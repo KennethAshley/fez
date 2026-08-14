@@ -1,6 +1,6 @@
 # Fez Architecture
 
-> This describes the architecture as it actually runs today (the TypeScript SDK in `src/`). A heavier, optional Rust layer is planned but not implemented — see [Planned: Rust Layer](#planned-rust-layer) at the bottom. If you're looking for `agent-acp`, Postgres, Redis, or a delegation-enforcing relay, they don't exist yet; this doc used to describe them as if they did, which was wrong.
+> This describes the architecture as it actually runs today (the TypeScript SDK in `src/`). Fez is TypeScript end to end — there's no Rust layer, planned or otherwise. If you're looking for `agent-acp`, Postgres, Redis, or a delegation-enforcing relay, they don't exist; this doc used to describe them as an unbuilt Rust plan, but that plan has been dropped.
 
 ## Philosophy
 
@@ -48,8 +48,7 @@ This is the opposite of most agent platforms, where the orchestrator (LangChain,
 │    nostr-rs-relay, relay.damus.io, ...) — NOT guaranteed to        │
 │    store/serve custom kinds like 47000+ reliably; use a relay      │
 │    you control for anything that matters                          │
-│  - The planned agent-relay Rust crate (not implemented — see        │
-│    bottom of this doc)                                             │
+│  - A future self-hosted TypeScript relay (not yet built)           │
 └──────────────────────────┬─────────────────────────────────────────┘
                             │ WebSocket (NIP-01)
               ┌─────────────┼─────────────┐
@@ -77,7 +76,7 @@ There is no separate harness process, no subprocess/JSON-RPC boundary, and no sh
 4. FAN-OUT           → forward to any live subscription whose filter matches
 ```
 
-That's it — no delegation check, no budget check, no audit log. Those are protocol-level *conventions* (`docs/protocol/delegation.md`, `docs/protocol/payments.md`) that a relay or agent *could* enforce, and the planned `agent-relay` Rust crate is meant to add them optionally — but nothing in this repo enforces them today. An agent that wants to honor delegation scopes has to check the referenced `KIND_AGENT_DELEGATION` event itself; `src/agent.ts` doesn't currently do this.
+That's it — no delegation check, no budget check, no audit log. Those are protocol-level *conventions* (`docs/protocol/delegation.md`, `docs/protocol/payments.md`) that a relay or agent *could* enforce, and a future self-hosted relay could add them optionally — but nothing in this repo enforces them today. An agent that wants to honor delegation scopes has to check the referenced `KIND_AGENT_DELEGATION` event itself; `src/agent.ts` doesn't currently do this.
 
 ## Agent Lifecycle
 
@@ -140,39 +139,4 @@ There is no "admin panel" or "root user." The human with the private key is the 
 | Presence/typing | Built-in | Not applicable |
 | Relay role | Smart (membership, roles) | Dumb (or delegation-aware, once that layer exists) |
 
----
-
-## Planned: Rust Layer
-
-**Nothing below this line is implemented.** `crates/*` are stub `README.md` files with no `.rs` source, `cargo build` produces nothing runnable, and the `justfile`'s `cargo run -p ...` targets don't work. This section is kept as design intent for a possible future heavier deployment option (self-hosted relay with enforcement, subprocess agent harness for non-Node agents) — treat it as a proposal, not a description of current behavior.
-
-### Planned Crate Dependency Hierarchy
-
-```
-agent-core    (zero I/O — kinds, verification, filter matching)
-    │
-    ├── agent-relay       (WebSocket relay, optionally delegation/budget-aware)
-    ├── agent-acp         (Agent harness — spawns non-Node agents via stdio JSON-RPC, manages keypairs)
-    └── agent-cli         (Orchestrator CLI — delegate, inspect, cancel)
-
-agent-dev-mcp             (MCP server — exposes agent tools to Claude/etc)
-```
-
-### Planned Event Pipeline (agent-relay)
-
-The idea, if built, is for `agent-relay` to add optional enforcement on top of the bare NIP-01 pipeline described above:
-
-```
-1. VERIFY         → spawn_blocking(verify_event)
-2. AUTH CHECK     → NIP-42 or NIP-98
-3. DELEGATION     → (optional) if event has delegation tag, verify unexpired/unrevoked
-4. BUDGET CHECK   → (optional) decrement budget cap
-5. DB INSERT      → Postgres (ON CONFLICT DO NOTHING)
-6. REDIS PUBLISH  → (optional) cross-node fan-out
-7. FAN-OUT        → subscriptions matching filters
-8. AUDIT          → (optional) hash-chain log
-```
-
-### Planned ACP Subprocess Contract
-
-For agents written in languages other than TypeScript, the idea is a harness (`agent-acp`) that spawns them as subprocesses speaking JSON-RPC over stdio (`session/prompt` in, `tools/call`/`session/post_output` out), with the harness handling all Nostr networking on the subprocess's behalf. This is a different contract than the current TS agent contract (self-contained script, direct `Agent` construction) — if this gets built, TS agents would likely keep using the direct SDK rather than going through the subprocess harness.
+If a self-hosted relay with delegation/budget enforcement gets built, it'll be TypeScript, matching the rest of the stack — there is no Rust component in this project, planned or otherwise.

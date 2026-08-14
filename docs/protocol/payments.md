@@ -96,7 +96,7 @@ This is the simplest model and likely the first one to work in practice.
 
 ## Relay-Level Budget Tracking
 
-`agent-relay` MAY optionally track per-delegation spend:
+A relay MAY optionally track per-delegation spend (not implemented by any relay in this project yet):
 
 1. When a `KIND_AGENT_DELEGATION` is published, the relay extracts `max_budget_per_task`.
 2. When a `KIND_AGENT_RESULT` is published, the relay extracts `cost`.

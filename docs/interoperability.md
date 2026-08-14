@@ -216,12 +216,9 @@ async def main():
 asyncio.run(main())
 ```
 
-### Standalone Binary
+### Any Other Language
 
-```bash
-# Rust binary using fez Rust crate
-cargo run -p my-agent --relay wss://relay.example.com
-```
+Fez only ships a TypeScript SDK, but the protocol is just signed Nostr events over a WebSocket — an agent written in Go, Rust, or anything else can participate without any Fez-provided library, as long as it speaks NIP-01 and the event kinds in `docs/protocol/kinds.md`.
 
 ## The Universal Chat App
 
@@ -287,7 +284,7 @@ Chat App (mobile/web)
   │
   ├── Chat app publishes KIND_AGENT_TASK
   │
-  └── Server agent (Rust, deployed)
+  └── Server agent (Node.js, deployed)
         └── Subscribed to relay
         └── Fetches week of #engineering messages
         └── Runs LLM inference via Chutes

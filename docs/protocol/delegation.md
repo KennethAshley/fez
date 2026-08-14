@@ -117,7 +117,7 @@ When an agent receives a task or publishes a result:
 
 ## Relay Enforcement (Optional)
 
-A standard Nostr relay does NOT validate delegations. `agent-relay` adds optional enforcement:
+A standard Nostr relay does NOT validate delegations. A relay could optionally add enforcement (no such relay is implemented in this project yet):
 
 - Reject events with `delegation` tag if the delegation is expired or revoked.
 - Track budget caps and reject over-budget events.

@@ -60,20 +60,15 @@ agent.onTask(async (task) => {
 await agent.start();
 ```
 
-### Why Node.js/TypeScript (not Rust)?
+### Why Node.js/TypeScript?
 
-- **Faster iteration** — no cargo build cycle, no Docker
+- **Faster iteration** — no compiled build cycle, no Docker
 - **NPM ecosystem** — `nostr-tools`, `ws`, etc. are mature and well-maintained
-- **Agent authors** write in TypeScript/Python, not Rust
-- **Installable globally** — `npm install -g fez-sdk` and go
+- **Agent authors** write in TypeScript/Python — the SDK matches the common case
+- **Installable globally** — `npm install -g @fez/protocol` and go
 - **Pi-like minimalism** — single dependency tree, no workspace complexity
 
-The Rust crates (`agent-core`, `agent-relay`) still exist for:
-- The **reference relay** (if you want your own)
-- The **production application** (Buzz-like layer)
-- **Performance-critical** verification (signature checking can call into Rust via WASM or napi)
-
-But the **SDK that 90% of developers use** is Node.js/TypeScript.
+Fez is TypeScript end to end — there's no Rust component, planned or otherwise. If a self-hosted relay or heavier application layer gets built, it'll be TypeScript too, to keep one toolchain and one dependency tree for the whole project.
 
 ---
 
@@ -82,13 +77,13 @@ But the **SDK that 90% of developers use** is Node.js/TypeScript.
 **What it is:** A separate repo or subdirectory that builds the Buzz-like experience:
 - Desktop app (Tauri + React, or web-only)
 - Human orchestrator UI (channel view, agent list, delegation management)
-- Optional self-hosted relay (`agent-relay` from the Rust crates)
+- Optional self-hosted relay (not yet built — would be TypeScript, matching the rest of the stack)
 - Optional Postgres for persistence and search
 
 **What it consumes:**
 - The same event kinds (47000–47099)
-- The same Nostr relays (public or the bundled `agent-relay`)
-- The same SDK (`fez-sdk`) for its own built-in agents
+- The same Nostr relays (public or a self-hosted one, once built)
+- The same SDK (`@fez/protocol`) for its own built-in agents
 
 **Key principle:** The application is just **one more client** on the Nostr network. It doesn't own the protocol.
 
@@ -201,9 +196,9 @@ Buzz is a single repo with everything coupled:
 Fez separates the layers:
 - **Protocol** — Just markdown specs (docs/protocol/)
 - **SDK** — Lightweight Node.js package
-- **Relay** — Optional Rust crate (only if you want self-hosting)
+- **Relay** — Optional, self-hosted, not yet built (only if you want your own)
 - **Application** — Optional desktop/web product
 
-A Python developer can build an agent without installing Rust. A TypeScript developer can integrate the SDK without touching Docker. A team that wants the full product can deploy the relay + app.
+A Python developer can build an agent without touching this repo's toolchain at all — the protocol is just signed JSON over a WebSocket. A TypeScript developer can integrate the SDK without touching Docker. A team that wants the full product can deploy the relay + app once they exist.
 
 **The protocol is the center of gravity, not the codebase.**

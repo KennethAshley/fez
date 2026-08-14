@@ -165,7 +165,7 @@ A student in Tokyo running pi can call an inference agent in Amsterdam. A team i
 |-----------|-----------|
 | **Protocol Spec** | Markdown docs defining event kinds, task flows, delegation |
 | **TypeScript SDK** | `npm install agent-nostr-sdk` — build or consume agents |
-| **Reference Relay** | Optional Rust relay with delegation enforcement |
+| **Reference Relay** | Optional self-hosted relay with delegation enforcement (not yet built) |
 | **Chat App** | Optional web/desktop UI for the human orchestrator |
 | **Example Agents** | Ditto, Hindsight, Echo — reference implementations |
 

@@ -12,28 +12,26 @@ The "real" example agent. Records channel history, stores on Hippius, and can sp
 
 ## Architecture
 
+Not yet built — this is a design sketch, not a running example. There's no shared subprocess harness in Fez; an agent like this would be its own standalone process, same as `examples/echo-agent.ts`. If written in TypeScript (to match the rest of the SDK), it would use `Agent.create()`/`onTask()` directly instead of adapter modules calling into a harness:
+
 ```
 ┌─────────────┐
-│ ditto-agent │  (Python subprocess, managed by agent-acp)
-│  (ACP)      │
+│ ditto-agent │  (standalone process — Agent.create() + onTask())
 └──────┬──────┘
        │
-       ├──► Nostr relay ──► REQ for channel history
+       ├──► Nostr relay ──► subscribes for tasks, queries channel history
        │
-       ├──► Hippius adapter ──► Store packed data
-       │    (Bittensor Python SDK or HTTP API)
+       ├──► Hippius adapter ──► Store packed data (Bittensor SDK or HTTP API)
        │
-       └──► Chutes adapter ──► LLM inference
-            (Bittensor Python SDK or HTTP API)
+       └──► Chutes adapter ──► LLM inference (Bittensor SDK or HTTP API)
 ```
 
 ## Adapters
 
-Adapters are internal modules that handle Bittensor subnet communication:
+Adapters would be modules that handle Bittensor subnet communication:
 
-- `hippius.py` — Upload/download to Hippius miners
-- `chutes.py` — Send prompts to Chutes inference miners
-- `nostr.py` — Read/write Nostr events via the harness's `relay/query` and `relay/publish` tools
+- `hippius.ts` — Upload/download to Hippius miners
+- `chutes.ts` — Send prompts to Chutes inference miners
 
 ## Task Flow: `summarize`
 
@@ -57,13 +55,10 @@ export DITTO_DEFAULT_RELAY="wss://relay.example.com"
 ## Running
 
 ```bash
-# Build and run via the harness
-agent-acp --relay wss://relay.example.com \
-          --agent ./ditto_agent.py \
-          --key-file ditto.key \
-          --max-agents 2
+# Once implemented — same pattern as examples/echo-agent.ts:
+npx tsx src/cli.ts run examples/ditto-agent/ditto-agent.ts -r wss://relay.example.com -k ditto.key
 ```
 
 ## Bittensor Integration
 
-The Hippius and Chutes adapters currently wrap the Bittensor Python SDK (`bittensor`). A future Rust-native adapter using `subxt` + custom gRPC is possible but not yet built.
+The Hippius and Chutes adapters would wrap Bittensor's SDK, likely via its HTTP API rather than a native binding (Fez has no non-TypeScript component).
