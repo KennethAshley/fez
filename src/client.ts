@@ -1,0 +1,226 @@
+import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
+import { RelayConnection } from "./relay.js";
+import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
+
+export interface ClientConfig {
+  /** Relay URL */
+  relay: string;
+  /** Optional private key (auto-generated if not provided) */
+  privateKey?: string;
+}
+
+export interface Capability {
+  pubkey: string;
+  name: string;
+  type: string;
+  description?: string;
+  pricing?: Record<string, string>;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+}
+
+export interface TaskOptions {
+  /** Target agent pubkey */
+  to: string;
+  /** Task type identifier */
+  taskType: string;
+  /** Natural language instruction */
+  instruction: string;
+  /** Optional parameters */
+  params?: Record<string, unknown>;
+  /** Optional context */
+  context?: Record<string, unknown>;
+  /** Optional deadline (unix timestamp) */
+  deadline?: number;
+  /** Optional budget */
+  budget?: { currency: string; amount: string };
+  /** Optional: reference to a parent task */
+  parentTaskId?: string;
+  /** Callback for progress updates */
+  onProgress?: (event: Event) => void;
+}
+
+export interface TaskResult {
+  event: Event;
+  status: string;
+  result?: Record<string, unknown>;
+  error?: { code?: string; message: string };
+  cost?: { currency: string; amount: string };
+}
+
+/**
+ * Fez Client — for calling agents from your app, script, or another agent.
+ *
+ * ```typescript
+ * const client = new CapabilityClient({ relay: "wss://relay.example.com" });
+ *
+ * // Discover agents
+ * const storageAgents = await client.findCapabilities({ type: "storage" });
+ *
+ * // Call one
+ * const result = await client.sendTask({
+ *   to: storageAgents[0].pubkey,
+ *   taskType: "store",
+ *   instruction: "Store this file",
+ *   params: { data: "..." },
+ * });
+ * ```
+ */
+export class CapabilityClient {
+  private relay: RelayConnection;
+  private privateKey: Uint8Array;
+  private pubkey: string;
+
+  constructor(config: ClientConfig) {
+    this.relay = new RelayConnection({ url: config.relay });
+
+    if (config.privateKey) {
+      this.privateKey = hexToBytes(config.privateKey);
+    } else {
+      this.privateKey = generateSecretKey();
+    }
+    this.pubkey = getPublicKey(this.privateKey);
+  }
+
+  getPubkey(): string {
+    return this.pubkey;
+  }
+
+  /** Connect to the relay */
+  async connect(): Promise<void> {
+    await this.relay.connect();
+  }
+
+  disconnect(): void {
+    this.relay.disconnect();
+  }
+
+  /**
+   * Discover agents by capability type.
+   */
+  async findCapabilities(filter: { type?: string; name?: string }): Promise<Capability[]> {
+    const filters: Filter[] = [{ kinds: [KIND_AGENT_CAPABILITY], limit: 100 }];
+
+    if (filter.type) {
+      filters[0]["#capability_type"] = [filter.type];
+    }
+
+    const events = await this.relay.query(filters);
+
+    return events
+      .map((event) => {
+        try {
+          const content = JSON.parse(event.content);
+          const capType = event.tags.find((t) => t[0] === "capability_type")?.[1];
+          return {
+            pubkey: event.pubkey,
+            name: content.name || event.tags.find((t) => t[0] === "d")?.[1] || "unnamed",
+            type: capType || "unknown",
+            description: content.description,
+            pricing: content.pricing,
+            inputSchema: content.input_schema,
+            outputSchema: content.output_schema,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean) as Capability[];
+  }
+
+  /**
+   * Discover agents by name from metadata events.
+   */
+  async findAgentsByName(name: string): Promise<{ pubkey: string; name: string; supportedTasks: string[] }[]> {
+    const filters: Filter[] = [
+      {
+        kinds: [KIND_AGENT_METADATA],
+        limit: 100,
+      },
+    ];
+
+    const events = await this.relay.query(filters);
+
+    return events
+      .map((event) => {
+        try {
+          const content = JSON.parse(event.content);
+          if (content.name?.toLowerCase().includes(name.toLowerCase())) {
+            return {
+              pubkey: event.pubkey,
+              name: content.name,
+              supportedTasks: content.supported_tasks || [],
+            };
+          }
+          return null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean) as { pubkey: string; name: string; supportedTasks: string[] }[];
+  }
+
+  /**
+   * Send a task to an agent and wait for the result.
+   */
+  async sendTask(options: TaskOptions): Promise<TaskResult> {
+    const event: UnsignedEvent = {
+      kind: KIND_AGENT_TASK,
+      pubkey: this.pubkey,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ["p", options.to],
+        ["task_type", options.taskType],
+        ...(options.deadline ? [["deadline", options.deadline.toString()]] : []),
+        ...(options.budget ? [["budget", options.budget.currency, options.budget.amount]] : []),
+        ...(options.parentTaskId ? [["e", options.parentTaskId]] : []),
+      ],
+      content: JSON.stringify({
+        instruction: options.instruction,
+        params: options.params,
+        context: options.context,
+      }),
+    };
+
+    const signed = finalizeEvent(event, this.privateKey);
+    await this.relay.publish(signed);
+
+    // Subscribe for result
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unsub();
+        reject(new Error("Task timed out waiting for result"));
+      }, 60000);
+
+      const unsub = this.relay.subscribe(
+        [
+          {
+            kinds: [KIND_AGENT_RESULT],
+            "#e": [signed.id],
+            "#p": [this.pubkey],
+          },
+        ],
+        (resultEvent) => {
+          try {
+            const content = JSON.parse(resultEvent.content);
+            clearTimeout(timeout);
+            unsub();
+            resolve({
+              event: resultEvent,
+              status: content.status,
+              result: content.result,
+              error: content.error,
+              cost: content.cost,
+            });
+          } catch {
+            // ignore parse errors
+          }
+        }
+      );
+    });
+  }
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  return new Uint8Array(hex.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16)));
+}

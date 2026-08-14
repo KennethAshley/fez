@@ -1,0 +1,59 @@
+{
+  "name": "@fez/protocol",
+  "version": "0.1.0",
+  "description": "Fez — a decentralized MCP for agents. Any agent can call any other agent by name over Nostr.",
+  "type": "module",
+  "bin": {
+    "fez": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "VISION.md"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/cli.js",
+    "dev": "tsc --watch",
+    "test": "vitest --run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "nostr-tools": "^2.14.0",
+    "ws": "^8.18.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "ora": "^8.1.0",
+    "inquirer": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  },
+  "keywords": [
+    "nostr",
+    "agent",
+    "mcp",
+    "ai",
+    "llm",
+    "decentralized",
+    "protocol"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

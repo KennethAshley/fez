@@ -1,0 +1,16 @@
+{
+  "name": "@fez/claude-code",
+  "version": "0.1.0",
+  "description": "Fez integration for Claude Code — @mention agents from Claude Code",
+  "fez": {
+    "type": "integration",
+    "integrations": {
+      "claudeCode": {
+        "commands": "commands/fez.md",
+        "evals": "evals/mentions.md"
+      }
+    }
+  },
+  "keywords": ["fez-package", "integration", "claude-code"],
+  "license": "MIT"
+}
