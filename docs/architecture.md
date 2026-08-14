@@ -1,165 +1,178 @@
 # Fez Architecture
 
+> This describes the architecture as it actually runs today (the TypeScript SDK in `src/`). A heavier, optional Rust layer is planned but not implemented — see [Planned: Rust Layer](#planned-rust-layer) at the bottom. If you're looking for `agent-acp`, Postgres, Redis, or a delegation-enforcing relay, they don't exist yet; this doc used to describe them as if they did, which was wrong.
+
 ## Philosophy
 
 The relay is dumb. The protocol is the standard.
 
-This is the opposite of most agent platforms, where the orchestrator (LangChain, CrewAI, etc.) is a centralized Python library that wires agents together in-process. Here, **agents are distributed processes** that communicate via signed Nostr events on any relay. The orchestrator is just another pubkey — usually a human with a browser extension or CLI.
+This is the opposite of most agent platforms, where the orchestrator (LangChain, CrewAI, etc.) is a centralized library that wires agents together in-process. Here, **agents are independent processes** that communicate via signed Nostr events on any relay. There's no orchestrator process at all — a human (via the CLI or TUI) or another agent just publishes events and reads replies.
 
-## System Diagram
+## Current Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        HUMAN ORCHESTRATOR                            │
-│                                                                      │
-│  Nostr keypair (self-custody)                                       │
-│  ┌──────────────┐  ┌──────────────┐                                  │
-│  │ Web UI       │  │ CLI          │                                  │
-│  │ (or browser  │  │ (agent-cli)  │                                  │
-│  │  extension)  │  │              │                                  │
-│  └──────┬───────┘  └──────┬───────┘                                  │
-│         │                 │                                         │
-│         └────────┬────────┘                                         │
-│                  │                                                   │
-│         ┌────────▼────────┐                                         │
-│         │  NIP-42 Auth     │  ◄── signs events manually             │
-│         │  (human pubkey)  │                                         │
-│         └───────────────────┘                                         │
-└─────────────────────────────────────────────────────────────────────┘
-                               │
-                               │ WebSocket (NIP-01)
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        NOSTR RELAY                                   │
-│                                                                      │
-│  Can be:                                                             │
-│  - agent-relay (this repo)                                           │
-│  - Any standard Nostr relay (nostr-rs-relay, strfry, etc.)          │
-│  - A fleet of relays (NIP-65)                                       │
-│                                                                      │
-│  All relays understand:                                              │
-│  - EVENT (any kind, including 47000+)                                │
-│  - REQ (any filter)                                                  │
-│                                                                      │
-│  agent-relay ADDITIONALLY validates:                               │
-│  - Delegation expiry/revocation                                      │
-│  - Budget caps (if enabled)                                        │
-│  - Agent-specific rate limits                                      │
-└─────────────────────────────────────────────────────────────────────┘
-                               │
-                               │ WebSocket (NIP-01)
-                               │
-              ┌────────────────┼────────────────┐
-              │                │                │
-              ▼                ▼                ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│   agent-acp     │  │   agent-acp     │  │   agent-acp     │
-│  (buzz-acp fork)│  │  (buzz-acp fork)│  │  (buzz-acp fork)│
-│                 │  │                 │  │                 │
-│  ┌───────────┐  │  │  ┌───────────┐  │  │  ┌───────────┐  │
-│  │ ditto-    │  │  │  │ chutes-   │  │  │  │ echo-     │  │
-│  │ agent     │  │  │  │ agent     │  │  │  │ agent     │  │
-│  │ (Python)  │  │  │  │ (Python)  │  │  │  │ (Rust)    │  │
-│  └───────────┘  │  │  └───────────┘  │  │  └───────────┘  │
-│                 │  │                 │  │                 │
-│  Keypair:       │  │  Keypair:       │  │  Keypair:       │
-│  harness-       │  │  harness-       │  │  harness-       │
-│  managed        │  │  managed        │  │  managed        │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-              │                │                │
-              │                │                │
-              ▼                ▼                ▼
-        ┌─────────┐      ┌─────────┐      ┌─────────┐
-        │Hippius  │      │Chutes   │      │ (local) │
-        │Miners   │      │Miners   │      │         │
-        └─────────┘      └─────────┘      └─────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    HUMAN (or calling agent)                      │
+│                                                                    │
+│  Nostr keypair — generated by `fez keygen` or auto-generated,     │
+│  stored as hex at ~/.fez/default.key                              │
+│                                                                    │
+│  ┌────────────────┐         ┌────────────────┐                    │
+│  │ fez (TUI)       │         │ fez <command>   │                   │
+│  │ src/tui.ts      │         │ src/cli.ts      │                   │
+│  │ @mention chat   │         │ discover/send/  │                   │
+│  │ REPL            │         │ run/install     │                   │
+│  └────────┬────────┘         └────────┬────────┘                  │
+│           └─────────────┬─────────────┘                            │
+│                          │  both built on:                         │
+│                 ┌────────▼─────────┐                               │
+│                 │ CapabilityClient  │  src/client.ts                │
+│                 │ (discover, send)  │                               │
+│                 └────────┬──────────┘                               │
+└──────────────────────────┼───────────────────────────────────────┘
+                            │
+                 ┌──────────▼──────────┐
+                 │  RelayConnection     │  src/relay.ts —
+                 │  (nostr-tools        │  thin wrapper over
+                 │   SimplePool)        │  nostr-tools' SimplePool
+                 └──────────┬──────────┘
+                            │ WebSocket (NIP-01)
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        A NOSTR RELAY                               │
+│                                                                    │
+│  Can be:                                                           │
+│  - dev/local-relay.ts — minimal in-memory relay for local dev,     │
+│    no persistence, no auth/delegation checks                      │
+│  - Any standard public/private Nostr relay (strfry,                │
+│    nostr-rs-relay, relay.damus.io, ...) — NOT guaranteed to        │
+│    store/serve custom kinds like 47000+ reliably; use a relay      │
+│    you control for anything that matters                          │
+│  - The planned agent-relay Rust crate (not implemented — see        │
+│    bottom of this doc)                                             │
+└──────────────────────────┬─────────────────────────────────────────┘
+                            │ WebSocket (NIP-01)
+              ┌─────────────┼─────────────┐
+              ▼              ▼              ▼
+      ┌──────────────┐┌──────────────┐┌──────────────┐
+      │  Agent        ││  Agent        ││  Agent        │  src/agent.ts —
+      │  process       ││  process       ││  process       │  each is a plain
+      │  (any .ts/.js  ││  (any .ts/.js  ││  (any .ts/.js  │  Node process:
+      │  file that     ││  file that     ││  file that     │  Agent.create() →
+      │  builds an     ││  builds an     ││  builds an     │  onTask() → start()
+      │  Agent)        ││  Agent)        ││  Agent)        │
+      └──────────────┘└──────────────┘└──────────────┘
 ```
+
+There is no separate harness process, no subprocess/JSON-RPC boundary, and no shared database. Each agent is a single Node process holding its own keypair (env var, key file, or auto-generated) and its own WebSocket connection to whatever relay it's configured with. `fez run <file> -r <url> -k <keyfile>` just sets `FEZ_RELAY`/`FEZ_PRIVATE_KEY` env vars and imports the file — the script constructs its own `Agent` (see `examples/echo-agent.ts`).
+
+## The Event Pipeline (as implemented)
+
+`dev/local-relay.ts` — and any spec-compliant NIP-01 relay — handles events like this:
+
+```
+1. EVENT received  → verify signature (verifyEvent)
+2. STORE            → append to in-memory array (or relay's own persistence)
+3. ACK               → send OK back to publisher
+4. FAN-OUT           → forward to any live subscription whose filter matches
+```
+
+That's it — no delegation check, no budget check, no audit log. Those are protocol-level *conventions* (`docs/protocol/delegation.md`, `docs/protocol/payments.md`) that a relay or agent *could* enforce, and the planned `agent-relay` Rust crate is meant to add them optionally — but nothing in this repo enforces them today. An agent that wants to honor delegation scopes has to check the referenced `KIND_AGENT_DELEGATION` event itself; `src/agent.ts` doesn't currently do this.
+
+## Agent Lifecycle
+
+```
+┌─────────────┐
+│  DEPLOYED   │  ← Agent.create() + agent.start()
+└──────┬──────┘
+       │ publishes KIND_AGENT_METADATA (47000)
+       ▼
+┌─────────────┐
+│  IDLE       │  ← subscribed to TASK (47001) and CANCEL (47012) addressed to its pubkey
+└──────┬──────┘
+       │ receives KIND_AGENT_TASK (47001)
+       ▼
+┌─────────────┐
+│  WORKING    │  ← runs the onTask() handler, optionally calls task.progress()
+└──────┬──────┘
+       │ handler calls task.reply()
+       ▼
+┌─────────────┐
+│  RESULT     │  ← publishes KIND_AGENT_RESULT (47003)
+└─────────────┘
+       │
+       │ (or: CANCEL (47012) received — logged, but src/agent.ts doesn't yet
+       │  interrupt in-flight work; see the TODO in handleEvent())
+       ▼
+┌─────────────┐
+│  CANCELLED  │  (partially implemented — see note above)
+└─────────────┘
+```
+
+This matches `src/agent.ts` directly: `start()` publishes metadata and subscribes to `[TASK, CANCEL]` filtered on `#p: [pubkey]`; `handleTask()` parses the event, runs your handler, and `reply()`/`progress()` publish signed `RESULT`/`PROGRESS` events tagged back to the task and caller.
+
+## Multi-Relay Deployment
+
+Because this is just Nostr, agents can in principle subscribe to multiple relays (NIP-65) — but `Agent`/`CapabilityClient`/`RelayConnection` currently take a single `relay: string` and connect to exactly one. A task published to relay A is not automatically visible on relay B, and there's no multi-relay fan-out in the SDK today. If you need an agent reachable across relays, you'd currently have to run multiple `Agent` instances, one per relay, with the same keypair.
+
+## Trust Model
+
+| Layer | Mechanism | Enforced today? |
+|-------|-----------|------------------|
+| Identity | Secp256k1 pubkey — no accounts, no DNS | Yes — every event is `finalizeEvent`-signed |
+| Message integrity | Schnorr signature on every event | Yes — `dev/local-relay.ts` calls `verifyEvent`; any spec relay does too |
+| Delegation | Human-signed `DELEGATION` event, agent references it | Speced (`docs/protocol/delegation.md`), **not checked** by `src/agent.ts` or `dev/local-relay.ts` |
+| Revocation | Human-signed `REVOKE` event | Speced, **not checked** anywhere in `src/` |
+| Audit | Every event is a signed, timestamped, non-repudiable log entry | True in the sense that events are signed — but nothing persists an audit trail beyond whatever the relay itself stores (in-memory only for `dev/local-relay.ts`) |
+| Encryption | NIP-44 for sensitive task payloads | Not implemented — task `content` is sent as plain JSON today |
+
+There is no "admin panel" or "root user." The human with the private key is the intended root of authority, expressed through delegation events — but until delegation is actually checked somewhere, any pubkey can send a task to any agent's pubkey and the agent will process it if it matches `supportedTasks`. Don't rely on delegation as an access-control mechanism yet.
 
 ## Key Differences from Buzz
 
 | Aspect | Buzz | Fez |
-|--------|------|-------------|
+|--------|------|-----|
 | Primary actor | Human in a team | Autonomous agent |
-| Social primitive | Channel (`h` tag) | Direct addressing (`p` tag) or broadcast |
-| Access control | Channel membership | Delegation + signature verification |
-| UI | Desktop app (Tauri) | Web orchestrator + CLI |
-| Persistence | Postgres + all team data | Postgres + events only (no channel tables) |
+| Social primitive | Channel (`h` tag) | Direct addressing (`p` tag) |
+| Access control | Channel membership | Delegation + signature verification (speced, not yet enforced — see Trust Model) |
+| UI | Desktop app (Tauri) | CLI (`fez discover/send/run`) + terminal chat REPL (`fez` with no args) |
+| Persistence | Postgres + all team data | None — relay-side only, and `dev/local-relay.ts` is in-memory |
 | Presence/typing | Built-in | Not applicable |
-| Relay role | Smart (membership, roles) | Dumb (or delegation-aware) |
+| Relay role | Smart (membership, roles) | Dumb (or delegation-aware, once that layer exists) |
 
-## Crate Dependency Hierarchy
+---
+
+## Planned: Rust Layer
+
+**Nothing below this line is implemented.** `crates/*` are stub `README.md` files with no `.rs` source, `cargo build` produces nothing runnable, and the `justfile`'s `cargo run -p ...` targets don't work. This section is kept as design intent for a possible future heavier deployment option (self-hosted relay with enforcement, subprocess agent harness for non-Node agents) — treat it as a proposal, not a description of current behavior.
+
+### Planned Crate Dependency Hierarchy
 
 ```
 agent-core    (zero I/O — kinds, verification, filter matching)
     │
-    ├── agent-relay       (WebSocket relay, optionally delegation-aware)
-    ├── agent-acp         (Agent harness — spawns agents, manages keypairs)
+    ├── agent-relay       (WebSocket relay, optionally delegation/budget-aware)
+    ├── agent-acp         (Agent harness — spawns non-Node agents via stdio JSON-RPC, manages keypairs)
     └── agent-cli         (Orchestrator CLI — delegate, inspect, cancel)
 
 agent-dev-mcp             (MCP server — exposes agent tools to Claude/etc)
 ```
 
-## The Event Pipeline (agent-relay)
+### Planned Event Pipeline (agent-relay)
 
-When the relay receives `EVENT`:
+The idea, if built, is for `agent-relay` to add optional enforcement on top of the bare NIP-01 pipeline described above:
 
 ```
 1. VERIFY         → spawn_blocking(verify_event)
 2. AUTH CHECK     → NIP-42 or NIP-98
 3. DELEGATION     → (optional) if event has delegation tag, verify unexpired/unrevoked
-4. BUDGET CHECK   → (optional) if agent-relay, decrement budget cap
+4. BUDGET CHECK   → (optional) decrement budget cap
 5. DB INSERT      → Postgres (ON CONFLICT DO NOTHING)
 6. REDIS PUBLISH  → (optional) cross-node fan-out
 7. FAN-OUT        → subscriptions matching filters
 8. AUDIT          → (optional) hash-chain log
 ```
 
-Steps 3–4 and 8 are **optional** — a standard Nostr relay skips them. `agent-relay` adds them for deployments that want enforcement.
+### Planned ACP Subprocess Contract
 
-## Agent Lifecycle
-
-```
-┌─────────────┐
-│  DEPLOYED   │  ← operator starts agent-acp with a keypair
-└──────┬──────┘
-       │ publishes KIND_AGENT_METADATA (47000)
-       ▼
-┌─────────────┐
-│  IDLE       │  ← waiting for TASK events addressed to its pubkey
-└──────┬──────┘
-       │ receives KIND_AGENT_TASK (47001)
-       ▼
-┌─────────────┐
-│  WORKING    │  ← executes task, optionally publishes PROGRESS (47002)
-└──────┬──────┘
-       │ completes or fails
-       ▼
-┌─────────────┐
-│  RESULT     │  ← publishes KIND_AGENT_RESULT (47003)
-└─────────────┘
-       │
-       │ (or receives KIND_AGENT_CANCEL (47012))
-       ▼
-┌─────────────┐
-│  CANCELLED  │
-└─────────────┘
-```
-
-## Multi-Relay Deployment
-
-Because this is just Nostr, agents can subscribe to multiple relays (NIP-65). A task published to relay A is not automatically visible on relay B — but the agent can subscribe to both. The human orchestrator controls which relays their agents monitor.
-
-For deployments that want a **private agent mesh**, run `agent-relay` internally and point agents at it. For **public agent discovery**, also publish to public relays.
-
-## Trust Model
-
-| Layer | Mechanism |
-|-------|-----------|
-| Identity | Secp256k1 pubkey — no accounts, no DNS |
-| Message integrity | Schnorr signature on every event |
-| Delegation | Human-signed `DELEGATION` event, agent references it |
-| Revocation | Human-signed `REVOKE` event, checked by agent-relay |
-| Audit | Every event is a signed, timestamped, non-repudiable log entry |
-| Encryption | NIP-44 (sealed sender) for sensitive task payloads |
-
-There is no "admin panel" or "root user." The human with the private key is the root of authority, expressed through delegation events.
+For agents written in languages other than TypeScript, the idea is a harness (`agent-acp`) that spawns them as subprocesses speaking JSON-RPC over stdio (`session/prompt` in, `tools/call`/`session/post_output` out), with the harness handling all Nostr networking on the subprocess's behalf. This is a different contract than the current TS agent contract (self-contained script, direct `Agent` construction) — if this gets built, TS agents would likely keep using the direct SDK rather than going through the subprocess harness.

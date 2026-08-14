@@ -14,7 +14,7 @@ The `crates/` directory is a **planned, not-yet-implemented** Rust workspace for
 
 ## Heritage
 
-This is a fork-concept from [Buzz](https://github.com/block/buzz) (Block, Inc.). The *protocol design* (Nostr event pipeline: verify → store → fan-out, delegation-as-permission-primitive) inherits from Buzz's model. The originally-planned Rust workspace structure and ACP subprocess harness pattern are described in `docs/architecture.md`, but that doc predates the pivot to a TypeScript-first SDK and describes the unbuilt Rust path, not what actually runs today — see "Current vs. Planned" below before trusting it.
+This is a fork-concept from [Buzz](https://github.com/block/buzz) (Block, Inc.). The *protocol design* (Nostr event pipeline: verify → store → fan-out, delegation-as-permission-primitive) inherits from Buzz's model. `docs/architecture.md` documents both what actually runs today (the TS SDK) and, clearly separated at the bottom, the originally-planned Rust workspace/ACP subprocess harness that isn't built yet.
 
 We strip away from Buzz:
 - Desktop app (Tauri + React)
@@ -31,7 +31,7 @@ We strip away from Buzz:
 | Local dev relay (in-memory, for testing) | **Working** | `dev/local-relay.ts` |
 | Claude Code integration package | **Working** | `packages/claude-code/` |
 | Rust reference relay / ACP harness / orchestrator CLI | **Not implemented** — README stubs only | `crates/*` |
-| `docs/architecture.md` | **Describes the unbuilt Rust/ACP path** — treat as design notes for future work, not current behavior | `docs/architecture.md` |
+| `docs/architecture.md` | **Reconciled** — describes the current TS architecture, with the unbuilt Rust/ACP path clearly separated at the bottom | `docs/architecture.md` |
 | `justfile` | **Rust-only** (`cargo run -p ...`) — none of these targets currently work since the crates have no source | `justfile` |
 
 If you're asked to "wire up the relay" or "run the agent harness," clarify whether that means the working TS path (`dev/local-relay.ts` + `src/agent.ts`) or the planned Rust path (`crates/agent-relay`, `crates/agent-acp`) — they are not interchangeable and only one exists today.
@@ -55,7 +55,7 @@ fez/
 ├── dev/
 │   └── local-relay.ts          # Minimal in-memory Nostr relay for local testing
 ├── docs/
-│   ├── architecture.md         # Rust/ACP design notes — NOT current behavior, see table above
+│   ├── architecture.md         # Current TS architecture + planned Rust layer at the bottom
 │   ├── minimal-vs-application.md  # Why the SDK is TS-first; Rust layer is optional/future
 │   ├── orchestrator.md          # The two Fez interfaces (TUI + CLI) sharing one protocol
 │   ├── tui-design.md            # `fez` chat REPL design
@@ -179,7 +179,7 @@ Prefer `dev/local-relay.ts` over a public relay for iteration — it's instant a
 - Read `docs/minimal-vs-application.md` for why the SDK is TS-first and what the (currently unbuilt) Rust layer is for
 - Read `docs/protocol/delegation.md` for the trust model (spec only — not enforced in code yet)
 - Read `examples/echo-agent.ts` for the simplest working agent — not `examples/echo-agent/README.md`, which describes an unbuilt Python/ACP version
-- Treat `docs/architecture.md` as design notes for a possible future Rust layer, not a description of what runs today
+- Read `docs/architecture.md` for the current system diagram and trust model — the Rust layer described at its bottom is planned, not built
 
 ## License
 
