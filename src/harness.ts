@@ -50,7 +50,27 @@ function claudeCodeHarness(): HarnessAdapter {
     detect: () => spawnDetect(command, ["--version"]),
 
     async invoke(instruction, cwd = process.cwd()) {
-      const child = spawn(command, [], { stdio: ["pipe", "pipe", "inherit"] });
+      const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"] });
+
+      // Without these, a write to a pipe whose reader already exited (e.g.
+      // the process quitting mid-chain, with a persona subprocess still
+      // running) emits an unhandled 'error' event and crashes the whole
+      // Node process, not just this one call — this is what invoke() should
+      // fail with, not what should take down the caller.
+      child.stdin?.on("error", () => {});
+      child.stdout?.on("error", () => {});
+      child.stderr?.on("error", () => {});
+
+      // Captured, not inherited: claude-agent-acp can print its own crash
+      // trace to stderr when killed mid-write (e.g. we kill it on quit
+      // while it's still mid-turn) — that's noise about the adapter's own
+      // shutdown handling, not a Fez error, and inheriting it makes a
+      // benign kill look like Fez crashed. Only surface it if invoke()
+      // itself actually fails, as context for why.
+      let stderrTail = "";
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+      });
 
       try {
         const stream = ndJsonStream(

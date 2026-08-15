@@ -21,7 +21,13 @@ interface Message {
   content: string;
   timestamp: Date;
   status?: "pending" | "working" | "done" | "error";
+  /** Id of the message this one is responding to — set on chained agent replies. */
+  replyTo?: string;
+  reactions?: { emoji: string; by: string }[];
 }
+
+/** Caps agent-mentions-agent chains (e.g. @researcher -> @reviewer -> ...) so a mutual-mention loop can't run forever. */
+const MAX_CHAIN_DEPTH = 5;
 
 /**
  * Minimal Fez TUI — chat-first terminal interface.
@@ -159,10 +165,15 @@ export class FezTUI {
     return null;
   }
 
-  private async routeToAgent(agentName: string, instruction: string, parentMsgId: string): Promise<void> {
+  private async routeToAgent(
+    agentName: string,
+    instruction: string,
+    triggeringMsgId: string,
+    depth = 0
+  ): Promise<void> {
     // Show "routing" message
     const routingMsg: Message = {
-      id: `routing-${parentMsgId}`,
+      id: `routing-${triggeringMsgId}`,
       author: "orchestrator",
       content: `Routing to @${agentName}...`,
       timestamp: new Date(),
@@ -193,6 +204,7 @@ export class FezTUI {
           content: `✅ @${label}:\n${result}`,
           status: "done",
         });
+        await this.handleAgentReply(result, label, triggeringMsgId, routingMsg.id, depth);
       } catch (err) {
         this.updateMessage(routingMsg.id, {
           content: `❌ @${label} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -250,12 +262,58 @@ export class FezTUI {
         content: resultContent,
         status: "done",
       });
+
+      if (result.status === "success") {
+        const rawText =
+          typeof result.result === "string" ? result.result : JSON.stringify(result.result ?? "");
+        await this.handleAgentReply(rawText, target.name, triggeringMsgId, routingMsg.id, depth);
+      }
     } catch (err) {
       this.updateMessage(routingMsg.id, {
         content: `❌ @${target.name} failed: ${err instanceof Error ? err.message : String(err)}`,
         status: "error",
       });
     }
+  }
+
+  /**
+   * Runs after any successful agent reply, human-triggered or chained.
+   * Reacts to whatever message caused this agent to engage, then — same
+   * mechanism, no special-casing — checks the reply's own text for another
+   * @mention and routes to it if found. This is how "@researcher ... then
+   * message @reviewer" resolves: @reviewer isn't dispatched by parsing your
+   * original instruction upfront, it's triggered because @researcher's own
+   * reply happened to mention it, exactly like a human's message would.
+   */
+  private async handleAgentReply(
+    replyText: string,
+    fromLabel: string,
+    triggeringMsgId: string,
+    replyMsgId: string,
+    depth: number
+  ): Promise<void> {
+    this.addReaction(triggeringMsgId, "✅", fromLabel);
+
+    if (depth >= MAX_CHAIN_DEPTH) return;
+
+    const mention = this.parseMention(replyText);
+    if (!mention) return;
+    if (mention.agent.toLowerCase() === fromLabel.toLowerCase()) return; // no self-mentions
+
+    await this.routeToAgent(mention.agent, mention.instruction, replyMsgId, depth + 1);
+  }
+
+  private addReaction(messageId: string, emoji: string, by: string): void {
+    const idx = this.messages.findIndex((m) => m.id === messageId);
+    if (idx < 0) return;
+    const msg = this.messages[idx];
+    msg.reactions = [...(msg.reactions ?? []), { emoji, by }];
+    console.log(chalk.dim(`   ${emoji} @${by} → "${this.truncate(msg.content)}"`));
+  }
+
+  private truncate(text: string, max = 60): string {
+    const oneLine = text.replace(/\s+/g, " ").trim();
+    return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
   }
 
   private async orchestratorResponse(input: string, parentMsgId: string): Promise<void> {
