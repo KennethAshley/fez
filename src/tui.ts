@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import readline from "readline";
 import chalk from "chalk";
+import ora, { type Ora } from "ora";
 import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
@@ -47,7 +48,6 @@ export class FezTUI {
   private rl?: readline.Interface;
   private myPubkey: string;
   private agentNameMap: Map<string, string> = new Map(); // pubkey -> name
-  private pendingTasks: Map<string, Message> = new Map(); // taskId -> message
 
   constructor(private relayUrl: string, privateKey?: string) {
     this.client = new CapabilityClient({ relay: relayUrl, privateKey });
@@ -171,15 +171,25 @@ export class FezTUI {
     triggeringMsgId: string,
     depth = 0
   ): Promise<void> {
-    // Show "routing" message
+    // routingMsg is bookkeeping only — never printed directly. A live spinner
+    // shows work-in-progress (Buzz's TypingIndicatorRow does the same "X is
+    // typing..." thing); the eventual reply is what gets printed, once, as a
+    // normal chat message.
     const routingMsg: Message = {
       id: `routing-${triggeringMsgId}`,
-      author: "orchestrator",
-      content: `Routing to @${agentName}...`,
+      author: agentName,
+      content: "",
       timestamp: new Date(),
       status: "pending",
     };
-    this.addMessage(routingMsg);
+    this.recordMessage(routingMsg);
+
+    const triggeredBy =
+      depth > 0 ? this.messages.find((m) => m.id === triggeringMsgId)?.author : undefined;
+    const openingLine = triggeredBy
+      ? `@${agentName} (mentioned by @${triggeredBy}) is thinking...`
+      : `@${agentName} is thinking...`;
+    const spinner = ora({ text: openingLine, spinner: "dots" }).start();
 
     // Resolution order: named persona (a harness + system prompt the user
     // configured) -> bare harness by id -> Nostr agent discovery. Personas
@@ -189,60 +199,41 @@ export class FezTUI {
 
     if (harness) {
       const label = persona ? persona.id : harness.id;
-      this.updateMessage(routingMsg.id, {
-        content: `🔄 @${label} is working (local)...`,
-        status: "working",
-      });
-
       const fullInstruction = persona?.systemPrompt
         ? `${persona.systemPrompt}\n\n${instruction}`
         : instruction;
 
       try {
         const result = await harness.invoke(fullInstruction, process.cwd(), (textSoFar) => {
-          this.updateMessage(routingMsg.id, {
-            content: `🔄 @${label} is working (local)...\n${this.truncate(textSoFar, 200) || "(thinking...)"}`,
-            status: "working",
-          });
+          const preview = this.truncate(textSoFar, 70);
+          spinner.text = preview ? `@${label}: ${preview}` : openingLine;
         });
-        this.updateMessage(routingMsg.id, {
-          content: `✅ @${label}:\n${result}`,
-          status: "done",
-        });
+        spinner.stop();
+        this.updateMessage(routingMsg.id, { content: result, status: "done" });
+        this.printReply(label, result, chalk.bold.green, triggeredBy);
         await this.handleAgentReply(result, label, triggeringMsgId, routingMsg.id, depth);
       } catch (err) {
-        this.updateMessage(routingMsg.id, {
-          content: `❌ @${label} failed: ${err instanceof Error ? err.message : String(err)}`,
-          status: "error",
-        });
+        const message = err instanceof Error ? err.message : String(err);
+        spinner.fail(`@${label} failed: ${message}`);
+        this.updateMessage(routingMsg.id, { content: message, status: "error" });
       }
       return;
     }
 
-    // Resolve agent
+    // Resolve agent over Nostr
     const agents = await this.client.findAgentsByName(agentName);
 
     if (agents.length === 0) {
-      this.updateMessage(routingMsg.id, {
-        content: `❌ No agent named "${agentName}" found.\n\nTry:\n  fez discover --name ${agentName}\n  fez install ${agentName}`,
-        status: "error",
-      });
+      spinner.fail(
+        `No agent named "${agentName}" found. Try: fez discover --name ${agentName}, or fez install ${agentName}`
+      );
+      this.updateMessage(routingMsg.id, { content: "not found", status: "error" });
       return;
     }
 
     const target = agents[0];
     this.agentNameMap.set(target.pubkey, target.name);
 
-    // Update to "working"
-    this.updateMessage(routingMsg.id, {
-      content: `🔄 @${target.name} is working...`,
-      status: "working",
-    });
-
-    // Store as pending task
-    this.pendingTasks.set(routingMsg.id, routingMsg);
-
-    // Send task
     try {
       const result = await this.client.sendTask({
         to: target.pubkey,
@@ -251,33 +242,31 @@ export class FezTUI {
         onProgress: (event) => {
           try {
             const content = JSON.parse(event.content);
-            this.updateMessage(routingMsg.id, {
-              content: `🔄 @${target.name}: ${content.message || "working..."} (${content.percent_complete || 0}%)`,
-              status: "working",
-            });
+            const pct = content.percent_complete ? ` (${content.percent_complete}%)` : "";
+            spinner.text = `@${target.name}: ${content.message || "working..."}${pct}`;
           } catch {
             // ignore
           }
         },
       });
 
-      // Display result
-      const resultContent = this.formatResult(target.name, result);
-      this.updateMessage(routingMsg.id, {
-        content: resultContent,
-        status: "done",
-      });
-
+      spinner.stop();
       if (result.status === "success") {
         const rawText =
-          typeof result.result === "string" ? result.result : JSON.stringify(result.result ?? "");
+          typeof result.result === "string" ? result.result : JSON.stringify(result.result ?? "", null, 2);
+        const costNote = result.cost ? `\n${chalk.dim(`Cost: ${result.cost.amount} ${result.cost.currency}`)}` : "";
+        this.updateMessage(routingMsg.id, { content: rawText, status: "done" });
+        this.printReply(target.name, rawText + costNote, chalk.bold.green, triggeredBy);
         await this.handleAgentReply(rawText, target.name, triggeringMsgId, routingMsg.id, depth);
+      } else {
+        const message = result.error?.message || "Unknown error";
+        this.updateMessage(routingMsg.id, { content: message, status: "error" });
+        this.printReply(target.name, `Failed: ${message}`, chalk.bold.red, triggeredBy);
       }
     } catch (err) {
-      this.updateMessage(routingMsg.id, {
-        content: `❌ @${target.name} failed: ${err instanceof Error ? err.message : String(err)}`,
-        status: "error",
-      });
+      const message = err instanceof Error ? err.message : String(err);
+      spinner.fail(`@${target.name} failed: ${message}`);
+      this.updateMessage(routingMsg.id, { content: message, status: "error" });
     }
   }
 
@@ -308,17 +297,34 @@ export class FezTUI {
     await this.routeToAgent(mention.agent, mention.instruction, replyMsgId, depth + 1);
   }
 
+  /** Data-only — the reaction shows up as a pill under the message it's attached to (see printReply), not as its own line. */
   private addReaction(messageId: string, emoji: string, by: string): void {
     const idx = this.messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
-    const msg = this.messages[idx];
-    msg.reactions = [...(msg.reactions ?? []), { emoji, by }];
-    console.log(chalk.dim(`   ${emoji} @${by} → "${this.truncate(msg.content)}"`));
+    this.messages[idx].reactions = [...(this.messages[idx].reactions ?? []), { emoji, by }];
   }
 
   private truncate(text: string, max = 60): string {
     const oneLine = text.replace(/\s+/g, " ").trim();
     return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+  }
+
+  /**
+   * Prints one chat bubble: bold name header, content below — matches
+   * Buzz's MessageAuthorText + body layout. When triggeredBy is set (a
+   * chained reply), shows a ✅ reaction note — the visible form of the
+   * reaction addReaction() recorded on the triggering message.
+   */
+  private printReply(
+    displayName: string,
+    content: string,
+    color: (s: string) => string,
+    triggeredBy?: string
+  ): void {
+    const reactionNote = triggeredBy ? chalk.dim(` ✅ responding to @${triggeredBy}`) : "";
+    console.log();
+    console.log(color(`@${displayName}`) + reactionNote);
+    console.log(content);
   }
 
   private async orchestratorResponse(input: string, parentMsgId: string): Promise<void> {
@@ -472,53 +478,36 @@ export class FezTUI {
     );
   }
 
-  private formatResult(agentName: string, result: any): string {
-    if (result.status === "success") {
-      let text = `✅ @${agentName}:`;
-      if (result.result) {
-        const resultStr = typeof result.result === "string"
-          ? result.result
-          : JSON.stringify(result.result, null, 2);
-        text += `\n${resultStr}`;
-      }
-      if (result.cost) {
-        text += `\n${chalk.dim(`Cost: ${result.cost.amount} ${result.cost.currency}`)}`;
-      }
-      return text;
-    } else {
-      return `❌ @${agentName} failed: ${result.error?.message || "Unknown error"}`;
-    }
-  }
-
   private addMessage(msg: Message): void {
     this.messages.push(msg);
     this.renderMessage(msg);
   }
 
+  /** Push without rendering — for internal bookkeeping entries (routing placeholders) that a spinner represents instead. */
+  private recordMessage(msg: Message): void {
+    this.messages.push(msg);
+  }
+
+  /** Data-only. Nothing prints from an update — routeToAgent prints the final reply itself, once, via printReply. */
   private updateMessage(id: string, updates: Partial<Message>): void {
     const idx = this.messages.findIndex((m) => m.id === id);
     if (idx >= 0) {
       this.messages[idx] = { ...this.messages[idx], ...updates };
-      // Re-render (simple: just print update)
-      const msg = this.messages[idx];
-      const prefix = msg.author === "orchestrator"
-        ? chalk.magenta("🤖 ")
-        : chalk.green(`🤖 @${msg.author} `);
-      console.log(prefix + updates.content);
     }
   }
 
+  /** Chat-bubble layout: bold name header, content below, no per-line timestamp — matches Buzz's MessageAuthorText pattern. */
   private renderMessage(msg: Message): void {
-    const time = chalk.dim(msg.timestamp.toLocaleTimeString());
-
+    console.log();
     if (msg.author === "user") {
-      console.log(`${time} ${chalk.blue("You:")} ${msg.content}`);
+      console.log(chalk.bold.blue("You"));
     } else if (msg.author === "orchestrator") {
-      console.log(`${time} ${chalk.magenta("🤖")} ${msg.content}`);
+      console.log(chalk.bold.magenta("Fez"));
     } else {
-      const color = msg.status === "error" ? chalk.red : chalk.green;
-      console.log(`${time} ${color(`🤖 @${msg.author}`)} ${msg.content}`);
+      const color = msg.status === "error" ? chalk.bold.red : chalk.bold.green;
+      console.log(color(`@${msg.author}`));
     }
+    console.log(msg.content);
   }
 
   private renderHeader(): void {
