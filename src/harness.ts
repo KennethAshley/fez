@@ -136,19 +136,40 @@ function claudeCodeHarness(): HarnessAdapter {
   };
 }
 
-export const HARNESS_REGISTRY: HarnessAdapter[] = [claudeCodeHarness()];
+const registry: HarnessAdapter[] = [];
+
+/**
+ * Add a harness to the registry. This is the one entry point — built-in
+ * harnesses (registerBuiltinHarnesses, below) and user extensions
+ * (extensions.ts) call the exact same function, so nothing built in is
+ * privileged over anything a third party registers.
+ */
+export function registerHarness(adapter: HarnessAdapter): void {
+  if (registry.some((h) => h.id === adapter.id)) {
+    console.error(`⚠️  Harness "${adapter.id}" is already registered — skipping duplicate`);
+    return;
+  }
+  registry.push(adapter);
+}
+
+/** Registers Fez's own built-in harnesses. Called once at startup, before extensions load. */
+export function registerBuiltinHarnesses(): void {
+  registerHarness(claudeCodeHarness());
+}
 
 export function findHarness(name: string): HarnessAdapter | undefined {
   const normalized = name.toLowerCase();
-  return HARNESS_REGISTRY.find(
-    (h) => h.id === normalized || h.aliases.includes(normalized)
-  );
+  return registry.find((h) => h.id === normalized || h.aliases.includes(normalized));
 }
 
-/** Detect all installed harnesses. Runs detection in parallel. */
+export function listHarnesses(): HarnessAdapter[] {
+  return [...registry];
+}
+
+/** Detect all registered harnesses. Runs detection in parallel. */
 export async function detectHarnesses(): Promise<HarnessAdapter[]> {
   const results = await Promise.all(
-    HARNESS_REGISTRY.map(async (h) => ((await h.detect()) ? h : null))
+    registry.map(async (h) => ((await h.detect()) ? h : null))
   );
   return results.filter((h): h is HarnessAdapter => h !== null);
 }

@@ -5,7 +5,8 @@ import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
-import { findHarness, detectHarnesses, HARNESS_REGISTRY } from "./harness.js";
+import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
+import { loadExtensions } from "./extensions.js";
 import type { Event } from "nostr-tools";
 import fs from "fs/promises";
 import path from "path";
@@ -62,8 +63,12 @@ export class FezTUI {
     // Show header
     this.renderHeader();
 
-    // Detect locally installed harnesses (Claude Code, ...) up front so
-    // @mentions can dispatch to them without a relay round-trip.
+    // Register built-ins, then user extensions (~/.fez/extensions/*) through
+    // the exact same registerHarness() call — built-ins have no special
+    // path. Then detect what's actually installed so @mentions can dispatch
+    // locally without a relay round-trip.
+    registerBuiltinHarnesses();
+    await loadExtensions();
     console.log(chalk.dim("Checking for installed harnesses..."));
     const harnesses = await detectHarnesses();
 
@@ -88,7 +93,7 @@ export class FezTUI {
     const harnessLine =
       harnesses.length > 0
         ? `Local harnesses ready: ${harnesses.map((h) => `@${h.aliases[0] ?? h.id}`).join(", ")}`
-        : `No local harnesses detected (checked: ${HARNESS_REGISTRY.map((h) => h.command).join(", ")})`;
+        : `No local harnesses detected (checked: ${listHarnesses().map((h) => h.command).join(", ")})`;
 
     this.addMessage({
       id: "welcome",
@@ -135,7 +140,7 @@ export class FezTUI {
   }
 
   private parseMention(input: string): { agent: string; instruction: string } | null {
-    const match = input.match(/^@(\w+)(?:\s+(.+))?$/);
+    const match = input.match(/^@([\w-]+)(?:\s+(.+))?$/);
     if (match) {
       return {
         agent: match[1],
@@ -143,11 +148,11 @@ export class FezTUI {
       };
     }
     // Also match inline mentions like "@ditto store this"
-    const inlineMatch = input.match(/@(\w+)/);
+    const inlineMatch = input.match(/@([\w-]+)/);
     if (inlineMatch) {
       return {
         agent: inlineMatch[1],
-        instruction: input.replace(/@\w+\s*/, "").trim() || "help",
+        instruction: input.replace(/@[\w-]+\s*/, "").trim() || "help",
       };
     }
     return null;
