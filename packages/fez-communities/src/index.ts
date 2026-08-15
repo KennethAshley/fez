@@ -186,7 +186,7 @@ export default function communities(api: FezExtensionAPI): void {
       const community = state.community(id);
       if (!community) continue;
       for (const channel of community.channels.values()) {
-        lines.push(`• ${community.name}/#${channel.name} (${channel.members.size} members)`);
+        lines.push(`• ${community.name}/#${channel.name} (${channel.members.size} members)\n  id: \`${channel.id}\``);
       }
     }
     ctx.reply(lines.length > 0 ? lines.join("\n") : "No channels — /community create <name> or /community join <id>");

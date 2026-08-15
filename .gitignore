@@ -45,3 +45,4 @@ venv/
 
 # Logs
 *.log
+dev/relay.mjs

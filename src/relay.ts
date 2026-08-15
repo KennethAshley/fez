@@ -95,6 +95,10 @@ export class RelayConnection {
    * Publish a signed event to the relay.
    */
   async publish(event: Event): Promise<void> {
-    await this.pool.publish([this.url], event);
+    // pool.publish returns Promise[] (one per relay) — awaiting the bare
+    // array resolves immediately without waiting for (or surfacing) the
+    // actual sends. Bit us live: a short-lived process exited before its
+    // events reached the relay, silently.
+    await Promise.all(this.pool.publish([this.url], event));
   }
 }

@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
 import {
   RelayConnection,
   CapabilityClient,
@@ -58,7 +62,23 @@ async function main() {
     .map((name) => findMcpServer(name))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
 
-  const client = new CapabilityClient({ relay: relayUrl, privateKey: process.env.FEZ_PRIVATE_KEY });
+  // Identity: one stable key per persona, auto-created at
+  // ~/.fez/agents/<persona>.key. Deliberately NOT process.env.FEZ_PRIVATE_KEY
+  // — `fez run` fills that from ~/.fez/default.key (the *user's* identity),
+  // and an agent must not impersonate its owner: invites, membership, and
+  // respondTo gates are all bound to the agent's own pubkey surviving
+  // restarts.
+  const keyPath = path.join(os.homedir(), ".fez", "agents", `${personaId}.key`);
+  let agentKey: string;
+  try {
+    agentKey = fs.readFileSync(keyPath, "utf-8").trim();
+  } catch {
+    agentKey = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
+    fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+    fs.writeFileSync(keyPath, agentKey, { mode: 0o600 });
+    console.log(`🔑 Generated agent identity → ${keyPath}`);
+  }
+  const client = new CapabilityClient({ relay: relayUrl, privateKey: agentKey });
   const relay = new RelayConnection({ url: relayUrl });
   await relay.connect();
   const myPubkey = client.getPubkey();

@@ -24,12 +24,25 @@ program.name("fez").description("Fez — decentralized MCP for agents").version(
 // ─── Default: Open TUI when no command given ───────────────────────────────
 
 if (process.argv.length <= 2) {
-  // No arguments — launch TUI
+  // No arguments — launch TUI. Identity must be stable across restarts —
+  // community creator rights and channel membership are bound to the
+  // pubkey, so a regenerated key each run would orphan everything you
+  // created. Resolution: env override > ~/.fez/default.key > generate
+  // once and persist there.
+  let privateKey = process.env.FEZ_PRIVATE_KEY;
+  if (!privateKey) {
+    const keyPath = path.join(os.homedir(), ".fez", "default.key");
+    try {
+      privateKey = (await fs.readFile(keyPath, "utf-8")).trim();
+    } catch {
+      privateKey = bytesToHex(generateSecretKey());
+      await fs.mkdir(path.dirname(keyPath), { recursive: true });
+      await fs.writeFile(keyPath, privateKey, { mode: 0o600 });
+      console.log(`🔑 Generated identity → ${keyPath}`);
+    }
+  }
   const { FezTUI } = await import("./tui.js");
-  const tui = new FezTUI(
-    process.env.FEZ_RELAY || "wss://relay.damus.io",
-    process.env.FEZ_PRIVATE_KEY
-  );
+  const tui = new FezTUI(process.env.FEZ_RELAY || "wss://relay.damus.io", privateKey);
   await tui.start();
   // TUI blocks until /quit, then exits cleanly
   process.exit(0);
