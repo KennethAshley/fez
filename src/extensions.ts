@@ -53,6 +53,8 @@ export interface FezExtensionAPI {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number }): PanelHandle;
     appendMessage(author: string, content: string): void;
+    /** Wipe the chat log — view switching (e.g. a thread view repainting the timeline). */
+    clearLog(): void;
   };
 }
 
@@ -65,6 +67,7 @@ export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
 interface UiBackend {
   createSidePanel(opts?: { width?: number }): PanelHandle;
   appendMessage(author: string, content: string): void;
+  clearLog(): void;
 }
 
 let nostrBackend: NostrAccess | undefined;
@@ -95,6 +98,7 @@ function buildApi(): FezExtensionAPI {
       createSidePanel: (opts) =>
         uiBackend ? uiBackend.createSidePanel(opts) : { setText: () => {} },
       appendMessage: (author, content) => uiBackend?.appendMessage(author, content),
+      clearLog: () => uiBackend?.clearLog(),
     },
   };
 }

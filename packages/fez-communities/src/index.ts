@@ -35,8 +35,86 @@ export default function communities(api: FezExtensionAPI): void {
   state.load();
   const names = new Map<string, string>(); // pubkey -> display name (from 47000)
   const seenMessages = new Set<string>();
-  const authorsById = new Map<string, string>(); // message id -> display name, for reply context
   let unsubscribe: (() => void) | undefined;
+
+  // ── Message cache + threads (client-side; Buzz keeps thread_metadata
+  // server-side, fez derives it from NIP-10 markers on the fly) ───────────
+  interface Msg {
+    id: string;
+    authorPk: string;
+    authorName: string;
+    content: string;
+    parentId?: string;
+    rootId?: string; // set iff the message is part of a thread
+    ts: number;
+  }
+  const MSG_CACHE_CAP = 200;
+  const messagesByChannel = new Map<string, Msg[]>();
+  const msgById = new Map<string, Msg>();
+  // Threads get small user-facing numbers (#1, #2, …) as they're first seen —
+  // event-id hex is unusable as a command argument.
+  const threadNoByRoot = new Map<string, number>();
+  const rootByThreadNo = new Map<number, string>();
+  let nextThreadNo = 1;
+
+  let view: { mode: "channel" } | { mode: "thread"; rootId: string } = { mode: "channel" };
+
+  /** Buzz's parse (threading.ts): parent = last reply-marked e-tag; root = root-marked ?? parent. */
+  function parseThreadRef(tags: string[][]): { parentId?: string; rootId?: string } {
+    const parentId = tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+    const rootId = tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? parentId;
+    return { parentId, rootId };
+  }
+
+  function threadNo(rootId: string): number {
+    let no = threadNoByRoot.get(rootId);
+    if (no === undefined) {
+      no = nextThreadNo++;
+      threadNoByRoot.set(rootId, no);
+      rootByThreadNo.set(no, rootId);
+    }
+    return no;
+  }
+
+  function cacheMessage(channelId: string, event: NostrEvent, authorName: string): Msg {
+    const { parentId, rootId } = parseThreadRef(event.tags);
+    const msg: Msg = {
+      id: event.id,
+      authorPk: event.pubkey,
+      authorName,
+      content: event.content,
+      parentId,
+      rootId,
+      ts: event.created_at,
+    };
+    const list = messagesByChannel.get(channelId) ?? [];
+    list.push(msg);
+    if (list.length > MSG_CACHE_CAP) list.splice(0, list.length - MSG_CACHE_CAP);
+    messagesByChannel.set(channelId, list);
+    msgById.set(msg.id, msg);
+    if (rootId) threadNo(rootId);
+    return msg;
+  }
+
+  function threadReplies(channelId: string, rootId: string): Msg[] {
+    return (messagesByChannel.get(channelId) ?? []).filter((m) => m.rootId === rootId);
+  }
+
+  /** Visible indent depth by walking the parent chain (Buzz caps visible depth; TUI caps at 3). */
+  function depthOf(msg: Msg): number {
+    let depth = 0;
+    let current: Msg | undefined = msg;
+    while (current?.parentId && depth < 3) {
+      depth++;
+      current = msgById.get(current.parentId);
+    }
+    return depth;
+  }
+
+  function snippet(text: string, max = 40): string {
+    const oneLine = text.replace(/\s+/g, " ").trim();
+    return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+  }
 
   // pubkey -> expiry timestamp for active typing indicators in the current
   // scope. Rendered as a footer segment; pruned on a 1s tick (Buzz's model:
@@ -62,10 +140,51 @@ export default function communities(api: FezExtensionAPI): void {
   function refreshUi(): void {
     panel.setText(state.sidebarText());
     const current = state.currentChannel();
+    const threadSuffix =
+      view.mode === "thread" ? ` ▸ thread #${threadNo(view.rootId)}` : "";
     api.ui.setStatus(
       "scope",
-      current ? `${current.community.name}/#${current.channel.name}` : ""
+      current ? `${current.community.name}/#${current.channel.name}${threadSuffix}` : ""
     );
+  }
+
+  /** Bubble for a thread reply — indented author label, Buzz's connector glyph. */
+  function threadBubble(msg: Msg): void {
+    const indent = "  ".repeat(Math.max(0, depthOf(msg) - 1));
+    api.ui.appendMessage(`${indent}↳ ${msg.authorName}`, msg.content);
+  }
+
+  /** Repaint the channel timeline from cache: root bubbles, threads as one summary line each. */
+  function renderChannelTimeline(channelId: string): void {
+    api.ui.clearLog();
+    const list = messagesByChannel.get(channelId) ?? [];
+    const summarized = new Set<string>();
+    for (const msg of list) {
+      if (!msg.parentId) {
+        api.ui.appendMessage(msg.authorName === "You" ? "You" : msg.authorName, msg.content);
+        continue;
+      }
+      const rootId = msg.rootId!;
+      if (summarized.has(rootId)) continue;
+      summarized.add(rootId);
+      const replies = threadReplies(channelId, rootId);
+      const root = msgById.get(rootId);
+      const no = threadNo(rootId);
+      api.ui.appendMessage(
+        `thread #${no}`,
+        `${replies.length} repl${replies.length === 1 ? "y" : "ies"} to "${snippet(root?.content ?? "…")}" — /thread ${no}`
+      );
+    }
+  }
+
+  /** Repaint as a single thread: root bubble, replies in arrival order, indented. */
+  function renderThreadView(channelId: string, rootId: string): void {
+    api.ui.clearLog();
+    const no = threadNo(rootId);
+    const root = msgById.get(rootId);
+    if (root) api.ui.appendMessage(root.authorName, root.content);
+    for (const msg of threadReplies(channelId, rootId)) threadBubble(msg);
+    api.ui.appendMessage("communities", `— in thread #${no}: plain messages reply here, /back returns to #channel —`);
   }
 
   function absorb(event: NostrEvent): void {
@@ -75,28 +194,43 @@ export default function communities(api: FezExtensionAPI): void {
   function handleIncomingMessage(event: NostrEvent): void {
     if (seenMessages.has(event.id)) return;
     seenMessages.add(event.id);
-    authorsById.set(event.id, displayName(event.pubkey));
     // A real message from someone clears their typing indicator immediately
     // (Buzz does the same rather than waiting out the TTL).
     typing.delete(event.pubkey);
     renderTyping();
-    if (event.pubkey === nostr!.pubkey) return; // own message, already echoed
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
     if (!channelId || !communityId) return;
-    const scope = state.scope;
-    if (!scope || scope.channelId !== channelId || scope.communityId !== communityId) return;
     if (!state.isMember(communityId, channelId, event.pubkey)) return; // client-side gate
 
-    // NIP-10 reply context (Buzz's wire shape): the last reply-marked e-tag
-    // is the parent. Rendered inline as "author ↳ parent-author" — fez's
-    // TUI keeps a flat timeline, not Buzz's side-panel threads.
-    const parentId = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
-    const parentAuthor = parentId ? authorsById.get(parentId) : undefined;
-    const label = parentAuthor
-      ? `${displayName(event.pubkey)} ↳ ${parentAuthor}`
-      : displayName(event.pubkey);
-    api.ui.appendMessage(label, event.content);
+    const msg = cacheMessage(channelId, event, event.pubkey === nostr!.pubkey ? "You" : displayName(event.pubkey));
+    if (event.pubkey === nostr!.pubkey) return; // own message, already echoed on send
+
+    const scope = state.scope;
+    if (!scope || scope.channelId !== channelId || scope.communityId !== communityId) return;
+
+    // Buzz's timeline rule, TUI-shaped: the main view shows roots as
+    // bubbles and collapses replies into thread summaries; the thread view
+    // shows its own replies as indented bubbles and everything else as a
+    // compact line so the thread stays coherent.
+    if (view.mode === "thread") {
+      if (msg.rootId === view.rootId) {
+        threadBubble(msg);
+      } else {
+        api.ui.appendMessage("communities", `(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
+      }
+      return;
+    }
+    if (!msg.parentId) {
+      api.ui.appendMessage(msg.authorName, msg.content);
+    } else {
+      const no = threadNo(msg.rootId!);
+      const count = threadReplies(channelId, msg.rootId!).length;
+      api.ui.appendMessage(
+        `thread #${no}`,
+        `↳ ${msg.authorName}: ${snippet(msg.content)} (${count} repl${count === 1 ? "y" : "ies"}) — /thread ${no}`
+      );
+    }
   }
 
   function handleTyping(event: NostrEvent): void {
@@ -257,9 +391,42 @@ export default function communities(api: FezExtensionAPI): void {
   api.registerCommand("leave", async (_args, ctx) => {
     if (!state.scope) return ctx.reply("Not in a channel.");
     state.scope = null;
+    view = { mode: "channel" };
     state.save();
     refreshUi();
     ctx.reply("Left the channel — back to normal fez chat.");
+  });
+
+  api.registerCommand("thread", async (args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel — /join <channel> first.");
+    const no = Number(args.trim());
+    const rootId = rootByThreadNo.get(no);
+    if (!rootId) return ctx.reply(`No thread #${args.trim() || "?"} — /threads lists them.`);
+    view = { mode: "thread", rootId };
+    renderThreadView(current.channel.id, rootId);
+    refreshUi();
+  });
+
+  api.registerCommand("threads", async (_args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel — /join <channel> first.");
+    const lines: string[] = [];
+    for (const [no, rootId] of rootByThreadNo) {
+      const replies = threadReplies(current.channel.id, rootId);
+      if (replies.length === 0) continue;
+      const root = msgById.get(rootId);
+      lines.push(`• #${no} "${snippet(root?.content ?? "…")}" — ${replies.length} repl${replies.length === 1 ? "y" : "ies"}, latest from ${replies.at(-1)!.authorName}`);
+    }
+    ctx.reply(lines.length > 0 ? lines.join("\n") : "No threads in this channel yet — replies start them.");
+  });
+
+  api.registerCommand("back", async (_args, ctx) => {
+    if (view.mode !== "thread") return ctx.reply("Not in a thread view.");
+    const current = state.currentChannel();
+    view = { mode: "channel" };
+    if (current) renderChannelTimeline(current.channel.id);
+    refreshUi();
   });
 
   api.registerCommand("members", async (_args, ctx) => {
@@ -298,8 +465,6 @@ export default function communities(api: FezExtensionAPI): void {
     const current = state.currentChannel();
     if (!current) return false;
 
-    api.ui.appendMessage("You", text);
-
     if (!current.channel.members.has(nostr.pubkey)) {
       api.ui.appendMessage("communities", "⚠️  You're not in this channel's membership — other members won't see this until the creator /invites you.");
     }
@@ -313,18 +478,34 @@ export default function communities(api: FezExtensionAPI): void {
       }
     }
 
+    // In a thread view, the message is a reply — Buzz's exact wire shape:
+    // direct child of the root carries just the reply marker; deeper
+    // replies carry root + reply markers (parent = latest thread message).
+    const threadTags: string[][] = [];
+    if (view.mode === "thread") {
+      const replies = threadReplies(current.channel.id, view.rootId);
+      const parentId = replies.at(-1)?.id ?? view.rootId;
+      if (parentId !== view.rootId) threadTags.push(["e", view.rootId, "", "root"]);
+      threadTags.push(["e", parentId, "", "reply"]);
+    }
+
     const event = await nostr.publish({
       kind: KIND_CHANNEL_MESSAGE,
       tags: [
         ["h", current.channel.id],
         ["c", current.community.id],
+        ...threadTags,
         ...mentions.map((pk) => ["p", pk]),
       ],
       content: text,
     });
     seenMessages.add(event.id);
-    authorsById.set(event.id, "You"); // agent replies to this show "agent ↳ You"
-    void mentions; // p tags carry them; standing agents react over the relay
+    const msg = cacheMessage(current.channel.id, event, "You");
+    if (view.mode === "thread") {
+      threadBubble(msg);
+    } else {
+      api.ui.appendMessage("You", text);
+    }
     return true;
   });
 

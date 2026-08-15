@@ -219,13 +219,19 @@ async function main() {
         console.log(`💬 Mention from ${event.pubkey.slice(0, 8)}… — invoking ${persona.harness}`);
         const reply = await harness.invoke(prompt, process.cwd(), undefined, mcpServers);
 
+        // NIP-10 markers, Buzz's exact shape (threading.ts): replying to a
+        // message that's already in a thread carries that thread's root as
+        // a root-marked tag; replying to a root message carries only the
+        // reply marker (the trigger IS the root). Root of the trigger =
+        // its root-marked e-tag, falling back to its reply-marked parent.
+        const triggerParent = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+        const triggerRoot = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? triggerParent;
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
           tags: [
             ["h", channelId],
             ["c", communityId],
-            // NIP-10 marked reply to the triggering message — Buzz's wire
-            // shape (threading.ts); clients render "agent ↳ author" from it.
+            ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
             ["e", event.id, "", "reply"],
             ["p", event.pubkey],
           ],

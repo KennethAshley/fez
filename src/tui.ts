@@ -135,6 +135,10 @@ export class FezTUI {
         };
       },
       appendMessage: (author, content) => this.appendBubble(author, content),
+      clearLog: () => {
+        this.log.clear();
+        this.screen?.requestRender();
+      },
     });
 
     await loadExtensions();
