@@ -213,7 +213,71 @@ program
     await pm.remove(name);
   });
 
+// ─── persona ────────────────────────────────────────────────────────────────
 
+import { createPersona, listPersonas, removePersona } from "./personas.js";
+import { registerBuiltinHarnesses, listHarnesses } from "./harness.js";
+import { loadExtensions } from "./extensions.js";
+
+const persona = program.command("persona").description("Manage named agent identities");
+
+persona
+  .command("create <name>")
+  .description("Create a named persona backed by a harness (e.g. claude-code)")
+  .requiredOption("-h, --harness <id>", "Harness id this persona runs on (see: fez persona harnesses)")
+  .option("-p, --prompt <text>", "System prompt prefixed to every instruction")
+  .option("-a, --alias <names...>", "Additional names this persona responds to")
+  .action(async (name: string, options) => {
+    try {
+      const p = await createPersona({
+        id: name,
+        harness: options.harness,
+        systemPrompt: options.prompt,
+        aliases: options.alias,
+      });
+      console.log(chalk.green(`✅ Created persona @${p.id} on harness "${p.harness}"`));
+    } catch (err) {
+      console.error(chalk.red(`❌ ${err instanceof Error ? err.message : String(err)}`));
+      process.exit(1);
+    }
+  });
+
+persona
+  .command("list")
+  .description("List configured personas")
+  .action(async () => {
+    const personas = await listPersonas();
+    if (personas.length === 0) {
+      console.log(chalk.yellow("No personas configured."));
+      console.log(chalk.dim("Try: fez persona create researcher --harness claude-code --prompt \"...\""));
+      return;
+    }
+    for (const p of personas) {
+      console.log(`  ${chalk.green(`@${p.id}`)} ${chalk.dim(`(${p.harness})`)}`);
+      if (p.aliases.length) console.log(`    Aliases: ${p.aliases.join(", ")}`);
+      if (p.systemPrompt) console.log(`    Prompt: ${p.systemPrompt}`);
+      console.log();
+    }
+  });
+
+persona
+  .command("remove <name>")
+  .description("Remove a persona")
+  .action(async (name: string) => {
+    const removed = await removePersona(name);
+    console.log(removed ? chalk.green(`✅ Removed @${name}`) : chalk.yellow(`⚠️  No persona named "${name}"`));
+  });
+
+persona
+  .command("harnesses")
+  .description("List available harnesses personas can be built on")
+  .action(async () => {
+    registerBuiltinHarnesses();
+    await loadExtensions();
+    for (const h of listHarnesses()) {
+      console.log(`  ${chalk.green(h.id)} ${chalk.dim(`(${h.command})`)}`);
+    }
+  });
 
 // Helpers
 function bytesToHex(bytes: Uint8Array): string {

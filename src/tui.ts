@@ -7,6 +7,7 @@ import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { loadExtensions } from "./extensions.js";
+import { findPersona } from "./personas.js";
 import type { Event } from "nostr-tools";
 import fs from "fs/promises";
 import path from "path";
@@ -169,24 +170,32 @@ export class FezTUI {
     };
     this.addMessage(routingMsg);
 
-    // Local harness (Claude Code, ...) takes priority over Nostr discovery —
-    // no relay round-trip needed for a tool already installed on this machine.
-    const harness = findHarness(agentName);
+    // Resolution order: named persona (a harness + system prompt the user
+    // configured) -> bare harness by id -> Nostr agent discovery. Personas
+    // and harnesses both dispatch locally, no relay round-trip.
+    const persona = await findPersona(agentName);
+    const harness = persona ? findHarness(persona.harness) : findHarness(agentName);
+
     if (harness) {
+      const label = persona ? persona.id : harness.id;
       this.updateMessage(routingMsg.id, {
-        content: `🔄 @${harness.id} is working (local)...`,
+        content: `🔄 @${label} is working (local)...`,
         status: "working",
       });
 
+      const fullInstruction = persona?.systemPrompt
+        ? `${persona.systemPrompt}\n\n${instruction}`
+        : instruction;
+
       try {
-        const result = await harness.invoke(instruction, process.cwd());
+        const result = await harness.invoke(fullInstruction, process.cwd());
         this.updateMessage(routingMsg.id, {
-          content: `✅ @${harness.id}:\n${result}`,
+          content: `✅ @${label}:\n${result}`,
           status: "done",
         });
       } catch (err) {
         this.updateMessage(routingMsg.id, {
-          content: `❌ @${harness.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+          content: `❌ @${label} failed: ${err instanceof Error ? err.message : String(err)}`,
           status: "error",
         });
       }
