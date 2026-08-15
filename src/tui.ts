@@ -5,6 +5,7 @@ import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
+import { findHarness, detectHarnesses, HARNESS_REGISTRY } from "./harness.js";
 import type { Event } from "nostr-tools";
 import fs from "fs/promises";
 import path from "path";
@@ -61,6 +62,11 @@ export class FezTUI {
     // Show header
     this.renderHeader();
 
+    // Detect locally installed harnesses (Claude Code, ...) up front so
+    // @mentions can dispatch to them without a relay round-trip.
+    console.log(chalk.dim("Checking for installed harnesses..."));
+    const harnesses = await detectHarnesses();
+
     // Start input loop
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -79,10 +85,15 @@ export class FezTUI {
     });
 
     // Initial greeting
+    const harnessLine =
+      harnesses.length > 0
+        ? `Local harnesses ready: ${harnesses.map((h) => `@${h.aliases[0] ?? h.id}`).join(", ")}`
+        : `No local harnesses detected (checked: ${HARNESS_REGISTRY.map((h) => h.command).join(", ")})`;
+
     this.addMessage({
       id: "welcome",
       author: "orchestrator",
-      content: `Welcome to Fez! 🧢\n\nI can chat with you and route @mentions to agents.\nType @agent-name to call an agent, or try:\n  fez install <package>  — install an agent\n  fez discover           — find agents on the network\n  /quit                  — exit`,
+      content: `Welcome to Fez! 🧢\n\n${harnessLine}\n\nI can chat with you and route @mentions to agents.\nType @agent-name to call an agent, or try:\n  fez install <package>  — install an agent\n  fez discover           — find agents on the network\n  /quit                  — exit`,
       timestamp: new Date(),
     });
 
@@ -152,6 +163,30 @@ export class FezTUI {
       status: "pending",
     };
     this.addMessage(routingMsg);
+
+    // Local harness (Claude Code, ...) takes priority over Nostr discovery —
+    // no relay round-trip needed for a tool already installed on this machine.
+    const harness = findHarness(agentName);
+    if (harness) {
+      this.updateMessage(routingMsg.id, {
+        content: `🔄 @${harness.id} is working (local)...`,
+        status: "working",
+      });
+
+      try {
+        const result = await harness.invoke(instruction, process.cwd());
+        this.updateMessage(routingMsg.id, {
+          content: `✅ @${harness.id}:\n${result}`,
+          status: "done",
+        });
+      } catch (err) {
+        this.updateMessage(routingMsg.id, {
+          content: `❌ @${harness.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+          status: "error",
+        });
+      }
+      return;
+    }
 
     // Resolve agent
     const agents = await this.client.findAgentsByName(agentName);
