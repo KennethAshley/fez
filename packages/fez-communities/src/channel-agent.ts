@@ -9,6 +9,7 @@ import {
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
+  KIND_REACTION,
   KIND_TYPING,
 } from "@fez/protocol";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
@@ -39,6 +40,9 @@ async function main() {
   const channelSpecs = (process.env.FEZ_AGENT_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
   const respondTo = process.env.FEZ_AGENT_RESPOND_TO || "owner";
   const owner = process.env.FEZ_AGENT_OWNER;
+  // Emoji the agent reacts with on every member message it sees (its
+  // "read receipt"). Empty string disables. FEZ_AGENT_SEEN_EMOJI overrides.
+  const seenEmoji = process.env.FEZ_AGENT_SEEN_EMOJI ?? "👀";
 
   if (!personaId || channelSpecs.length === 0) {
     console.error("Usage: FEZ_AGENT_PERSONA=<id> FEZ_AGENT_CHANNELS=<name-or-id,...> [FEZ_AGENT_RESPOND_TO=anyone|owner|allowlist:<pks>] fez run channel-agent.js");
@@ -140,21 +144,51 @@ async function main() {
       recent.set(channelId, context.slice(-10));
 
       const mentioned = event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
+      const authorIsMember = memberships.get(channelId)?.members.has(event.pubkey) ?? false;
+
+      // Presence signal: react 👀 to every member message the agent sees —
+      // Slack-style "your agent noticed this" (Buzz's kind-7 shape:
+      // content = emoji, e-tag = target, h-tag so clients can subscribe by
+      // channel). Fire-and-forget; a failed reaction is not an error.
+      if (authorIsMember && seenEmoji) {
+        void relay
+          .publish(
+            client.signEvent({
+              kind: KIND_REACTION,
+              tags: [["e", event.id], ["h", channelId], ["c", communityId], ["p", event.pubkey]],
+              content: seenEmoji,
+            })
+          )
+          .catch(() => {});
+      }
+
       if (!mentioned) return;
       if (!authorAllowed(event.pubkey)) return;
-      if (!memberships.get(channelId)?.members.has(event.pubkey)) return;
+      if (!authorIsMember) return;
       if (busy) return; // one turn at a time, v1
 
       busy = true;
       // Slack-style "is typing": heartbeat an ephemeral 20002 into the
       // channel while the harness turn runs; receivers expire it
       // client-side, so no stop event is needed (crash-safe by design).
+      // Typing scope follows where the trigger came from (Buzz carries
+      // NIP-10 markers on typing events): a mention inside a thread means
+      // thread-scoped typing; a plain channel mention means channel-scoped
+      // — the mentioning user is looking at the channel view, and a
+      // thread-scoped indicator there would be invisible to them.
+      const typingThreadRoot =
+        event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ??
+        event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
       const typing = setInterval(() => {
         void relay
           .publish(
             client.signEvent({
               kind: KIND_TYPING,
-              tags: [["h", channelId], ["c", communityId]],
+              tags: [
+                ["h", channelId],
+                ["c", communityId],
+                ...(typingThreadRoot ? [["e", typingThreadRoot, "", "root"]] : []),
+              ],
               content: JSON.stringify({ name: personaId }),
             })
           )

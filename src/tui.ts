@@ -20,7 +20,7 @@ import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
-import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers } from "./extensions.js";
+import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers, type MessageHandle } from "./extensions.js";
 import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
 import { findMcpServer } from "./mcp-servers.js";
@@ -677,16 +677,43 @@ export class FezTUI {
    * renderMessage but with a caller-supplied display name. "You" gets the
    * user's blue so an extension echoing the user's own message matches
    * native bubbles.
+   *
+   * Each bubble is its own nested Container (header Text, Markdown body,
+   * footer Text), so the returned MessageHandle can mutate it in place —
+   * live reaction rows, reply counts updating, streamed content — in an
+   * otherwise append-only log.
    */
-  private appendBubble(author: string, content: string): void {
+  private appendBubble(author: string, content: string): MessageHandle {
     if (!this.screen) {
       this.pendingBubbles.push({ author, content });
-      return;
+      // Pre-screen bubbles are startup notices — nothing updates them later.
+      return { setAuthor: () => {}, setContent: () => {}, setFooter: () => {} };
     }
-    const color = author === "You" ? chalk.bold.blue : chalk.bold.green;
-    this.log.addChild(new Text("\n" + color(author)));
-    this.log.addChild(new Markdown(content, 0, 0, markdownTheme));
+    const colorFor = (a: string) => (a === "You" ? chalk.bold.blue(a) : chalk.bold.green(a));
+    const header = new Text("\n" + colorFor(author));
+    const body = new Markdown(content, 0, 0, markdownTheme);
+    const footer = new Text("");
+    const bubble = new Container();
+    bubble.addChild(header);
+    bubble.addChild(body);
+    bubble.addChild(footer);
+    this.log.addChild(bubble);
     this.screen.requestRender();
+    const rerender = () => this.screen.requestRender();
+    return {
+      setAuthor: (a) => {
+        header.setText("\n" + colorFor(a));
+        rerender();
+      },
+      setContent: (c) => {
+        body.setText(c);
+        rerender();
+      },
+      setFooter: (f) => {
+        footer.setText(f ? chalk.dim(f) : "");
+        rerender();
+      },
+    };
   }
 
   /** A dim one-liner outside the chat-bubble shape — startup notes, routing warnings. */

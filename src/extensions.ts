@@ -41,6 +41,18 @@ export interface PanelHandle {
   setText(text: string): void;
 }
 
+/**
+ * Handle to a rendered chat bubble — lets the creator mutate it in place
+ * after the fact (live reaction rows, updating reply counts, streaming
+ * content) instead of appending corrections to an append-only log.
+ */
+export interface MessageHandle {
+  setAuthor(author: string): void;
+  setContent(content: string): void;
+  /** Dim single line under the bubble — reaction row, reply count, etc. Empty string hides it. */
+  setFooter(text: string): void;
+}
+
 export type InputHandler = (text: string) => Promise<boolean>;
 
 export interface FezExtensionAPI {
@@ -52,7 +64,7 @@ export interface FezExtensionAPI {
   ui: {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number }): PanelHandle;
-    appendMessage(author: string, content: string): void;
+    appendMessage(author: string, content: string): MessageHandle;
     /** Wipe the chat log — view switching (e.g. a thread view repainting the timeline). */
     clearLog(): void;
   };
@@ -66,9 +78,15 @@ export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
 
 interface UiBackend {
   createSidePanel(opts?: { width?: number }): PanelHandle;
-  appendMessage(author: string, content: string): void;
+  appendMessage(author: string, content: string): MessageHandle;
   clearLog(): void;
 }
+
+const inertMessageHandle: MessageHandle = {
+  setAuthor: () => {},
+  setContent: () => {},
+  setFooter: () => {},
+};
 
 let nostrBackend: NostrAccess | undefined;
 let uiBackend: UiBackend | undefined;
@@ -97,7 +115,8 @@ function buildApi(): FezExtensionAPI {
       setStatus,
       createSidePanel: (opts) =>
         uiBackend ? uiBackend.createSidePanel(opts) : { setText: () => {} },
-      appendMessage: (author, content) => uiBackend?.appendMessage(author, content),
+      appendMessage: (author, content) =>
+        uiBackend ? uiBackend.appendMessage(author, content) : inertMessageHandle,
       clearLog: () => uiBackend?.clearLog(),
     },
   };

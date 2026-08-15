@@ -36,6 +36,12 @@ export interface PanelHandle {
   setText(text: string): void;
 }
 
+export interface MessageHandle {
+  setAuthor(author: string): void;
+  setContent(content: string): void;
+  setFooter(text: string): void;
+}
+
 export interface CommandContext {
   reply(content: string): void;
 }
@@ -47,7 +53,7 @@ export interface FezExtensionAPI {
   ui: {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number }): PanelHandle;
-    appendMessage(author: string, content: string): void;
+    appendMessage(author: string, content: string): MessageHandle;
     clearLog(): void;
   };
 }

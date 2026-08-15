@@ -54,6 +54,15 @@ export const KIND_TYPING = 20002;
  */
 export const KIND_THREAD_SUMMARY = 39005;
 
+/**
+ * Reaction — standard nostr kind 7, Buzz's shape: content = the emoji,
+ * ["e", targetEventId], plus ["h", channelId] so clients can subscribe by
+ * channel (Buzz derives the channel server-side from the e-target; fez's
+ * dumb relay can't, so the tag rides the wire). Same membership trust
+ * rule as messages.
+ */
+export const KIND_REACTION = 7;
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,

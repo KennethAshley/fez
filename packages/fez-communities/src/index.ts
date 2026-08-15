@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { CommunityState, type Role } from "./state.js";
-import type { FezExtensionAPI, NostrEvent, NostrFilter } from "./api-types.js";
+import type { FezExtensionAPI, MessageHandle, NostrEvent, NostrFilter } from "./api-types.js";
 
 const KIND_AGENT_METADATA = 47000;
 const KIND_COMMUNITY = 47100;
@@ -9,6 +9,7 @@ const KIND_MEMBERSHIP = 47102;
 const KIND_CHANNEL_MESSAGE = 47103;
 const KIND_TYPING = 20002; // ephemeral, Buzz's kind — see fez src/kinds.ts
 const KIND_THREAD_SUMMARY = 39005; // indexer-published thread stats — see fez src/kinds.ts
+const KIND_REACTION = 7; // standard nostr, Buzz's shape: content = emoji, ["e", target], plus ["h", channel] for subscription
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -60,6 +61,25 @@ export default function communities(api: FezExtensionAPI): void {
 
   let view: { mode: "channel" } | { mode: "thread"; rootId: string } = { mode: "channel" };
 
+  // Live-updatable UI state: handles to rendered bubbles (by message id)
+  // so reactions land on them after the fact, and to thread-summary lines
+  // (by root id) so counts update in place instead of appending repeats.
+  // Both reset on every clearLog repaint — handles die with their bubbles.
+  let bubbleHandles = new Map<string, MessageHandle>();
+  let summaryLineHandles = new Map<string, MessageHandle>();
+
+  // Reactions (kind 7): message id -> emoji -> reactor names. Rendered as
+  // a dim footer row on the target's bubble.
+  const reactionsByTarget = new Map<string, Map<string, Set<string>>>();
+
+  function reactionFooter(targetId: string): string {
+    const reactions = reactionsByTarget.get(targetId);
+    if (!reactions || reactions.size === 0) return "";
+    return [...reactions.entries()]
+      .map(([emoji, who]) => `${emoji} ${[...who].join(", ")}`)
+      .join("   ");
+  }
+
   // Indexer-published thread stats (39005). Trust rule: only summaries
   // authored by a channel member count; latest created_at wins per root.
   // Display uses max(local count, summary count) — the indexer fills gaps
@@ -84,6 +104,10 @@ export default function communities(api: FezExtensionAPI): void {
       if (typeof replyCount !== "number") return;
       summaryByRoot.set(rootId, { replyCount, lastAuthorTs: lastReplyAt ?? 0, summaryTs: event.created_at });
       threadNo(rootId); // late joiners learn the thread exists at all
+      // Bump the live summary line if it's on screen (channel view only).
+      if (view.mode === "channel" && summaryLineHandles.has(rootId)) {
+        updateOrAppendSummaryLine(channelId, rootId);
+      }
     } catch {
       /* malformed summary — ignore */
     }
@@ -146,14 +170,19 @@ export default function communities(api: FezExtensionAPI): void {
     return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
   }
 
-  // pubkey -> expiry timestamp for active typing indicators in the current
-  // scope. Rendered as a footer segment; pruned on a 1s tick (Buzz's model:
-  // TTL from last heartbeat, cleared instantly when a real message lands).
-  const typing = new Map<string, number>();
+  // Typing indicators, keyed `${pubkey}:${threadRoot ?? "channel"}` — Buzz
+  // keys by pubkey:threadHead so channel and thread typing stay separate.
+  // The footer shows only indicators matching the CURRENT view. Pruned on
+  // a 1s tick (TTL from last heartbeat), cleared instantly when that
+  // author's real message lands.
+  const typing = new Map<string, { pubkey: string; threadRoot?: string; expiry: number }>();
   function renderTyping(): void {
     const now = Date.now();
-    for (const [pk, expiry] of typing) if (expiry <= now) typing.delete(pk);
-    const who = [...typing.keys()].map(displayName);
+    for (const [key, t] of typing) if (t.expiry <= now) typing.delete(key);
+    const currentRoot = view.mode === "thread" ? view.rootId : undefined;
+    const who = [...typing.values()]
+      .filter((t) => t.threadRoot === currentRoot)
+      .map((t) => displayName(t.pubkey));
     api.ui.setStatus(
       "typing",
       who.length === 0 ? "" : who.length === 1 ? `${who[0]} is typing…` : `${who.slice(0, 3).join(", ")} are typing…`
@@ -179,41 +208,48 @@ export default function communities(api: FezExtensionAPI): void {
   }
 
   /** Bubble for a thread reply — indented author label, Buzz's connector glyph. */
-  function threadBubble(msg: Msg): void {
+  function threadBubble(msg: Msg): MessageHandle {
     const indent = "  ".repeat(Math.max(0, depthOf(msg) - 1));
-    api.ui.appendMessage(`${indent}↳ ${msg.authorName}`, msg.content);
+    const handle = api.ui.appendMessage(`${indent}↳ ${msg.authorName}`, msg.content);
+    handle.setFooter(reactionFooter(msg.id));
+    return handle;
   }
 
-  /** Repaint the channel timeline from cache: root bubbles, threads as one summary line each. */
+  /** Register a freshly painted bubble so late reactions land on it. */
+  function paintBubble(msg: Msg): void {
+    const handle = api.ui.appendMessage(msg.authorName, msg.content);
+    handle.setFooter(reactionFooter(msg.id));
+    bubbleHandles.set(msg.id, handle);
+  }
+
+  /** Repaint the channel timeline from cache: root bubbles, threads as one live summary line each. */
   function renderChannelTimeline(channelId: string): void {
     api.ui.clearLog();
+    bubbleHandles = new Map();
+    summaryLineHandles = new Map();
     const list = messagesByChannel.get(channelId) ?? [];
     const summarized = new Set<string>();
     for (const msg of list) {
       if (!msg.parentId) {
-        api.ui.appendMessage(msg.authorName === "You" ? "You" : msg.authorName, msg.content);
+        paintBubble(msg);
         continue;
       }
       const rootId = msg.rootId!;
       if (summarized.has(rootId)) continue;
       summarized.add(rootId);
-      const count = threadReplyCount(channelId, rootId);
-      const root = msgById.get(rootId);
-      const no = threadNo(rootId);
-      api.ui.appendMessage(
-        `thread #${no}`,
-        `${count} repl${count === 1 ? "y" : "ies"} to "${snippet(root?.content ?? "…")}" — /thread ${no}`
-      );
+      updateOrAppendSummaryLine(channelId, rootId);
     }
   }
 
   /** Repaint as a single thread: root bubble, replies in arrival order, indented. */
   function renderThreadView(channelId: string, rootId: string): void {
     api.ui.clearLog();
+    bubbleHandles = new Map();
+    summaryLineHandles = new Map();
     const no = threadNo(rootId);
     const root = msgById.get(rootId);
-    if (root) api.ui.appendMessage(root.authorName, root.content);
-    for (const msg of threadReplies(channelId, rootId)) threadBubble(msg);
+    if (root) paintBubble(root);
+    for (const msg of threadReplies(channelId, rootId)) bubbleHandles.set(msg.id, threadBubble(msg));
     api.ui.appendMessage("communities", `— in thread #${no}: plain messages reply here, /back returns to #channel —`);
   }
 
@@ -224,9 +260,9 @@ export default function communities(api: FezExtensionAPI): void {
   function handleIncomingMessage(event: NostrEvent): void {
     if (seenMessages.has(event.id)) return;
     seenMessages.add(event.id);
-    // A real message from someone clears their typing indicator immediately
+    // A real message from someone clears their typing indicators immediately
     // (Buzz does the same rather than waiting out the TTL).
-    typing.delete(event.pubkey);
+    for (const key of typing.keys()) if (key.startsWith(`${event.pubkey}:`)) typing.delete(key);
     renderTyping();
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
@@ -245,29 +281,65 @@ export default function communities(api: FezExtensionAPI): void {
     // compact line so the thread stays coherent.
     if (view.mode === "thread") {
       if (msg.rootId === view.rootId) {
-        threadBubble(msg);
+        bubbleHandles.set(msg.id, threadBubble(msg));
       } else {
         api.ui.appendMessage("communities", `(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
       }
       return;
     }
     if (!msg.parentId) {
-      api.ui.appendMessage(msg.authorName, msg.content);
+      bubbleHandles.set(msg.id, api.ui.appendMessage(msg.authorName, msg.content));
     } else {
-      const no = threadNo(msg.rootId!);
-      const count = threadReplyCount(channelId, msg.rootId!);
-      api.ui.appendMessage(
-        `thread #${no}`,
-        `↳ ${msg.authorName}: ${snippet(msg.content)} (${count} repl${count === 1 ? "y" : "ies"}) — /thread ${no}`
-      );
+      updateOrAppendSummaryLine(channelId, msg.rootId!, msg);
     }
+  }
+
+  /**
+   * Thread activity in the channel view: one live summary line per thread,
+   * updated in place via its MessageHandle — new replies bump the count
+   * and latest-author snippet instead of appending another line.
+   */
+  function updateOrAppendSummaryLine(channelId: string, rootId: string, latest?: Msg): void {
+    const no = threadNo(rootId);
+    const count = threadReplyCount(channelId, rootId);
+    const root = msgById.get(rootId);
+    const latestNote = latest ? `↳ ${latest.authorName}: ${snippet(latest.content)} · ` : "";
+    const text = `${latestNote}${count} repl${count === 1 ? "y" : "ies"} to "${snippet(root?.content ?? "(not seen)")}" — /thread ${no}`;
+    const existing = summaryLineHandles.get(rootId);
+    if (existing) {
+      existing.setContent(text);
+    } else {
+      summaryLineHandles.set(rootId, api.ui.appendMessage(`thread #${no}`, text));
+    }
+  }
+
+  /** Reactions (kind 7, Buzz's shape) — land live on the target's bubble footer. */
+  function handleReaction(event: NostrEvent): void {
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!targetId || !channelId || !communityId) return;
+    if (!state.isMember(communityId, channelId, event.pubkey)) return; // trust rule
+    const emoji = event.content.trim();
+    if (!emoji || emoji.length > 8) return;
+    let byEmoji = reactionsByTarget.get(targetId);
+    if (!byEmoji) reactionsByTarget.set(targetId, (byEmoji = new Map()));
+    let who = byEmoji.get(emoji);
+    if (!who) byEmoji.set(emoji, (who = new Set()));
+    who.add(displayName(event.pubkey));
+    bubbleHandles.get(targetId)?.setFooter(reactionFooter(targetId));
   }
 
   function handleTyping(event: NostrEvent): void {
     if (event.pubkey === nostr!.pubkey) return;
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     if (!channelId || state.scope?.channelId !== channelId) return;
-    typing.set(event.pubkey, Date.now() + TYPING_TTL_MS);
+    const { rootId } = parseThreadRef(event.tags);
+    typing.set(`${event.pubkey}:${rootId ?? "channel"}`, {
+      pubkey: event.pubkey,
+      threadRoot: rootId,
+      expiry: Date.now() + TYPING_TTL_MS,
+    });
     renderTyping();
   }
 
@@ -281,7 +353,7 @@ export default function communities(api: FezExtensionAPI): void {
       filters.push(
         { kinds: [KIND_COMMUNITY, KIND_CHANNEL, KIND_MEMBERSHIP], "#c": ids },
         { kinds: [KIND_COMMUNITY], "#d": ids },
-        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
+        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
         { kinds: [KIND_THREAD_SUMMARY], "#h": channelIdsOfJoined() }
       );
     }
@@ -292,6 +364,10 @@ export default function communities(api: FezExtensionAPI): void {
       }
       if (event.kind === KIND_THREAD_SUMMARY) {
         handleThreadSummary(event);
+        return;
+      }
+      if (event.kind === KIND_REACTION) {
+        handleReaction(event);
         return;
       }
       if (event.kind === KIND_AGENT_METADATA) {
@@ -540,11 +616,9 @@ export default function communities(api: FezExtensionAPI): void {
     });
     seenMessages.add(event.id);
     const msg = cacheMessage(current.channel.id, event, "You");
-    if (view.mode === "thread") {
-      threadBubble(msg);
-    } else {
-      api.ui.appendMessage("You", text);
-    }
+    // Register the echo bubble so incoming reactions (agents 👀-ing your
+    // message) land on it live.
+    bubbleHandles.set(msg.id, view.mode === "thread" ? threadBubble(msg) : api.ui.appendMessage("You", text));
     return true;
   });
 
