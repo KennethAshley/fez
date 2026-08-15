@@ -14,6 +14,24 @@ export const KIND_AGENT_REVOKE = 47011;
 export const KIND_AGENT_CANCEL = 47012;
 export const KIND_AGENT_AUDIT = 47020;
 
+/**
+ * Communities/channels (471xx). Client-side trust model — every participant
+ * runs fez, so all clients apply the same rules; the relay is dumb storage:
+ *
+ * - The author of a community's 47100 (d = community id) is that
+ *   community's root of trust.
+ * - 47101/47102 events count only when signed by the community creator.
+ * - These are regular (non-replaceable) kinds — relays keep every version;
+ *   among a creator's 47102s with the same d-tag, highest created_at wins,
+ *   resolved client-side.
+ * - A 47103 renders only if its author is in the channel's winning 47102
+ *   membership. Signature validity comes free from nostr-tools.
+ */
+export const KIND_COMMUNITY = 47100;       // creator-signed; ["d", communityId]; content {name, description}
+export const KIND_CHANNEL = 47101;         // creator-signed; ["d", channelId], ["c", communityId]; content {name, description, visibility}
+export const KIND_MEMBERSHIP = 47102;      // creator-signed; ["d", channelId], ["c", communityId], ["p", pubkey, role]*; owner|admin|member|bot
+export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["c", communityId], ["p", mentionPubkey]*; content = text
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,

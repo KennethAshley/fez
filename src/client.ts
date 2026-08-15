@@ -86,6 +86,23 @@ export class CapabilityClient {
     return this.pubkey;
   }
 
+  /**
+   * Sign an arbitrary event template with the user's key. The one sanctioned
+   * path for anything outside this class (e.g. extensions via
+   * FezExtensionAPI.nostr.publish) to author events as the user — the
+   * private key itself stays private.
+   */
+  signEvent(tmpl: { kind: number; tags: string[][]; content: string }): Event {
+    const event: UnsignedEvent = {
+      kind: tmpl.kind,
+      pubkey: this.pubkey,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: tmpl.tags,
+      content: tmpl.content,
+    };
+    return finalizeEvent(event, this.privateKey);
+  }
+
   /** Connect to the relay */
   async connect(): Promise<void> {
     await this.relay.connect();

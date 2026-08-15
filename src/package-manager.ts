@@ -353,16 +353,22 @@ export class PackageManager {
     const pkgDir = this.getInstallDir(this.packages.get(name)!);
 
     if (config.entry) {
+      // Preserve the entry's real extension — a bundled package ships a .js
+      // entry that plain `node` can import; renaming it .ts would misstate
+      // what it is (loadExtensions accepts .ts/.js/.mjs either way).
+      const ext = path.extname(config.entry) || ".js";
       const src = path.join(pkgDir, config.entry);
-      const dest = path.join(extensionsDir, `${name}.ts`);
+      const dest = path.join(extensionsDir, `${name}${ext}`);
       await fs.copyFile(src, dest);
-      console.log(chalk.dim(`   Created ~/.fez/extensions/${name}.ts`));
+      console.log(chalk.dim(`   Created ~/.fez/extensions/${name}${ext}`));
     }
   }
 
   private async removeFezExtension(name: string): Promise<void> {
     const home = os.homedir();
-    await fs.rm(path.join(home, ".fez", "extensions", `${name}.ts`), { force: true });
+    for (const ext of [".ts", ".js", ".mjs"]) {
+      await fs.rm(path.join(home, ".fez", "extensions", `${name}${ext}`), { force: true });
+    }
   }
 
   private getInstallDir(pkg: FezPackage): string {

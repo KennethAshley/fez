@@ -3,6 +3,7 @@ import chalk from "chalk";
 import {
   Container,
   Editor,
+  HStack,
   Loader,
   Markdown,
   ProcessTerminal,
@@ -19,7 +20,7 @@ import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
-import { loadExtensions } from "./extensions.js";
+import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers } from "./extensions.js";
 import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
 import { findMcpServer } from "./mcp-servers.js";
@@ -72,6 +73,12 @@ export class FezTUI {
   private screen!: TuiAltScreen;
   private log = new Container();
   private editor!: Editor;
+  // Side panels created by extensions via ui.createSidePanel() during
+  // loadExtensions(), before the screen exists — collected here, laid out
+  // once the layout root is built.
+  private panels: { text: Text; width?: number }[] = [];
+  // ui.appendMessage() calls made before screen.start() — flushed after.
+  private pendingBubbles: { author: string; content: string }[] = [];
 
   constructor(private relayUrl: string, privateKey?: string) {
     this.client = new CapabilityClient({ relay: relayUrl, privateKey });
@@ -101,28 +108,72 @@ export class FezTUI {
     // Extensions' ui.setStatus() calls during init are held by the Footer
     // and appear once it attaches below.
     registerBuiltinHarnesses();
+
+    // Backends behind FezExtensionAPI's nostr/ui surface, installed before
+    // extensions load so their init-time calls land. The screen doesn't
+    // exist yet: createSidePanel builds a real Text now (laid out later),
+    // appendMessage buffers until after screen.start().
+    setNostrBackend({
+      pubkey: this.myPubkey,
+      publish: async (tmpl) => {
+        const event = this.client.signEvent(tmpl);
+        await this.relay.publish(event);
+        return event;
+      },
+      subscribe: (filters, onEvent) => this.relay.subscribe(filters, onEvent),
+      query: (filters) => this.relay.query(filters),
+    });
+    setUiBackend({
+      createSidePanel: (opts) => {
+        const text = new Text("");
+        this.panels.push({ text, width: opts?.width });
+        return {
+          setText: (t: string) => {
+            text.setText(t);
+            this.screen?.requestRender();
+          },
+        };
+      },
+      appendMessage: (author, content) => this.appendBubble(author, content),
+    });
+
     await loadExtensions();
     const harnesses = await detectHarnesses();
 
     // Owned-terminal UI, full-window chat shape: the message log fills all
     // remaining height inside a ScrollView glued to the newest message
     // (follow: "end" — scroll up to read history, it re-glues at bottom),
-    // editor and footer pinned below at natural height. Alt-screen means
-    // no native terminal scrollback (like vim) — pi-tui's own wheel
-    // scrolling/search/selection replace it, and the shell's history is
-    // restored intact on quit. screen.start() flips stdin to raw mode —
-    // from here on, all output must go through the component tree.
+    // editor and footer pinned below at natural height. When extensions
+    // registered side panels, the whole thing sits right of a fixed-width
+    // panel column. Alt-screen means no native terminal scrollback (like
+    // vim) — pi-tui's own wheel scrolling/search/selection replace it, and
+    // the shell's history is restored intact on quit. screen.start() flips
+    // stdin to raw mode — from here on, all output must go through the
+    // component tree.
     const terminal = new ProcessTerminal();
     this.screen = new TuiAltScreen(terminal, true, undefined, { mouse: true });
     this.editor = new Editor(this.screen, editorTheme);
     this.editor.onSubmit = (text) => void this.onSubmit(text);
-    const layout = new VStack();
-    layout.addChild(new ScrollView(this.log, { follow: "end" }), { grow: 1 });
-    layout.addChild(this.editor);
-    layout.addChild(footer.attach(this.screen));
-    this.screen.setLayoutRoot(layout);
+    const main = new VStack();
+    main.addChild(new ScrollView(this.log, { follow: "end" }), { grow: 1 });
+    main.addChild(this.editor);
+    main.addChild(footer.attach(this.screen));
+    if (this.panels.length > 0) {
+      const side = new VStack();
+      for (const panel of this.panels) side.addChild(panel.text);
+      const root = new HStack([], { gap: 1 });
+      root.addChild(side, { basis: this.panels[0].width ?? 26 });
+      root.addChild(main, { grow: 1 });
+      this.screen.setLayoutRoot(root);
+    } else {
+      this.screen.setLayoutRoot(main);
+    }
     this.screen.start();
     this.screen.setFocus(this.editor);
+
+    // Flush ui.appendMessage calls that arrived before the screen existed.
+    for (const bubble of this.pendingBubbles) this.appendBubble(bubble.author, bubble.content);
+    this.pendingBubbles = [];
 
     // Mid-session warnings (harness stop-reasons, bad persona files) render
     // into the chat log instead of smearing raw stderr over the owned screen.
@@ -168,6 +219,13 @@ export class FezTUI {
     if (input.startsWith("/")) {
       await this.handleCommand(input);
       return;
+    }
+
+    // Extension input handlers (e.g. a communities extension claiming chat
+    // while a channel scope is active) — first to return true owns the
+    // input, including rendering its own "You" bubble.
+    for (const handler of getInputHandlers()) {
+      if (await handler(input)) return;
     }
 
     // Add user message
@@ -607,6 +665,23 @@ export class FezTUI {
     }
     this.log.addChild(new Text("\n" + header));
     this.log.addChild(new Markdown(msg.content, 0, 0, markdownTheme));
+    this.screen.requestRender();
+  }
+
+  /**
+   * Chat bubble from an extension (ui.appendMessage) — same shape as
+   * renderMessage but with a caller-supplied display name. "You" gets the
+   * user's blue so an extension echoing the user's own message matches
+   * native bubbles.
+   */
+  private appendBubble(author: string, content: string): void {
+    if (!this.screen) {
+      this.pendingBubbles.push({ author, content });
+      return;
+    }
+    const color = author === "You" ? chalk.bold.blue : chalk.bold.green;
+    this.log.addChild(new Text("\n" + color(author)));
+    this.log.addChild(new Markdown(content, 0, 0, markdownTheme));
     this.screen.requestRender();
   }
 

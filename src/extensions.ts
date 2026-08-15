@@ -3,6 +3,7 @@ import path from "path";
 import os from "os";
 import { pathToFileURL } from "url";
 import type { McpServer } from "@agentclientprotocol/sdk";
+import type { Event, Filter } from "nostr-tools";
 import { registerHarness, type HarnessAdapter } from "./harness.js";
 import { registerMcpServer } from "./mcp-servers.js";
 import { registerCommand, type CommandHandler } from "./commands.js";
@@ -13,38 +14,90 @@ import { setStatus } from "./status.js";
  * Fez grows, one method at a time (pi's ExtensionAPI has ~10x this after
  * years of use; starting minimal beats guessing at surface nobody needs yet).
  *
- * `ui.setStatus` is the rendering surface third-party extensions plug
- * into — same shape as pi's `ctx.ui.setStatus(key, value)`, which is how
- * extensions like pi-powerline-footer publish segments into a persistent
- * status bar without needing to know anything about terminal rendering
- * themselves. Fez's version renders into fez-tui's Footer.
+ * Everything an installed extension can do comes off this object — an
+ * installed entry is a single bundled file in ~/.fez/extensions/ with no
+ * reachable node_modules, so bare imports of fez internals or pi-tui would
+ * not resolve. That's why the UI surface is handles and callbacks
+ * (createSidePanel -> setText) rather than component types.
  *
- * `registerMcpServer` publishes a named skill (e.g. "github") that a
- * persona can opt into via its `mcpServers:` frontmatter — see
- * personas.ts and harness.ts's threading of it through
- * SessionBuilder.withMcpServer().
- *
- * `registerCommand` gives an extension its own control surface —
- * pi-atelier's `/atelier` is the reference shape — rather than tui.ts's
- * built-in switch statement growing a case per extension.
+ * `ui.setStatus` — footer segments (pi's ctx.ui.setStatus shape).
+ * `ui.createSidePanel` — a text panel docked left of the chat (the
+ *   communities sidebar is the reference consumer).
+ * `ui.appendMessage` — render a chat bubble into the log (incoming
+ *   relay messages).
+ * `registerInputHandler` — claim non-command chat input before fez's
+ *   default @mention/orchestrator routing; return true = handled.
+ * `nostr` — publish (signed with the user's key) / subscribe / query on
+ *   fez's relay. Undefined outside the TUI (CLI subcommands) — guard on it.
  */
+export interface NostrAccess {
+  pubkey: string;
+  publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<Event>;
+  subscribe(filters: Filter[], onEvent: (event: Event) => void): () => void;
+  query(filters: Filter[]): Promise<Event[]>;
+}
+
+export interface PanelHandle {
+  setText(text: string): void;
+}
+
+export type InputHandler = (text: string) => Promise<boolean>;
+
 export interface FezExtensionAPI {
   registerHarness(adapter: HarnessAdapter): void;
   registerMcpServer(name: string, server: McpServer): void;
   registerCommand(name: string, handler: CommandHandler): void;
+  registerInputHandler(handler: InputHandler): void;
+  nostr?: NostrAccess;
   ui: {
     setStatus(key: string, value: string): void;
+    createSidePanel(opts?: { width?: number }): PanelHandle;
+    appendMessage(author: string, content: string): void;
   };
 }
 
 export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
 
-const api: FezExtensionAPI = {
-  registerHarness,
-  registerMcpServer,
-  registerCommand,
-  ui: { setStatus },
-};
+// ─── Backends, installed by tui.ts before loadExtensions(). Absent (CLI
+// subcommands), nostr stays undefined and the UI surface degrades to inert
+// no-ops so extensions can load without crashing. ─────────────────────────
+
+interface UiBackend {
+  createSidePanel(opts?: { width?: number }): PanelHandle;
+  appendMessage(author: string, content: string): void;
+}
+
+let nostrBackend: NostrAccess | undefined;
+let uiBackend: UiBackend | undefined;
+const inputHandlers: InputHandler[] = [];
+
+export function setNostrBackend(backend: NostrAccess): void {
+  nostrBackend = backend;
+}
+
+export function setUiBackend(backend: UiBackend): void {
+  uiBackend = backend;
+}
+
+export function getInputHandlers(): readonly InputHandler[] {
+  return inputHandlers;
+}
+
+function buildApi(): FezExtensionAPI {
+  return {
+    registerHarness,
+    registerMcpServer,
+    registerCommand,
+    registerInputHandler: (handler) => inputHandlers.push(handler),
+    nostr: nostrBackend,
+    ui: {
+      setStatus,
+      createSidePanel: (opts) =>
+        uiBackend ? uiBackend.createSidePanel(opts) : { setText: () => {} },
+      appendMessage: (author, content) => uiBackend?.appendMessage(author, content),
+    },
+  };
+}
 
 const EXTENSIONS_DIR = path.join(os.homedir(), ".fez", "extensions");
 
@@ -66,6 +119,8 @@ export async function loadExtensions(dir: string = EXTENSIONS_DIR): Promise<void
   } catch {
     return; // no extensions directory yet — nothing to load
   }
+
+  const api = buildApi();
 
   for (const entry of entries) {
     if (!/\.(ts|js|mjs)$/.test(entry)) continue;
