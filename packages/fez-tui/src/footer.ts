@@ -46,8 +46,16 @@ export class Footer {
     if (this.active || !process.stdout.isTTY) return this;
     this.active = true;
     this.rows = process.stdout.rows ?? 24;
+    // DECSTBM's cursor-homing side effect varies by terminal — some reset
+    // to (1,1), some don't. Rather than guess and force a position (the
+    // previous bug: an unconditional moveTo(rows-1, 1) here jumped the
+    // cursor away from wherever content had already legitimately printed,
+    // leaving a huge blank gap — confirmed live via a real terminal trace),
+    // save whatever position it's actually at and restore exactly that,
+    // regardless of what the terminal did in between.
+    process.stdout.write(SAVE_CURSOR);
     process.stdout.write(setScrollRegion(1, this.rows - 1));
-    process.stdout.write(moveTo(this.rows - 1, 1)); // put the cursor back in the scrollable region
+    process.stdout.write(RESTORE_CURSOR);
     process.stdout.on("resize", this.onResize);
     this.render();
     return this;
@@ -56,7 +64,9 @@ export class Footer {
   private handleResize(): void {
     if (!this.active) return;
     this.rows = process.stdout.rows ?? this.rows;
+    process.stdout.write(SAVE_CURSOR);
     process.stdout.write(setScrollRegion(1, this.rows - 1));
+    process.stdout.write(RESTORE_CURSOR);
     this.render();
   }
 
