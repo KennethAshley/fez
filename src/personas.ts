@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { notice } from "./notices.js";
 
 /**
  * A named agent identity a user has configured — references a harness
@@ -16,8 +17,15 @@ import os from "os";
  * ---
  * harness: claude-code
  * aliases: [research]
+ * mcpServers: [web-search]
  * ---
  * You are a research assistant.
+ *
+ * mcpServers names resolved skills (see mcp-servers.ts) this persona's
+ * sessions get access to — e.g. @researcher declares [web-search],
+ * @reviewer declares [obsidian]. Fez resolves each name against whatever's
+ * registered (built in or via an extension) when routing to this persona;
+ * an unresolved name is dropped with a warning, not a hard failure.
  */
 export interface Persona {
   id: string;
@@ -25,6 +33,8 @@ export interface Persona {
   /** HarnessAdapter.id this persona runs on, e.g. "claude-code". */
   harness: string;
   systemPrompt?: string;
+  /** Names looked up in the mcp-servers.ts registry — see the interface doc above. */
+  mcpServers: string[];
   createdAt: string;
 }
 
@@ -34,10 +44,19 @@ function personaPath(id: string): string {
   return path.join(PERSONAS_DIR, `${id}.md`);
 }
 
-/** Deliberately minimal — this frontmatter only ever needs two flat fields, a real YAML parser would be overkill. */
-function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; body: string } {
+/** Shared by both bracket-list frontmatter fields (aliases, mcpServers) — `[a, b]` -> ["a", "b"]. */
+function parseList(raw: string): string[] {
+  return raw
+    .replace(/^\[|\]$/g, "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Deliberately minimal — this frontmatter only ever needs a few flat fields, a real YAML parser would be overkill. */
+function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; body: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { aliases: [], body: raw.trim() };
+  if (!match) return { aliases: [], mcpServers: [], body: raw.trim() };
 
   const [, frontmatter, body] = match;
   const meta: Record<string, string> = {};
@@ -46,35 +65,34 @@ function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; b
     if (kv) meta[kv[1]] = kv[2].trim();
   }
 
-  const aliases = meta.aliases
-    ? meta.aliases
-        .replace(/^\[|\]$/g, "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [];
-
-  return { harness: meta.harness || undefined, aliases, body: body.trim() };
+  return {
+    harness: meta.harness || undefined,
+    aliases: meta.aliases ? parseList(meta.aliases) : [],
+    mcpServers: meta.mcpServers ? parseList(meta.mcpServers) : [],
+    body: body.trim(),
+  };
 }
 
-function serialize(harness: string, aliases: string[], systemPrompt: string): string {
+function serialize(harness: string, aliases: string[], mcpServers: string[], systemPrompt: string): string {
   const aliasLine = aliases.length > 0 ? `aliases: [${aliases.join(", ")}]\n` : "";
-  return `---\nharness: ${harness}\n${aliasLine}---\n${systemPrompt}\n`;
+  const mcpServersLine = mcpServers.length > 0 ? `mcpServers: [${mcpServers.join(", ")}]\n` : "";
+  return `---\nharness: ${harness}\n${aliasLine}${mcpServersLine}---\n${systemPrompt}\n`;
 }
 
 async function loadOne(filePath: string): Promise<Persona | undefined> {
   const id = path.basename(filePath, ".md");
   try {
     const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf-8"), fs.stat(filePath)]);
-    const { harness, aliases, body } = parseFrontmatter(raw);
+    const { harness, aliases, mcpServers, body } = parseFrontmatter(raw);
     if (!harness) {
-      console.error(`⚠️  ${id}.md has no "harness:" in its frontmatter — skipped`);
+      notice(`⚠️  ${id}.md has no "harness:" in its frontmatter — skipped`);
       return undefined;
     }
     return {
       id,
       aliases,
       harness,
+      mcpServers,
       systemPrompt: body || undefined,
       createdAt: stat.birthtime.toISOString(),
     };
@@ -117,6 +135,7 @@ export async function createPersona(input: {
   id: string;
   harness: string;
   aliases?: string[];
+  mcpServers?: string[];
   systemPrompt?: string;
 }): Promise<Persona> {
   const filePath = personaPath(input.id.toLowerCase());
@@ -131,8 +150,9 @@ export async function createPersona(input: {
 
   await fs.mkdir(PERSONAS_DIR, { recursive: true });
   const aliases = input.aliases ?? [];
+  const mcpServers = input.mcpServers ?? [];
   const systemPrompt = input.systemPrompt ?? "";
-  await fs.writeFile(filePath, serialize(input.harness, aliases, systemPrompt), "utf-8");
+  await fs.writeFile(filePath, serialize(input.harness, aliases, mcpServers, systemPrompt), "utf-8");
 
   const persona = await loadOne(filePath);
   if (!persona) throw new Error(`Failed to write persona "${input.id}"`);

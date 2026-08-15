@@ -7,6 +7,16 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 
+// Loads ./.env (secrets like GITHUB_TOKEN for extension-registered MCP
+// servers, see mcp-servers.ts) before anything reads process.env. Node's
+// built-in loader, not the `dotenv` package — one less dependency for
+// something this small. No .env file is the common case, not an error.
+try {
+  process.loadEnvFile();
+} catch (err) {
+  if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+}
+
 const program = new Command();
 
 program.name("fez").description("Fez — decentralized MCP for agents").version("0.1.0");
@@ -227,6 +237,7 @@ persona
   .requiredOption("-h, --harness <id>", "Harness id this persona runs on (see: fez persona harnesses)")
   .option("-p, --prompt <text>", "System prompt prefixed to every instruction")
   .option("-a, --alias <names...>", "Additional names this persona responds to")
+  .option("-m, --mcp-server <names...>", "Skills (registered MCP servers) this persona gets access to")
   .action(async (name: string, options) => {
     try {
       const p = await createPersona({
@@ -234,6 +245,7 @@ persona
         harness: options.harness,
         systemPrompt: options.prompt,
         aliases: options.alias,
+        mcpServers: options.mcpServer,
       });
       console.log(chalk.green(`✅ Created persona @${p.id} on harness "${p.harness}"`));
     } catch (err) {
@@ -255,6 +267,7 @@ persona
     for (const p of personas) {
       console.log(`  ${chalk.green(`@${p.id}`)} ${chalk.dim(`(${p.harness})`)}`);
       if (p.aliases.length) console.log(`    Aliases: ${p.aliases.join(", ")}`);
+      if (p.mcpServers.length) console.log(`    Skills: ${p.mcpServers.join(", ")}`);
       if (p.systemPrompt) console.log(`    Prompt: ${p.systemPrompt}`);
       console.log();
     }

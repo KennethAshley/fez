@@ -2,7 +2,10 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { pathToFileURL } from "url";
+import type { McpServer } from "@agentclientprotocol/sdk";
 import { registerHarness, type HarnessAdapter } from "./harness.js";
+import { registerMcpServer } from "./mcp-servers.js";
+import { registerCommand, type CommandHandler } from "./commands.js";
 import { setStatus } from "./status.js";
 
 /**
@@ -15,9 +18,20 @@ import { setStatus } from "./status.js";
  * extensions like pi-powerline-footer publish segments into a persistent
  * status bar without needing to know anything about terminal rendering
  * themselves. Fez's version renders into fez-tui's Footer.
+ *
+ * `registerMcpServer` publishes a named skill (e.g. "github") that a
+ * persona can opt into via its `mcpServers:` frontmatter — see
+ * personas.ts and harness.ts's threading of it through
+ * SessionBuilder.withMcpServer().
+ *
+ * `registerCommand` gives an extension its own control surface —
+ * pi-atelier's `/atelier` is the reference shape — rather than tui.ts's
+ * built-in switch statement growing a case per extension.
  */
 export interface FezExtensionAPI {
   registerHarness(adapter: HarnessAdapter): void;
+  registerMcpServer(name: string, server: McpServer): void;
+  registerCommand(name: string, handler: CommandHandler): void;
   ui: {
     setStatus(key: string, value: string): void;
   };
@@ -25,7 +39,12 @@ export interface FezExtensionAPI {
 
 export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
 
-const api: FezExtensionAPI = { registerHarness, ui: { setStatus } };
+const api: FezExtensionAPI = {
+  registerHarness,
+  registerMcpServer,
+  registerCommand,
+  ui: { setStatus },
+};
 
 const EXTENSIONS_DIR = path.join(os.homedir(), ".fez", "extensions");
 

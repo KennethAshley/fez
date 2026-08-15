@@ -32,9 +32,13 @@ export interface FezManifest {
       entry: string;
       supportedTasks: string[];
     };
-    // For extensions: hooks
+    // For extensions: entry file copied to ~/.fez/extensions/<name>.ts,
+    // loaded by loadExtensions() (extensions.ts) same as a hand-written one.
+    // Same shape as integrations.pi.extensions below — one file, one
+    // destination — deliberately not a list: a package wanting multiple
+    // entry points can just have its one entry file import the rest.
     extension?: {
-      hooks: string[];
+      entry?: string;
     };
   };
 }
@@ -258,6 +262,11 @@ export class PackageManager {
       await this.installPiIntegration(name, integrations.pi);
     }
 
+    // Fez's own extension dir — registerHarness/registerMcpServer/ui hooks
+    if (manifest.fez.extension) {
+      await this.installFezExtension(name, manifest.fez.extension);
+    }
+
     // Agent registration
     if (manifest.fez.agent) {
       console.log(chalk.blue(`🤖 Registering agent: ${manifest.fez.agent.entry}`));
@@ -276,6 +285,9 @@ export class PackageManager {
     }
     if (integrations?.pi) {
       await this.removePiIntegration(pkg.name);
+    }
+    if (manifest.fez.extension) {
+      await this.removeFezExtension(pkg.name);
     }
   }
 
@@ -331,6 +343,26 @@ export class PackageManager {
   private async removePiIntegration(name: string): Promise<void> {
     const home = os.homedir();
     await fs.rm(path.join(home, ".pi", "agent", "extensions", `${name}.ts`), { force: true });
+  }
+
+  private async installFezExtension(name: string, config: { entry?: string }): Promise<void> {
+    const home = os.homedir();
+    const extensionsDir = path.join(home, ".fez", "extensions");
+    await fs.mkdir(extensionsDir, { recursive: true });
+
+    const pkgDir = this.getInstallDir(this.packages.get(name)!);
+
+    if (config.entry) {
+      const src = path.join(pkgDir, config.entry);
+      const dest = path.join(extensionsDir, `${name}.ts`);
+      await fs.copyFile(src, dest);
+      console.log(chalk.dim(`   Created ~/.fez/extensions/${name}.ts`));
+    }
+  }
+
+  private async removeFezExtension(name: string): Promise<void> {
+    const home = os.homedir();
+    await fs.rm(path.join(home, ".fez", "extensions", `${name}.ts`), { force: true });
   }
 
   private getInstallDir(pkg: FezPackage): string {
