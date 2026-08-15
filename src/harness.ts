@@ -12,8 +12,12 @@ export interface HarnessAdapter {
   /** The binary this adapter spawns. */
   command: string;
   detect(): Promise<boolean>;
-  invoke(instruction: string, cwd?: string): Promise<string>;
+  /** onProgress fires (throttled) with the accumulated text so far, before the call resolves. */
+  invoke(instruction: string, cwd?: string, onProgress?: (textSoFar: string) => void): Promise<string>;
 }
+
+/** Minimum gap between onProgress calls — avoids flooding the terminal on every streamed token. */
+const PROGRESS_THROTTLE_MS = 2_000;
 
 export interface TimeoutOptions {
   /** Abort if no session/update arrives for this long — the agent has gone silent. */
@@ -49,7 +53,7 @@ function claudeCodeHarness(): HarnessAdapter {
     command,
     detect: () => spawnDetect(command, ["--version"]),
 
-    async invoke(instruction, cwd = process.cwd()) {
+    async invoke(instruction, cwd = process.cwd(), onProgress) {
       const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"] });
 
       // Without these, a write to a pipe whose reader already exited (e.g.
@@ -102,6 +106,7 @@ function claudeCodeHarness(): HarnessAdapter {
           const { idleMs, maxMs } = DEFAULT_TIMEOUTS;
           const hardDeadline = Date.now() + maxMs;
           let text = "";
+          let lastProgressAt = 0;
 
           while (true) {
             const remaining = hardDeadline - Date.now();
@@ -144,6 +149,15 @@ function claudeCodeHarness(): HarnessAdapter {
               update.content.type === "text"
             ) {
               text += update.content.text;
+            }
+
+            // Throttled, and fires on any update (not just text chunks) —
+            // even a tool-call-only stretch should tell the caller "still
+            // alive," not just go silent until the next text token.
+            const now = Date.now();
+            if (onProgress && now - lastProgressAt >= PROGRESS_THROTTLE_MS) {
+              lastProgressAt = now;
+              onProgress(text);
             }
           }
 

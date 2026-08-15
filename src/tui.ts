@@ -199,7 +199,12 @@ export class FezTUI {
         : instruction;
 
       try {
-        const result = await harness.invoke(fullInstruction, process.cwd());
+        const result = await harness.invoke(fullInstruction, process.cwd(), (textSoFar) => {
+          this.updateMessage(routingMsg.id, {
+            content: `🔄 @${label} is working (local)...\n${this.truncate(textSoFar, 200) || "(thinking...)"}`,
+            status: "working",
+          });
+        });
         this.updateMessage(routingMsg.id, {
           content: `✅ @${label}:\n${result}`,
           status: "done",
