@@ -8,6 +8,7 @@ import {
   registerBuiltinHarnesses,
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
+  KIND_DELETION,
   KIND_MEMBERSHIP,
   KIND_REACTION,
   KIND_TYPING,
@@ -40,9 +41,6 @@ async function main() {
   const channelSpecs = (process.env.FEZ_AGENT_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
   const respondTo = process.env.FEZ_AGENT_RESPOND_TO || "owner";
   const owner = process.env.FEZ_AGENT_OWNER;
-  // Emoji the agent reacts with on every member message it sees (its
-  // "read receipt"). Empty string disables. FEZ_AGENT_SEEN_EMOJI overrides.
-  const seenEmoji = process.env.FEZ_AGENT_SEEN_EMOJI ?? "👀";
 
   if (!personaId || channelSpecs.length === 0) {
     console.error("Usage: FEZ_AGENT_PERSONA=<id> FEZ_AGENT_CHANNELS=<name-or-id,...> [FEZ_AGENT_RESPOND_TO=anyone|owner|allowlist:<pks>] fez run channel-agent.js");
@@ -146,28 +144,43 @@ async function main() {
       const mentioned = event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
       const authorIsMember = memberships.get(channelId)?.members.has(event.pubkey) ?? false;
 
-      // Presence signal: react 👀 to every member message the agent sees —
-      // Slack-style "your agent noticed this" (Buzz's kind-7 shape:
-      // content = emoji, e-tag = target, h-tag so clients can subscribe by
-      // channel). Fire-and-forget; a failed reaction is not an error.
-      if (authorIsMember && seenEmoji) {
-        void relay
-          .publish(
-            client.signEvent({
-              kind: KIND_REACTION,
-              tags: [["e", event.id], ["h", channelId], ["c", communityId], ["p", event.pubkey]],
-              content: seenEmoji,
-            })
-          )
-          .catch(() => {});
-      }
-
       if (!mentioned) return;
       if (!authorAllowed(event.pubkey)) return;
       if (!authorIsMember) return;
       if (busy) return; // one turn at a time, v1
 
       busy = true;
+
+      // Status-reaction lifecycle, Buzz's model (buzz-acp ReactionGuard):
+      // 👀 "seen, will handle" the moment the mention is accepted, 💬
+      // "working" when the turn starts, and BOTH deleted when the turn
+      // ends — the reply is the permanent artifact, the reactions are
+      // live status. Fire-and-forget throughout; reactions are cosmetic.
+      const statusReactionIds: string[] = [];
+      const react = async (emoji: string) => {
+        try {
+          const reaction = client.signEvent({
+            kind: KIND_REACTION,
+            tags: [["e", event.id], ["h", channelId], ["c", communityId], ["p", event.pubkey]],
+            content: emoji,
+          });
+          statusReactionIds.push(reaction.id);
+          await relay.publish(reaction);
+        } catch { /* cosmetic */ }
+      };
+      const clearStatusReactions = () => {
+        if (statusReactionIds.length === 0) return;
+        void relay
+          .publish(
+            client.signEvent({
+              kind: KIND_DELETION,
+              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId], ["c", communityId]],
+              content: "",
+            })
+          )
+          .catch(() => {});
+      };
+      void react("👀");
       // Slack-style "is typing": heartbeat an ephemeral 20002 into the
       // channel while the harness turn runs; receivers expire it
       // client-side, so no stop event is needed (crash-safe by design).
@@ -203,6 +216,7 @@ async function main() {
         ].filter(Boolean).join("\n\n");
 
         console.log(`💬 Mention from ${event.pubkey.slice(0, 8)}… — invoking ${persona.harness}`);
+        void react("💬"); // "working" — the turn is actually starting
         const reply = await harness.invoke(prompt, process.cwd(), undefined, mcpServers);
 
         // NIP-10 markers, Buzz's exact shape (threading.ts): replying to a
@@ -228,6 +242,9 @@ async function main() {
       } catch (err) {
         console.error(`❌ Turn failed:`, err instanceof Error ? err.message : err);
       } finally {
+        // Buzz's ReactionGuard shape: status reactions clear on every exit
+        // path — the reply (or nothing, on failure) is what remains.
+        clearStatusReactions();
         clearInterval(typing);
         busy = false;
       }

@@ -11,9 +11,11 @@ import {
   Text,
   TuiAltScreen,
   VStack,
+  authorColor,
   editorTheme,
   loaderColors,
   markdownTheme,
+  timestamp,
 } from "../packages/fez-tui/dist/index.js";
 import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
@@ -656,18 +658,19 @@ export class FezTUI {
     }
   }
 
-  /** Chat-bubble layout: bold name header, content below, no per-line timestamp — matches Buzz's MessageAuthorText pattern. */
+  /** Chat-bubble layout: colored name header + dim time, content below — matches Buzz's MessageAuthorText pattern. */
   private renderMessage(msg: Message): void {
     let header: string;
     if (msg.author === "user") {
-      header = chalk.bold.blue("You");
+      header = authorColor("You")("You");
     } else if (msg.author === "orchestrator") {
-      header = chalk.bold.magenta("Fez");
+      header = authorColor("Fez")("Fez");
+    } else if (msg.status === "error") {
+      header = chalk.bold.red(`@${msg.author}`);
     } else {
-      const color = msg.status === "error" ? chalk.bold.red : chalk.bold.green;
-      header = color(`@${msg.author}`);
+      header = authorColor(msg.author)(`@${msg.author}`);
     }
-    this.log.addChild(new Text("\n" + header));
+    this.log.addChild(new Text("\n" + header + " " + timestamp(msg.timestamp)));
     this.log.addChild(new Markdown(msg.content, 0, 0, markdownTheme));
     this.screen.requestRender();
   }
@@ -689,7 +692,7 @@ export class FezTUI {
       // Pre-screen bubbles are startup notices — nothing updates them later.
       return { setAuthor: () => {}, setContent: () => {}, setFooter: () => {} };
     }
-    const colorFor = (a: string) => (a === "You" ? chalk.bold.blue(a) : chalk.bold.green(a));
+    const colorFor = (a: string) => authorColor(a)(a) + " " + timestamp();
     const header = new Text("\n" + colorFor(author));
     const body = new Markdown(content, 0, 0, markdownTheme);
     const footer = new Text("");
@@ -723,15 +726,17 @@ export class FezTUI {
   }
 
   private renderHeader(): void {
+    const line = chalk.dim("─".repeat(56));
     this.log.addChild(
       new Text(
-        chalk.bold("🧢 Fez — Decentralized MCP for Agents") +
+        line +
           "\n" +
-          chalk.dim(`Relay: ${this.relayUrl}`) +
+          "  🧢 " + chalk.bold.magenta("fez") + chalk.dim(" · decentralized MCP for agents") +
           "\n" +
-          chalk.dim(`Pubkey: ${this.myPubkey.slice(0, 16)}...`) +
+          "  " + chalk.dim("relay ") + chalk.cyan(this.relayUrl) +
+          chalk.dim("  ·  you ") + chalk.cyan(this.myPubkey.slice(0, 12) + "…") +
           "\n" +
-          chalk.dim("—".repeat(50))
+          line
       )
     );
     this.screen.requestRender();

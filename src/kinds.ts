@@ -63,6 +63,15 @@ export const KIND_THREAD_SUMMARY = 39005;
  */
 export const KIND_REACTION = 7;
 
+/**
+ * Deletion — standard nostr kind 5: e-tags name the author's own events to
+ * retract. Fez's use (Buzz's model): agent status reactions are a lifecycle
+ * — 👀 "seen, will handle" at accept time, 💬 "working" when the turn
+ * starts, both deleted when the turn completes. Clients honor a deletion
+ * only when its author matches the deleted event's author.
+ */
+export const KIND_DELETION = 5;
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,

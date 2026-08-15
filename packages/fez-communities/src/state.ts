@@ -162,19 +162,31 @@ export class CommunityState {
     return [...community.channels.values()].find((c) => c.name.toLowerCase() === wanted);
   }
 
-  /** Sidebar text: every joined community, its channels, current one marked. */
+  /**
+   * Sidebar text: every joined community as a tree, current channel
+   * highlighted. Raw ANSI (bold/dim/cyan) instead of a chalk import keeps
+   * the bundled extension lean — this is the only place it styles text.
+   */
   sidebarText(): string {
+    const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
+    const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
+    const active = (s: string) => `\x1b[1;36m${s}\x1b[0m`; // bold cyan
     const lines: string[] = [];
     for (const id of this.joined) {
       const community = this.communities.get(id);
       if (!community) continue;
-      lines.push(community.name);
-      for (const channel of community.channels.values()) {
+      if (lines.length > 0) lines.push("");
+      lines.push(bold(community.name));
+      const channels = [...community.channels.values()];
+      channels.forEach((channel, i) => {
+        const glyph = i === channels.length - 1 ? "└─" : "├─";
         const current =
           this.scope?.communityId === id && this.scope?.channelId === channel.id;
-        lines.push(`${current ? "> " : "  "}#${channel.name}`);
-      }
+        const label = `#${channel.name}`;
+        const count = dim(` ${channel.members.size}`);
+        lines.push(current ? `${dim(glyph)} ${active("▸ " + label)}${count}` : `${dim(glyph)} ${label}${count}`);
+      });
     }
-    return lines.length > 0 ? lines.join("\n") : "(no communities — /community create <name>)";
+    return lines.length > 0 ? lines.join("\n") : dim("no communities\n/community create <name>");
   }
 }

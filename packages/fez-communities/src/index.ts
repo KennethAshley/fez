@@ -10,6 +10,7 @@ const KIND_CHANNEL_MESSAGE = 47103;
 const KIND_TYPING = 20002; // ephemeral, Buzz's kind — see fez src/kinds.ts
 const KIND_THREAD_SUMMARY = 39005; // indexer-published thread stats — see fez src/kinds.ts
 const KIND_REACTION = 7; // standard nostr, Buzz's shape: content = emoji, ["e", target], plus ["h", channel] for subscription
+const KIND_DELETION = 5; // standard nostr: retract your own events (agents clear status reactions)
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -69,8 +70,11 @@ export default function communities(api: FezExtensionAPI): void {
   let summaryLineHandles = new Map<string, MessageHandle>();
 
   // Reactions (kind 7): message id -> emoji -> reactor names. Rendered as
-  // a dim footer row on the target's bubble.
+  // a dim footer row on the target's bubble. reactionIndex remembers each
+  // reaction event so a kind-5 deletion (agents clear their 👀/💬 status
+  // reactions when a turn ends — Buzz's lifecycle) can undo it.
   const reactionsByTarget = new Map<string, Map<string, Set<string>>>();
+  const reactionIndex = new Map<string, { targetId: string; emoji: string; authorPk: string }>();
 
   function reactionFooter(targetId: string): string {
     const reactions = reactionsByTarget.get(targetId);
@@ -327,7 +331,22 @@ export default function communities(api: FezExtensionAPI): void {
     let who = byEmoji.get(emoji);
     if (!who) byEmoji.set(emoji, (who = new Set()));
     who.add(displayName(event.pubkey));
+    reactionIndex.set(event.id, { targetId, emoji, authorPk: event.pubkey });
     bubbleHandles.get(targetId)?.setFooter(reactionFooter(targetId));
+  }
+
+  /** Kind-5 deletion — only honored for the deleter's own reactions (standard nostr rule). */
+  function handleDeletion(event: NostrEvent): void {
+    for (const tag of event.tags) {
+      if (tag[0] !== "e" || !tag[1]) continue;
+      const entry = reactionIndex.get(tag[1]);
+      if (!entry || entry.authorPk !== event.pubkey) continue;
+      reactionIndex.delete(tag[1]);
+      const who = reactionsByTarget.get(entry.targetId)?.get(entry.emoji);
+      who?.delete(displayName(entry.authorPk));
+      if (who && who.size === 0) reactionsByTarget.get(entry.targetId)?.delete(entry.emoji);
+      bubbleHandles.get(entry.targetId)?.setFooter(reactionFooter(entry.targetId));
+    }
   }
 
   function handleTyping(event: NostrEvent): void {
@@ -353,7 +372,7 @@ export default function communities(api: FezExtensionAPI): void {
       filters.push(
         { kinds: [KIND_COMMUNITY, KIND_CHANNEL, KIND_MEMBERSHIP], "#c": ids },
         { kinds: [KIND_COMMUNITY], "#d": ids },
-        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
+        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
         { kinds: [KIND_THREAD_SUMMARY], "#h": channelIdsOfJoined() }
       );
     }
@@ -368,6 +387,10 @@ export default function communities(api: FezExtensionAPI): void {
       }
       if (event.kind === KIND_REACTION) {
         handleReaction(event);
+        return;
+      }
+      if (event.kind === KIND_DELETION) {
+        handleDeletion(event);
         return;
       }
       if (event.kind === KIND_AGENT_METADATA) {
