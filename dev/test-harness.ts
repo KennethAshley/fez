@@ -1,6 +1,7 @@
-import { detectHarnesses, findHarness } from "../src/harness.js";
+import { detectHarnesses, findHarness, registerBuiltinHarnesses } from "../src/harness.js";
 
 async function main() {
+  registerBuiltinHarnesses();
   console.log("Detecting harnesses...");
   const detected = await detectHarnesses();
   console.log(
