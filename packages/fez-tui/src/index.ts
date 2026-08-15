@@ -11,7 +11,11 @@
 export {
   ProcessTerminal,
   TuiMainScreen,
+  TuiAltScreen,
   Container,
+  ScrollView,
+  VStack,
+  HStack,
   Text,
   Loader,
   Markdown,

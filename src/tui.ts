@@ -6,8 +6,10 @@ import {
   Loader,
   Markdown,
   ProcessTerminal,
+  ScrollView,
   Text,
-  TuiMainScreen,
+  TuiAltScreen,
+  VStack,
   editorTheme,
   loaderColors,
   markdownTheme,
@@ -67,7 +69,7 @@ export class FezTUI {
   // raw-mode stdin for the whole session — readline is gone entirely; that
   // was the one-ownership-model resolution to the conflict recorded in
   // packages/fez-tui/README.md.
-  private screen!: TuiMainScreen;
+  private screen!: TuiAltScreen;
   private log = new Container();
   private editor!: Editor;
 
@@ -102,16 +104,23 @@ export class FezTUI {
     await loadExtensions();
     const harnesses = await detectHarnesses();
 
-    // Owned-terminal UI: message log on top, editor below it, status
-    // footer at the very bottom. screen.start() flips stdin to raw mode —
+    // Owned-terminal UI, full-window chat shape: the message log fills all
+    // remaining height inside a ScrollView glued to the newest message
+    // (follow: "end" — scroll up to read history, it re-glues at bottom),
+    // editor and footer pinned below at natural height. Alt-screen means
+    // no native terminal scrollback (like vim) — pi-tui's own wheel
+    // scrolling/search/selection replace it, and the shell's history is
+    // restored intact on quit. screen.start() flips stdin to raw mode —
     // from here on, all output must go through the component tree.
     const terminal = new ProcessTerminal();
-    this.screen = new TuiMainScreen(terminal, true);
+    this.screen = new TuiAltScreen(terminal, true, undefined, { mouse: true });
     this.editor = new Editor(this.screen, editorTheme);
     this.editor.onSubmit = (text) => void this.onSubmit(text);
-    this.screen.addChild(this.log);
-    this.screen.addChild(this.editor);
-    this.screen.addChild(footer.attach(this.screen));
+    const layout = new VStack();
+    layout.addChild(new ScrollView(this.log, { follow: "end" }), { grow: 1 });
+    layout.addChild(this.editor);
+    layout.addChild(footer.attach(this.screen));
+    this.screen.setLayoutRoot(layout);
     this.screen.start();
     this.screen.setFocus(this.editor);
 
