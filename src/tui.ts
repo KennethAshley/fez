@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import readline from "readline";
 import chalk from "chalk";
-import ora, { type Ora } from "ora";
+import { Spinner, renderMarkup } from "../packages/fez-tui/dist/index.js";
 import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
@@ -189,7 +189,7 @@ export class FezTUI {
     const openingLine = triggeredBy
       ? `@${agentName} (mentioned by @${triggeredBy}) is thinking...`
       : `@${agentName} is thinking...`;
-    const spinner = ora({ text: openingLine, spinner: "dots" }).start();
+    const spinner = new Spinner(openingLine).start();
 
     // Resolution order: named persona (a harness + system prompt the user
     // configured) -> bare harness by id -> Nostr agent discovery. Personas
@@ -206,7 +206,7 @@ export class FezTUI {
       try {
         const result = await harness.invoke(fullInstruction, process.cwd(), (textSoFar) => {
           const preview = this.truncate(textSoFar, 70);
-          spinner.text = preview ? `@${label}: ${preview}` : openingLine;
+          spinner.setText(preview ? `@${label}: ${preview}` : openingLine);
         });
         spinner.stop();
         this.updateMessage(routingMsg.id, { content: result, status: "done" });
@@ -243,7 +243,7 @@ export class FezTUI {
           try {
             const content = JSON.parse(event.content);
             const pct = content.percent_complete ? ` (${content.percent_complete}%)` : "";
-            spinner.text = `@${target.name}: ${content.message || "working..."}${pct}`;
+            spinner.setText(`@${target.name}: ${content.message || "working..."}${pct}`);
           } catch {
             // ignore
           }
@@ -324,7 +324,7 @@ export class FezTUI {
     const reactionNote = triggeredBy ? chalk.dim(` ✅ responding to @${triggeredBy}`) : "";
     console.log();
     console.log(color(`@${displayName}`) + reactionNote);
-    console.log(content);
+    console.log(renderMarkup(content));
   }
 
   private async orchestratorResponse(input: string, parentMsgId: string): Promise<void> {
@@ -541,7 +541,12 @@ export class FezTUI {
 
   private shutdown(): void {
     console.log(chalk.dim("\n👋 Goodbye!"));
+    // Closing rl here re-fires its own "close" listener, which calls
+    // shutdown() again — that's the root cause of the old double-Goodbye.
+    // Detach the listener before closing.
+    this.rl?.removeAllListeners("close");
     this.rl?.close();
+    this.rl = undefined;
     this.client.disconnect();
     this.relay.disconnect();
   }
