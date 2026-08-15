@@ -1,16 +1,24 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import { WebSocketServer, WebSocket } from "ws";
 
 /**
- * Minimal in-memory NIP-01 relay for local development — EVENT/REQ/CLOSE,
- * filter matching on kinds/authors/ids/since/limit and single-letter tag
- * filters (#c, #h, #p, #d, ...). No signature verification, no persistence:
- * it exists because public relays typically reject fez's custom 471xx
- * kinds, so communities can't be exercised against them.
+ * Minimal NIP-01 relay for local development — EVENT/REQ/CLOSE, filter
+ * matching on kinds/authors/ids/since/limit and single-letter tag filters
+ * (#c, #h, #p, #d, ...). No signature verification: it exists because
+ * public relays typically reject fez's custom 471xx kinds, so communities
+ * can't be exercised against them.
+ *
+ * Events persist to dev/relay-events.jsonl (append-only, reloaded on
+ * start) — a relay restart used to orphan every community, since creator
+ * rights live in relay events. Ephemeral kinds (20000-29999, e.g. typing
+ * indicators) are relayed but never persisted, per NIP-01. Delete the
+ * file for a clean slate.
  *
  * Run: npm run dev:relay   (ws://localhost:7777)
  */
 const PORT = Number(process.env.PORT || 7777);
+const STORE = new URL("./relay-events.jsonl", import.meta.url).pathname;
 
 interface StoredEvent {
   id: string;
@@ -24,7 +32,17 @@ interface StoredEvent {
 
 type Filter = Record<string, unknown>;
 
+const isEphemeral = (kind: number) => kind >= 20000 && kind < 30000;
+
 const events: StoredEvent[] = [];
+try {
+  for (const line of fs.readFileSync(STORE, "utf-8").split("\n")) {
+    if (line.trim()) events.push(JSON.parse(line));
+  }
+  console.log(`📂 Loaded ${events.length} events from ${STORE}`);
+} catch {
+  // no store yet — fresh relay
+}
 const subs = new Map<WebSocket, Map<string, Filter[]>>();
 
 function matches(event: StoredEvent, filter: Filter): boolean {
@@ -58,7 +76,10 @@ wss.on("connection", (ws) => {
 
     if (msg[0] === "EVENT") {
       const event = msg[1] as StoredEvent;
-      events.push(event);
+      if (!isEphemeral(event.kind)) {
+        events.push(event);
+        fs.appendFileSync(STORE, JSON.stringify(event) + "\n");
+      }
       ws.send(JSON.stringify(["OK", event.id, true, ""]));
       for (const [client, clientSubs] of subs) {
         if (client.readyState !== WebSocket.OPEN) continue;

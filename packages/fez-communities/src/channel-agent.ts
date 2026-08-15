@@ -11,8 +11,10 @@ import {
   findMcpServer,
   registerBuiltinHarnesses,
   KIND_AGENT_METADATA,
+  KIND_CHANNEL,
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
+  KIND_TYPING,
 } from "@fez/protocol";
 
 /**
@@ -38,12 +40,12 @@ import {
 async function main() {
   const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
   const personaId = process.env.FEZ_AGENT_PERSONA;
-  const channels = (process.env.FEZ_AGENT_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const channelSpecs = (process.env.FEZ_AGENT_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
   const respondTo = process.env.FEZ_AGENT_RESPOND_TO || "owner";
   const owner = process.env.FEZ_AGENT_OWNER;
 
-  if (!personaId || channels.length === 0) {
-    console.error("Usage: FEZ_AGENT_PERSONA=<id> FEZ_AGENT_CHANNELS=<id,id> [FEZ_AGENT_RESPOND_TO=anyone|owner|allowlist:<pks>] fez run channel-agent.js");
+  if (!personaId || channelSpecs.length === 0) {
+    console.error("Usage: FEZ_AGENT_PERSONA=<id> FEZ_AGENT_CHANNELS=<name-or-id,...> [FEZ_AGENT_RESPOND_TO=anyone|owner|allowlist:<pks>] fez run channel-agent.js");
     process.exit(1);
   }
 
@@ -82,6 +84,41 @@ async function main() {
   const relay = new RelayConnection({ url: relayUrl });
   await relay.connect();
   const myPubkey = client.getPubkey();
+
+  // Resolve channel specs to ids. UUIDs pass through; anything else is a
+  // channel NAME, matched (case-insensitive, optional leading #) against
+  // 47101 channel-metadata events on the relay — raw channel UUIDs proved
+  // to be a recurring foot-gun (relay resets mint new ids, agents end up
+  // pointed at dead channels). A name may match several channels across
+  // communities; the agent serves all of them.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const channels: string[] = [];
+  const nameSpecs = channelSpecs.filter((s) => !UUID_RE.test(s));
+  channels.push(...channelSpecs.filter((s) => UUID_RE.test(s)));
+  if (nameSpecs.length > 0) {
+    const channelEvents = await relay.query([{ kinds: [KIND_CHANNEL] }]);
+    for (const spec of nameSpecs) {
+      const wanted = spec.replace(/^#/, "").toLowerCase();
+      const matched = channelEvents.filter((e) => {
+        try {
+          return (JSON.parse(e.content).name ?? "").toLowerCase() === wanted;
+        } catch {
+          return false;
+        }
+      });
+      const ids = matched.map((e) => e.tags.find((t) => t[0] === "d")?.[1]).filter((id): id is string => !!id);
+      if (ids.length === 0) {
+        console.warn(`⚠️  No channel named "${spec}" found on ${relayUrl}`);
+      } else {
+        console.log(`🔎 "${spec}" → ${ids.length} channel(s): ${ids.join(", ")}`);
+        channels.push(...ids);
+      }
+    }
+  }
+  if (channels.length === 0) {
+    console.error("No channels resolved — check FEZ_AGENT_CHANNELS and the relay.");
+    process.exit(1);
+  }
 
   const allowlist = respondTo.startsWith("allowlist:")
     ? new Set(respondTo.slice("allowlist:".length).split(",").map((s) => s.trim()))
@@ -157,6 +194,20 @@ async function main() {
       if (busy) return; // one turn at a time, v1
 
       busy = true;
+      // Slack-style "is typing": heartbeat an ephemeral 20002 into the
+      // channel while the harness turn runs; receivers expire it
+      // client-side, so no stop event is needed (crash-safe by design).
+      const typing = setInterval(() => {
+        void relay
+          .publish(
+            client.signEvent({
+              kind: KIND_TYPING,
+              tags: [["h", channelId], ["c", communityId]],
+              content: JSON.stringify({ name: personaId }),
+            })
+          )
+          .catch(() => {});
+      }, 3000);
       try {
         const prompt = [
           persona.systemPrompt ?? "",
@@ -170,7 +221,14 @@ async function main() {
 
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
-          tags: [["h", channelId], ["c", communityId], ["p", event.pubkey]],
+          tags: [
+            ["h", channelId],
+            ["c", communityId],
+            // NIP-10 marked reply to the triggering message — Buzz's wire
+            // shape (threading.ts); clients render "agent ↳ author" from it.
+            ["e", event.id, "", "reply"],
+            ["p", event.pubkey],
+          ],
           content: reply,
         });
         await relay.publish(replyEvent);
@@ -178,6 +236,7 @@ async function main() {
       } catch (err) {
         console.error(`❌ Turn failed:`, err instanceof Error ? err.message : err);
       } finally {
+        clearInterval(typing);
         busy = false;
       }
     }

@@ -32,6 +32,14 @@ export const KIND_CHANNEL = 47101;         // creator-signed; ["d", channelId], 
 export const KIND_MEMBERSHIP = 47102;      // creator-signed; ["d", channelId], ["c", communityId], ["p", pubkey, role]*; owner|admin|member|bot
 export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["c", communityId], ["p", mentionPubkey]*; content = text
 
+/**
+ * Typing indicator — nostr ephemeral range (relays broadcast, never store;
+ * dev/relay.ts honors this), same kind number Buzz uses. ["h", channelId];
+ * content {name}. Publishers heartbeat while composing/working; receivers
+ * expire the indicator client-side a few seconds after the last one.
+ */
+export const KIND_TYPING = 20002;
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,

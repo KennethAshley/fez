@@ -7,6 +7,10 @@ const KIND_COMMUNITY = 47100;
 const KIND_CHANNEL = 47101;
 const KIND_MEMBERSHIP = 47102;
 const KIND_CHANNEL_MESSAGE = 47103;
+const KIND_TYPING = 20002; // ephemeral, Buzz's kind — see fez src/kinds.ts
+
+/** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
+const TYPING_TTL_MS = 8000;
 
 /**
  * Fez communities — Buzz-shaped channels over fez-native nostr kinds
@@ -31,7 +35,23 @@ export default function communities(api: FezExtensionAPI): void {
   state.load();
   const names = new Map<string, string>(); // pubkey -> display name (from 47000)
   const seenMessages = new Set<string>();
+  const authorsById = new Map<string, string>(); // message id -> display name, for reply context
   let unsubscribe: (() => void) | undefined;
+
+  // pubkey -> expiry timestamp for active typing indicators in the current
+  // scope. Rendered as a footer segment; pruned on a 1s tick (Buzz's model:
+  // TTL from last heartbeat, cleared instantly when a real message lands).
+  const typing = new Map<string, number>();
+  function renderTyping(): void {
+    const now = Date.now();
+    for (const [pk, expiry] of typing) if (expiry <= now) typing.delete(pk);
+    const who = [...typing.keys()].map(displayName);
+    api.ui.setStatus(
+      "typing",
+      who.length === 0 ? "" : who.length === 1 ? `${who[0]} is typing…` : `${who.slice(0, 3).join(", ")} are typing…`
+    );
+  }
+  setInterval(renderTyping, 1000).unref?.();
 
   const panel = api.ui.createSidePanel({ width: 26 });
 
@@ -55,6 +75,11 @@ export default function communities(api: FezExtensionAPI): void {
   function handleIncomingMessage(event: NostrEvent): void {
     if (seenMessages.has(event.id)) return;
     seenMessages.add(event.id);
+    authorsById.set(event.id, displayName(event.pubkey));
+    // A real message from someone clears their typing indicator immediately
+    // (Buzz does the same rather than waiting out the TTL).
+    typing.delete(event.pubkey);
+    renderTyping();
     if (event.pubkey === nostr!.pubkey) return; // own message, already echoed
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
@@ -62,7 +87,24 @@ export default function communities(api: FezExtensionAPI): void {
     const scope = state.scope;
     if (!scope || scope.channelId !== channelId || scope.communityId !== communityId) return;
     if (!state.isMember(communityId, channelId, event.pubkey)) return; // client-side gate
-    api.ui.appendMessage(displayName(event.pubkey), event.content);
+
+    // NIP-10 reply context (Buzz's wire shape): the last reply-marked e-tag
+    // is the parent. Rendered inline as "author ↳ parent-author" — fez's
+    // TUI keeps a flat timeline, not Buzz's side-panel threads.
+    const parentId = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+    const parentAuthor = parentId ? authorsById.get(parentId) : undefined;
+    const label = parentAuthor
+      ? `${displayName(event.pubkey)} ↳ ${parentAuthor}`
+      : displayName(event.pubkey);
+    api.ui.appendMessage(label, event.content);
+  }
+
+  function handleTyping(event: NostrEvent): void {
+    if (event.pubkey === nostr!.pubkey) return;
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    if (!channelId || state.scope?.channelId !== channelId) return;
+    typing.set(event.pubkey, Date.now() + TYPING_TTL_MS);
+    renderTyping();
   }
 
   function resubscribe(): void {
@@ -75,10 +117,14 @@ export default function communities(api: FezExtensionAPI): void {
       filters.push(
         { kinds: [KIND_COMMUNITY, KIND_CHANNEL, KIND_MEMBERSHIP], "#c": ids },
         { kinds: [KIND_COMMUNITY], "#d": ids },
-        { kinds: [KIND_CHANNEL_MESSAGE], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) }
+        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) }
       );
     }
     unsubscribe = nostr!.subscribe(filters, (event) => {
+      if (event.kind === KIND_TYPING) {
+        handleTyping(event);
+        return;
+      }
       if (event.kind === KIND_AGENT_METADATA) {
         try {
           const name = JSON.parse(event.content).name;
@@ -277,6 +323,7 @@ export default function communities(api: FezExtensionAPI): void {
       content: text,
     });
     seenMessages.add(event.id);
+    authorsById.set(event.id, "You"); // agent replies to this show "agent ↳ You"
     void mentions; // p tags carry them; standing agents react over the relay
     return true;
   });

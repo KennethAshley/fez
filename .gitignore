@@ -46,3 +46,4 @@ venv/
 # Logs
 *.log
 dev/relay.mjs
+dev/relay-events.jsonl
