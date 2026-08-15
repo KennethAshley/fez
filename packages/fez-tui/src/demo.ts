@@ -1,47 +1,72 @@
+#!/usr/bin/env node
 import chalk from "chalk";
-import { Spinner } from "./spinner.js";
-import { renderMarkup } from "./markup.js";
+import { Container, Loader, Markdown, ProcessTerminal, Text, TuiMainScreen } from "@earendil-works/pi-tui";
+import { Footer } from "./footer.js";
+import { loaderColors, markdownTheme } from "./theme.js";
 
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
+/**
+ * Standalone smoke test for the pi-tui-backed stack — run it in a real
+ * terminal before trusting the production wiring in src/tui.ts. Renders
+ * the same beats as a real session: header, a user message, a live
+ * loader, a markdown reply, the footer. Exits by itself; never reads
+ * stdin, so it can't hang a non-interactive runner.
+ */
 async function main() {
-  console.log(chalk.bold.magenta("Fez"));
-  console.log("Welcome to Fez! 🧢 (fez-tui demo — no pi-tui, no raw mode)");
+  const terminal = new ProcessTerminal();
+  const tui = new TuiMainScreen(terminal, false);
+  const log = new Container();
+  const footer = new Footer();
+  tui.addChild(log);
+  tui.addChild(footer.attach(tui));
+  tui.start();
 
-  console.log();
-  console.log(chalk.bold.blue("You"));
-  console.log("What's the plan for the auth refactor?");
+  footer.setStatus("relay", "wss://relay.damus.io");
+  footer.setStatus("demo", "fez-tui smoke test");
 
-  console.log();
-  const spinner = new Spinner("@researcher is thinking...").start();
-  await sleep(800);
-  spinner.setText("@researcher: Replacing session cookies with short-l...");
-  await sleep(800);
-  spinner.setText("@researcher: ...JWTs, adding a refreshToken rotation...");
-  await sleep(800);
-  spinner.stop();
+  log.addChild(new Text(chalk.bold.magenta("Fez") + "\nWelcome to Fez! 🧢 (fez-tui demo)"));
+  tui.requestRender();
+  await sleep(600);
 
-  console.log(chalk.bold.green("@researcher"));
-  console.log(
-    renderMarkup(
+  log.addChild(new Text("\n" + chalk.bold.blue("You") + "\nWhat's the plan for the auth refactor?"));
+  tui.requestRender();
+  await sleep(600);
+
+  const loader = new Loader(tui, loaderColors.spinner, loaderColors.message, "@researcher is thinking...");
+  log.addChild(loader);
+  loader.start();
+  await sleep(1500);
+  loader.stop();
+  log.removeChild(loader);
+
+  log.addChild(new Text("\n" + chalk.bold.green("@researcher")));
+  log.addChild(
+    new Markdown(
       [
-        "Here's the plan:",
+        "## Auth refactor plan",
         "",
         "1. Replace session cookies with **short-lived JWTs**",
         "2. Add a `refreshToken` rotation endpoint",
         "3. Migrate existing sessions with a background job",
         "",
-        "```ts",
-        "function rotate(token: string) { /* ... */ }",
-        "```",
-      ].join("\n")
+        "> Ship behind a feature flag — don't cut over all at once.",
+      ].join("\n"),
+      0,
+      0,
+      markdownTheme
     )
   );
+  tui.requestRender();
+  await sleep(1500);
 
-  console.log();
-  console.log(chalk.dim("(demo complete — this whole thing never touched process.stdin)"));
+  tui.stop();
+  console.log(chalk.dim("\n(demo complete)"));
 }
 
-main();
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

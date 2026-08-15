@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
-import { client, ndJsonStream } from "@agentclientprotocol/sdk";
+import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
+import { notice } from "./notices.js";
 
 /**
  * A locally installed coding-agent harness (Claude Code, pi, ...) that Fez
@@ -12,8 +13,18 @@ export interface HarnessAdapter {
   /** The binary this adapter spawns. */
   command: string;
   detect(): Promise<boolean>;
-  /** onProgress fires (throttled) with the accumulated text so far, before the call resolves. */
-  invoke(instruction: string, cwd?: string, onProgress?: (textSoFar: string) => void): Promise<string>;
+  /**
+   * onProgress fires (throttled) with the accumulated text so far, before the call resolves.
+   * mcpServers are the persona's resolved skills (see mcp-servers.ts) — a
+   * harness that isn't ACP-based (or doesn't support MCP) is free to ignore
+   * this; it's additive, not a required capability.
+   */
+  invoke(
+    instruction: string,
+    cwd?: string,
+    onProgress?: (textSoFar: string) => void,
+    mcpServers?: McpServer[]
+  ): Promise<string>;
 }
 
 /** Minimum gap between onProgress calls — avoids flooding the terminal on every streamed token. */
@@ -53,7 +64,7 @@ function claudeCodeHarness(): HarnessAdapter {
     command,
     detect: () => spawnDetect(command, ["--version"]),
 
-    async invoke(instruction, cwd = process.cwd(), onProgress) {
+    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers) {
       const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"] });
 
       // Without these, a write to a pipe whose reader already exited (e.g.
@@ -95,7 +106,11 @@ function claudeCodeHarness(): HarnessAdapter {
         });
 
         return await app.connectWith(stream, async (ctx) => {
-          const session = await ctx.buildSession(cwd).start();
+          let builder = ctx.buildSession(cwd);
+          for (const server of mcpServers ?? []) {
+            builder = builder.withMcpServer(server);
+          }
+          const session = await builder.start();
 
           // Fire the prompt; drive completion through nextUpdate() rather than
           // awaiting prompt() directly so each update can reset the idle timer.
@@ -138,7 +153,7 @@ function claudeCodeHarness(): HarnessAdapter {
 
             if (message.kind === "stop") {
               if (message.stopReason !== "end_turn") {
-                console.error(`${command} stopped with reason: ${message.stopReason}`);
+                notice(`${command} stopped with reason: ${message.stopReason}`);
               }
               break;
             }

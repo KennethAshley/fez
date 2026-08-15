@@ -2,7 +2,7 @@
   "name": "@fez/tui",
   "version": "0.1.0",
   "private": true,
-  "description": "Fez's own chat-TUI rendering primitives — spinner + inline markup, no raw mode, no dependency on pi-tui",
+  "description": "Fez's chat-TUI components, built on pi-tui's owned-terminal rendering engine",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,6 +10,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@earendil-works/pi-tui": "0.84.2",
     "chalk": "^5.3.0"
   },
   "devDependencies": {

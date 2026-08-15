@@ -1,7 +1,17 @@
 #!/usr/bin/env node
-import readline from "readline";
 import chalk from "chalk";
-import { Spinner, renderMarkup } from "../packages/fez-tui/dist/index.js";
+import {
+  Container,
+  Editor,
+  Loader,
+  Markdown,
+  ProcessTerminal,
+  Text,
+  TuiMainScreen,
+  editorTheme,
+  loaderColors,
+  markdownTheme,
+} from "../packages/fez-tui/dist/index.js";
 import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
@@ -10,7 +20,11 @@ import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses }
 import { loadExtensions } from "./extensions.js";
 import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
+import { findMcpServer } from "./mcp-servers.js";
+import { findCommand } from "./commands.js";
+import { setNoticeSink } from "./notices.js";
 import type { Event } from "nostr-tools";
+import type { McpServer } from "@agentclientprotocol/sdk";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
@@ -46,9 +60,16 @@ export class FezTUI {
   private client: CapabilityClient;
   private relay: RelayConnection;
   private messages: Message[] = [];
-  private rl?: readline.Interface;
   private myPubkey: string;
   private agentNameMap: Map<string, string> = new Map(); // pubkey -> name
+
+  // Owned-terminal rendering (pi-tui engine via fez-tui). The screen owns
+  // raw-mode stdin for the whole session — readline is gone entirely; that
+  // was the one-ownership-model resolution to the conflict recorded in
+  // packages/fez-tui/README.md.
+  private screen!: TuiMainScreen;
+  private log = new Container();
+  private editor!: Editor;
 
   constructor(private relayUrl: string, privateKey?: string) {
     this.client = new CapabilityClient({ relay: relayUrl, privateKey });
@@ -68,46 +89,40 @@ export class FezTUI {
     // Subscribe to results and progress
     this.subscribeToEvents();
 
-    // Show header
-    this.renderHeader();
-
-    // Persistent status bar, pinned below normal scrollback via a terminal
-    // scroll region — no-ops if stdout isn't a real TTY (e.g. piped tests).
-    // Started before extensions load so any extension's ui.setStatus() call
-    // during its own init takes effect immediately.
-    footer.start();
-    footer.setStatus("relay", this.relayUrl);
-    footer.setStatus("pubkey", `${this.myPubkey.slice(0, 12)}...`);
-
     // Register built-ins, then user extensions (~/.fez/extensions/*) through
     // the exact same registerHarness() call — built-ins have no special
     // path. Then detect what's actually installed so @mentions can dispatch
-    // locally without a relay round-trip.
+    // locally without a relay round-trip. All of this runs BEFORE the
+    // screen takes raw-mode ownership: any console output these emit
+    // (duplicate-registration warnings, failed extension loads) still goes
+    // to plain stdout where it can't corrupt an owned-terminal render.
+    // Extensions' ui.setStatus() calls during init are held by the Footer
+    // and appear once it attaches below.
     registerBuiltinHarnesses();
     await loadExtensions();
-    console.log(chalk.dim("Checking for installed harnesses..."));
     const harnesses = await detectHarnesses();
 
-    // Start input loop
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      prompt: chalk.cyan("> "),
-    });
+    // Owned-terminal UI: message log on top, editor below it, status
+    // footer at the very bottom. screen.start() flips stdin to raw mode —
+    // from here on, all output must go through the component tree.
+    const terminal = new ProcessTerminal();
+    this.screen = new TuiMainScreen(terminal, true);
+    this.editor = new Editor(this.screen, editorTheme);
+    this.editor.onSubmit = (text) => void this.onSubmit(text);
+    this.screen.addChild(this.log);
+    this.screen.addChild(this.editor);
+    this.screen.addChild(footer.attach(this.screen));
+    this.screen.start();
+    this.screen.setFocus(this.editor);
 
-    this.rl.on("line", async (line) => {
-      await this.handleInput(line.trim());
-      this.rl?.prompt();
-      // Repaint the footer one line below the freshly drawn prompt —
-      // render() saves/restores the cursor around it, so this leaves the
-      // cursor exactly where readline left it, ready for typing.
-      footer.render();
-    });
+    // Mid-session warnings (harness stop-reasons, bad persona files) render
+    // into the chat log instead of smearing raw stderr over the owned screen.
+    setNoticeSink((text) => this.systemLine(text));
 
-    this.rl.on("close", () => {
-      this.shutdown();
-      this.resolveQuit?.();
-    });
+    footer.setStatus("relay", this.relayUrl);
+    footer.setStatus("pubkey", `${this.myPubkey.slice(0, 12)}...`);
+
+    this.renderHeader();
 
     // Initial greeting
     const harnessLine =
@@ -122,13 +137,19 @@ export class FezTUI {
       timestamp: new Date(),
     });
 
-    this.rl.prompt();
-    footer.render();
-
     // Block until user quits
     return new Promise((resolve) => {
       this.resolveQuit = resolve;
     });
+  }
+
+  /** Editor submit handler — replaces readline's "line" event. */
+  private async onSubmit(text: string): Promise<void> {
+    const input = text.trim();
+    this.editor.setText("");
+    if (!input) return;
+    this.editor.addToHistory(input);
+    await this.handleInput(input);
   }
 
   private async handleInput(input: string): Promise<void> {
@@ -203,7 +224,7 @@ export class FezTUI {
     const openingLine = triggeredBy
       ? `@${agentName} (mentioned by @${triggeredBy}) is thinking...`
       : `@${agentName} is thinking...`;
-    const spinner = new Spinner(openingLine).start();
+    const spinner = this.startLoader(openingLine);
 
     // Resolution order: named persona (a harness + system prompt the user
     // configured) -> bare harness by id -> Nostr agent discovery. Personas
@@ -217,18 +238,35 @@ export class FezTUI {
         ? `${persona.systemPrompt}\n\n${instruction}`
         : instruction;
 
+      // Resolve the persona's declared skill names against whatever's
+      // actually registered (built in or via an extension) — an unresolved
+      // name is dropped with a warning, not a hard failure, same tolerance
+      // as a missing harness or a failed extension load elsewhere.
+      const mcpServers = (persona?.mcpServers ?? [])
+        .map((name) => {
+          const server = findMcpServer(name);
+          if (!server) this.systemLine(`⚠️  @${label} wants MCP server "${name}" but nothing registered it`);
+          return server;
+        })
+        .filter((s): s is McpServer => s !== undefined);
+
       try {
-        const result = await harness.invoke(fullInstruction, process.cwd(), (textSoFar) => {
-          const preview = this.truncate(textSoFar, 70);
-          spinner.setText(preview ? `@${label}: ${preview}` : openingLine);
-        });
-        spinner.stop();
+        const result = await harness.invoke(
+          fullInstruction,
+          process.cwd(),
+          (textSoFar) => {
+            const preview = this.truncate(textSoFar, 70);
+            spinner.setMessage(preview ? `@${label}: ${preview}` : openingLine);
+          },
+          mcpServers
+        );
+        this.stopLoader(spinner);
         this.updateMessage(routingMsg.id, { content: result, status: "done" });
         this.printReply(label, result, chalk.bold.green, triggeredBy);
         await this.handleAgentReply(result, label, triggeringMsgId, routingMsg.id, depth);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        spinner.fail(`@${label} failed: ${message}`);
+        this.failLoader(spinner, `@${label} failed: ${message}`);
         this.updateMessage(routingMsg.id, { content: message, status: "error" });
       }
       return;
@@ -238,7 +276,8 @@ export class FezTUI {
     const agents = await this.client.findAgentsByName(agentName);
 
     if (agents.length === 0) {
-      spinner.fail(
+      this.failLoader(
+        spinner,
         `No agent named "${agentName}" found. Try: fez discover --name ${agentName}, or fez install ${agentName}`
       );
       this.updateMessage(routingMsg.id, { content: "not found", status: "error" });
@@ -257,14 +296,14 @@ export class FezTUI {
           try {
             const content = JSON.parse(event.content);
             const pct = content.percent_complete ? ` (${content.percent_complete}%)` : "";
-            spinner.setText(`@${target.name}: ${content.message || "working..."}${pct}`);
+            spinner.setMessage(`@${target.name}: ${content.message || "working..."}${pct}`);
           } catch {
             // ignore
           }
         },
       });
 
-      spinner.stop();
+      this.stopLoader(spinner);
       if (result.status === "success") {
         const rawText =
           typeof result.result === "string" ? result.result : JSON.stringify(result.result ?? "", null, 2);
@@ -279,9 +318,30 @@ export class FezTUI {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      spinner.fail(`@${target.name} failed: ${message}`);
+      this.failLoader(spinner, `@${target.name} failed: ${message}`);
       this.updateMessage(routingMsg.id, { content: message, status: "error" });
     }
+  }
+
+  /** Live "agent is working" line — a pi-tui Loader added to the log, removed again on stop/fail. */
+  private startLoader(text: string): Loader {
+    const loader = new Loader(this.screen, loaderColors.spinner, loaderColors.message, text);
+    this.log.addChild(loader);
+    loader.start();
+    this.screen.requestRender();
+    return loader;
+  }
+
+  private stopLoader(loader: Loader): void {
+    loader.stop();
+    this.log.removeChild(loader);
+    this.screen.requestRender();
+  }
+
+  private failLoader(loader: Loader, text: string): void {
+    this.stopLoader(loader);
+    this.log.addChild(new Text(chalk.red("✗ ") + text));
+    this.screen.requestRender();
   }
 
   /**
@@ -336,9 +396,9 @@ export class FezTUI {
     triggeredBy?: string
   ): void {
     const reactionNote = triggeredBy ? chalk.dim(` ✅ responding to @${triggeredBy}`) : "";
-    console.log();
-    console.log(color(`@${displayName}`) + reactionNote);
-    console.log(renderMarkup(content));
+    this.log.addChild(new Text("\n" + color(`@${displayName}`) + reactionNote));
+    this.log.addChild(new Markdown(content, 0, 0, markdownTheme));
+    this.screen.requestRender();
   }
 
   private async orchestratorResponse(input: string, parentMsgId: string): Promise<void> {
@@ -403,7 +463,7 @@ export class FezTUI {
         });
         try {
           const agents = await this.client.findAgentsByName("");
-          console.log(chalk.dim(`[debug] Found ${agents.length} agents`));
+          this.systemLine(`[debug] Found ${agents.length} agents`);
           const names = agents.map((a) => `  • @${a.name} (${a.pubkey.slice(0, 16)}...)`).join("\n");
           this.addMessage({
             id: `cmd-discover-result`,
@@ -455,13 +515,28 @@ export class FezTUI {
         });
         break;
 
-      default:
+      default: {
+        const extensionCommand = findCommand(cmd);
+        if (extensionCommand) {
+          const args = parts.slice(1).join(" ");
+          await extensionCommand(args, {
+            reply: (content) =>
+              this.addMessage({
+                id: `cmd-${cmd}-${Math.random().toString(36).slice(2)}`,
+                author: "orchestrator",
+                content,
+                timestamp: new Date(),
+              }),
+          });
+          break;
+        }
         this.addMessage({
           id: `cmd-unknown`,
           author: "orchestrator",
           content: `Unknown command: /${cmd}. Try /help`,
           timestamp: new Date(),
         });
+      }
     }
   }
 
@@ -512,25 +587,39 @@ export class FezTUI {
 
   /** Chat-bubble layout: bold name header, content below, no per-line timestamp — matches Buzz's MessageAuthorText pattern. */
   private renderMessage(msg: Message): void {
-    console.log();
+    let header: string;
     if (msg.author === "user") {
-      console.log(chalk.bold.blue("You"));
+      header = chalk.bold.blue("You");
     } else if (msg.author === "orchestrator") {
-      console.log(chalk.bold.magenta("Fez"));
+      header = chalk.bold.magenta("Fez");
     } else {
       const color = msg.status === "error" ? chalk.bold.red : chalk.bold.green;
-      console.log(color(`@${msg.author}`));
+      header = color(`@${msg.author}`);
     }
-    console.log(msg.content);
+    this.log.addChild(new Text("\n" + header));
+    this.log.addChild(new Markdown(msg.content, 0, 0, markdownTheme));
+    this.screen.requestRender();
+  }
+
+  /** A dim one-liner outside the chat-bubble shape — startup notes, routing warnings. */
+  private systemLine(text: string): void {
+    this.log.addChild(new Text(chalk.dim(text)));
+    this.screen.requestRender();
   }
 
   private renderHeader(): void {
-    console.clear();
-    console.log(chalk.bold("🧢 Fez — Decentralized MCP for Agents"));
-    console.log(chalk.dim(`Relay: ${this.relayUrl}`));
-    console.log(chalk.dim(`Pubkey: ${this.myPubkey.slice(0, 16)}...`));
-    console.log(chalk.dim("—".repeat(50)));
-    console.log();
+    this.log.addChild(
+      new Text(
+        chalk.bold("🧢 Fez — Decentralized MCP for Agents") +
+          "\n" +
+          chalk.dim(`Relay: ${this.relayUrl}`) +
+          "\n" +
+          chalk.dim(`Pubkey: ${this.myPubkey.slice(0, 16)}...`) +
+          "\n" +
+          chalk.dim("—".repeat(50))
+      )
+    );
+    this.screen.requestRender();
   }
 
   private async ensureKey(): Promise<void> {
@@ -554,17 +643,12 @@ export class FezTUI {
   }
 
   private shutdown(): void {
-    // Reset the scroll region before any further output — otherwise this
-    // final message prints while still constrained to the region above
-    // the footer, and the footer row is left stale on screen.
-    footer.stop();
+    // screen.stop() restores the terminal (raw mode off, cursor visible)
+    // — after it, plain console output is safe again.
+    setNoticeSink((text) => console.error(text));
+    footer.detach();
+    this.screen.stop();
     console.log(chalk.dim("\n👋 Goodbye!"));
-    // Closing rl here re-fires its own "close" listener, which calls
-    // shutdown() again — that's the root cause of the old double-Goodbye.
-    // Detach the listener before closing.
-    this.rl?.removeAllListeners("close");
-    this.rl?.close();
-    this.rl = undefined;
     this.client.disconnect();
     this.relay.disconnect();
   }
