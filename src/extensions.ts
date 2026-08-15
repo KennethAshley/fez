@@ -3,19 +3,29 @@ import path from "path";
 import os from "os";
 import { pathToFileURL } from "url";
 import { registerHarness, type HarnessAdapter } from "./harness.js";
+import { setStatus } from "./status.js";
 
 /**
  * API surface handed to extension files. Deliberately small — grows as
  * Fez grows, one method at a time (pi's ExtensionAPI has ~10x this after
  * years of use; starting minimal beats guessing at surface nobody needs yet).
+ *
+ * `ui.setStatus` is the rendering surface third-party extensions plug
+ * into — same shape as pi's `ctx.ui.setStatus(key, value)`, which is how
+ * extensions like pi-powerline-footer publish segments into a persistent
+ * status bar without needing to know anything about terminal rendering
+ * themselves. Fez's version renders into fez-tui's Footer.
  */
 export interface FezExtensionAPI {
   registerHarness(adapter: HarnessAdapter): void;
+  ui: {
+    setStatus(key: string, value: string): void;
+  };
 }
 
 export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
 
-const api: FezExtensionAPI = { registerHarness };
+const api: FezExtensionAPI = { registerHarness, ui: { setStatus } };
 
 const EXTENSIONS_DIR = path.join(os.homedir(), ".fez", "extensions");
 

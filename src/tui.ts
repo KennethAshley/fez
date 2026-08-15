@@ -8,6 +8,7 @@ import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { loadExtensions } from "./extensions.js";
+import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
 import type { Event } from "nostr-tools";
 import fs from "fs/promises";
@@ -69,6 +70,14 @@ export class FezTUI {
 
     // Show header
     this.renderHeader();
+
+    // Persistent status bar, pinned below normal scrollback via a terminal
+    // scroll region — no-ops if stdout isn't a real TTY (e.g. piped tests).
+    // Started before extensions load so any extension's ui.setStatus() call
+    // during its own init takes effect immediately.
+    footer.start();
+    footer.setStatus("relay", this.relayUrl);
+    footer.setStatus("pubkey", `${this.myPubkey.slice(0, 12)}...`);
 
     // Register built-ins, then user extensions (~/.fez/extensions/*) through
     // the exact same registerHarness() call — built-ins have no special
@@ -540,6 +549,10 @@ export class FezTUI {
   }
 
   private shutdown(): void {
+    // Reset the scroll region before any further output — otherwise this
+    // final message prints while still constrained to the region above
+    // the footer, and the footer row is left stale on screen.
+    footer.stop();
     console.log(chalk.dim("\n👋 Goodbye!"));
     // Closing rl here re-fires its own "close" listener, which calls
     // shutdown() again — that's the root cause of the old double-Goodbye.
