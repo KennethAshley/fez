@@ -2,72 +2,61 @@ import chalk from "chalk";
 
 const SAVE_CURSOR = "\x1b7";
 const RESTORE_CURSOR = "\x1b8";
-const HIDE_CURSOR = "\x1b[?25l";
-const SHOW_CURSOR = "\x1b[?25h";
-
-function setScrollRegion(top: number, bottom: number): string {
-  return `\x1b[${top};${bottom}r`;
-}
-function resetScrollRegion(): string {
-  return "\x1b[r";
-}
-function moveTo(row: number, col: number): string {
-  return `\x1b[${row};${col}H`;
-}
-function clearLine(): string {
-  return "\x1b[K";
-}
 
 /**
- * A persistent one-line status bar pinned to the bottom of the terminal,
- * independent of normal scrollback — the rendering surface extensions plug
- * into (matches how pi's extensions publish segments via ctx.ui.setStatus(),
- * e.g. github.com/nicobailon/pi-powerline-footer).
+ * A persistent one-line status bar trailing the bottom of normal output —
+ * the rendering surface extensions plug into (matches how pi's extensions
+ * publish segments via ctx.ui.setStatus(), e.g.
+ * github.com/nicobailon/pi-powerline-footer).
  *
- * Built on the terminal scroll-region escape (DECSTBM), the same category
- * of technique as the Spinner's \r+clear-line redraw: pure stdout writes,
- * never raw mode, never touches stdin. Constrains normal scrolling
- * (console.log, readline's own prompt) to the region above the footer, so
- * the footer survives untouched while everything else scrolls normally.
+ * Two earlier versions of this file didn't work, for two different
+ * reasons, both worth recording:
  *
- * Real terminal-rendering behavior — verify live in an actual interactive
- * terminal, not just by inspecting the emitted escape sequences. A piped/
- * non-TTY capture (this whole session's usual verification method) can
- * confirm the right bytes are sent but can't confirm a terminal emulator
- * actually renders the split region correctly.
+ * 1. The original used the DECSTBM scroll-region escape (`\x1b[top;bottomr`)
+ *    plus absolute row addressing (`moveTo(rows, 1)`) to pin the footer to
+ *    the terminal's literal bottom row. Checked against
+ *    @earendil-works/pi-tui (the dependency this package replaced, see
+ *    packages/fez-tui/README.md) and it never uses DECSTBM or absolute row
+ *    addressing anywhere — its non-fullscreen renderer tracks its own
+ *    cursor row and redraws with purely relative moves. Live-tested here:
+ *    DECSTBM silently no-ops in the terminal actually used to verify this
+ *    (no crash, no visible scroll-region effect at all), so normal output
+ *    scrolled straight over the footer's absolute-addressed row.
+ *
+ * 2. The relative-move rewrite fixed that, but introduced a logic bug:
+ *    it hid the footer before every `rl.prompt()` call and only re-showed
+ *    it on the next write, meaning the footer was invisible for the exact
+ *    state a user actually looks at — idle at an empty prompt. Confirmed
+ *    live via stderr instrumentation: render() was being called with the
+ *    right text throughout, the footer's own writes just never survived
+ *    to the steady state because of that hide-before-prompt call.
+ *
+ * Current design: render() is a single self-contained operation — save
+ * the cursor, drop a line, clear it, write the footer text, restore the
+ * cursor to exactly where it was (SAVE_CURSOR/RESTORE_CURSOR, the same
+ * primitive 340e3fe already validated live for surviving a scroll). This
+ * needs no state tracking (no "is the footer currently printed" flag) and
+ * no special-casing for the prompt: the footer always sits one line below
+ * wherever the cursor legitimately is, and repainting it is idempotent.
+ * Console.log is patched (only while active) to call render() again after
+ * every write, since a normal write's own trailing newline naturally
+ * reclaims whatever line the footer was previously painted on — nothing
+ * needs to clear it first.
  */
 export class Footer {
   private segments = new Map<string, string>();
   private active = false;
-  private rows = process.stdout.rows ?? 24;
-  private onResize = () => this.handleResize();
+  private originalConsoleLog = console.log;
 
   start(): this {
     if (this.active || !process.stdout.isTTY) return this;
     this.active = true;
-    this.rows = process.stdout.rows ?? 24;
-    // DECSTBM's cursor-homing side effect varies by terminal — some reset
-    // to (1,1), some don't. Rather than guess and force a position (the
-    // previous bug: an unconditional moveTo(rows-1, 1) here jumped the
-    // cursor away from wherever content had already legitimately printed,
-    // leaving a huge blank gap — confirmed live via a real terminal trace),
-    // save whatever position it's actually at and restore exactly that,
-    // regardless of what the terminal did in between.
-    process.stdout.write(SAVE_CURSOR);
-    process.stdout.write(setScrollRegion(1, this.rows - 1));
-    process.stdout.write(RESTORE_CURSOR);
-    process.stdout.on("resize", this.onResize);
+    console.log = (...args: unknown[]) => {
+      this.originalConsoleLog.apply(console, args);
+      this.render();
+    };
     this.render();
     return this;
-  }
-
-  private handleResize(): void {
-    if (!this.active) return;
-    this.rows = process.stdout.rows ?? this.rows;
-    process.stdout.write(SAVE_CURSOR);
-    process.stdout.write(setScrollRegion(1, this.rows - 1));
-    process.stdout.write(RESTORE_CURSOR);
-    this.render();
   }
 
   /** Publish or update a named status segment. The extension API's ui.setStatus() calls this. */
@@ -80,22 +69,17 @@ export class Footer {
     if (this.active) this.render();
   }
 
-  private render(): void {
+  /** Paint the footer one line below the cursor's current position, then restore the cursor exactly. Safe to call any time the footer is active — self-contained, no state to get out of sync. */
+  render(): void {
     if (!this.active || !process.stdout.isTTY) return;
     const text = Array.from(this.segments.values()).join(chalk.dim(" │ "));
-    process.stdout.write(SAVE_CURSOR + HIDE_CURSOR);
-    process.stdout.write(moveTo(this.rows, 1) + clearLine());
-    process.stdout.write(chalk.dim(text));
-    process.stdout.write(RESTORE_CURSOR + SHOW_CURSOR);
+    process.stdout.write(SAVE_CURSOR + "\n\r\x1b[2K" + chalk.dim(text) + RESTORE_CURSOR);
   }
 
   stop(): void {
     if (!this.active) return;
-    process.stdout.off("resize", this.onResize);
-    process.stdout.write(SAVE_CURSOR);
-    process.stdout.write(moveTo(this.rows, 1) + clearLine());
-    process.stdout.write(resetScrollRegion());
-    process.stdout.write(RESTORE_CURSOR);
+    process.stdout.write(SAVE_CURSOR + "\n\r\x1b[2K" + RESTORE_CURSOR);
+    console.log = this.originalConsoleLog;
     this.active = false;
   }
 }

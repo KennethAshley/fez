@@ -98,6 +98,10 @@ export class FezTUI {
     this.rl.on("line", async (line) => {
       await this.handleInput(line.trim());
       this.rl?.prompt();
+      // Repaint the footer one line below the freshly drawn prompt —
+      // render() saves/restores the cursor around it, so this leaves the
+      // cursor exactly where readline left it, ready for typing.
+      footer.render();
     });
 
     this.rl.on("close", () => {
@@ -119,6 +123,7 @@ export class FezTUI {
     });
 
     this.rl.prompt();
+    footer.render();
 
     // Block until user quits
     return new Promise((resolve) => {
