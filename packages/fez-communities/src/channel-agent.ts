@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import crypto from "node:crypto";
 import {
   RelayConnection,
   CapabilityClient,
@@ -11,11 +7,11 @@ import {
   findMcpServer,
   registerBuiltinHarnesses,
   KIND_AGENT_METADATA,
-  KIND_CHANNEL,
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
   KIND_TYPING,
 } from "@fez/protocol";
+import { loadServiceKey, resolveChannels } from "./service-common.js";
 
 /**
  * Standing channel agent — Buzz-style. Runs as its own process via
@@ -64,61 +60,17 @@ async function main() {
     .map((name) => findMcpServer(name))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
 
-  // Identity: one stable key per persona, auto-created at
-  // ~/.fez/agents/<persona>.key. Deliberately NOT process.env.FEZ_PRIVATE_KEY
-  // — `fez run` fills that from ~/.fez/default.key (the *user's* identity),
-  // and an agent must not impersonate its owner: invites, membership, and
-  // respondTo gates are all bound to the agent's own pubkey surviving
-  // restarts.
-  const keyPath = path.join(os.homedir(), ".fez", "agents", `${personaId}.key`);
-  let agentKey: string;
-  try {
-    agentKey = fs.readFileSync(keyPath, "utf-8").trim();
-  } catch {
-    agentKey = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-    fs.mkdirSync(path.dirname(keyPath), { recursive: true });
-    fs.writeFileSync(keyPath, agentKey, { mode: 0o600 });
-    console.log(`🔑 Generated agent identity → ${keyPath}`);
-  }
-  const client = new CapabilityClient({ relay: relayUrl, privateKey: agentKey });
+  // Identity: one stable key per persona (~/.fez/agents/<persona>.key).
+  // Deliberately NOT process.env.FEZ_PRIVATE_KEY — `fez run` fills that
+  // from ~/.fez/default.key (the *user's* identity), and an agent must not
+  // impersonate its owner: invites, membership, and respondTo gates are
+  // all bound to the agent's own pubkey surviving restarts.
+  const client = new CapabilityClient({ relay: relayUrl, privateKey: loadServiceKey(personaId) });
   const relay = new RelayConnection({ url: relayUrl });
   await relay.connect();
   const myPubkey = client.getPubkey();
 
-  // Resolve channel specs to ids. UUIDs pass through; anything else is a
-  // channel NAME, matched (case-insensitive, optional leading #) against
-  // 47101 channel-metadata events on the relay — raw channel UUIDs proved
-  // to be a recurring foot-gun (relay resets mint new ids, agents end up
-  // pointed at dead channels). A name may match several channels across
-  // communities; the agent serves all of them.
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const channels: string[] = [];
-  const nameSpecs = channelSpecs.filter((s) => !UUID_RE.test(s));
-  channels.push(...channelSpecs.filter((s) => UUID_RE.test(s)));
-  if (nameSpecs.length > 0) {
-    const channelEvents = await relay.query([{ kinds: [KIND_CHANNEL] }]);
-    for (const spec of nameSpecs) {
-      const wanted = spec.replace(/^#/, "").toLowerCase();
-      const matched = channelEvents.filter((e) => {
-        try {
-          return (JSON.parse(e.content).name ?? "").toLowerCase() === wanted;
-        } catch {
-          return false;
-        }
-      });
-      const ids = matched.map((e) => e.tags.find((t) => t[0] === "d")?.[1]).filter((id): id is string => !!id);
-      if (ids.length === 0) {
-        console.warn(`⚠️  No channel named "${spec}" found on ${relayUrl}`);
-      } else {
-        console.log(`🔎 "${spec}" → ${ids.length} channel(s): ${ids.join(", ")}`);
-        channels.push(...ids);
-      }
-    }
-  }
-  if (channels.length === 0) {
-    console.error("No channels resolved — check FEZ_AGENT_CHANNELS and the relay.");
-    process.exit(1);
-  }
+  const channels = await resolveChannels(relay, channelSpecs, relayUrl);
 
   const allowlist = respondTo.startsWith("allowlist:")
     ? new Set(respondTo.slice("allowlist:".length).split(",").map((s) => s.trim()))

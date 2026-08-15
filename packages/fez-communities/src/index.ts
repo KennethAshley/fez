@@ -8,6 +8,7 @@ const KIND_CHANNEL = 47101;
 const KIND_MEMBERSHIP = 47102;
 const KIND_CHANNEL_MESSAGE = 47103;
 const KIND_TYPING = 20002; // ephemeral, Buzz's kind — see fez src/kinds.ts
+const KIND_THREAD_SUMMARY = 39005; // indexer-published thread stats — see fez src/kinds.ts
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -58,6 +59,35 @@ export default function communities(api: FezExtensionAPI): void {
   let nextThreadNo = 1;
 
   let view: { mode: "channel" } | { mode: "thread"; rootId: string } = { mode: "channel" };
+
+  // Indexer-published thread stats (39005). Trust rule: only summaries
+  // authored by a channel member count; latest created_at wins per root.
+  // Display uses max(local count, summary count) — the indexer fills gaps
+  // for clients that missed messages, local knowledge never regresses.
+  const summaryByRoot = new Map<string, { replyCount: number; lastAuthorTs: number; summaryTs: number }>();
+
+  function threadReplyCount(channelId: string, rootId: string): number {
+    const local = threadReplies(channelId, rootId).length;
+    return Math.max(local, summaryByRoot.get(rootId)?.replyCount ?? 0);
+  }
+
+  function handleThreadSummary(event: NostrEvent): void {
+    const rootId = event.tags.find((t) => t[0] === "d")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!rootId || !channelId || !communityId) return;
+    if (!state.isMember(communityId, channelId, event.pubkey)) return; // trust rule
+    const existing = summaryByRoot.get(rootId);
+    if (existing && event.created_at < existing.summaryTs) return;
+    try {
+      const { replyCount, lastReplyAt } = JSON.parse(event.content);
+      if (typeof replyCount !== "number") return;
+      summaryByRoot.set(rootId, { replyCount, lastAuthorTs: lastReplyAt ?? 0, summaryTs: event.created_at });
+      threadNo(rootId); // late joiners learn the thread exists at all
+    } catch {
+      /* malformed summary — ignore */
+    }
+  }
 
   /** Buzz's parse (threading.ts): parent = last reply-marked e-tag; root = root-marked ?? parent. */
   function parseThreadRef(tags: string[][]): { parentId?: string; rootId?: string } {
@@ -167,12 +197,12 @@ export default function communities(api: FezExtensionAPI): void {
       const rootId = msg.rootId!;
       if (summarized.has(rootId)) continue;
       summarized.add(rootId);
-      const replies = threadReplies(channelId, rootId);
+      const count = threadReplyCount(channelId, rootId);
       const root = msgById.get(rootId);
       const no = threadNo(rootId);
       api.ui.appendMessage(
         `thread #${no}`,
-        `${replies.length} repl${replies.length === 1 ? "y" : "ies"} to "${snippet(root?.content ?? "…")}" — /thread ${no}`
+        `${count} repl${count === 1 ? "y" : "ies"} to "${snippet(root?.content ?? "…")}" — /thread ${no}`
       );
     }
   }
@@ -225,7 +255,7 @@ export default function communities(api: FezExtensionAPI): void {
       api.ui.appendMessage(msg.authorName, msg.content);
     } else {
       const no = threadNo(msg.rootId!);
-      const count = threadReplies(channelId, msg.rootId!).length;
+      const count = threadReplyCount(channelId, msg.rootId!);
       api.ui.appendMessage(
         `thread #${no}`,
         `↳ ${msg.authorName}: ${snippet(msg.content)} (${count} repl${count === 1 ? "y" : "ies"}) — /thread ${no}`
@@ -251,12 +281,17 @@ export default function communities(api: FezExtensionAPI): void {
       filters.push(
         { kinds: [KIND_COMMUNITY, KIND_CHANNEL, KIND_MEMBERSHIP], "#c": ids },
         { kinds: [KIND_COMMUNITY], "#d": ids },
-        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) }
+        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
+        { kinds: [KIND_THREAD_SUMMARY], "#h": channelIdsOfJoined() }
       );
     }
     unsubscribe = nostr!.subscribe(filters, (event) => {
       if (event.kind === KIND_TYPING) {
         handleTyping(event);
+        return;
+      }
+      if (event.kind === KIND_THREAD_SUMMARY) {
+        handleThreadSummary(event);
         return;
       }
       if (event.kind === KIND_AGENT_METADATA) {
@@ -413,10 +448,14 @@ export default function communities(api: FezExtensionAPI): void {
     if (!current) return ctx.reply("Not in a channel — /join <channel> first.");
     const lines: string[] = [];
     for (const [no, rootId] of rootByThreadNo) {
+      const count = threadReplyCount(current.channel.id, rootId);
+      if (count === 0) continue;
       const replies = threadReplies(current.channel.id, rootId);
-      if (replies.length === 0) continue;
       const root = msgById.get(rootId);
-      lines.push(`• #${no} "${snippet(root?.content ?? "…")}" — ${replies.length} repl${replies.length === 1 ? "y" : "ies"}, latest from ${replies.at(-1)!.authorName}`);
+      const latest = replies.at(-1)?.authorName;
+      lines.push(
+        `• #${no} "${snippet(root?.content ?? "(not seen — indexer summary)")}" — ${count} repl${count === 1 ? "y" : "ies"}${latest ? `, latest from ${latest}` : ""}`
+      );
     }
     ctx.reply(lines.length > 0 ? lines.join("\n") : "No threads in this channel yet — replies start them.");
   });

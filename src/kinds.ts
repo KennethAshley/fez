@@ -40,6 +40,20 @@ export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["c"
  */
 export const KIND_TYPING = 20002;
 
+/**
+ * Thread summary — the indexer pattern: a standing service watches channel
+ * messages, maintains derived stats in whatever storage its operator
+ * brings, and publishes these back so clients get counts without having
+ * seen every message (Buzz's relay-signed 39005 overlay, decentralized).
+ * Parameterized-replaceable range: real relays keep only the latest per
+ * (pubkey, kind, d); clients apply latest-created_at-wins regardless.
+ * Tags ["d", rootEventId], ["h", channelId], ["c", communityId];
+ * content {replyCount, lastReplyAt, participants}. Trust rule: consumers
+ * accept a summary only if its author is in the channel's winning 47102
+ * membership — an indexer is invited like any agent.
+ */
+export const KIND_THREAD_SUMMARY = 39005;
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,
