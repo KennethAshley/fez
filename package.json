@@ -30,7 +30,9 @@
     "prepublishOnly": "npm run build",
     "communities:build": "npm run build --prefix packages/fez-communities",
     "communities:dev": "npm run communities:build && cp packages/fez-communities/dist/index.js ~/.fez/extensions/fez-communities.js",
-    "dev:relay": "esbuild dev/relay.ts --bundle --format=esm --platform=node --external:ws --outfile=dev/relay.mjs && node dev/relay.mjs"
+    "dev:relay": "esbuild dev/relay.ts --bundle --format=esm --platform=node --external:ws --outfile=dev/relay.mjs && node dev/relay.mjs",
+    "herdr:build": "npm run build --prefix packages/fez-herdr",
+    "herdr:dev": "npm run herdr:build && cp packages/fez-herdr/dist/index.js ~/.fez/extensions/fez-herdr.js"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",

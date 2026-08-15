@@ -27,8 +27,12 @@ export interface HarnessAdapter {
   ): Promise<string>;
 }
 
-/** Minimum gap between onProgress calls — avoids flooding the terminal on every streamed token. */
-const PROGRESS_THROTTLE_MS = 2_000;
+/**
+ * Minimum gap between onProgress calls. Low enough that streaming a reply
+ * into a live bubble reads as typing (pi-style); it gates a local render,
+ * not network traffic.
+ */
+const PROGRESS_THROTTLE_MS = 150;
 
 export interface TimeoutOptions {
   /** Abort if no session/update arrives for this long — the agent has gone silent. */

@@ -75,14 +75,17 @@ program
   .command("run")
   .description("Run an agent from a file")
   .argument("<file>", "Path to agent script (.ts or .js)")
-  .option("-r, --relay <url>", "Relay URL", "wss://relay.damus.io")
+  .option("-r, --relay <url>", "Relay URL (default: FEZ_RELAY env, else wss://relay.damus.io)")
   .option("-k, --key <file>", "Private key file (hex)")
   .action(async (file, options) => {
     // Agent scripts are self-contained: they call Agent.create() and
     // agent.start() themselves (see examples/echo-agent.ts). `fez run`
     // doesn't construct the Agent — it just passes the relay/key through
     // as env vars, which scripts read the same way the TUI does.
-    process.env.FEZ_RELAY = options.relay;
+    // Explicit -r wins; otherwise an inherited FEZ_RELAY stands (a
+    // supervisor like herdr sets it on the launched process — a baked-in
+    // commander default silently clobbered it).
+    process.env.FEZ_RELAY = options.relay ?? process.env.FEZ_RELAY ?? "wss://relay.damus.io";
 
     if (options.key) {
       process.env.FEZ_PRIVATE_KEY = (await fs.readFile(options.key, "utf-8")).trim();

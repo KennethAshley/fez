@@ -55,11 +55,21 @@ export interface MessageHandle {
 
 export type InputHandler = (text: string) => Promise<boolean>;
 
+export type UrlHandler = (url: string) => void;
+
 export interface FezExtensionAPI {
   registerHarness(adapter: HarnessAdapter): void;
   registerMcpServer(name: string, server: McpServer): void;
   registerCommand(name: string, handler: CommandHandler): void;
   registerInputHandler(handler: InputHandler): void;
+  /**
+   * Claim clicks on OSC-8 hyperlinks whose URL starts with `prefix` — the
+   * mechanism behind clickable sidebar/chat text. Embed a link as
+   * `\x1b]8;;URL\x1b\\label\x1b]8;;\x1b\\`; when the user clicks it, the
+   * first matching handler runs. Unclaimed http(s) URLs open in the
+   * system browser.
+   */
+  registerUrlHandler(prefix: string, handler: UrlHandler): void;
   nostr?: NostrAccess;
   ui: {
     setStatus(key: string, value: string): void;
@@ -91,6 +101,7 @@ const inertMessageHandle: MessageHandle = {
 let nostrBackend: NostrAccess | undefined;
 let uiBackend: UiBackend | undefined;
 const inputHandlers: InputHandler[] = [];
+const urlHandlers: { prefix: string; handler: UrlHandler }[] = [];
 
 export function setNostrBackend(backend: NostrAccess): void {
   nostrBackend = backend;
@@ -104,12 +115,18 @@ export function getInputHandlers(): readonly InputHandler[] {
   return inputHandlers;
 }
 
+/** First registered handler whose prefix matches wins; undefined if none. */
+export function findUrlHandler(url: string): UrlHandler | undefined {
+  return urlHandlers.find((h) => url.startsWith(h.prefix))?.handler;
+}
+
 function buildApi(): FezExtensionAPI {
   return {
     registerHarness,
     registerMcpServer,
     registerCommand,
     registerInputHandler: (handler) => inputHandlers.push(handler),
+    registerUrlHandler: (prefix, handler) => urlHandlers.push({ prefix, handler }),
     nostr: nostrBackend,
     ui: {
       setStatus,

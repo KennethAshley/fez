@@ -22,7 +22,8 @@ import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
-import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers, type MessageHandle } from "./extensions.js";
+import { spawn } from "node:child_process";
+import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers, findUrlHandler, type MessageHandle } from "./extensions.js";
 import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
 import { findMcpServer } from "./mcp-servers.js";
@@ -157,7 +158,20 @@ export class FezTUI {
     // stdin to raw mode — from here on, all output must go through the
     // component tree.
     const terminal = new ProcessTerminal();
-    this.screen = new TuiAltScreen(terminal, true, undefined, { mouse: true });
+    this.screen = new TuiAltScreen(terminal, true, undefined, {
+      mouse: true,
+      // OSC-8 hyperlink clicks: extensions claim custom schemes via
+      // registerUrlHandler (e.g. a sidebar entry focusing a herdr tab);
+      // unclaimed web links open in the system browser.
+      openUrl: (url) => {
+        const handler = findUrlHandler(url);
+        if (handler) {
+          handler(url);
+        } else if (/^https?:\/\//.test(url)) {
+          spawn("open", [url], { stdio: "ignore", detached: true }).unref();
+        }
+      },
+    });
     this.editor = new Editor(this.screen, editorTheme);
     this.editor.onSubmit = (text) => void this.onSubmit(text);
     const main = new VStack();
@@ -323,23 +337,42 @@ export class FezTUI {
         })
         .filter((s): s is McpServer => s !== undefined);
 
+      // Stream the reply into a live bubble, pi-style: the Loader covers
+      // the pre-first-token phase (tool calls, thinking); the moment text
+      // arrives it's replaced by the reply bubble, which grows with every
+      // throttled progress tick via its MessageHandle.
+      let streamBubble: MessageHandle | undefined;
       try {
         const result = await harness.invoke(
           fullInstruction,
           process.cwd(),
           (textSoFar) => {
-            const preview = this.truncate(textSoFar, 70);
-            spinner.setMessage(preview ? `@${label}: ${preview}` : openingLine);
+            if (!textSoFar) return;
+            if (!streamBubble) {
+              this.stopLoader(spinner);
+              streamBubble = this.appendBubble(`@${label}`, textSoFar);
+              if (triggeredBy) streamBubble.setFooter(`↳ responding to @${triggeredBy}`);
+            } else {
+              streamBubble.setContent(textSoFar);
+            }
           },
           mcpServers
         );
-        this.stopLoader(spinner);
+        if (streamBubble) {
+          streamBubble.setContent(result);
+        } else {
+          this.stopLoader(spinner);
+          this.printReply(label, result, chalk.bold.green, triggeredBy);
+        }
         this.updateMessage(routingMsg.id, { content: result, status: "done" });
-        this.printReply(label, result, chalk.bold.green, triggeredBy);
         await this.handleAgentReply(result, label, triggeringMsgId, routingMsg.id, depth);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.failLoader(spinner, `@${label} failed: ${message}`);
+        if (streamBubble) {
+          streamBubble.setFooter(`✗ ${message}`);
+        } else {
+          this.failLoader(spinner, `@${label} failed: ${message}`);
+        }
         this.updateMessage(routingMsg.id, { content: message, status: "error" });
       }
       return;
@@ -470,7 +503,7 @@ export class FezTUI {
   ): void {
     const reactionNote = triggeredBy ? chalk.dim(` ✅ responding to @${triggeredBy}`) : "";
     this.log.addChild(new Text("\n" + color(`@${displayName}`) + reactionNote));
-    this.log.addChild(new Markdown(content, 0, 0, markdownTheme));
+    this.log.addChild(new Markdown(content, 2, 0, markdownTheme));
     this.screen.requestRender();
   }
 
@@ -671,7 +704,7 @@ export class FezTUI {
       header = authorColor(msg.author)(`@${msg.author}`);
     }
     this.log.addChild(new Text("\n" + header + " " + timestamp(msg.timestamp)));
-    this.log.addChild(new Markdown(msg.content, 0, 0, markdownTheme));
+    this.log.addChild(new Markdown(msg.content, 2, 0, markdownTheme));
     this.screen.requestRender();
   }
 
@@ -694,7 +727,7 @@ export class FezTUI {
     }
     const colorFor = (a: string) => authorColor(a)(a) + " " + timestamp();
     const header = new Text("\n" + colorFor(author));
-    const body = new Markdown(content, 0, 0, markdownTheme);
+    const body = new Markdown(content, 2, 0, markdownTheme);
     const footer = new Text("");
     const bubble = new Container();
     bubble.addChild(header);
