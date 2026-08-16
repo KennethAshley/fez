@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import chalk from "chalk";
 import {
-  Box,
+
   Container,
   Editor,
   HStack,
@@ -16,6 +16,7 @@ import {
   editorTheme,
   loaderColors,
   markdownTheme,
+  SidePanel,
   timestamp,
 } from "../packages/fez-tui/dist/index.js";
 import { CapabilityClient } from "./client.js";
@@ -77,10 +78,12 @@ export class FezTUI {
   private screen!: TuiAltScreen;
   private log = new Container();
   private editor!: Editor;
-  // Side panels created by extensions via ui.createSidePanel() during
-  // loadExtensions(), before the screen exists — collected here, laid out
-  // once the layout root is built.
-  private panels: { text: Text; width?: number }[] = [];
+  // Full-height sidebar surface (atelier's renderDock pattern — emits
+  // terminal-height rows every render). Extensions get sections via
+  // ui.createSidePanel() during loadExtensions(), before the screen exists.
+  private sidePanel = new SidePanel(() => process.stdout.rows ?? 24);
+  private sidePanelWidth = 26;
+  private sidePanelUsed = false;
   // ui.appendMessage() calls made before screen.start() — flushed after.
   private pendingBubbles: { author: string; content: string }[] = [];
   private warnedMissingSkills = new Set<string>();
@@ -132,11 +135,12 @@ export class FezTUI {
     });
     setUiBackend({
       createSidePanel: (opts) => {
-        const text = new Text("");
-        this.panels.push({ text, width: opts?.width });
+        const section = this.sidePanel.addSection();
+        if (opts?.width) this.sidePanelWidth = opts.width;
+        this.sidePanelUsed = true;
         return {
           setText: (t: string) => {
-            text.setText(t);
+            this.sidePanel.setSection(section, t);
             this.screen?.requestRender();
           },
         };
@@ -183,15 +187,9 @@ export class FezTUI {
     main.addChild(new ScrollView(this.log, { follow: "end" }), { grow: 1 });
     main.addChild(this.editor);
     main.addChild(footer.attach(this.screen));
-    if (this.panels.length > 0) {
-      const side = new VStack();
-      for (const panel of this.panels) side.addChild(panel.text);
-      // Subtle background tint distinguishes the sidebar pane from the
-      // chat surface (Box paints its bg across the full column width).
-      const sideBox = new Box(1, 0, (t) => chalk.bgAnsi256(236)(t));
-      sideBox.addChild(side);
+    if (this.sidePanelUsed) {
       const root = new HStack([], { gap: 1 });
-      root.addChild(sideBox, { basis: this.panels[0].width ?? 26 });
+      root.addChild(this.sidePanel, { basis: this.sidePanelWidth });
       root.addChild(main, { grow: 1 });
       this.screen.setLayoutRoot(root);
     } else {

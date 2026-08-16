@@ -28,5 +28,6 @@ export {
 } from "@earendil-works/pi-tui";
 
 export { Footer } from "./footer.js";
+export { SidePanel } from "./side-panel.js";
 export { markdownTheme, editorTheme, loaderColors, authorColor, timestamp } from "./theme.js";
 export { highlightCode } from "./highlight.js";
