@@ -12,6 +12,7 @@ const KIND_THREAD_SUMMARY = 39005; // indexer-published thread stats — see fez
 const KIND_REACTION = 7; // standard nostr, Buzz's shape: content = emoji, ["e", target], plus ["h", channel] for subscription
 const KIND_DELETION = 5; // standard nostr: retract your own events (agents clear status reactions)
 const KIND_DRAFT = 20003; // ephemeral streaming preview of a message being composed — see fez src/kinds.ts
+const KIND_OBSERVER = 20004; // ephemeral owner-encrypted agent activity frames — see fez src/kinds.ts
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -61,7 +62,63 @@ export default function communities(api: FezExtensionAPI): void {
   const rootByThreadNo = new Map<number, string>();
   let nextThreadNo = 1;
 
-  let view: { mode: "channel" } | { mode: "thread"; rootId: string } = { mode: "channel" };
+  let view: { mode: "channel" } | { mode: "thread"; rootId: string } | { mode: "watch"; agent: string } =
+    { mode: "channel" };
+
+  // ── Observer stream (owner-only, NIP-44) — live window into owned
+  // agents. Frames decrypt with the user's key; per-agent rolling
+  // activity feeds the /watch view and a glanceable footer segment. ─────
+  interface ObserverEntry {
+    type: string;
+    text?: string;
+    title?: string;
+    status?: string;
+    ts: number;
+  }
+  const observerFeeds = new Map<string, ObserverEntry[]>(); // agent name -> rolling entries
+  let watchThoughtBubble: MessageHandle | undefined;
+  let watchTextBubble: MessageHandle | undefined;
+
+  function handleObserverFrame(event: NostrEvent): void {
+    const agent = event.tags.find((t) => t[0] === "agent")?.[1];
+    if (!agent) return;
+    let frame: ObserverEntry;
+    try {
+      frame = JSON.parse(nostr!.decrypt(event.pubkey, event.content));
+    } catch {
+      return; // not for us / garbage — ignorable by design
+    }
+    const feed = observerFeeds.get(agent) ?? [];
+    feed.push(frame);
+    if (feed.length > 30) feed.splice(0, feed.length - 30);
+    observerFeeds.set(agent, feed);
+
+    // Glanceable footer segment while any owned agent is mid-turn.
+    if (frame.type === "turn" && frame.status !== "started") {
+      api.ui.setStatus("observer", "");
+    } else if (frame.type === "tool" && frame.title) {
+      api.ui.setStatus("observer", `⚙ ${agent}: ${frame.title}`);
+    } else if (frame.type === "turn") {
+      api.ui.setStatus("observer", `⚙ ${agent}: working…`);
+    }
+
+    // Live rendering inside /watch.
+    if (view.mode !== "watch" || view.agent !== agent) return;
+    if (frame.type === "thought" && frame.text) {
+      if (!watchThoughtBubble) watchThoughtBubble = api.ui.appendMessage(`${agent} · thinking`, "");
+      watchThoughtBubble.setContent(frame.text);
+    } else if (frame.type === "text" && frame.text) {
+      if (!watchTextBubble) watchTextBubble = api.ui.appendMessage(`${agent} · drafting`, "");
+      watchTextBubble.setContent(frame.text);
+    } else if (frame.type === "tool") {
+      api.ui.appendMessage("⚙", `${frame.title ?? "tool"}${frame.status ? ` — ${frame.status}` : ""}`);
+    } else if (frame.type === "turn") {
+      api.ui.appendMessage("communities", `— turn ${frame.status} —`);
+      // Next turn gets fresh bubbles.
+      watchThoughtBubble = undefined;
+      watchTextBubble = undefined;
+    }
+  }
 
   // Live-updatable UI state: handles to rendered bubbles (by message id)
   // so reactions land on them after the fact, and to thread-summary lines
@@ -205,7 +262,11 @@ export default function communities(api: FezExtensionAPI): void {
     panel.setText(state.sidebarText());
     const current = state.currentChannel();
     const threadSuffix =
-      view.mode === "thread" ? ` ▸ thread #${threadNo(view.rootId)}` : "";
+      view.mode === "thread"
+        ? ` ▸ thread #${threadNo(view.rootId)}`
+        : view.mode === "watch"
+          ? ` ▸ watching @${view.agent}`
+          : "";
     api.ui.setStatus(
       "scope",
       current ? `${current.community.name}/#${current.channel.name}${threadSuffix}` : ""
@@ -286,6 +347,10 @@ export default function communities(api: FezExtensionAPI): void {
     // bubbles and collapses replies into thread summaries; the thread view
     // shows its own replies as indented bubbles and everything else as a
     // compact line so the thread stays coherent.
+    if (view.mode === "watch") {
+      api.ui.appendMessage("communities", `(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
+      return;
+    }
     if (view.mode === "thread") {
       if (msg.rootId === view.rootId) {
         // Adopt the author's streaming draft bubble as this message's
@@ -622,10 +687,32 @@ export default function communities(api: FezExtensionAPI): void {
   });
 
   api.registerCommand("back", async (_args, ctx) => {
-    if (view.mode !== "thread") return ctx.reply("Not in a thread view.");
+    if (view.mode === "channel") return ctx.reply("Not in a thread or watch view.");
     const current = state.currentChannel();
     view = { mode: "channel" };
+    watchThoughtBubble = undefined;
+    watchTextBubble = undefined;
     if (current) renderChannelTimeline(current.channel.id);
+    else api.ui.clearLog();
+    refreshUi();
+  });
+
+  api.registerCommand("watch", async (args, ctx) => {
+    const agent = args.trim().replace(/^@/, "");
+    if (!agent) return ctx.reply("Usage: /watch <agent-name> — live encrypted view of an agent you own. /back to leave.");
+    view = { mode: "watch", agent };
+    watchThoughtBubble = undefined;
+    watchTextBubble = undefined;
+    api.ui.clearLog();
+    const feed = observerFeeds.get(agent) ?? [];
+    api.ui.appendMessage(
+      "communities",
+      `— watching **@${agent}** (owner-encrypted activity; frames arrive while it works) — /back to leave —`
+    );
+    for (const entry of feed.slice(-10)) {
+      if (entry.type === "tool") api.ui.appendMessage("⚙", `${entry.title ?? "tool"}${entry.status ? ` — ${entry.status}` : ""}`);
+      else if (entry.type === "turn") api.ui.appendMessage("communities", `— turn ${entry.status} —`);
+    }
     refreshUi();
   });
 
@@ -708,6 +795,11 @@ export default function communities(api: FezExtensionAPI): void {
   });
 
   // ── Startup ──────────────────────────────────────────────────────────────
+
+  // Observer frames are p-tagged to us and orthogonal to channel
+  // subscriptions — one always-on subscription, tiny traffic (only while
+  // owned agents work).
+  nostr.subscribe([{ kinds: [KIND_OBSERVER], "#p": [nostr.pubkey] }], handleObserverFrame);
 
   void (async () => {
     const metadataEvents = await nostr.query([{ kinds: [KIND_AGENT_METADATA], limit: 200 }]);

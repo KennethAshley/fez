@@ -1,4 +1,4 @@
-import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
+import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey, nip44 } from "nostr-tools";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
 
@@ -101,6 +101,20 @@ export class CapabilityClient {
       content: tmpl.content,
     };
     return finalizeEvent(event, this.privateKey);
+  }
+
+  /**
+   * NIP-44 encrypt to a peer — the crypto seam for private pipes over
+   * public relays (observer frames, future DMs). Same custody rationale
+   * as signEvent: the private key never leaves this class.
+   */
+  encryptTo(peerPubkey: string, plaintext: string): string {
+    return nip44.encrypt(plaintext, nip44.getConversationKey(this.privateKey, peerPubkey));
+  }
+
+  /** NIP-44 decrypt from a peer. Throws on wrong key/garbage — callers decide whether that's ignorable. */
+  decryptFrom(peerPubkey: string, ciphertext: string): string {
+    return nip44.decrypt(ciphertext, nip44.getConversationKey(this.privateKey, peerPubkey));
   }
 
   /** Connect to the relay */

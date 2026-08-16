@@ -125,6 +125,8 @@ export class FezTUI {
       },
       subscribe: (filters, onEvent) => this.relay.subscribe(filters, onEvent),
       query: (filters) => this.relay.query(filters),
+      encrypt: (peer, plaintext) => this.client.encryptTo(peer, plaintext),
+      decrypt: (peer, ciphertext) => this.client.decryptFrom(peer, ciphertext),
     });
     setUiBackend({
       createSidePanel: (opts) => {

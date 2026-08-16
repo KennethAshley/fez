@@ -35,6 +35,10 @@ export interface NostrAccess {
   publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<Event>;
   subscribe(filters: Filter[], onEvent: (event: Event) => void): () => void;
   query(filters: Filter[]): Promise<Event[]>;
+  /** NIP-44 with the user's key — private pipes over public relays (observer frames, DMs). */
+  encrypt(peerPubkey: string, plaintext: string): string;
+  /** Throws on wrong key/garbage — callers decide whether that's ignorable. */
+  decrypt(peerPubkey: string, ciphertext: string): string;
 }
 
 export interface PanelHandle {

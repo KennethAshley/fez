@@ -30,6 +30,8 @@ export interface NostrAccess {
   publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<NostrEvent>;
   subscribe(filters: NostrFilter[], onEvent: (event: NostrEvent) => void): () => void;
   query(filters: NostrFilter[]): Promise<NostrEvent[]>;
+  encrypt(peerPubkey: string, plaintext: string): string;
+  decrypt(peerPubkey: string, ciphertext: string): string;
 }
 
 export interface PanelHandle {

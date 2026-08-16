@@ -141,7 +141,9 @@ export default function herdr(api: FezExtensionAPI): void {
         // Type the run command into the tab's shell — herdr supervises the
         // process from here; it survives fez restarts.
         const relay = process.env.FEZ_RELAY ?? "wss://relay.damus.io";
-        const cmd = `FEZ_AGENT_PERSONA=${persona} FEZ_AGENT_CHANNELS=${channel} FEZ_AGENT_RESPOND_TO=${respondTo} FEZ_RELAY=${relay} fez run ${process.cwd()}/packages/fez-communities/dist/channel-agent.js\n`;
+        // FEZ_AGENT_OWNER = the registering user: enables the encrypted
+        // observer stream (/watch <persona>) for free on registered agents.
+        const cmd = `FEZ_AGENT_PERSONA=${persona} FEZ_AGENT_CHANNELS=${channel} FEZ_AGENT_RESPOND_TO=${respondTo} FEZ_AGENT_OWNER=${api.nostr!.pubkey} FEZ_RELAY=${relay} fez run ${process.cwd()}/packages/fez-communities/dist/channel-agent.js\n`;
         await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: cmd });
         registered = registered.filter((t) => t.persona !== persona);
         registered.push({ persona, channel, tabId: tab.tab_id, paneId: pane.pane_id });

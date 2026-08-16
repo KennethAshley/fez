@@ -11,8 +11,10 @@ import {
   KIND_DELETION,
   KIND_DRAFT,
   KIND_MEMBERSHIP,
+  KIND_OBSERVER,
   KIND_REACTION,
   KIND_TYPING,
+  type HarnessUpdate,
 } from "@fez/protocol";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 
@@ -120,6 +122,24 @@ async function main() {
 
   console.log(`🟢 @${personaId} standing by in ${channels.length} channel(s) on ${relayUrl}`);
   console.log(`   Pubkey: ${myPubkey} | respondTo: ${respondTo}`);
+
+  // Observer stream: the owner-only activity firehose (thoughts, tool
+  // calls, turn lifecycle) as ephemeral NIP-44-encrypted frames — Buzz's
+  // observer bus, decentralized. Owner absent = stream off.
+  if (owner) console.log(`   Observer stream → ${owner.slice(0, 12)}… (/watch ${personaId} in fez)`);
+  else console.log(`   Observer stream off (set FEZ_AGENT_OWNER=<pubkey> to enable /watch)`);
+  const publishObserver = (frame: Record<string, unknown>) => {
+    if (!owner) return;
+    void relay
+      .publish(
+        client.signEvent({
+          kind: KIND_OBSERVER,
+          tags: [["p", owner], ["agent", personaId!]],
+          content: client.encryptTo(owner, JSON.stringify({ ...frame, ts: Date.now() })),
+        })
+      )
+      .catch(() => {});
+  };
 
   const recent = new Map<string, string[]>(); // channelId -> last few messages, as harness context
   let busy = false;
@@ -249,7 +269,9 @@ async function main() {
             .catch(() => {});
         };
 
-        const reply = await harness.invoke(prompt, process.cwd(), publishDraft, mcpServers);
+        publishObserver({ type: "turn", status: "started" });
+        const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
+        const reply = await harness.invoke(prompt, process.cwd(), publishDraft, mcpServers, onUpdate);
 
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
@@ -257,8 +279,10 @@ async function main() {
           content: reply,
         });
         await relay.publish(replyEvent);
+        publishObserver({ type: "turn", status: "done" });
         console.log(`✅ Replied (${reply.length} chars)`);
       } catch (err) {
+        publishObserver({ type: "turn", status: "failed" });
         console.error(`❌ Turn failed:`, err instanceof Error ? err.message : err);
       } finally {
         // Buzz's ReactionGuard shape: status reactions clear on every exit

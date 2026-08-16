@@ -4,6 +4,22 @@ import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
 import { notice } from "./notices.js";
 
 /**
+ * One activity event from a running harness turn — the raw material of the
+ * observer stream (Buzz's two-audience model: reply text is channel-
+ * visible; thoughts/tools are owner-only). text/thought carry ACCUMULATED
+ * text (coalesced like onProgress); tool/plan events are discrete.
+ */
+export interface HarnessUpdate {
+  type: "text" | "thought" | "tool" | "plan";
+  /** Accumulated text so far (text/thought types). */
+  text?: string;
+  /** Tool call title (tool type). */
+  title?: string;
+  /** Tool call status (tool type, from tool_call_update). */
+  status?: string;
+}
+
+/**
  * A locally installed coding-agent harness (Claude Code, pi, ...) that Fez
  * can dispatch instructions to directly, without going through Nostr.
  */
@@ -18,12 +34,15 @@ export interface HarnessAdapter {
    * mcpServers are the persona's resolved skills (see mcp-servers.ts) — a
    * harness that isn't ACP-based (or doesn't support MCP) is free to ignore
    * this; it's additive, not a required capability.
+   * onUpdate fires with richer activity (thoughts, tool calls, plans) for
+   * observer streams — also optional and additive.
    */
   invoke(
     instruction: string,
     cwd?: string,
     onProgress?: (textSoFar: string) => void,
-    mcpServers?: McpServer[]
+    mcpServers?: McpServer[],
+    onUpdate?: (update: HarnessUpdate) => void
   ): Promise<string>;
 }
 
@@ -68,7 +87,7 @@ function claudeCodeHarness(): HarnessAdapter {
     command,
     detect: () => spawnDetect(command, ["--version"]),
 
-    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers) {
+    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate) {
       const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"] });
 
       // Without these, a write to a pipe whose reader already exited (e.g.
@@ -125,7 +144,9 @@ function claudeCodeHarness(): HarnessAdapter {
           const { idleMs, maxMs } = DEFAULT_TIMEOUTS;
           const hardDeadline = Date.now() + maxMs;
           let text = "";
+          let thought = "";
           let lastProgressAt = 0;
+          let lastThoughtAt = 0;
 
           while (true) {
             const remaining = hardDeadline - Date.now();
@@ -168,6 +189,30 @@ function claudeCodeHarness(): HarnessAdapter {
               update.content.type === "text"
             ) {
               text += update.content.text;
+              const now = Date.now();
+              if (onUpdate && now - lastProgressAt >= PROGRESS_THROTTLE_MS) {
+                onUpdate({ type: "text", text });
+              }
+            } else if (
+              update.sessionUpdate === "agent_thought_chunk" &&
+              update.content.type === "text"
+            ) {
+              thought += update.content.text;
+              const now = Date.now();
+              if (onUpdate && now - lastThoughtAt >= PROGRESS_THROTTLE_MS) {
+                lastThoughtAt = now;
+                onUpdate({ type: "thought", text: thought });
+              }
+            } else if (update.sessionUpdate === "tool_call") {
+              onUpdate?.({ type: "tool", title: update.title, status: update.status ?? "started" });
+            } else if (update.sessionUpdate === "tool_call_update") {
+              onUpdate?.({
+                type: "tool",
+                title: update.title ?? undefined,
+                status: update.status ?? undefined,
+              });
+            } else if (update.sessionUpdate === "plan") {
+              onUpdate?.({ type: "plan" });
             }
 
             // Throttled, and fires on any update (not just text chunks) —
@@ -185,6 +230,8 @@ function claudeCodeHarness(): HarnessAdapter {
           // with zero onProgress calls (bit for real: relay draft streaming
           // saw nothing for one-chunk replies).
           if (onProgress && text) onProgress(text);
+          if (onUpdate && thought) onUpdate({ type: "thought", text: thought });
+          if (onUpdate && text) onUpdate({ type: "text", text });
 
           return text;
         });

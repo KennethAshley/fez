@@ -31,7 +31,7 @@ export { PackageManager, type FezPackage, type FezManifest } from "./package-man
 export * from "./kinds.js";
 // Harness/persona/skill resolution — what a standing agent script (run via
 // `fez run`) needs to dispatch instructions the same way the TUI does.
-export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, registerHarness, type HarnessAdapter } from "./harness.js";
+export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, registerHarness, type HarnessAdapter, type HarnessUpdate } from "./harness.js";
 export { findPersona, listPersonas, type Persona } from "./personas.js";
 export { findMcpServer, registerMcpServer } from "./mcp-servers.js";
 export type { FezExtensionAPI, FezExtension, NostrAccess, PanelHandle, InputHandler } from "./extensions.js";

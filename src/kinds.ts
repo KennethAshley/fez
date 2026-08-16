@@ -51,6 +51,18 @@ export const KIND_TYPING = 20002;
 export const KIND_DRAFT = 20003;
 
 /**
+ * Observer frame — the owner-only half of the two-audience model (Buzz's
+ * observer bus, decentralized): channels see final messages + presence;
+ * the agent's OWNER sees the full activity firehose (thought chunks, tool
+ * calls, turn lifecycle) as NIP-44-encrypted frames only they can read.
+ * Ephemeral (live-only, never stored — and a sloppy relay storing them
+ * leaks nothing, they're ciphertext). Tags ["p", ownerPubkey],
+ * ["agent", personaName]; content = nip44(agentKey ↔ ownerPub) of
+ * {type: "thought"|"tool"|"text"|"turn", text?, title?, status?, ts}.
+ */
+export const KIND_OBSERVER = 20004;
+
+/**
  * Thread summary — the indexer pattern: a standing service watches channel
  * messages, maintains derived stats in whatever storage its operator
  * brings, and publishes these back so clients get counts without having
