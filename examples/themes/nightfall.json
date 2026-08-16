@@ -1,0 +1,26 @@
+{
+  "$schema": "./fez-theme-schema.json",
+  "name": "nightfall",
+  "vars": {
+    "violet": 135,
+    "deepViolet": 99,
+    "teal": 80,
+    "indigo": 60
+  },
+  "colors": {
+    "you": 75,
+    "brand": "violet",
+    "authorPalette": [114, 216, "teal", 210, 147, 222],
+    "timestamp": "indigo",
+    "accent": "teal",
+    "error": 203,
+    "banner": "deepViolet",
+    "sidebarBg": 234,
+    "loaderSpinner": "violet",
+    "mdHeading": 222,
+    "mdLink": "teal",
+    "mdCode": 216,
+    "mdQuote": "indigo",
+    "mdListBullet": "violet"
+  }
+}

@@ -13,6 +13,7 @@ import {
   TuiAltScreen,
   VStack,
   authorColor,
+  compileThemeJson,
   editorTheme,
   getActiveTheme,
   loaderColors,
@@ -21,6 +22,7 @@ import {
   SidePanel,
   timestamp,
   type FezTheme,
+  type ThemeJson,
 } from "../packages/fez-tui/dist/index.js";
 import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
@@ -28,7 +30,7 @@ import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { spawn } from "node:child_process";
-import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, type MessageHandle } from "./extensions.js";
+import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, registerTheme as registerThemePack, type MessageHandle } from "./extensions.js";
 import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
 import { findMcpServer } from "./mcp-servers.js";
@@ -158,6 +160,7 @@ export class FezTUI {
     });
 
     await loadExtensions();
+    this.loadJsonThemes();
     this.initThemes();
     const harnesses = await detectHarnesses();
 
@@ -815,12 +818,59 @@ export class FezTUI {
   }
 
   /**
-   * Themes: packs registered during loadExtensions() become switchable
-   * via /theme, the choice persisted in ~/.fez/theme.json. Applying is a
-   * live swap — the theme module's exports are delegates into the active
-   * theme, so everything rendered from now on (and the sidebar, which
-   * repaints every frame) picks it up; existing bubbles keep the colors
-   * they were painted with.
+   * JSON themes — pi's themes-as-data model: ~/.fez/themes/*.json are
+   * flat color-token files (hex / 256-index / "", optional vars),
+   * compiled into theme specs and registered exactly like extension
+   * packs. Data beats code here: schema-validatable, safely
+   * agent-authorable, and a future GUI imports the same JSON directly.
+   * Hot reload: editing the ACTIVE theme's file reapplies it on save.
+   */
+  private loadJsonThemes(): void {
+    const dir = path.join(os.homedir(), ".fez", "themes");
+    const register = (file: string): string | undefined => {
+      try {
+        const spec = JSON.parse(fsSync.readFileSync(path.join(dir, file), "utf-8")) as ThemeJson;
+        const compiled = compileThemeJson(spec);
+        registerThemePack(compiled as never);
+        return compiled.name;
+      } catch (err) {
+        console.error(`⚠️  theme ${file}: ${err instanceof Error ? err.message : err}`);
+        return undefined;
+      }
+    };
+    let entries: string[] = [];
+    try {
+      entries = fsSync.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    } catch {
+      return; // no themes dir yet
+    }
+    for (const file of entries) register(file);
+    try {
+      const watcher = fsSync.watch(dir, (_event, file) => {
+        if (!file || !file.endsWith(".json")) return;
+        setTimeout(() => {
+          const name = register(file);
+          if (name && name === getActiveTheme().name) {
+            const spec = findTheme(name);
+            if (spec) {
+              setActiveTheme(spec as unknown as Partial<FezTheme>);
+              this.screen?.requestRender();
+            }
+          }
+        }, 60); // editors fire rename+change pairs; a beat lets the write land
+      });
+      watcher.unref?.();
+    } catch { /* watching is best-effort */ }
+  }
+
+  /**
+   * Themes: packs registered during loadExtensions() and JSON themes
+   * from ~/.fez/themes become switchable via /theme, the choice
+   * persisted in ~/.fez/theme.json. Applying is a live swap — the theme
+   * module's exports are delegates into the active theme, so everything
+   * rendered from now on (and the sidebar, which repaints every frame)
+   * picks it up; existing bubbles keep the colors they were painted
+   * with.
    */
   private initThemes(): void {
     const prefFile = path.join(os.homedir(), ".fez", "theme.json");

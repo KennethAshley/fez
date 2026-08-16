@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "fez theme",
+  "description": "A fez color theme — flat color tokens compiled by fez-tui (and importable directly by GUI clients). Colors are \"#rrggbb\", a 256-color index (0-255), \"\" for unstyled, or the name of a vars entry. Every token is optional; omitted tokens keep the default theme's styling. Structural emphasis (bold authors/headings, underlined links, italic quotes) is applied by the engine — themes stay pure color.",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": { "type": "string", "minLength": 1, "pattern": "^[^/]+$" },
+    "vars": {
+      "type": "object",
+      "description": "Reusable colors, referenced by name from colors entries.",
+      "additionalProperties": { "$ref": "#/definitions/color" }
+    },
+    "colors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "you": { "$ref": "#/definitions/color", "description": "Your own messages (rendered bold)" },
+        "brand": { "$ref": "#/definitions/color", "description": "fez itself — banner wordmark, @fez in chat (bold)" },
+        "authorPalette": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/color" },
+          "minItems": 1,
+          "description": "Hash-picked per-author colors (bold) — same author, same color, everywhere"
+        },
+        "timestamp": { "$ref": "#/definitions/color", "description": "HH:MM:SS stamps; \"\" = terminal dim" },
+        "dim": { "$ref": "#/definitions/color", "description": "System lines and secondary text; \"\" = terminal dim" },
+        "accent": { "$ref": "#/definitions/color", "description": "Links, prompts, interactive accent" },
+        "error": { "$ref": "#/definitions/color", "description": "Errors (bold)" },
+        "banner": { "$ref": "#/definitions/color", "description": "The FEZ block logo" },
+        "sidebarBg": { "$ref": "#/definitions/color", "description": "Background across the full-height sidebar pane" },
+        "loaderSpinner": { "$ref": "#/definitions/color" },
+        "loaderMessage": { "$ref": "#/definitions/color" },
+        "mdHeading": { "$ref": "#/definitions/color", "description": "Markdown headings (bold)" },
+        "mdLink": { "$ref": "#/definitions/color", "description": "Markdown links (underlined)" },
+        "mdLinkUrl": { "$ref": "#/definitions/color" },
+        "mdCode": { "$ref": "#/definitions/color", "description": "Inline code" },
+        "mdCodeBlock": { "$ref": "#/definitions/color" },
+        "mdCodeBlockBorder": { "$ref": "#/definitions/color" },
+        "mdQuote": { "$ref": "#/definitions/color", "description": "Blockquotes (italic)" },
+        "mdQuoteBorder": { "$ref": "#/definitions/color" },
+        "mdHr": { "$ref": "#/definitions/color" },
+        "mdListBullet": { "$ref": "#/definitions/color" }
+      }
+    }
+  },
+  "definitions": {
+    "color": {
+      "oneOf": [
+        { "type": "string", "description": "\"#rrggbb\", \"\" for unstyled, or a vars name" },
+        { "type": "integer", "minimum": 0, "maximum": 255, "description": "256-color palette index" }
+      ]
+    }
+  }
+}

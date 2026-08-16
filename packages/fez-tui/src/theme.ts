@@ -157,3 +157,81 @@ export const loaderColors = {
   spinner: (t: string) => active.loader.spinner(t),
   message: (t: string) => active.loader.message(t),
 };
+
+// ── JSON themes — pi's model: themes as DATA, not code. ────────────────
+//
+// A JSON theme is a flat map of color tokens (hex "#rrggbb", 256-color
+// index, or "" for unstyled), with optional `vars` for reuse — safely
+// authorable by hand, by schema-validated editors, or by an agent, and
+// consumable byte-for-byte by a future GUI (tokens map onto CSS vars in
+// a way style FUNCTIONS never can). compileThemeJson turns one into the
+// Partial<FezTheme> the engine already understands; structural emphasis
+// (bold authors, underlined links, italic quotes) is applied HERE so
+// theme files stay pure color.
+
+export interface ThemeJson {
+  name: string;
+  vars?: Record<string, string | number>;
+  colors?: Record<string, string | number | (string | number)[]>;
+}
+
+type ColorValue = string | number;
+
+export function compileThemeJson(spec: ThemeJson): Partial<FezTheme> & { name: string } {
+  if (!spec || typeof spec.name !== "string" || !spec.name || spec.name.includes("/")) {
+    throw new Error(`theme "name" is required (no "/")`);
+  }
+  const vars = spec.vars ?? {};
+  const resolveValue = (v: ColorValue): ColorValue => (typeof v === "string" && v in vars ? vars[v] : v);
+  const paint = (v: ColorValue): StyleFn => {
+    const value = resolveValue(v);
+    if (value === "") return (s) => s;
+    if (typeof value === "number") return chalk.ansi256(value);
+    if (/^#[0-9a-f]{6}$/i.test(value)) return chalk.hex(value);
+    throw new Error(`bad color "${v}" (use "#rrggbb", a 256-color number, "" for plain, or a vars name)`);
+  };
+  const paintBg = (v: ColorValue): StyleFn => {
+    const value = resolveValue(v);
+    if (value === "") return (s) => s;
+    if (typeof value === "number") return chalk.bgAnsi256(value);
+    if (/^#[0-9a-f]{6}$/i.test(value)) return chalk.bgHex(value);
+    throw new Error(`bad color "${v}"`);
+  };
+  const bold = (fn: StyleFn): StyleFn => (s) => chalk.bold(fn(s));
+  // A dim-role token without a color keeps the terminal's dim attribute.
+  const dimmish = (v: ColorValue): StyleFn => (resolveValue(v) === "" ? chalk.dim : paint(v));
+
+  const c = spec.colors ?? {};
+  const out: Partial<FezTheme> & { name: string } = { name: spec.name };
+  const has = (k: string) => k in c;
+  const val = (k: string) => c[k] as ColorValue;
+
+  if (has("you")) out.you = bold(paint(val("you")));
+  if (has("brand")) out.brand = bold(paint(val("brand")));
+  if (Array.isArray(c.authorPalette)) out.authorPalette = c.authorPalette.map((v) => bold(paint(v)));
+  if (has("timestamp")) out.timestamp = dimmish(val("timestamp"));
+  if (has("dim")) out.dim = dimmish(val("dim"));
+  if (has("accent")) out.accent = paint(val("accent"));
+  if (has("error")) out.error = bold(paint(val("error")));
+  if (has("banner")) out.banner = paint(val("banner"));
+  if (has("sidebarBg")) out.sidebarBg = paintBg(val("sidebarBg"));
+  if (has("loaderSpinner") || has("loaderMessage")) {
+    out.loader = {
+      spinner: has("loaderSpinner") ? paint(val("loaderSpinner")) : defaultTheme.loader.spinner,
+      message: has("loaderMessage") ? dimmish(val("loaderMessage")) : defaultTheme.loader.message,
+    };
+  }
+  const md: Partial<MarkdownTheme> = {};
+  if (has("mdHeading")) md.heading = bold(paint(val("mdHeading")));
+  if (has("mdLink")) md.link = (t) => chalk.underline(paint(val("mdLink"))(t));
+  if (has("mdLinkUrl")) md.linkUrl = dimmish(val("mdLinkUrl"));
+  if (has("mdCode")) md.code = paint(val("mdCode"));
+  if (has("mdCodeBlock")) md.codeBlock = paint(val("mdCodeBlock"));
+  if (has("mdCodeBlockBorder")) md.codeBlockBorder = dimmish(val("mdCodeBlockBorder"));
+  if (has("mdQuote")) md.quote = (t) => chalk.italic(dimmish(val("mdQuote"))(t));
+  if (has("mdQuoteBorder")) md.quoteBorder = dimmish(val("mdQuoteBorder"));
+  if (has("mdHr")) md.hr = dimmish(val("mdHr"));
+  if (has("mdListBullet")) md.listBullet = paint(val("mdListBullet"));
+  if (Object.keys(md).length > 0) out.markdown = { ...defaultTheme.markdown, ...md };
+  return out;
+}
