@@ -29,5 +29,5 @@ export {
 
 export { Footer } from "./footer.js";
 export { SidePanel } from "./side-panel.js";
-export { markdownTheme, editorTheme, loaderColors, authorColor, timestamp } from "./theme.js";
+export { markdownTheme, editorTheme, loaderColors, authorColor, timestamp, defaultTheme, setActiveTheme, getActiveTheme, type FezTheme, type StyleFn } from "./theme.js";
 export { highlightCode } from "./highlight.js";

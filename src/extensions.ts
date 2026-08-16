@@ -61,6 +61,49 @@ export type InputHandler = (text: string) => Promise<boolean>;
 
 export type UrlHandler = (url: string) => void;
 
+/**
+ * A theme pack's payload — a named Partial of fez-tui's FezTheme,
+ * declared structurally here so packs (which can't resolve fez-tui from
+ * ~/.fez/extensions) and core agree on shape without a shared import.
+ * Style functions are (s) => s-with-ANSI; packs use raw escape codes
+ * (chalk doesn't resolve from the extensions dir either — see
+ * examples/themes/). Unknown tokens are ignored; omitted ones fall back
+ * to the default theme.
+ */
+export interface ThemeSpec {
+  name: string;
+  you?: (s: string) => string;
+  brand?: (s: string) => string;
+  authorPalette?: ((s: string) => string)[];
+  timestamp?: (s: string) => string;
+  dim?: (s: string) => string;
+  accent?: (s: string) => string;
+  error?: (s: string) => string;
+  banner?: (s: string) => string;
+  sidebarBg?: (s: string) => string;
+  loader?: { spinner?: (s: string) => string; message?: (s: string) => string };
+  markdown?: Record<string, (...args: string[]) => string>;
+  editor?: Record<string, unknown>;
+}
+
+const themeRegistry = new Map<string, ThemeSpec>();
+
+export function registerTheme(spec: ThemeSpec): void {
+  if (!spec?.name) {
+    console.error("⚠️  registerTheme: theme has no name — skipped");
+    return;
+  }
+  themeRegistry.set(spec.name, spec);
+}
+
+export function getRegisteredThemes(): ThemeSpec[] {
+  return [...themeRegistry.values()];
+}
+
+export function findTheme(name: string): ThemeSpec | undefined {
+  return themeRegistry.get(name);
+}
+
 export interface FezExtensionAPI {
   registerHarness(adapter: HarnessAdapter): void;
   registerMcpServer(name: string, server: McpServer): void;
@@ -74,6 +117,11 @@ export interface FezExtensionAPI {
    * system browser.
    */
   registerUrlHandler(prefix: string, handler: UrlHandler): void;
+  /**
+   * Register a theme pack (see ThemeSpec). Registering doesn't activate —
+   * the user picks with /theme <name>, persisted across sessions.
+   */
+  registerTheme(spec: ThemeSpec): void;
   nostr?: NostrAccess;
   ui: {
     setStatus(key: string, value: string): void;
@@ -134,6 +182,7 @@ function buildApi(): FezExtensionAPI {
     registerCommand,
     registerInputHandler: (handler) => inputHandlers.push(handler),
     registerUrlHandler: (prefix, handler) => urlHandlers.push({ prefix, handler }),
+    registerTheme,
     nostr: nostrBackend,
     ui: {
       setStatus,

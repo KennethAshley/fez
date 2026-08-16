@@ -14,10 +14,13 @@ import {
   VStack,
   authorColor,
   editorTheme,
+  getActiveTheme,
   loaderColors,
   markdownTheme,
+  setActiveTheme,
   SidePanel,
   timestamp,
+  type FezTheme,
 } from "../packages/fez-tui/dist/index.js";
 import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
@@ -25,11 +28,12 @@ import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { spawn } from "node:child_process";
-import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers, findUrlHandler, type MessageHandle } from "./extensions.js";
+import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, type MessageHandle } from "./extensions.js";
 import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
 import { findMcpServer } from "./mcp-servers.js";
-import { findCommand } from "./commands.js";
+import { findCommand, registerCommand } from "./commands.js";
+import fsSync from "node:fs";
 import { setNoticeSink } from "./notices.js";
 import type { Event } from "nostr-tools";
 import type { McpServer } from "@agentclientprotocol/sdk";
@@ -154,6 +158,7 @@ export class FezTUI {
     });
 
     await loadExtensions();
+    this.initThemes();
     const harnesses = await detectHarnesses();
 
     // Owned-terminal UI, full-window chat shape: the message log fills all
@@ -809,6 +814,57 @@ export class FezTUI {
     this.screen.requestRender();
   }
 
+  /**
+   * Themes: packs registered during loadExtensions() become switchable
+   * via /theme, the choice persisted in ~/.fez/theme.json. Applying is a
+   * live swap — the theme module's exports are delegates into the active
+   * theme, so everything rendered from now on (and the sidebar, which
+   * repaints every frame) picks it up; existing bubbles keep the colors
+   * they were painted with.
+   */
+  private initThemes(): void {
+    const prefFile = path.join(os.homedir(), ".fez", "theme.json");
+    const apply = (name: string): boolean => {
+      if (name === "fez" || name === "default") {
+        setActiveTheme({ name: "fez" });
+        return true;
+      }
+      const spec = findTheme(name);
+      if (!spec) return false;
+      setActiveTheme(spec as unknown as Partial<FezTheme>);
+      return true;
+    };
+
+    try {
+      const saved = JSON.parse(fsSync.readFileSync(prefFile, "utf-8")).name;
+      if (typeof saved === "string" && !apply(saved)) {
+        console.error(`⚠️  Saved theme "${saved}" isn't registered — using default. Reinstall its pack or /theme fez.`);
+      }
+    } catch { /* no saved preference */ }
+
+    registerCommand("theme", (args, ctx) => {
+      const name = args.trim();
+      const names = ["fez", ...getRegisteredThemes().map((t) => t.name)];
+      if (!name) {
+        ctx.reply(
+          `Themes: ${names.map((n) => (n === getActiveTheme().name ? `**${n}** ← active` : n)).join(" · ")}\n` +
+            `Switch with /theme <name>. Packs are extensions calling api.registerTheme (see examples/themes/).`
+        );
+        return;
+      }
+      if (!apply(name)) {
+        ctx.reply(`No theme "${name}". Available: ${names.join(", ")}`);
+        return;
+      }
+      try {
+        fsSync.mkdirSync(path.dirname(prefFile), { recursive: true });
+        fsSync.writeFileSync(prefFile, JSON.stringify({ name: getActiveTheme().name }), { mode: 0o600 });
+      } catch { /* preference persists best-effort */ }
+      this.screen.requestRender();
+      ctx.reply(`Theme → **${getActiveTheme().name}** — new output uses it (sidebar repaints immediately).`);
+    });
+  }
+
   /** Startup chrome, flow-title style: block logo + session info + hints — replaces both the old rule-banner and the welcome bubble. */
   private renderHeader(harnessLine: string): void {
     const logo = [
@@ -817,14 +873,14 @@ export class FezTUI {
       "█████   █████     ██   ",
       "██      ██      ██     ",
       "██      ███████ ███████",
-    ].map((l) => chalk.magenta(l));
+    ].map((l) => getActiveTheme().banner(l));
     this.log.addChild(
       new Text(
         [
           "",
           ...logo,
           "",
-          chalk.bold.magenta("fez") + chalk.dim(" · decentralized MCP for agents 🧢"),
+          getActiveTheme().brand("fez") + chalk.dim(" · decentralized MCP for agents 🧢"),
           chalk.dim("relay:  ") + chalk.cyan(this.relayUrl),
           chalk.dim("you:    ") + chalk.cyan(this.myPubkey.slice(0, 16) + "…"),
           chalk.dim("agents: ") + harnessLine,

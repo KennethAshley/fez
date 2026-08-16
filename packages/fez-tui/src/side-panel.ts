@@ -1,5 +1,5 @@
-import chalk from "chalk";
 import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { getActiveTheme } from "./theme.js";
 
 /**
  * Full-height sidebar surface — pi-atelier's renderDock pattern: the
@@ -17,7 +17,9 @@ export class SidePanel implements Component {
 
   constructor(
     private getHeight: () => number,
-    private bg: (s: string) => string = (s) => chalk.bgAnsi256(236)(s)
+    // Defaults to the ACTIVE theme's pane tint, resolved per render — a
+    // theme switch repaints the sidebar on the next frame.
+    private bg: (s: string) => string = (s) => getActiveTheme().sidebarBg(s)
   ) {}
 
   addSection(): number {
