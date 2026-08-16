@@ -779,24 +779,39 @@ export class FezTUI {
       this.bubbleContents.delete(this.bubbleContents.keys().next().value as string);
     }
     const osc8 = (url: string, label: string) => `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
-    const actions =
-      "  " + osc8(`fez-copy://${actionId}`, chalk.dim("⧉")) + " " + osc8(`fez-quote://${actionId}`, chalk.dim("↩"));
+    // Inline glyphs for one-liners; a LABELED action row under longer
+    // messages (and under code blocks — ⧉ code copies just the fences).
+    // Glyphs take the accent color so the affordance is actually visible.
+    const glyph = (g: string) => getActiveTheme().accent(g);
+    const inlineActions = () =>
+      "  " + osc8(`fez-copy://${actionId}`, glyph("⧉")) + " " + osc8(`fez-quote://${actionId}`, glyph("↩"));
+    const actionRow = (hasCode: boolean) =>
+      [
+        osc8(`fez-copy://${actionId}`, glyph("⧉") + chalk.dim(" copy")),
+        ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, glyph("⧉") + chalk.dim(" code"))] : []),
+        osc8(`fez-quote://${actionId}`, glyph("↩") + chalk.dim(" quote")),
+      ].join(chalk.dim("  ·  "));
     const bubble = new Container();
     const layout = (c: string) => {
       bubble.clear();
       this.bubbleContents.set(actionId, c);
+      // Fenced code, extracted for the "⧉ code" action — streamed
+      // updates keep this fresh so the final code is what copies.
+      const codeBlocks = [...c.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1].replace(/\n$/, ""));
+      if (codeBlocks.length > 0) this.bubbleContents.set(`${actionId}.code`, codeBlocks.join("\n\n"));
       if (currentAuthor === "You") {
         // pi's userMessageBg: your own messages render as a full-width
         // tinted block (pi-tui Text paints customBgFn edge to edge).
         // The ​ spacer keeps the gap OUTSIDE the tint — a leading
         // \n inside the block would paint an empty tinted row instead.
         bubble.addChild(new Text("​", 0, 0));
-        bubble.addChild(new Text(headText() + " " + c + actions, 1, 0, (s) => getActiveTheme().userMessageBg(s)));
+        bubble.addChild(new Text(headText() + " " + c + inlineActions(), 1, 0, (s) => getActiveTheme().userMessageBg(s)));
       } else if (!c.includes("\n") && c.length <= 100) {
-        bubble.addChild(new Text("\n" + headText() + " " + c + actions, 0, 0));
+        bubble.addChild(new Text("\n" + headText() + " " + c + inlineActions(), 0, 0));
       } else {
-        bubble.addChild(new Text("\n" + headText() + actions, 0, 0));
+        bubble.addChild(new Text("\n" + headText(), 0, 0));
         bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
+        bubble.addChild(new Text(actionRow(codeBlocks.length > 0), 0, 0));
       }
       // An empty Text still renders one blank line — only mount the footer
       // when it has content, or every message drags a stray gap under it.
