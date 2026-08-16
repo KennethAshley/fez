@@ -1,4 +1,7 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { CommunityState, type Role } from "./state.js";
 import type { FezExtensionAPI, MessageHandle, NostrEvent, NostrFilter } from "./api-types.js";
 
@@ -1031,6 +1034,35 @@ export default function communities(api: FezExtensionAPI): void {
         if (name) names.set(event.pubkey, name);
       } catch { /* ignore */ }
     }
+
+    // First-run bootstrap: a brand-new user (no saved state, nothing
+    // joined) lands in a working room instead of an empty TUI — their
+    // own Home community with #general, creator rights and membership
+    // theirs from the first message. Existing users never hit this
+    // (state file exists); a fresh user who meant to join elsewhere can
+    // simply /leave.
+    if (state.joined.size === 0 && !fs.existsSync(path.join(os.homedir(), ".fez", "communities.json"))) {
+      const communityId = crypto.randomUUID();
+      const channelId = crypto.randomUUID();
+      try {
+        await nostr.publish({ kind: KIND_COMMUNITY, tags: [["d", communityId]], content: JSON.stringify({ name: "Home" }) });
+        await nostr.publish({
+          kind: KIND_CHANNEL,
+          tags: [["d", channelId], ["c", communityId]],
+          content: JSON.stringify({ name: "general", visibility: "open" }),
+        });
+        await nostr.publish({
+          kind: KIND_MEMBERSHIP,
+          tags: [["d", channelId], ["c", communityId], ["p", nostr.pubkey, "owner"]],
+          content: "",
+        });
+        state.joined.add(communityId);
+        state.scope = { communityId, channelId };
+        state.save();
+        api.ui.notify("🏠 Created your Home community — you're in #general. Mention an agent (@researcher …) to get going; /help for the rest.");
+      } catch { /* relay unreachable — the TUI's own error surface covers it */ }
+    }
+
     await syncJoined();
     resubscribe();
     refreshUi();

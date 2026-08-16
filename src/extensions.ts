@@ -217,6 +217,18 @@ export async function loadExtensions(dir: string = EXTENSIONS_DIR): Promise<void
     return; // no extensions directory yet — nothing to load
   }
 
+  // Bundles are ESM in .js files; without a package.json in the dir,
+  // Node walks UP the tree for one, so a stray CJS package.json in any
+  // ancestor (home dir, /tmp) silently flips every extension to CJS and
+  // they all fail with "Cannot use import statement". Pin the type here
+  // rather than depend on the filesystem above us.
+  const marker = path.join(dir, "package.json");
+  try {
+    await fs.access(marker);
+  } catch {
+    await fs.writeFile(marker, JSON.stringify({ type: "module" }, null, 1), "utf-8").catch(() => {});
+  }
+
   const api = buildApi();
 
   for (const entry of entries) {

@@ -360,7 +360,11 @@ export function registerHarness(adapter: HarnessAdapter): void {
 }
 
 /** Registers Fez's own built-in harnesses. Called once at startup, before extensions load. */
+let builtinsRegistered = false;
 export function registerBuiltinHarnesses(): void {
+  // Idempotent — the wizard, doctor, TUI, and services may each call it.
+  if (builtinsRegistered) return;
+  builtinsRegistered = true;
   registerHarness(claudeCodeHarness());
 }
 

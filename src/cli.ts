@@ -34,8 +34,21 @@ if (process.argv.length <= 2) {
     const { loadOrCreateKey } = await import("./keys.js");
     privateKey = loadOrCreateKey("default"); // keychain custody; migrates a legacy plaintext file
   }
+
+  // First run (interactive terminals only — scripted/piped invocations
+  // must never block on prompts): the whole required surface is ONE
+  // input, the relay URL. Key already exists (above), a missing harness
+  // gets actionable guidance, a starter persona covers the empty case,
+  // and the communities extension bootstraps a Home community on its
+  // side. Everything lands in ~/.fez/settings.json.
+  const { loadSettings, resolveRelay } = await import("./settings.js");
+  if (!loadSettings().onboarded && process.stdin.isTTY && process.stdout.isTTY) {
+    const { firstRunWizard } = await import("./onboarding.js");
+    await firstRunWizard();
+  }
+
   const { FezTUI } = await import("./tui.js");
-  const tui = new FezTUI(process.env.FEZ_RELAY || "wss://relay.damus.io", privateKey);
+  const tui = new FezTUI(resolveRelay(), privateKey);
   await tui.start();
   // TUI blocks until /quit, then exits cleanly
   process.exit(0);
@@ -119,6 +132,92 @@ keys
     }
   });
 
+// ─── doctor — is this machine ready to fez? ─────────────────────────────────
+
+program
+  .command("doctor")
+  .description("Check identity, relay, harness, personas — with fixes for whatever's missing")
+  .action(async () => {
+    const { getKey, listKeys } = await import("./keys.js");
+    const { detectHarnesses, listHarnesses, registerBuiltinHarnesses } = await import("./harness.js");
+    registerBuiltinHarnesses();
+    const { listPersonas } = await import("./personas.js");
+    const { loadSettings, resolveRelay, DEFAULT_RELAY } = await import("./settings.js");
+    const ok = (s: string) => console.log(`  ${chalk.green("✓")} ${s}`);
+    const warn = (s: string, fix?: string) => {
+      console.log(`  ${chalk.yellow("!")} ${s}`);
+      if (fix) console.log(chalk.dim(`      fix: ${fix}`));
+    };
+    const bad = (s: string, fix?: string) => {
+      console.log(`  ${chalk.red("✗")} ${s}`);
+      if (fix) console.log(chalk.dim(`      fix: ${fix}`));
+      failures++;
+    };
+    let failures = 0;
+
+    // identity
+    const key = getKey("default");
+    if (key) {
+      const backends = new Set(listKeys().map((k) => k.backend));
+      ok(`identity key (${listKeys().find((k) => k.name === "default")?.backend ?? "?"}${backends.has("file") ? "; some agent keys still file-backed — they migrate on next run" : ""})`);
+    } else {
+      warn("no identity yet — one is generated on first `fez` launch");
+    }
+
+    // relay: value + provenance + reachability
+    const relay = resolveRelay();
+    const source = process.env.FEZ_RELAY
+      ? "env FEZ_RELAY"
+      : loadSettings().relay
+        ? "~/.fez/settings.json"
+        : `built-in default (${DEFAULT_RELAY})`;
+    const reachable = await new Promise<boolean>((resolve) => {
+      void import("ws").then(({ default: WebSocket }) => {
+        const socket = new WebSocket(relay);
+        const timer = setTimeout(() => { socket.terminate(); resolve(false); }, 4000);
+        socket.on("open", () => { clearTimeout(timer); socket.close(); resolve(true); });
+        socket.on("error", () => { clearTimeout(timer); resolve(false); });
+      });
+    });
+    if (reachable) ok(`relay ${relay} reachable (${source})`);
+    else bad(`relay ${relay} unreachable (${source})`, `start one (npm run dev:relay in the fez repo) or set another in ~/.fez/settings.json`);
+
+    // harness
+    const harnesses = await detectHarnesses();
+    if (harnesses.length > 0) ok(`harness: ${harnesses.map((h) => h.id).join(", ")}`);
+    else bad(`no agent harness (checked: ${listHarnesses().map((h) => h.command).join(", ")})`, "npm install -g @anthropic-ai/claude-code @agentclientprotocol/claude-agent-acp");
+
+    // personas
+    const personas = await listPersonas();
+    if (personas.length > 0) ok(`personas: ${personas.map((p) => `@${p.id}`).join(", ")}`);
+    else warn("no personas — @mentions have nobody to become", "create ~/.fez/personas/<name>.md (the first-run wizard offers a starter)");
+
+    // extensions + themes (informational)
+    for (const [dir, label] of [["extensions", "extensions"], ["themes", "themes"], ["workflows", "workflows"]] as const) {
+      try {
+        const count = (await fs.readdir(path.join(os.homedir(), ".fez", dir))).filter((f) => !f.startsWith(".")).length;
+        if (count > 0) ok(`${label}: ${count} installed`);
+      } catch { /* none — fine */ }
+    }
+
+    // orchestrator endpoint, only if configured
+    const { findPersona } = await import("./personas.js");
+    const fezPersona = await findPersona("fez");
+    const routerUrl = process.env.FEZ_ORCHESTRATOR_URL || fezPersona?.extra.url;
+    if (routerUrl) {
+      try {
+        const res = await fetch(`${routerUrl.replace(/\/$/, "")}/models`, { signal: AbortSignal.timeout(2500) });
+        const body = (await res.json()) as { data?: { id: string }[] };
+        ok(`orchestrator router at ${routerUrl} (${body.data?.[0]?.id ?? "?"})`);
+      } catch {
+        warn(`orchestrator router ${routerUrl} not responding`, "cactus serve ~/.cache/cactus/weights/needle-prebuilt --no-cloud-handoff --no-cloud-tele");
+      }
+    }
+
+    console.log(failures === 0 ? chalk.green("\nAll clear.") : chalk.red(`\n${failures} problem(s).`));
+    process.exitCode = failures === 0 ? 0 : 1;
+  });
+
 // ─── run ────────────────────────────────────────────────────────────────────
 
 program
@@ -134,8 +233,10 @@ program
     // as env vars, which scripts read the same way the TUI does.
     // Explicit -r wins; otherwise an inherited FEZ_RELAY stands (a
     // supervisor like herdr sets it on the launched process — a baked-in
-    // commander default silently clobbered it).
-    process.env.FEZ_RELAY = options.relay ?? process.env.FEZ_RELAY ?? "wss://relay.damus.io";
+    // commander default silently clobbered it), then the user's saved
+    // settings, then the public default.
+    const { resolveRelay } = await import("./settings.js");
+    process.env.FEZ_RELAY = resolveRelay(options.relay);
 
     if (options.key) {
       process.env.FEZ_PRIVATE_KEY = (await fs.readFile(options.key, "utf-8")).trim();
