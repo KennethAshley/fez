@@ -36,13 +36,17 @@ export interface HarnessAdapter {
    * this; it's additive, not a required capability.
    * onUpdate fires with richer activity (thoughts, tool calls, plans) for
    * observer streams — also optional and additive.
+   * signal aborts the turn (steering: cancel in-flight, re-dispatch a
+   * merged prompt — Buzz's model); invoke rejects with an error named
+   * "AbortError" so callers can tell a steer from a failure.
    */
   invoke(
     instruction: string,
     cwd?: string,
     onProgress?: (textSoFar: string) => void,
     mcpServers?: McpServer[],
-    onUpdate?: (update: HarnessUpdate) => void
+    onUpdate?: (update: HarnessUpdate) => void,
+    signal?: AbortSignal
   ): Promise<string>;
 }
 
@@ -87,7 +91,7 @@ function claudeCodeHarness(): HarnessAdapter {
     command,
     detect: () => spawnDetect(command, ["--version"]),
 
-    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate) {
+    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal) {
       const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"] });
 
       // Without these, a write to a pipe whose reader already exited (e.g.
@@ -141,6 +145,22 @@ function claudeCodeHarness(): HarnessAdapter {
           // from nextUpdate(), which is what the loop below actually waits on.
           session.prompt(instruction).catch(() => {});
 
+          // Abort (steering) races every update wait — created once so
+          // listeners don't pile up on the signal per loop iteration; the
+          // outer finally kills the child on any exit path. Guarded catch:
+          // nothing awaits this between iterations, so an abort firing
+          // there must not surface as an unhandled rejection.
+          const abortPromise = new Promise<never>((_, reject) => {
+            const onAbort = () => {
+              const err = new Error("turn aborted (steer)");
+              err.name = "AbortError";
+              reject(err);
+            };
+            if (signal?.aborted) onAbort();
+            else signal?.addEventListener("abort", onAbort, { once: true });
+          });
+          abortPromise.catch(() => {});
+
           const { idleMs, maxMs } = DEFAULT_TIMEOUTS;
           const hardDeadline = Date.now() + maxMs;
           let text = "";
@@ -172,7 +192,7 @@ function claudeCodeHarness(): HarnessAdapter {
 
             let message;
             try {
-              message = await Promise.race([session.nextUpdate(), idleTimeout]);
+              message = await Promise.race([session.nextUpdate(), idleTimeout, abortPromise]);
             } finally {
               clearTimeout(idleHandle!);
             }

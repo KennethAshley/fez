@@ -182,6 +182,15 @@ async function main() {
   let busy = false;
   const pendingMentions: { id: string; pubkey: string; created_at: number; content: string; tags: string[][] }[] = [];
 
+  // Steering (Buzz's MultipleEventHandling::Steer, its default): an
+  // admitted mention arriving mid-turn CANCELS the in-flight turn and
+  // re-dispatches a merged prompt that frames the new message as guidance
+  // to weave in — instead of queueing behind a possibly-stale answer.
+  // FEZ_AGENT_ON_BUSY=queue restores the queue-only behavior.
+  const onBusy = process.env.FEZ_AGENT_ON_BUSY === "queue" ? "queue" : "steer";
+  let turnController: AbortController | undefined;
+  let steerMessages: string[] = [];
+
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
   // mention of a not-yet-running agent can't carry its p-tag (the sender
@@ -229,13 +238,14 @@ async function main() {
         return;
       }
 
-      // Mid-turn mentions QUEUE instead of dropping (Buzz's Queue mode) —
-      // processed in order after the current turn, with the finished
-      // exchange already in `recent` context. True steering (weaving the
-      // new message into the in-flight turn, Buzz's default) needs a
-      // cancellable/promptable harness session — future work.
+      // Mid-turn mentions: STEER (default — cancel the in-flight turn and
+      // restart with the new message woven in) or QUEUE (process after).
       if (busy) {
-        if (pendingMentions.length < 3 && !pendingMentions.some((p) => p.id === event.id)) {
+        if (onBusy === "steer" && turnController) {
+          steerMessages.push(`${event.pubkey.slice(0, 8)}: ${event.content}`);
+          console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
+          turnController.abort();
+        } else if (pendingMentions.length < 3 && !pendingMentions.some((p) => p.id === event.id)) {
           pendingMentions.push(event);
           console.log(`⏳ Busy — queued mention from ${event.pubkey.slice(0, 8)}… (${pendingMentions.length} pending)`);
         }
@@ -301,11 +311,21 @@ async function main() {
           )
           .catch(() => {});
       }, 3000);
+      turnController = new AbortController();
+      // Steering guidance consumed into this turn's prompt (Buzz frames
+      // steered messages as "arrived while you were working — weave in").
+      const steering = steerMessages.splice(0);
       try {
         const prompt = [
           persona.systemPrompt ?? "",
           `You are @${personaId}, responding in a group chat channel. Recent messages:`,
           ...(recent.get(channelId) ?? []),
+          ...(steering.length > 0
+            ? [
+                `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
+                ...steering,
+              ]
+            : []),
           `Reply to the last message that mentioned you. Be concise — this is chat.`,
         ].filter(Boolean).join("\n\n");
 
@@ -345,7 +365,7 @@ async function main() {
 
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
-        const reply = await harness.invoke(prompt, process.cwd(), publishDraft, mcpServers, onUpdate);
+        const reply = await harness.invoke(prompt, process.cwd(), publishDraft, mcpServers, onUpdate, turnController.signal);
 
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
@@ -356,18 +376,30 @@ async function main() {
         publishObserver({ type: "turn", status: "done" });
         console.log(`✅ Replied (${reply.length} chars)`);
       } catch (err) {
-        publishObserver({ type: "turn", status: "failed" });
-        console.error(`❌ Turn failed:`, err instanceof Error ? err.message : err);
+        if (err instanceof Error && err.name === "AbortError") {
+          publishObserver({ type: "turn", status: "steered" });
+          console.log(`🔀 Turn cancelled for steering — re-dispatching merged prompt`);
+        } else {
+          publishObserver({ type: "turn", status: "failed" });
+          console.error(`❌ Turn failed:`, err instanceof Error ? err.message : err);
+        }
       } finally {
         // Buzz's ReactionGuard shape: status reactions clear on every exit
         // path — the reply (or nothing, on failure) is what remains.
         clearStatusReactions();
         clearInterval(typing);
+        turnController = undefined;
         busy = false;
-        // Drain the queue: next pending mention gets its own full turn,
-        // with the exchange that just finished already in context.
-        const next = pendingMentions.shift();
-        if (next) setTimeout(() => void handleChannelMessage(next), 250);
+        if (steerMessages.length > 0) {
+          // Steered: re-dispatch the SAME trigger — the unconsumed steer
+          // messages get woven into the merged prompt.
+          setTimeout(() => void handleChannelMessage(event), 250);
+        } else {
+          // Drain the queue: next pending mention gets its own full turn,
+          // with the exchange that just finished already in context.
+          const next = pendingMentions.shift();
+          if (next) setTimeout(() => void handleChannelMessage(next), 250);
+        }
       }
   };
 

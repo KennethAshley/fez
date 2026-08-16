@@ -62,14 +62,17 @@ function herdrCall(method: string, params: Record<string, unknown>): Promise<Rec
 
 interface RegisteredTab {
   persona: string;
-  channel: string;
+  /** Channel specs (names or ids) this agent's process serves — grows as summons pull it into new channels. */
+  channels: string[];
   tabId: string;
   paneId: string;
 }
 
 function loadRegistry(): RegisteredTab[] {
   try {
-    return JSON.parse(fs.readFileSync(REGISTRY, "utf-8"));
+    const raw = JSON.parse(fs.readFileSync(REGISTRY, "utf-8")) as (RegisteredTab & { channel?: string })[];
+    // Migrate pre-multi-channel entries ({channel: "x"} -> {channels: ["x"]}).
+    return raw.map((t) => ({ ...t, channels: t.channels ?? (t.channel ? [t.channel] : []) }));
   } catch {
     return [];
   }
@@ -99,12 +102,18 @@ export default function herdr(api: FezExtensionAPI): void {
     }
     const lines = [bold("Agents")];
     if (registered.length === 0) {
-      lines.push(dim("/herdr register <persona> <ch>"));
+      lines.push(dim("@mention a persona to summon it"));
     }
+    // Agent-centric: the entry IS the agent (click → its terminal), not a
+    // channel binding — mentions can pull an agent into any channel, so a
+    // single-channel label would lie. One channel shows by name; more
+    // collapse to a count.
     for (const tab of registered) {
       const alive = liveTabIds.has(tab.tabId);
       const glyph = alive ? "\x1b[32m●\x1b[39m" : dim("○");
-      lines.push(`${glyph} ${OSC8(`fez-herdr://focus/${tab.tabId}`, `@${tab.persona}`)} ${dim("#" + tab.channel)}`);
+      const where =
+        tab.channels.length === 1 ? dim("#" + tab.channels[0].slice(0, 12)) : dim(`·${tab.channels.length}ch`);
+      lines.push(`${glyph} ${OSC8(`fez-herdr://focus/${tab.tabId}`, `@${tab.persona}`)} ${where}`);
     }
     panel.setText("\n" + lines.join("\n"));
   }
@@ -114,8 +123,15 @@ export default function herdr(api: FezExtensionAPI): void {
     void herdrCall("tab.focus", { tab_id: tabId }).catch(() => {});
   });
 
+  function agentCommand(persona: string, channels: string[], respondTo: string): string {
+    const relay = process.env.FEZ_RELAY ?? "wss://relay.damus.io";
+    // FEZ_AGENT_OWNER = the registering user: enables the encrypted
+    // observer stream (/watch <persona>) for free on registered agents.
+    return `FEZ_AGENT_PERSONA=${persona} FEZ_AGENT_CHANNELS=${channels.join(",")} FEZ_AGENT_RESPOND_TO=${respondTo} FEZ_AGENT_OWNER=${api.nostr!.pubkey} FEZ_RELAY=${relay} fez run ${process.cwd()}/packages/fez-communities/dist/channel-agent.js\n`;
+  }
+
   /** Create the herdr tab and type the run command — shared by /herdr register and auto-spawn. */
-  async function registerAgent(persona: string, channel: string, respondTo: string): Promise<RegisteredTab> {
+  async function registerAgent(persona: string, channels: string[], respondTo: string): Promise<RegisteredTab> {
     const created = await herdrCall("tab.create", {
       label: `fez:${persona}`,
       cwd: process.cwd(),
@@ -123,17 +139,27 @@ export default function herdr(api: FezExtensionAPI): void {
     });
     const tab = created.tab as { tab_id: string };
     const pane = created.root_pane as { pane_id: string };
-    const relay = process.env.FEZ_RELAY ?? "wss://relay.damus.io";
-    // FEZ_AGENT_OWNER = the registering user: enables the encrypted
-    // observer stream (/watch <persona>) for free on registered agents.
-    const cmd = `FEZ_AGENT_PERSONA=${persona} FEZ_AGENT_CHANNELS=${channel} FEZ_AGENT_RESPOND_TO=${respondTo} FEZ_AGENT_OWNER=${api.nostr!.pubkey} FEZ_RELAY=${relay} fez run ${process.cwd()}/packages/fez-communities/dist/channel-agent.js\n`;
-    await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: cmd });
-    const entry: RegisteredTab = { persona, channel, tabId: tab.tab_id, paneId: pane.pane_id };
+    await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: agentCommand(persona, channels, respondTo) });
+    const entry: RegisteredTab = { persona, channels, tabId: tab.tab_id, paneId: pane.pane_id };
     registered = registered.filter((t) => t.persona !== persona);
     registered.push(entry);
     saveRegistry(registered);
     await refreshPanel();
     return entry;
+  }
+
+  /**
+   * A summon into a channel the agent doesn't serve: restart its EXISTING
+   * pane with the union of channels — one process per persona, not one
+   * per channel.
+   */
+  async function expandAgentChannels(entry: RegisteredTab, channel: string): Promise<void> {
+    entry.channels.push(channel);
+    saveRegistry(registered);
+    await herdrCall("pane.send_keys", { pane_id: entry.paneId, keys: ["ctrl+c"] });
+    await new Promise((r) => setTimeout(r, 800));
+    await herdrCall("pane.send_text", { pane_id: entry.paneId, text: agentCommand(entry.persona, entry.channels, "owner") });
+    await refreshPanel();
   }
 
   // ── Auto-spawn: @mentioning a persona that isn't running summons it.
@@ -198,15 +224,29 @@ export default function herdr(api: FezExtensionAPI): void {
         if (!channelId || !communityId) return;
         for (const match of event.content.matchAll(/@([\w-]+)/g)) {
           const persona = match[1].toLowerCase();
-          const existing = registered.find((t) => t.persona === persona);
-          if (existing && liveTabIds.has(existing.tabId)) continue; // already running
           if (spawning.has(persona) || !personaExists(persona)) continue;
+          const existing = registered.find((t) => t.persona === persona);
+          if (existing && liveTabIds.has(existing.tabId)) {
+            // Running, but summoned into a channel it doesn't serve:
+            // restart its pane with the union — one process per persona.
+            if (!existing.channels.includes(channelId)) {
+              spawning.add(persona);
+              pendingInvites.set(persona, { channelId, communityId });
+              api.ui.appendMessage("herdr", `pulling **@${persona}** into this channel…`);
+              expandAgentChannels(existing, channelId)
+                .catch((err) => {
+                  spawning.delete(persona);
+                  api.ui.appendMessage("herdr", `⚠️ couldn't expand @${persona}: ${err instanceof Error ? err.message : err}`);
+                });
+            }
+            continue;
+          }
           spawning.add(persona);
           pendingInvites.set(persona, { channelId, communityId });
           api.ui.appendMessage("herdr", `summoning **@${persona}** — spawning it in a herdr tab…`);
           // respondTo=owner (Buzz's default posture): the summoner and
           // attested sibling agents can trigger it; strangers can't.
-          registerAgent(persona, channelId, "owner")
+          registerAgent(persona, [channelId], "owner")
             .catch((err) => {
               spawning.delete(persona);
               api.ui.appendMessage("herdr", `⚠️ couldn't spawn @${persona}: ${err instanceof Error ? err.message : err}`);
@@ -257,7 +297,7 @@ export default function herdr(api: FezExtensionAPI): void {
       const [persona, channel, respondTo = "anyone"] = rest;
       if (!persona || !channel) return ctx.reply("Usage: /herdr register <persona> <channel> [respondTo]");
       try {
-        const entry = await registerAgent(persona, channel, respondTo);
+        const entry = await registerAgent(persona, [channel], respondTo);
         ctx.reply(`Registered **@${persona}** with herdr — tab \`${entry.tabId}\` serving #${channel}. Click it in the sidebar to jump to its terminal.`);
       } catch (err) {
         ctx.reply(`herdr registration failed: ${err instanceof Error ? err.message : err}`);
@@ -277,7 +317,7 @@ export default function herdr(api: FezExtensionAPI): void {
       if (registered.length === 0) return ctx.reply("No fez agents registered with herdr.");
       ctx.reply(
         registered
-          .map((t) => `• @${t.persona} → #${t.channel} — tab \`${t.tabId}\` ${liveTabIds.has(t.tabId) ? "(running)" : "(gone)"}`)
+          .map((t) => `• @${t.persona} → ${t.channels.map((c) => "#" + c).join(", ")} — tab \`${t.tabId}\` ${liveTabIds.has(t.tabId) ? "(running)" : "(gone)"}`)
           .join("\n")
       );
       return;
