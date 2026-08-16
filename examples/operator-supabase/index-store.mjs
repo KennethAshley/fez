@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
  * Postgres instead of the default JSON file. Loaded via:
  *   FEZ_INDEXER_STORE=examples/operator-supabase/index-store.mjs
  */
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
 
 export default {
   async loadAll() {

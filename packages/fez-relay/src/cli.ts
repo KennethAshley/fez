@@ -18,6 +18,15 @@ import { builtinPolicies, type RelayPolicy } from "./policies.js";
  * whatever storage they bring. Flags override config.
  */
 async function main() {
+  // Operator secrets (e.g. store credentials read by --config modules)
+  // live in ./.env — same convention as the fez CLI. Absent file is the
+  // common case, not an error.
+  try {
+    process.loadEnvFile();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
   const args = process.argv.slice(2);
   let port: number | undefined;
   let store: string | undefined;

@@ -10,7 +10,7 @@ import { createClient } from "@supabase/supabase-js";
  * client calls for any backend.
  */
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
 
 /**
  * EventStore over fez_events. load() is synchronous by contract, so the

@@ -13,10 +13,10 @@ backing store, plus a ban-list ingest policy read from a table. This is
 
    ```
    SUPABASE_URL=https://<project-ref>.supabase.co
-   SUPABASE_SERVICE_KEY=<service_role key>
+   SUPABASE_SECRET_KEY=<secret key (sb_secret_...)>
    ```
 
-   The service-role key is correct here: the relay/indexer are trusted
+   The secret key is correct here: the relay/indexer are trusted
    operator processes. Keep RLS on for every other client.
 
 3. Create the tables (SQL editor → run `schema.sql`).
