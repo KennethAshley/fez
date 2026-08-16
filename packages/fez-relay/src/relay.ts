@@ -1,7 +1,7 @@
-import fs from "node:fs";
 import { WebSocketServer, WebSocket } from "ws";
 import { verifyEvent } from "nostr-tools";
 import type { PolicyContext, RelayPolicy } from "./policies.js";
+import { storeForPath, type EventStore } from "./stores.js";
 
 /**
  * fez-relay — a NIP-01 relay with a policy pipeline (see policies.ts).
@@ -34,8 +34,10 @@ type Filter = Record<string, unknown>;
 
 export interface RelayOptions {
   port: number;
-  /** JSONL persistence path; omit for a purely in-memory relay. */
+  /** Persistence path (.jsonl default; .db/.sqlite → SQLite). Omit for in-memory. */
   store?: string;
+  /** Bring-your-own durability (overrides `store`) — see stores.ts EventStore. */
+  eventStore?: EventStore;
   /** Verify event signatures/ids at ingest (default true). */
   verifySignatures?: boolean;
   policies?: RelayPolicy[];
@@ -70,17 +72,9 @@ export function startRelay(options: RelayOptions): RelayHandle {
   const verify = options.verifySignatures !== false;
   const policies = options.policies ?? [];
 
-  const events: StoredEvent[] = [];
-  if (options.store) {
-    try {
-      for (const line of fs.readFileSync(options.store, "utf-8").split("\n")) {
-        if (line.trim()) events.push(JSON.parse(line));
-      }
-      log(`📂 loaded ${events.length} events from ${options.store}`);
-    } catch {
-      // no store yet — fresh relay
-    }
-  }
+  const store = options.eventStore ?? (options.store ? storeForPath(options.store) : undefined);
+  const events: StoredEvent[] = store ? store.load() : [];
+  if (store) log(`📂 loaded ${events.length} events from ${options.store ?? "operator store"}`);
 
   const ctx: PolicyContext = {
     query: (filter) => events.filter((e) => matches(e, filter)),
@@ -126,7 +120,7 @@ export function startRelay(options: RelayOptions): RelayHandle {
 
           if (!isEphemeral(event.kind)) {
             events.push(event);
-            if (options.store) fs.appendFileSync(options.store, JSON.stringify(event) + "\n");
+            store?.append(event);
           }
           ws.send(JSON.stringify(["OK", event.id, true, ""]));
           for (const [client, clientSubs] of subs) {
@@ -172,3 +166,5 @@ export function startRelay(options: RelayOptions): RelayHandle {
     },
   };
 }
+
+export { type EventStore, JsonlEventStore, SqliteEventStore, storeForPath } from "./stores.js";

@@ -58,6 +58,7 @@ async function main() {
   startRelay({
     port: port ?? config.port ?? 7777,
     store: store ?? config.store,
+    eventStore: config.eventStore,
     verifySignatures: verifySignatures ?? config.verifySignatures,
     policies: [...(config.policies ?? []), ...policies],
   });

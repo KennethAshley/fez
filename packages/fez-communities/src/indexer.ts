@@ -101,7 +101,16 @@ async function main() {
     }
   }
 
-  const store: IndexStore = new JsonFileStore();
+  // Bring-your-own storage: FEZ_INDEXER_STORE points at a module whose
+  // default export implements IndexStore (loadAll/upsert) over any
+  // backend — Supabase, Postgres, whatever; its security is the
+  // operator's concern. Default: a JSON file.
+  let store: IndexStore = new JsonFileStore();
+  if (process.env.FEZ_INDEXER_STORE) {
+    const mod = await import(new URL(`file://${path.resolve(process.env.FEZ_INDEXER_STORE)}`).href);
+    store = typeof mod.default === "function" ? await mod.default() : mod.default;
+    console.log(`🗄  index store: ${process.env.FEZ_INDEXER_STORE}`);
+  }
   const stats = await store.loadAll();
 
   // Identity announcement, so member lists show "indexer" not hex.
