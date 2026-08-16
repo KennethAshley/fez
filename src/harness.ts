@@ -180,6 +180,12 @@ function claudeCodeHarness(): HarnessAdapter {
             }
           }
 
+          // Final flush: text that arrived inside the last throttle window
+          // was never reported — a short reply could otherwise complete
+          // with zero onProgress calls (bit for real: relay draft streaming
+          // saw nothing for one-chunk replies).
+          if (onProgress && text) onProgress(text);
+
           return text;
         });
       } finally {

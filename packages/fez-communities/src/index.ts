@@ -11,6 +11,7 @@ const KIND_TYPING = 20002; // ephemeral, Buzz's kind — see fez src/kinds.ts
 const KIND_THREAD_SUMMARY = 39005; // indexer-published thread stats — see fez src/kinds.ts
 const KIND_REACTION = 7; // standard nostr, Buzz's shape: content = emoji, ["e", target], plus ["h", channel] for subscription
 const KIND_DELETION = 5; // standard nostr: retract your own events (agents clear status reactions)
+const KIND_DRAFT = 20003; // ephemeral streaming preview of a message being composed — see fez src/kinds.ts
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -231,6 +232,7 @@ export default function communities(api: FezExtensionAPI): void {
     api.ui.clearLog();
     bubbleHandles = new Map();
     summaryLineHandles = new Map();
+    draftBubbles.clear();
     const list = messagesByChannel.get(channelId) ?? [];
     const summarized = new Set<string>();
     for (const msg of list) {
@@ -250,6 +252,7 @@ export default function communities(api: FezExtensionAPI): void {
     api.ui.clearLog();
     bubbleHandles = new Map();
     summaryLineHandles = new Map();
+    draftBubbles.clear();
     const no = threadNo(rootId);
     const root = msgById.get(rootId);
     if (root) paintBubble(root);
@@ -285,7 +288,17 @@ export default function communities(api: FezExtensionAPI): void {
     // compact line so the thread stays coherent.
     if (view.mode === "thread") {
       if (msg.rootId === view.rootId) {
-        bubbleHandles.set(msg.id, threadBubble(msg));
+        // Adopt the author's streaming draft bubble as this message's
+        // bubble — the stream simply "finishes" instead of duplicating.
+        const draft = draftBubbles.get(event.pubkey);
+        if (draft && draft.rootId === msg.rootId) {
+          draft.handle.setContent(msg.content);
+          draft.handle.setFooter(reactionFooter(msg.id));
+          bubbleHandles.set(msg.id, draft.handle);
+          draftBubbles.delete(event.pubkey);
+        } else {
+          bubbleHandles.set(msg.id, threadBubble(msg));
+        }
       } else {
         api.ui.appendMessage("communities", `(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
       }
@@ -335,6 +348,51 @@ export default function communities(api: FezExtensionAPI): void {
     bubbleHandles.get(targetId)?.setFooter(reactionFooter(targetId));
   }
 
+  // Streaming drafts (ephemeral 20003): one live bubble per author,
+  // growing with each draft, adopted as the real message's bubble when the
+  // final 47103 lands (matched by author) — pi-style typing over the relay.
+  const draftBubbles = new Map<string, { handle: MessageHandle; rootId?: string }>();
+
+  function handleDraft(event: NostrEvent): void {
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!channelId || !communityId || !event.content) return;
+    if (event.pubkey === nostr!.pubkey) return;
+    if (!state.isMember(communityId, channelId, event.pubkey)) return;
+    const scope = state.scope;
+    if (!scope || scope.channelId !== channelId) return;
+    const { rootId } = parseThreadRef(event.tags);
+
+    // Streaming renders where the final message will land: as a bubble in
+    // a matching thread view; as the live summary-line snippet in channel
+    // view (agent replies are thread children, so their final form there
+    // is the summary line).
+    if (view.mode === "thread" && rootId === view.rootId) {
+      let draft = draftBubbles.get(event.pubkey);
+      if (!draft) {
+        const handle = api.ui.appendMessage(`↳ ${displayName(event.pubkey)}`, event.content);
+        handle.setFooter("✍ typing…");
+        draft = { handle, rootId };
+        draftBubbles.set(event.pubkey, draft);
+      } else {
+        draft.handle.setContent(event.content);
+      }
+      // Streaming text supersedes the typing indicator for this author.
+      for (const key of typing.keys()) if (key.startsWith(`${event.pubkey}:`)) typing.delete(key);
+      renderTyping();
+    } else if (view.mode === "channel" && rootId) {
+      const no = threadNo(rootId);
+      const count = threadReplyCount(channelId, rootId);
+      const root = msgById.get(rootId);
+      const text = `✍ ${displayName(event.pubkey)}: ${snippet(event.content, 60)} — /thread ${no}`;
+      const existing = summaryLineHandles.get(rootId);
+      if (existing) existing.setContent(text);
+      else summaryLineHandles.set(rootId, api.ui.appendMessage(`thread #${no}`, text));
+      void count;
+      void root;
+    }
+  }
+
   /** Kind-5 deletion — only honored for the deleter's own reactions (standard nostr rule). */
   function handleDeletion(event: NostrEvent): void {
     for (const tag of event.tags) {
@@ -372,7 +430,7 @@ export default function communities(api: FezExtensionAPI): void {
       filters.push(
         { kinds: [KIND_COMMUNITY, KIND_CHANNEL, KIND_MEMBERSHIP], "#c": ids },
         { kinds: [KIND_COMMUNITY], "#d": ids },
-        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
+        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION, KIND_DRAFT], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
         { kinds: [KIND_THREAD_SUMMARY], "#h": channelIdsOfJoined() }
       );
     }
@@ -391,6 +449,10 @@ export default function communities(api: FezExtensionAPI): void {
       }
       if (event.kind === KIND_DELETION) {
         handleDeletion(event);
+        return;
+      }
+      if (event.kind === KIND_DRAFT) {
+        handleDraft(event);
         return;
       }
       if (event.kind === KIND_AGENT_METADATA) {

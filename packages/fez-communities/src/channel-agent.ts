@@ -9,6 +9,7 @@ import {
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
   KIND_DELETION,
+  KIND_DRAFT,
   KIND_MEMBERSHIP,
   KIND_REACTION,
   KIND_TYPING,
@@ -217,24 +218,42 @@ async function main() {
 
         console.log(`💬 Mention from ${event.pubkey.slice(0, 8)}… — invoking ${persona.harness}`);
         void react("💬"); // "working" — the turn is actually starting
-        const reply = await harness.invoke(prompt, process.cwd(), undefined, mcpServers);
 
         // NIP-10 markers, Buzz's exact shape (threading.ts): replying to a
         // message that's already in a thread carries that thread's root as
         // a root-marked tag; replying to a root message carries only the
         // reply marker (the trigger IS the root). Root of the trigger =
         // its root-marked e-tag, falling back to its reply-marked parent.
+        // Computed before the turn so drafts carry the same tags as the
+        // eventual reply — clients stream them into the right place.
         const triggerParent = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
         const triggerRoot = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? triggerParent;
+        const replyTags = [
+          ["h", channelId],
+          ["c", communityId],
+          ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
+          ["e", event.id, "", "reply"],
+          ["p", event.pubkey],
+        ];
+
+        // Stream the reply as it generates: ephemeral drafts (never stored
+        // — history and late joiners see only the final message) carrying
+        // the accumulated text, throttled to be kind to the relay.
+        let lastDraftAt = 0;
+        const publishDraft = (textSoFar: string) => {
+          const now = Date.now();
+          if (!textSoFar || now - lastDraftAt < 350) return;
+          lastDraftAt = now;
+          void relay
+            .publish(client.signEvent({ kind: KIND_DRAFT, tags: replyTags, content: textSoFar }))
+            .catch(() => {});
+        };
+
+        const reply = await harness.invoke(prompt, process.cwd(), publishDraft, mcpServers);
+
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
-          tags: [
-            ["h", channelId],
-            ["c", communityId],
-            ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
-            ["e", event.id, "", "reply"],
-            ["p", event.pubkey],
-          ],
+          tags: replyTags,
           content: reply,
         });
         await relay.publish(replyEvent);

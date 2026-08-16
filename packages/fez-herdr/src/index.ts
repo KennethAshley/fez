@@ -97,7 +97,7 @@ export default function herdr(api: FezExtensionAPI): void {
     } catch {
       liveTabIds = new Set(); // herdr down — everything shows ○
     }
-    const lines = [bold("herdr")];
+    const lines = [bold("Agents")];
     if (registered.length === 0) {
       lines.push(dim("/herdr register <persona> <ch>"));
     }

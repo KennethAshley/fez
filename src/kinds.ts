@@ -41,6 +41,16 @@ export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["c"
 export const KIND_TYPING = 20002;
 
 /**
+ * Draft — ephemeral streaming preview of a message being composed (an
+ * agent's accumulated harness output mid-turn). Same tags as the eventual
+ * 47103 (h/c + NIP-10 thread markers); content = the text so far.
+ * Ephemeral: relayed live, never stored — late joiners and history see
+ * only the final message. Receivers stream it into a live bubble and
+ * adopt that bubble when the final message arrives.
+ */
+export const KIND_DRAFT = 20003;
+
+/**
  * Thread summary — the indexer pattern: a standing service watches channel
  * messages, maintains derived stats in whatever storage its operator
  * brings, and publishes these back so clients get counts without having
