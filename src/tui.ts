@@ -738,14 +738,46 @@ export class FezTUI {
     this.log.addChild(bubble);
     this.screen.requestRender();
     const rerender = () => this.screen.requestRender();
+
+    // Typewriter tween: streamed sources (harness chunks, relay drafts)
+    // arrive in coarse bursts, so snapping to each update reads as jumps,
+    // not typing. setContent instead reveals toward the latest target at a
+    // steady rate — the pi feel, independent of chunk granularity. Reveal
+    // speed adapts so the animation never lags a fast stream unboundedly.
+    let shown = content.length;
+    let target = content;
+    let tween: ReturnType<typeof setInterval> | undefined;
+    const step = () => {
+      if (shown >= target.length) {
+        clearInterval(tween);
+        tween = undefined;
+        body.setText(target); // exact final text (mid-reveal can split ANSI/markdown)
+        rerender();
+        return;
+      }
+      shown = Math.min(target.length, shown + Math.max(3, Math.ceil((target.length - shown) / 12)));
+      body.setText(target.slice(0, shown));
+      rerender();
+    };
+
     return {
       setAuthor: (a) => {
         header.setText("\n" + colorFor(a));
         rerender();
       },
       setContent: (c) => {
-        body.setText(c);
-        rerender();
+        // Not an append-y update (edit/replace): snap, don't animate.
+        if (!c.startsWith(target.slice(0, Math.min(shown, target.length)))) {
+          clearInterval(tween);
+          tween = undefined;
+          shown = c.length;
+          body.setText(c);
+          rerender();
+          target = c;
+          return;
+        }
+        target = c;
+        if (!tween) tween = setInterval(step, 33);
       },
       setFooter: (f) => {
         footer.setText(f ? chalk.dim(f) : "");

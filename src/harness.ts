@@ -147,6 +147,7 @@ function claudeCodeHarness(): HarnessAdapter {
           let thought = "";
           let lastProgressAt = 0;
           let lastThoughtAt = 0;
+          let lastTextAt = 0;
 
           while (true) {
             const remaining = hardDeadline - Date.now();
@@ -189,8 +190,12 @@ function claudeCodeHarness(): HarnessAdapter {
               update.content.type === "text"
             ) {
               text += update.content.text;
+              // Own timestamp — sharing lastProgressAt let frequent
+              // tool-call ticks starve text frames (a whole reply could
+              // surface as ONE text update).
               const now = Date.now();
-              if (onUpdate && now - lastProgressAt >= PROGRESS_THROTTLE_MS) {
+              if (onUpdate && now - lastTextAt >= PROGRESS_THROTTLE_MS) {
+                lastTextAt = now;
                 onUpdate({ type: "text", text });
               }
             } else if (
