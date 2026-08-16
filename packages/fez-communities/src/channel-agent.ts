@@ -144,16 +144,22 @@ async function main() {
   const recent = new Map<string, string[]>(); // channelId -> last few messages, as harness context
   let busy = false;
 
-  relay.subscribe(
-    [
-      { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
-      { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
-    ],
-    async (event) => {
-      if (event.kind === KIND_MEMBERSHIP) {
-        absorbMembership(event);
-        return;
-      }
+  // Mention = p-tag (the normal path) OR the agent's own @name in the
+  // content. The name fallback exists for the auto-spawn bootstrap: a
+  // mention of a not-yet-running agent can't carry its p-tag (the sender
+  // didn't know its pubkey), so the freshly spawned agent must recognize
+  // itself by name in the backfilled message.
+  const nameMentionRe = new RegExp(`(^|\\W)@${personaId}\\b`, "i");
+  const isMention = (event: { content: string; tags: string[][] }) =>
+    event.tags.some((t) => t[0] === "p" && t[1] === myPubkey) || nameMentionRe.test(event.content);
+
+  const handleChannelMessage = async (event: {
+    id: string;
+    pubkey: string;
+    created_at: number;
+    content: string;
+    tags: string[][];
+  }): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       const communityId = event.tags.find((t) => t[0] === "c")?.[1];
       if (!channelId || !communityId || event.pubkey === myPubkey) return;
@@ -162,7 +168,7 @@ async function main() {
       context.push(`${event.pubkey.slice(0, 8)}: ${event.content}`);
       recent.set(channelId, context.slice(-10));
 
-      const mentioned = event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
+      const mentioned = isMention(event);
       const authorIsMember = memberships.get(channelId)?.members.has(event.pubkey) ?? false;
 
       if (!mentioned) return;
@@ -291,8 +297,44 @@ async function main() {
         clearInterval(typing);
         busy = false;
       }
+  };
+
+  relay.subscribe(
+    [
+      { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
+      { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+    ],
+    (event) => {
+      if (event.kind === KIND_MEMBERSHIP) {
+        absorbMembership(event);
+        return;
+      }
+      void handleChannelMessage(event);
     }
   );
+
+  // Backfill: an auto-spawned agent starts seconds AFTER the mention that
+  // summoned it — the live subscription (since: now) misses it. Pick up
+  // the most recent unanswered mention from the last two minutes.
+  const BACKFILL_WINDOW_S = 120;
+  const [recentMessages, ownReplies] = await Promise.all([
+    relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }]),
+    relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }]),
+  ]);
+  const answered = new Set(
+    ownReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e" && t[3] === "reply").map((t) => t[1]))
+  );
+  const pending = recentMessages
+    .filter((e) => e.pubkey !== myPubkey && isMention(e) && !answered.has(e.id))
+    .sort((a, b) => a.created_at - b.created_at)
+    .at(-1);
+  if (pending) {
+    console.log(`⏪ Backfilling mention from ${pending.pubkey.slice(0, 8)}… (${Math.floor(Date.now() / 1000) - pending.created_at}s ago)`);
+    // Small grace so an auto-spawn /invite (published once our 47000 is
+    // seen) lands before our reactions/reply — non-member events get
+    // dropped by clients.
+    setTimeout(() => void handleChannelMessage(pending), 3000);
+  }
 
   process.on("SIGINT", () => {
     clearInterval(heartbeat);
