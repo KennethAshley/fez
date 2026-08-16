@@ -1,5 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
-import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -122,26 +121,14 @@ function isolatedClaudeEnv(): NodeJS.ProcessEnv {
     if (!fs.existsSync(settingsFile)) {
       fs.writeFileSync(settingsFile, JSON.stringify({ disableClaudeAiConnectors: true }, null, 1), { mode: 0o600 });
     }
-    if (process.platform === "darwin") {
-      const suffix = crypto.createHash("sha256").update(dir).digest("hex").slice(0, 8);
-      const service = `Claude Code-credentials-${suffix}`;
-      const probe = spawnSync("security", ["find-generic-password", "-s", service], { stdio: "ignore" });
-      if (probe.status !== 0) {
-        const token = spawnSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], {
-          encoding: "utf-8",
-        });
-        if (token.status === 0 && token.stdout.trim()) {
-          spawnSync("security", ["add-generic-password", "-U", "-s", service, "-a", os.userInfo().username, "-w", token.stdout.trim()], { stdio: "ignore" });
-        }
-      }
-    } else {
-      const credFile = path.join(dir, ".credentials.json");
-      const globalCred = path.join(os.homedir(), ".claude", ".credentials.json");
-      if (!fs.existsSync(credFile) && fs.existsSync(globalCred)) {
-        fs.copyFileSync(globalCred, credFile);
-        fs.chmodSync(credFile, 0o600);
-      }
-    }
+    // Deliberately NOT seeded with the user's OAuth token. That was the
+    // first design and it died in production: refresh tokens rotate, so
+    // a copied session raced the user's own Claude and expired with
+    // "OAuth session expired and could not be refreshed" once either
+    // side refreshed. The clean room needs its OWN session — a one-time
+    //   CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login
+    // (fez doctor checks for it and prints exactly that). An
+    // ANTHROPIC_API_KEY in the environment sidesteps login entirely.
   } catch {
     // Isolation is best-effort: a seeding failure falls back to inherited
     // config (the pre-isolation behavior) rather than a broken agent.

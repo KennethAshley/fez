@@ -202,6 +202,25 @@ program
     if (harnesses.length > 0) ok(`harness: ${harnesses.map((h) => h.id).join(", ")}`);
     else bad(`no agent harness (checked: ${listHarnesses().map((h) => h.command).join(", ")})`, "npm install -g @anthropic-ai/claude-code @agentclientprotocol/claude-agent-acp");
 
+    // harness clean-room auth: agents run against an isolated Claude
+    // config dir with its OWN login session (a copied token rots — see
+    // harness.ts). API key in env makes login unnecessary.
+    if (harnesses.length > 0 && process.env.FEZ_HARNESS_INHERIT !== "1") {
+      if (process.env.ANTHROPIC_API_KEY) {
+        ok("harness auth: ANTHROPIC_API_KEY set");
+      } else {
+        const cleanDir = path.join(os.homedir(), ".fez", "harness", "claude", "shared");
+        const { createHash } = await import("node:crypto");
+        const { spawnSync } = await import("node:child_process");
+        const authed =
+          process.platform === "darwin"
+            ? spawnSync("security", ["find-generic-password", "-s", `Claude Code-credentials-${createHash("sha256").update(cleanDir).digest("hex").slice(0, 8)}`], { stdio: "ignore" }).status === 0
+            : await fs.access(path.join(cleanDir, ".credentials.json")).then(() => true, () => false);
+        if (authed) ok("harness auth: clean-room session present");
+        else bad("harness clean room isn't logged in — agent turns will fail", `CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login   (one time)`);
+      }
+    }
+
     // personas
     const personas = await listPersonas();
     if (personas.length > 0) ok(`personas: ${personas.map((p) => `@${p.id}`).join(", ")}`);

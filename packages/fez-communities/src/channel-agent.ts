@@ -65,6 +65,14 @@ async function main() {
     console.error(`Persona "${personaId}" needs harness "${persona.harness}" which isn't available`);
     process.exit(1);
   }
+  // Resolve declared skills; the unresolved ones aren't silently dropped
+  // — the agent is told about the gap so it can SAY SO when a task needs
+  // one, instead of quietly faking its way through (the user's only
+  // signal otherwise is a confidently wrong answer).
+  const missingSkills = persona.mcpServers.filter((name) => !findMcpServer(name));
+  if (missingSkills.length > 0) {
+    console.warn(`⚠️  Skills declared but not loadable here: ${missingSkills.join(", ")} — the agent will disclose the gap when relevant`);
+  }
   const mcpServers = persona.mcpServers
     .map((name) => findMcpServer(name))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
@@ -208,9 +216,21 @@ async function main() {
   // mention of a not-yet-running agent can't carry its p-tag (the sender
   // didn't know its pubkey), so the freshly spawned agent must recognize
   // itself by name in the backfilled message.
+  // Addressing: the FIRST @name in a message is its addressee; later
+  // @names are context or downstream handoffs. Without this, "@reviewer
+  // check the docs, if good ping @coder" fires BOTH agents immediately —
+  // coder starts coding before reviewer has judged anything. So: when a
+  // message contains mentions, only the first one acts; a message with
+  // no text mentions at all falls back to the p-tag (thread replies
+  // addressed without retyping the name). The name fallback still covers
+  // the auto-spawn bootstrap (a mention of a not-yet-running agent
+  // carries no p-tag).
   const nameMentionRe = new RegExp(`(^|\\W)@${personaId}\\b`, "i");
-  const isMention = (event: { content: string; tags: string[][] }) =>
-    event.tags.some((t) => t[0] === "p" && t[1] === myPubkey) || nameMentionRe.test(event.content);
+  const isMention = (event: { content: string; tags: string[][] }) => {
+    const first = event.content.match(/@([\w-]+)/)?.[1];
+    if (first) return first.toLowerCase() === personaId!.toLowerCase();
+    return event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
+  };
 
   const handleChannelMessage = async (event: {
     id: string;
@@ -327,10 +347,32 @@ async function main() {
       // Steering guidance consumed into this turn's prompt (Buzz frames
       // steered messages as "arrived while you were working — weave in").
       const steering = steerMessages.splice(0);
+      // NIP-10 markers, Buzz's exact shape (threading.ts) — computed
+      // BEFORE the try so drafts, the reply, and the failure notice all
+      // carry the same thread tags.
+      const triggerParent = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+      const triggerRoot = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? triggerParent;
+      const replyTags = [
+        ["h", channelId],
+        ["c", communityId],
+        ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
+        ["e", event.id, "", "reply"],
+        ["p", event.pubkey],
+        ["depth", String(triggerDepth + 1)],
+      ];
       try {
         const prompt = [
           persona.systemPrompt ?? "",
-          `You are @${personaId}, responding in a group chat channel. Recent messages:`,
+          `You are @${personaId}, responding in a group chat channel where humans and other agents talk. Two conventions matter:`,
+          `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this when the task says to bring someone in ("if X, ping @coder"), phrasing the handoff as a direct request with the context they need. If the task's condition for the handoff is NOT met, do not mention them; state the outcome instead.`,
+          ...(missingSkills.length > 0
+            ? [
+                `- Capability honesty: your persona declares skills that are NOT available in this session: ${missingSkills.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
+              ]
+            : [
+                `- Capability honesty: if the task needs a tool or data source you don't have access to, say so plainly instead of improvising the result.`,
+              ]),
+          `Recent messages:`,
           ...(recent.get(channelId) ?? []),
           ...(steering.length > 0
             ? [
@@ -338,29 +380,11 @@ async function main() {
                 ...steering,
               ]
             : []),
-          `Reply to the last message that mentioned you. Be concise — this is chat.`,
+          `Reply to the last message that addressed you. Be concise — this is chat.`,
         ].filter(Boolean).join("\n\n");
 
         console.log(`💬 Mention from ${event.pubkey.slice(0, 8)}… — invoking ${persona.harness}`);
         void react("💬"); // "working" — the turn is actually starting
-
-        // NIP-10 markers, Buzz's exact shape (threading.ts): replying to a
-        // message that's already in a thread carries that thread's root as
-        // a root-marked tag; replying to a root message carries only the
-        // reply marker (the trigger IS the root). Root of the trigger =
-        // its root-marked e-tag, falling back to its reply-marked parent.
-        // Computed before the turn so drafts carry the same tags as the
-        // eventual reply — clients stream them into the right place.
-        const triggerParent = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
-        const triggerRoot = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? triggerParent;
-        const replyTags = [
-          ["h", channelId],
-          ["c", communityId],
-          ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
-          ["e", event.id, "", "reply"],
-          ["p", event.pubkey],
-          ["depth", String(triggerDepth + 1)],
-        ];
 
         // Stream the reply as it generates: ephemeral drafts (never stored
         // — history and late joiners see only the final message) carrying
@@ -393,7 +417,24 @@ async function main() {
           console.log(`🔀 Turn cancelled for steering — re-dispatching merged prompt`);
         } else {
           publishObserver({ type: "turn", status: "failed" });
-          console.error(`❌ Turn failed:`, err instanceof Error ? err.message : err);
+          const reason = err instanceof Error ? err.message : String(err);
+          console.error(`❌ Turn failed:`, reason);
+          // Failures are LOUD in the channel. Silence is a valid outcome
+          // for "condition not met", never for errors — a user staring
+          // at a cleared 👀 with no reply can't tell a judgment call
+          // from a broken agent. Auth failures name their fix.
+          const hint = /oauth|authenticat|logged in/i.test(reason)
+            ? " — my harness needs a login: CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login"
+            : "";
+          void relay
+            .publish(
+              client.signEvent({
+                kind: KIND_CHANNEL_MESSAGE,
+                tags: replyTags,
+                content: `⚠️ I couldn't finish that: ${reason.slice(0, 160)}${hint}`,
+              })
+            )
+            .catch(() => {});
         }
       } finally {
         // Buzz's ReactionGuard shape: status reactions clear on every exit

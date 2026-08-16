@@ -372,8 +372,18 @@ export default function communities(api: FezExtensionAPI): void {
   }
 
   function refreshUi(): void {
-    const active = activeJobs().length;
-    panel.setText(state.sidebarText() + (active > 0 ? `\n\n Jobs ⚙ ${active} — /jobs` : ""));
+    // Live agent status under the tree: one line per busy agent (👀
+    // accepted, ⚙ turn running, with the current tool when the observer
+    // stream names one) — the glanceable answer to "what is reviewer
+    // doing right now", no /watch needed.
+    const busy = new Map<string, Job>();
+    for (const job of activeJobs()) busy.set(job.agentPk, job);
+    const statusLines = [...busy.values()]
+      .slice(0, 5)
+      .map((j) => ` ${j.status === "working" ? "⚙" : "👀"} @${displayName(j.agentPk)}${j.currentTool ? ` · ${j.currentTool}` : ""}`);
+    panel.setText(
+      state.sidebarText() + (statusLines.length > 0 ? `\n\n Working\n${statusLines.join("\n")}\n — /jobs` : "")
+    );
     const current = state.currentChannel();
     const threadSuffix =
       view.mode === "thread"
