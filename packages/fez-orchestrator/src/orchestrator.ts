@@ -234,9 +234,14 @@ async function main() {
     return picked;
   }
 
+  // Routing fires ONLY on an explicit @name in the text — never on a bare
+  // p-tag. Channel agents p-tag whoever they're answering, so fez's own
+  // routed handoffs come back as replies p-tagging fez; treating those as
+  // requests re-routes every ANSWER (live-tested: one question echoed
+  // through the roster until the depth cap). Explicit @fez = a request;
+  // a p-tag alone = reply addressing.
   const nameMentionRe = new RegExp(`(^|\\W)@${name}\\b`, "i");
-  const isMention = (event: { content: string; tags: string[][] }) =>
-    event.tags.some((t) => t[0] === "p" && t[1] === myPubkey) || nameMentionRe.test(event.content);
+  const isMention = (event: { content: string; tags: string[][] }) => nameMentionRe.test(event.content);
 
   const announce = async () => {
     await relay.publish(
