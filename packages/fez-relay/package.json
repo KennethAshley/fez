@@ -1,0 +1,24 @@
+{
+  "name": "@fez/relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NIP-01 relay with pluggable ingest-policy hooks — enforcement for operators, dumb store by default",
+  "type": "module",
+  "main": "./dist/relay.js",
+  "types": "./dist/relay.d.ts",
+  "bin": {
+    "fez-relay": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/cli.js"
+  },
+  "dependencies": {
+    "nostr-tools": "^2.14.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.6.0"
+  }
+}
