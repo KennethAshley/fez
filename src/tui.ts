@@ -88,6 +88,10 @@ export class FezTUI {
   // terminal-height rows every render). Extensions get sections via
   // ui.createSidePanel() during loadExtensions(), before the screen exists.
   private sidePanel = new SidePanel(() => process.stdout.rows ?? 24);
+  // Per-message action registry: bubble id -> current content, backing the
+  // clickable ⧉ (copy to clipboard) / ↩ (quote into editor) glyphs.
+  private bubbleSeq = 0;
+  private bubbleContents = new Map<string, string>();
   private sidePanelWidth = 26;
   private sidePanelUsed = false;
   // ui.appendMessage() calls made before screen.start() — flushed after.
@@ -181,6 +185,26 @@ export class FezTUI {
       // registerUrlHandler (e.g. a sidebar entry focusing a herdr tab);
       // unclaimed web links open in the system browser.
       openUrl: (url) => {
+        // Per-message actions (the ⧉/↩ glyphs on every bubble): copy the
+        // message to the system clipboard, or quote it into the editor.
+        if (url.startsWith("fez-copy://") || url.startsWith("fez-quote://")) {
+          const id = url.slice(url.indexOf("//") + 2);
+          const content = this.bubbleContents.get(id);
+          if (content === undefined) return;
+          if (url.startsWith("fez-copy://")) {
+            const pb = spawn("pbcopy", [], { stdio: ["pipe", "ignore", "ignore"] });
+            pb.stdin?.on("error", () => {});
+            pb.stdin?.end(content);
+            footer.setStatus("clip", "⧉ copied");
+            setTimeout(() => footer.setStatus("clip", ""), 2500);
+          } else {
+            const quoted = content.split("\n").map((l) => `> ${l}`).join("\n") + "\n";
+            if (this.editor.insertTextAtCursor) this.editor.insertTextAtCursor(quoted);
+            else this.editor.setText(this.editor.getText() + quoted);
+          }
+          this.screen.requestRender();
+          return;
+        }
         const handler = findUrlHandler(url);
         if (handler) {
           handler(url);
@@ -744,13 +768,34 @@ export class FezTUI {
     let currentAuthor = author;
     let footerText = "";
     const headText = () => stamp + " " + authorColor(currentAuthor)(currentAuthor) + chalk.dim(":");
+    // Clickable per-message actions, rendered at the end of the first
+    // line: ⧉ copies the message body to the clipboard, ↩ quotes it into
+    // the editor. OSC-8 links routed by openUrl's fez-copy/fez-quote
+    // branches; the registry tracks live content so streamed bubbles
+    // copy their FINAL text.
+    const actionId = String(++this.bubbleSeq);
+    this.bubbleContents.set(actionId, content);
+    if (this.bubbleContents.size > 300) {
+      this.bubbleContents.delete(this.bubbleContents.keys().next().value as string);
+    }
+    const osc8 = (url: string, label: string) => `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
+    const actions =
+      "  " + osc8(`fez-copy://${actionId}`, chalk.dim("⧉")) + " " + osc8(`fez-quote://${actionId}`, chalk.dim("↩"));
     const bubble = new Container();
     const layout = (c: string) => {
       bubble.clear();
-      if (!c.includes("\n") && c.length <= 100) {
-        bubble.addChild(new Text("\n" + headText() + " " + c, 0, 0));
+      this.bubbleContents.set(actionId, c);
+      if (currentAuthor === "You") {
+        // pi's userMessageBg: your own messages render as a full-width
+        // tinted block (pi-tui Text paints customBgFn edge to edge).
+        // The ​ spacer keeps the gap OUTSIDE the tint — a leading
+        // \n inside the block would paint an empty tinted row instead.
+        bubble.addChild(new Text("​", 0, 0));
+        bubble.addChild(new Text(headText() + " " + c + actions, 1, 0, (s) => getActiveTheme().userMessageBg(s)));
+      } else if (!c.includes("\n") && c.length <= 100) {
+        bubble.addChild(new Text("\n" + headText() + " " + c + actions, 0, 0));
       } else {
-        bubble.addChild(new Text("\n" + headText(), 0, 0));
+        bubble.addChild(new Text("\n" + headText() + actions, 0, 0));
         bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
       }
       // An empty Text still renders one blank line — only mount the footer

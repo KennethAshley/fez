@@ -81,6 +81,7 @@ export interface ThemeSpec {
   error?: (s: string) => string;
   banner?: (s: string) => string;
   sidebarBg?: (s: string) => string;
+  userMessageBg?: (s: string) => string;
   loader?: { spinner?: (s: string) => string; message?: (s: string) => string };
   markdown?: Record<string, (...args: string[]) => string>;
   editor?: Record<string, unknown>;

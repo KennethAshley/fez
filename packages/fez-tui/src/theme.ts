@@ -36,6 +36,8 @@ export interface FezTheme {
   banner: StyleFn;
   /** Background painted across the full-height sidebar pane. */
   sidebarBg: StyleFn;
+  /** Full-width block background behind the user's own messages (pi's userMessageBg). */
+  userMessageBg: StyleFn;
   loader: { spinner: StyleFn; message: StyleFn };
   markdown: MarkdownTheme;
   editor: EditorTheme;
@@ -52,6 +54,7 @@ export const defaultTheme: FezTheme = {
   error: chalk.red,
   banner: chalk.magenta,
   sidebarBg: (s) => chalk.bgAnsi256(236)(s),
+  userMessageBg: (s) => chalk.bgAnsi256(237)(s),
   loader: { spinner: chalk.cyan, message: chalk.dim },
   markdown: {
     heading: (t) => chalk.bold.yellow(t),
@@ -215,6 +218,7 @@ export function compileThemeJson(spec: ThemeJson): Partial<FezTheme> & { name: s
   if (has("error")) out.error = bold(paint(val("error")));
   if (has("banner")) out.banner = paint(val("banner"));
   if (has("sidebarBg")) out.sidebarBg = paintBg(val("sidebarBg"));
+  if (has("userMessageBg")) out.userMessageBg = paintBg(val("userMessageBg"));
   if (has("loaderSpinner") || has("loaderMessage")) {
     out.loader = {
       spinner: has("loaderSpinner") ? paint(val("loaderSpinner")) : defaultTheme.loader.spinner,
