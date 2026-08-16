@@ -217,6 +217,11 @@ async function main() {
   };
 
   const recent = new Map<string, string[]>(); // channelId -> last few messages, as harness context
+  // Event-id dedupe: relays can deliver an event more than once (and the
+  // startup backfill can overlap the live subscription); without this a
+  // duplicate delivery runs a second full turn and double-posts the reply
+  // — observed live as an agent "re-posting the same result".
+  const seenEventIds = new Set<string>();
   let busy = false;
   const pendingMentions: { id: string; pubkey: string; created_at: number; content: string; tags: string[][] }[] = [];
 
@@ -237,29 +242,40 @@ async function main() {
   // Addressing: the FIRST @name in a message is its addressee; later
   // @names are context or downstream handoffs. Without this, "@reviewer
   // check the docs, if good ping @coder" fires BOTH agents immediately —
-  // coder starts coding before reviewer has judged anything. So: when a
-  // message contains mentions, only the first one acts; a message with
-  // no text mentions at all falls back to the p-tag (thread replies
-  // addressed without retyping the name). The name fallback still covers
-  // the auto-spawn bootstrap (a mention of a not-yet-running agent
-  // carries no p-tag).
+  // coder starts coding before reviewer has judged anything.
+  //
+  // A message with NO text mentions falls back to the p-tag — but only
+  // from the OWNER. Replies auto-p-tag whoever they answer, so between
+  // agents the fallback is a perpetual-motion machine: A answers B
+  // (p-tagging B), which summons B to answer A, forever — observed live
+  // running straight into the depth cap even with both agents politely
+  // naming each other without @. Agents summon each other with an
+  // explicit @name or not at all; a human replying in a thread keeps
+  // the no-retyping convenience.
   const nameMentionRe = new RegExp(`(^|\\W)@${personaId}\\b`, "i");
-  const isMention = (event: { content: string; tags: string[][] }) => {
+  const isMention = (event: { pubkey: string; content: string; tags: string[][] }) => {
     const first = event.content.match(/@([\w-]+)/)?.[1];
     if (first) return first.toLowerCase() === personaId!.toLowerCase();
-    return event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
+    return event.pubkey === owner && event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
   };
 
-  const handleChannelMessage = async (event: {
-    id: string;
-    pubkey: string;
-    created_at: number;
-    content: string;
-    tags: string[][];
-  }): Promise<void> => {
+  const handleChannelMessage = async (
+    event: {
+      id: string;
+      pubkey: string;
+      created_at: number;
+      content: string;
+      tags: string[][];
+    },
+    /** true for our own deliberate re-entries (steer re-dispatch, queue drain) — they reuse a seen event. */
+    redispatch = false
+  ): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       const communityId = event.tags.find((t) => t[0] === "c")?.[1];
       if (!channelId || !communityId || event.pubkey === myPubkey) return;
+      if (!redispatch && seenEventIds.has(event.id)) return;
+      seenEventIds.add(event.id);
+      if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
 
       const context = recent.get(channelId) ?? [];
       context.push(`${event.pubkey.slice(0, 8)}: ${event.content}`);
@@ -387,7 +403,7 @@ async function main() {
         const prompt = [
           persona.systemPrompt ?? "",
           `You are @${personaId}, responding in a group chat channel where humans and other agents talk. Two conventions matter:`,
-          `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this when the task says to bring someone in ("if X, ping @coder"), phrasing the handoff as a direct request with the context they need. If the task's condition for the handoff is NOT met, do not mention them; state the outcome instead.`,
+          `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
           ...(missingSkills.length > 0
             ? [
                 `- Capability honesty: your persona declares skills that are NOT available in this session: ${missingSkills.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
@@ -448,7 +464,7 @@ async function main() {
           // at a cleared 👀 with no reply can't tell a judgment call
           // from a broken agent. Auth failures name their fix.
           const hint = classifyTurnError(err) === "auth"
-            ? " — my harness needs a login: CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login"
+            ? " — my harness isn't logged in: run `claude /login`, then mention me again (fez doctor has the details)"
             : "";
           consecutiveFailures++;
           const tripped = consecutiveFailures >= BREAKER_THRESHOLD;
@@ -479,12 +495,12 @@ async function main() {
         if (steerMessages.length > 0) {
           // Steered: re-dispatch the SAME trigger — the unconsumed steer
           // messages get woven into the merged prompt.
-          setTimeout(() => void handleChannelMessage(event), 250);
+          setTimeout(() => void handleChannelMessage(event, true), 250);
         } else {
           // Drain the queue: next pending mention gets its own full turn,
           // with the exchange that just finished already in context.
           const next = pendingMentions.shift();
-          if (next) setTimeout(() => void handleChannelMessage(next), 250);
+          if (next) setTimeout(() => void handleChannelMessage(next, true), 250);
         }
       }
   };
@@ -523,6 +539,8 @@ async function main() {
     // Small grace so an auto-spawn /invite (published once our 47000 is
     // seen) lands before our reactions/reply — non-member events get
     // dropped by clients.
+    // Backfill deliberately KEEPS the dedupe: if the live subscription
+    // already delivered this event, a second turn is exactly the bug.
     setTimeout(() => void handleChannelMessage(pending), 3000);
   }
 

@@ -248,13 +248,14 @@ program
     if (harnesses.length > 0) ok(`harness: ${harnesses.map((h) => h.id).join(", ")}`);
     else bad(`no agent harness (checked: ${listHarnesses().map((h) => h.command).join(", ")})`, "npm install -g @anthropic-ai/claude-code @agentclientprotocol/claude-agent-acp");
 
-    // harness clean-room auth: agents run against an isolated Claude
-    // config dir with its OWN login session (a copied token rots — see
-    // harness.ts). API key in env makes login unnecessary.
-    if (harnesses.length > 0 && process.env.FEZ_HARNESS_INHERIT !== "1") {
+    // harness auth. Default mode shares the user's own Claude login
+    // (Buzz's model — no second session) with account connectors
+    // suppressed by env; only explicit FEZ_HARNESS_ISOLATE=1 needs its
+    // own clean-room login.
+    if (harnesses.length > 0) {
       if (process.env.ANTHROPIC_API_KEY) {
         ok("harness auth: ANTHROPIC_API_KEY set");
-      } else {
+      } else if (process.env.FEZ_HARNESS_ISOLATE === "1") {
         const cleanDir = path.join(os.homedir(), ".fez", "harness", "claude", "shared");
         const { createHash } = await import("node:crypto");
         const { spawnSync } = await import("node:child_process");
@@ -262,8 +263,10 @@ program
           process.platform === "darwin"
             ? spawnSync("security", ["find-generic-password", "-s", `Claude Code-credentials-${createHash("sha256").update(cleanDir).digest("hex").slice(0, 8)}`], { stdio: "ignore" }).status === 0
             : await fs.access(path.join(cleanDir, ".credentials.json")).then(() => true, () => false);
-        if (authed) ok("harness auth: clean-room session present");
-        else bad("harness clean room isn't logged in — agent turns will fail", `CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login   (one time)`);
+        if (authed) ok("harness auth: isolated session present (FEZ_HARNESS_ISOLATE)");
+        else bad("FEZ_HARNESS_ISOLATE is set but the clean room isn't logged in", `CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login   (one time)`);
+      } else {
+        ok("harness auth: shared with your Claude login (connectors suppressed)");
       }
     }
 

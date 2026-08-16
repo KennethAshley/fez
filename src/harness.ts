@@ -80,24 +80,31 @@ function spawnDetect(command: string, args: string[]): Promise<boolean> {
 }
 
 /**
- * Clean-room config for spawned Claude instances. The persona markdown is
- * the contract: an agent gets the MCP servers its persona declares (passed
- * explicitly per ACP session) and NOTHING from the user's global ~/.claude
- * — without this, every agent inherits the user's whole personal workspace
- * (global MCP servers, global instructions), which breaks reproducibility
- * and quietly un-bounds what a sibling-triggerable agent can reach.
+ * Environment for spawned Claude instances — Buzz's model, arrived at
+ * the hard way. Three modes:
  *
- * Mechanics (verified empirically on macOS): CLAUDE_CONFIG_DIR pointed at
- * a fez-owned dir drops all global config, but also logs the instance out —
- * Claude keys its keychain item per config dir ("Claude Code-credentials-"
- * + sha256(dir)[:8]). So first use seeds that item from the user's global
- * one (their own token, staying in their own keychain). On non-mac
- * platforms credentials live in <dir>/.credentials.json; seeding is a file
- * copy. Minimal account state (oauthAccount etc.) is copied into the dir's
- * .claude.json. FEZ_HARNESS_INHERIT=1 opts out of isolation entirely.
+ * DEFAULT (shared): the user's own config and LOGIN, exactly like
+ * running `claude` themselves (buzz-acp does the same — no second
+ * session to create, no OAuth refresh race), plus
+ * ENABLE_CLAUDEAI_MCP_SERVERS=false: the one leak that actually
+ * mattered (claude.ai account connectors — Gmail, ditto, …) is killed
+ * by env var alone, no config-dir isolation required (verified: 7
+ * connectors → 0). Persona MCP servers arrive per ACP session as ever.
+ *
+ * FEZ_HARNESS_ISOLATE=1: the full clean room — fez-owned
+ * CLAUDE_CONFIG_DIR, nothing global, its OWN login (one-time
+ * `CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login`).
+ * NEVER seed the user's token into it: refresh tokens rotate, and a
+ * copied session races the user's real one until one of them dies —
+ * that failure was observed live, mid-scenario.
+ *
+ * FEZ_HARNESS_INHERIT=1: raw environment, connectors and all.
  */
 function isolatedClaudeEnv(): NodeJS.ProcessEnv {
   if (process.env.FEZ_HARNESS_INHERIT === "1") return process.env;
+  if (process.env.FEZ_HARNESS_ISOLATE !== "1") {
+    return { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "false" };
+  }
   const dir = path.join(os.homedir(), ".fez", "harness", "claude", "shared");
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -121,14 +128,7 @@ function isolatedClaudeEnv(): NodeJS.ProcessEnv {
     if (!fs.existsSync(settingsFile)) {
       fs.writeFileSync(settingsFile, JSON.stringify({ disableClaudeAiConnectors: true }, null, 1), { mode: 0o600 });
     }
-    // Deliberately NOT seeded with the user's OAuth token. That was the
-    // first design and it died in production: refresh tokens rotate, so
-    // a copied session raced the user's own Claude and expired with
-    // "OAuth session expired and could not be refreshed" once either
-    // side refreshed. The clean room needs its OWN session — a one-time
-    //   CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login
-    // (fez doctor checks for it and prints exactly that). An
-    // ANTHROPIC_API_KEY in the environment sidesteps login entirely.
+    // No token seeding — see the mode doc above.
   } catch {
     // Isolation is best-effort: a seeding failure falls back to inherited
     // config (the pre-isolation behavior) rather than a broken agent.
