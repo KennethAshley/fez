@@ -25,28 +25,43 @@ cactus serve Cactus-Compute/needle --no-cloud-handoff --no-cloud-tele
 Anything else that speaks `/v1/chat/completions` with function calling
 works the same: ollama, llama.cpp server, or a cloud model.
 
+## Setup — a persona file, like any other agent
+
+`~/.fez/personas/fez.md` is the primary config; env vars override it.
+
+```markdown
+---
+harness: router
+url: http://127.0.0.1:8080/v1
+channels: [general]
+owner: <your pubkey>
+aliases: [orchestrator]
+description: routes tasks to the right agent — mention @fez with anything
+---
+🎩 fez here. Mention @fez with a task and I'll bring in whoever's best for it.
+```
+
+- `harness: router` marks it as a standing service — fez-herdr won't try
+  to auto-spawn it as a channel agent.
+- The body is fez's greeting, in your voice (roster gets appended).
+- `aliases` are extra @names that reach it; `description` is its 47000 about.
+- `model:` pins the model id (otherwise auto-discovered from the endpoint).
+
 ## Run
 
 ```bash
 npm run orchestrator:build
-FEZ_AGENT_CHANNELS=general \
-FEZ_AGENT_OWNER=<your pubkey> \
 fez run packages/fez-orchestrator/dist/orchestrator.js -r ws://localhost:7777
 ```
 
 Then invite its pubkey (printed on first run) as the community creator:
 `/invite <pubkey> bot`.
 
-Env:
-
-| var | default | |
-|---|---|---|
-| `FEZ_ORCHESTRATOR_URL` | `http://127.0.0.1:8080/v1` | OpenAI-compatible base URL |
-| `FEZ_ORCHESTRATOR_MODEL` | first model the endpoint lists | model id |
-| `FEZ_ORCHESTRATOR_NAME` | `fez` | the orchestrator's @name |
-| `FEZ_AGENT_CHANNELS` | — | channel names/ids to serve |
-| `FEZ_AGENT_RESPOND_TO` | `owner` | `anyone` \| `owner` \| `allowlist:<pk,...>` |
-| `FEZ_AGENT_OWNER` | — | owner pubkey (owner mode + sibling gate) |
+Env overrides (each beats the persona file): `FEZ_ORCHESTRATOR_URL`,
+`FEZ_ORCHESTRATOR_MODEL`, `FEZ_ORCHESTRATOR_NAME` (default `fez` — also
+picks which persona file loads), `FEZ_AGENT_CHANNELS`,
+`FEZ_AGENT_RESPOND_TO` (`anyone` | `owner` | `allowlist:<pk,...>`),
+`FEZ_AGENT_OWNER`.
 
 ## How fez knows who's around
 

@@ -44,6 +44,14 @@ export interface Persona {
    * Falls back to the system prompt's first line when absent.
    */
   description?: string;
+  /**
+   * Frontmatter keys this loader doesn't recognize, passed through
+   * verbatim — the seam that lets a persona file configure whatever
+   * service runs it (the orchestrator reads url/model/channels from
+   * here) without core learning every service's vocabulary. Bracket
+   * lists stay raw strings; consumers parse what they own.
+   */
+  extra: Record<string, string>;
   createdAt: string;
 }
 
@@ -63,9 +71,9 @@ function parseList(raw: string): string[] {
 }
 
 /** Deliberately minimal — this frontmatter only ever needs a few flat fields, a real YAML parser would be overkill. */
-function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; description?: string; body: string } {
+function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; description?: string; extra: Record<string, string>; body: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { aliases: [], mcpServers: [], body: raw.trim() };
+  if (!match) return { aliases: [], mcpServers: [], extra: {}, body: raw.trim() };
 
   const [, frontmatter, body] = match;
   const meta: Record<string, string> = {};
@@ -74,11 +82,15 @@ function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; m
     if (kv) meta[kv[1]] = kv[2].trim();
   }
 
+  const known = new Set(["harness", "aliases", "mcpServers", "description"]);
+  const extra = Object.fromEntries(Object.entries(meta).filter(([k]) => !known.has(k)));
+
   return {
     harness: meta.harness || undefined,
     aliases: meta.aliases ? parseList(meta.aliases) : [],
     mcpServers: meta.mcpServers ? parseList(meta.mcpServers) : [],
     description: meta.description || undefined,
+    extra,
     body: body.trim(),
   };
 }
@@ -93,7 +105,7 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
   const id = path.basename(filePath, ".md");
   try {
     const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf-8"), fs.stat(filePath)]);
-    const { harness, aliases, mcpServers, description, body } = parseFrontmatter(raw);
+    const { harness, aliases, mcpServers, description, extra, body } = parseFrontmatter(raw);
     if (!harness) {
       notice(`⚠️  ${id}.md has no "harness:" in its frontmatter — skipped`);
       return undefined;
@@ -104,6 +116,7 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
       harness,
       mcpServers,
       description,
+      extra,
       systemPrompt: body || undefined,
       createdAt: stat.birthtime.toISOString(),
     };

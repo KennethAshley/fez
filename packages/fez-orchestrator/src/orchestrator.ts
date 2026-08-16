@@ -2,6 +2,7 @@
 import {
   RelayConnection,
   CapabilityClient,
+  findPersona,
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
   KIND_CHANNEL,
@@ -49,6 +50,16 @@ import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-commo
  */
 const MAX_CHAIN_DEPTH = 5;
 
+/**
+ * Greetings/pleasantries, detected deterministically: short and matching
+ * a smalltalk shape. Anything else is a task for the router.
+ */
+const SMALL_TALK_RE =
+  /^(yo|hey( there)?|hi( there)?|hiya|hello|howdy|sup|what'?s up|gm|good (morning|afternoon|evening|night)|how are you( doing)?( today)?|how's it going|you (there|ok|good)|thanks?|thank you|ty|nice( one)?|cool|great|awesome|lol|ok(ay)?)([\s!?.,…]+fez)?[\s!?.,…🎩👋]*$/i;
+function isSmallTalk(text: string): boolean {
+  return text.split(/\s+/).length <= 6 && SMALL_TALK_RE.test(text);
+}
+
 interface KnownAgent {
   pubkey: string;
   name: string;
@@ -60,19 +71,38 @@ interface KnownAgent {
 
 async function main() {
   const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
-  const baseUrl = (process.env.FEZ_ORCHESTRATOR_URL || "http://127.0.0.1:8080/v1").replace(/\/$/, "");
   const name = process.env.FEZ_ORCHESTRATOR_NAME || "fez";
-  const channelSpecs = (process.env.FEZ_AGENT_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
-  const respondTo = process.env.FEZ_AGENT_RESPOND_TO || "owner";
-  const owner = process.env.FEZ_AGENT_OWNER;
+
+  // Primary config is a persona file, same as every other agent —
+  // ~/.fez/personas/fez.md; env vars are overrides. Frontmatter:
+  //   harness: router            required by the persona loader; marks
+  //                              this as not-a-channel-agent (no such
+  //                              harness exists to spawn)
+  //   url: http://127.0.0.1:8080/v1   OpenAI-compatible router endpoint
+  //   model: needle-prebuilt     optional; auto-discovered when absent
+  //   channels: [general]        channels to orchestrate
+  //   aliases: [orchestrator]    extra @names that reach it
+  //   description: ...           47000 about
+  // Body = the greeting fez opens with (roster appended).
+  const persona = await findPersona(name);
+  const listRaw = (raw?: string) => (raw ?? "").replace(/^\[|\]$/g, "");
+  const baseUrl = (process.env.FEZ_ORCHESTRATOR_URL || persona?.extra.url || "http://127.0.0.1:8080/v1").replace(/\/$/, "");
+  const channelSpecs = (process.env.FEZ_AGENT_CHANNELS || listRaw(persona?.extra.channels))
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const respondTo = process.env.FEZ_AGENT_RESPOND_TO || persona?.extra.respondTo || "owner";
+  const owner = process.env.FEZ_AGENT_OWNER || persona?.extra.owner;
 
   if (channelSpecs.length === 0) {
-    console.error("Usage: FEZ_AGENT_CHANNELS=<name-or-id,...> [FEZ_ORCHESTRATOR_URL=http://...] fez run orchestrator.js");
+    console.error(
+      `No channels configured — add "channels: [general]" to ~/.fez/personas/${name}.md or set FEZ_AGENT_CHANNELS.`
+    );
     process.exit(1);
   }
 
-  // Model id: env wins; otherwise ask the endpoint what it serves.
-  let model = process.env.FEZ_ORCHESTRATOR_MODEL;
+  // Model id: env wins, then the persona file; otherwise ask the endpoint.
+  let model = process.env.FEZ_ORCHESTRATOR_MODEL || persona?.extra.model;
   if (!model) {
     try {
       const res = await fetch(`${baseUrl}/models`);
@@ -239,8 +269,9 @@ async function main() {
   // routed handoffs come back as replies p-tagging fez; treating those as
   // requests re-routes every ANSWER (live-tested: one question echoed
   // through the roster until the depth cap). Explicit @fez = a request;
-  // a p-tag alone = reply addressing.
-  const nameMentionRe = new RegExp(`(^|\\W)@${name}\\b`, "i");
+  // a p-tag alone = reply addressing. Persona aliases are extra @names.
+  const mentionNames = [name, ...(persona?.aliases ?? [])].filter((n) => /^[\w-]+$/.test(n));
+  const nameMentionRe = new RegExp(`(^|\\W)@(${mentionNames.join("|")})\\b`, "i");
   const isMention = (event: { content: string; tags: string[][] }) => nameMentionRe.test(event.content);
 
   const announce = async () => {
@@ -251,7 +282,8 @@ async function main() {
         content: JSON.stringify({
           name,
           supported_tasks: ["orchestrate"],
-          about: `Orchestrator — mention @${name} with a task and it brings in the right agent.`,
+          about: persona?.description ?? `Orchestrator — mention @${name} with a task and it brings in the right agent.`,
+          aliases: persona?.aliases,
         }),
       })
     );
@@ -293,11 +325,14 @@ async function main() {
     const names = routableNames();
     return names.length > 0 ? ` On deck: ${names.join(", ")}.` : "";
   };
-  const GREETINGS = [
-    `👋 ${name} here — mention @${name} with a task and I'll pull in the right agent.`,
-    `🎩 @${name} online. Toss me anything and I'll find who should take it.`,
-    `👋 popping in — need something done but not sure who does it? Just @${name} it.`,
-  ];
+  // Persona body = the user's own greeting voice; canned lines otherwise.
+  const GREETINGS = persona?.systemPrompt
+    ? [persona.systemPrompt.split(/\n\s*\n/)[0].trim()]
+    : [
+        `👋 ${name} here — mention @${name} with a task and I'll pull in the right agent.`,
+        `🎩 @${name} online. Toss me anything and I'll find who should take it.`,
+        `👋 popping in — need something done but not sure who does it? Just @${name} it.`,
+      ];
   for (const channelId of channels) {
     const communityId = communityOf.get(channelId);
     if (!communityId) continue;
@@ -356,6 +391,34 @@ async function main() {
     // words. Tiny models extract lossy task spans — never let the router
     // rewrite the request.
     const cleaned = event.content.replace(nameMentionRe, "$1").replace(/\s+/g, " ").trim();
+
+    // Small talk never reaches the router — measured: needle routes "yo"
+    // to an agent and returns nothing for "how are you?" (a routing
+    // model always wants to route). Greetings are cheap to detect
+    // deterministically, and fez answering in person beats delegating
+    // your hello to a research agent.
+    if (isSmallTalk(cleaned)) {
+      const names = routableNames();
+      const replies = [
+        `🎩 all good — router's warm${names.length > 0 ? `, ${names.join(" and ")} on deck` : ""}. Toss me a task and I'll route it.`,
+        `👋 hey! Around and routing. Need something done?`,
+        `Doing great.${names.length > 0 ? ` On deck: ${names.join(", ")}.` : ""} What can I route for you?`,
+      ];
+      console.log(`💬 Small talk from ${event.pubkey.slice(0, 8)} — answering in person`);
+      await say(channelId, communityId, replies[Math.floor(Math.random() * replies.length)], threadTags).catch(() => {});
+      if (statusReactionIds.length > 0) {
+        void relay
+          .publish(
+            client.signEvent({
+              kind: KIND_DELETION,
+              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId], ["c", communityId]],
+              content: "",
+            })
+          )
+          .catch(() => {});
+      }
+      return;
+    }
     try {
       const picked = await route(cleaned || event.content);
       if (picked.length > 0) {

@@ -191,10 +191,18 @@ export default function herdr(api: FezExtensionAPI): void {
       .catch(() => attested.delete(agentPubkey));
   }
 
+  /**
+   * A persona herdr can actually spawn as a channel-agent. Orchestrator
+   * personas (fez.md) declare `harness: router` — they're standing
+   * services the user runs themselves; auto-spawning one here would
+   * launch a channel-agent that exits on the unknown harness and leave
+   * a dead tab.
+   */
   function personaExists(name: string): boolean {
     try {
-      fs.accessSync(path.join(os.homedir(), ".fez", "personas", `${name}.md`));
-      return true;
+      const raw = fs.readFileSync(path.join(os.homedir(), ".fez", "personas", `${name}.md`), "utf-8");
+      const harness = raw.match(/^harness:\s*(.+)$/m)?.[1]?.trim();
+      return harness !== undefined && harness !== "router";
     } catch {
       return false;
     }
