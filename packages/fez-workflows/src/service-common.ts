@@ -1,8 +1,4 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import crypto from "node:crypto";
-import { RelayConnection, KIND_CHANNEL } from "@fez/protocol";
+import { RelayConnection, KIND_CHANNEL, loadOrCreateKey } from "@fez/protocol";
 
 /**
  * Shared plumbing for standing services (channel-agent, indexer): stable
@@ -11,18 +7,9 @@ import { RelayConnection, KIND_CHANNEL } from "@fez/protocol";
  * custody rationale (a service must not inherit the user's key).
  */
 
-/** Load or create a stable key at ~/.fez/agents/<name>.key (0o600). */
+/** Stable service identity "agent:<name>" — core custody (keychain on macOS, migrates legacy ~/.fez/agents/<name>.key). */
 export function loadServiceKey(name: string): string {
-  const keyPath = path.join(os.homedir(), ".fez", "agents", `${name}.key`);
-  try {
-    return fs.readFileSync(keyPath, "utf-8").trim();
-  } catch {
-    const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-    fs.mkdirSync(path.dirname(keyPath), { recursive: true });
-    fs.writeFileSync(keyPath, key, { mode: 0o600 });
-    console.log(`🔑 Generated service identity → ${keyPath}`);
-    return key;
-  }
+  return loadOrCreateKey(`agent:${name}`);
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

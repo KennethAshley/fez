@@ -34,4 +34,5 @@ export * from "./kinds.js";
 export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, registerHarness, type HarnessAdapter, type HarnessUpdate } from "./harness.js";
 export { findPersona, listPersonas, type Persona } from "./personas.js";
 export { findMcpServer, registerMcpServer } from "./mcp-servers.js";
+export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./keys.js";
 export type { FezExtensionAPI, FezExtension, NostrAccess, PanelHandle, InputHandler } from "./extensions.js";
