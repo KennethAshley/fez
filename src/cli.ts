@@ -132,6 +132,21 @@ keys
     }
   });
 
+// ─── setup — run the first-run wizard on demand ─────────────────────────────
+
+program
+  .command("setup")
+  .description("(Re)run the setup wizard — relay, harness check, starter persona")
+  .action(async () => {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      console.error("fez setup is interactive — run it from a terminal.");
+      process.exitCode = 1;
+      return;
+    }
+    const { firstRunWizard } = await import("./onboarding.js");
+    await firstRunWizard();
+  });
+
 // ─── doctor — is this machine ready to fez? ─────────────────────────────────
 
 program

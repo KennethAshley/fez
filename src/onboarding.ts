@@ -4,7 +4,7 @@ import path from "node:path";
 import chalk from "chalk";
 import { detectHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { listPersonas } from "./personas.js";
-import { DEFAULT_RELAY, saveSettings } from "./settings.js";
+import { resolveRelay, saveSettings } from "./settings.js";
 
 /**
  * First-run wizard — the entire required surface of fez is deliberately
@@ -25,7 +25,8 @@ export async function firstRunWizard(): Promise<void> {
       type: "input",
       name: "relay",
       message: "Nostr relay URL (your own fez-relay, or a public one):",
-      default: process.env.FEZ_RELAY ?? DEFAULT_RELAY,
+      // Re-runs (fez setup) suggest whatever currently wins: env > saved > default.
+      default: resolveRelay(),
       validate: (v: string) => (/^wss?:\/\/.+/.test(v.trim()) ? true : "expected ws:// or wss://"),
     },
   ]);
