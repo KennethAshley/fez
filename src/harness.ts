@@ -140,22 +140,32 @@ function isolatedClaudeEnv(): NodeJS.ProcessEnv {
 }
 
 /**
- * Claude Code, spoken to over ACP (Agent Client Protocol) rather than
- * shelling out to `claude -p` — same mechanism Buzz uses. Requires the
- * separate `@agentclientprotocol/claude-agent-acp` adapter to be installed;
- * having the `claude` CLI itself is not sufficient.
+ * Generic ACP (Agent Client Protocol) harness — one implementation, any
+ * engine with an ACP adapter binary (agentclientprotocol.com's whole
+ * point). claude-code speaks it via @agentclientprotocol/claude-agent-acp
+ * (same mechanism Buzz uses); pi speaks it via the community pi-acp
+ * bridge (spawns `pi --mode rpc` underneath). New engines are a
+ * descriptor here, not a protocol implementation.
  */
-function claudeCodeHarness(): HarnessAdapter {
-  const command = "claude-agent-acp";
+interface AcpDescriptor {
+  id: string;
+  aliases: string[];
+  command: string;
+  /** Environment for the spawned adapter — the engine-specific part. */
+  env: () => NodeJS.ProcessEnv;
+}
+
+function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
+  const { command } = descriptor;
 
   return {
-    id: "claude-code",
-    aliases: ["claude"],
+    id: descriptor.id,
+    aliases: descriptor.aliases,
     command,
     detect: () => spawnDetect(command, ["--version"]),
 
     async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal) {
-      const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: isolatedClaudeEnv() });
+      const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
 
       // Without these, a write to a pipe whose reader already exited (e.g.
       // the process quitting mid-chain, with a persona subprocess still
@@ -413,7 +423,12 @@ export function registerBuiltinHarnesses(): void {
   // Idempotent — the wizard, doctor, TUI, and services may each call it.
   if (builtinsRegistered) return;
   builtinsRegistered = true;
-  registerHarness(claudeCodeHarness());
+  // claude-code: Anthropic account required; env shapes the clean-vs-shared
+  // config story (see isolatedClaudeEnv). pi: the bring-anything engine —
+  // subscription OAuth, API keys, or fully local models; its config is its
+  // own (~/.pi/agent), so the environment passes through untouched.
+  registerHarness(acpHarness({ id: "claude-code", aliases: ["claude"], command: "claude-agent-acp", env: isolatedClaudeEnv }));
+  registerHarness(acpHarness({ id: "pi", aliases: [], command: "pi-acp", env: () => process.env }));
 }
 
 export function findHarness(name: string): HarnessAdapter | undefined {

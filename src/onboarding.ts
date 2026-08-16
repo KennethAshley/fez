@@ -38,7 +38,8 @@ export async function firstRunWizard(): Promise<void> {
     console.log(`  ${chalk.green("✓")} agent harness: ${harnesses.map((h) => h.id).join(", ")}`);
   } else {
     console.log(`  ${chalk.yellow("!")} no agent harness found — fez chats work, but @mentions can't think yet.`);
-    console.log(chalk.dim("    install Claude Code + the ACP adapter:  npm install -g @anthropic-ai/claude-code @agentclientprotocol/claude-agent-acp"));
+    console.log(chalk.dim("    Claude Code:  npm install -g @anthropic-ai/claude-code @agentclientprotocol/claude-agent-acp"));
+    console.log(chalk.dim("    or pi (any provider, incl. local models):  npm install -g --ignore-scripts @earendil-works/pi-coding-agent pi-acp"));
   }
 
   // 3. Starter persona, only when none exist and there's a harness to run it.
