@@ -711,8 +711,13 @@ export default function communities(api: FezExtensionAPI): void {
     renderTyping();
   }
 
+  // Channel-id snapshot of the LIVE subscription — the loop guard above
+  // compares against it before resubscribing.
+  let subscribedChannelIds = "";
+
   function resubscribe(): void {
     unsubscribe?.();
+    subscribedChannelIds = channelIdsOfJoined().sort().join(",");
     const ids = [...state.joined];
     const filters: NostrFilter[] = [
       { kinds: [KIND_AGENT_METADATA], since: Math.floor(Date.now() / 1000) - 7 * 86400 },
@@ -763,8 +768,16 @@ export default function communities(api: FezExtensionAPI): void {
       }
       absorb(event);
       // Membership/channel changes can add channels — refresh the live
-      // message subscription so new channels stream immediately.
-      if (event.kind === KIND_CHANNEL) resubscribe();
+      // message subscription so new channels stream immediately. ONLY
+      // when the channel set actually changed: the subscription's
+      // community/channel filters replay history (no `since`), so
+      // resubscribing on every 47101 re-triggers itself on the replayed
+      // 47101s — a feedback loop observed live pinning the TUI at 98%
+      // CPU (each cycle re-verifies every stored event's signature).
+      if (event.kind === KIND_CHANNEL) {
+        const ids = channelIdsOfJoined().sort().join(",");
+        if (ids !== subscribedChannelIds) resubscribe();
+      }
     });
   }
 
