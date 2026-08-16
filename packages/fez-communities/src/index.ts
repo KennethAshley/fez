@@ -79,6 +79,15 @@ export default function communities(api: FezExtensionAPI): void {
   let watchThoughtBubble: MessageHandle | undefined;
   let watchTextBubble: MessageHandle | undefined;
 
+  const workingAgents = new Map<string, { activity: string; ts: number }>();
+  function renderObserverStatus(): void {
+    const now = Date.now();
+    for (const [name, w] of workingAgents) if (now - w.ts > 180_000) workingAgents.delete(name);
+    const parts = [...workingAgents.entries()].map(([name, w]) => `${name}: ${w.activity}`);
+    api.ui.setStatus("observer", parts.length === 0 ? "" : `⚙ ${parts.slice(0, 3).join(" · ")}`);
+  }
+  setInterval(renderObserverStatus, 5000).unref?.();
+
   function handleObserverFrame(event: NostrEvent): void {
     const agent = event.tags.find((t) => t[0] === "agent")?.[1];
     if (!agent) return;
@@ -93,14 +102,18 @@ export default function communities(api: FezExtensionAPI): void {
     if (feed.length > 30) feed.splice(0, feed.length - 30);
     observerFeeds.set(agent, feed);
 
-    // Glanceable footer segment while any owned agent is mid-turn.
+    // Glanceable footer segment while owned agents are mid-turn —
+    // aggregated across agents (single-slot overwrite flickered when two
+    // agents worked at once). Stale entries expire in case a turn-done
+    // frame is lost.
     if (frame.type === "turn" && frame.status !== "started") {
-      api.ui.setStatus("observer", "");
+      workingAgents.delete(agent);
     } else if (frame.type === "tool" && frame.title) {
-      api.ui.setStatus("observer", `⚙ ${agent}: ${frame.title}`);
+      workingAgents.set(agent, { activity: frame.title, ts: Date.now() });
     } else if (frame.type === "turn") {
-      api.ui.setStatus("observer", `⚙ ${agent}: working…`);
+      workingAgents.set(agent, { activity: "working…", ts: Date.now() });
     }
+    renderObserverStatus();
 
     // Automatic inline visibility: if this agent's draft bubble is on
     // screen (its reply streaming), its tool activity rides that bubble's
@@ -385,6 +398,8 @@ export default function communities(api: FezExtensionAPI): void {
     if (!msg.parentId) {
       bubbleHandles.set(msg.id, api.ui.appendMessage(msg.authorName, msg.content));
     } else {
+      // The final message ends this author's draft in that thread.
+      draftersByRoot.get(msg.rootId!)?.delete(event.pubkey);
       updateOrAppendSummaryLine(channelId, msg.rootId!, msg);
     }
   }
@@ -430,6 +445,10 @@ export default function communities(api: FezExtensionAPI): void {
   // growing with each draft, adopted as the real message's bubble when the
   // final 47103 lands (matched by author) — pi-style typing over the relay.
   const draftBubbles = new Map<string, { handle: MessageHandle; rootId?: string }>();
+  // rootId -> pubkey -> latest draft snippet: concurrent drafters into the
+  // same thread aggregate on its summary line instead of overwriting each
+  // other per frame.
+  const draftersByRoot = new Map<string, Map<string, string>>();
 
   function handleDraft(event: NostrEvent): void {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
@@ -460,14 +479,16 @@ export default function communities(api: FezExtensionAPI): void {
       renderTyping();
     } else if (view.mode === "channel" && rootId) {
       const no = threadNo(rootId);
-      const count = threadReplyCount(channelId, rootId);
-      const root = msgById.get(rootId);
-      const text = `✍ ${displayName(event.pubkey)}: ${snippet(event.content, 60)} — /thread ${no}`;
+      let drafters = draftersByRoot.get(rootId);
+      if (!drafters) draftersByRoot.set(rootId, (drafters = new Map()));
+      drafters.set(event.pubkey, snippet(event.content, 60));
+      const text =
+        drafters.size === 1
+          ? `✍ ${displayName(event.pubkey)}: ${drafters.get(event.pubkey)} — /thread ${no}`
+          : `✍ ${[...drafters.keys()].map(displayName).join(", ")} are replying… — /thread ${no}`;
       const existing = summaryLineHandles.get(rootId);
       if (existing) existing.setContent(text);
       else summaryLineHandles.set(rootId, api.ui.appendMessage(`thread #${no}`, text));
-      void count;
-      void root;
     }
   }
 
