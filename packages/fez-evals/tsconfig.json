@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": [
+      "ES2022"
+    ],
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@fez/protocol": [
+        "../../dist/index.d.ts"
+      ]
+    },
+    "types": []
+  },
+  "include": [
+    "tests/**/*",
+    "../fez-orchestrator/src/route-logic.ts",
+    "../fez-acp/src/addressing.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

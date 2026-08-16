@@ -19,6 +19,7 @@ import {
   KIND_TYPING,
   type HarnessUpdate,
 } from "@fez/protocol";
+import { isAddressedTo } from "./addressing.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 
 /**
@@ -239,25 +240,10 @@ async function main() {
   // mention of a not-yet-running agent can't carry its p-tag (the sender
   // didn't know its pubkey), so the freshly spawned agent must recognize
   // itself by name in the backfilled message.
-  // Addressing: the FIRST @name in a message is its addressee; later
-  // @names are context or downstream handoffs. Without this, "@reviewer
-  // check the docs, if good ping @coder" fires BOTH agents immediately —
-  // coder starts coding before reviewer has judged anything.
-  //
-  // A message with NO text mentions falls back to the p-tag — but only
-  // from the OWNER. Replies auto-p-tag whoever they answer, so between
-  // agents the fallback is a perpetual-motion machine: A answers B
-  // (p-tagging B), which summons B to answer A, forever — observed live
-  // running straight into the depth cap even with both agents politely
-  // naming each other without @. Agents summon each other with an
-  // explicit @name or not at all; a human replying in a thread keeps
-  // the no-retyping convenience.
-  const nameMentionRe = new RegExp(`(^|\\W)@${personaId}\\b`, "i");
-  const isMention = (event: { pubkey: string; content: string; tags: string[][] }) => {
-    const first = event.content.match(/@([\w-]+)/)?.[1];
-    if (first) return first.toLowerCase() === personaId!.toLowerCase();
-    return event.pubkey === owner && event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
-  };
+  // Addressing rules live in addressing.ts (pure, shared with
+  // fez-evals — regressions fail a gate instead of shipping).
+  const isMention = (event: { pubkey: string; content: string; tags: string[][] }) =>
+    isAddressedTo(event, personaId!, myPubkey, owner);
 
   const handleChannelMessage = async (
     event: {

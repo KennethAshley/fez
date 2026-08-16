@@ -11,6 +11,7 @@ import {
   KIND_MEMBERSHIP,
   KIND_REACTION,
 } from "@fez/protocol";
+import { isSmallTalk, agentTool } from "./route-logic.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 
 /**
@@ -49,16 +50,6 @@ import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-commo
  *   FEZ_AGENT_OWNER         owner pubkey (owner mode + sibling gate)
  */
 const MAX_CHAIN_DEPTH = 5;
-
-/**
- * Greetings/pleasantries, detected deterministically: short and matching
- * a smalltalk shape. Anything else is a task for the router.
- */
-const SMALL_TALK_RE =
-  /^(yo|hey( there)?|hi( there)?|hiya|hello|howdy|sup|what'?s up|gm|good (morning|afternoon|evening|night)|how are you( doing)?( today)?|how's it going|you (there|ok|good)|thanks?|thank you|ty|nice( one)?|cool|great|awesome|lol|ok(ay)?)([\s!?.,…]+fez)?[\s!?.,…🎩👋]*$/i;
-function isSmallTalk(text: string): boolean {
-  return text.split(/\s+/).length <= 6 && SMALL_TALK_RE.test(text);
-}
 
 interface KnownAgent {
   pubkey: string;
@@ -218,23 +209,7 @@ async function main() {
       if (byName.has(agent.name) && byName.get(agent.name)!.updatedAt >= agent.updatedAt) continue;
       byName.set(agent.name, agent);
     }
-    for (const agent of byName.values()) {
-      const description = [agent.about, agent.skills?.length ? `skills: ${agent.skills.join(", ")}` : undefined]
-        .filter(Boolean)
-        .join(" — ") || "a general-purpose agent";
-      tools.push({
-        type: "function",
-        function: {
-          name: agent.name,
-          description,
-          parameters: {
-            type: "object",
-            properties: { task: { type: "string" } },
-            required: ["task"],
-          },
-        },
-      });
-    }
+    for (const agent of byName.values()) tools.push(agentTool(agent));
     return { tools, byName };
   }
 
