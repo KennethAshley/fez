@@ -147,6 +147,52 @@ program
     await firstRunWizard();
   });
 
+// ─── agent — run a standing channel agent (the fez-acp runtime) ─────────────
+
+program
+  .command("agent <persona>")
+  .description("Run a standing channel agent for a persona (fez-acp runtime)")
+  .option("-c, --channels <list>", "channel names/ids, comma-separated", "general")
+  .option("-r, --relay <url>", "Relay URL (default: settings/env)")
+  .option("--respond-to <policy>", "anyone | owner | allowlist:<pk,...>", "owner")
+  .option("--owner <pubkey>", "owner pubkey (default: your fez identity)")
+  .option("--on-busy <mode>", "steer | queue", "steer")
+  .action(async (personaId: string, options) => {
+    const { resolveRelay } = await import("./settings.js");
+    process.env.FEZ_RELAY = resolveRelay(options.relay);
+    process.env.FEZ_AGENT_PERSONA = personaId;
+    process.env.FEZ_AGENT_CHANNELS = options.channels;
+    process.env.FEZ_AGENT_RESPOND_TO = options.respondTo;
+    process.env.FEZ_AGENT_ON_BUSY = options.onBusy;
+    // Owner defaults to the user's own identity — the observer stream
+    // (/watch) and sibling gating work out of the box instead of being
+    // an env var most people never discover.
+    if (!process.env.FEZ_AGENT_OWNER) {
+      const owner =
+        options.owner ??
+        (await (async () => {
+          const { getKey } = await import("./keys.js");
+          const hex = getKey("default");
+          return hex ? getPublicKey(Uint8Array.from(Buffer.from(hex, "hex"))) : undefined;
+        })());
+      if (owner) process.env.FEZ_AGENT_OWNER = owner;
+    }
+    // Runtime resolution: explicit override, then the repo/npm-link
+    // layout relative to this CLI build.
+    const { fileURLToPath, pathToFileURL } = await import("node:url");
+    const { existsSync } = await import("node:fs");
+    const candidates = [
+      process.env.FEZ_ACP_RUNTIME,
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/fez-acp/dist/agent.js"),
+    ].filter((p): p is string => !!p);
+    const runtime = candidates.find((p) => existsSync(p));
+    if (!runtime) {
+      console.error(`fez-acp runtime not found (looked at: ${candidates.join(", ")}) — build it with: npm run acp:build`);
+      process.exit(1);
+    }
+    await import(pathToFileURL(runtime).href);
+  });
+
 // ─── doctor — is this machine ready to fez? ─────────────────────────────────
 
 program

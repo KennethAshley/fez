@@ -347,6 +347,61 @@ export function registerHarness(adapter: HarnessAdapter): void {
 }
 
 /** Registers Fez's own built-in harnesses. Called once at startup, before extensions load. */
+/**
+ * Turn-error classification — Buzz's taxonomy (buzz-acp is_auth_error),
+ * fez-shaped. "auth" is matched with high-precision patterns because the
+ * costs are asymmetric: retrying an auth error is pure waste (the token
+ * won't self-repair between attempts; it delays the visible failure),
+ * while classifying a transient blip as fatal merely skips a retry.
+ */
+export type TurnErrorKind = "auth" | "aborted" | "transient" | "fatal";
+
+export function classifyTurnError(err: unknown): TurnErrorKind {
+  if (err instanceof Error && err.name === "AbortError") return "aborted";
+  const message = err instanceof Error ? err.message : String(err);
+  if (/Re-authenticate|API Error: 401|oauth|authenticat|logged in/i.test(message)) return "auth";
+  if (/timed? ?out|ECONNREFUSED|ECONNRESET|ENOTFOUND|EPIPE|socket|network|overloaded|529|rate.?limit|exited (with|before)/i.test(message)) {
+    return "transient";
+  }
+  return "fatal";
+}
+
+/**
+ * invoke() with bounded retries for TRANSIENT failures only — auth and
+ * fatal errors surface immediately, aborts pass through untouched.
+ * Native so every consumer (TUI local dispatch, fez-acp agents, future
+ * runtimes) shares one retry policy instead of growing their own.
+ */
+export async function invokeWithRetry(
+  harness: HarnessAdapter,
+  instruction: string,
+  cwd?: string,
+  onProgress?: (textSoFar: string) => void,
+  mcpServers?: McpServer[],
+  onUpdate?: (update: HarnessUpdate) => void,
+  signal?: AbortSignal,
+  attempts = 3
+): Promise<string> {
+  let delayMs = 2_000;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await harness.invoke(instruction, cwd, onProgress, mcpServers, onUpdate, signal);
+    } catch (err) {
+      if (classifyTurnError(err) !== "transient" || attempt >= attempts) throw err;
+      console.warn(
+        `↻ transient harness error (attempt ${attempt}/${attempts}), retrying in ${Math.round(delayMs / 1000)}s: ${err instanceof Error ? err.message : err}`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (signal?.aborted) {
+        const abort = new Error("aborted during retry backoff");
+        abort.name = "AbortError";
+        throw abort;
+      }
+      delayMs *= 2.5;
+    }
+  }
+}
+
 let builtinsRegistered = false;
 export function registerBuiltinHarnesses(): void {
   // Idempotent — the wizard, doctor, TUI, and services may each call it.

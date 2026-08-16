@@ -2,9 +2,11 @@
 import {
   RelayConnection,
   CapabilityClient,
+  classifyTurnError,
   findHarness,
   findPersona,
   findMcpServer,
+  invokeWithRetry,
   registerBuiltinHarnesses,
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
@@ -20,16 +22,16 @@ import {
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 
 /**
- * Standing channel agent — Buzz-style. Runs as its own process via
- * `fez run` (which passes FEZ_RELAY / FEZ_PRIVATE_KEY through env, see
- * fez's cli.ts). Subscribes to its channels, fires the persona's harness
- * when a channel message p-tags it, replies into the channel over the
- * relay. The TUI never dispatches these — anyone in the channel can
+ * fez-acp — the standing agent runtime, buzz-acp's role in fez: a
+ * persona-backed process that subscribes to its channels, runs harness
+ * turns on mentions, and replies over the relay. Launch with
+ * `fez agent <persona>` (preferred) or `fez run dist/agent.js` with the
+ * env below. The TUI never dispatches these — anyone in the channel can
  * mention this agent while your terminal is closed.
  *
- * Config (env):
+ * Config (env — `fez agent` fills these from flags/persona):
  *   FEZ_AGENT_PERSONA     persona id (harness + prompt + skills, ~/.fez/personas)
- *   FEZ_AGENT_CHANNELS    comma-separated channel ids to serve
+ *   FEZ_AGENT_CHANNELS    comma-separated channel names/ids to serve
  *   FEZ_AGENT_RESPOND_TO  who may trigger it: anyone | owner | allowlist:<pk,pk,...>
  *   FEZ_AGENT_OWNER       owner pubkey (required for owner mode)
  *
@@ -38,6 +40,12 @@ import { loadServiceKey, resolveChannels } from "./service-common.js";
  * checks its own membership per channel and warns loudly if missing —
  * other clients drop replies from non-members until the creator /invites
  * this agent's pubkey (role: bot).
+ *
+ * Resilience (Buzz's shape): transient harness failures retry with
+ * backoff (core invokeWithRetry; auth errors never retry — a token
+ * doesn't self-repair), every terminal failure posts a threaded notice,
+ * and a circuit breaker pauses the agent after repeated consecutive
+ * failures instead of burning budget against a broken setup.
  */
 /** Max agent-to-agent hops before an agent declines to respond — matches the TUI's local chain cap. */
 const MAX_CHAIN_DEPTH = 5;
@@ -50,7 +58,7 @@ async function main() {
   const owner = process.env.FEZ_AGENT_OWNER;
 
   if (!personaId || channelSpecs.length === 0) {
-    console.error("Usage: FEZ_AGENT_PERSONA=<id> FEZ_AGENT_CHANNELS=<name-or-id,...> [FEZ_AGENT_RESPOND_TO=anyone|owner|allowlist:<pks>] fez run channel-agent.js");
+    console.error("Usage: fez agent <persona> [-c channels] — or set FEZ_AGENT_PERSONA / FEZ_AGENT_CHANNELS and fez run dist/agent.js");
     process.exit(1);
   }
 
@@ -131,6 +139,16 @@ async function main() {
     while (turnTimes.length > 0 && turnTimes[0] < cutoff) turnTimes.shift();
     return turnTimes.length >= maxTurnsPerHour;
   }
+
+  // Circuit breaker (Buzz's SlotCircuit, turn-shaped): repeated
+  // consecutive failures mean the setup is broken — an expired login, a
+  // dead endpoint — and every further turn burns budget to produce the
+  // same error. Trip after BREAKER_THRESHOLD in a row, announce once,
+  // and sit out the cooldown; any success resets.
+  const BREAKER_THRESHOLD = 3;
+  const BREAKER_COOLDOWN_MS = 10 * 60_000;
+  let consecutiveFailures = 0;
+  let breakerUntil = 0;
 
   // Channel membership (latest creator-signed 47102 per channel). The
   // creator pubkey isn't known here, so v1 takes the latest 47102 per
@@ -270,6 +288,11 @@ async function main() {
         return;
       }
 
+      if (Date.now() < breakerUntil) {
+        console.log(`🛑 Breaker open (${Math.ceil((breakerUntil - Date.now()) / 60_000)}m left) — ignoring mention`);
+        return;
+      }
+
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
       if (busy) {
@@ -401,7 +424,7 @@ async function main() {
 
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
-        const reply = await harness.invoke(prompt, process.cwd(), publishDraft, mcpServers, onUpdate, turnController.signal);
+        const reply = await invokeWithRetry(harness, prompt, process.cwd(), publishDraft, mcpServers, onUpdate, turnController.signal);
 
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
@@ -410,6 +433,7 @@ async function main() {
         });
         await relay.publish(replyEvent);
         publishObserver({ type: "turn", status: "done" });
+        consecutiveFailures = 0;
         console.log(`✅ Replied (${reply.length} chars)`);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
@@ -418,20 +442,29 @@ async function main() {
         } else {
           publishObserver({ type: "turn", status: "failed" });
           const reason = err instanceof Error ? err.message : String(err);
-          console.error(`❌ Turn failed:`, reason);
+          console.error(`❌ Turn failed (${classifyTurnError(err)}):`, reason);
           // Failures are LOUD in the channel. Silence is a valid outcome
           // for "condition not met", never for errors — a user staring
           // at a cleared 👀 with no reply can't tell a judgment call
           // from a broken agent. Auth failures name their fix.
-          const hint = /oauth|authenticat|logged in/i.test(reason)
+          const hint = classifyTurnError(err) === "auth"
             ? " — my harness needs a login: CLAUDE_CONFIG_DIR=~/.fez/harness/claude/shared claude /login"
             : "";
+          consecutiveFailures++;
+          const tripped = consecutiveFailures >= BREAKER_THRESHOLD;
+          if (tripped) {
+            breakerUntil = Date.now() + BREAKER_COOLDOWN_MS;
+            consecutiveFailures = 0;
+            console.error(`🛑 Breaker tripped — pausing ${BREAKER_COOLDOWN_MS / 60_000}m`);
+          }
           void relay
             .publish(
               client.signEvent({
                 kind: KIND_CHANNEL_MESSAGE,
                 tags: replyTags,
-                content: `⚠️ I couldn't finish that: ${reason.slice(0, 160)}${hint}`,
+                content: tripped
+                  ? `🛑 ${BREAKER_THRESHOLD} failures in a row (last: ${reason.slice(0, 120)}${hint}) — pausing for ${BREAKER_COOLDOWN_MS / 60_000} minutes. Fix the cause and mention me after, or restart me.`
+                  : `⚠️ I couldn't finish that: ${reason.slice(0, 160)}${hint}`,
               })
             )
             .catch(() => {});

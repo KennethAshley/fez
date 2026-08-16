@@ -8,14 +8,10 @@
     "type": "extension",
     "extension": {
       "entry": "dist/index.js"
-    },
-    "agent": {
-      "entry": "dist/channel-agent.js",
-      "supportedTasks": ["channel-chat"]
     }
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.js && esbuild src/channel-agent.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/channel-agent.js && esbuild src/indexer.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/indexer.js",
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.js && esbuild src/indexer.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/indexer.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {

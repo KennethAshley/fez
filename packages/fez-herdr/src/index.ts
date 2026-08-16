@@ -127,7 +127,7 @@ export default function herdr(api: FezExtensionAPI): void {
     const relay = process.env.FEZ_RELAY ?? "wss://relay.damus.io";
     // FEZ_AGENT_OWNER = the registering user: enables the encrypted
     // observer stream (/watch <persona>) for free on registered agents.
-    return `FEZ_AGENT_PERSONA=${persona} FEZ_AGENT_CHANNELS=${channels.join(",")} FEZ_AGENT_RESPOND_TO=${respondTo} FEZ_AGENT_OWNER=${api.nostr!.pubkey} FEZ_RELAY=${relay} fez run ${process.cwd()}/packages/fez-communities/dist/channel-agent.js\n`;
+    return `FEZ_AGENT_OWNER=${api.nostr!.pubkey} FEZ_RELAY=${relay} fez agent ${persona} -c ${channels.join(",")} --respond-to ${respondTo}\n`;
   }
 
   /** Create the herdr tab and type the run command — shared by /herdr register and auto-spawn. */
