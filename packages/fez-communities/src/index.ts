@@ -102,6 +102,19 @@ export default function communities(api: FezExtensionAPI): void {
       api.ui.setStatus("observer", `⚙ ${agent}: working…`);
     }
 
+    // Automatic inline visibility: if this agent's draft bubble is on
+    // screen (its reply streaming), its tool activity rides that bubble's
+    // footer — no /watch needed for the common case. The final message
+    // replaces the footer with reactions on adoption.
+    if (frame.type === "tool" && frame.title) {
+      for (const [pubkey, name] of names) {
+        if (name === agent) {
+          draftBubbles.get(pubkey)?.handle.setFooter(`⚙ ${frame.title}`);
+          break;
+        }
+      }
+    }
+
     // Live rendering inside /watch.
     if (view.mode !== "watch" || view.agent !== agent) return;
     if (frame.type === "thought" && frame.text) {
