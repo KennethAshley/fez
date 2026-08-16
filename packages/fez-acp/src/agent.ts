@@ -3,10 +3,13 @@ import {
   RelayConnection,
   CapabilityClient,
   classifyTurnError,
+  conversationKey,
+  engramHeads,
   findHarness,
   findPersona,
   findMcpServer,
   invokeWithRetry,
+  KIND_AGENT_ENGRAM,
   registerBuiltinHarnesses,
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
@@ -91,10 +94,37 @@ async function main() {
   // from ~/.fez/default.key (the *user's* identity), and an agent must not
   // impersonate its owner: invites, membership, and respondTo gates are
   // all bound to the agent's own pubkey surviving restarts.
-  const client = new CapabilityClient({ relay: relayUrl, privateKey: loadServiceKey(personaId) });
+  const agentKeyHex = loadServiceKey(personaId);
+  const client = new CapabilityClient({ relay: relayUrl, privateKey: agentKeyHex });
   const relay = new RelayConnection({ url: relayUrl });
   await relay.connect();
   const myPubkey = client.getPubkey();
+
+  // ── NIP-AE memory: the agent's `core` engram feeds every turn's
+  // standing context; a missing core becomes an onboarding nudge (the
+  // agent interviews its owner and writes its own identity). A FAILED
+  // fetch injects nothing new — a relay blip must not read as amnesia
+  // and invite the agent to overwrite real memory (spec's rule; the
+  // last good section is reused instead). Requires an owner: memory is
+  // scoped to the (agent, owner) pair.
+  const memConvKey = owner ? conversationKey(Uint8Array.from(Buffer.from(agentKeyHex, "hex")), owner) : undefined;
+  const MEM_NUDGE = `No core memory found. Create one now with the shell command: fez mem set core "<your identity, rules, and goals>" — it persists across sessions. Ask your user about yourself if unsure.`;
+  let memCache: { section: string | null; at: number } = { section: null, at: 0 };
+  async function coreMemorySection(): Promise<string | null> {
+    if (!owner || !memConvKey) return null;
+    if (Date.now() - memCache.at < 30_000) return memCache.section;
+    try {
+      const events = await relay.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
+      const core = engramHeads(events as never, myPubkey, owner, memConvKey).get("core");
+      memCache = {
+        section: `[Agent Memory — core]\n${core ? core.body.profile : MEM_NUDGE}`,
+        at: Date.now(),
+      };
+    } catch {
+      /* keep the previous section (possibly null) */
+    }
+    return memCache.section;
+  }
 
   const channels = await resolveChannels(relay, channelSpecs, relayUrl);
 
@@ -386,8 +416,10 @@ async function main() {
         ["depth", String(triggerDepth + 1)],
       ];
       try {
+        const memorySection = await coreMemorySection();
         const prompt = [
           persona.systemPrompt ?? "",
+          ...(memorySection ? [memorySection] : []),
           `You are @${personaId}, responding in a group chat channel where humans and other agents talk. Two conventions matter:`,
           `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
           ...(missingSkills.length > 0
@@ -397,6 +429,11 @@ async function main() {
             : [
                 `- Capability honesty: if the task needs a tool or data source you don't have access to, say so plainly instead of improvising the result.`,
               ]),
+          ...(memorySection
+            ? [
+                `- Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" (identity/rules/goals — a rewrite, not an append), fez mem set mem/<topic> "<note>" for individual facts, fez mem get <slug> / fez mem list to recall.`,
+              ]
+            : []),
           `Recent messages:`,
           ...(recent.get(channelId) ?? []),
           ...(steering.length > 0

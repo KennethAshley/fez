@@ -191,8 +191,14 @@ function claudeCodeHarness(): HarnessAdapter {
         // choice, not a neutral default. Revisit before this is anything
         // other than a local single-user MVP.
         app.onRequest("session/request_permission", async ({ params }) => {
-          const first = params.options[0];
-          return { outcome: { outcome: "selected" as const, optionId: first.optionId } };
+          // Select by KIND, not position — options[0] is not reliably an
+          // allow (observed live: an agent's `fez mem set` shell call got
+          // auto-DENIED because the first option was a reject variant).
+          const allow =
+            params.options.find((o) => (o as { kind?: string }).kind === "allow_once") ??
+            params.options.find((o) => String((o as { kind?: string }).kind ?? "").startsWith("allow")) ??
+            params.options[0];
+          return { outcome: { outcome: "selected" as const, optionId: allow.optionId } };
         });
 
         return await app.connectWith(stream, async (ctx) => {

@@ -35,4 +35,5 @@ export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, 
 export { findPersona, listPersonas, type Persona } from "./personas.js";
 export { findMcpServer, registerMcpServer } from "./mcp-servers.js";
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./keys.js";
+export { isValidSlug, conversationKey, engramDTag, parseBodyStrict, bodyIsValid, validateEngram, selectHead, engramHeads, buildEngramEvent, type EngramBody, type ValidEngram } from "./engram.js";
 export type { FezExtensionAPI, FezExtension, NostrAccess, PanelHandle, InputHandler } from "./extensions.js";

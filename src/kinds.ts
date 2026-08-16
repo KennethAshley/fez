@@ -100,6 +100,18 @@ export const KIND_THREAD_SUMMARY = 39005;
 export const KIND_WORKFLOW_RUN = 47200;
 
 /**
+ * Agent engram — NIP-AE persistent agent memory (Buzz's spec,
+ * implemented to the letter in src/engram.ts for cross-implementation
+ * interop). Addressable: latest per (agent pubkey, d) wins. Signed by
+ * the AGENT, NIP-44-encrypted under the agent↔owner conversation key —
+ * symmetric, so the owner can always read everything the agent
+ * remembers. d = HMAC(conversation key, slug): slugs leak nothing.
+ * One "core" record (identity/rules/goals, injected into every turn's
+ * standing context) plus mem/... entries; value:null = tombstone.
+ */
+export const KIND_AGENT_ENGRAM = 30174;
+
+/**
  * Reaction — standard nostr kind 7, Buzz's shape: content = the emoji,
  * ["e", targetEventId], plus ["h", channelId] so clients can subscribe by
  * channel (Buzz derives the channel server-side from the e-target; fez's

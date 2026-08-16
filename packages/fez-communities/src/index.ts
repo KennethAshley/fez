@@ -17,6 +17,7 @@ const KIND_DELETION = 5; // standard nostr: retract your own events (agents clea
 const KIND_DRAFT = 20003; // ephemeral streaming preview of a message being composed — see fez src/kinds.ts
 const KIND_OBSERVER = 20004; // ephemeral owner-encrypted agent activity frames — see fez src/kinds.ts
 const KIND_WORKFLOW_RUN = 47200; // workflow run traces — see fez src/kinds.ts
+const KIND_AGENT_ENGRAM = 30174; // NIP-AE agent memory — see fez src/engram.ts
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -924,6 +925,48 @@ export default function communities(api: FezExtensionAPI): void {
     if (current) renderChannelTimeline(current.channel.id);
     else api.ui.clearLog();
     refreshUi();
+  });
+
+  // The owner's window into an agent's NIP-AE memory. The conversation
+  // key is symmetric, so everything an agent remembers is readable here
+  // by construction. Display-time lenient mirror of core's head
+  // selection (extensions bundle standalone; the strict validation
+  // lives in @fez/protocol and its evals).
+  api.registerCommand("memory", async (args, ctx) => {
+    const name = args.trim().replace(/^@/, "");
+    if (!name) return ctx.reply("Usage: /memory <agent> — read that agent's persistent memory.");
+    const agentPk = [...names.entries()].find(([, n]) => n.toLowerCase() === name.toLowerCase())?.[0];
+    if (!agentPk) return ctx.reply(`No agent named "${name}" seen on this relay.`);
+    const events = await nostr.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [agentPk], "#p": [nostr.pubkey] }]);
+    const byD = new Map<string, NostrEvent>();
+    for (const event of events) {
+      const d = event.tags.find((t) => t[0] === "d")?.[1];
+      if (!d) continue;
+      const prev = byD.get(d);
+      if (!prev || event.created_at > prev.created_at || (event.created_at === prev.created_at && event.id < prev.id)) {
+        byD.set(d, event);
+      }
+    }
+    let core: string | undefined;
+    const entries: { slug: string; value: string }[] = [];
+    for (const event of byD.values()) {
+      try {
+        const body = JSON.parse(nostr.decrypt(event.pubkey, event.content));
+        if (body.slug === "core" && typeof body.profile === "string") core = body.profile;
+        else if (typeof body.slug === "string" && typeof body.value === "string") entries.push(body);
+      } catch { /* not ours / garbage — ignorable */ }
+    }
+    if (!core && entries.length === 0) {
+      return ctx.reply(`@${name} has no memory yet — it writes its own as it learns (or seed it: \`fez mem set --persona ${name} core "..."\`).`);
+    }
+    entries.sort((a, b) => a.slug.localeCompare(b.slug));
+    ctx.reply(
+      [
+        `**@${name} — memory**`,
+        core ? `**core**\n${core}` : "_(core not set)_",
+        ...entries.map((b) => `**${b.slug}**\n${b.value}`),
+      ].join("\n\n")
+    );
   });
 
   api.registerCommand("jobs", async (_args, _ctx) => {
