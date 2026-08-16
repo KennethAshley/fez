@@ -493,21 +493,18 @@ export class FezTUI {
   }
 
   /**
-   * Prints one chat bubble: bold name header, content below — matches
-   * Buzz's MessageAuthorText + body layout. When triggeredBy is set (a
-   * chained reply), shows a ✅ reaction note — the visible form of the
-   * reaction addReaction() recorded on the triggering message.
+   * One tg-shaped reply bubble. When triggeredBy is set (a chained reply),
+   * the ✅ note rides the bubble footer — the visible form of the reaction
+   * addReaction() recorded on the triggering message.
    */
   private printReply(
     displayName: string,
     content: string,
-    color: (s: string) => string,
+    _color: (s: string) => string,
     triggeredBy?: string
   ): void {
-    const reactionNote = triggeredBy ? chalk.dim(` ✅ responding to @${triggeredBy}`) : "";
-    this.log.addChild(new Text("\n" + color(`@${displayName}`) + reactionNote));
-    this.log.addChild(new Markdown(content, 2, 0, markdownTheme));
-    this.screen.requestRender();
+    const handle = this.appendBubble(`@${displayName}`, content);
+    if (triggeredBy) handle.setFooter(`✅ responding to @${triggeredBy}`);
   }
 
   private async orchestratorResponse(input: string, parentMsgId: string): Promise<void> {
@@ -694,33 +691,25 @@ export class FezTUI {
     }
   }
 
-  /** Chat-bubble layout: colored name header + dim time, content below — matches Buzz's MessageAuthorText pattern. */
+  /** Core chat messages ride the same tg-shaped bubble as extension messages. */
   private renderMessage(msg: Message): void {
-    let header: string;
-    if (msg.author === "user") {
-      header = authorColor("You")("You");
-    } else if (msg.author === "orchestrator") {
-      header = authorColor("Fez")("Fez");
-    } else if (msg.status === "error") {
-      header = chalk.bold.red(`@${msg.author}`);
-    } else {
-      header = authorColor(msg.author)(`@${msg.author}`);
-    }
-    this.log.addChild(new Text("\n" + header + " " + timestamp(msg.timestamp)));
-    this.log.addChild(new Markdown(msg.content, 2, 0, markdownTheme));
-    this.screen.requestRender();
+    const name =
+      msg.author === "user" ? "You" : msg.author === "orchestrator" ? "Fez" : `@${msg.author}`;
+    this.appendBubble(name, msg.content);
   }
 
   /**
-   * Chat bubble from an extension (ui.appendMessage) — same shape as
-   * renderMessage but with a caller-supplied display name. "You" gets the
-   * user's blue so an extension echoing the user's own message matches
-   * native bubbles.
+   * Chat bubble from an extension (ui.appendMessage) — tg/IRC-shaped:
+   * `HH:MM:SS Author: message` on one line for short messages; longer or
+   * multi-line content keeps the header line with markdown flowing below.
+   * "You" gets the user's blue so an extension echoing the user's own
+   * message matches native bubbles.
    *
-   * Each bubble is its own nested Container (header Text, Markdown body,
-   * footer Text), so the returned MessageHandle can mutate it in place —
-   * live reaction rows, reply counts updating, streamed content — in an
-   * otherwise append-only log.
+   * Each bubble is its own nested Container, so the returned MessageHandle
+   * can mutate it in place — live reaction rows, reply counts updating,
+   * streamed content — in an otherwise append-only log. setContent
+   * re-lays-out: a streaming reply can start as a one-liner and grow into
+   * a header+block shape.
    */
   private appendBubble(author: string, content: string): MessageHandle {
     if (!this.screen) {
@@ -728,14 +717,22 @@ export class FezTUI {
       // Pre-screen bubbles are startup notices — nothing updates them later.
       return { setAuthor: () => {}, setContent: () => {}, setFooter: () => {} };
     }
-    const colorFor = (a: string) => authorColor(a)(a) + " " + timestamp();
-    const header = new Text("\n" + colorFor(author));
-    const body = new Markdown(content, 2, 0, markdownTheme);
+    const stamp = timestamp(); // fixed at arrival, tg-style
+    let currentAuthor = author;
+    const headText = () => stamp + " " + authorColor(currentAuthor)(currentAuthor) + chalk.dim(":");
     const footer = new Text("");
     const bubble = new Container();
-    bubble.addChild(header);
-    bubble.addChild(body);
-    bubble.addChild(footer);
+    const layout = (c: string) => {
+      bubble.clear();
+      if (!c.includes("\n") && c.length <= 100) {
+        bubble.addChild(new Text("\n" + headText() + " " + c));
+      } else {
+        bubble.addChild(new Text("\n" + headText()));
+        bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
+      }
+      bubble.addChild(footer);
+    };
+    layout(content);
     this.log.addChild(bubble);
     this.screen.requestRender();
     const rerender = () => this.screen.requestRender();
@@ -752,18 +749,19 @@ export class FezTUI {
       if (shown >= target.length) {
         clearInterval(tween);
         tween = undefined;
-        body.setText(target); // exact final text (mid-reveal can split ANSI/markdown)
+        layout(target); // exact final text (mid-reveal can split ANSI/markdown)
         rerender();
         return;
       }
       shown = Math.min(target.length, shown + Math.max(3, Math.ceil((target.length - shown) / 12)));
-      body.setText(target.slice(0, shown));
+      layout(target.slice(0, shown));
       rerender();
     };
 
     return {
       setAuthor: (a) => {
-        header.setText("\n" + colorFor(a));
+        currentAuthor = a;
+        layout(shown >= target.length ? target : target.slice(0, shown));
         rerender();
       },
       setContent: (c) => {
@@ -772,7 +770,7 @@ export class FezTUI {
           clearInterval(tween);
           tween = undefined;
           shown = c.length;
-          body.setText(c);
+          layout(c);
           rerender();
           target = c;
           return;

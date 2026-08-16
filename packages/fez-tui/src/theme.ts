@@ -47,11 +47,10 @@ export function authorColor(name: string): (s: string) => string {
   return AUTHOR_PALETTE[Math.abs(hash) % AUTHOR_PALETTE.length];
 }
 
-/** Dim HH:MM stamp for bubble headers. */
+/** Dim HH:MM:SS stamp prefixing each message line (tg/IRC-style). */
 export function timestamp(date: Date = new Date()): string {
-  return chalk.dim(
-    `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
-  );
+  const p = (n: number) => String(n).padStart(2, "0");
+  return chalk.dim(`${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`);
 }
 
 export const editorTheme: EditorTheme = {
