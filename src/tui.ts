@@ -930,7 +930,7 @@ export class FezTUI {
           "",
           ...logo,
           "",
-          getActiveTheme().brand("fez") + chalk.dim(" · decentralized MCP for agents 🧢"),
+          getActiveTheme().brand("fez") + chalk.dim(" · decentralized MCP for agents"),
           chalk.dim("relay:  ") + chalk.cyan(this.relayUrl),
           chalk.dim("you:    ") + chalk.cyan(this.myPubkey.slice(0, 16) + "…"),
           chalk.dim("agents: ") + harnessLine,

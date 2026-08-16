@@ -16,7 +16,7 @@ import { resolveRelay, saveSettings } from "./settings.js";
 export async function firstRunWizard(): Promise<void> {
   const inquirer = (await import("inquirer")).default;
 
-  console.log(chalk.bold("\nWelcome to fez 🧢 — one-time setup\n"));
+  console.log(chalk.bold("\nWelcome to fez — let's get you set up\n"));
 
   // 1. The relay — the only real input. An inherited FEZ_RELAY becomes
   // the suggestion so existing setups just press enter.

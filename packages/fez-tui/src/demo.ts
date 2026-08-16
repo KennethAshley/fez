@@ -23,7 +23,7 @@ async function main() {
   footer.setStatus("relay", "wss://relay.damus.io");
   footer.setStatus("demo", "fez-tui smoke test");
 
-  log.addChild(new Text(chalk.bold.magenta("Fez") + "\nWelcome to Fez! 🧢 (fez-tui demo)"));
+  log.addChild(new Text(chalk.bold.magenta("Fez") + "\nWelcome to Fez! (fez-tui demo)"));
   tui.requestRender();
   await sleep(600);
 
