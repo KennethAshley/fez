@@ -764,10 +764,13 @@ export class FezTUI {
       // Pre-screen bubbles are startup notices — nothing updates them later.
       return { setAuthor: () => {}, setContent: () => {}, setFooter: () => {} };
     }
-    const stamp = timestamp(); // fixed at arrival, tg-style
+    const stamp = timestamp(); // fixed at arrival
     let currentAuthor = author;
     let footerText = "";
-    const headText = () => stamp + " " + authorColor(currentAuthor)(currentAuthor) + chalk.dim(":");
+    // Slack's hierarchy: AUTHOR then a small dim timestamp on the header
+    // line, content on its own lines below — the name is the anchor the
+    // eye scans, not an inline prefix competing with the text.
+    const headText = () => authorColor(currentAuthor)(currentAuthor) + "  " + stamp;
     // Clickable per-message actions, rendered at the end of the first
     // line: ⧉ copies the message body to the clipboard, ↩ quotes it into
     // the editor. OSC-8 links routed by openUrl's fez-copy/fez-quote
@@ -782,15 +785,16 @@ export class FezTUI {
     // Inline glyphs for one-liners; a LABELED action row under longer
     // messages (and under code blocks — ⧉ code copies just the fences).
     // Glyphs take the accent color so the affordance is actually visible.
-    const glyph = (g: string) => getActiveTheme().accent(g);
-    const inlineActions = () =>
-      "  " + osc8(`fez-copy://${actionId}`, glyph("⧉")) + " " + osc8(`fez-quote://${actionId}`, glyph("↩"));
+    // Claude's pattern: the action row sits BELOW the content, visually
+    // subordinate — all dim, compact, never competing with the message.
     const actionRow = (hasCode: boolean) =>
-      [
-        osc8(`fez-copy://${actionId}`, glyph("⧉") + chalk.dim(" copy")),
-        ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, glyph("⧉") + chalk.dim(" code"))] : []),
-        osc8(`fez-quote://${actionId}`, glyph("↩") + chalk.dim(" quote")),
-      ].join(chalk.dim("  ·  "));
+      chalk.dim(
+        [
+          osc8(`fez-copy://${actionId}`, "⧉ copy"),
+          ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, "⧉ code")] : []),
+          osc8(`fez-quote://${actionId}`, "↩ quote"),
+        ].join("   ")
+      );
     const bubble = new Container();
     const layout = (c: string) => {
       bubble.clear();
@@ -801,16 +805,16 @@ export class FezTUI {
       if (codeBlocks.length > 0) this.bubbleContents.set(`${actionId}.code`, codeBlocks.join("\n\n"));
       if (currentAuthor === "You") {
         // pi's userMessageBg: your own messages render as a full-width
-        // tinted block (pi-tui Text paints customBgFn edge to edge).
-        // The ​ spacer keeps the gap OUTSIDE the tint — a leading
-        // \n inside the block would paint an empty tinted row instead.
+        // tinted block (header + content inside the tint). The ​ spacer
+        // keeps the gap OUTSIDE the tint — a leading \n inside would
+        // paint an empty tinted row.
         bubble.addChild(new Text("​", 0, 0));
-        bubble.addChild(new Text(headText() + " " + c + inlineActions(), 1, 0, (s) => getActiveTheme().userMessageBg(s)));
-      } else if (!c.includes("\n") && c.length <= 100) {
-        bubble.addChild(new Text("\n" + headText() + " " + c + inlineActions(), 0, 0));
+        bubble.addChild(new Text(headText() + "\n" + c, 1, 0, (s) => getActiveTheme().userMessageBg(s)));
+        bubble.addChild(new Text(actionRow(codeBlocks.length > 0), 1, 0));
       } else {
         bubble.addChild(new Text("\n" + headText(), 0, 0));
-        bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
+        if (!c.includes("\n") && c.length <= 100) bubble.addChild(new Text(c, 0, 0));
+        else bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
         bubble.addChild(new Text(actionRow(codeBlocks.length > 0), 0, 0));
       }
       // An empty Text still renders one blank line — only mount the footer
