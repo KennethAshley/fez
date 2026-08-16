@@ -397,6 +397,20 @@ export class FezTUI {
     const target = agents[0];
     this.agentNameMap.set(target.pubkey, target.name);
 
+    // Channel-native agents (standing channel agents, the orchestrator,
+    // the workflow service) speak 47103 channel messages, not the 47001
+    // task protocol — a task sent to one spins for the full timeout and
+    // dies. Their supported_tasks say so; fail fast with the actual fix.
+    const CHANNEL_NATIVE = new Set(["channel-chat", "orchestrate", "workflow-automation"]);
+    if (target.supportedTasks.length > 0 && target.supportedTasks.every((t) => CHANNEL_NATIVE.has(t))) {
+      this.failLoader(
+        spinner,
+        `@${target.name} lives in channels — join one you share (e.g. /join general) and mention it there.`
+      );
+      this.updateMessage(routingMsg.id, { content: "channel-native agent", status: "error" });
+      return;
+    }
+
     try {
       const result = await this.client.sendTask({
         to: target.pubkey,
