@@ -9,6 +9,16 @@ export const KIND_AGENT_PROGRESS = 47002;
 export const KIND_AGENT_RESULT = 47003;
 export const KIND_AGENT_DM = 47004;
 export const KIND_AGENT_CAPABILITY = 47005;
+
+/**
+ * Owner attestation — owner-signed proof that a pubkey is their agent:
+ * ["p", agentPubkey], empty content, signed by the owner. Agents use it
+ * for sibling verification (Buzz's NIP-OA gate): respondTo=owner admits
+ * the owner AND any author the owner has attested, so a user's agents
+ * chain freely while strangers can't trigger them. Self-declared owner
+ * claims are worthless — only the owner's signature proves the link.
+ */
+export const KIND_AGENT_ATTESTATION = 47006;
 export const KIND_AGENT_DELEGATION = 47010;
 export const KIND_AGENT_REVOKE = 47011;
 export const KIND_AGENT_CANCEL = 47012;

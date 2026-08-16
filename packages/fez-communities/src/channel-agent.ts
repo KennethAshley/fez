@@ -6,6 +6,7 @@ import {
   findPersona,
   findMcpServer,
   registerBuiltinHarnesses,
+  KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
   KIND_DELETION,
@@ -84,10 +85,43 @@ async function main() {
     ? new Set(respondTo.slice("allowlist:".length).split(",").map((s) => s.trim()))
     : undefined;
 
-  function authorAllowed(pubkey: string): boolean {
+  // Sibling verification (Buzz's NIP-OA gate, fez-shaped): an author is a
+  // sibling if OUR owner has published a 47006 attestation p-tagging them.
+  // Only the owner's signature counts — self-declared ownership is
+  // spoofable. Cached per author; a later attestation is picked up on the
+  // next cache miss (cache entries for "false" expire after 5 min).
+  const siblingCache = new Map<string, { verdict: boolean; ts: number }>();
+  async function isSibling(pubkey: string): Promise<boolean> {
+    if (!owner) return false;
+    const cached = siblingCache.get(pubkey);
+    if (cached && (cached.verdict || Date.now() - cached.ts < 300_000)) return cached.verdict;
+    const attestations = await relay
+      .query([{ kinds: [KIND_AGENT_ATTESTATION], authors: [owner], "#p": [pubkey] }])
+      .catch(() => []);
+    const verdict = attestations.length > 0;
+    siblingCache.set(pubkey, { verdict, ts: Date.now() });
+    return verdict;
+  }
+
+  // owner mode = owner ∪ siblings (Buzz's default posture: your agents
+  // trust each other, strangers don't get in); allowlist adds explicit
+  // pubkeys on top of that.
+  async function authorAllowed(pubkey: string): Promise<boolean> {
     if (respondTo === "anyone") return true;
-    if (allowlist) return allowlist.has(pubkey);
-    return owner !== undefined && pubkey === owner; // owner mode
+    if (pubkey === owner) return true;
+    if (allowlist?.has(pubkey)) return true;
+    return isSibling(pubkey);
+  }
+
+  // Turn budget (Buzz's max_turns_per_session, rolling-window flavored) —
+  // the blunt backstop behind the depth-tag loop guard: a runaway chain
+  // or mention flood burns the budget and the agent goes quiet.
+  const maxTurnsPerHour = Number(process.env.FEZ_AGENT_MAX_TURNS_PER_HOUR || 30);
+  const turnTimes: number[] = [];
+  function budgetExhausted(): boolean {
+    const cutoff = Date.now() - 3_600_000;
+    while (turnTimes.length > 0 && turnTimes[0] < cutoff) turnTimes.shift();
+    return turnTimes.length >= maxTurnsPerHour;
   }
 
   // Channel membership (latest creator-signed 47102 per channel). The
@@ -146,6 +180,7 @@ async function main() {
 
   const recent = new Map<string, string[]>(); // channelId -> last few messages, as harness context
   let busy = false;
+  const pendingMentions: { id: string; pubkey: string; created_at: number; content: string; tags: string[][] }[] = [];
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
@@ -175,9 +210,8 @@ async function main() {
       const authorIsMember = memberships.get(channelId)?.members.has(event.pubkey) ?? false;
 
       if (!mentioned) return;
-      if (!authorAllowed(event.pubkey)) return;
+      if (!(await authorAllowed(event.pubkey))) return;
       if (!authorIsMember) return;
-      if (busy) return; // one turn at a time, v1
 
       // Agent-to-agent chain cap — mirrors the TUI's MAX_CHAIN_DEPTH for
       // relay-dispatched agents. Human messages carry no depth tag
@@ -190,7 +224,26 @@ async function main() {
         return;
       }
 
+      if (budgetExhausted()) {
+        console.log(`⛔ Turn budget exhausted (${maxTurnsPerHour}/hour) — not responding`);
+        return;
+      }
+
+      // Mid-turn mentions QUEUE instead of dropping (Buzz's Queue mode) —
+      // processed in order after the current turn, with the finished
+      // exchange already in `recent` context. True steering (weaving the
+      // new message into the in-flight turn, Buzz's default) needs a
+      // cancellable/promptable harness session — future work.
+      if (busy) {
+        if (pendingMentions.length < 3 && !pendingMentions.some((p) => p.id === event.id)) {
+          pendingMentions.push(event);
+          console.log(`⏳ Busy — queued mention from ${event.pubkey.slice(0, 8)}… (${pendingMentions.length} pending)`);
+        }
+        return;
+      }
+
       busy = true;
+      turnTimes.push(Date.now());
 
       // Status-reaction lifecycle, Buzz's model (buzz-acp ReactionGuard):
       // 👀 "seen, will handle" the moment the mention is accepted, 💬
@@ -311,6 +364,10 @@ async function main() {
         clearStatusReactions();
         clearInterval(typing);
         busy = false;
+        // Drain the queue: next pending mention gets its own full turn,
+        // with the exchange that just finished already in context.
+        const next = pendingMentions.shift();
+        if (next) setTimeout(() => void handleChannelMessage(next), 250);
       }
   };
 

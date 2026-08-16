@@ -144,10 +144,26 @@ export default function herdr(api: FezExtensionAPI): void {
   // freshly spawned agent backfills the summoning mention itself
   // (channel-agent's name-mention + backfill logic). ────────────────────
   const KIND_AGENT_METADATA = 47000;
+  const KIND_AGENT_ATTESTATION = 47006;
   const KIND_CHANNEL_MESSAGE = 47103;
   const KIND_MEMBERSHIP = 47102;
   const spawning = new Set<string>();
   const pendingInvites = new Map<string, { channelId: string; communityId: string }>(); // persona -> where to invite
+  const attested = new Set<string>(); // agent pubkeys attested this session
+
+  /**
+   * Owner attestation (47006): the registering user signs "this pubkey is
+   * my agent", making the agent a verifiable SIBLING — other agents with
+   * respondTo=owner admit it, so the user's fleet chains freely while
+   * strangers stay locked out (Buzz's NIP-OA posture).
+   */
+  function attestAgent(agentPubkey: string): void {
+    if (attested.has(agentPubkey)) return;
+    attested.add(agentPubkey);
+    void api
+      .nostr!.publish({ kind: KIND_AGENT_ATTESTATION, tags: [["p", agentPubkey]], content: "" })
+      .catch(() => attested.delete(agentPubkey));
+  }
 
   function personaExists(name: string): boolean {
     try {
@@ -188,7 +204,9 @@ export default function herdr(api: FezExtensionAPI): void {
           spawning.add(persona);
           pendingInvites.set(persona, { channelId, communityId });
           api.ui.appendMessage("herdr", `summoning **@${persona}** — spawning it in a herdr tab…`);
-          registerAgent(persona, channelId, "anyone")
+          // respondTo=owner (Buzz's default posture): the summoner and
+          // attested sibling agents can trigger it; strangers can't.
+          registerAgent(persona, channelId, "owner")
             .catch((err) => {
               spawning.delete(persona);
               api.ui.appendMessage("herdr", `⚠️ couldn't spawn @${persona}: ${err instanceof Error ? err.message : err}`);
@@ -206,7 +224,12 @@ export default function herdr(api: FezExtensionAPI): void {
         } catch {
           return;
         }
-        if (!name || !pendingInvites.has(name)) return;
+        if (!name) return;
+        // Any of our registered agents announcing itself gets an owner
+        // attestation — makes it a verifiable sibling to the rest of the
+        // fleet, regardless of how it was started.
+        if (registered.some((t) => t.persona === name)) attestAgent(event.pubkey);
+        if (!pendingInvites.has(name)) return;
         const target = pendingInvites.get(name)!;
         pendingInvites.delete(name);
         spawning.delete(name);
