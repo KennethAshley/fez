@@ -43,6 +43,9 @@ export async function firstRunWizard(): Promise<void> {
   }
 
   // 3. Starter persona, only when none exist and there's a harness to run it.
+  // Fleet default: prefer pi when both engines are present — it runs on
+  // any provider (or none), so starter personas work account-free.
+  const starterHarness = harnesses.find((h) => h.id === "pi") ?? harnesses[0];
   if ((await listPersonas()).length === 0 && harnesses.length > 0) {
     const { starter } = await inquirer.prompt([
       { type: "confirm", name: "starter", message: "Create a starter persona (@researcher)?", default: true },
@@ -54,7 +57,7 @@ export async function firstRunWizard(): Promise<void> {
       // frontmatter — verb phrases are what orchestrators route on.
       fs.writeFileSync(
         file,
-        `---\nharness: ${harnesses[0].id}\naliases: [research]\ndescription: search the web, find papers and specs, look up facts\n---\nYou are a research assistant. Be concise.\n`,
+        `---\nharness: ${starterHarness.id}\naliases: [research]\ndescription: search the web, find papers and specs, look up facts\n---\nYou are a research assistant. Be concise.\n`,
         "utf-8"
       );
       console.log(`  ${chalk.green("✓")} @researcher → ${file} (edit the markdown to shape it)`);

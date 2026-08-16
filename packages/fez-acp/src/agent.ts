@@ -22,6 +22,9 @@ import {
   KIND_TYPING,
   type HarnessUpdate,
 } from "@fez/protocol";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 
@@ -88,6 +91,51 @@ async function main() {
   const mcpServers = persona.mcpServers
     .map((name) => findMcpServer(name))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
+
+  // ── Per-persona working directory. Turns run HERE, not wherever `fez
+  // agent` happened to be launched — no accidental project context
+  // (.mcp.json, AGENTS.md) bleeding into a chat agent, plus a stable
+  // scratch space that survives restarts. Coding personas that should
+  // live in a repo set `workdir:` in their frontmatter.
+  const workDir = persona.extra.workdir
+    ? path.resolve(persona.extra.workdir)
+    : path.join(os.homedir(), ".fez", "agents", "work", personaId);
+  fs.mkdirSync(workDir, { recursive: true });
+
+  // pi personas: brain selection and hygiene ride pi's own project
+  // settings (<workdir>/.pi/settings.json) — `provider:`/`model:`
+  // frontmatter pins which mind this persona thinks with (the fleet
+  // model: one engine, many minds). RPC mode only honors project
+  // settings for TRUSTED folders, so one trust.json entry for the
+  // shared work root covers every persona (observed format:
+  // { "<path>": true }); a custom workdir is trusted individually.
+  if (persona.harness === "pi") {
+    const piDir = path.join(workDir, ".pi");
+    fs.mkdirSync(piDir, { recursive: true });
+    const piSettings: Record<string, unknown> = { quietStartup: true };
+    if (persona.extra.provider) piSettings.defaultProvider = persona.extra.provider;
+    if (persona.extra.model) piSettings.defaultModel = persona.extra.model;
+    fs.writeFileSync(path.join(piDir, "settings.json"), JSON.stringify(piSettings, null, 1) + "\n");
+    try {
+      const trustFile = path.join(os.homedir(), ".pi", "agent", "trust.json");
+      let trust: Record<string, boolean> = {};
+      try {
+        trust = JSON.parse(fs.readFileSync(trustFile, "utf-8"));
+      } catch { /* first pi use — file created below */ }
+      const trustPath = persona.extra.workdir ? workDir : path.join(os.homedir(), ".fez", "agents", "work");
+      if (trust[trustPath] !== true) {
+        trust[trustPath] = true;
+        fs.mkdirSync(path.dirname(trustFile), { recursive: true });
+        fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
+        console.log(`🔓 pi project trust granted for ${trustPath}`);
+      }
+    } catch (err) {
+      console.warn(`⚠️  couldn't update pi trust — persona provider/model settings may be ignored: ${err instanceof Error ? err.message : err}`);
+    }
+    if (persona.extra.provider || persona.extra.model) {
+      console.log(`🧠 pi mind: ${persona.extra.provider ?? "(default provider)"} / ${persona.extra.model ?? "(default model)"}`);
+    }
+  }
 
   // Identity: one stable key per persona (~/.fez/agents/<persona>.key).
   // Deliberately NOT process.env.FEZ_PRIVATE_KEY — `fez run` fills that
@@ -180,6 +228,31 @@ async function main() {
   const BREAKER_COOLDOWN_MS = 10 * 60_000;
   let consecutiveFailures = 0;
   let breakerUntil = 0;
+
+  // ── Self-bounding lifetime (Buzz VISION_REMOTE_AGENTS: "agents that
+  // know when to leave"). With `idleExit:` in the persona (or
+  // FEZ_AGENT_IDLE_EXIT), an agent that has accepted no turn for that
+  // long finishes anything in flight and EXITS cleanly — not killed,
+  // finished. The default state of an agent is "not running": a mention
+  // re-summons it (herdr auto-spawn) under the same identity, with its
+  // memory intact on the relay. Off unless configured.
+  const idleExitRaw = (persona.extra.idleExit as string | undefined) ?? process.env.FEZ_AGENT_IDLE_EXIT;
+  const idleExitMs = (() => {
+    const match = idleExitRaw?.trim().match(/^(\d+)\s*(m|h|d)$/);
+    if (!match) return undefined;
+    return Number(match[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] as "m" | "h" | "d"];
+  })();
+  let lastAcceptedAt = Date.now();
+  if (idleExitMs) {
+    console.log(`🌙 idle exit armed: ${idleExitRaw} of quiet and I'll sign off (mentions re-summon)`);
+    setInterval(() => {
+      if (busy || Date.now() - lastAcceptedAt < idleExitMs) return;
+      console.log(`🌙 quiet for ${idleExitRaw} — signing off. Mention @${personaId} to re-summon.`);
+      clearInterval(heartbeat);
+      relay.disconnect();
+      process.exit(0);
+    }, 60_000).unref?.();
+  }
 
   // Channel membership (latest creator-signed 47102 per channel). The
   // creator pubkey isn't known here, so v1 takes the latest 47102 per
@@ -340,6 +413,7 @@ async function main() {
       }
 
       busy = true;
+      lastAcceptedAt = Date.now();
       turnTimes.push(Date.now());
 
       // Status-reaction lifecycle, Buzz's model (buzz-acp ReactionGuard):
@@ -463,7 +537,7 @@ async function main() {
 
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
-        const reply = await invokeWithRetry(harness, prompt, process.cwd(), publishDraft, mcpServers, onUpdate, turnController.signal);
+        const reply = await invokeWithRetry(harness, prompt, workDir, publishDraft, mcpServers, onUpdate, turnController.signal);
 
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
