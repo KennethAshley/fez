@@ -8,7 +8,9 @@
     "type": "agent",
     "agent": {
       "entry": "dist/workflows.js",
-      "supportedTasks": ["workflow-automation"]
+      "supportedTasks": [
+        "workflow-automation"
+      ]
     }
   },
   "scripts": {
@@ -17,6 +19,7 @@
   },
   "dependencies": {
     "@fez/protocol": "^0.1.0",
+    "croner": "^10.0.1",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {

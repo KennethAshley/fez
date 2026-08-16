@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
+import { Cron } from "croner";
+import { evalCondition } from "./expr.js";
 
 /**
  * Workflow definitions — Buzz's WorkflowDef (buzz-workflow/schema.rs),
@@ -12,7 +14,7 @@ import yaml from "js-yaml";
 
 export interface TriggerDef {
   /** What fires the workflow. */
-  on: "message" | "reaction";
+  on: "message" | "reaction" | "schedule";
   /**
    * Who may fire it: an agent name (resolved via 47000 metadata),
    * "owner" (FEZ_AGENT_OWNER), or a pubkey hex. Absent = any channel
@@ -24,19 +26,38 @@ export interface TriggerDef {
   filter?: string;
   /** reaction triggers: only this emoji fires (absent = any). */
   emoji?: string;
+  /**
+   * schedule triggers: cron expression (5-field, or 6-field with
+   * seconds; evaluated by croner in local time). Mutually exclusive
+   * with `every`. Fires are best-effort like Buzz's: last-fired state
+   * is in-memory, missed fires during downtime are not replayed.
+   */
+  cron?: string;
+  /** schedule triggers: simple interval like "30m", "1h". Mutually exclusive with `cron`. Minimum 30s. */
+  every?: string;
 }
 
-export interface SayStep {
+interface StepBase {
+  /**
+   * Optional condition (see expr.ts) — when false the step is SKIPPED,
+   * not failed (Buzz's semantics), and the run continues. An expression
+   * that errors (bad syntax, unknown variable) also skips the step,
+   * loudly, with the reason in the trace.
+   */
+  if?: string;
+}
+
+export interface SayStep extends StepBase {
   /**
    * Publish a channel message into the trigger's thread. Template vars:
    * {{trigger.text}}, {{trigger.author}}, {{trigger.author_name}},
-   * {{trigger.id}}. @names are p-tagged via the 47000 roster, so this
-   * is also how a workflow summons an agent.
+   * {{trigger.id}}, {{now}}. @names are p-tagged via the 47000 roster,
+   * so this is also how a workflow summons an agent.
    */
   say: string;
 }
 
-export interface WaitReactionStep {
+export interface WaitReactionStep extends StepBase {
   /**
    * Suspend the run until the previous step's message (or the trigger,
    * if first) receives a matching reaction — Buzz's RequestApproval
@@ -75,9 +96,9 @@ export function parseDuration(raw: string | undefined, fallbackMs: number): numb
   return n * { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] as "s" | "m" | "h" | "d"];
 }
 
-/** Resolve {{trigger.X}} template variables. Unknown vars are left as-is (visible > silent). */
-export function resolveTemplate(text: string, vars: Record<string, string>): string {
-  return text.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (whole, name: string) => vars[name] ?? whole);
+/** Resolve {{trigger.X}} / {{now}} template variables. Unknown vars are left as-is (visible > silent). */
+export function resolveTemplate(text: string, vars: Record<string, string | number | boolean>): string {
+  return text.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
 }
 
 function validate(def: unknown, file: string): WorkflowDef {
@@ -89,8 +110,17 @@ function validate(def: unknown, file: string): WorkflowDef {
   if (!d.name || typeof d.name !== "string") fail(`"name" is required`);
   if (!d.channel || typeof d.channel !== "string") fail(`"channel" is required`);
   if (!d.trigger || typeof d.trigger !== "object") fail(`"trigger" is required`);
-  if (d.trigger!.on !== "message" && d.trigger!.on !== "reaction") fail(`trigger.on must be "message" or "reaction"`);
+  const on = d.trigger!.on;
+  if (on !== "message" && on !== "reaction" && on !== "schedule") fail(`trigger.on must be "message", "reaction", or "schedule"`);
   if (d.trigger!.filter) new RegExp(d.trigger!.filter); // throws on bad regex
+  if (on === "schedule") {
+    const { cron, every } = d.trigger!;
+    if (!cron === !every) fail(`schedule triggers need exactly one of "cron" or "every"`);
+    if (cron) new Cron(cron, { paused: true }).stop(); // throws on bad pattern
+    if (every && parseDuration(every, 0) < 30_000) fail(`"every" must be at least 30s`);
+  } else if (d.trigger!.cron || d.trigger!.every) {
+    fail(`"cron"/"every" only apply to schedule triggers`);
+  }
   if (!Array.isArray(d.steps) || d.steps.length === 0) fail(`at least one step is required`);
   for (const [i, step] of d.steps!.entries()) {
     const s = step as Partial<SayStep & WaitReactionStep>;
@@ -98,8 +128,20 @@ function validate(def: unknown, file: string): WorkflowDef {
       if (!s.say.trim()) fail(`step ${i + 1}: "say" must not be empty`);
     } else if (s.wait_reaction && typeof s.wait_reaction === "object") {
       parseDuration(s.wait_reaction.timeout, 0); // throws on bad duration
+      if (on === "schedule" && i === 0) fail(`step 1: a schedule run has no trigger message to react to — put a "say" before the first wait_reaction`);
     } else {
       fail(`step ${i + 1}: must be a "say" or "wait_reaction" step`);
+    }
+    if (s.if !== undefined) {
+      if (typeof s.if !== "string" || !s.if.trim()) fail(`step ${i + 1}: "if" must be a non-empty expression`);
+      try {
+        // Parse-check against a representative variable set so typos in
+        // syntax fail at load; unknown-variable errors stay a runtime
+        // skip (schedule runs have fewer vars than message runs).
+        evalCondition(s.if, { "trigger.text": "", "trigger.author": "", "trigger.author_name": "", "trigger.id": "", now: "" });
+      } catch (err) {
+        if (err instanceof Error && !err.message.startsWith("unknown variable")) fail(`step ${i + 1}: bad "if" expression — ${err.message}`);
+      }
     }
   }
   return d as WorkflowDef;

@@ -6,13 +6,16 @@ import {
   RelayConnection,
   CapabilityClient,
   KIND_AGENT_METADATA,
+  KIND_CHANNEL,
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
   KIND_REACTION,
   KIND_WORKFLOW_RUN,
 } from "@fez/protocol";
+import { Cron } from "croner";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { loadDefs, isSay, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";
+import { evalCondition, type ExprValue } from "./expr.js";
 
 /**
  * fez-workflows — Buzz's workflow engine (buzz-workflow crate),
@@ -136,7 +139,7 @@ async function main() {
   const publishTrace = (
     def: WorkflowDef,
     runId: string,
-    trigger: FezEvent,
+    trigger: FezEvent | undefined,
     channelId: string,
     communityId: string,
     status: string,
@@ -146,32 +149,60 @@ async function main() {
       .publish(
         client.signEvent({
           kind: KIND_WORKFLOW_RUN,
-          tags: [["h", channelId], ["c", communityId], ["e", trigger.id], ["workflow", def.name]],
+          tags: [
+            ["h", channelId],
+            ["c", communityId],
+            ...(trigger ? [["e", trigger.id]] : []),
+            ["workflow", def.name],
+          ],
           content: JSON.stringify({ workflow: def.name, run: runId, status, ...extra }),
         })
       )
       .catch(() => {});
   };
 
-  async function runWorkflow(def: WorkflowDef, trigger: FezEvent, channelId: string, communityId: string): Promise<void> {
+  /** trigger absent = a schedule fire: says start a fresh thread (the first say becomes the root). */
+  async function runWorkflow(def: WorkflowDef, trigger: FezEvent | undefined, channelId: string, communityId: string): Promise<void> {
     const runId = crypto.randomUUID();
-    const triggerDepth = Number(trigger.tags.find((t) => t[0] === "depth")?.[1] ?? 0);
-    const vars: Record<string, string> = {
-      "trigger.text": trigger.content,
-      "trigger.author": trigger.pubkey,
-      "trigger.author_name": pubkeyToName.get(trigger.pubkey) ?? trigger.pubkey.slice(0, 8),
-      "trigger.id": trigger.id,
+    const triggerDepth = trigger ? Number(trigger.tags.find((t) => t[0] === "depth")?.[1] ?? 0) : 0;
+    const vars: Record<string, ExprValue> = {
+      now: new Date().toISOString(),
+      ...(trigger
+        ? {
+            "trigger.text": trigger.content,
+            "trigger.author": trigger.pubkey,
+            "trigger.author_name": pubkeyToName.get(trigger.pubkey) ?? trigger.pubkey.slice(0, 8),
+            "trigger.id": trigger.id,
+          }
+        : {}),
     };
     // All say steps thread under the trigger: shared root, each replying
     // to the previous message — the chain reads as a conversation.
-    const rootId = parseThreadRef(trigger.tags).rootId ?? trigger.id;
-    let prevId = trigger.id;
+    let rootId = trigger ? parseThreadRef(trigger.tags).rootId ?? trigger.id : undefined;
+    let prevId = trigger?.id;
 
-    console.log(`▶️  ${def.name} run ${runId.slice(0, 8)} (trigger ${trigger.id.slice(0, 8)} by ${vars["trigger.author_name"]})`);
+    console.log(`▶️  ${def.name} run ${runId.slice(0, 8)} (${trigger ? `trigger ${trigger.id.slice(0, 8)} by ${vars["trigger.author_name"]}` : "scheduled"})`);
     publishTrace(def, runId, trigger, channelId, communityId, "started");
 
     for (const [index, step] of def.steps.entries()) {
       const stepNo = index + 1;
+      // `if:` — false skips the step (not the run), Buzz's semantics. An
+      // expression that errors also skips, loudly: silently running a
+      // gated step on a broken condition is the worse failure mode.
+      if (step.if) {
+        let verdict = false;
+        let error: string | undefined;
+        try {
+          verdict = evalCondition(step.if, vars);
+        } catch (err) {
+          error = err instanceof Error ? err.message : String(err);
+        }
+        if (!verdict) {
+          console.log(`   ⤼  step ${stepNo}: skipped (${error ? `if error: ${error}` : `if false: ${step.if}`})`);
+          publishTrace(def, runId, trigger, channelId, communityId, "step_skipped", { step: stepNo, ...(error ? { detail: error } : {}) });
+          continue;
+        }
+      }
       if (isSay(step)) {
         const text = resolveTemplate(step.say, vars);
         // @names -> p tags: this is how a workflow summons an agent.
@@ -185,19 +216,27 @@ async function main() {
           tags: [
             ["h", channelId],
             ["c", communityId],
-            ["e", rootId, "", "root"],
-            ["e", prevId, "", "reply"],
+            ...(rootId ? [["e", rootId, "", "root"]] : []),
+            ...(prevId ? [["e", prevId, "", "reply"]] : []),
             ["depth", String(triggerDepth + 1)],
             ...mentions.map((pk) => ["p", pk]),
           ],
           content: text,
         });
         await relay.publish(event);
+        rootId ??= event.id; // a scheduled run's first say starts the thread
         prevId = event.id;
         console.log(`   💬 step ${stepNo}: ${text.slice(0, 70)}`);
         publishTrace(def, runId, trigger, channelId, communityId, "step_done", { step: stepNo });
       } else {
         const gate = step.wait_reaction;
+        if (!prevId) {
+          // Unreachable by validation (schedule runs must say before
+          // waiting), kept as a hard stop rather than an undefined anchor.
+          publishTrace(def, runId, trigger, channelId, communityId, "failed", { step: stepNo, detail: "no message to anchor the approval to" });
+          return;
+        }
+        const anchorId: string = prevId;
         const emoji = gate.emoji ?? "👍";
         const allowedPubkey = gate.from === "any" ? undefined : resolvePrincipal(gate.from ?? "owner");
         if (gate.from !== "any" && !allowedPubkey) {
@@ -206,11 +245,11 @@ async function main() {
           return;
         }
         const timeoutMs = parseDuration(gate.timeout, DEFAULT_APPROVAL_TIMEOUT_MS);
-        console.log(`   ⏸  step ${stepNo}: waiting for ${emoji} on ${prevId.slice(0, 8)} (${gate.timeout ?? "24h"} timeout)`);
+        console.log(`   ⏸  step ${stepNo}: waiting for ${emoji} on ${anchorId.slice(0, 8)} (${gate.timeout ?? "24h"} timeout)`);
         publishTrace(def, runId, trigger, channelId, communityId, "waiting_approval", { step: stepNo });
 
         const approver = await new Promise<string | undefined>((resolve) => {
-          const pending: PendingApproval = { targetId: prevId, emoji, allowedPubkey, channelId, resolve: (pk) => { cleanup(); resolve(pk); } };
+          const pending: PendingApproval = { targetId: anchorId, emoji, allowedPubkey, channelId, resolve: (pk) => { cleanup(); resolve(pk); } };
           const timer = setTimeout(() => { cleanup(); resolve(undefined); }, timeoutMs);
           const cleanup = () => {
             clearTimeout(timer);
@@ -227,7 +266,13 @@ async function main() {
             .publish(
               client.signEvent({
                 kind: KIND_CHANNEL_MESSAGE,
-                tags: [["h", channelId], ["c", communityId], ["e", rootId, "", "root"], ["e", prevId, "", "reply"], ["depth", String(triggerDepth + 1)]],
+                tags: [
+                  ["h", channelId],
+                  ["c", communityId],
+                  ...(rootId ? [["e", rootId, "", "root"]] : []),
+                  ["e", anchorId, "", "reply"],
+                  ["depth", String(triggerDepth + 1)],
+                ],
                 content: `⏱ workflow **${def.name}**: approval (${emoji}) timed out — remaining steps skipped.`,
               })
             )
@@ -271,6 +316,7 @@ async function main() {
     for (const def of defs) {
       if (!channelsByDef.get(def)!.includes(channelId)) continue;
       const trig = def.trigger;
+      if (trig.on === "schedule") continue; // fired by the scheduler, never by events
       if (trig.on === "message" && event.kind !== KIND_CHANNEL_MESSAGE) continue;
       if (trig.on === "reaction" && event.kind !== KIND_REACTION) continue;
       if (trig.on === "reaction" && trig.emoji && event.content !== trig.emoji) continue;
@@ -297,13 +343,54 @@ async function main() {
     (event) => handleEvent(event)
   );
 
+  // ── Schedules — Buzz's Schedule trigger: croner drives cron patterns,
+  // setInterval drives `every`. Best-effort like Buzz's MVP: last-fired
+  // state is in-memory, fires missed while the service is down are not
+  // replayed. Scheduled runs need a community tag before any message
+  // exists, so channel→community comes from 47101 metadata.
+  const communityOf = new Map<string, string>();
+  for (const event of await relay.query([{ kinds: [KIND_CHANNEL], "#d": channels }])) {
+    const d = event.tags.find((t) => t[0] === "d")?.[1];
+    const c = event.tags.find((t) => t[0] === "c")?.[1];
+    if (d && c) communityOf.set(d, c);
+  }
+  const scheduleHandles: { stop(): void }[] = [];
+  for (const def of defs) {
+    if (def.trigger.on !== "schedule") continue;
+    const fire = () => {
+      for (const channelId of channelsByDef.get(def)!) {
+        const communityId = communityOf.get(channelId);
+        if (!communityId) {
+          console.warn(`⚠️  ${def.name}: no community metadata for channel ${channelId} — fire skipped`);
+          continue;
+        }
+        void runWorkflow(def, undefined, channelId, communityId).catch((err) => {
+          console.error(`❌ ${def.name} scheduled run failed:`, err instanceof Error ? err.message : err);
+        });
+      }
+    };
+    if (def.trigger.cron) {
+      const job = new Cron(def.trigger.cron, fire);
+      scheduleHandles.push({ stop: () => job.stop() });
+    } else {
+      const timer = setInterval(fire, parseDuration(def.trigger.every, 3_600_000));
+      scheduleHandles.push({ stop: () => clearInterval(timer) });
+    }
+  }
+
   console.log(`🟢 fez-workflows: ${defs.length} workflow(s) across ${channels.length} channel(s) on ${relayUrl}`);
   for (const def of defs) {
-    console.log(`   • ${def.name}: on ${def.trigger.on}${def.trigger.from ? ` from ${def.trigger.from}` : ""}${def.trigger.filter ? ` ~ /${def.trigger.filter}/i` : ""} → ${def.steps.length} step(s) in #${def.channel}`);
+    const trig = def.trigger;
+    const detail =
+      trig.on === "schedule"
+        ? ` (${trig.cron ?? `every ${trig.every}`})`
+        : `${trig.from ? ` from ${trig.from}` : ""}${trig.filter ? ` ~ /${trig.filter}/i` : ""}`;
+    console.log(`   • ${def.name}: on ${trig.on}${detail} → ${def.steps.length} step(s) in #${def.channel}`);
   }
   console.log(`   Pubkey: ${myPubkey}${owner ? "" : " | ⚠️ FEZ_AGENT_OWNER unset — owner-approved gates cannot resolve"}`);
 
   process.on("SIGINT", () => {
+    for (const handle of scheduleHandles) handle.stop();
     relay.disconnect();
     console.log(`\n🔴 fez-workflows stopped.`);
     process.exit(0);

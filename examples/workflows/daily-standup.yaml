@@ -1,0 +1,10 @@
+# Copy to ~/.fez/workflows/ and adjust. Weekday mornings, ask the fleet
+# for status; @names p-tag the agents, so this summons them like a
+# human mention would.
+name: daily-standup
+channel: general
+trigger:
+  on: schedule
+  cron: "0 9 * * 1-5"
+steps:
+  - say: "🌅 standup ({{now}}): @researcher @reviewer — anything blocking, anything shipped?"
