@@ -1,4 +1,8 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
 import { notice } from "./notices.js";
@@ -77,6 +81,67 @@ function spawnDetect(command: string, args: string[]): Promise<boolean> {
 }
 
 /**
+ * Clean-room config for spawned Claude instances. The persona markdown is
+ * the contract: an agent gets the MCP servers its persona declares (passed
+ * explicitly per ACP session) and NOTHING from the user's global ~/.claude
+ * — without this, every agent inherits the user's whole personal workspace
+ * (global MCP servers, global instructions), which breaks reproducibility
+ * and quietly un-bounds what a sibling-triggerable agent can reach.
+ *
+ * Mechanics (verified empirically on macOS): CLAUDE_CONFIG_DIR pointed at
+ * a fez-owned dir drops all global config, but also logs the instance out —
+ * Claude keys its keychain item per config dir ("Claude Code-credentials-"
+ * + sha256(dir)[:8]). So first use seeds that item from the user's global
+ * one (their own token, staying in their own keychain). On non-mac
+ * platforms credentials live in <dir>/.credentials.json; seeding is a file
+ * copy. Minimal account state (oauthAccount etc.) is copied into the dir's
+ * .claude.json. FEZ_HARNESS_INHERIT=1 opts out of isolation entirely.
+ */
+function isolatedClaudeEnv(): NodeJS.ProcessEnv {
+  if (process.env.FEZ_HARNESS_INHERIT === "1") return process.env;
+  const dir = path.join(os.homedir(), ".fez", "harness", "claude", "shared");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const configFile = path.join(dir, ".claude.json");
+    if (!fs.existsSync(configFile)) {
+      let seed: Record<string, unknown> = {};
+      try {
+        const global = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude.json"), "utf-8"));
+        for (const key of ["oauthAccount", "hasCompletedOnboarding", "userID", "firstStartTime"]) {
+          if (key in global) seed[key] = global[key];
+        }
+      } catch { /* no global config — fresh machine, claude will onboard */ }
+      fs.writeFileSync(configFile, JSON.stringify(seed, null, 1), { mode: 0o600 });
+    }
+    if (process.platform === "darwin") {
+      const suffix = crypto.createHash("sha256").update(dir).digest("hex").slice(0, 8);
+      const service = `Claude Code-credentials-${suffix}`;
+      const probe = spawnSync("security", ["find-generic-password", "-s", service], { stdio: "ignore" });
+      if (probe.status !== 0) {
+        const token = spawnSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], {
+          encoding: "utf-8",
+        });
+        if (token.status === 0 && token.stdout.trim()) {
+          spawnSync("security", ["add-generic-password", "-U", "-s", service, "-a", os.userInfo().username, "-w", token.stdout.trim()], { stdio: "ignore" });
+        }
+      }
+    } else {
+      const credFile = path.join(dir, ".credentials.json");
+      const globalCred = path.join(os.homedir(), ".claude", ".credentials.json");
+      if (!fs.existsSync(credFile) && fs.existsSync(globalCred)) {
+        fs.copyFileSync(globalCred, credFile);
+        fs.chmodSync(credFile, 0o600);
+      }
+    }
+  } catch {
+    // Isolation is best-effort: a seeding failure falls back to inherited
+    // config (the pre-isolation behavior) rather than a broken agent.
+    return process.env;
+  }
+  return { ...process.env, CLAUDE_CONFIG_DIR: dir };
+}
+
+/**
  * Claude Code, spoken to over ACP (Agent Client Protocol) rather than
  * shelling out to `claude -p` — same mechanism Buzz uses. Requires the
  * separate `@agentclientprotocol/claude-agent-acp` adapter to be installed;
@@ -92,7 +157,7 @@ function claudeCodeHarness(): HarnessAdapter {
     detect: () => spawnDetect(command, ["--version"]),
 
     async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal) {
-      const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: isolatedClaudeEnv() });
 
       // Without these, a write to a pipe whose reader already exited (e.g.
       // the process quitting mid-chain, with a persona subprocess still
