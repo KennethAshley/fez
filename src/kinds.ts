@@ -87,6 +87,19 @@ export const KIND_OBSERVER = 20004;
 export const KIND_THREAD_SUMMARY = 39005;
 
 /**
+ * Workflow run trace — one event per lifecycle transition of an
+ * automation run (Buzz's workflow_runs table, decentralized): started,
+ * step_done, waiting_approval, approved, timeout, done, failed. Published
+ * by whatever workflow service the operator runs so ANY client can render
+ * "what did my automations do" without knowing the engine. Tags
+ * ["h", channelId], ["c", communityId], ["e", triggerEventId],
+ * ["workflow", name]; content {workflow, run, status, step?, detail?}.
+ * Same membership trust rule as messages — a workflow service is invited
+ * like any agent.
+ */
+export const KIND_WORKFLOW_RUN = 47200;
+
+/**
  * Reaction — standard nostr kind 7, Buzz's shape: content = the emoji,
  * ["e", targetEventId], plus ["h", channelId] so clients can subscribe by
  * channel (Buzz derives the channel server-side from the e-target; fez's

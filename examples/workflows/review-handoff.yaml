@@ -1,0 +1,15 @@
+# Copy to ~/.fez/workflows/ and adjust. When researcher posts in
+# #general, summon reviewer on it; once the owner ✅s the review
+# request, hand the thread onward.
+name: review-handoff
+channel: general
+trigger:
+  on: message
+  from: researcher
+steps:
+  - say: "@reviewer please review this from {{trigger.author_name}}: {{trigger.text}}"
+  - wait_reaction:
+      emoji: "✅"
+      from: owner
+      timeout: 24h
+  - say: "Review approved by the owner — thread closed. 🏁"
