@@ -89,7 +89,7 @@ const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
 
 export default function herdr(api: FezExtensionAPI): void {
   let registered = loadRegistry();
-  const panel = api.ui.createSidePanel();
+  const panel = api.ui.createSidePanel({ title: "agents", icon: "🤖" });
   let liveTabIds = new Set<string>();
 
   async function refreshPanel(): Promise<void> {
@@ -100,7 +100,7 @@ export default function herdr(api: FezExtensionAPI): void {
     } catch {
       liveTabIds = new Set(); // herdr down — everything shows ○
     }
-    const lines = [bold("Agents")];
+    const lines: string[] = [];
     if (registered.length === 0) {
       lines.push(dim("@mention a persona to summon it"));
     }
@@ -111,11 +111,18 @@ export default function herdr(api: FezExtensionAPI): void {
     for (const tab of registered) {
       const alive = liveTabIds.has(tab.tabId);
       const glyph = alive ? "\x1b[32m●\x1b[39m" : dim("○");
+      // Channel names read well; raw channel-id specs (auto-spawn stores
+      // ids) are noise at sidebar width — count them instead.
+      const named = tab.channels.filter((c) => !/^[0-9a-f]{8}-/.test(c));
       const where =
-        tab.channels.length === 1 ? dim("#" + tab.channels[0].slice(0, 12)) : dim(`·${tab.channels.length}ch`);
+        named.length > 0
+          ? dim(`#${named[0].slice(0, 12)}${tab.channels.length > 1 ? ` +${tab.channels.length - 1}` : ""}`)
+          : tab.channels.length > 1
+            ? dim(`·${tab.channels.length}ch`)
+            : "";
       lines.push(`${glyph} ${OSC8(`fez-herdr://focus/${tab.tabId}`, `@${tab.persona}`)} ${where}`);
     }
-    panel.setText("\n" + lines.join("\n"));
+    panel.setText(lines.join("\n"));
   }
 
   api.registerUrlHandler("fez-herdr://focus/", (url) => {

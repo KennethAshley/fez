@@ -28,6 +28,6 @@ export {
 } from "@earendil-works/pi-tui";
 
 export { Footer } from "./footer.js";
-export { SidePanel } from "./side-panel.js";
+export { SidePanel, type SidePanelSectionMeta } from "./side-panel.js";
 export { markdownTheme, editorTheme, loaderColors, authorColor, timestamp, defaultTheme, setActiveTheme, getActiveTheme, compileThemeJson, type FezTheme, type StyleFn, type ThemeJson } from "./theme.js";
 export { highlightCode } from "./highlight.js";

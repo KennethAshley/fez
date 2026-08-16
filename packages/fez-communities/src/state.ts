@@ -170,7 +170,7 @@ export class CommunityState {
   sidebarText(): string {
     const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
     const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
-    const active = (s: string) => `\x1b[1;36m${s}\x1b[0m`; // bold cyan
+    const active = (s: string) => `\x1b[1;36m${s}\x1b[39m\x1b[22m`; // bold cyan (fg/weight resets only — a full \x1b[0m kills the pane background)
     const lines: string[] = [];
     for (const id of this.joined) {
       const community = this.communities.get(id);

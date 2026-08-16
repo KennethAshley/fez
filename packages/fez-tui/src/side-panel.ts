@@ -2,18 +2,31 @@ import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/p
 import { getActiveTheme } from "./theme.js";
 
 /**
- * Full-height sidebar surface — pi-atelier's renderDock pattern: the
- * component emits exactly `getHeight()` rows every render, each padded to
- * the column width and painted with the pane background, so the sidebar
- * reads as a continuous surface from top to bottom of the terminal
- * (content rows or not) instead of a floating patch behind whatever text
- * happens to exist.
+ * Full-height sidebar surface — pi-atelier's dock, both halves now:
+ * the renderDock MECHANICS (emit exactly `getHeight()` rows every
+ * render, each padded to width and painted with the pane background,
+ * so the sidebar reads as one continuous surface) and its VISUAL
+ * language (each section is a crowned, rounded box:
  *
- * Sections stack top-down with a blank row between non-empty ones;
- * extensions get a section each via ui.createSidePanel().
+ *   ╭─ 🏠 COMMUNITIES ────────╮
+ *   │ Web3Builders            │
+ *   │ └─ ▸ #general 10        │
+ *   ╰─────────────────────────╯
+ *
+ * dim borders, accent titles, one quiet row between boxes). Sections
+ * come from ui.createSidePanel({title, icon}) — untitled sections
+ * render as plain rows for back-compat.
  */
+
+export interface SidePanelSectionMeta {
+  title?: string;
+  icon?: string;
+}
+
+const BOLD = (s: string) => `\x1b[1m${s}\x1b[22m`;
+
 export class SidePanel implements Component {
-  private sections: string[] = [];
+  private sections: { meta: SidePanelSectionMeta; text: string }[] = [];
 
   constructor(
     private getHeight: () => number,
@@ -22,28 +35,56 @@ export class SidePanel implements Component {
     private bg: (s: string) => string = (s) => getActiveTheme().sidebarBg(s)
   ) {}
 
-  addSection(): number {
-    this.sections.push("");
+  addSection(meta: SidePanelSectionMeta = {}): number {
+    this.sections.push({ meta, text: "" });
     return this.sections.length - 1;
   }
 
   setSection(index: number, text: string): void {
-    this.sections[index] = text;
+    if (this.sections[index]) this.sections[index].text = text;
   }
 
+  /** pi-tui cache hook — this component recomputes every render, nothing to drop. */
   invalidate(): void {}
 
   render(width: number): string[] {
-    const height = Math.max(0, this.getHeight());
-    if (width <= 0 || height === 0) return [];
-    const lines = this.sections
-      .filter((s) => s.trim().length > 0)
-      .join("\n\n")
-      .split("\n");
-    return Array.from({ length: height }, (_, i) => {
-      const content = truncateToWidth(" " + (lines[i] ?? ""), width, "");
-      const pad = " ".repeat(Math.max(0, width - visibleWidth(content)));
-      return this.bg(content + pad);
+    const theme = getActiveTheme();
+    const dim = theme.dim;
+    const accent = theme.accent;
+    const inner = Math.max(1, width - 4); // "│ " … " │"
+    const rows: string[] = [];
+
+    for (const { meta, text } of this.sections) {
+      if (!text.trim() && !meta.title) continue;
+      if (rows.length > 0) rows.push("");
+
+      if (meta.title) {
+        // ╭─ 🏠 TITLE ──────╮  — crown line, atelier-style.
+        const label = `${meta.icon ? `${meta.icon} ` : ""}${meta.title.toUpperCase()}`;
+        const fill = Math.max(0, width - 5 - visibleWidth(label));
+        rows.push(dim("╭─ ") + BOLD(accent(label)) + dim(` ${"─".repeat(fill)}╮`));
+      } else {
+        rows.push(dim(`╭${"─".repeat(Math.max(0, width - 2))}╮`));
+      }
+
+      for (const line of text.split("\n")) {
+        const clipped = truncateToWidth(line, inner, "");
+        const pad = " ".repeat(Math.max(0, inner - visibleWidth(clipped)));
+        rows.push(dim("│ ") + clipped + pad + dim(" │"));
+      }
+
+      rows.push(dim(`╰${"─".repeat(Math.max(0, width - 2))}╯`));
+    }
+
+    // Exactly terminal-height rows, every one padded and painted — the
+    // continuous-surface invariant this component exists for.
+    const height = Math.max(1, this.getHeight());
+    const sized = rows.slice(0, height);
+    while (sized.length < height) sized.push("");
+    return sized.map((row) => {
+      const clipped = truncateToWidth(row, width, "");
+      const pad = " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+      return this.bg(clipped + pad);
     });
   }
 }

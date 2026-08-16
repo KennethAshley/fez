@@ -366,7 +366,7 @@ export default function communities(api: FezExtensionAPI): void {
   }
   setInterval(renderTyping, 1000).unref?.();
 
-  const panel = api.ui.createSidePanel({ width: 26 });
+  const panel = api.ui.createSidePanel({ width: 30, title: "channels", icon: "🗨️" });
 
   function displayName(pubkey: string): string {
     return names.get(pubkey) ?? `${pubkey.slice(0, 8)}…`;
