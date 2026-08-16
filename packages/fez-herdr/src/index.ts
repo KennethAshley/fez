@@ -232,24 +232,24 @@ export default function herdr(api: FezExtensionAPI): void {
             if (!existing.channels.includes(channelId)) {
               spawning.add(persona);
               pendingInvites.set(persona, { channelId, communityId });
-              api.ui.appendMessage("herdr", `pulling **@${persona}** into this channel…`);
+              api.ui.notify("herdr · " + `pulling **@${persona}** into this channel…`);
               expandAgentChannels(existing, channelId)
                 .catch((err) => {
                   spawning.delete(persona);
-                  api.ui.appendMessage("herdr", `⚠️ couldn't expand @${persona}: ${err instanceof Error ? err.message : err}`);
+                  api.ui.notify("herdr · " + `⚠️ couldn't expand @${persona}: ${err instanceof Error ? err.message : err}`);
                 });
             }
             continue;
           }
           spawning.add(persona);
           pendingInvites.set(persona, { channelId, communityId });
-          api.ui.appendMessage("herdr", `summoning **@${persona}** — spawning it in a herdr tab…`);
+          api.ui.notify("herdr · " + `summoning **@${persona}** — spawning it in a herdr tab…`);
           // respondTo=owner (Buzz's default posture): the summoner and
           // attested sibling agents can trigger it; strangers can't.
           registerAgent(persona, [channelId], "owner")
             .catch((err) => {
               spawning.delete(persona);
-              api.ui.appendMessage("herdr", `⚠️ couldn't spawn @${persona}: ${err instanceof Error ? err.message : err}`);
+              api.ui.notify("herdr · " + `⚠️ couldn't spawn @${persona}: ${err instanceof Error ? err.message : err}`);
             });
         }
       }
@@ -274,8 +274,8 @@ export default function herdr(api: FezExtensionAPI): void {
         pendingInvites.delete(name);
         spawning.delete(name);
         inviteToChannel(event.pubkey, target.channelId, target.communityId)
-          .then(() => api.ui.appendMessage("herdr", `**@${name}** is up and invited — it'll answer your mention momentarily.`))
-          .catch(() => api.ui.appendMessage("herdr", `⚠️ @${name} spawned but the invite failed — /invite ${event.pubkey} bot`));
+          .then(() => api.ui.notify("herdr · " + `**@${name}** is up and invited — it'll answer your mention momentarily.`))
+          .catch(() => api.ui.notify("herdr · " + `⚠️ @${name} spawned but the invite failed — /invite ${event.pubkey} bot`));
       }
     );
   }

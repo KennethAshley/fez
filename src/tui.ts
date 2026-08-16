@@ -140,6 +140,7 @@ export class FezTUI {
         };
       },
       appendMessage: (author, content) => this.appendBubble(author, content),
+      notify: (text) => this.systemLine(text),
       clearLog: () => {
         this.log.clear();
         this.screen?.requestRender();

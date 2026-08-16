@@ -139,7 +139,7 @@ export default function communities(api: FezExtensionAPI): void {
     } else if (frame.type === "tool") {
       api.ui.appendMessage("⚙", `${frame.title ?? "tool"}${frame.status ? ` — ${frame.status}` : ""}`);
     } else if (frame.type === "turn") {
-      api.ui.appendMessage("communities", `— turn ${frame.status} —`);
+      api.ui.notify(`— turn ${frame.status} —`);
       // Next turn gets fresh bubbles.
       watchThoughtBubble = undefined;
       watchTextBubble = undefined;
@@ -344,7 +344,7 @@ export default function communities(api: FezExtensionAPI): void {
     const root = msgById.get(rootId);
     if (root) paintBubble(root);
     for (const msg of threadReplies(channelId, rootId)) bubbleHandles.set(msg.id, threadBubble(msg));
-    api.ui.appendMessage("communities", `— in thread #${no}: plain messages reply here, /back returns to #channel —`);
+    api.ui.notify(`— in thread #${no}: plain messages reply here, /back returns to #channel —`);
   }
 
   function absorb(event: NostrEvent): void {
@@ -374,7 +374,7 @@ export default function communities(api: FezExtensionAPI): void {
     // shows its own replies as indented bubbles and everything else as a
     // compact line so the thread stays coherent.
     if (view.mode === "watch") {
-      api.ui.appendMessage("communities", `(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
+      api.ui.notify(`(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
       return;
     }
     if (view.mode === "thread") {
@@ -391,7 +391,7 @@ export default function communities(api: FezExtensionAPI): void {
           bubbleHandles.set(msg.id, threadBubble(msg));
         }
       } else {
-        api.ui.appendMessage("communities", `(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
+        api.ui.notify(`(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
       }
       return;
     }
@@ -745,7 +745,7 @@ export default function communities(api: FezExtensionAPI): void {
     );
     for (const entry of feed.slice(-10)) {
       if (entry.type === "tool") api.ui.appendMessage("⚙", `${entry.title ?? "tool"}${entry.status ? ` — ${entry.status}` : ""}`);
-      else if (entry.type === "turn") api.ui.appendMessage("communities", `— turn ${entry.status} —`);
+      else if (entry.type === "turn") api.ui.notify(`— turn ${entry.status} —`);
     }
     refreshUi();
   });
@@ -787,7 +787,7 @@ export default function communities(api: FezExtensionAPI): void {
     if (!current) return false;
 
     if (!current.channel.members.has(nostr.pubkey)) {
-      api.ui.appendMessage("communities", "⚠️  You're not in this channel's membership — other members won't see this until the creator /invites you.");
+      api.ui.notify("⚠️  You're not in this channel's membership — other members won't see this until the creator /invites you.");
     }
 
     // @name tokens -> p tags, resolved against channel member display names.

@@ -57,6 +57,7 @@ export interface FezExtensionAPI {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number }): PanelHandle;
     appendMessage(author: string, content: string): MessageHandle;
+    notify(text: string): void;
     clearLog(): void;
   };
 }
