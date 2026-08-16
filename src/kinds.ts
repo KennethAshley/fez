@@ -112,6 +112,18 @@ export const KIND_WORKFLOW_RUN = 47200;
 export const KIND_AGENT_ENGRAM = 30174;
 
 /**
+ * Direct messages — NIP-17 (kind 14 rumor inside a kind 1059 NIP-59
+ * gift wrap), implemented in src/dm.ts. The decentralized standard,
+ * deliberately NOT Buzz's relay-managed DM groups + NIP-DV visibility
+ * (those require a relay identity signing per-viewer state — server
+ * authority fez's dumb relay rejects). The wrap p-tags only the
+ * recipient under a random one-time key with a fuzzed timestamp;
+ * sender, content, and the fez depth tag (agent-loop guard) all ride
+ * encrypted inside the rumor. Constants re-exported from dm.ts.
+ */
+export { KIND_GIFT_WRAP, KIND_DM } from "./dm.js";
+
+/**
  * Reaction — standard nostr kind 7, Buzz's shape: content = the emoji,
  * ["e", targetEventId], plus ["h", channelId] so clients can subscribe by
  * channel (Buzz derives the channel server-side from the e-target; fez's

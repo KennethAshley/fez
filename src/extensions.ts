@@ -5,6 +5,7 @@ import { pathToFileURL } from "url";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import type { Event, Filter } from "nostr-tools";
 import { registerHarness, type HarnessAdapter } from "./harness.js";
+import type { DmRumor } from "./dm.js";
 import { registerMcpServer } from "./mcp-servers.js";
 import { registerCommand, type CommandHandler } from "./commands.js";
 import { setStatus } from "./status.js";
@@ -39,6 +40,10 @@ export interface NostrAccess {
   encrypt(peerPubkey: string, plaintext: string): string;
   /** Throws on wrong key/garbage — callers decide whether that's ignorable. */
   decrypt(peerPubkey: string, ciphertext: string): string;
+  /** NIP-17 private DM as the user: wraps to recipient + self-copy, publishes both. Resolves to the rumor id. */
+  sendDm(recipientPubkey: string, text: string): Promise<string>;
+  /** Unwrap a kind-1059 gift wrap addressed to the user; undefined if not ours / not a DM. */
+  unwrapDm(event: Event): DmRumor | undefined;
 }
 
 export interface PanelHandle {

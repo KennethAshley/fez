@@ -25,6 +25,15 @@ export interface NostrFilter {
   [key: `#${string}`]: string[] | undefined;
 }
 
+export interface DmRumor {
+  senderPk: string;
+  peerPk: string;
+  text: string;
+  ts: number;
+  depth: number;
+  id: string;
+}
+
 export interface NostrAccess {
   pubkey: string;
   publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<NostrEvent>;
@@ -32,6 +41,8 @@ export interface NostrAccess {
   query(filters: NostrFilter[]): Promise<NostrEvent[]>;
   encrypt(peerPubkey: string, plaintext: string): string;
   decrypt(peerPubkey: string, ciphertext: string): string;
+  sendDm(recipientPubkey: string, text: string): Promise<string>;
+  unwrapDm(event: NostrEvent): DmRumor | undefined;
 }
 
 export interface PanelHandle {

@@ -376,7 +376,7 @@ export function classifyTurnError(err: unknown): TurnErrorKind {
   if (err instanceof Error && err.name === "AbortError") return "aborted";
   const message = err instanceof Error ? err.message : String(err);
   if (/Re-authenticate|API Error: 401|oauth|authenticat|logged in/i.test(message)) return "auth";
-  if (/timed? ?out|ECONNREFUSED|ECONNRESET|ENOTFOUND|EPIPE|socket|network|overloaded|529|rate.?limit|exited (with|before)/i.test(message)) {
+  if (/timed? ?out|went silent|hard deadline|ECONNREFUSED|ECONNRESET|ENOTFOUND|EPIPE|socket|network|overloaded|529|rate.?limit|exited (with|before)/i.test(message)) {
     return "transient";
   }
   return "fatal";

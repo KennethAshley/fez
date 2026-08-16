@@ -1,6 +1,7 @@
 import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey, nip44 } from "nostr-tools";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
+import { buildDmWraps, unwrapDm, type DmRumor } from "./dm.js";
 
 export interface ClientConfig {
   /** Relay URL */
@@ -115,6 +116,29 @@ export class CapabilityClient {
   /** NIP-44 decrypt from a peer. Throws on wrong key/garbage — callers decide whether that's ignorable. */
   decryptFrom(peerPubkey: string, ciphertext: string): string {
     return nip44.decrypt(ciphertext, nip44.getConversationKey(this.privateKey, peerPubkey));
+  }
+
+  /**
+   * Send a NIP-17 private DM: publishes two gift wraps — one to the
+   * recipient, one to self (so the sender's other clients see it too).
+   * Returns the rumor id (stable across both copies).
+   */
+  async sendDm(recipientPubkey: string, text: string, depth = 0): Promise<string> {
+    const { toPeer, toSelf, id } = this.wrapDm(recipientPubkey, text, depth);
+    await this.relay.publish(toPeer);
+    await this.relay.publish(toSelf);
+    return id;
+  }
+
+  /** Build both DM wraps without publishing — for callers with their own relay connection. */
+  wrapDm(recipientPubkey: string, text: string, depth = 0): { toPeer: Event; toSelf: Event; id: string } {
+    const { toPeer, toSelf } = buildDmWraps(this.privateKey, recipientPubkey, text, depth);
+    return { toPeer, toSelf, id: unwrapDm(toSelf, this.privateKey)?.id ?? "" };
+  }
+
+  /** Unwrap a kind-1059 gift wrap addressed to us; undefined if not ours / not a DM. */
+  unwrapDm(event: Event): DmRumor | undefined {
+    return unwrapDm(event, this.privateKey);
   }
 
   /** Connect to the relay */

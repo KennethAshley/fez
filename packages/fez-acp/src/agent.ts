@@ -20,6 +20,9 @@ import {
   KIND_OBSERVER,
   KIND_REACTION,
   KIND_TYPING,
+  KIND_GIFT_WRAP,
+  DM_FUZZ_WINDOW_S,
+  type DmRumor,
   type HarnessUpdate,
 } from "@fez/protocol";
 import fs from "node:fs";
@@ -602,14 +605,147 @@ async function main() {
       }
   };
 
+  // ── Private DMs (NIP-17). The wrap's timestamp is fuzzed up to 2 days
+  // BACK, so the subscription window must reach that far or live DMs get
+  // dropped by the relay's since-filter — which also means every startup
+  // replays up to 2 days of stored wraps. Recency is judged on the
+  // RUMOR's real timestamp: only DMs from the last BACKFILL window are
+  // actionable, and the startup replay is buffered briefly so our own
+  // reply self-copies (which mark a DM as answered) are seen before we
+  // decide to answer it again.
+  const dmRecent = new Map<string, string[]>(); // peerPk -> conversation context
+  const dmLastSent = new Map<string, number>(); // peerPk -> ts of our last reply
+  const pendingDms: DmRumor[] = [];
+  const DM_BACKFILL_WINDOW_S = 120;
+
+  const sendDmReply = async (peerPk: string, text: string, depth: number) => {
+    const { toPeer, toSelf } = client.wrapDm(peerPk, text, depth);
+    await relay.publish(toPeer);
+    await relay.publish(toSelf);
+  };
+
+  const handleDm = async (dm: DmRumor): Promise<void> => {
+    if (seenEventIds.has(dm.id)) return;
+    seenEventIds.add(dm.id);
+    if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
+
+    if (dm.senderPk === myPubkey) {
+      // Our own self-copy — record it as "answered up to here", don't respond.
+      dmLastSent.set(dm.peerPk, Math.max(dmLastSent.get(dm.peerPk) ?? 0, dm.ts));
+      return;
+    }
+
+    const context = dmRecent.get(dm.peerPk) ?? [];
+    context.push(`${dm.senderPk.slice(0, 8)}: ${dm.text}`);
+    dmRecent.set(dm.peerPk, context.slice(-10));
+
+    // Replayed history: context only, no turn.
+    if (dm.ts < Math.floor(Date.now() / 1000) - DM_BACKFILL_WINDOW_S) return;
+    if ((dmLastSent.get(dm.peerPk) ?? 0) >= dm.ts) return; // already answered
+    if (!(await authorAllowed(dm.senderPk))) return;
+    // Same loop guard as channels — agent↔agent DMs ping-pong just as
+    // happily in private, with nobody watching. The depth rides INSIDE
+    // the encrypted rumor (a wrap tag would leak conversation shape).
+    if (dm.depth >= MAX_CHAIN_DEPTH) {
+      console.log(`⛔ DM chain depth ${dm.depth} ≥ ${MAX_CHAIN_DEPTH} — not responding (loop guard)`);
+      return;
+    }
+    if (budgetExhausted()) {
+      console.log(`⛔ Turn budget exhausted (${maxTurnsPerHour}/hour) — not responding to DM`);
+      return;
+    }
+    if (Date.now() < breakerUntil) return;
+
+    if (busy) {
+      if (pendingDms.length < 3 && !pendingDms.some((p) => p.id === dm.id)) {
+        pendingDms.push(dm);
+        console.log(`⏳ Busy — queued DM from ${dm.senderPk.slice(0, 8)}… (${pendingDms.length} pending)`);
+      }
+      return;
+    }
+
+    busy = true;
+    lastAcceptedAt = Date.now();
+    turnTimes.push(Date.now());
+    try {
+      const memorySection = await coreMemorySection();
+      const prompt = [
+        persona.systemPrompt ?? "",
+        ...(memorySection ? [memorySection] : []),
+        `You are @${personaId}, in a PRIVATE direct-message conversation — only you and your correspondent can read it. Reply to them directly; @names summon nobody here, and there is no channel audience. If a task needs a tool or data source you don't have, say so plainly instead of improvising.`,
+        ...(memorySection
+          ? [
+              `Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" or fez mem set mem/<topic> "<note>".`,
+            ]
+          : []),
+        `Conversation so far:`,
+        ...(dmRecent.get(dm.peerPk) ?? []),
+        `Reply to the last message. Be concise — this is chat.`,
+      ].filter(Boolean).join("\n\n");
+
+      console.log(`✉️  DM from ${dm.senderPk.slice(0, 8)}… — invoking ${persona.harness}`);
+      publishObserver({ type: "turn", status: "started" });
+      const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
+      const reply = await invokeWithRetry(harness, prompt, workDir, undefined, mcpServers, onUpdate);
+
+      await sendDmReply(dm.peerPk, reply, dm.depth + 1);
+      dmLastSent.set(dm.peerPk, Math.floor(Date.now() / 1000));
+      const myContext = dmRecent.get(dm.peerPk) ?? [];
+      myContext.push(`me: ${reply}`);
+      dmRecent.set(dm.peerPk, myContext.slice(-10));
+      publishObserver({ type: "turn", status: "done" });
+      consecutiveFailures = 0;
+      console.log(`✅ DM reply sent (${reply.length} chars)`);
+    } catch (err) {
+      publishObserver({ type: "turn", status: "failed" });
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`❌ DM turn failed (${classifyTurnError(err)}):`, reason);
+      consecutiveFailures++;
+      if (consecutiveFailures >= BREAKER_THRESHOLD) {
+        breakerUntil = Date.now() + BREAKER_COOLDOWN_MS;
+        consecutiveFailures = 0;
+        console.error(`🛑 Breaker tripped — pausing ${BREAKER_COOLDOWN_MS / 60_000}m`);
+      }
+      // Failure notice goes back over the same private pipe.
+      void sendDmReply(dm.peerPk, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
+    } finally {
+      busy = false;
+      const next = pendingDms.shift();
+      if (next) {
+        seenEventIds.delete(next.id);
+        setTimeout(() => void handleDm(next), 250);
+      }
+    }
+  };
+
+  // Startup replay buffer: hold unwrapped rumors until the replayed
+  // window has (very likely) fully arrived, so self-copies of past
+  // replies register as "answered" before any decision to reply is made
+  // — otherwise every restart re-answers the last DM.
+  let dmLive = false;
+  const dmBacklog: DmRumor[] = [];
+  setTimeout(() => {
+    dmLive = true;
+    dmBacklog.sort((a, b) => a.ts - b.ts);
+    for (const dm of dmBacklog.splice(0)) void handleDm(dm);
+  }, 2500);
+
   relay.subscribe(
     [
       { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
       { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+      { kinds: [KIND_GIFT_WRAP], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) - DM_FUZZ_WINDOW_S },
     ],
     (event) => {
       if (event.kind === KIND_MEMBERSHIP) {
         absorbMembership(event);
+        return;
+      }
+      if (event.kind === KIND_GIFT_WRAP) {
+        const dm = client.unwrapDm(event);
+        if (!dm) return;
+        if (dmLive) void handleDm(dm);
+        else dmBacklog.push(dm);
         return;
       }
       void handleChannelMessage(event);

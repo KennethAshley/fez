@@ -5,6 +5,9 @@ import path from "node:path";
 import { CommunityState, type Role } from "./state.js";
 import type { FezExtensionAPI, MessageHandle, NostrEvent, NostrFilter } from "./api-types.js";
 
+const KIND_GIFT_WRAP = 1059; // NIP-59 gift wrap carrying a NIP-17 private DM — see fez src/dm.ts
+const DM_FUZZ_WINDOW_S = 2 * 86_400; // wrap timestamps are fuzzed up to 2 days BACK — subscriptions must reach this far
+
 const KIND_AGENT_METADATA = 47000;
 const KIND_COMMUNITY = 47100;
 const KIND_CHANNEL = 47101;
@@ -71,7 +74,8 @@ export default function communities(api: FezExtensionAPI): void {
     | { mode: "channel" }
     | { mode: "thread"; rootId: string }
     | { mode: "watch"; agent: string }
-    | { mode: "jobs" } = { mode: "channel" };
+    | { mode: "jobs" }
+    | { mode: "dm"; peerPk: string } = { mode: "channel" };
 
   // ── Jobs: units of agent work, ASSEMBLED from events already on the
   // wire — nothing publishes "a job". A mention an agent accepts (its 👀
@@ -367,6 +371,7 @@ export default function communities(api: FezExtensionAPI): void {
   setInterval(renderTyping, 1000).unref?.();
 
   const panel = api.ui.createSidePanel({ width: 30, title: "channels", icon: "🗨️" });
+  const dmPanel = api.ui.createSidePanel({ title: "dms", icon: "✉️" });
 
   function displayName(pubkey: string): string {
     return names.get(pubkey) ?? `${pubkey.slice(0, 8)}…`;
@@ -386,6 +391,10 @@ export default function communities(api: FezExtensionAPI): void {
       state.sidebarText() + (statusLines.length > 0 ? `\n\n Working\n${statusLines.join("\n")}\n — /jobs` : "")
     );
     const current = state.currentChannel();
+    if (view.mode === "dm") {
+      api.ui.setStatus("scope", `✉ @${displayName(view.peerPk)} · private`);
+      return;
+    }
     const threadSuffix =
       view.mode === "thread"
         ? ` ▸ thread #${threadNo(view.rootId)}`
@@ -804,6 +813,101 @@ export default function communities(api: FezExtensionAPI): void {
     refreshUi();
   }
 
+  // ── Private DMs (NIP-17 gift wraps — crypto lives behind
+  // nostr.sendDm/unwrapDm, see fez src/dm.ts; this is pure view state).
+  // The wrap subscription reaches DM_FUZZ_WINDOW_S back because wrap
+  // timestamps are fuzzed BACKWARDS — a since-now filter would drop live
+  // messages. The replay this causes doubles as history restore: each
+  // session recovers up to 2 days of conversation, silently (no unread,
+  // no notify for anything older than this session).
+  interface DmMsg {
+    id: string;
+    senderPk: string;
+    text: string;
+    ts: number;
+  }
+  const dmConvos = new Map<string, { msgs: DmMsg[]; unread: number }>();
+  const seenDmIds = new Set<string>();
+  const sessionStartS = Math.floor(Date.now() / 1000);
+  const OSC8 = (url: string, label: string) => `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
+
+  function dmConvo(peerPk: string): { msgs: DmMsg[]; unread: number } {
+    let convo = dmConvos.get(peerPk);
+    if (!convo) dmConvos.set(peerPk, (convo = { msgs: [], unread: 0 }));
+    return convo;
+  }
+
+  function refreshDmPanel(): void {
+    if (dmConvos.size === 0) {
+      dmPanel.setText(" (none — /dm <agent>)");
+      return;
+    }
+    const lines = [...dmConvos.entries()]
+      .sort((a, b) => (b[1].msgs.at(-1)?.ts ?? 0) - (a[1].msgs.at(-1)?.ts ?? 0))
+      .slice(0, 12)
+      .map(([pk, c]) => ` ${OSC8(`fez-dm://open/${pk}`, `@${displayName(pk)}`)}${c.unread > 0 ? ` (${c.unread})` : ""}`);
+    dmPanel.setText(lines.join("\n"));
+  }
+
+  function renderDmView(peerPk: string): void {
+    api.ui.clearLog();
+    bubbleHandles = new Map();
+    summaryLineHandles = new Map();
+    draftBubbles.clear();
+    api.ui.notify(`— private DM with @${displayName(peerPk)} · end-to-end encrypted, no channel involved · plain messages send here, /back returns —`);
+    for (const m of dmConvo(peerPk).msgs) {
+      api.ui.appendMessage(m.senderPk === nostr!.pubkey ? "You" : displayName(m.senderPk), m.text);
+    }
+  }
+
+  function openDm(peerPk: string): void {
+    view = { mode: "dm", peerPk };
+    dmConvo(peerPk).unread = 0;
+    renderDmView(peerPk);
+    refreshDmPanel();
+    refreshUi();
+  }
+
+  function handleGiftWrap(event: NostrEvent): void {
+    const dm = nostr!.unwrapDm(event);
+    if (!dm || seenDmIds.has(dm.id)) return;
+    seenDmIds.add(dm.id);
+    const convo = dmConvo(dm.peerPk);
+    convo.msgs.push({ id: dm.id, senderPk: dm.senderPk, text: dm.text, ts: dm.ts });
+    convo.msgs.sort((a, b) => a.ts - b.ts);
+    if (convo.msgs.length > 100) convo.msgs.splice(0, convo.msgs.length - 100);
+    const live = dm.ts >= sessionStartS;
+    if (view.mode === "dm" && view.peerPk === dm.peerPk) {
+      if (live) api.ui.appendMessage(dm.senderPk === nostr!.pubkey ? "You" : displayName(dm.senderPk), dm.text);
+    } else if (live && dm.senderPk !== nostr!.pubkey) {
+      convo.unread++;
+      api.ui.notify(`✉️  DM from ${displayName(dm.senderPk)}: ${snippet(dm.text)} — /dm ${displayName(dm.senderPk)}`);
+    }
+    refreshDmPanel();
+  }
+
+  api.registerCommand("dm", async (args, ctx) => {
+    const target = args.trim().replace(/^@/, "");
+    if (!target) {
+      if (dmConvos.size === 0) {
+        return ctx.reply("No DM conversations yet. /dm <agent-name|pubkey> starts one — private and end-to-end encrypted, no channel involved.");
+      }
+      return ctx.reply(
+        [...dmConvos.entries()]
+          .map(([pk, c]) => `• @${displayName(pk)}${c.unread > 0 ? ` — ${c.unread} unread` : ""} (/dm ${displayName(pk)})`)
+          .join("\n")
+      );
+    }
+    const peerPk = /^[0-9a-f]{64}$/i.test(target)
+      ? target.toLowerCase()
+      : [...names.entries()].find(([, n]) => n.toLowerCase() === target.toLowerCase())?.[0];
+    if (!peerPk) return ctx.reply(`No one named "${target}" seen on this relay — a 64-char hex pubkey works for anyone unnamed.`);
+    if (peerPk === nostr.pubkey) return ctx.reply("That's you.");
+    openDm(peerPk);
+  });
+
+  api.registerUrlHandler("fez-dm://open/", (url) => openDm(url.slice("fez-dm://open/".length)));
+
   // ── Commands ─────────────────────────────────────────────────────────────
 
   api.registerCommand("community", async (args, ctx) => {
@@ -930,7 +1034,7 @@ export default function communities(api: FezExtensionAPI): void {
   });
 
   api.registerCommand("back", async (_args, ctx) => {
-    if (view.mode === "channel") return ctx.reply("Not in a thread or watch view.");
+    if (view.mode === "channel") return ctx.reply("Not in a thread, watch, jobs, or DM view.");
     const current = state.currentChannel();
     view = { mode: "channel" };
     watchThoughtBubble = undefined;
@@ -1040,6 +1144,18 @@ export default function communities(api: FezExtensionAPI): void {
   // ── Chat input while scoped ──────────────────────────────────────────────
 
   api.registerInputHandler(async (text) => {
+    // DM view: plain input goes over the private pipe, channel or not.
+    if (view.mode === "dm") {
+      const peerPk = view.peerPk;
+      const id = await nostr.sendDm(peerPk, text);
+      if (id) seenDmIds.add(id); // our self-copy echoes back via the subscription
+      const convo = dmConvo(peerPk);
+      convo.msgs.push({ id, senderPk: nostr.pubkey, text, ts: Math.floor(Date.now() / 1000) });
+      api.ui.appendMessage("You", text);
+      refreshDmPanel();
+      return true;
+    }
+
     const current = state.currentChannel();
     if (!current) return false;
 
@@ -1091,6 +1207,14 @@ export default function communities(api: FezExtensionAPI): void {
   // subscriptions — one always-on subscription, tiny traffic (only while
   // owned agents work).
   nostr.subscribe([{ kinds: [KIND_OBSERVER], "#p": [nostr.pubkey] }], handleObserverFrame);
+
+  // Gift wraps are p-tagged to us and orthogonal to channels — always-on,
+  // window reaching back past the timestamp fuzz (see the DM section).
+  nostr.subscribe(
+    [{ kinds: [KIND_GIFT_WRAP], "#p": [nostr.pubkey], since: sessionStartS - DM_FUZZ_WINDOW_S }],
+    handleGiftWrap
+  );
+  refreshDmPanel();
 
   void (async () => {
     const metadataEvents = await nostr.query([{ kinds: [KIND_AGENT_METADATA], limit: 200 }]);

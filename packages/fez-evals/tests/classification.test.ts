@@ -21,6 +21,8 @@ const CASES: [string, ReturnType<typeof classifyTurnError>][] = [
   ["socket hang up", "transient"],
   ["request timed out", "transient"],
   ["Harness timed out after 300s", "transient"],
+  ["claude-agent-acp went silent for 30000ms mid-turn", "transient"],
+  ["claude-agent-acp hit the 300000ms hard deadline without finishing", "transient"],
   ["API Error: 529 overloaded_error", "transient"],
   ["rate limit exceeded, retry later", "transient"],
   ["claude-agent-acp exited with code 1", "transient"],

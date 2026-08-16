@@ -142,6 +142,13 @@ export class FezTUI {
       query: (filters) => this.relay.query(filters),
       encrypt: (peer, plaintext) => this.client.encryptTo(peer, plaintext),
       decrypt: (peer, ciphertext) => this.client.decryptFrom(peer, ciphertext),
+      sendDm: async (recipient, text) => {
+        const { toPeer, toSelf, id } = this.client.wrapDm(recipient, text);
+        await this.relay.publish(toPeer);
+        await this.relay.publish(toSelf);
+        return id;
+      },
+      unwrapDm: (event) => this.client.unwrapDm(event),
     });
     setUiBackend({
       createSidePanel: (opts) => {
