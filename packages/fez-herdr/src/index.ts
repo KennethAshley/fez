@@ -176,6 +176,9 @@ export default function herdr(api: FezExtensionAPI): void {
   const spawning = new Set<string>();
   const pendingInvites = new Map<string, { channelId: string; communityId: string }>(); // persona -> where to invite
   const attested = new Set<string>(); // agent pubkeys attested this session
+  // Pubkeys allowed to summon local personas via @mention (self is implicit):
+  // hydrated from the user's own 47006 attestations, grown on new attests.
+  const attestedSiblings = new Set<string>();
 
   /**
    * Owner attestation (47006): the registering user signs "this pubkey is
@@ -186,6 +189,7 @@ export default function herdr(api: FezExtensionAPI): void {
   function attestAgent(agentPubkey: string): void {
     if (attested.has(agentPubkey)) return;
     attested.add(agentPubkey);
+    attestedSiblings.add(agentPubkey); // freshly attested agents may summon too
     void api
       .nostr!.publish({ kind: KIND_AGENT_ATTESTATION, tags: [["p", agentPubkey]], content: "" })
       .catch(() => attested.delete(agentPubkey));
@@ -223,10 +227,27 @@ export default function herdr(api: FezExtensionAPI): void {
 
   if (api.nostr) {
     const nostr = api.nostr;
-    // Own outgoing messages → summon mentioned-but-absent personas.
+    // Summoning authority: the user's own messages, plus messages from
+    // pubkeys the user has ATTESTED (47006) — their orchestrator and
+    // fleet. Without this, a fez-routed "@researcher <task>" reaches only
+    // agents that happen to be running; with it, routing wakes the fleet.
+    // Strangers' mentions never spawn anything on this machine.
+    void nostr
+      .query([{ kinds: [KIND_AGENT_ATTESTATION], authors: [nostr.pubkey] }])
+      .then((events) => {
+        for (const event of events) {
+          const pk = event.tags.find((t) => t[0] === "p")?.[1];
+          if (pk) attestedSiblings.add(pk);
+        }
+      })
+      .catch(() => {});
+    // Mentions in channel messages → summon mentioned-but-absent personas.
     nostr.subscribe(
-      [{ kinds: [KIND_CHANNEL_MESSAGE], authors: [nostr.pubkey], since: Math.floor(Date.now() / 1000) }],
+      [{ kinds: [KIND_CHANNEL_MESSAGE], since: Math.floor(Date.now() / 1000) }],
       (event) => {
+        if (event.pubkey !== nostr.pubkey && !attestedSiblings.has(event.pubkey)) return;
+        // Chain-capped events don't summon — same loop guard agents use.
+        if (Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0) >= 5) return;
         const channelId = event.tags.find((t) => t[0] === "h")?.[1];
         const communityId = event.tags.find((t) => t[0] === "c")?.[1];
         if (!channelId || !communityId) return;

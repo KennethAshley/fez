@@ -13,6 +13,7 @@ const KIND_REACTION = 7; // standard nostr, Buzz's shape: content = emoji, ["e",
 const KIND_DELETION = 5; // standard nostr: retract your own events (agents clear status reactions)
 const KIND_DRAFT = 20003; // ephemeral streaming preview of a message being composed — see fez src/kinds.ts
 const KIND_OBSERVER = 20004; // ephemeral owner-encrypted agent activity frames — see fez src/kinds.ts
+const KIND_WORKFLOW_RUN = 47200; // workflow run traces — see fez src/kinds.ts
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -62,8 +63,68 @@ export default function communities(api: FezExtensionAPI): void {
   const rootByThreadNo = new Map<number, string>();
   let nextThreadNo = 1;
 
-  let view: { mode: "channel" } | { mode: "thread"; rootId: string } | { mode: "watch"; agent: string } =
-    { mode: "channel" };
+  let view:
+    | { mode: "channel" }
+    | { mode: "thread"; rootId: string }
+    | { mode: "watch"; agent: string }
+    | { mode: "jobs" } = { mode: "channel" };
+
+  // ── Jobs: units of agent work, ASSEMBLED from events already on the
+  // wire — nothing publishes "a job". A mention an agent accepts (its 👀
+  // status reaction) opens one; 💬 marks it working; the threaded reply
+  // closes it; owner-only observer frames enrich it with the current tool
+  // and catch failed/steered turns. Because it's all derived, the board
+  // covers agents running anywhere — herdr-supervised, manual, or on
+  // another machine. herdr itself stays what it's good at: supervision.
+  interface Job {
+    triggerId: string;
+    agentPk: string;
+    channelId: string;
+    status: "seen" | "working" | "done" | "failed" | "steered";
+    startedAt: number;
+    endedAt?: number;
+    rootId: string;
+    snippet: string;
+    currentTool?: string;
+  }
+  const jobs = new Map<string, Job>(); // `${agentPk}:${triggerId}`
+  const JOB_CAP = 100;
+  function trimJobs(): void {
+    while (jobs.size > JOB_CAP) {
+      const oldest = jobs.keys().next().value as string;
+      jobs.delete(oldest);
+    }
+  }
+  function activeJobs(): Job[] {
+    return [...jobs.values()].filter((j) => j.status === "seen" || j.status === "working");
+  }
+  /** An agent's most recent unfinished job — where observer enrichment lands. */
+  function latestOpenJob(agentPk: string): Job | undefined {
+    let found: Job | undefined;
+    for (const job of jobs.values()) {
+      if (job.agentPk === agentPk && (job.status === "seen" || job.status === "working")) found = job;
+    }
+    return found;
+  }
+  function jobsChanged(): void {
+    if (view.mode === "jobs") renderJobsView();
+    refreshUi(); // sidebar job count
+  }
+
+  // Workflow runs (47200) — the automations' own job trail. Latest trace
+  // per run wins; capped like jobs.
+  const workflowRuns = new Map<string, { workflow: string; status: string; step?: number; ts: number }>();
+  function handleWorkflowRun(event: NostrEvent): void {
+    try {
+      const trace = JSON.parse(event.content) as { workflow?: string; run?: string; status?: string; step?: number };
+      if (!trace.workflow || !trace.run || !trace.status) return;
+      workflowRuns.set(trace.run, { workflow: trace.workflow, status: trace.status, step: trace.step, ts: event.created_at * 1000 });
+      while (workflowRuns.size > 50) workflowRuns.delete(workflowRuns.keys().next().value as string);
+      if (view.mode === "jobs") renderJobsView();
+    } catch {
+      /* not a trace we understand */
+    }
+  }
 
   // ── Observer stream (owner-only, NIP-44) — live window into owned
   // agents. Frames decrypt with the user's key; per-agent rolling
@@ -114,6 +175,29 @@ export default function communities(api: FezExtensionAPI): void {
       workingAgents.set(agent, { activity: "working…", ts: Date.now() });
     }
     renderObserverStatus();
+
+    // Jobs enrichment (owner-only detail the public wire can't provide):
+    // tool frames name what the open job is doing right now; failed and
+    // steered turns close/flag it — the reply-based close never comes.
+    for (const [pk, n] of names) {
+      if (n !== agent) continue;
+      const job = latestOpenJob(pk);
+      if (!job) break;
+      if (frame.type === "tool" && frame.title) {
+        job.currentTool = frame.title;
+        jobsChanged();
+      } else if (frame.type === "turn" && frame.status === "failed") {
+        job.status = "failed";
+        job.endedAt = Date.now();
+        job.currentTool = undefined;
+        jobsChanged();
+      } else if (frame.type === "turn" && frame.status === "steered") {
+        job.status = "steered"; // the re-dispatched turn's 💬 reopens it
+        job.currentTool = undefined;
+        jobsChanged();
+      }
+      break;
+    }
 
     // Automatic inline visibility: if this agent's draft bubble is on
     // screen (its reply streaming), its tool activity rides that bubble's
@@ -285,14 +369,17 @@ export default function communities(api: FezExtensionAPI): void {
   }
 
   function refreshUi(): void {
-    panel.setText(state.sidebarText());
+    const active = activeJobs().length;
+    panel.setText(state.sidebarText() + (active > 0 ? `\n\n Jobs ⚙ ${active} — /jobs` : ""));
     const current = state.currentChannel();
     const threadSuffix =
       view.mode === "thread"
         ? ` ▸ thread #${threadNo(view.rootId)}`
         : view.mode === "watch"
           ? ` ▸ watching @${view.agent}`
-          : "";
+          : view.mode === "jobs"
+            ? " ▸ jobs"
+            : "";
     api.ui.setStatus(
       "scope",
       current ? `${current.community.name}/#${current.channel.name}${threadSuffix}` : ""
@@ -347,6 +434,54 @@ export default function communities(api: FezExtensionAPI): void {
     api.ui.notify(`— in thread #${no}: plain messages reply here, /back returns to #channel —`);
   }
 
+  /** The job board — per-agent work assembled from wire events; repaints live while open. */
+  function renderJobsView(): void {
+    api.ui.clearLog();
+    bubbleHandles = new Map();
+    summaryLineHandles = new Map();
+    draftBubbles.clear();
+
+    const byAgent = new Map<string, Job[]>();
+    for (const job of jobs.values()) {
+      const list = byAgent.get(job.agentPk) ?? [];
+      list.push(job);
+      byAgent.set(job.agentPk, list);
+    }
+    if (byAgent.size === 0 && workflowRuns.size === 0) {
+      api.ui.appendMessage("jobs", "No agent work seen this session — mention an agent (or @fez) and its job will appear here.");
+      api.ui.notify("— /back returns to the channel —");
+      return;
+    }
+    const GLYPH: Record<Job["status"], string> = { seen: "👀", working: "⚙", done: "✓", failed: "✗", steered: "🔀" };
+    const age = (ms: number) => {
+      const s = Math.max(0, Math.round(ms / 1000));
+      return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+    };
+    const now = Date.now();
+    for (const [pk, list] of byAgent) {
+      list.sort((a, b) => b.startedAt - a.startedAt);
+      const open = list.filter((j) => j.status === "seen" || j.status === "working").length;
+      const done = list.filter((j) => j.status === "done").length;
+      const lines = list.slice(0, 8).map((job) => {
+        const dur = job.endedAt ? age(job.endedAt - job.startedAt) : age(now - job.startedAt);
+        const tool = job.currentTool ? ` · ${job.currentTool}` : "";
+        const thread = threadNoByRoot.has(job.rootId) ? ` — /thread ${threadNo(job.rootId)}` : "";
+        const stale =
+          (job.status === "seen" || job.status === "working") && now - job.startedAt > 30 * 60_000 ? " (stalled?)" : "";
+        return `${GLYPH[job.status]} ${dur}${tool} "${job.snippet}"${stale}${thread}`;
+      });
+      api.ui.appendMessage(`@${displayName(pk)} — ${open} active · ${done} done`, lines.join("\n"));
+    }
+    if (workflowRuns.size > 0) {
+      const runs = [...workflowRuns.values()]
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, 8)
+        .map((r) => `${r.workflow}: ${r.status}${r.step ? ` (step ${r.step})` : ""} · ${age(now - r.ts)} ago`);
+      api.ui.appendMessage("automations", runs.join("\n"));
+    }
+    api.ui.notify("— live · /back returns to the channel —");
+  }
+
   function absorb(event: NostrEvent): void {
     if (state.absorb(event)) refreshUi();
   }
@@ -364,6 +499,22 @@ export default function communities(api: FezExtensionAPI): void {
     if (!state.isMember(communityId, channelId, event.pubkey)) return; // client-side gate
 
     const msg = cacheMessage(channelId, event, event.pubkey === nostr!.pubkey ? "You" : displayName(event.pubkey));
+
+    // A threaded reply closes its author's job on the message it answers
+    // (falling back to the thread root — some agents reply to the root).
+    if (msg.parentId) {
+      for (const anchor of [msg.parentId, msg.rootId]) {
+        const job = anchor ? jobs.get(`${event.pubkey}:${anchor}`) : undefined;
+        if (job && job.status !== "done") {
+          job.status = "done";
+          job.endedAt = event.created_at * 1000;
+          job.currentTool = undefined;
+          jobsChanged();
+          break;
+        }
+      }
+    }
+
     if (event.pubkey === nostr!.pubkey) return; // own message, already echoed on send
 
     const scope = state.scope;
@@ -377,6 +528,8 @@ export default function communities(api: FezExtensionAPI): void {
       api.ui.notify(`(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
       return;
     }
+    if (view.mode === "jobs") return; // the board repaints itself via jobsChanged
+
     if (view.mode === "thread") {
       if (msg.rootId === view.rootId) {
         // Adopt the author's streaming draft bubble as this message's
@@ -439,6 +592,31 @@ export default function communities(api: FezExtensionAPI): void {
     who.add(displayName(event.pubkey));
     reactionIndex.set(event.id, { targetId, emoji, authorPk: event.pubkey });
     bubbleHandles.get(targetId)?.setFooter(reactionFooter(targetId));
+
+    // Status reactions open jobs: 👀 = accepted (seen), 💬 = turn running.
+    if (emoji === "👀" || emoji === "💬") {
+      const key = `${event.pubkey}:${targetId}`;
+      const existing = jobs.get(key);
+      if (existing) {
+        if (emoji === "💬" && existing.status !== "working" && existing.status !== "done") {
+          existing.status = "working";
+          jobsChanged();
+        }
+      } else {
+        const trigger = msgById.get(targetId);
+        jobs.set(key, {
+          triggerId: targetId,
+          agentPk: event.pubkey,
+          channelId,
+          status: emoji === "💬" ? "working" : "seen",
+          startedAt: event.created_at * 1000,
+          rootId: trigger?.rootId ?? targetId,
+          snippet: snippet(trigger?.content ?? "(message not seen)", 48),
+        });
+        trimJobs();
+        jobsChanged();
+      }
+    }
   }
 
   // Streaming drafts (ephemeral 20003): one live bubble per author,
@@ -529,13 +707,17 @@ export default function communities(api: FezExtensionAPI): void {
       filters.push(
         { kinds: [KIND_COMMUNITY, KIND_CHANNEL, KIND_MEMBERSHIP], "#c": ids },
         { kinds: [KIND_COMMUNITY], "#d": ids },
-        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION, KIND_DRAFT], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
+        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION, KIND_DRAFT, KIND_WORKFLOW_RUN], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
         { kinds: [KIND_THREAD_SUMMARY], "#h": channelIdsOfJoined() }
       );
     }
     unsubscribe = nostr!.subscribe(filters, (event) => {
       if (event.kind === KIND_TYPING) {
         handleTyping(event);
+        return;
+      }
+      if (event.kind === KIND_WORKFLOW_RUN) {
+        handleWorkflowRun(event);
         return;
       }
       if (event.kind === KIND_THREAD_SUMMARY) {
@@ -729,6 +911,12 @@ export default function communities(api: FezExtensionAPI): void {
     if (current) renderChannelTimeline(current.channel.id);
     else api.ui.clearLog();
     refreshUi();
+  });
+
+  api.registerCommand("jobs", async (_args, _ctx) => {
+    view = { mode: "jobs" };
+    refreshUi();
+    renderJobsView();
   });
 
   api.registerCommand("watch", async (args, ctx) => {
