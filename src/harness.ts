@@ -113,6 +113,15 @@ function isolatedClaudeEnv(): NodeJS.ProcessEnv {
       } catch { /* no global config — fresh machine, claude will onboard */ }
       fs.writeFileSync(configFile, JSON.stringify(seed, null, 1), { mode: 0o600 });
     }
+    // Config-dir isolation alone is NOT enough: MCP connectors attached to
+    // the user's claude.ai ACCOUNT sync in with the login token itself
+    // (measured: 7 "claude.ai <X>" servers appeared in a fresh dir the
+    // moment auth was seeded). Disable account-connector sync for this
+    // dir; persona-declared servers arrive via ACP session and stay live.
+    const settingsFile = path.join(dir, "settings.json");
+    if (!fs.existsSync(settingsFile)) {
+      fs.writeFileSync(settingsFile, JSON.stringify({ disableClaudeAiConnectors: true }, null, 1), { mode: 0o600 });
+    }
     if (process.platform === "darwin") {
       const suffix = crypto.createHash("sha256").update(dir).digest("hex").slice(0, 8);
       const service = `Claude Code-credentials-${suffix}`;
@@ -138,7 +147,9 @@ function isolatedClaudeEnv(): NodeJS.ProcessEnv {
     // config (the pre-isolation behavior) rather than a broken agent.
     return process.env;
   }
-  return { ...process.env, CLAUDE_CONFIG_DIR: dir };
+  // Belt and braces with settings.json's disableClaudeAiConnectors — the
+  // env form covers a dir seeded before that setting existed.
+  return { ...process.env, CLAUDE_CONFIG_DIR: dir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" };
 }
 
 /**
