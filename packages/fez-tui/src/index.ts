@@ -9,6 +9,7 @@
  * on the engine's Component interface.
  */
 export {
+  Box,
   ProcessTerminal,
   TuiMainScreen,
   TuiAltScreen,

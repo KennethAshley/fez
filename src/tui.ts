@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import chalk from "chalk";
 import {
+  Box,
   Container,
   Editor,
   HStack,
@@ -82,6 +83,7 @@ export class FezTUI {
   private panels: { text: Text; width?: number }[] = [];
   // ui.appendMessage() calls made before screen.start() — flushed after.
   private pendingBubbles: { author: string; content: string }[] = [];
+  private warnedMissingSkills = new Set<string>();
 
   constructor(private relayUrl: string, privateKey?: string) {
     this.client = new CapabilityClient({ relay: relayUrl, privateKey });
@@ -184,8 +186,12 @@ export class FezTUI {
     if (this.panels.length > 0) {
       const side = new VStack();
       for (const panel of this.panels) side.addChild(panel.text);
+      // Subtle background tint distinguishes the sidebar pane from the
+      // chat surface (Box paints its bg across the full column width).
+      const sideBox = new Box(1, 0, (t) => chalk.bgAnsi256(236)(t));
+      sideBox.addChild(side);
       const root = new HStack([], { gap: 1 });
-      root.addChild(side, { basis: this.panels[0].width ?? 26 });
+      root.addChild(sideBox, { basis: this.panels[0].width ?? 26 });
       root.addChild(main, { grow: 1 });
       this.screen.setLayoutRoot(root);
     } else {
@@ -205,20 +211,11 @@ export class FezTUI {
     footer.setStatus("relay", this.relayUrl);
     footer.setStatus("pubkey", `${this.myPubkey.slice(0, 12)}...`);
 
-    this.renderHeader();
-
-    // Initial greeting
     const harnessLine =
       harnesses.length > 0
-        ? `Local harnesses ready: ${harnesses.map((h) => `@${h.aliases[0] ?? h.id}`).join(", ")}`
-        : `No local harnesses detected (checked: ${listHarnesses().map((h) => h.command).join(", ")})`;
-
-    this.addMessage({
-      id: "welcome",
-      author: "orchestrator",
-      content: `Welcome to Fez! 🧢\n\n${harnessLine}\n\nI can chat with you and route @mentions to agents.\nType @agent-name to call an agent, or try:\n  fez install <package>  — install an agent\n  fez discover           — find agents on the network\n  /quit                  — exit`,
-      timestamp: new Date(),
-    });
+        ? harnesses.map((h) => chalk.cyan(`@${h.aliases[0] ?? h.id}`)).join(chalk.dim(", "))
+        : chalk.dim(`none detected (checked: ${listHarnesses().map((h) => h.command).join(", ")})`);
+    this.renderHeader(harnessLine);
 
     // Block until user quits
     return new Promise((resolve) => {
@@ -335,7 +332,13 @@ export class FezTUI {
       const mcpServers = (persona?.mcpServers ?? [])
         .map((name) => {
           const server = findMcpServer(name);
-          if (!server) this.systemLine(`⚠️  @${label} wants MCP server "${name}" but nothing registered it`);
+          // Warn once per persona+skill per session — repeating it under
+          // every message is pure noise (seen in real use).
+          const warnKey = `${label}:${name}`;
+          if (!server && !this.warnedMissingSkills.has(warnKey)) {
+            this.warnedMissingSkills.add(warnKey);
+            this.systemLine(`⚠️  @${label} wants MCP server "${name}" but nothing registered it`);
+          }
           return server;
         })
         .filter((s): s is McpServer => s !== undefined);
@@ -794,18 +797,30 @@ export class FezTUI {
     this.screen.requestRender();
   }
 
-  private renderHeader(): void {
-    const line = chalk.dim("─".repeat(56));
+  /** Startup chrome, flow-title style: block logo + session info + hints — replaces both the old rule-banner and the welcome bubble. */
+  private renderHeader(harnessLine: string): void {
+    const logo = [
+      "███████ ███████ ███████",
+      "██      ██          ██ ",
+      "█████   █████     ██   ",
+      "██      ██      ██     ",
+      "██      ███████ ███████",
+    ].map((l) => chalk.magenta(l));
     this.log.addChild(
       new Text(
-        line +
-          "\n" +
-          "  🧢 " + chalk.bold.magenta("fez") + chalk.dim(" · decentralized MCP for agents") +
-          "\n" +
-          "  " + chalk.dim("relay ") + chalk.cyan(this.relayUrl) +
-          chalk.dim("  ·  you ") + chalk.cyan(this.myPubkey.slice(0, 12) + "…") +
-          "\n" +
-          line
+        [
+          "",
+          ...logo,
+          "",
+          chalk.bold.magenta("fez") + chalk.dim(" · decentralized MCP for agents 🧢"),
+          chalk.dim("relay:  ") + chalk.cyan(this.relayUrl),
+          chalk.dim("you:    ") + chalk.cyan(this.myPubkey.slice(0, 16) + "…"),
+          chalk.dim("agents: ") + harnessLine,
+          "",
+          chalk.dim("@name to talk to an agent · /join <channel> · /threads · /watch <agent> · /help · /quit"),
+        ].join("\n"),
+        0,
+        0
       )
     );
     this.screen.requestRender();
