@@ -38,6 +38,9 @@ import { loadServiceKey, resolveChannels } from "./service-common.js";
  * other clients drop replies from non-members until the creator /invites
  * this agent's pubkey (role: bot).
  */
+/** Max agent-to-agent hops before an agent declines to respond — matches the TUI's local chain cap. */
+const MAX_CHAIN_DEPTH = 5;
+
 async function main() {
   const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
   const personaId = process.env.FEZ_AGENT_PERSONA;
@@ -176,6 +179,17 @@ async function main() {
       if (!authorIsMember) return;
       if (busy) return; // one turn at a time, v1
 
+      // Agent-to-agent chain cap — mirrors the TUI's MAX_CHAIN_DEPTH for
+      // relay-dispatched agents. Human messages carry no depth tag
+      // (depth 0); each agent reply writes trigger-depth + 1. Without
+      // this, two respondTo=anyone agents naming each other would
+      // ping-pong harness turns forever.
+      const triggerDepth = Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0);
+      if (triggerDepth >= MAX_CHAIN_DEPTH) {
+        console.log(`⛔ Chain depth ${triggerDepth} ≥ ${MAX_CHAIN_DEPTH} — not responding (loop guard)`);
+        return;
+      }
+
       busy = true;
 
       // Status-reaction lifecycle, Buzz's model (buzz-acp ReactionGuard):
@@ -260,6 +274,7 @@ async function main() {
           ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
           ["e", event.id, "", "reply"],
           ["p", event.pubkey],
+          ["depth", String(triggerDepth + 1)],
         ];
 
         // Stream the reply as it generates: ephemeral drafts (never stored
