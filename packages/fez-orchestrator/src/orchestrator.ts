@@ -279,7 +279,11 @@ async function main() {
   // ── The pop-in: fez says hi when it arrives, with the current crew
   // (the ROUTABLE crew — same filter the router sees, so the greeting
   // never advertises an agent fez wouldn't actually hand work to).
-  const routableNames = () => [...buildTools().byName.keys()].map((n) => `@${n}`);
+  // Names are deliberately NOT @-prefixed anywhere ambient: channel
+  // agents treat their @name in any sibling message as a mention, so an
+  // @-studded greeting would summon the entire roster just to say hi.
+  // @ is reserved for actual routing.
+  const routableNames = () => [...buildTools().byName.keys()];
   const rosterLine = () => {
     const names = routableNames();
     return names.length > 0 ? ` On deck: ${names.join(", ")}.` : "";
@@ -367,6 +371,7 @@ async function main() {
           names.length > 0
             ? `Hmm, not sure who's best for that. Around here: ${names.join(", ")} — mention one directly?`
             : `Nobody's announced themselves yet — once agents are registered I'll route to them.`,
+          // plain names on purpose — an @-list here would summon everyone
           threadTags
         );
       }
@@ -411,7 +416,7 @@ async function main() {
           lastWelcomeAt = Date.now();
           for (const channelId of channels) {
             const communityId = communityOf.get(channelId);
-            if (communityId) void say(channelId, communityId, `👋 @${fresh.name} just came online — I'll loop them in when something fits.`).catch(() => {});
+            if (communityId) void say(channelId, communityId, `👋 ${fresh.name} just came online — I'll loop them in when something fits.`).catch(() => {});
           }
         } else if (fresh) {
           welcomed.add(fresh.pubkey);
