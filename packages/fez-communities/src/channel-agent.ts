@@ -146,11 +146,23 @@ async function main() {
   }
 
   // Announce identity so TUIs show a name instead of a truncated pubkey.
+  // about + skills make the agent discoverable by orchestrators (fez's
+  // router builds its tool list from these 47000s): about is the
+  // persona's `description:` frontmatter (verb phrases route best on
+  // small models — see Persona.description) falling back to the prompt's
+  // first line, skills its MCP server names — the agent self-describes
+  // on the wire, no registry anywhere.
   const announce = async () => {
     const event = client.signEvent({
       kind: KIND_AGENT_METADATA,
       tags: [],
-      content: JSON.stringify({ name: personaId, supported_tasks: ["channel-chat"] }),
+      content: JSON.stringify({
+        name: personaId,
+        supported_tasks: ["channel-chat"],
+        about: persona.description ?? (persona.systemPrompt?.split("\n")[0]?.trim() || undefined),
+        skills: persona.mcpServers,
+        aliases: persona.aliases,
+      }),
     });
     await relay.publish(event);
   };

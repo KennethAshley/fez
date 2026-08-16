@@ -33,7 +33,8 @@
     "dev:relay": "node packages/fez-relay/dist/cli.js --port 7777 --store dev/relay-events.jsonl",
     "herdr:build": "npm run build --prefix packages/fez-herdr",
     "herdr:dev": "npm run herdr:build && cp packages/fez-herdr/dist/index.js ~/.fez/extensions/fez-herdr.js",
-    "dev:relay:enforced": "node packages/fez-relay/dist/cli.js --port 7777 --store dev/relay-events.jsonl --policy membership --policy rate-limit"
+    "dev:relay:enforced": "node packages/fez-relay/dist/cli.js --port 7777 --store dev/relay-events.jsonl --policy membership --policy rate-limit",
+    "orchestrator:build": "npm run build --prefix packages/fez-orchestrator"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",

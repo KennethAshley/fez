@@ -35,6 +35,15 @@ export interface Persona {
   systemPrompt?: string;
   /** Names looked up in the mcp-servers.ts registry — see the interface doc above. */
   mcpServers: string[];
+  /**
+   * One-line self-description published in the agent's 47000 metadata —
+   * what orchestrators route on. Write it as verb phrases ("search the
+   * web, find papers, look up github repos"): small router models match
+   * request verbs against description verbs, and noun-style bios
+   * ("You are a research assistant.") measurably misroute on them.
+   * Falls back to the system prompt's first line when absent.
+   */
+  description?: string;
   createdAt: string;
 }
 
@@ -54,7 +63,7 @@ function parseList(raw: string): string[] {
 }
 
 /** Deliberately minimal — this frontmatter only ever needs a few flat fields, a real YAML parser would be overkill. */
-function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; body: string } {
+function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; description?: string; body: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return { aliases: [], mcpServers: [], body: raw.trim() };
 
@@ -69,6 +78,7 @@ function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; m
     harness: meta.harness || undefined,
     aliases: meta.aliases ? parseList(meta.aliases) : [],
     mcpServers: meta.mcpServers ? parseList(meta.mcpServers) : [],
+    description: meta.description || undefined,
     body: body.trim(),
   };
 }
@@ -83,7 +93,7 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
   const id = path.basename(filePath, ".md");
   try {
     const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf-8"), fs.stat(filePath)]);
-    const { harness, aliases, mcpServers, body } = parseFrontmatter(raw);
+    const { harness, aliases, mcpServers, description, body } = parseFrontmatter(raw);
     if (!harness) {
       notice(`⚠️  ${id}.md has no "harness:" in its frontmatter — skipped`);
       return undefined;
@@ -93,6 +103,7 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
       aliases,
       harness,
       mcpServers,
+      description,
       systemPrompt: body || undefined,
       createdAt: stat.birthtime.toISOString(),
     };

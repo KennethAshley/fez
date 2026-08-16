@@ -1,0 +1,25 @@
+{
+  "name": "@fez/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "@fez — a routing orchestrator agent for fez channels, backed by any OpenAI-compatible endpoint (reference: cactus serve + needle, fully local)",
+  "type": "module",
+  "fez": {
+    "type": "agent",
+    "agent": {
+      "entry": "dist/orchestrator.js",
+      "supportedTasks": ["orchestrate"]
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/orchestrator.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/orchestrator.js",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fez/protocol": "^0.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  }
+}
