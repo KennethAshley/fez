@@ -449,7 +449,7 @@ export class FezTUI {
 
   private failLoader(loader: Loader, text: string): void {
     this.stopLoader(loader);
-    this.log.addChild(new Text(chalk.red("✗ ") + text));
+    this.log.addChild(new Text(chalk.red("✗ ") + text, 0, 0));
     this.screen.requestRender();
   }
 
@@ -719,18 +719,20 @@ export class FezTUI {
     }
     const stamp = timestamp(); // fixed at arrival, tg-style
     let currentAuthor = author;
+    let footerText = "";
     const headText = () => stamp + " " + authorColor(currentAuthor)(currentAuthor) + chalk.dim(":");
-    const footer = new Text("");
     const bubble = new Container();
     const layout = (c: string) => {
       bubble.clear();
       if (!c.includes("\n") && c.length <= 100) {
-        bubble.addChild(new Text("\n" + headText() + " " + c));
+        bubble.addChild(new Text("\n" + headText() + " " + c, 0, 0));
       } else {
-        bubble.addChild(new Text("\n" + headText()));
+        bubble.addChild(new Text("\n" + headText(), 0, 0));
         bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
       }
-      bubble.addChild(footer);
+      // An empty Text still renders one blank line — only mount the footer
+      // when it has content, or every message drags a stray gap under it.
+      if (footerText) bubble.addChild(new Text(chalk.dim(footerText), 0, 0));
     };
     layout(content);
     this.log.addChild(bubble);
@@ -779,7 +781,8 @@ export class FezTUI {
         if (!tween) tween = setInterval(step, 33);
       },
       setFooter: (f) => {
-        footer.setText(f ? chalk.dim(f) : "");
+        footerText = f;
+        layout(shown >= target.length ? target : target.slice(0, shown));
         rerender();
       },
     };
@@ -787,7 +790,7 @@ export class FezTUI {
 
   /** A dim one-liner outside the chat-bubble shape — startup notes, routing warnings. */
   private systemLine(text: string): void {
-    this.log.addChild(new Text(chalk.dim(text)));
+    this.log.addChild(new Text(chalk.dim(text), 0, 0));
     this.screen.requestRender();
   }
 
