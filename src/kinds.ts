@@ -51,6 +51,15 @@ export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["c"
 export const KIND_TYPING = 20002;
 
 /**
+ * Presence heartbeat — ephemeral (relayed, never stored), Buzz's kind.
+ * Every participant (TUI while open, agents while running) beats every
+ * ~30s with empty-ish JSON content; online = heard from within a ~90s
+ * TTL, resolved client-side. No explicit offline event — crash-safe by
+ * construction, like typing indicators.
+ */
+export const KIND_PRESENCE = 20001;
+
+/**
  * Draft — ephemeral streaming preview of a message being composed (an
  * agent's accumulated harness output mid-turn). Same tags as the eventual
  * 47103 (h/c + NIP-10 thread markers); content = the text so far.

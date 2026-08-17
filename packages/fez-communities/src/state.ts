@@ -167,7 +167,7 @@ export class CommunityState {
    * highlighted. Raw ANSI (bold/dim/cyan) instead of a chalk import keeps
    * the bundled extension lean — this is the only place it styles text.
    */
-  sidebarText(): string {
+  sidebarText(unreads?: Map<string, number>): string {
     const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
     const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
     const active = (s: string) => `\x1b[1;36m${s}\x1b[39m\x1b[22m`; // bold cyan (fg/weight resets only — a full \x1b[0m kills the pane background)
@@ -184,7 +184,11 @@ export class CommunityState {
           this.scope?.communityId === id && this.scope?.channelId === channel.id;
         const label = `#${channel.name}`;
         const count = dim(` ${channel.members.size}`);
-        lines.push(current ? `${dim(glyph)} ${active("▸ " + label)}${count}` : `${dim(glyph)} ${label}${count}`);
+        // Unread badge — bold, after the member count: the reason to
+        // glance at the sidebar at all.
+        const unread = unreads?.get(channel.id) ?? 0;
+        const badge = unread > 0 && !current ? ` ${bold(`(${unread > 99 ? "99+" : unread})`)}` : "";
+        lines.push(current ? `${dim(glyph)} ${active("▸ " + label)}${count}` : `${dim(glyph)} ${label}${count}${badge}`);
       });
     }
     return lines.length > 0 ? lines.join("\n") : dim("no communities\n/community create <name>");

@@ -20,6 +20,7 @@ import {
   KIND_OBSERVER,
   KIND_REACTION,
   KIND_TYPING,
+  KIND_PRESENCE,
   KIND_GIFT_WRAP,
   DM_FUZZ_WINDOW_S,
   type DmRumor,
@@ -313,6 +314,16 @@ async function main() {
   };
   await announce();
   const heartbeat = setInterval(announce, 12 * 60 * 60 * 1000);
+
+  // Presence: ephemeral beat every 30s — clients show ● while they keep
+  // hearing us, ○ ~90s after we stop (exit, crash, network — no
+  // explicit offline event needed).
+  const presenceBeat = () =>
+    void relay
+      .publish(client.signEvent({ kind: KIND_PRESENCE, tags: [], content: JSON.stringify({ name: personaId }) }))
+      .catch(() => {});
+  presenceBeat();
+  setInterval(presenceBeat, 30_000).unref?.();
 
   console.log(`🟢 @${personaId} standing by ${channels.length > 0 ? `in ${channels.length} channel(s)` : "DM-only"} on ${relayUrl}`);
   console.log(`   Pubkey: ${myPubkey} | respondTo: ${respondTo}`);

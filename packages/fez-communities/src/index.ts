@@ -34,6 +34,10 @@ const KIND_DOC = 40100;
 const KIND_MSG_EDIT = 40003;     // ["e", target] — content = replacement text
 const KIND_MSG_PIN = 40004;      // ["e", target], ["h"], ["c"] — channel pin
 const KIND_MSG_BOOKMARK = 40005; // ["e", target] — personal bookmark (only your own render)
+const KIND_PRESENCE = 20001;     // ephemeral heartbeat — online = heard from within the TTL
+const KIND_READ_STATE = 30078;   // addressable, d = channelId; content = NIP-44 SELF-encrypted {last_read} — read habits are nobody's business
+const PRESENCE_TTL_MS = 90_000;
+const PRESENCE_BEAT_MS = 30_000;
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -388,6 +392,46 @@ export default function communities(api: FezExtensionAPI): void {
     return names.get(pubkey) ?? `${pubkey.slice(0, 8)}…`;
   }
 
+  // ── Presence (ephemeral 20001) + read state (self-encrypted 30078).
+  // Presence: everyone in the mesh heartbeats; online = heard from
+  // within the TTL. Read state: last-read timestamp per channel, synced
+  // across sessions via the relay — the sidebar unread badges.
+  const lastSeenByPk = new Map<string, number>();
+  const lastReadByChannel = new Map<string, number>();
+  const readPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const isOnline = (pk: string) => Date.now() - (lastSeenByPk.get(pk) ?? 0) < PRESENCE_TTL_MS;
+  const presenceDot = (pk: string) => (isOnline(pk) ? "\x1b[32m●\x1b[39m" : DIM("○"));
+
+  function unreadCounts(): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const [channelId, list] of messagesByChannel) {
+      if (state.scope?.channelId === channelId) continue; // viewing = read
+      const lastRead = lastReadByChannel.get(channelId) ?? 0;
+      const n = list.filter((m) => m.ts > lastRead && m.authorPk !== nostr!.pubkey).length;
+      if (n > 0) counts.set(channelId, n);
+    }
+    return counts;
+  }
+
+  /** Mark the scoped channel read up to `ts` and sync (debounced) to the relay. */
+  function markRead(channelId: string, ts: number): void {
+    if ((lastReadByChannel.get(channelId) ?? 0) >= ts) return;
+    lastReadByChannel.set(channelId, ts);
+    clearTimeout(readPublishTimers.get(channelId));
+    readPublishTimers.set(
+      channelId,
+      setTimeout(() => {
+        void nostr!
+          .publish({
+            kind: KIND_READ_STATE,
+            tags: [["d", channelId]],
+            content: nostr!.encrypt(nostr!.pubkey, JSON.stringify({ last_read: lastReadByChannel.get(channelId) })),
+          })
+          .catch(() => {});
+      }, 5000)
+    );
+  }
+
   function refreshUi(): void {
     // Live agent status under the tree: one line per busy agent (👀
     // accepted, ⚙ turn running, with the current tool when the observer
@@ -399,7 +443,7 @@ export default function communities(api: FezExtensionAPI): void {
       .slice(0, 5)
       .map((j) => ` ${j.status === "working" ? "⚙" : "👀"} @${displayName(j.agentPk)}${j.currentTool ? ` · ${j.currentTool}` : ""}`);
     panel.setText(
-      state.sidebarText() + (statusLines.length > 0 ? `\n\n Working\n${statusLines.join("\n")}\n — /jobs` : "")
+      state.sidebarText(unreadCounts()) + (statusLines.length > 0 ? `\n\n Working\n${statusLines.join("\n")}\n — /jobs` : "")
     );
     const current = state.currentChannel();
     if (view.mode === "dm") {
@@ -553,6 +597,14 @@ export default function communities(api: FezExtensionAPI): void {
           break;
         }
       }
+    }
+
+    // Read state: viewing the channel means these messages are read;
+    // anywhere else they count toward the sidebar badge.
+    if (state.scope?.channelId === channelId && (view.mode === "channel" || view.mode === "thread")) {
+      markRead(channelId, msg.ts);
+    } else {
+      refreshUi();
     }
 
     if (event.pubkey === nostr!.pubkey) return; // own message, already echoed on send
@@ -993,6 +1045,11 @@ export default function communities(api: FezExtensionAPI): void {
       else if (event.kind === KIND_MSG_BOOKMARK) handleMsgBookmark(event);
     }
     for (const event of deletions) handleDeletion(event);
+    // Opening a channel reads it — through the newest loaded message.
+    if (state.scope?.channelId === channelId) {
+      const newest = (messagesByChannel.get(channelId) ?? []).at(-1);
+      if (newest) markRead(channelId, newest.ts);
+    }
     refreshUi();
   }
 
@@ -1130,7 +1187,7 @@ export default function communities(api: FezExtensionAPI): void {
     const lines = [...dmConvos.entries()]
       .sort((a, b) => (b[1].msgs.at(-1)?.ts ?? 0) - (a[1].msgs.at(-1)?.ts ?? 0))
       .slice(0, 12)
-      .map(([pk, c]) => ` ${OSC8(`fez-dm://open/${pk}`, `@${displayName(pk)}`)}${c.unread > 0 ? ` (${c.unread})` : ""}`);
+      .map(([pk, c]) => ` ${presenceDot(pk)} ${OSC8(`fez-dm://open/${pk}`, `@${displayName(pk)}`)}${c.unread > 0 ? ` (${c.unread})` : ""}`);
     dmPanel.setText(lines.join("\n"));
   }
 
@@ -1717,7 +1774,7 @@ export default function communities(api: FezExtensionAPI): void {
     const current = state.currentChannel();
     if (!current) return ctx.reply("Not in a channel — /join <channel> first.");
     const lines = [...current.channel.members.entries()].map(
-      ([pubkey, role]) => `• ${displayName(pubkey)} (${role})${pubkey === nostr.pubkey ? " ← you" : ""}`
+      ([pubkey, role]) => `${presenceDot(pubkey)} ${displayName(pubkey)} (${role})${pubkey === nostr.pubkey ? " ← you" : ""}`
     );
     ctx.reply(lines.join("\n"));
   });
@@ -1818,6 +1875,20 @@ export default function communities(api: FezExtensionAPI): void {
   );
   refreshDmPanel();
 
+  // Presence: everyone heartbeats an ephemeral 20001; hearing one within
+  // the TTL = online. Our own beat also drives the periodic re-render
+  // that expires stale dots.
+  nostr.subscribe([{ kinds: [KIND_PRESENCE] }], (event) => {
+    lastSeenByPk.set(event.pubkey, Date.now());
+  });
+  const beat = () => void nostr.publish({ kind: KIND_PRESENCE, tags: [], content: "{}" }).catch(() => {});
+  beat();
+  setInterval(() => {
+    beat();
+    refreshDmPanel();
+    refreshUi();
+  }, PRESENCE_BEAT_MS).unref?.();
+
   void (async () => {
     const metadataEvents = await nostr.query([{ kinds: [KIND_AGENT_METADATA], limit: 200 }]);
     for (const event of metadataEvents) {
@@ -1855,6 +1926,24 @@ export default function communities(api: FezExtensionAPI): void {
         api.ui.notify("🏠 Created your Home community — you're in #general. Mention an agent (@researcher …) to get going; /help for the rest.");
       } catch { /* relay unreachable — the TUI's own error surface covers it */ }
     }
+
+    // Read state hydrates before history so backfilled channels count
+    // unreads against the synced last-read, not zero.
+    try {
+      const readEvents = await nostr.query([{ kinds: [KIND_READ_STATE], authors: [nostr.pubkey] }]);
+      const latestByD = new Map<string, NostrEvent>();
+      for (const event of readEvents) {
+        const d = event.tags.find((t) => t[0] === "d")?.[1];
+        if (!d) continue;
+        const prev = latestByD.get(d);
+        if (!prev || event.created_at > prev.created_at) latestByD.set(d, event);
+      }
+      for (const [d, event] of latestByD) {
+        try {
+          lastReadByChannel.set(d, Number(JSON.parse(nostr.decrypt(nostr.pubkey, event.content)).last_read) || 0);
+        } catch { /* not ours / old format */ }
+      }
+    } catch { /* relay hiccup — badges start from zero */ }
 
     await syncJoined();
     resubscribe();
