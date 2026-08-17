@@ -223,3 +223,45 @@ describe("deletion trust rule (author + creator only)", () => {
     expect(client.canDeleteMessage("unknown-community", msg)).toBe(false); // not author, no creator standing
   });
 });
+
+describe("ban list trust rule (kind 30047)", () => {
+  test("a creator ban makes a rostered member a non-member everywhere; forged lists ignored; unban restores", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(true);
+
+    // Mallory forges a ban list banning bob — not the creator, ignored.
+    wire.deliver(ev(30047, MALLORY, [["d", COMM], ["p", BOB]], "", now));
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(true);
+    expect(client.state.isBanned(COMM, BOB)).toBe(false);
+
+    // The creator bans bob: still on the roster, but a non-member everywhere.
+    wire.deliver(ev(30047, ALICE, [["d", COMM], ["p", BOB]], "", now + 1));
+    expect(client.state.isBanned(COMM, BOB)).toBe(true);
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(false);
+    expect(client.state.communities.get(COMM)!.channels.get(CHAN)!.members.has(BOB)).toBe(true); // roster untouched
+
+    // Banned bob's live message is dropped by the member gate.
+    const silenced = ev(47103, BOB, [["h", CHAN], ["c", COMM]], "shouting into the void", now + 2);
+    wire.deliver(silenced);
+    expect(client.msgById(silenced.id)).toBeUndefined();
+
+    // An OLDER ban list arriving late cannot resurrect a lifted ban...
+    wire.deliver(ev(30047, ALICE, [["d", COMM]], "", now + 10)); // creator unbans (empty list)
+    expect(client.state.isBanned(COMM, BOB)).toBe(false);
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(true);
+    wire.deliver(ev(30047, ALICE, [["d", COMM], ["p", BOB]], "", now + 5)); // stale ban replayed
+    expect(client.state.isBanned(COMM, BOB)).toBe(false);
+  });
+
+  test("banUser/unbanUser publish creator-signed lists with advancing created_at", async () => {
+    await client.banUser(COMM, BOB);
+    const banEvent = wire.published.at(-1)!;
+    expect(banEvent.kind).toBe(30047);
+    expect(banEvent.tags.filter((t) => t[0] === "p").map((t) => t[1])).toContain(BOB);
+    expect(client.state.isBanned(COMM, BOB)).toBe(true);
+    await expect(client.banUser(COMM, ALICE)).rejects.toThrow(/creator/);
+    await client.unbanUser(COMM, BOB);
+    expect(wire.published.at(-1)!.created_at).toBeGreaterThan(banEvent.created_at);
+    expect(client.state.isBanned(COMM, BOB)).toBe(false);
+  });
+});

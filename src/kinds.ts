@@ -48,6 +48,29 @@ export const KIND_TURN_METRIC = 47030;
 export const KIND_OBSERVER_CONTROL = 20005;
 
 /**
+ * Report — standard NIP-56 kind 1984, fez-shaped for a PUBLIC relay:
+ * the content ({targetPk, reason, aboutEventId?}) is NIP-44-encrypted
+ * to the community CREATOR — an accusation is private data between the
+ * reporter and the moderator (Buzz keeps its report queue server-side
+ * private for the same reason). Tags ["c", communityId],
+ * ["p", creatorPk] so creators can subscribe; observers learn only
+ * "someone reported something in this community".
+ */
+export const KIND_REPORT = 1984;
+
+/**
+ * Ban list — creator-signed moderation state per community
+ * (Buzz's 9040-44 relay commands, decentralized): parameterized-
+ * replaceable, d = communityId, p tags = banned pubkeys. Only the
+ * community creator's latest counts (same trust chain as 47102).
+ * Enforcement: clients treat banned pubkeys as non-members EVERYWHERE
+ * membership is checked (messages, reactions, pins, docs) without
+ * touching the roster — /unban restores standing instantly. Relay-side,
+ * moderationPolicy() rejects their writes and withholds their reads.
+ */
+export const KIND_BAN_LIST = 30047;
+
+/**
  * Communities/channels (471xx). Client-side trust model — every participant
  * runs fez, so all clients apply the same rules; the relay is dumb storage:
  *

@@ -1,0 +1,75 @@
+/**
+ * Structural mirror of fez's FezExtensionAPI (src/extensions.ts) — the
+ * slice this extension uses. Type-only, erased at bundle time; the
+ * bundled file has zero imports. TypeScript's structural typing keeps
+ * this honest against the real API.
+ */
+
+export interface NostrEvent {
+  id: string;
+  kind: number;
+  pubkey: string;
+  created_at: number;
+  content: string;
+  tags: string[][];
+  sig: string;
+}
+
+export interface PanelHandle {
+  setText(text: string): void;
+}
+
+export interface MessageHandle {
+  setAuthor(author: string): void;
+  setContent(content: string): void;
+  setFooter(text: string): void;
+  setMeta(text: string): void;
+}
+
+export interface ViewBus {
+  owner(): string;
+  claim(owner: string): void;
+  release(): void;
+  onChange(cb: (owner: string) => void): void;
+}
+
+export interface CommandContext {
+  reply(content: string): void;
+}
+
+export interface NostrFilter {
+  kinds?: number[];
+  authors?: string[];
+  since?: number;
+  until?: number;
+  limit?: number;
+  [key: `#${string}`]: string[] | undefined;
+}
+
+export interface NostrAccess {
+  pubkey: string;
+  publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<NostrEvent>;
+  query(filters: NostrFilter[]): Promise<NostrEvent[]>;
+  encrypt(peerPubkey: string, plaintext: string): string;
+  decrypt(peerPubkey: string, ciphertext: string): string;
+  signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): NostrEvent;
+}
+
+export interface FezExtensionAPI {
+  nostr: NostrAccess;
+  registerCommand(name: string, handler: (args: string, ctx: CommandContext) => void | Promise<void>): void;
+  registerInputHandler(handler: (text: string) => Promise<boolean>): void;
+  registerUrlHandler(prefix: string, handler: (url: string) => void): void;
+  /** The process's shared @fez/client instance — typed via a type-only import of @fez/client. */
+  client?: unknown;
+  ui: {
+    setStatus(key: string, value: string): void;
+    createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
+    appendMessage(author: string, content: string, ts?: number, opts?: { linePrefix?: string; bare?: boolean }): MessageHandle;
+    prependMessage(author: string, content: string, ts?: number, opts?: { linePrefix?: string; bare?: boolean }): MessageHandle;
+    onLogScrollTop(handler: () => Promise<void>): void;
+    notify(text: string): void;
+    clearLog(): void;
+    viewBus: ViewBus;
+  };
+}

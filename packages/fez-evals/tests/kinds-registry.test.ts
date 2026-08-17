@@ -40,6 +40,7 @@ const K_TO_REGISTRY: Record<string, string> = {
   DOC: "KIND_DOC",
   PROFILE: "KIND_PROFILE",
   USER_STATUS: "KIND_USER_STATUS",
+  BAN_LIST: "KIND_BAN_LIST",
 };
 
 describe("kind registry", () => {

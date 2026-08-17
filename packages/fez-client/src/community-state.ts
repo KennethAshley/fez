@@ -28,6 +28,10 @@ export interface Community {
   creator: string; // pubkey — root of trust
   name: string;
   channels: Map<string, Channel>;
+  /** Creator-signed ban list (kind 30047, latest wins). Banned = non-member everywhere. */
+  banned: Set<string>;
+  banListCreatedAt: number;
+  banListEventId?: string;
 }
 
 export interface Scope {
@@ -111,7 +115,31 @@ export class CommunityState {
         creator: event.pubkey,
         name,
         channels: existing?.channels ?? new Map(),
+        banned: existing?.banned ?? new Set(),
+        banListCreatedAt: existing?.banListCreatedAt ?? 0,
+        banListEventId: existing?.banListEventId,
       });
+      return true;
+    }
+
+    if (event.kind === 30047) {
+      // Ban list: creator-signed only, latest wins (id tie-break), same
+      // trust chain as the roster. p tags = banned pubkeys.
+      const communityId = tag("d");
+      if (!communityId) return false;
+      const community = this.communities.get(communityId);
+      if (!community || community.creator !== event.pubkey) return false;
+      if (event.created_at < community.banListCreatedAt) return false;
+      if (
+        event.created_at === community.banListCreatedAt &&
+        community.banListEventId !== undefined &&
+        event.id >= community.banListEventId
+      ) {
+        return false;
+      }
+      community.banned = new Set(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
+      community.banListCreatedAt = event.created_at;
+      community.banListEventId = event.id;
       return true;
     }
 
@@ -179,7 +207,13 @@ export class CommunityState {
 
   /** Is `author` allowed to speak in this channel per the winning membership? */
   isMember(communityId: string, channelId: string, pubkey: string): boolean {
-    return this.communities.get(communityId)?.channels.get(channelId)?.members.has(pubkey) ?? false;
+    const community = this.communities.get(communityId);
+    if (!community || community.banned.has(pubkey)) return false; // banned = non-member EVERYWHERE
+    return community.channels.get(channelId)?.members.has(pubkey) ?? false;
+  }
+
+  isBanned(communityId: string, pubkey: string): boolean {
+    return this.communities.get(communityId)?.banned.has(pubkey) ?? false;
   }
 
   findChannelByName(communityId: string, name: string): Channel | undefined {

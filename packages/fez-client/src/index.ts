@@ -98,6 +98,7 @@ export const K = {
   READ_STATE: 30078,
   PROFILE: 0,
   USER_STATUS: 30315,
+  BAN_LIST: 30047,
 } as const;
 
 const DM_FUZZ_WINDOW_S = 2 * 86_400;
@@ -664,6 +665,42 @@ export class FezClient {
     return this.displayName(pubkey);
   }
 
+  /**
+   * Ban/unban (creator-only): republish the community's 30047 with the
+   * pubkey added/removed, created_at strictly advancing (same monotonic
+   * rule as rosters). A ban leaves the roster untouched — the banned
+   * pubkey is simply treated as a non-member everywhere until unbanned.
+   */
+  private async publishBanList(communityId: string, banned: Set<string>): Promise<void> {
+    const community = this.state.communities.get(communityId);
+    if (!community) throw new Error("unknown community");
+    if (community.creator !== this.pubkey) throw new Error("only the community creator can moderate");
+    const event = await this.wire.publish({
+      kind: K.BAN_LIST,
+      tags: [["d", communityId], ...[...banned].map((pk) => ["p", pk])],
+      content: "",
+      created_at: Math.max(Math.floor(Date.now() / 1000), community.banListCreatedAt + 1),
+    });
+    this.state.absorb(event);
+    this.emit("channelsChanged");
+  }
+
+  async banUser(communityId: string, pubkey: string): Promise<string> {
+    const community = this.state.communities.get(communityId);
+    if (community && pubkey === community.creator) throw new Error("the creator can't be banned");
+    const banned = new Set(community?.banned ?? []);
+    banned.add(pubkey);
+    await this.publishBanList(communityId, banned);
+    return this.displayName(pubkey);
+  }
+
+  async unbanUser(communityId: string, pubkey: string): Promise<string> {
+    const banned = new Set(this.state.communities.get(communityId)?.banned ?? []);
+    if (!banned.delete(pubkey)) throw new Error("not banned");
+    await this.publishBanList(communityId, banned);
+    return this.displayName(pubkey);
+  }
+
   /** Creator republishes the roster without the pubkey. The removed party's history stays. */
   async kick(pubkey: string): Promise<string> {
     const current = this.state.currentChannel();
@@ -936,8 +973,9 @@ export class FezClient {
     const events = await this.wire.query([
       { kinds: [K.COMMUNITY], "#d": ids },
       { kinds: [K.CHANNEL, K.MEMBERSHIP], "#c": ids },
+      { kinds: [K.BAN_LIST], "#d": ids },
     ]);
-    for (const kind of [K.COMMUNITY, K.CHANNEL, K.MEMBERSHIP]) {
+    for (const kind of [K.COMMUNITY, K.CHANNEL, K.MEMBERSHIP, K.BAN_LIST]) {
       for (const event of events.filter((e) => e.kind === kind)) this.state.absorb(event);
     }
     this.emit("channelsChanged");
@@ -951,7 +989,7 @@ export class FezClient {
     if (ids.length > 0) {
       filters.push(
         { kinds: [K.COMMUNITY, K.CHANNEL, K.MEMBERSHIP], "#c": ids },
-        { kinds: [K.COMMUNITY], "#d": ids },
+        { kinds: [K.COMMUNITY, K.BAN_LIST], "#d": ids },
         {
           kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK],
           "#h": this.channelIdsOfJoined(),

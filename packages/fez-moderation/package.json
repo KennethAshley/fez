@@ -1,0 +1,13 @@
+{
+  "name": "@fez/moderation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Moderation for fez — /report (encrypted to the creator), /reports queue, /ban and /unban via creator-signed 30047 ban lists. Enforcement is client trust rules + the relay's moderation policy.",
+  "type": "module",
+  "fez": { "type": "extension", "extension": { "entry": "dist/index.js" } },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": { "esbuild": "^0.21.5", "typescript": "^5.6.0" }
+}

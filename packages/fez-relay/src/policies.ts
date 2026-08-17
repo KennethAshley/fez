@@ -231,6 +231,64 @@ export function createdAtFencePolicy(opts?: { maxDriftS?: number; pastExemptKind
   };
 }
 
+/**
+ * Moderation enforcement (Buzz's 9040-44 "bans bite at the seam",
+ * decentralized): the community creator's latest kind-30047 ban list is
+ * enforced at ingest (banned pubkeys can't write community-tagged events)
+ * and at delivery (an authed banned pubkey receives no community
+ * content). Clients enforce the same list in their own trust rules —
+ * this policy is the operator-grade backstop, like membershipPolicy.
+ */
+export function moderationPolicy(): RelayPolicy {
+  const KIND_BAN_LIST = 30047;
+  const banCache = new Map<string, Set<string>>();
+
+  const bansFor = (ctx: PolicyContext, communityId: string): Set<string> => {
+    const cached = banCache.get(communityId);
+    if (cached) return cached;
+    const creator = ctx
+      .query({ kinds: [KIND_COMMUNITY], "#d": [communityId] })
+      .sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
+    const latest = ctx
+      .query({ kinds: [KIND_BAN_LIST], "#d": [communityId] })
+      .filter((e) => e.pubkey === creator)
+      .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
+    const banned = new Set(latest?.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]) ?? []);
+    banCache.set(communityId, banned);
+    return banned;
+  };
+
+  return {
+    name: "moderation",
+
+    onEvent(event, ctx) {
+      if (event.kind === KIND_BAN_LIST) {
+        const communityId = tag(event, "d");
+        if (!communityId) return reject("blocked: ban list missing community d tag");
+        const creator = ctx
+          .query({ kinds: [KIND_COMMUNITY], "#d": [communityId] })
+          .sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
+        if (!creator) return reject("blocked: unknown community");
+        if (creator !== event.pubkey) return reject("blocked: only the community creator may publish the ban list");
+        banCache.delete(communityId);
+        return ok;
+      }
+      const communityId = tag(event, "c");
+      if (!communityId) return ok;
+      if (bansFor(ctx, communityId).has(event.pubkey)) {
+        return reject("blocked: banned from this community");
+      }
+      return ok;
+    },
+
+    onDeliver(event, ctx) {
+      const communityId = tag(event, "c");
+      if (!communityId || !ctx.authedPubkey) return true; // unauthed read privacy is membershipPolicy's job
+      return !bansFor(ctx, communityId).has(ctx.authedPubkey);
+    },
+  };
+}
+
 /** Registry for --policy flags on the CLI. */
 export const builtinPolicies: Record<string, (arg?: string) => RelayPolicy> = {
   membership: () => membershipPolicy(),
@@ -239,4 +297,5 @@ export const builtinPolicies: Record<string, (arg?: string) => RelayPolicy> = {
     kindWhitelistPolicy((arg ?? "").split(",").map(Number).filter(Number.isFinite)),
   "created-at-fence": (arg) =>
     createdAtFencePolicy(arg ? { maxDriftS: Number(arg) } : undefined),
+  moderation: () => moderationPolicy(),
 };
