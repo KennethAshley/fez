@@ -341,17 +341,6 @@ export default function communities(api: FezExtensionAPI): void {
     return (messagesByChannel.get(channelId) ?? []).filter((m) => m.rootId === rootId);
   }
 
-  /** Visible indent depth by walking the parent chain (Buzz caps visible depth; TUI caps at 3). */
-  function depthOf(msg: Msg): number {
-    let depth = 0;
-    let current: Msg | undefined = msg;
-    while (current?.parentId && depth < 3) {
-      depth++;
-      current = msgById.get(current.parentId);
-    }
-    return depth;
-  }
-
   function snippet(text: string, max = 40): string {
     const oneLine = text.replace(/\s+/g, " ").trim();
     return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
@@ -424,14 +413,13 @@ export default function communities(api: FezExtensionAPI): void {
   }
 
   /**
-   * Bubble for a thread reply — the WHOLE comment (header, body) indents
-   * per depth (reddix's mechanism: plain spaces, applied to rendered
-   * lines so markdown stays intact). Depth capped at 3 — deeper chains
-   * stay readable instead of marching off the right edge.
+   * Bubble for a thread reply — flat, Slack's thread-panel model: the
+   * thread view IS the scope, so replies render like normal messages in
+   * arrival order (per-depth indentation tried and rejected — the view
+   * provides the context, the margin doesn't need to).
    */
-  const threadIndent = (depth: number) => "   ".repeat(Math.min(3, Math.max(1, depth)));
   function threadBubble(msg: Msg): MessageHandle {
-    const handle = api.ui.appendMessage(msg.authorName, msg.content, msg.ts, { linePrefix: threadIndent(depthOf(msg)) });
+    const handle = api.ui.appendMessage(msg.authorName, msg.content, msg.ts);
     handle.setFooter(reactionFooter(msg.id));
     return handle;
   }
@@ -710,7 +698,7 @@ export default function communities(api: FezExtensionAPI): void {
     if (view.mode === "thread" && rootId === view.rootId) {
       let draft = draftBubbles.get(event.pubkey);
       if (!draft) {
-        const handle = api.ui.appendMessage(displayName(event.pubkey), event.content, undefined, { linePrefix: threadIndent(1) });
+        const handle = api.ui.appendMessage(displayName(event.pubkey), event.content);
         handle.setFooter("✍ typing…");
         draft = { handle, rootId };
         draftBubbles.set(event.pubkey, draft);
