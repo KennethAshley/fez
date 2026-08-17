@@ -183,3 +183,13 @@ body {
   text-align: center; padding: 4px;
 }
 .conn-bar.error { background: var(--red); }
+
+/* ── ghost-town affordances ─────────────────────────────────── */
+.community-id { color: var(--bg2); font-size: 10px; }
+.ghost { color: var(--fg-dim); margin-left: 4px; font-size: 11px; }
+.empty-room {
+  background: var(--bg1); border: 1px dashed var(--bg2); border-radius: 8px;
+  color: var(--fg-dim); font-size: 13px; padding: 10px 14px; margin-bottom: 14px;
+}
+.thread-link.quiet { color: transparent; }
+.bubble:hover .thread-link.quiet { color: var(--fg-dim); }

@@ -61,9 +61,19 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
       for (const community of await client.listCommunities()) {
         await client.joinCommunity(community.id);
       }
-      const first = [...client.state.communities.values()][0];
-      const channel = first ? [...first.channels.values()][0] : undefined;
-      if (first && channel) client.setScope(first.id, channel.id);
+      // Default scope: the LIVELIEST channel we're a member of — not map
+      // order, which landed users in stale one-person rooms (found live:
+      // three mentions shouted into an empty ghost town).
+      let best: { communityId: string; channelId: string; members: number } | undefined;
+      for (const community of client.state.communities.values()) {
+        for (const channel of community.channels.values()) {
+          if (!channel.members.has(client.pubkey)) continue;
+          if (!best || channel.members.size > best.members) {
+            best = { communityId: community.id, channelId: channel.id, members: channel.members.size };
+          }
+        }
+      }
+      if (best) client.setScope(best.communityId, best.channelId);
     }
     const scope = client.state.scope;
     if (scope) await client.loadChannelHistory(scope.channelId, scope.communityId);
@@ -191,15 +201,26 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         </div>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))
-          .map((community) => (
+          .map((community, _index, joined) => (
             <div key={community.id} className="community">
-              <div className="community-name">{community.name}</div>
+              <div className="community-name">
+                {community.name}
+                {joined.filter((other) => other.name === community.name).length > 1 && (
+                  <span className="community-id"> ·{community.id.slice(0, 4)}</span>
+                )}
+              </div>
               {[...community.channels.values()].map((channel) => {
                 const active = view.kind === "channel" && scope?.channelId === channel.id;
                 const unread = unreads.get(channel.id) ?? 0;
                 return (
-                  <button key={channel.id} className={active ? "channel active" : "channel"} onClick={() => void openChannel(community.id, channel.id)}>
+                  <button
+                    key={channel.id}
+                    className={active ? "channel active" : "channel"}
+                    title={`${channel.members.size} member${channel.members.size === 1 ? "" : "s"}`}
+                    onClick={() => void openChannel(community.id, channel.id)}
+                  >
                     <span className="hash">#</span> {channel.name}
+                    {channel.members.size <= 1 && <span className="ghost" title="nobody else is in this channel">∅</span>}
                     {unread > 0 && !active && <span className="badge">{unread}</span>}
                   </button>
                 );
@@ -313,6 +334,11 @@ function ChannelView({ client, channelId }: { client: FezClient; channelId: stri
         )}
       </header>
       <div className="timeline">
+        {(client.state.currentChannel()?.channel.members.size ?? 0) <= 1 && (
+          <div className="empty-room">
+            Nobody else is in this channel — agents can't hear you here. Pick a channel without the ∅ mark, or /invite members from the TUI.
+          </div>
+        )}
         {shown.map((msg) => (
           <Bubble key={msg.id} client={client} channelId={channelId} msg={msg} inThread={!!threadRoot} onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)} />
         ))}
