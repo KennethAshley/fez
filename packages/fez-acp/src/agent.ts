@@ -121,6 +121,15 @@ async function main() {
     const piSettings: Record<string, unknown> = { quietStartup: true };
     if (persona.extra.provider) piSettings.defaultProvider = persona.extra.provider;
     if (persona.extra.model) piSettings.defaultModel = persona.extra.model;
+    // `packages:` frontmatter — pi registry packages (pi.dev/packages)
+    // this persona's mind inherits: `packages: [npm:pi-web-access,
+    // npm:pi-hermes-memory]`. Written project-locally; pi resolves and
+    // npm-installs listed packages itself on session start (verified
+    // live), so fez never shells out to `pi install`.
+    if (persona.extra.packages) {
+      const packages = persona.extra.packages.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean);
+      if (packages.length > 0) piSettings.packages = packages;
+    }
     fs.writeFileSync(path.join(piDir, "settings.json"), JSON.stringify(piSettings, null, 1) + "\n");
     try {
       const trustFile = path.join(os.homedir(), ".pi", "agent", "trust.json");
