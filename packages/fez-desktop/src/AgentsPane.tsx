@@ -4,6 +4,7 @@ import type { FezClient, ObserverEntry, WireEvent } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import ActivityFeed from "./ActivityFeed";
 import Avatar from "./Avatar";
+import PersonaEditor from "./PersonaEditor";
 
 /**
  * The agents surface — Buzz's biggest pane, fez-shaped. Roster of every
@@ -49,6 +50,14 @@ export default function AgentsPane({
 }) {
   const [selected, setSelected] = useState<string>(); // agent pk
   const [creating, setCreating] = useState(false);
+  const [editingPersona, setEditingPersona] = useState<string>();
+  // Persona files on disk — includes agents that have never spawned
+  // (no 47000 metadata yet), which would otherwise be invisible here.
+  const [localPersonas, setLocalPersonas] = useState<string[]>([]);
+  const [personaNonce, setPersonaNonce] = useState(0);
+  useEffect(() => {
+    void invoke<string[]>("list_personas").then(setLocalPersonas).catch(() => setLocalPersonas([]));
+  }, [personaNonce]);
   const roster = useMemo(
     () =>
       [...client.agents().entries()]
@@ -57,22 +66,42 @@ export default function AgentsPane({
     [client]
   );
   const current = selected ? roster.find((agent) => agent.pk === selected) : undefined;
+  const knownNames = new Set(roster.map((agent) => agent.name.toLowerCase()));
+  const unspawned = localPersonas.filter((name) => !knownNames.has(name.toLowerCase()));
 
   return (
     <aside className="pane">
       <header className="pane-head">
-        {current || creating ? (
-          <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); }}>← agents</button>
+        {current || creating || editingPersona ? (
+          <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); setEditingPersona(undefined); }}>
+            ← agents
+          </button>
         ) : (
           <span>@ agents</span>
         )}
-        {!current && !creating && (
+        {!current && !creating && !editingPersona && (
           <button className="agent-action" onClick={() => setCreating(true)}>+ new agent</button>
         )}
         <button className="pane-close" onClick={onClose}>✕</button>
       </header>
-      {creating && <CreateAgentForm onDone={() => setCreating(false)} />}
-      {!current && !creating && (
+      {editingPersona && (
+        <PersonaEditor
+          name={editingPersona}
+          onDone={(changed) => {
+            setEditingPersona(undefined);
+            if (changed) setPersonaNonce((n) => n + 1);
+          }}
+        />
+      )}
+      {creating && (
+        <CreateAgentForm
+          onDone={() => {
+            setCreating(false);
+            setPersonaNonce((n) => n + 1);
+          }}
+        />
+      )}
+      {!current && !creating && !editingPersona && (
         <div className="pane-body">
           {roster.length === 0 && (
             <div className="pane-empty">no agents known yet — they appear when their 47000 metadata reaches your relay</div>
@@ -92,9 +121,21 @@ export default function AgentsPane({
               </button>
             );
           })}
+          {unspawned.length > 0 && (
+            <>
+              <div className="manage-section">on this machine (never summoned)</div>
+              {unspawned.map((name) => (
+                <button key={name} className="agent-row" title="edit persona" onClick={() => setEditingPersona(name)}>
+                  <span className="agent-ghost">◌</span>
+                  <span className="agent-name">@{name}</span>
+                  <span className="agent-sub">mention @{name} to summon · click to edit</span>
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
-      {current && !creating && (
+      {current && !creating && !editingPersona && (
         <AgentDetail
           client={client}
           wire={wire}
@@ -105,6 +146,11 @@ export default function AgentsPane({
           workingHeadline={working.get(current.name)}
           onCancel={() => onCancel(current.name)}
           onDm={() => onDm(current.pk)}
+          onEdit={
+            localPersonas.some((name) => name.toLowerCase() === current.name.toLowerCase())
+              ? () => setEditingPersona(localPersonas.find((name) => name.toLowerCase() === current.name.toLowerCase())!)
+              : undefined
+          }
         />
       )}
     </aside>
@@ -121,6 +167,7 @@ function AgentDetail({
   workingHeadline,
   onCancel,
   onDm,
+  onEdit,
 }: {
   client: FezClient;
   wire: BrowserWire;
@@ -131,6 +178,7 @@ function AgentDetail({
   workingHeadline?: { activity: string; ts: number };
   onCancel: () => void;
   onDm: () => void;
+  onEdit?: () => void;
 }) {
   const [tab, setTab] = useState<"activity" | "memory" | "costs">("activity");
   const [engrams, setEngrams] = useState<EngramView[] | "loading" | "error">();
@@ -241,6 +289,7 @@ function AgentDetail({
             </button>
           )}
           <button className="agent-action" onClick={onDm}>✉ dm</button>
+          {onEdit && <button className="agent-action" onClick={onEdit}>✎ edit persona</button>}
           {canInvite && (
             <button className="agent-action" disabled={inviteState === "sending"} onClick={() => void invite()}>
               {inviteState === "idle" && `+ invite to #${scope.channel.name}`}

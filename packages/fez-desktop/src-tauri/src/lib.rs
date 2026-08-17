@@ -87,12 +87,82 @@ fn write_persona(name: String, content: String) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
+fn persona_dir() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    Ok(std::path::Path::new(&home).join(".fez").join("personas"))
+}
+
+fn valid_persona_name(name: &str) -> bool {
+    name.len() >= 2
+        && name.len() <= 32
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !name.starts_with('-')
+}
+
+/// Persona files on disk — the agents the GUI can edit, including ones
+/// that have never spawned (and so have no 47000 metadata yet).
+#[tauri::command]
+fn list_personas() -> Result<Vec<String>, String> {
+    let dir = persona_dir()?;
+    let mut names = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    names.push(stem.to_string());
+                }
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+#[tauri::command]
+fn read_persona(name: String) -> Result<String, String> {
+    if !valid_persona_name(&name) {
+        return Err("bad persona name".to_string());
+    }
+    std::fs::read_to_string(persona_dir()?.join(format!("{name}.md")))
+        .map_err(|e| format!("couldn't read persona \"{name}\": {e}"))
+}
+
+/// Overwrite an EXISTING persona — the editing counterpart of
+/// write_persona (which refuses overwrite). Requiring existence means a
+/// typo'd name can't silently create a second agent.
+#[tauri::command]
+fn update_persona(name: String, content: String) -> Result<(), String> {
+    if !valid_persona_name(&name) {
+        return Err("bad persona name".to_string());
+    }
+    let path = persona_dir()?.join(format!("{name}.md"));
+    if !path.exists() {
+        return Err(format!("persona \"{name}\" doesn't exist — use create for new agents"));
+    }
+    std::fs::write(&path, content).map_err(|e| format!("write failed: {e}"))
+}
+
+#[tauri::command]
+fn delete_persona(name: String) -> Result<(), String> {
+    if !valid_persona_name(&name) {
+        return Err("bad persona name".to_string());
+    }
+    let path = persona_dir()?.join(format!("{name}.md"));
+    if !path.exists() {
+        return Err(format!("persona \"{name}\" doesn't exist"));
+    }
+    std::fs::remove_file(&path).map_err(|e| format!("delete failed: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, delete_persona])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

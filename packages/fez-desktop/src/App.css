@@ -736,3 +736,4 @@ button.author:hover { text-decoration: underline; }
 .self-status { font-size: 10.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .self-gear { color: var(--fg-dim); padding: 2px 4px; border-radius: 5px; }
 .self-gear:hover { color: var(--fg); background: var(--bg2); }
+.agent-ghost { color: var(--fg-dim); font-size: 14px; width: 18px; text-align: center; }
