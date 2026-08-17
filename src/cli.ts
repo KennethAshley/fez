@@ -461,6 +461,79 @@ program
     await import(pathToFileURL(runtime).href);
   });
 
+program
+  .command("sentinel-install")
+  .description("Install the sentinel as a launchd agent: starts at login, restarts on crash (macOS)")
+  .option("-r, --relay <url>", "Relay URL baked into the service (default: settings/env)")
+  .action(async (options) => {
+    if (process.platform !== "darwin") {
+      console.error("launchd is macOS-only — on Linux, use a systemd user unit running `fez sentinel`.");
+      process.exit(1);
+    }
+    const { resolveRelay } = await import("./settings.js");
+    const { execSync } = await import("node:child_process");
+    const fsSync = await import("node:fs");
+    const relayUrl = resolveRelay(options.relay);
+    const logDir = path.join(os.homedir(), ".fez", "logs");
+    fsSync.mkdirSync(logDir, { recursive: true });
+    const label = "com.fez.sentinel";
+    const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
+    const cliPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "cli.js");
+    // launchd inherits a bare PATH; the node dir must ride explicitly, and
+    // `security` (keychain) lives in /usr/bin.
+    const pathEnv = `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`;
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${process.execPath}</string>
+    <string>${cliPath}</string>
+    <string>sentinel</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>${pathEnv}</string>
+    <key>FEZ_RELAY</key><string>${relayUrl}</string>
+    <key>HOME</key><string>${os.homedir()}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key><false/>
+  </dict>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>StandardOutPath</key><string>${path.join(logDir, "sentinel.log")}</string>
+  <key>StandardErrorPath</key><string>${path.join(logDir, "sentinel.log")}</string>
+</dict>
+</plist>
+`;
+    fsSync.mkdirSync(path.dirname(plistPath), { recursive: true });
+    fsSync.writeFileSync(plistPath, plist);
+    // bootout first so re-install picks up plist changes; ignore "not loaded".
+    try { execSync(`launchctl bootout gui/$(id -u) ${plistPath} 2>/dev/null`); } catch { /* not loaded */ }
+    execSync(`launchctl bootstrap gui/$(id -u) ${plistPath}`);
+    console.log(`✅ sentinel installed as ${label} — starts at login, restarts on crash.`);
+    console.log(`   plist: ${plistPath}`);
+    console.log(`   logs:  ${path.join(logDir, "sentinel.log")}`);
+    console.log(`   remove anytime: fez sentinel-uninstall`);
+    console.log(`   ⚠️ if a foreground \`fez sentinel\` is running elsewhere, stop it — the pidfile keeps them from doubling, but one owner is cleaner.`);
+  });
+
+program
+  .command("sentinel-uninstall")
+  .description("Remove the launchd sentinel service")
+  .action(async () => {
+    const { execSync } = await import("node:child_process");
+    const fsSync = await import("node:fs");
+    const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "com.fez.sentinel.plist");
+    try { execSync(`launchctl bootout gui/$(id -u) ${plistPath} 2>/dev/null`); } catch { /* not loaded */ }
+    fsSync.rmSync(plistPath, { force: true });
+    console.log("✅ sentinel launchd service removed (any running instance was stopped).");
+  });
+
 // ─── doctor — is this machine ready to fez? ─────────────────────────────────
 
 program
