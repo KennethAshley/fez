@@ -35,12 +35,24 @@ export class BrowserWire implements Wire {
   private serial = 0;
   private closed = false;
   onStatus?: (connected: boolean) => void;
+  onError?: (message: string) => void;
+
+  private watchdog?: ReturnType<typeof setInterval>;
 
   constructor(url: string, keyHex: string) {
     this.url = url;
     this.secret = Uint8Array.from(keyHex.match(/.{2}/g)!.map((b) => parseInt(b, 16)));
     this.pubkey = getPublicKey(this.secret);
     this.connect();
+    // Belt-and-braces recovery: whatever state an old socket wedges in
+    // (HMR remounts, sleep/wake, orphaned handlers), a socket that isn't
+    // OPEN or CONNECTING gets replaced. The onclose reconnect is the
+    // fast path; this is the guarantee.
+    this.watchdog = setInterval(() => {
+      if (this.closed) return;
+      const state = this.ws?.readyState;
+      if (state !== WebSocket.OPEN && state !== WebSocket.CONNECTING) this.connect();
+    }, 5000);
   }
 
   private connect(): void {
@@ -167,10 +179,18 @@ export class BrowserWire implements Wire {
 
   private publishSigned(event: Event): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.pendingOks.set(event.id, { resolve, reject });
+      const fail = (message: string) => {
+        this.onError?.(message);
+        reject(new Error(message));
+      };
+      if (this.ws?.readyState !== WebSocket.OPEN) {
+        fail("not connected to the relay — reconnecting, try again in a moment");
+        return;
+      }
+      this.pendingOks.set(event.id, { resolve, reject: (e) => fail(e.message) });
       this.send(["EVENT", event]);
       setTimeout(() => {
-        if (this.pendingOks.delete(event.id)) reject(new Error("publish timed out"));
+        if (this.pendingOks.delete(event.id)) fail("publish timed out — relay didn't acknowledge");
       }, 10_000);
     });
   }
@@ -233,6 +253,7 @@ export class BrowserWire implements Wire {
 
   close(): void {
     this.closed = true;
+    clearInterval(this.watchdog);
     this.ws?.close();
   }
 }

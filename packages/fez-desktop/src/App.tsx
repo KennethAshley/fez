@@ -41,40 +41,63 @@ function useForceRender(): () => void {
   return bump;
 }
 
+/**
+ * Boot is a MODULE-LEVEL singleton: React StrictMode double-mounts and
+ * Fast-Refresh remounts re-run effects, and the first version of this
+ * closed the live wire on every remount — a wedged socket with silent
+ * send failures (found the hard way: messages typed into the dev window
+ * evaporated). One wire + one client per page lifetime; remounts reuse.
+ */
+let bootPromise: Promise<{ client: FezClient; wire: BrowserWire }> | undefined;
+
+function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
+  bootPromise ??= (async () => {
+    const keyHex = await invoke<string>("get_identity", { account: ACCOUNT });
+    const relayUrl = localStorage.getItem("fez-relay") ?? RELAY_URL;
+    const wire = new BrowserWire(relayUrl, keyHex);
+    const client = new FezClient(wire);
+    await client.start();
+    if (client.state.joined.size === 0) {
+      for (const community of await client.listCommunities()) {
+        await client.joinCommunity(community.id);
+      }
+      const first = [...client.state.communities.values()][0];
+      const channel = first ? [...first.channels.values()][0] : undefined;
+      if (first && channel) client.setScope(first.id, channel.id);
+    }
+    const scope = client.state.scope;
+    if (scope) await client.loadChannelHistory(scope.channelId, scope.communityId);
+    return { client, wire };
+  })();
+  bootPromise.catch(() => {
+    bootPromise = undefined; // a failed boot may retry (e.g. after onboarding)
+  });
+  return bootPromise;
+}
+
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [connected, setConnected] = useState(true);
   const [bootNonce, setBootNonce] = useState(0);
 
   useEffect(() => {
-    let wire: BrowserWire | undefined;
-    (async () => {
-      try {
-        const keyHex = await invoke<string>("get_identity", { account: ACCOUNT });
-        const relayUrl = localStorage.getItem("fez-relay") ?? RELAY_URL;
-        wire = new BrowserWire(relayUrl, keyHex);
+    let cancelled = false;
+    void bootOnce()
+      .then(({ client, wire }) => {
+        if (cancelled) return;
         wire.onStatus = setConnected;
-        const client = new FezClient(wire);
-        await client.start();
-        if (client.state.joined.size === 0) {
-          for (const community of await client.listCommunities()) {
-            await client.joinCommunity(community.id);
-          }
-          const first = [...client.state.communities.values()][0];
-          const channel = first ? [...first.channels.values()][0] : undefined;
-          if (first && channel) client.setScope(first.id, channel.id);
-        }
-        const scope = client.state.scope;
-        if (scope) await client.loadChannelHistory(scope.channelId, scope.communityId);
         setBoot({ phase: "ready", client, wire });
-      } catch (err) {
+      })
+      .catch((err) => {
+        if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
         // No keychain identity = a NEW USER, not an error — onboarding.
         if (/no fez identity/i.test(message)) setBoot({ phase: "onboarding" });
         else setBoot({ phase: "error", message });
-      }
-    })();
-    return () => wire?.close();
+      });
+    return () => {
+      cancelled = true; // never close the singleton wire on remount
+    };
   }, [bootNonce]);
 
   if (boot.phase === "loading") return <div className="boot">connecting…</div>;
@@ -97,6 +120,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
   const render = useForceRender();
   const [view, setView] = useState<MainView>({ kind: "channel" });
   const [pane, setPane] = useState<SidePane>();
+  const [banner, setBanner] = useState<string>();
+  useEffect(() => {
+    wire.onError = (message) => {
+      setBanner(message);
+      setTimeout(() => setBanner(undefined), 6000);
+    };
+  }, [wire]);
   // Rolling observer activity per agent — the client emits frames; the
   // GUI keeps the last 200 per agent for the watch pane.
   const activityRef = useRef(new Map<string, ObserverEntry[]>());
@@ -150,6 +180,8 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
 
   return (
     <div className="shell">
+      {!connected && <div className="conn-bar">relay disconnected — reconnecting…</div>}
+      {banner && <div className="conn-bar error">{banner}</div>}
       <aside className="rail">
         <div className="brand">
           fez <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />

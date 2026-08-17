@@ -175,3 +175,11 @@ body {
 }
 .ob-sas { font-size: 40px; font-weight: 800; letter-spacing: 6px; color: var(--yellow); padding: 8px 0; }
 .ob-backup { display: flex; flex-direction: column; }
+
+/* ── connectivity / error banners ───────────────────────────── */
+.conn-bar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+  background: var(--yellow); color: var(--bg0); font-size: 12px; font-weight: 700;
+  text-align: center; padding: 4px;
+}
+.conn-bar.error { background: var(--red); }
