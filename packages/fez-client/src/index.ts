@@ -437,6 +437,47 @@ export class FezClient {
     return this.msgByIdMap.get(target.id);
   }
 
+  /** Edit a specific own message (author-only, enforced by every consumer's handleMsgEdit). */
+  async editMessage(channelId: string, communityId: string, targetId: string, text: string): Promise<Msg | undefined> {
+    const target = this.msgByIdMap.get(targetId);
+    if (!target || target.authorPk !== this.pubkey) return undefined;
+    const event = await this.wire.publish({
+      kind: K.MSG_EDIT,
+      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      content: text,
+    });
+    this.handleMsgEdit(event);
+    return this.msgByIdMap.get(targetId);
+  }
+
+  /** My own live reaction (its event id) on a target, if any — the toggle handle. */
+  myReactionTo(targetId: string, emoji: string): string | undefined {
+    for (const [reactionId, entry] of this.reactionIndex) {
+      if (entry.targetId === targetId && entry.emoji === emoji && entry.authorPk === this.pubkey) return reactionId;
+    }
+    return undefined;
+  }
+
+  /** Toggle a reaction: publish kind 7, or retract my existing one via kind 5. */
+  async toggleReaction(channelId: string, communityId: string, targetId: string, emoji: string): Promise<void> {
+    const mine = this.myReactionTo(targetId, emoji);
+    if (mine) {
+      const event = await this.wire.publish({
+        kind: K.DELETION,
+        tags: [["e", mine], ["h", channelId], ["c", communityId]],
+        content: "",
+      });
+      this.handleDeletion(event);
+      return;
+    }
+    const event = await this.wire.publish({
+      kind: K.REACTION,
+      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      content: emoji,
+    });
+    this.handleReaction(event, true);
+  }
+
   async pinMessage(channelId: string, communityId: string, targetId: string): Promise<void> {
     const event = await this.wire.publish({
       kind: K.MSG_PIN,

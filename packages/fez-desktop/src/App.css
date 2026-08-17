@@ -240,3 +240,42 @@ body {
   -webkit-text-fill-color: transparent; animation: shimmer 2s linear infinite;
 }
 @keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ── message actions + markdown ─────────────────────────────── */
+.actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.bubble:hover .actions { opacity: 1; }
+.actions button {
+  background: var(--bg1); border: 1px solid var(--bg2); color: var(--fg-dim);
+  font: inherit; font-size: 12px; width: 24px; height: 22px; border-radius: 5px; cursor: pointer;
+}
+.actions button:hover { color: var(--fg); border-color: var(--fg-dim); }
+.actions button.danger:hover { color: var(--red); border-color: var(--red); }
+.bubble-head { max-width: 780px; }
+.pin-mark { color: var(--yellow); font-size: 12px; }
+.emoji-picker {
+  display: flex; gap: 4px; background: var(--bg1); border: 1px solid var(--bg2);
+  border-radius: 8px; padding: 4px 6px; width: fit-content; margin-bottom: 4px;
+}
+.emoji-picker button { background: none; border: 0; font-size: 16px; cursor: pointer; border-radius: 5px; padding: 2px 4px; }
+.emoji-picker button:hover { background: var(--bg2); }
+.pill { border: 1px solid transparent; cursor: pointer; font: inherit; color: var(--fg); }
+.pill.mine-pill { border-color: var(--accent); background: var(--bg-mine); }
+.edit-banner { padding: 0 18px 4px; color: var(--yellow); font-size: 12px; }
+.composer input.editing { border-color: var(--yellow); }
+
+/* markdown inside bubbles */
+.md p { margin: 0 0 6px; }
+.md p:last-child { margin-bottom: 0; }
+.md pre {
+  background: var(--bg0); border: 1px solid var(--bg2); border-radius: 6px;
+  padding: 8px 10px; overflow-x: auto; margin: 6px 0; font-size: 12.5px;
+}
+.md code { font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; background: var(--bg0); border-radius: 4px; padding: 1px 4px; }
+.md pre code { background: none; padding: 0; }
+.md ul, .md ol { margin: 4px 0 6px; padding-left: 22px; }
+.md a { color: var(--accent); }
+.md h1, .md h2, .md h3 { margin: 8px 0 4px; font-size: 15px; }
+.md blockquote { border-left: 3px solid var(--bg2); margin: 6px 0; padding-left: 10px; color: var(--fg-dim); }
+.md table { border-collapse: collapse; margin: 6px 0; }
+.md th, .md td { border: 1px solid var(--bg2); padding: 3px 8px; font-size: 13px; }
+.md-img { max-width: 420px; max-height: 320px; border-radius: 8px; display: block; margin: 6px 0; }

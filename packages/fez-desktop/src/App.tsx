@@ -1,5 +1,8 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { FezClient, setStatePersistence, type Msg, type ObserverEntry } from "@fez/client";
 import { BrowserWire } from "./wire";
 import Onboarding from "./Onboarding";
@@ -374,6 +377,8 @@ function ChannelView({
 }) {
   const [draft, setDraft] = useState("");
   const [threadRoot, setThreadRoot] = useState<string | undefined>();
+  const [editing, setEditing] = useState<{ id: string; original: string } | undefined>();
+  const communityId = client.state.scope?.communityId ?? "";
   const bottomRef = useRef<HTMLDivElement>(null);
   const messages = client.messages(channelId);
   const shown = threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages.filter((m) => !m.parentId);
@@ -390,10 +395,31 @@ function ChannelView({
     const text = draft.trim();
     if (!text) return;
     setDraft("");
+    if (editing) {
+      const target = editing;
+      setEditing(undefined);
+      if (text !== target.original) await client.editMessage(channelId, communityId, target.id, text);
+      return;
+    }
     const mentionPks = [...text.matchAll(/@([\w-]+)/g)]
       .map((match) => client.pkByName(match[1]))
       .filter((pk): pk is string => !!pk);
     await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks });
+  };
+
+  /** Discord's up-arrow: empty composer + ↑ edits your latest message in view. */
+  const startEditLast = () => {
+    const mine = (threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages)
+      .filter((m) => m.authorPk === client.pubkey && !m.deletedBy)
+      .at(-1);
+    if (!mine) return;
+    setEditing({ id: mine.id, original: mine.content });
+    setDraft(mine.content);
+  };
+
+  const beginEdit = (msg: Msg) => {
+    setEditing({ id: msg.id, original: msg.content });
+    setDraft(msg.content);
   };
 
   const channelName = client.channelRef(channelId)?.name ?? channelId.slice(0, 8);
@@ -415,7 +441,15 @@ function ChannelView({
         )}
         {shown.map((msg) => (
           <div key={msg.id}>
-            <Bubble client={client} channelId={channelId} msg={msg} inThread={!!threadRoot} onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)} />
+            <Bubble
+              client={client}
+              channelId={channelId}
+              communityId={communityId}
+              msg={msg}
+              inThread={!!threadRoot}
+              onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)}
+              onEdit={() => beginEdit(msg)}
+            />
             {!threadRoot && <RootLiveArea client={client} channelId={channelId} rootId={msg.id} drafts={draftsForRoot(msg.id)} onOpenThread={() => setThreadRoot(msg.id)} />}
           </div>
         ))}
@@ -434,13 +468,26 @@ function ChannelView({
           ))}
         </div>
       )}
+      {editing && (
+        <div className="edit-banner">
+          editing message · <b>enter</b> saves · <b>esc</b> cancels
+        </div>
+      )}
       <div className="composer">
         <input
           value={draft}
+          className={editing ? "editing" : undefined}
           placeholder={threadRoot ? "reply in thread…" : `message #${channelName} — @name summons an agent`}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) void send();
+            else if (e.key === "ArrowUp" && !draft && !editing) {
+              e.preventDefault();
+              startEditLast();
+            } else if (e.key === "Escape" && editing) {
+              setEditing(undefined);
+              setDraft("");
+            }
           }}
         />
       </div>
@@ -542,7 +589,7 @@ function DmView({ client, convoKey }: { client: FezClient; convoKey: string }) {
                 <span className="author">{client.displayName(msg.senderPk)}</span>
                 <span className="time">{new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
-              <div className="bubble-body">{renderMentions(msg.text)}</div>
+              <div className="bubble-body md"><MdBody text={msg.text} /></div>
             </div>
           );
         })}
@@ -679,23 +726,36 @@ function CostsPane({ client, wire, onClose }: { client: FezClient; wire: Browser
   );
 }
 
+const QUICK_EMOJI = ["👍", "❤️", "😂", "🚀", "👀"];
+
 function Bubble({
   client,
   channelId,
+  communityId,
   msg,
   inThread,
   onOpenThread,
+  onEdit,
 }: {
   client: FezClient;
   channelId: string;
+  communityId: string;
   msg: Msg;
   inThread: boolean;
   onOpenThread: () => void;
+  onEdit?: () => void;
 }) {
   const mine = msg.authorPk === client.pubkey;
   const replies = client.threadReplyCount(channelId, msg.id);
   const reactions = client.reactions(msg.id);
+  const pinned = client.isPinned(channelId, msg.id);
   const time = new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const react = (emoji: string) => {
+    setPickerOpen(false);
+    void client.toggleReaction(channelId, communityId, msg.id, emoji);
+  };
 
   return (
     <div className={mine ? "bubble mine" : "bubble"}>
@@ -703,18 +763,55 @@ function Bubble({
         <span className="author">{msg.authorName}</span>
         <span className="time">{time}</span>
         {msg.edited && <span className="time">edited</span>}
+        {pinned && <span className="pin-mark" title="pinned">⚑</span>}
+        {!msg.deletedBy && (
+          <div className="actions">
+            <button title="react" onClick={() => setPickerOpen(!pickerOpen)}>☺</button>
+            {!inThread && <button title="reply in thread" onClick={onOpenThread}>↩</button>}
+            {mine && onEdit && <button title="edit (↑ also edits your last)" onClick={onEdit}>✎</button>}
+            <button
+              title={pinned ? "pinned" : "pin"}
+              onClick={() => {
+                if (!pinned) void client.pinMessage(channelId, communityId, msg.id);
+              }}
+            >
+              ⚑
+            </button>
+            {client.canDeleteMessage(communityId, msg) && (
+              <button className="danger" title="delete" onClick={() => void client.deleteMessage(channelId, communityId, msg.id)}>
+                ⌫
+              </button>
+            )}
+          </div>
+        )}
       </div>
+      {pickerOpen && (
+        <div className="emoji-picker">
+          {QUICK_EMOJI.map((emoji) => (
+            <button key={emoji} onClick={() => react(emoji)}>
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
       {msg.deletedBy ? (
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
-        <div className="bubble-body">{renderMentions(msg.content)}</div>
+        <div className="bubble-body md">
+          <MdBody text={msg.content} />
+        </div>
       )}
       <div className="bubble-foot">
         {reactions &&
           [...reactions.entries()].map(([emoji, who]) => (
-            <span key={emoji} className="pill" title={[...who].join(", ")}>
+            <button
+              key={emoji}
+              className={client.myReactionTo(msg.id, emoji) ? "pill mine-pill" : "pill"}
+              title={[...who].join(", ")}
+              onClick={() => react(emoji)}
+            >
               {emoji} {who.size}
-            </span>
+            </button>
           ))}
         {!inThread && replies > 0 && (
           <button className="thread-link" onClick={onOpenThread}>
@@ -741,4 +838,51 @@ function renderMentions(text: string) {
       <span key={index}>{part}</span>
     )
   );
+}
+
+const IMAGE_URL = /https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg)(?:\?\S*)?/gi;
+/** 📎 name.ext (…) url — fez-media's share line; render the blob when the NAME is an image. */
+const MEDIA_LINE = /📎\s+(\S+\.(?:png|jpe?g|gif|webp|svg))\s+\([^)]*\)\s+(https?:\/\/\S+)/i;
+
+/** Markdown body: gfm, @mention accents, external links via the OS browser, inline images. */
+function MdBody({ text }: { text: string }) {
+  const images = [...new Set([...(text.match(IMAGE_URL) ?? []), ...(text.match(MEDIA_LINE) ? [text.match(MEDIA_LINE)![2]] : [])])];
+  return (
+    <>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              onClick={(e) => {
+                e.preventDefault();
+                if (href) void openUrl(href);
+              }}
+            >
+              {children}
+            </a>
+          ),
+          img: ({ src, alt }) => (src ? <img className="md-img" src={src} alt={alt ?? ""} /> : null),
+          p: ({ children }) => <p>{accentMentions(children)}</p>,
+          li: ({ children }) => <li>{accentMentions(children)}</li>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+      {images.map((src) => (
+        <img key={src} className="md-img" src={src} alt="" />
+      ))}
+    </>
+  );
+}
+
+/** Wrap @names in accent spans inside rendered markdown children. */
+function accentMentions(children: React.ReactNode): React.ReactNode {
+  const walk = (node: React.ReactNode): React.ReactNode => {
+    if (typeof node === "string") return renderMentions(node);
+    if (Array.isArray(node)) return node.map((child, i) => <span key={i}>{walk(child)}</span>);
+    return node;
+  };
+  return walk(children);
 }
