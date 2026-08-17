@@ -33,6 +33,7 @@ import {
   type TimeoutOptions,
 } from "@fez/protocol";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
@@ -104,6 +105,27 @@ async function main() {
   const mcpServers = persona.mcpServers
     .map((name) => findMcpServer(name))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
+
+  // fez-mcp: EVERY persona gets first-class fez tools (send/read channels,
+  // DMs, search, memory, docs) as a stdio MCP server signed with the
+  // agent's own key — Buzz hands its agents the `buzz` CLI; this is the
+  // fez-native equivalent, attached automatically, declared by nobody.
+  const fezMcpPath = fileURLToPath(new URL("../../fez-mcp/dist/server.js", import.meta.url));
+  if (fs.existsSync(fezMcpPath)) {
+    mcpServers.push({
+      name: "fez",
+      command: process.execPath,
+      args: [fezMcpPath],
+      env: [
+        { name: "FEZ_AGENT_PERSONA", value: personaId },
+        { name: "FEZ_RELAY", value: relayUrl },
+        ...(owner ? [{ name: "FEZ_AGENT_OWNER", value: owner }] : []),
+      ],
+    });
+    console.log("🔧 fez tools attached (fez-mcp)");
+  } else {
+    console.warn("⚠️  fez-mcp not built — agents run without fez_* tools (npm run build in packages/fez-mcp)");
+  }
 
   // ── Per-persona working directory. Turns run HERE, not wherever `fez
   // agent` happened to be launched — no accidental project context
@@ -799,6 +821,7 @@ async function main() {
                   `- Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" (identity/rules/goals — a rewrite, not an append), fez mem set mem/<topic> "<note>" for individual facts, fez mem get <slug> / fez mem list to recall.`,
                 ]
               : []),
+            `- Fez tools: you have fez_* MCP tools — fez_send_message, fez_read_channel, fez_send_dm, fez_search, fez_mem_set/get/list, fez_doc_get/append, fez_list_agents. Prefer them over \`fez\` shell commands.`,
             `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
             `Recent messages:`,
             ...(recent.get(channelId) ?? []),
@@ -1008,6 +1031,7 @@ async function main() {
           persona.systemPrompt ?? "",
           ...(memorySection ? [memorySection] : []),
           groupNote ?? "",
+          `Fez tools: you have fez_* MCP tools (send/read channels, DMs, search, memory, docs) — prefer them over \`fez\` shell commands.`,
           `You are @${personaId}, in a PRIVATE direct-message conversation — only the participants can read it. This session is ONGOING — later messages arrive as new turns in the same conversation. Reply to them directly; @names summon nobody here, and there is no channel audience. If a task needs a tool or data source you don't have, say so plainly instead of improvising.`,
           ...(memorySection
             ? [

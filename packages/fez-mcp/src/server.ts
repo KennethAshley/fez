@@ -1,0 +1,315 @@
+#!/usr/bin/env node
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import {
+  RelayConnection,
+  getKey,
+  resolveRelay,
+  buildDmWraps,
+  conversationKey,
+  engramHeads,
+  buildEngramEvent,
+  isValidSlug,
+  KIND_AGENT_ENGRAM,
+} from "@fez/protocol";
+
+/**
+ * fez-mcp — the agent's hands ON fez itself (GAPS §3 item 15; Buzz gives
+ * its agents the `buzz` CLI inside buzz-dev-mcp — this is the fez-native
+ * equivalent as proper MCP tools instead of shell strings).
+ *
+ * Runs as a stdio MCP server INSIDE a harness session, signed with the
+ * AGENT's own key (FEZ_AGENT_PERSONA → local service key), so everything
+ * an agent does through these tools is attributable to the agent — same
+ * custody story as fez-acp itself. Attached automatically to every
+ * fez-acp session; personas need declare nothing.
+ *
+ * Env (fez-acp fills these): FEZ_AGENT_PERSONA (required),
+ * FEZ_RELAY, FEZ_AGENT_OWNER (enables memory tools).
+ */
+
+const persona = process.env.FEZ_AGENT_PERSONA;
+if (!persona) {
+  console.error("fez-mcp: FEZ_AGENT_PERSONA is required");
+  process.exit(1);
+}
+const keyHex = getKey(`agent:${persona}`);
+if (!keyHex) {
+  console.error(`fez-mcp: no local key for agent "${persona}"`);
+  process.exit(1);
+}
+const secret = Uint8Array.from(Buffer.from(keyHex, "hex"));
+const myPubkey = getPublicKey(secret);
+const owner = process.env.FEZ_AGENT_OWNER;
+const relayUrl = process.env.FEZ_RELAY || resolveRelay(undefined);
+
+const relay = new RelayConnection({
+  url: relayUrl,
+  authSigner: async (tmpl) => finalizeEvent(tmpl as never, secret),
+});
+
+const sign = (tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }) =>
+  finalizeEvent(
+    { kind: tmpl.kind, created_at: tmpl.created_at ?? Math.floor(Date.now() / 1000), tags: tmpl.tags, content: tmpl.content },
+    secret
+  );
+
+// ── Shared lookups ───────────────────────────────────────────────────────
+
+let nameCache: Map<string, string> | undefined;
+async function names(): Promise<Map<string, string>> {
+  if (nameCache) return nameCache;
+  nameCache = new Map();
+  const events = await relay.query([{ kinds: [47000], limit: 200 }, { kinds: [0], limit: 200 }]);
+  for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
+    try {
+      const meta = JSON.parse(event.content) as { name?: string; display_name?: string };
+      const name = event.kind === 47000 ? meta.name : meta.display_name || meta.name;
+      if (name) nameCache.set(event.pubkey, name);
+    } catch { /* skip */ }
+  }
+  return nameCache;
+}
+
+async function displayName(pk: string): Promise<string> {
+  return (await names()).get(pk) ?? `${pk.slice(0, 8)}…`;
+}
+
+async function resolvePubkey(who: string): Promise<string | undefined> {
+  const raw = who.trim().replace(/^@/, "");
+  if (/^[0-9a-f]{64}$/i.test(raw)) return raw.toLowerCase();
+  const wanted = raw.toLowerCase();
+  for (const [pk, name] of await names()) if (name.toLowerCase() === wanted) return pk;
+  return undefined;
+}
+
+type ChannelRef = { channelId: string; communityId: string; name: string };
+
+/**
+ * Name OR id OR id-prefix. Channel names aren't unique across communities
+ * (two #generals is the normal case) — an ambiguous name returns the
+ * candidate list as an error string so the model retries with an id
+ * instead of silently posting into the wrong room.
+ */
+async function resolveChannel(spec: string): Promise<ChannelRef | { error: string }> {
+  const raw = spec.trim().replace(/^#/, "");
+  const wanted = raw.toLowerCase();
+  const channels = await relay.query([{ kinds: [47101], limit: 200 }]);
+  const seen = new Map<string, ChannelRef>();
+  for (const event of channels) {
+    const d = event.tags.find((t) => t[0] === "d")?.[1];
+    const c = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!d || !c || seen.has(d)) continue;
+    let name = d;
+    try {
+      name = (JSON.parse(event.content).name as string) ?? d;
+    } catch { /* keep id */ }
+    seen.set(d, { channelId: d, communityId: c, name });
+  }
+  const byId = [...seen.values()].filter((ch) => ch.channelId === raw || (raw.length >= 6 && ch.channelId.startsWith(raw.replace(/\.+$/, ""))));
+  if (byId.length === 1) return byId[0];
+  const byName = [...seen.values()].filter((ch) => ch.name.toLowerCase() === wanted);
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) {
+    return {
+      error: `"${raw}" is ambiguous — ${byName.length} channels share that name. Retry with an id: ${byName.map((ch) => `${ch.channelId} (#${ch.name})`).join(", ")}`,
+    };
+  }
+  return { error: `No channel "${raw}" on this relay.` };
+}
+
+const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
+
+// ── Server + tools ───────────────────────────────────────────────────────
+
+const server = new McpServer({ name: "fez", version: "0.1.0" });
+
+server.registerTool(
+  "fez_send_message",
+  {
+    description:
+      "Post a message to a fez channel as yourself (the agent). Use for announcements or cross-channel notes outside the current conversation — your normal reply already reaches the channel you were mentioned in.",
+    inputSchema: { channel: z.string().describe("channel name or id"), message: z.string() },
+  },
+  async ({ channel, message }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    await relay.publish(sign({ kind: 47103, tags: [["h", ref.channelId], ["c", ref.communityId]], content: message }));
+    return text(`Posted to #${ref.name}.`);
+  }
+);
+
+server.registerTool(
+  "fez_read_channel",
+  {
+    description: "Read the most recent messages in a fez channel.",
+    inputSchema: { channel: z.string().describe("channel name or id"), limit: z.number().optional().describe("default 20") },
+  },
+  async ({ channel, limit }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const events = await relay.query([{ kinds: [47103], "#h": [ref.channelId], limit: Math.min(limit ?? 20, 50) }]);
+    if (events.length === 0) return text(`#${ref.name} is empty.`);
+    const lines = await Promise.all(
+      events
+        .sort((a, b) => a.created_at - b.created_at)
+        .map(async (e) => `[${new Date(e.created_at * 1000).toISOString().slice(5, 16)}] ${await displayName(e.pubkey)}: ${e.content}`)
+    );
+    return text(lines.join("\n"));
+  }
+);
+
+server.registerTool(
+  "fez_send_dm",
+  {
+    description: "Send an end-to-end encrypted private DM to an agent or person.",
+    inputSchema: { to: z.string().describe("name or pubkey"), message: z.string() },
+  },
+  async ({ to, message }) => {
+    const pk = await resolvePubkey(to);
+    if (!pk) return text(`No one named "${to}" on this relay.`);
+    const { toPeer, toSelf } = buildDmWraps(secret, pk, message, 1); // depth 1: agent-originated
+    await relay.publish(toPeer);
+    await relay.publish(toSelf);
+    return text(`DM sent to ${await displayName(pk)}.`);
+  }
+);
+
+server.registerTool(
+  "fez_search",
+  {
+    description: "Full-text search across fez channel messages and docs (NIP-50). DMs are encrypted and not searchable.",
+    inputSchema: { query: z.string(), channel: z.string().optional().describe("restrict to one channel (name or id)") },
+  },
+  async ({ query, channel }) => {
+    const filter: Record<string, unknown> = { kinds: [47103, 40100], search: query, limit: 20 };
+    if (channel) {
+      const ref = await resolveChannel(channel);
+      if ("error" in ref) return text(ref.error);
+      filter["#h"] = [ref.channelId];
+    }
+    const events = await relay.query([filter as never]);
+    if (events.length === 0) return text(`Nothing matching "${query}".`);
+    const lines = await Promise.all(
+      events
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, 10)
+        .map(async (e) => `• ${await displayName(e.pubkey)}: ${e.content.replace(/\s+/g, " ").slice(0, 120)}`)
+    );
+    return text(lines.join("\n"));
+  }
+);
+
+server.registerTool(
+  "fez_list_agents",
+  { description: "List the agents announced on this relay (name + pubkey).", inputSchema: {} },
+  async () => {
+    const events = await relay.query([{ kinds: [47000], limit: 200 }]);
+    const latest = new Map<string, { name?: string; about?: string }>();
+    for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
+      try {
+        latest.set(event.pubkey, JSON.parse(event.content));
+      } catch { /* skip */ }
+    }
+    const rows = [...latest.entries()].map(([pk, m]) => `• @${m.name ?? pk.slice(0, 8)}${m.about ? ` — ${m.about}` : ""} (${pk.slice(0, 12)}…)`);
+    return text(rows.join("\n") || "No agents announced.");
+  }
+);
+
+// ── Memory (NIP-AE engrams) — requires an owner ──────────────────────────
+
+async function memHeads() {
+  if (!owner) throw new Error("memory tools need FEZ_AGENT_OWNER");
+  const events = await relay.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
+  const convKey = conversationKey(secret, owner);
+  return { convKey, heads: engramHeads(events as never, myPubkey, owner, convKey) };
+}
+
+server.registerTool(
+  "fez_mem_set",
+  {
+    description:
+      'Write a persistent memory record that survives session recycles. slug "core" = your identity/rules/goals (a full rewrite); "mem/<topic>" = an individual fact.',
+    inputSchema: { slug: z.string(), value: z.string() },
+  },
+  async ({ slug, value }) => {
+    if (!isValidSlug(slug)) return text(`Bad slug "${slug}" — use "core" or mem/<lowercase-alnum>.`);
+    const { convKey, heads } = await memHeads();
+    const createdAt = Math.max(Math.floor(Date.now() / 1000), (heads.get(slug)?.event.created_at ?? 0) + 1);
+    const body = slug === "core" ? { slug, profile: value } : { slug, value };
+    const template = buildEngramEvent(convKey, owner!, body as never, createdAt);
+    await relay.publish(finalizeEvent({ ...template, pubkey: myPubkey } as never, secret));
+    return text(`${slug} written (${value.length} chars).`);
+  }
+);
+
+server.registerTool(
+  "fez_mem_get",
+  { description: "Read one of your persistent memory records.", inputSchema: { slug: z.string() } },
+  async ({ slug }) => {
+    const { heads } = await memHeads();
+    const head = heads.get(slug);
+    if (!head || head.body.value === null) return text(`(no entry for ${slug})`);
+    return text(String(slug === "core" ? head.body.profile : head.body.value));
+  }
+);
+
+server.registerTool(
+  "fez_mem_list",
+  { description: "List your persistent memory slugs.", inputSchema: {} },
+  async () => {
+    const { heads } = await memHeads();
+    const rows = [...heads.values()]
+      .filter((h) => h.body.value !== null || h.body.slug === "core")
+      .map((h) => `• ${h.body.slug}`);
+    return text(rows.join("\n") || "(no memory yet)");
+  }
+);
+
+// ── Channel doc ──────────────────────────────────────────────────────────
+
+async function latestDoc(channelId: string) {
+  const versions = await relay.query([{ kinds: [40100], "#h": [channelId], limit: 200 }]);
+  return versions.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1)).at(-1);
+}
+
+server.registerTool(
+  "fez_doc_get",
+  { description: "Read a channel's shared markdown doc.", inputSchema: { channel: z.string() } },
+  async ({ channel }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const latest = await latestDoc(ref.channelId);
+    return text(latest?.content ?? `#${ref.name} has no doc yet.`);
+  }
+);
+
+server.registerTool(
+  "fez_doc_append",
+  {
+    description: "Append markdown to a channel's shared doc (appends never clobber another agent's edit).",
+    inputSchema: { channel: z.string(), markdown: z.string() },
+  },
+  async ({ channel, markdown }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const latest = await latestDoc(ref.channelId);
+    const createdAt = Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1);
+    await relay.publish(
+      sign({
+        kind: 40100,
+        created_at: createdAt,
+        tags: [["h", ref.channelId], ["c", ref.communityId], ...(latest ? [["base", latest.id]] : [])],
+        content: latest ? `${latest.content}\n\n${markdown}` : markdown,
+      })
+    );
+    return text(`Appended to #${ref.name}'s doc.`);
+  }
+);
+
+// ── Boot ─────────────────────────────────────────────────────────────────
+
+await relay.connect();
+await server.connect(new StdioServerTransport());
