@@ -151,6 +151,22 @@ export const KIND_REACTION = 7;
 export const KIND_DELETION = 5;
 
 /**
+ * Profile — standard nostr kind 0 (replaceable): self-attested display
+ * name so a second HUMAN in your community isn't a hex string, and the
+ * first point of interop with ordinary nostr clients. content JSON
+ * {name, display_name?}. Agents keep announcing via 47000, which outranks
+ * kind 0 in display resolution (routing names are load-bearing).
+ */
+export const KIND_PROFILE = 0;
+
+/**
+ * User status — NIP-38 kind 30315 ("away", "deep work"); d="general",
+ * content = the status text, empty content clears. Complements the
+ * presence dot (online/offline) with intent.
+ */
+export const KIND_USER_STATUS = 30315;
+
+/**
  * Read state — client-signed, NIP-44 SELF-encrypted last-read marks
  * (Buzz's NIP-RS decision: unreads are private, derived client-side).
  * Parameterized-replaceable; ["d", channelId]; content = nip44(self) of

@@ -93,11 +93,14 @@ export class CapabilityClient {
    * FezExtensionAPI.nostr.publish) to author events as the user — the
    * private key itself stays private.
    */
-  signEvent(tmpl: { kind: number; tags: string[][]; content: string }): Event {
+  signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Event {
     const event: UnsignedEvent = {
       kind: tmpl.kind,
       pubkey: this.pubkey,
-      created_at: Math.floor(Date.now() / 1000),
+      // created_at override exists for monotonic bumps (roster updates
+      // must strictly advance past the previous winning 47102 even
+      // within the same second), not for backdating.
+      created_at: tmpl.created_at ?? Math.floor(Date.now() / 1000),
       tags: tmpl.tags,
       content: tmpl.content,
     };

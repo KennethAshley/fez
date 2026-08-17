@@ -41,8 +41,8 @@ class StubWire {
   published: WireEvent[] = [];
   private subs: { filters: WireFilter[]; onEvent: (e: WireEvent) => void }[] = [];
 
-  async publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<WireEvent> {
-    const event = ev(tmpl.kind, this.pubkey, tmpl.tags, tmpl.content, Math.floor(Date.now() / 1000));
+  async publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent> {
+    const event = ev(tmpl.kind, this.pubkey, tmpl.tags, tmpl.content, tmpl.created_at ?? Math.floor(Date.now() / 1000));
     this.published.push(event);
     return event;
   }
@@ -175,6 +175,44 @@ describe("deletion trust rule (author + creator only)", () => {
     expect(client.msgById(live.id)?.content).toBe("second thoughts");
     wire.deliver(ev(5, BOB, [["e", live.id], ["h", CHAN], ["c", COMM]], "", Math.floor(Date.now() / 1000)));
     expect(client.msgById(live.id)?.deletedBy).toBe("author");
+  });
+
+  test("same-second roster tie resolves deterministically (lowest id wins)", () => {
+    const t = T0 + 300;
+    const low: WireEvent = { id: "1".repeat(64), kind: 47102, pubkey: ALICE, created_at: t, content: "", tags: [["d", CHAN], ["c", COMM], ["p", ALICE], ["p", BOB]], sig: "" };
+    const high: WireEvent = { id: "9".repeat(64), kind: 47102, pubkey: ALICE, created_at: t, content: "", tags: [["d", CHAN], ["c", COMM], ["p", ALICE]], sig: "" };
+    // Arrival order must not matter: higher id first, then lower id...
+    wire.deliver(high);
+    wire.deliver(low);
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(true); // low id won
+    // ...and delivering the higher id again cannot displace the winner.
+    wire.deliver({ ...high, id: "9".repeat(63) + "a" });
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(true);
+  });
+
+  test("kick republishes the roster without the member, created_at strictly advancing", async () => {
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(true);
+    const before = client.state.communities.get(COMM)!.channels.get(CHAN)!.membershipCreatedAt;
+    await client.kick(BOB);
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(false);
+    const roster = wire.published.at(-1)!;
+    expect(roster.kind).toBe(47102);
+    expect(roster.created_at).toBeGreaterThan(before); // monotonic bump — no same-second tie
+    expect(roster.tags.filter((t) => t[0] === "p").map((t) => t[1])).not.toContain(BOB);
+    // the creator cannot remove themselves — the roster roots in their signature
+    await expect(client.kick(ALICE)).rejects.toThrow(/creator/);
+    // restore bob for the remaining tests
+    wire.deliver(ev(47102, ALICE, [["d", CHAN], ["c", COMM], ["p", ALICE], ["p", BOB]], "", Math.floor(Date.now() / 1000) + 10));
+    expect(client.state.isMember(COMM, CHAN, BOB)).toBe(true);
+  });
+
+  test("kind-0 profile names a human; 47000 agent announcement outranks it", () => {
+    wire.deliver(ev(0, BOB, [], JSON.stringify({ name: "Bobby" }), Math.floor(Date.now() / 1000)));
+    expect(client.displayName(BOB)).toBe("Bobby");
+    wire.deliver(ev(30315, BOB, [["d", "general"]], "deep work", Math.floor(Date.now() / 1000)));
+    expect(client.statusOf(BOB)).toBe("deep work");
+    wire.deliver(ev(47000, BOB, [], JSON.stringify({ name: "bob-agent" }), Math.floor(Date.now() / 1000)));
+    expect(client.displayName(BOB)).toBe("bob-agent"); // routing names are load-bearing
   });
 
   test("canDeleteMessage mirrors the rule for UI gating", () => {

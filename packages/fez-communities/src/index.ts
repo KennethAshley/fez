@@ -17,6 +17,7 @@ import type { FezClient, Msg, Job } from "@fez/client";
  * /channels | /join | /leave | /members | /invite
  * /thread(s) | /back | /watch | /jobs | /memory
  * /edit | /delete | /pin(s) | /unpin | /bookmark(s) | /schedule | /remind
+ * /profile | /status | /kick
  */
 export default function communities(api: FezExtensionAPI): void {
   if (!api.client) return; // CLI subcommand context — nothing chat-shaped to do
@@ -518,10 +519,45 @@ export default function communities(api: FezExtensionAPI): void {
   api.registerCommand("members", async (_args, ctx) => {
     const current = client.state.currentChannel();
     if (!current) return ctx.reply("Not in a channel — /join <channel> first.");
-    const lines = [...current.channel.members.entries()].map(
-      ([pubkey, role]) => `${presenceDot(pubkey)} ${client.displayName(pubkey)} (${role})${pubkey === client.pubkey ? " ← you" : ""}`
-    );
+    const lines = [...current.channel.members.entries()].map(([pubkey, role]) => {
+      const status = client.statusOf(pubkey);
+      return `${presenceDot(pubkey)} ${client.displayName(pubkey)} (${role})${status ? ` — ${status}` : ""}${pubkey === client.pubkey ? " ← you" : ""}`;
+    });
     ctx.reply(lines.join("\n"));
+  });
+
+  api.registerCommand("profile", async (args, ctx) => {
+    const name = args.trim();
+    if (!name) return ctx.reply("Usage: /profile <display name> — publishes your kind-0 profile so others see a name, not hex.");
+    await client.setProfile(name);
+    ctx.reply(`👤 profile published — you appear as "${name}" to others.`);
+  });
+
+  api.registerCommand("status", async (args, ctx) => {
+    const text = args.trim();
+    if (text === "clear" || !text) {
+      await client.setStatus("");
+      return ctx.reply("💬 status cleared.");
+    }
+    await client.setStatus(text);
+    ctx.reply(`💬 status set: "${text}" — shows in /members next to your presence dot.`);
+  });
+
+  api.registerCommand("kick", async (args, ctx) => {
+    const current = client.state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel.");
+    const who = args.trim().replace(/^@/, "");
+    if (!who) return ctx.reply("Usage: /kick <name or pubkey> — creator-only; republishes the roster without them.");
+    const target =
+      client.pkByName(who) ??
+      [...current.channel.members.keys()].find((pk) => pk === who || pk.startsWith(who));
+    if (!target) return ctx.reply(`No member matching "${who}" here — /members lists them.`);
+    try {
+      const name = await client.kick(target);
+      ctx.reply(`🚪 removed ${name} from #${current.channel.name}. Their history stays; they can be re-invited.`);
+    } catch (err) {
+      ctx.reply(`Can't remove: ${err instanceof Error ? err.message : err}`);
+    }
   });
 
   api.registerCommand("invite", async (args, ctx) => {

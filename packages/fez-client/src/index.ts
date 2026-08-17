@@ -51,7 +51,7 @@ export interface DmRumor {
 /** Exactly the TUI's NostrAccess backend shape — the client's only dependency. */
 export interface Wire {
   pubkey: string;
-  publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<WireEvent>;
+  publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent>;
   subscribe(filters: WireFilter[], onEvent: (event: WireEvent) => void): () => void;
   query(filters: WireFilter[]): Promise<WireEvent[]>;
   encrypt(peerPubkey: string, plaintext: string): string;
@@ -87,6 +87,8 @@ export const K = {
   SCHEDULED: 40006,
   REMINDER: 40007,
   READ_STATE: 30078,
+  PROFILE: 0,
+  USER_STATUS: 30315,
 } as const;
 
 const DM_FUZZ_WINDOW_S = 2 * 86_400;
@@ -201,6 +203,8 @@ export class FezClient {
 
   // messages + threads
   private names = new Map<string, string>();
+  private profiles = new Map<string, string>(); // kind-0 name/display_name — humans stop being hex
+  private statuses = new Map<string, string>(); // kind-30315 status text
   private seenMessages = new Set<string>();
   private messagesByChannel = new Map<string, Msg[]>();
   private msgByIdMap = new Map<string, Msg>();
@@ -268,14 +272,21 @@ export class FezClient {
   // ── Read surface ────────────────────────────────────────────────────────
 
   displayName(pk: string): string {
-    return pk === this.pubkey ? "You" : this.names.get(pk) ?? `${pk.slice(0, 8)}…`;
+    // Agent announcements (47000) outrank kind-0 profiles: an agent's
+    // routing name is load-bearing, a human's profile is cosmetic.
+    return pk === this.pubkey ? "You" : this.names.get(pk) ?? this.profiles.get(pk) ?? `${pk.slice(0, 8)}…`;
   }
   nameOf(pk: string): string | undefined {
-    return this.names.get(pk);
+    return this.names.get(pk) ?? this.profiles.get(pk);
+  }
+  /** Kind-30315 status text ("away", "deep work"), if the pubkey set one. */
+  statusOf(pk: string): string | undefined {
+    return this.statuses.get(pk);
   }
   pkByName(name: string): string | undefined {
     const wanted = name.toLowerCase();
     for (const [pk, n] of this.names) if (n.toLowerCase() === wanted) return pk;
+    for (const [pk, n] of this.profiles) if (n.toLowerCase() === wanted) return pk;
     return undefined;
   }
   messages(channelId: string): readonly Msg[] {
@@ -592,6 +603,16 @@ export class FezClient {
     this.emit("channelsChanged");
   }
 
+  /**
+   * Roster updates must strictly advance the winning 47102's created_at —
+   * two updates in the same second would otherwise tie and resolve by id,
+   * surprising the creator who published second (Buzz bumps for the same
+   * reason).
+   */
+  private nextRosterCreatedAt(channel: { membershipCreatedAt: number }): number {
+    return Math.max(Math.floor(Date.now() / 1000), channel.membershipCreatedAt + 1);
+  }
+
   async invite(pubkey: string, role: Role): Promise<string> {
     const current = this.state.currentChannel();
     if (!current) throw new Error("no channel scope");
@@ -602,7 +623,35 @@ export class FezClient {
       ...[...current.channel.members.entries()].map(([pk, r]) => ["p", pk, r]),
     ];
     if (!current.channel.members.has(pubkey)) tags.push(["p", pubkey, role]);
-    const event = await this.wire.publish({ kind: K.MEMBERSHIP, tags, content: "" });
+    const event = await this.wire.publish({
+      kind: K.MEMBERSHIP,
+      tags,
+      content: "",
+      created_at: this.nextRosterCreatedAt(current.channel),
+    });
+    this.state.absorb(event);
+    this.emit("channelsChanged");
+    return this.displayName(pubkey);
+  }
+
+  /** Creator republishes the roster without the pubkey. The removed party's history stays. */
+  async kick(pubkey: string): Promise<string> {
+    const current = this.state.currentChannel();
+    if (!current) throw new Error("no channel scope");
+    if (current.community.creator !== this.pubkey) throw new Error("only the community creator can remove members");
+    if (pubkey === current.community.creator) throw new Error("the creator can't be removed — the roster is rooted in their signature");
+    if (!current.channel.members.has(pubkey)) throw new Error("not a member of this channel");
+    const tags: string[][] = [
+      ["d", current.channel.id],
+      ["c", current.community.id],
+      ...[...current.channel.members.entries()].filter(([pk]) => pk !== pubkey).map(([pk, r]) => ["p", pk, r]),
+    ];
+    const event = await this.wire.publish({
+      kind: K.MEMBERSHIP,
+      tags,
+      content: "",
+      created_at: this.nextRosterCreatedAt(current.channel),
+    });
     this.state.absorb(event);
     this.emit("channelsChanged");
     return this.displayName(pubkey);
@@ -697,12 +746,22 @@ export class FezClient {
     }, PRESENCE_BEAT_MS).unref?.();
     setInterval(() => this.emit("typingChanged"), 1000).unref?.();
 
-    // Names roster.
+    // Names roster: agent announcements + human kind-0 profiles + status.
     try {
-      const metadataEvents = await this.wire.query([{ kinds: [K.AGENT_METADATA], limit: 200 }]);
+      const [metadataEvents, profileEvents, statusEvents] = await Promise.all([
+        this.wire.query([{ kinds: [K.AGENT_METADATA], limit: 200 }]),
+        this.wire.query([{ kinds: [K.PROFILE], limit: 200 }]),
+        this.wire.query([{ kinds: [K.USER_STATUS], limit: 200 }]),
+      ]);
       for (const event of metadataEvents) this.absorbName(event, false);
+      for (const event of profileEvents) this.absorbProfile(event, false);
+      for (const event of statusEvents) this.absorbStatus(event, false);
       this.emit("presenceChanged");
     } catch { /* roster fills from the live stream */ }
+    this.wire.subscribe(
+      [{ kinds: [K.PROFILE, K.USER_STATUS], since: Math.floor(Date.now() / 1000) }],
+      (e) => (e.kind === K.PROFILE ? this.absorbProfile(e) : this.absorbStatus(e))
+    );
 
     // Read state (before history so unreads count against synced marks).
     try {
@@ -776,6 +835,50 @@ export class FezClient {
     let convo = this.dmConvos.get(peerPk);
     if (!convo) this.dmConvos.set(peerPk, (convo = { msgs: [], unread: 0 }));
     return convo;
+  }
+
+  private profileTs = new Map<string, number>();
+  private statusTs = new Map<string, number>();
+
+  /** Kind-0 profile: self-attested display name (latest per pubkey wins). */
+  private absorbProfile(event: WireEvent, emitChange = true): void {
+    if (event.created_at < (this.profileTs.get(event.pubkey) ?? 0)) return;
+    try {
+      const meta = JSON.parse(event.content) as { name?: string; display_name?: string };
+      const name = (meta.display_name || meta.name || "").trim().slice(0, 48);
+      if (!name) return;
+      this.profileTs.set(event.pubkey, event.created_at);
+      if (this.profiles.get(event.pubkey) !== name) {
+        this.profiles.set(event.pubkey, name);
+        if (emitChange) this.emit("presenceChanged");
+      }
+    } catch { /* not a profile we can read */ }
+  }
+
+  /** Kind-30315 user status: free-text ("away", "deep work"); empty clears. */
+  private absorbStatus(event: WireEvent, emitChange = true): void {
+    if (event.created_at < (this.statusTs.get(event.pubkey) ?? 0)) return;
+    this.statusTs.set(event.pubkey, event.created_at);
+    const text = event.content.trim().slice(0, 80);
+    if (text) this.statuses.set(event.pubkey, text);
+    else this.statuses.delete(event.pubkey);
+    if (emitChange) this.emit("presenceChanged");
+  }
+
+  /** Publish your kind-0 profile — humans get names, not hex. */
+  async setProfile(name: string): Promise<void> {
+    const event = await this.wire.publish({ kind: K.PROFILE, tags: [], content: JSON.stringify({ name }) });
+    this.absorbProfile(event);
+  }
+
+  /** Publish (or clear, with empty text) your kind-30315 status. */
+  async setStatus(text: string): Promise<void> {
+    const event = await this.wire.publish({
+      kind: K.USER_STATUS,
+      tags: [["d", "general"]],
+      content: text,
+    });
+    this.absorbStatus(event);
   }
 
   private absorbName(event: WireEvent, emitChange = true): void {

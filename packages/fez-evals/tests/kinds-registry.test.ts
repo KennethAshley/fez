@@ -38,6 +38,8 @@ const K_TO_REGISTRY: Record<string, string> = {
   SCHEDULED: "KIND_SCHEDULED",
   REMINDER: "KIND_REMINDER",
   DOC: "KIND_DOC",
+  PROFILE: "KIND_PROFILE",
+  USER_STATUS: "KIND_USER_STATUS",
 };
 
 describe("kind registry", () => {

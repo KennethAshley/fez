@@ -20,6 +20,7 @@ export interface Channel {
   name: string;
   members: Map<string, Role>; // pubkey -> role
   membershipCreatedAt: number; // created_at of the winning 47102
+  membershipEventId?: string; // id of the winning 47102 — same-second tie-break
 }
 
 export interface Community {
@@ -141,12 +142,23 @@ export class CommunityState {
       if (!community || community.creator !== event.pubkey) return false;
       const channel = community.channels.get(channelId);
       if (!channel || event.created_at < channel.membershipCreatedAt) return false;
+      // Same-second tie: deterministic winner (lowest id), so every
+      // client converges regardless of arrival order. Buzz avoids the
+      // tie by bumping timestamps; fez does both (see invite/kick).
+      if (
+        event.created_at === channel.membershipCreatedAt &&
+        channel.membershipEventId !== undefined &&
+        event.id >= channel.membershipEventId
+      ) {
+        return false;
+      }
       const members = new Map<string, Role>();
       for (const t of event.tags) {
         if (t[0] === "p" && t[1]) members.set(t[1], (t[2] as Role) ?? "member");
       }
       channel.members = members;
       channel.membershipCreatedAt = event.created_at;
+      channel.membershipEventId = event.id;
       return true;
     }
 

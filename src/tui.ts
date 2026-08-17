@@ -202,7 +202,7 @@ export class FezTUI {
     // headless protocol brain extensions render views over (api.client).
     const wire = {
       pubkey: this.myPubkey,
-      publish: async (tmpl: { kind: number; tags: string[][]; content: string }) => {
+      publish: async (tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }) => {
         const event = this.client.signEvent(tmpl);
         await this.relay.publish(event);
         return event;
