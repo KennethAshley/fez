@@ -17,6 +17,9 @@ import Avatar from "./Avatar";
 
 const KIND_SKILL_LISTING = 40200;
 const KIND_SKILL_INSTALL = 40201;
+/** Company-tier cross-relay install index — empty until fez company infra exists (infra/skill-counts is ready to deploy); relay receipts carry the counts meanwhile. */
+const DEFAULT_COUNTS_URL = "";
+const countsUrl = () => localStorage.getItem("fez-skill-counts-url") ?? DEFAULT_COUNTS_URL;
 
 interface SkillConfig {
   command?: string;
@@ -90,7 +93,15 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
         if (!counts.has(key)) counts.set(key, new Set());
         counts.get(key)!.add(receipt.pubkey);
       }
-      setInstalls(new Map([...counts.entries()].map(([key, pks]) => [key, pks.size])));
+      const merged = new Map([...counts.entries()].map(([key, pks]) => [key, pks.size]));
+      // Cross-relay index overrides this relay's local view when reachable.
+      try {
+        if (!countsUrl()) throw new Error("no index configured");
+        const res = await fetch(countsUrl(), { signal: AbortSignal.timeout(5000) });
+        const body = (await res.json()) as { counts?: { skill_name: string; listing_author: string; installs: number }[] };
+        for (const row of body.counts ?? []) merged.set(`${row.listing_author}:${row.skill_name}`, row.installs);
+      } catch { /* index unreachable — relay-local counts stand */ }
+      setInstalls(merged);
     })();
   }, [wire, reload]);
 
@@ -282,10 +293,16 @@ function InstallDialog({ listing, wire, onDone }: { listing: Listing; wire: Brow
         };
     try {
       await invoke("write_skill", { name: listing.name, configJson: JSON.stringify(config) });
-      // The receipt: +1 on the listing's install count, signed by you.
-      await wire
-        .publish({ kind: KIND_SKILL_INSTALL, tags: [["skill", listing.name], ["p", listing.authorPk]], content: "" })
-        .catch(() => {});
+      // The receipt: +1 on the listing's install count, signed by you —
+      // on the relay (truth) and pushed to the cross-relay index (number).
+      const receipt = wire.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", listing.name], ["p", listing.authorPk]], content: "" });
+      await wire.publish({ kind: receipt.kind, tags: receipt.tags, content: receipt.content, created_at: receipt.created_at }).catch(() => {});
+      if (countsUrl()) void fetch(countsUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(receipt),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
       onDone(true);
     } catch (err) {
       setError(String(err));

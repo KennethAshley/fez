@@ -46,3 +46,19 @@ export const DEFAULT_RELAY = "wss://relay.damus.io";
 export function resolveRelay(explicit?: string): string {
   return explicit || process.env.FEZ_RELAY || loadSettings().relay || DEFAULT_RELAY;
 }
+
+/**
+ * The global install counter is COMPANY-tier infrastructure — the fez
+ * company's cross-relay index over signed 40201 receipts (npmjs.com to
+ * fez's npm), distinct from any relay operator's storage. Until that
+ * endpoint exists the default is empty: clients count from relay
+ * receipts alone. The service is ready in infra/skill-counts/ — when
+ * deployed, its URL becomes this default. settings.skillCountsUrl
+ * overrides either way.
+ */
+export const DEFAULT_SKILL_COUNTS_URL = "";
+
+export function resolveSkillCountsUrl(): string {
+  const settings = loadSettings() as { skillCountsUrl?: string };
+  return settings.skillCountsUrl ?? DEFAULT_SKILL_COUNTS_URL;
+}

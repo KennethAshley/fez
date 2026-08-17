@@ -799,7 +799,20 @@ skill
       : { command: listing.command, ...(listing.args?.length ? { args: listing.args } : {}), ...(Object.keys(env).length ? { env } : {}) };
     const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
     saveSettings({ mcpServers: { ...settings.mcpServers, [name]: config } } as never);
-    await relay.publish(client.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", name], ["p", event.pubkey]], content: "" }));
+    const receipt = client.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", name], ["p", event.pubkey]], content: "" });
+    await relay.publish(receipt);
+    // Global counter (best-effort): the receipt is already on the wire;
+    // the index just makes the number universal across relays.
+    const { resolveSkillCountsUrl } = await import("./settings.js");
+    const countsUrl = resolveSkillCountsUrl();
+    if (countsUrl) {
+      await fetch(countsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(receipt),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => console.log(chalk.dim("   (global counter unreachable — receipt is on the relay regardless)")));
+    }
     console.log(`✅ installed "${name}" (+1 on its install count) — declare mcpServers: [${name}] in a persona to use it.`);
     relay.disconnect();
   });
@@ -828,6 +841,17 @@ skill
       if (!installCounts.has(key)) installCounts.set(key, new Set());
       installCounts.get(key)!.add(receipt.pubkey);
     }
+    // Global counts (cross-relay index) override this relay's local view.
+    const globalCounts = new Map<string, number>();
+    const { resolveSkillCountsUrl } = await import("./settings.js");
+    const countsUrl = resolveSkillCountsUrl();
+    if (countsUrl) {
+      try {
+        const res = await fetch(countsUrl, { signal: AbortSignal.timeout(5000) });
+        const body = (await res.json()) as { counts?: { skill_name: string; listing_author: string; installs: number }[] };
+        for (const row of body.counts ?? []) globalCounts.set(`${row.listing_author}:${row.skill_name}`, row.installs);
+      } catch { /* index unreachable — relay-local counts stand */ }
+    }
     const latest = new Map<string, { pubkey: string; content: string; created_at: number }>();
     for (const event of events) {
       const d = event.tags.find((t: string[]) => t[0] === "d")?.[1] ?? "";
@@ -838,7 +862,8 @@ skill
     for (const event of latest.values()) {
       try {
         const listing = JSON.parse(event.content) as { name: string; artifact?: string; description?: string; command?: string; args?: string[]; url?: string; envKeys?: string[]; installCmd?: string; github?: string; npm?: string };
-        const installs = installCounts.get(`${event.pubkey}:${listing.name}`)?.size ?? 0;
+        const key = `${event.pubkey}:${listing.name}`;
+        const installs = globalCounts.get(key) ?? installCounts.get(key)?.size ?? 0;
         const what = listing.url ?? [listing.command, ...(listing.args ?? [])].filter(Boolean).join(" ");
         console.log(`  ${chalk.green(listing.name.padEnd(18))} ${chalk.dim(`[${listing.artifact ?? "mcp"}]`)} ${listing.description ?? ""}  ${chalk.cyan(`${installs} install${installs === 1 ? "" : "s"}`)}`);
         if (what) console.log(chalk.dim(`    runs: ${what}${listing.envKeys?.length ? `  needs env: ${listing.envKeys.join(", ")}` : ""}`));
