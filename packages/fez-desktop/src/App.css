@@ -203,3 +203,40 @@ body {
 .community:hover .leave { color: var(--fg-dim); }
 .leave:hover { color: var(--red); }
 .leave.armed { color: var(--bg0); background: var(--red); font-weight: 700; padding: 0 6px; }
+
+/* ── live activity: streams, reply previews, activity strip ─── */
+.root-live { margin: -8px 0 14px 14px; }
+.reply-line {
+  display: block; background: none; border: 0; color: var(--fg-dim); font: inherit;
+  font-size: 13px; text-align: left; cursor: pointer; padding: 2px 0; max-width: 720px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reply-line:hover { color: var(--fg); }
+.reply-arrow { color: var(--bg2); }
+.reply-author { color: var(--yellow); font-weight: 600; }
+.reply-count { color: var(--accent); }
+.typing-line { cursor: default; }
+.stream { color: var(--fg-dim); font-size: 13px; padding: 2px 0; max-width: 720px; }
+.stream.compact { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stream-text { font-style: italic; }
+.cursor { animation: blink 1s steps(1) infinite; color: var(--accent); }
+@keyframes blink { 50% { opacity: 0; } }
+
+.activity-strip {
+  display: flex; gap: 8px; padding: 4px 18px 6px; flex-wrap: wrap;
+}
+.activity-chip {
+  display: flex; align-items: center; gap: 6px; background: var(--bg1);
+  border: 1px solid var(--bg2); border-radius: 14px; color: var(--fg); font: inherit;
+  font-size: 12px; padding: 3px 12px; cursor: pointer; max-width: 420px;
+}
+.activity-chip:hover { border-color: var(--accent); }
+.activity-headline {
+  color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--fg-dim) 40%, var(--fg) 50%, var(--fg-dim) 60%);
+  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; animation: shimmer 2s linear infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }

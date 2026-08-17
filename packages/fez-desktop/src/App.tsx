@@ -140,6 +140,10 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
   // Rolling observer activity per agent — the client emits frames; the
   // GUI keeps the last 200 per agent for the watch pane.
   const activityRef = useRef(new Map<string, ObserverEntry[]>());
+  // Live agent drafts (ephemeral 20003): channelId → authorPk → frame.
+  // The agent's reply streams here BEFORE the final message exists — the
+  // GUI's "live typing", adopted away when the real message lands.
+  const draftsRef = useRef(new Map<string, Map<string, { content: string; rootId?: string; ts: number }>>());
 
   useEffect(() => {
     const events = [
@@ -148,6 +152,16 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
       "dmMessage", "jobsChanged", "notice",
     ] as const;
     for (const name of events) client.on(name, render as never);
+    client.on("draft", ((channelId: string, authorPk: string, content: string, rootId?: string) => {
+      let byAuthor = draftsRef.current.get(channelId);
+      if (!byAuthor) draftsRef.current.set(channelId, (byAuthor = new Map()));
+      byAuthor.set(authorPk, { content, rootId, ts: Date.now() });
+      render();
+    }) as never);
+    client.on("message", ((channelId: string, msg: Msg) => {
+      // The final message adopts the draft — stop streaming it.
+      draftsRef.current.get(channelId)?.delete(msg.authorPk);
+    }) as never);
     client.on("observerFrame", ((agent: string, frame: ObserverEntry) => {
       const list = activityRef.current.get(agent) ?? [];
       list.push(frame);
@@ -284,7 +298,16 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       </aside>
 
-      {view.kind === "channel" && scope && <ChannelView key={scope.channelId} client={client} channelId={scope.channelId} />}
+      {view.kind === "channel" && scope && (
+        <ChannelView
+          key={scope.channelId}
+          client={client}
+          channelId={scope.channelId}
+          drafts={draftsRef.current.get(scope.channelId)}
+          working={working}
+          onWatch={(agent) => setPane({ kind: "watch", agent })}
+        />
+      )}
       {view.kind === "dm" && <DmView key={view.convoKey} client={client} convoKey={view.convoKey} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
 
@@ -336,12 +359,28 @@ function MemberRail({
   );
 }
 
-function ChannelView({ client, channelId }: { client: FezClient; channelId: string }) {
+function ChannelView({
+  client,
+  channelId,
+  drafts,
+  working,
+  onWatch,
+}: {
+  client: FezClient;
+  channelId: string;
+  drafts?: Map<string, { content: string; rootId?: string; ts: number }>;
+  working: ReadonlyMap<string, { activity: string; ts: number }>;
+  onWatch: (agent: string) => void;
+}) {
   const [draft, setDraft] = useState("");
   const [threadRoot, setThreadRoot] = useState<string | undefined>();
   const bottomRef = useRef<HTMLDivElement>(null);
   const messages = client.messages(channelId);
   const shown = threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages.filter((m) => !m.parentId);
+  const now = Date.now();
+  const liveDrafts = [...(drafts?.entries() ?? [])].filter(([, d]) => now - d.ts < 15_000);
+  const draftsForRoot = (rootId: string) => liveDrafts.filter(([, d]) => d.rootId === rootId);
+  const workingNow = [...working.entries()].filter(([, w]) => now - w.ts < 30_000);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "auto" });
@@ -375,11 +414,26 @@ function ChannelView({ client, channelId }: { client: FezClient; channelId: stri
           </div>
         )}
         {shown.map((msg) => (
-          <Bubble key={msg.id} client={client} channelId={channelId} msg={msg} inThread={!!threadRoot} onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)} />
+          <div key={msg.id}>
+            <Bubble client={client} channelId={channelId} msg={msg} inThread={!!threadRoot} onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)} />
+            {!threadRoot && <RootLiveArea client={client} channelId={channelId} rootId={msg.id} drafts={draftsForRoot(msg.id)} onOpenThread={() => setThreadRoot(msg.id)} />}
+          </div>
         ))}
+        {threadRoot &&
+          draftsForRoot(threadRoot).map(([pk, d]) => <StreamingBubble key={pk} author={client.displayName(pk)} text={d.content} />)}
         <div ref={bottomRef} />
       </div>
       {typing.length > 0 && <div className="typing">{typing.join(", ")} typing…</div>}
+      {workingNow.length > 0 && (
+        <div className="activity-strip">
+          {workingNow.map(([agent, w]) => (
+            <button key={agent} className="activity-chip" onClick={() => onWatch(agent)} title="open live activity">
+              <span className="working">⚙</span> {agent}
+              <span className="activity-headline shimmer">{w.activity}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="composer">
         <input
           value={draft}
@@ -391,6 +445,64 @@ function ChannelView({ client, channelId }: { client: FezClient; channelId: stri
         />
       </div>
     </main>
+  );
+}
+
+/**
+ * The live area under a root message in the channel timeline — where an
+ * agent's response becomes VISIBLE without opening the thread: latest
+ * reply preview, then per-root typing, then the streaming draft text
+ * (fez's 20003 frames carry the actual accumulating reply — one better
+ * than a "…is typing" row).
+ */
+function RootLiveArea({
+  client,
+  channelId,
+  rootId,
+  drafts,
+  onOpenThread,
+}: {
+  client: FezClient;
+  channelId: string;
+  rootId: string;
+  drafts: [string, { content: string; rootId?: string; ts: number }][];
+  onOpenThread: () => void;
+}) {
+  const replies = client.messages(channelId).filter((m) => m.rootId === rootId && m.id !== rootId);
+  const latest = replies.at(-1);
+  const typing = client.typingWho(rootId).filter((name) => name !== "You");
+  if (!latest && drafts.length === 0 && typing.length === 0) return null;
+  return (
+    <div className="root-live">
+      {latest && !drafts.some(([pk]) => pk === latest.authorPk) && (
+        <button className="reply-line" onClick={onOpenThread} title="open thread">
+          <span className="reply-arrow">↳</span> <span className="reply-author">{latest.authorName}</span>{" "}
+          {latest.deletedBy ? <em>removed</em> : latest.content.replace(/\s+/g, " ").slice(0, 110)}
+          {replies.length > 1 && <span className="reply-count"> · {replies.length} replies</span>}
+        </button>
+      )}
+      {drafts.map(([pk, d]) => (
+        <StreamingBubble key={pk} author={client.displayName(pk)} text={d.content} compact />
+      ))}
+      {typing.length > 0 && drafts.length === 0 && (
+        <div className="reply-line typing-line">
+          <span className="reply-arrow">↳</span> {typing.join(", ")} <span className="shimmer">replying…</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** An agent's reply streaming in live — dim, cursor, replaced by the real message when it lands. */
+function StreamingBubble({ author, text, compact }: { author: string; text: string; compact?: boolean }) {
+  return (
+    <div className={compact ? "stream compact" : "stream"}>
+      <span className="reply-arrow">↳</span> <span className="reply-author">{author}</span>{" "}
+      <span className="stream-text">
+        {compact ? text.replace(/\s+/g, " ").slice(-160) : text.slice(-800)}
+        <span className="cursor">▌</span>
+      </span>
+    </div>
   );
 }
 
