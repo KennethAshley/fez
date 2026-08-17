@@ -841,18 +841,20 @@ export class FezTUI {
       this.bubbleContents.delete(this.bubbleContents.keys().next().value as string);
     }
     const osc8 = (url: string, label: string) => `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
-    // Inline glyphs for one-liners; a LABELED action row under longer
-    // messages (and under code blocks — ⧉ code copies just the fences).
-    // Glyphs take the accent color so the affordance is actually visible.
-    // Claude's pattern: the action row sits BELOW the content, visually
-    // subordinate — all dim, compact, never competing with the message.
+    // Claude's pattern, quieter: the action row sits BELOW the content
+    // with a blank line of air (it was hugging the text block), indented
+    // and condensed — mid-dot separators, one glyph each — so it reads
+    // as a footnote, not a second line of message. Terminal fonts can't
+    // shrink, so "smaller" is fewer characters and more distance.
     const actionRow = (hasCode: boolean) =>
+      "\n" +
       chalk.dim(
-        [
-          osc8(`fez-copy://${actionId}`, "⧉ copy"),
-          ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, "⧉ code")] : []),
-          osc8(`fez-quote://${actionId}`, "↩ quote"),
-        ].join("   ")
+        "    " +
+          [
+            osc8(`fez-copy://${actionId}`, "⧉ copy"),
+            ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, "⧉ code")] : []),
+            osc8(`fez-quote://${actionId}`, "↩ quote"),
+          ].join("  ·  ")
       );
     const bubble = new Container();
     const layout = (c: string) => {

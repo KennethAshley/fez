@@ -1126,7 +1126,7 @@ export default function communities(api: FezExtensionAPI): void {
     for (const [channelId, info] of docsByChannel) {
       const ref = channelRef(channelId);
       if (!ref) continue;
-      rows.push(` ${OSC8(`fez-doc://open/${channelId}`, `#${ref.name}`)} ${DIM(`v${info.count} · ${displayName(info.latestAuthor)}`)}`);
+      rows.push(` ${OSC8(`fez-doc://open/${channelId}`, `#${ref.name}`)} ${DIM(`v${info.count} · ${info.latestAuthor === nostr!.pubkey ? "you" : displayName(info.latestAuthor)}`)}`);
     }
     docsPanel.setText(rows.length > 0 ? rows.join("\n") : " (none — /doc set)");
   }
