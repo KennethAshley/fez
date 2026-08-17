@@ -440,11 +440,20 @@ export class FezClient {
     });
   }
 
+  /**
+   * Reminders are private data on a public relay — note, fire time, and
+   * subject all ride NIP-44 self-encrypted (Buzz built encrypted 30300
+   * NIP-ER for exactly this reason; the plaintext remind_at tag was a
+   * leak). The sentinel runs with this same key and decrypts to arm.
+   */
   async setReminder(remindAt: number, note: string, aboutEventId?: string): Promise<void> {
     await this.wire.publish({
       kind: K.REMINDER,
-      tags: [["p", this.pubkey], ["remind_at", String(remindAt)], ...(aboutEventId ? [["e", aboutEventId]] : [])],
-      content: note,
+      tags: [["p", this.pubkey]],
+      content: this.wire.encrypt(
+        this.pubkey,
+        JSON.stringify({ note, remind_at: remindAt, ...(aboutEventId ? { about: aboutEventId } : {}) })
+      ),
     });
   }
 

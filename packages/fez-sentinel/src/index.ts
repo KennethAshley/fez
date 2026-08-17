@@ -361,6 +361,21 @@ async function main() {
   const firedIntents = new Set<string>();
 
   type IntentEvent = { id: string; kind: number; content: string; tags: string[][] };
+
+  // Reminders (40007) arrive NIP-44 self-encrypted — note, fire time, and
+  // subject in the ciphertext (they're private data on a public relay).
+  // We hold the same key, so decrypt to arm. Legacy plaintext reminders
+  // (remind_at tag + cleartext note) still decode via the fallback.
+  function decodeReminder(intent: IntentEvent): { note: string; at: number } {
+    try {
+      const payload = JSON.parse(client.decryptFrom(myPubkey, intent.content)) as { note?: string; remind_at?: number };
+      if (typeof payload.remind_at === "number") {
+        return { note: payload.note || "(reminder)", at: payload.remind_at };
+      }
+    } catch { /* legacy plaintext form */ }
+    return { note: intent.content || "(reminder)", at: Number(intent.tags.find((t) => t[0] === "remind_at")?.[1]) };
+  }
+
   async function fireIntent(intent: IntentEvent): Promise<void> {
     armedTimers.delete(intent.id);
     if (firedIntents.has(intent.id)) return;
@@ -373,15 +388,19 @@ async function main() {
         console.log(`⏲ delivered scheduled message to channel ${h.slice(0, 8)}…`);
       }
     } else {
-      deliver("⏰ reminder", intent.content || "(reminder)");
-      console.log(`⏰ fired reminder: ${intent.content.slice(0, 60)}`);
+      const { note } = decodeReminder(intent);
+      deliver("⏰ reminder", note);
+      console.log(`⏰ fired reminder: ${note.slice(0, 60)}`);
     }
     await relay.publish(client.signEvent({ kind: 5, tags: [["e", intent.id]], content: "" })).catch(() => {});
   }
 
   function armIntent(intent: IntentEvent): void {
     if (firedIntents.has(intent.id) || armedTimers.has(intent.id)) return;
-    const at = Number(intent.tags.find((t) => t[0] === "send_at" || t[0] === "remind_at")?.[1]);
+    const at =
+      intent.kind === KIND_REMINDER
+        ? decodeReminder(intent).at
+        : Number(intent.tags.find((t) => t[0] === "send_at")?.[1]);
     if (!at) return;
     const delayMs = Math.min(Math.max(0, at * 1000 - Date.now()), 2 ** 31 - 1);
     armedTimers.set(intent.id, setTimeout(() => void fireIntent(intent), delayMs));
