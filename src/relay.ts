@@ -6,36 +6,195 @@ export interface RelayOptions {
   onConnect?: () => void;
   onDisconnect?: () => void;
   onError?: (err: Error) => void;
+  /** Connectivity-watchdog poll interval (ms). Mainly for tests. */
+  watchdogMs?: number;
 }
+
+// The watchdog is the reconnect ladder: every tick it checks liveness and,
+// if we're down with live subscriptions, re-establishes + resubscribes.
+// 3s ≈ Buzz's early-ladder cadence without a burst of instant retries.
+const WATCHDOG_MS = 3_000;
+
+// On resubscribe after a drop, each subscription re-issues its ORIGINAL
+// filters and lets the per-subscription seen-set drop replayed duplicates.
+// A since-watermark rewind (Buzz-style) would be cheaper on the wire, but
+// NIP-01 filters select on created_at, not arrival time — and fez carries
+// kinds whose created_at is deliberately fuzzed days into the past (NIP-17
+// gift wraps). Any watermark cutoff silently loses those after an outage.
+// Full re-issue is the only recovery that's correct for every kind.
+
+// Publish retries cover the reconnect window after a drop. Only transient
+// failures retry — an OK=false policy rejection is final and rethrows
+// immediately. Re-sending the same event id is idempotent relay-side.
+const PUBLISH_RETRY_DELAYS_MS = [1_000, 3_000, 9_000];
+
+const CONNECT_TIMEOUT_MS = 5_000;
+const SEEN_CAP = 10_000;
+
+interface TrackedSub {
+  /** Caller's original filters, never mutated (the library mutates its copies). */
+  filters: Filter[];
+  onEvent: (event: Event) => void;
+  onEose?: () => void;
+  eoseFired: boolean;
+  seen: Set<string>;
+  close: () => void;
+}
+
+function isTransientPublishError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /timed? ?out|closed|connection|failed|websocket|ECONNREFUSED|ECONNRESET|EPIPE|ENOTFOUND|EAI_AGAIN/i.test(
+    msg
+  );
+}
+
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
 /**
  * Lightweight relay connection wrapper.
- * Uses nostr-tools SimplePool for pub/sub.
+ *
+ * Built on nostr-tools SimplePool with enablePing (dead-socket detection:
+ * ws.ping() where supported, dummy-REQ probe on Node's native WebSocket).
+ * Reconnection is owned here, not by the library — nostr-tools'
+ * enableReconnect gives up permanently when an *established* socket dies
+ * with an error frame (its onerror path treats attempt-zero errors as
+ * "relay unreachable"), which is exactly the network-blip case a standing
+ * agent must survive. The wrapper instead:
+ *
+ *  - tracks every subscription (original filters + seen-set),
+ *  - polls liveness on a watchdog; on a drop it reconnects and re-issues
+ *    each subscription's original filters, deduped by the seen-set (see
+ *    the fuzzed-created_at note above for why not a since-watermark),
+ *  - retries publishes across the reconnect window (transient errors only;
+ *    relay policy rejections fail fast),
+ *  - surfaces onConnect/onDisconnect so standing agents can log transitions.
  */
 export class RelayConnection {
   private pool: SimplePool;
   private url: string;
-  private subs: Map<string, { close: () => void }> = new Map();
+  private tracked: Map<string, TrackedSub> = new Map();
+  private watchdog?: ReturnType<typeof setInterval>;
+  private wasConnected = false;
+  private reconnecting = false;
+  private closed = false;
 
   constructor(private options: RelayOptions) {
     this.url = options.url;
-    this.pool = new SimplePool();
+    this.pool = new SimplePool({ enablePing: true });
+  }
+
+  private relayConnected(): boolean {
+    const pool = this.pool as unknown as { relays: Map<string, { connected: boolean }> };
+    for (const relay of pool.relays.values()) {
+      if (relay.connected) return true;
+    }
+    return false;
   }
 
   async connect(): Promise<void> {
-    // SimplePool lazily connects on first use
-    this.options.onConnect?.();
+    // Eager connect so startup problems surface at startup — but degrade to
+    // the old lazy behavior (first subscribe/publish connects) instead of
+    // throwing, so a relay that's briefly down doesn't kill boot.
+    try {
+      await this.pool.ensureRelay(this.url, { connectionTimeout: CONNECT_TIMEOUT_MS });
+      this.wasConnected = true;
+      this.options.onConnect?.();
+    } catch (err) {
+      this.options.onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+    this.startWatchdog();
+  }
+
+  private startWatchdog(): void {
+    if (this.watchdog || this.closed) return;
+    this.watchdog = setInterval(() => void this.checkLiveness(), this.options.watchdogMs ?? WATCHDOG_MS);
+    // Never hold the process open: one-shot CLI commands must be able to exit.
+    this.watchdog.unref?.();
+  }
+
+  private async checkLiveness(): Promise<void> {
+    if (this.closed || this.reconnecting) return;
+    if (this.relayConnected()) {
+      if (!this.wasConnected) {
+        this.wasConnected = true;
+        this.options.onConnect?.();
+      }
+      return;
+    }
+    if (this.wasConnected) {
+      this.wasConnected = false;
+      this.options.onDisconnect?.();
+    }
+    if (this.tracked.size === 0) return; // nothing to restore; publish/query reconnect on demand
+    this.reconnecting = true;
+    try {
+      await this.pool.ensureRelay(this.url, { connectionTimeout: CONNECT_TIMEOUT_MS });
+      for (const sub of this.tracked.values()) this.issue(sub);
+      this.wasConnected = true;
+      this.options.onConnect?.();
+    } catch {
+      // still down — next watchdog tick retries
+    } finally {
+      this.reconnecting = false;
+    }
+  }
+
+  /** Open (or re-open) the wire subscription for a tracked sub. */
+  private issue(sub: TrackedSub): void {
+    sub.close(); // no-op on a dead connection; prevents doubled REQs on a live one
+    // Fresh copies every time: the library mutates its filter objects.
+    const filters = sub.filters.map((f) => ({ ...f }));
+
+    let eoseCount = 0;
+    // See subscribe() docstring: one subscribeMany() per filter, merged.
+    const closers = filters.map((filter) =>
+      this.pool.subscribeMany([this.url], filter, {
+        onevent: (event) => {
+          if (sub.seen.has(event.id)) return;
+          this.remember(sub, event);
+          sub.onEvent(event);
+        },
+        oneose: () => {
+          eoseCount++;
+          if (!sub.eoseFired && eoseCount === filters.length) {
+            sub.eoseFired = true;
+            sub.onEose?.();
+          }
+        },
+      })
+    );
+    sub.close = () => closers.forEach((c) => c.close());
+  }
+
+  private remember(sub: TrackedSub, event: Event): void {
+    sub.seen.add(event.id);
+    if (sub.seen.size > SEEN_CAP) {
+      // Drop the oldest half. Set iterates in insertion order.
+      let i = 0;
+      const cut = SEEN_CAP / 2;
+      for (const id of sub.seen) {
+        sub.seen.delete(id);
+        if (++i >= cut) break;
+      }
+    }
   }
 
   disconnect(): void {
-    this.subs.forEach((sub) => sub.close());
-    this.subs.clear();
-    // SimplePool auto-manages connections
+    this.closed = true;
+    if (this.watchdog) {
+      clearInterval(this.watchdog);
+      this.watchdog = undefined;
+    }
+    this.tracked.forEach((sub) => sub.close());
+    this.tracked.clear();
+    this.pool.close([this.url]);
   }
 
   /**
    * Subscribe to events matching any of the given filters (OR semantics).
-   * Returns a function to unsubscribe.
+   * Returns a function to unsubscribe. Survives relay drops: the watchdog
+   * re-issues the subscription's original filters and the seen-set drops
+   * replayed duplicates (see class doc).
    *
    * nostr-tools' SimplePool.subscribeMany() takes a single Filter per call
    * (despite the "Many" in the name — that refers to relays, not filters),
@@ -49,30 +208,22 @@ export class RelayConnection {
     onEvent: (event: Event) => void,
     onEose?: () => void
   ): () => void {
-    const seen = new Set<string>();
-    let eoseCount = 0;
-
-    const subs = filters.map((filter) =>
-      this.pool.subscribeMany([this.url], filter, {
-        onevent: (event) => {
-          if (seen.has(event.id)) return;
-          seen.add(event.id);
-          onEvent(event);
-        },
-        oneose: () => {
-          eoseCount++;
-          if (eoseCount === filters.length) onEose?.();
-        },
-      })
-    );
-
     const id = Math.random().toString(36).slice(2);
-    const close = () => subs.forEach((sub) => sub.close());
-    this.subs.set(id, { close });
+    const sub: TrackedSub = {
+      filters: filters.map((f) => ({ ...f })),
+      onEvent,
+      onEose,
+      eoseFired: false,
+      seen: new Set(),
+      close: () => {},
+    };
+    this.tracked.set(id, sub);
+    this.issue(sub);
+    this.startWatchdog();
 
     return () => {
-      close();
-      this.subs.delete(id);
+      sub.close();
+      this.tracked.delete(id);
     };
   }
 
@@ -92,13 +243,31 @@ export class RelayConnection {
   }
 
   /**
-   * Publish a signed event to the relay.
+   * Publish a signed event to the relay, awaiting the relay's OK.
+   *
+   * pool.publish returns Promise[] (one per relay) — awaiting the bare
+   * array resolves immediately without waiting for (or surfacing) the
+   * actual sends. Bit us live: a short-lived process exited before its
+   * events reached the relay, silently.
+   *
+   * Transient failures (drop, timeout, refused) retry across the reconnect
+   * window; a relay policy rejection (OK=false) rethrows immediately —
+   * retrying a rejected event is noise.
    */
   async publish(event: Event): Promise<void> {
-    // pool.publish returns Promise[] (one per relay) — awaiting the bare
-    // array resolves immediately without waiting for (or surfacing) the
-    // actual sends. Bit us live: a short-lived process exited before its
-    // events reached the relay, silently.
-    await Promise.all(this.pool.publish([this.url], event));
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= PUBLISH_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        await Promise.all(this.pool.publish([this.url], event));
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (!isTransientPublishError(err)) break;
+        if (attempt < PUBLISH_RETRY_DELAYS_MS.length) {
+          await sleep(PUBLISH_RETRY_DELAYS_MS[attempt]);
+        }
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 }
