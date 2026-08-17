@@ -297,6 +297,13 @@ export class FezClient {
   statusOf(pk: string): string | undefined {
     return this.statuses.get(pk);
   }
+  /** Every pubkey we can name (agents outrank profiles) — autocomplete fodder. */
+  knownNames(): Map<string, string> {
+    const merged = new Map<string, string>(this.profiles);
+    for (const [pk, name] of this.names) merged.set(pk, name);
+    return merged;
+  }
+
   pkByName(name: string): string | undefined {
     const wanted = name.toLowerCase();
     for (const [pk, n] of this.names) if (n.toLowerCase() === wanted) return pk;

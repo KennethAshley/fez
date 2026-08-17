@@ -3,8 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { FezClient, setStatePersistence, type Msg, type ObserverEntry } from "@fez/client";
 import { BrowserWire } from "./wire";
+import Composer from "./Composer";
+import SearchOverlay from "./SearchOverlay";
+import { uploadFile, shareLine } from "./upload";
 import Onboarding from "./Onboarding";
 import "./App.css";
 
@@ -42,6 +46,21 @@ type SidePane = { kind: "watch"; agent: string } | { kind: "costs" } | undefined
 function useForceRender(): () => void {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   return bump;
+}
+
+/** Native notification, permission-lazy; silently a no-op where unavailable. */
+async function notify(title: string, body: string): Promise<void> {
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) granted = (await requestPermission()) === "granted";
+    if (granted) sendNotification({ title, body: body.replace(/\s+/g, " ").slice(0, 180) });
+  } catch {
+    /* browser dev server / permission denied */
+  }
+}
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -172,7 +191,33 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
       activityRef.current.set(agent, list);
       render();
     }) as never);
+    // Native notifications when the window isn't focused: @you in a
+    // channel, or any live DM. Backfill/history never notifies.
+    client.on("message", ((_channelId: string, msg: Msg, meta?: { live?: boolean }) => {
+      if (!meta?.live || msg.authorPk === client.pubkey || document.hasFocus()) return;
+      const myName = client.displayName(client.pubkey);
+      if (myName && new RegExp(`@${escapeRe(myName)}\\b`, "i").test(msg.content)) {
+        void notify(`${msg.authorName} mentioned you`, msg.content);
+      }
+    }) as never);
+    client.on("dmMessage", ((dm: { senderPk: string; text: string }, meta?: { live?: boolean }) => {
+      if (!meta?.live || dm.senderPk === client.pubkey || document.hasFocus()) return;
+      void notify(`${client.displayName(dm.senderPk)} (dm)`, dm.text);
+    }) as never);
   }, [client, render]);
+
+  // ⌘K — Buzz's topbar search, as a palette.
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const scope = client.state.scope;
   const unreads = client.unreadCounts();
@@ -240,6 +285,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
       <aside className="rail">
         <div className="brand">
           fez <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />
+          <button className="rail-tool" title="search (⌘K)" onClick={() => setSearchOpen(true)}>
+            🔍
+          </button>
           <button className="rail-tool" title="agent costs" onClick={() => setPane(pane?.kind === "costs" ? undefined : { kind: "costs" })}>
             $
           </button>
@@ -305,13 +353,14 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <ChannelView
           key={scope.channelId}
           client={client}
+          wire={wire}
           channelId={scope.channelId}
           drafts={draftsRef.current.get(scope.channelId)}
           working={working}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
         />
       )}
-      {view.kind === "dm" && <DmView key={view.convoKey} client={client} convoKey={view.convoKey} />}
+      {view.kind === "dm" && <DmView key={view.convoKey} client={client} wire={wire} convoKey={view.convoKey} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
 
       {pane?.kind === "watch" && (
@@ -324,6 +373,14 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
+      {searchOpen && (
+        <SearchOverlay
+          client={client}
+          wire={wire}
+          onJump={(communityId, channelId) => void openChannel(communityId, channelId)}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -364,18 +421,21 @@ function MemberRail({
 
 function ChannelView({
   client,
+  wire,
   channelId,
   drafts,
   working,
   onWatch,
 }: {
   client: FezClient;
+  wire: BrowserWire;
   channelId: string;
   drafts?: Map<string, { content: string; rootId?: string; ts: number }>;
   working: ReadonlyMap<string, { activity: string; ts: number }>;
   onWatch: (agent: string) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [uploading, setUploading] = useState<string>();
   const [threadRoot, setThreadRoot] = useState<string | undefined>();
   const [editing, setEditing] = useState<{ id: string; original: string } | undefined>();
   const communityId = client.state.scope?.communityId ?? "";
@@ -420,6 +480,20 @@ function ChannelView({
   const beginEdit = (msg: Msg) => {
     setEditing({ id: msg.id, original: msg.content });
     setDraft(msg.content);
+  };
+
+  /** Drop/paste → Blossom → fez-media's share line into the channel (or thread). */
+  const handleFiles = async (files: File[]) => {
+    for (const file of files) {
+      setUploading(file.name);
+      try {
+        const uploaded = await uploadFile(wire, file);
+        await client.sendChannelMessage(shareLine(uploaded), { threadRootId: threadRoot });
+      } catch (err) {
+        wire.onError?.(err instanceof Error ? err.message : String(err));
+      }
+    }
+    setUploading(undefined);
   };
 
   const channelName = client.channelRef(channelId)?.name ?? channelId.slice(0, 8);
@@ -473,24 +547,25 @@ function ChannelView({
           editing message · <b>enter</b> saves · <b>esc</b> cancels
         </div>
       )}
-      <div className="composer">
-        <input
-          value={draft}
-          className={editing ? "editing" : undefined}
-          placeholder={threadRoot ? "reply in thread…" : `message #${channelName} — @name summons an agent`}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) void send();
-            else if (e.key === "ArrowUp" && !draft && !editing) {
-              e.preventDefault();
-              startEditLast();
-            } else if (e.key === "Escape" && editing) {
-              setEditing(undefined);
-              setDraft("");
-            }
-          }}
-        />
-      </div>
+      {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
+      <Composer
+        client={client}
+        value={draft}
+        onChange={setDraft}
+        onSend={() => void send()}
+        placeholder={threadRoot ? "reply in thread…" : `message #${channelName} — @name summons an agent`}
+        editing={!!editing}
+        onArrowUpEmpty={editing ? undefined : startEditLast}
+        onEscape={
+          editing
+            ? () => {
+                setEditing(undefined);
+                setDraft("");
+              }
+            : undefined
+        }
+        onFiles={(files) => void handleFiles(files)}
+      />
     </main>
   );
 }
@@ -553,8 +628,9 @@ function StreamingBubble({ author, text, compact }: { author: string; text: stri
   );
 }
 
-function DmView({ client, convoKey }: { client: FezClient; convoKey: string }) {
+function DmView({ client, wire, convoKey }: { client: FezClient; wire: BrowserWire; convoKey: string }) {
   const [draft, setDraft] = useState("");
+  const [uploading, setUploading] = useState<string>();
   const bottomRef = useRef<HTMLDivElement>(null);
   const convo = client.dmConversations().get(convoKey);
   const group = convoKey.includes("+");
@@ -571,6 +647,24 @@ function DmView({ client, convoKey }: { client: FezClient; convoKey: string }) {
     setDraft("");
     if (group) await client.sendGroupDm(peers, text);
     else await client.sendDm(convoKey, text);
+  };
+
+  // NOTE: the blob itself lands on the media server in the clear — only
+  // the share line is E2E. Same trade fez-media makes; worth a settings
+  // toggle when private Blossom hosts are common.
+  const handleFiles = async (files: File[]) => {
+    for (const file of files) {
+      setUploading(file.name);
+      try {
+        const uploaded = await uploadFile(wire, file);
+        const line = shareLine(uploaded);
+        if (group) await client.sendGroupDm(peers, line);
+        else await client.sendDm(convoKey, line);
+      } catch (err) {
+        wire.onError?.(err instanceof Error ? err.message : String(err));
+      }
+    }
+    setUploading(undefined);
   };
 
   return (
@@ -595,16 +689,15 @@ function DmView({ client, convoKey }: { client: FezClient; convoKey: string }) {
         })}
         <div ref={bottomRef} />
       </div>
-      <div className="composer">
-        <input
-          value={draft}
-          placeholder={`message ${client.dmTitle(convoKey)} — encrypted`}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) void send();
-          }}
-        />
-      </div>
+      {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
+      <Composer
+        client={client}
+        value={draft}
+        onChange={setDraft}
+        onSend={() => void send()}
+        placeholder={`message ${client.dmTitle(convoKey)} — encrypted`}
+        onFiles={(files) => void handleFiles(files)}
+      />
     </main>
   );
 }

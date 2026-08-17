@@ -195,6 +195,19 @@ export class BrowserWire implements Wire {
     });
   }
 
+  /** Sign WITHOUT publishing — for events that travel outside the relay (Blossom auth headers). */
+  signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Event {
+    return finalizeEvent(
+      {
+        kind: tmpl.kind,
+        created_at: tmpl.created_at ?? Math.floor(Date.now() / 1000),
+        tags: tmpl.tags,
+        content: tmpl.content,
+      },
+      this.secret
+    );
+  }
+
   encrypt(peerPubkey: string, plaintext: string): string {
     return nip44.encrypt(plaintext, nip44.getConversationKey(this.secret, peerPubkey));
   }
