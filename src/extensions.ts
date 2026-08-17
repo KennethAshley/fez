@@ -35,6 +35,12 @@ import { setStatus } from "./status.js";
 export interface NostrAccess {
   pubkey: string;
   publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<Event>;
+  /**
+   * Sign WITHOUT publishing — for events that travel outside the relay
+   * (Blossom/NIP-98 HTTP auth headers). The private key stays behind the
+   * seam, as with publish.
+   */
+  signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Event;
   subscribe(filters: Filter[], onEvent: (event: Event) => void): () => void;
   query(filters: Filter[]): Promise<Event[]>;
   /** NIP-44 with the user's key — private pipes over public relays (observer frames, DMs). */

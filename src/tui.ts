@@ -207,6 +207,8 @@ export class FezTUI {
         await this.relay.publish(event);
         return event;
       },
+      signEvent: (tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }) =>
+        this.client.signEvent(tmpl),
       subscribe: (filters: Parameters<RelayConnection["subscribe"]>[0], onEvent: (event: Event) => void) =>
         this.relay.subscribe(filters, onEvent),
       query: (filters: Parameters<RelayConnection["query"]>[0]) => this.relay.query(filters),
