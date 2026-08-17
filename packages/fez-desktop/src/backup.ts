@@ -29,11 +29,12 @@ async function deriveAesKey(password: string, salt: Uint8Array, usage: KeyUsage)
   return crypto.subtle.importKey("raw", derived as BufferSource, "AES-GCM", false, [usage]);
 }
 
-export async function createBackup(keyHex: string, password: string): Promise<string> {
+/** Seal arbitrary text under a password — backups and archives share the exact scheme. */
+export async function sealText(plaintext: string, password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const aesKey = await deriveAesKey(password, salt, "encrypt");
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, aesKey, new TextEncoder().encode(keyHex));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, aesKey, new TextEncoder().encode(plaintext));
   const file: BackupFile = {
     v: 1,
     kdf: "scrypt",
@@ -47,8 +48,12 @@ export async function createBackup(keyHex: string, password: string): Promise<st
   return JSON.stringify(file, null, 2);
 }
 
+export async function createBackup(keyHex: string, password: string): Promise<string> {
+  return sealText(keyHex, password);
+}
+
 /** Throws on a wrong password or a mangled file. */
-export async function openBackup(json: string, password: string): Promise<string> {
+export async function openText(json: string, password: string): Promise<string> {
   const file = JSON.parse(json) as BackupFile;
   if (file.v !== 1 || file.kdf !== "scrypt") throw new Error("not a fez backup file");
   const derived = scrypt(new TextEncoder().encode(password.normalize("NFKC")), fromB64(file.salt), {
@@ -64,7 +69,11 @@ export async function openBackup(json: string, password: string): Promise<string
   } catch {
     throw new Error("wrong password (or the file is damaged)");
   }
-  const keyHex = new TextDecoder().decode(plain);
+  return new TextDecoder().decode(plain);
+}
+
+export async function openBackup(json: string, password: string): Promise<string> {
+  const keyHex = await openText(json, password);
   if (!/^[0-9a-f]{64}$/.test(keyHex)) throw new Error("backup decrypted to something that isn't a key");
   return keyHex;
 }

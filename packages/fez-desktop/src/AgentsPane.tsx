@@ -361,7 +361,7 @@ function AgentDetail({
  */
 function CreateAgentForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
-  const [harness, setHarness] = useState("claude-code");
+  const [harness, setHarness] = useState(localStorage.getItem("fez-default-harness") ?? "claude-code");
   const [description, setDescription] = useState("");
   const [prompt, setPrompt] = useState("");
   const [state, setState] = useState<"idle" | "saving" | "done" | string>("idle");

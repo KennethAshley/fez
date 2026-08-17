@@ -737,3 +737,23 @@ button.author:hover { text-decoration: underline; }
 .self-gear { color: var(--fg-dim); padding: 2px 4px; border-radius: 5px; }
 .self-gear:hover { color: var(--fg); background: var(--bg2); }
 .agent-ghost { color: var(--fg-dim); font-size: 14px; width: 18px; text-align: center; }
+
+/* ── formatting tray, new dm, archive ──────────────────────── */
+.format-tray {
+  position: absolute; bottom: 100%; left: 18px; margin-bottom: 4px; display: flex; gap: 2px;
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px; padding: 3px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 5;
+}
+.format-tray button {
+  background: none; border: 0; color: var(--fg); font-family: var(--font-mono); font-size: 12px;
+  width: 28px; height: 24px; border-radius: 5px; cursor: pointer;
+}
+.format-tray button:hover { background: var(--bg2); color: var(--accent); }
+.community-name { display: flex; align-items: center; gap: 6px; }
+.new-dm { margin-left: auto; line-height: 1; }
+.new-dm-input { font-size: 11px; padding: 3px 8px; margin: 2px 0 4px; }
+.settings-check {
+  display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--fg-dim);
+  margin-bottom: 8px; cursor: pointer;
+}
+.settings-check input { margin-top: 2px; }

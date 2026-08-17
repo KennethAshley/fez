@@ -440,9 +440,11 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
               })}
             </div>
           ))}
-        {dmConvos.length > 0 && (
-          <div className="community">
-            <div className="community-name">dms</div>
+        <div className="community">
+          <div className="community-name">
+            dms
+            <NewDmButton client={client} onOpen={openDm} />
+          </div>
             {dmConvos.slice(0, 10).map(([key, convo]) => {
               const group = key.includes("+");
               const active = view.kind === "dm" && view.convoKey === key;
@@ -454,8 +456,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
                 </button>
               );
             })}
-          </div>
-        )}
+        </div>
         <MemberRail
           client={client}
           working={working}
@@ -570,7 +571,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
-      {pane?.kind === "settings" && <SettingsPane client={client} onClose={() => setPane(undefined)} />}
+      {pane?.kind === "settings" && <SettingsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
       {pane?.kind === "reminders" && (
         <RemindersPane
           client={client}
@@ -637,6 +638,40 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
     </div>
+  );
+}
+
+/** Buzz's NewMessageScreen, minimal: type a name, get the conversation. */
+function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [who, setWho] = useState("");
+  const start = () => {
+    const raw = who.trim().replace(/^@/, "");
+    const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw);
+    if (!pk) return;
+    setOpen(false);
+    setWho("");
+    onOpen(pk);
+  };
+  if (!open) {
+    return (
+      <button className="mini new-dm" title="new direct message" onClick={() => setOpen(true)}>+</button>
+    );
+  }
+  return (
+    <input
+      className="manage-input new-dm-input"
+      value={who}
+      autoFocus
+      spellCheck={false}
+      placeholder="@name or pubkey"
+      onChange={(e) => setWho(e.target.value)}
+      onBlur={() => setOpen(false)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") start();
+        if (e.key === "Escape") setOpen(false);
+      }}
+    />
   );
 }
 
@@ -786,9 +821,9 @@ function ChannelView({
   /** Drop/paste → Blossom → fez-media's share line into the channel (or thread). */
   const handleFiles = async (files: File[]) => {
     for (const file of files) {
-      setUploading(file.name);
+      setUploading(`${file.name} · 0%`);
       try {
-        const uploaded = await uploadFile(wire, file);
+        const uploaded = await uploadFile(wire, file, (percent) => setUploading(`${file.name} · ${percent}%`));
         await client.sendChannelMessage(shareLine(uploaded), { threadRootId: threadRoot });
       } catch (err) {
         wire.onError?.(err instanceof Error ? err.message : String(err));
@@ -999,9 +1034,9 @@ function DmView({
   // toggle when private Blossom hosts are common.
   const handleFiles = async (files: File[]) => {
     for (const file of files) {
-      setUploading(file.name);
+      setUploading(`${file.name} · 0%`);
       try {
-        const uploaded = await uploadFile(wire, file);
+        const uploaded = await uploadFile(wire, file, (percent) => setUploading(`${file.name} · ${percent}%`));
         const line = shareLine(uploaded);
         if (group) await client.sendGroupDm(peers, line);
         else await client.sendDm(convoKey, line);

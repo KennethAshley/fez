@@ -103,6 +103,8 @@ export default function HomeView({
           </button>
         ))}
 
+        <DraftsSection client={client} channels={channels} onOpenChannel={onOpenChannel} onOpenDm={onOpenDm} />
+
         {dms.length > 0 && (
           <>
             <div className="home-section">conversations</div>
@@ -123,5 +125,45 @@ export default function HomeView({
         )}
       </div>
     </main>
+  );
+}
+
+/** Every unsent draft, from localStorage — click to resume where you left off. */
+function DraftsSection({
+  client,
+  channels,
+  onOpenChannel,
+  onOpenDm,
+}: {
+  client: FezClient;
+  channels: Map<string, { name: string; communityId: string; communityName: string }>;
+  onOpenChannel: (communityId: string, channelId: string, msgId?: string) => void;
+  onOpenDm: (convoKey: string) => void;
+}) {
+  const drafts: { label: string; text: string; open: () => void }[] = [];
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index)!;
+    const text = localStorage.getItem(key) ?? "";
+    if (!text) continue;
+    if (key.startsWith("fez-draft-dm-")) {
+      const convoKey = key.slice("fez-draft-dm-".length);
+      drafts.push({ label: `✉ ${client.dmTitle(convoKey)}`, text, open: () => onOpenDm(convoKey) });
+    } else if (key.startsWith("fez-draft-")) {
+      const channelId = key.slice("fez-draft-".length);
+      const ref = channels.get(channelId);
+      if (ref) drafts.push({ label: `# ${ref.name}`, text, open: () => onOpenChannel(ref.communityId, channelId) });
+    }
+  }
+  if (drafts.length === 0) return null;
+  return (
+    <>
+      <div className="home-section">drafts</div>
+      {drafts.map((draft) => (
+        <button key={draft.label + draft.text.slice(0, 8)} className="inbox-row" onClick={draft.open}>
+          <span className="search-meta">✎ {draft.label}</span>
+          <span className="search-snippet">{draft.text.replace(/\s+/g, " ").slice(0, 160)}</span>
+        </button>
+      ))}
+    </>
   );
 }

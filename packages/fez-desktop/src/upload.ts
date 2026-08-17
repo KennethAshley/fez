@@ -22,7 +22,11 @@ export interface Uploaded {
   size: number;
 }
 
-export async function uploadFile(wire: BrowserWire, file: File): Promise<Uploaded> {
+export async function uploadFile(
+  wire: BrowserWire,
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<Uploaded> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const hash = bytesToHex(sha256(bytes));
   const auth = wire.signEvent({
@@ -35,19 +39,29 @@ export async function uploadFile(wire: BrowserWire, file: File): Promise<Uploade
     content: "fez upload",
   });
   const base = mediaServer().replace(/\/+$/, "");
-  const response = await fetch(`${base}/upload`, {
-    method: "PUT",
-    headers: {
-      Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
-      "Content-Type": file.type || "application/octet-stream",
-    },
-    body: bytes,
+  // XHR instead of fetch — it's the only way to get real upload progress.
+  const body = await new Promise<{ url?: string }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `${base}/upload`);
+    xhr.setRequestHeader("Authorization", `Nostr ${btoa(JSON.stringify(auth))}`);
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as { url?: string });
+        } catch {
+          resolve({});
+        }
+      } else {
+        reject(new Error(`upload failed (${xhr.status}): ${xhr.responseText.slice(0, 200) || xhr.statusText}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("upload failed — network error"));
+    xhr.send(bytes);
   });
-  if (!response.ok) {
-    const reason = (await response.text().catch(() => "")).slice(0, 200);
-    throw new Error(`upload failed (${response.status}): ${reason || response.statusText}`);
-  }
-  const body = (await response.json().catch(() => ({}))) as { url?: string };
   return { url: body.url ?? `${base}/${hash}`, name: file.name, size: bytes.length };
 }
 
