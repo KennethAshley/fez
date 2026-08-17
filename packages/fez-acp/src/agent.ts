@@ -11,6 +11,7 @@ import {
   invokeWithRetry,
   KIND_AGENT_ENGRAM,
   registerBuiltinHarnesses,
+  SESSION_TIMEOUTS,
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
@@ -26,6 +27,7 @@ import {
   type DmRumor,
   type HarnessSession,
   type HarnessUpdate,
+  type TimeoutOptions,
 } from "@fez/protocol";
 import fs from "node:fs";
 import os from "node:os";
@@ -152,6 +154,26 @@ async function main() {
     if (persona.extra.provider || persona.extra.model) {
       console.log(`🧠 pi mind: ${persona.extra.provider ?? "(default provider)"} / ${persona.extra.model ?? "(default model)"}`);
     }
+  }
+
+  // Turn deadlines: SESSION_TIMEOUTS (Buzz's 900s idle / 2h hard — sized
+  // above the longest legitimate quiet tool run) unless the persona says
+  // otherwise: `idleTimeoutS:` / `turnTimeoutS:` in frontmatter (seconds).
+  const timeoutOverrideS = (key: string): number | undefined => {
+    const raw = persona.extra[key] as string | undefined;
+    const n = raw !== undefined ? Number(raw) : NaN;
+    if (raw !== undefined && (!Number.isFinite(n) || n <= 0)) {
+      console.warn(`⚠️  persona ${key}: "${raw}" is not a positive number of seconds — using default`);
+      return undefined;
+    }
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  const turnTimeouts: TimeoutOptions = {
+    idleMs: (timeoutOverrideS("idleTimeoutS") ?? SESSION_TIMEOUTS.idleMs / 1000) * 1000,
+    maxMs: (timeoutOverrideS("turnTimeoutS") ?? SESSION_TIMEOUTS.maxMs / 1000) * 1000,
+  };
+  if (persona.extra.idleTimeoutS || persona.extra.turnTimeoutS) {
+    console.log(`⏱  turn deadlines: idle ${turnTimeouts.idleMs / 1000}s · hard ${turnTimeouts.maxMs / 1000}s`);
   }
 
   // Identity: one stable key per persona (~/.fez/agents/<persona>.key).
@@ -364,7 +386,9 @@ async function main() {
   }
   const sessionPool = new Map<string, PooledSession>();
   const SESSION_LRU_CAP = 4; // live minds at once — memory bound
-  const SESSION_TURN_CAP = 20; // recycle before context grows unbounded (Buzz's max_turns_per_session)
+  // Recycle before context grows unbounded (Buzz's max_turns_per_session).
+  // Env-tunable: ops knob + lets tests force a recycle quickly.
+  const SESSION_TURN_CAP = Number(process.env.FEZ_SESSION_TURN_CAP ?? "") || 20;
   const SESSION_IDLE_MS = 30 * 60_000;
 
   function dropSession(scope: string): void {
@@ -386,13 +410,57 @@ async function main() {
     }
   }, 60_000).unref?.();
 
+  // Handoff across turn-cap recycles (Buzz's handoff.rs decision): turn
+  // N+1 in a fresh session used to wake with amnesia beyond the recent-
+  // messages window. Now the dying session writes its own succession note,
+  // folded into the replacement's priming prompt. Only turn-cap recycles
+  // qualify — a poisoned session is never prompted again (it may hang or
+  // lie), and idle reaps shouldn't pay a turn on the way out.
+  const handoffs = new Map<string, string>();
+  const HANDOFF_PROMPT =
+    "Your session is about to be recycled; a fresh session takes over this conversation. " +
+    "Write a compact handoff for your replacement: (1) the standing task or topic, if any; " +
+    "(2) facts, names, and decisions from this conversation worth keeping; " +
+    "(3) unfinished work and the immediate next step. " +
+    "Plain text, under 200 words. This note is the only memory that survives.";
+
+  async function captureHandoff(scope: string, pooled: PooledSession): Promise<void> {
+    console.log(`🧠 session ${scope} at turn cap — capturing handoff`);
+    try {
+      const summary = await Promise.race([
+        pooled.session.prompt(HANDOFF_PROMPT),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("handoff capture timed out")), 90_000)
+        ),
+      ]);
+      const trimmed = summary.trim().slice(0, 4000);
+      if (trimmed) handoffs.set(scope, trimmed);
+    } catch (err) {
+      console.warn(`⚠️  handoff capture failed — recycling without it: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /** Fold (and consume) a pending handoff into a fresh session's priming prompt. */
+  function withHandoff(scope: string, prompt: string, fresh: boolean): string {
+    if (!fresh) return prompt;
+    const handoff = handoffs.get(scope);
+    if (!handoff) return prompt;
+    handoffs.delete(scope);
+    return `${prompt}\n\n## Handoff from your previous session (its own words)\n${handoff}`;
+  }
+
   async function getSession(scope: string): Promise<PooledSession> {
     const existing = sessionPool.get(scope);
     if (existing && existing.session.alive && existing.turns < SESSION_TURN_CAP) {
       existing.lastUsed = Date.now();
       return existing;
     }
-    if (existing) dropSession(scope);
+    if (existing) {
+      if (existing.session.alive && existing.turns >= SESSION_TURN_CAP) {
+        await captureHandoff(scope, existing);
+      }
+      dropSession(scope);
+    }
     while (sessionPool.size >= SESSION_LRU_CAP) {
       let oldestKey: string | undefined;
       let oldest = Infinity;
@@ -405,7 +473,7 @@ async function main() {
       if (!oldestKey) break;
       dropSession(oldestKey);
     }
-    const session = await harness!.openSession!(workDir, mcpServers);
+    const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts);
     const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false };
     sessionPool.set(scope, pooled);
     console.log(`🧠 opened harness session for ${scope} (${sessionPool.size} live)`);
@@ -432,7 +500,8 @@ async function main() {
     }
     let pooled = await getSession(scope);
     try {
-      const reply = await pooled.session.prompt(await buildPrompt(!pooled.primed), onProgress, onUpdate, signal);
+      const instruction = withHandoff(scope, await buildPrompt(!pooled.primed), !pooled.primed);
+      const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
       pooled.primed = true;
       pooled.turns++;
       pooled.lastUsed = Date.now();
@@ -443,7 +512,12 @@ async function main() {
       if (kind !== "transient") throw err;
       console.log(`↻ transient harness error — recycling session, replaying once: ${err instanceof Error ? err.message : err}`);
       pooled = await getSession(scope);
-      const reply = await pooled.session.prompt(await buildPrompt(true), onProgress, onUpdate, signal);
+      const reply = await pooled.session.prompt(
+        withHandoff(scope, await buildPrompt(true), true),
+        onProgress,
+        onUpdate,
+        signal
+      );
       pooled.primed = true;
       pooled.turns++;
       pooled.lastUsed = Date.now();

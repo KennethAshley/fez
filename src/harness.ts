@@ -57,8 +57,10 @@ export interface HarnessAdapter {
    * session model. The caller owns the lifecycle (close on breaker
    * trips, turn caps, idle reaping). Optional: adapters without it are
    * one-shot only and callers fall back to invoke().
+   * timeouts (optional) size the per-prompt idle/hard deadlines — see
+   * SESSION_TIMEOUTS for the defaults and their rationale.
    */
-  openSession?(cwd: string, mcpServers?: McpServer[]): Promise<HarnessSession>;
+  openSession?(cwd: string, mcpServers?: McpServer[], timeouts?: TimeoutOptions): Promise<HarnessSession>;
 }
 
 /** A live harness conversation. prompt() calls MUST be sequential (no overlap). */
@@ -88,7 +90,21 @@ export interface TimeoutOptions {
   maxMs: number;
 }
 
-const DEFAULT_TIMEOUTS: TimeoutOptions = { idleMs: 30_000, maxMs: 5 * 60_000 };
+/**
+ * Timeout sizing is arithmetic, not taste (Buzz config.rs, learned from
+ * real long-tool burns): ACP emits a tool_call at start and nothing again
+ * until the tool finishes, so the idle window must EXCEED the longest
+ * legitimate tool run — Claude Code's shell tool alone goes to 600s.
+ * The old 30s idle killed any turn with a quiet 40s tool call.
+ *
+ * Sessions (standing agents doing real work): Buzz's numbers — 900s idle,
+ * 2h hard cap. One-shot invoke (TUI local dispatch, interactive feel):
+ * tighter but still above the shell-tool ceiling.
+ * Per-persona override: extra.idleTimeoutS / extra.turnTimeoutS (seconds),
+ * threaded through openSession by fez-acp.
+ */
+export const SESSION_TIMEOUTS: TimeoutOptions = { idleMs: 900_000, maxMs: 2 * 60 * 60_000 };
+const ONE_SHOT_TIMEOUTS: TimeoutOptions = { idleMs: 300_000, maxMs: 30 * 60_000 };
 
 class HarnessTimeoutError extends Error {}
 
@@ -189,7 +205,8 @@ async function drivePrompt(
   instruction: string,
   onProgress?: (textSoFar: string) => void,
   onUpdate?: (update: HarnessUpdate) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeouts: TimeoutOptions = ONE_SHOT_TIMEOUTS
 ): Promise<string> {
   // Fire the prompt; drive completion through nextUpdate() rather than
   // awaiting prompt() directly so each update can reset the idle timer.
@@ -206,7 +223,7 @@ async function drivePrompt(
   });
   abortPromise.catch(() => {});
 
-  const { idleMs, maxMs } = DEFAULT_TIMEOUTS;
+  const { idleMs, maxMs } = timeouts;
   const hardDeadline = Date.now() + maxMs;
   let text = "";
   let thought = "";
@@ -290,7 +307,12 @@ async function drivePrompt(
  * flow into the same conversation, so turn N remembers turns 1..N-1
  * (Buzz's per-channel session model; the cure for fresh-mind-per-turn).
  */
-function openAcpSession(descriptor: AcpDescriptor, cwd: string, mcpServers?: McpServer[]): Promise<HarnessSession> {
+function openAcpSession(
+  descriptor: AcpDescriptor,
+  cwd: string,
+  mcpServers?: McpServer[],
+  timeouts: TimeoutOptions = SESSION_TIMEOUTS
+): Promise<HarnessSession> {
   const { command } = descriptor;
   const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
   child.stdin?.on("error", () => {});
@@ -338,7 +360,7 @@ function openAcpSession(descriptor: AcpDescriptor, cwd: string, mcpServers?: Mcp
           async prompt(instruction, onProgress, onUpdate, signal) {
             if (!alive) throw new Error(`${command} session is closed`);
             try {
-              return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal);
+              return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal, timeouts);
             } catch (err) {
               // A failed prompt may leave the session mid-stream — the
               // caller decides whether to recycle; surface stderr context.
@@ -384,7 +406,7 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
     command,
     detect: () => spawnDetect(command, ["--version"]),
 
-    openSession: (cwd, mcpServers) => openAcpSession(descriptor, cwd, mcpServers),
+    openSession: (cwd, mcpServers, timeouts) => openAcpSession(descriptor, cwd, mcpServers, timeouts),
 
     async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal) {
       const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
