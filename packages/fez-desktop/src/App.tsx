@@ -9,6 +9,7 @@ import { BrowserWire } from "./wire";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
+import ManagePane from "./ManagePane";
 import ActivityFeed from "./ActivityFeed";
 import { uploadFile, shareLine } from "./upload";
 import Onboarding from "./Onboarding";
@@ -43,7 +44,12 @@ type Boot =
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
 type MainView = { kind: "channel" } | { kind: "dm"; convoKey: string };
-type SidePane = { kind: "watch"; agent: string } | { kind: "costs" } | { kind: "agents" } | undefined;
+type SidePane =
+  | { kind: "watch"; agent: string }
+  | { kind: "costs" }
+  | { kind: "agents" }
+  | { kind: "manage" }
+  | undefined;
 
 function useForceRender(): () => void {
   const [, bump] = useReducer((n: number) => n + 1, 0);
@@ -363,6 +369,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           drafts={draftsRef.current.get(scope.channelId)}
           working={working}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
+          onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
         />
       )}
       {view.kind === "dm" && <DmView key={view.convoKey} client={client} wire={wire} convoKey={view.convoKey} />}
@@ -378,6 +385,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
+      {pane?.kind === "manage" && (
+        <ManagePane
+          client={client}
+          onOpenChannel={(communityId, channelId) => void openChannel(communityId, channelId)}
+          onClose={() => setPane(undefined)}
+        />
+      )}
       {pane?.kind === "agents" && (
         <AgentsPane
           client={client}
@@ -442,6 +456,7 @@ function ChannelView({
   drafts,
   working,
   onWatch,
+  onManage,
 }: {
   client: FezClient;
   wire: BrowserWire;
@@ -449,6 +464,7 @@ function ChannelView({
   drafts?: Map<string, { content: string; rootId?: string; ts: number }>;
   working: ReadonlyMap<string, { activity: string; ts: number }>;
   onWatch: (agent: string) => void;
+  onManage: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [uploading, setUploading] = useState<string>();
@@ -521,6 +537,11 @@ function ChannelView({
         <span className="hash">#</span> {channelName}
         {threadRoot && (
           <button className="thread-exit" onClick={() => setThreadRoot(undefined)}>← back to channel</button>
+        )}
+        {!threadRoot && (
+          <button className="topbar-tool" title="channel settings — members, invites, moderation" onClick={onManage}>
+            ⚙
+          </button>
         )}
       </header>
       <div className="timeline">

@@ -283,3 +283,23 @@ describe("leaveCommunity", () => {
     expect(client.state.joined.has(COMM)).toBe(true);
   });
 });
+
+describe("createChannel (creator-signed only)", () => {
+  test("creator publishes 47101 + owner roster; scope moves to the new channel", async () => {
+    const before = wire.published.length;
+    const channelId = await client.createChannel(COMM, "builds");
+    const [chanEvent, rosterEvent] = wire.published.slice(before);
+    expect(chanEvent.kind).toBe(47101);
+    expect(JSON.parse(chanEvent.content).name).toBe("builds");
+    expect(rosterEvent.kind).toBe(47102);
+    expect(rosterEvent.tags).toContainEqual(["p", ALICE, "owner"]);
+    expect(client.state.scope?.channelId).toBe(channelId);
+    expect(client.state.communities.get(COMM)?.channels.get(channelId)?.name).toBe("builds");
+  });
+
+  test("non-creator (and unknown community) are refused", async () => {
+    client.state.absorb(ev(47100, BOB, [["d", "bobs-comm"]], JSON.stringify({ name: "Bobs" }), T0 + 5));
+    await expect(client.createChannel("bobs-comm", "sneak")).rejects.toThrow(/creator/);
+    await expect(client.createChannel("no-such", "x")).rejects.toThrow(/unknown/);
+  });
+});

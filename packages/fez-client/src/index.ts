@@ -650,6 +650,31 @@ export class FezClient {
     return { communityId, channelId };
   }
 
+  /** Creator adds a channel to their community; scope moves there. */
+  async createChannel(communityId: string, name: string): Promise<string> {
+    const community = this.state.communities.get(communityId);
+    if (!community) throw new Error("unknown community");
+    if (community.creator !== this.pubkey) throw new Error("only the community creator can add channels (v1)");
+    const channelId = crypto.randomUUID();
+    const channelEvent = await this.wire.publish({
+      kind: K.CHANNEL,
+      tags: [["d", channelId], ["c", communityId]],
+      content: JSON.stringify({ name, visibility: "open" }),
+    });
+    const rosterEvent = await this.wire.publish({
+      kind: K.MEMBERSHIP,
+      tags: [["d", channelId], ["c", communityId], ["p", this.pubkey, "owner"]],
+      content: "",
+    });
+    this.state.absorb(channelEvent);
+    this.state.absorb(rosterEvent);
+    this.state.scope = { communityId, channelId };
+    this.state.save();
+    this.resubscribe();
+    this.emit("channelsChanged");
+    return channelId;
+  }
+
   async listCommunities(): Promise<{ id: string; name: string; joined: boolean }[]> {
     const events = await this.wire.query([{ kinds: [K.COMMUNITY], limit: 50 }]);
     for (const e of events) this.state.absorb(e);
