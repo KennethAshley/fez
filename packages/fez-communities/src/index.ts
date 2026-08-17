@@ -371,7 +371,10 @@ export default function communities(api: FezExtensionAPI): void {
   setInterval(renderTyping, 1000).unref?.();
 
   const panel = api.ui.createSidePanel({ width: 30, title: "channels", icon: "🗨️" });
-  const dmPanel = api.ui.createSidePanel({ title: "dms", icon: "✉️" });
+  // order 30: below the herdr AGENTS box (extensions load after us and
+  // take insertion order ~2) — DMs are conversations WITH those agents,
+  // so they read as a sub-concern of the fleet, per the user's layout.
+  const dmPanel = api.ui.createSidePanel({ title: "dms", icon: "✉️", order: 30 });
 
   function displayName(pubkey: string): string {
     return names.get(pubkey) ?? `${pubkey.slice(0, 8)}…`;

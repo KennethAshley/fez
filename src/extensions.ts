@@ -131,7 +131,7 @@ export interface FezExtensionAPI {
   nostr?: NostrAccess;
   ui: {
     setStatus(key: string, value: string): void;
-    createSidePanel(opts?: { width?: number; title?: string; icon?: string }): PanelHandle;
+    createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
     appendMessage(author: string, content: string): MessageHandle;
     /** Dim system one-liner — notices, not chat: no author bubble, no timestamp, clearly not a participant. */
     notify(text: string): void;
@@ -147,7 +147,7 @@ export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
 // no-ops so extensions can load without crashing. ─────────────────────────
 
 interface UiBackend {
-  createSidePanel(opts?: { width?: number; title?: string; icon?: string }): PanelHandle;
+  createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
   appendMessage(author: string, content: string): MessageHandle;
   notify(text: string): void;
   clearLog(): void;

@@ -21,6 +21,8 @@ import { getActiveTheme } from "./theme.js";
 export interface SidePanelSectionMeta {
   title?: string;
   icon?: string;
+  /** Display position — lower renders higher. Defaults to insertion order (0, 1, 2, …), so an explicit order can slot a section below later-registered ones. */
+  order?: number;
 }
 
 const BOLD = (s: string) => `\x1b[1m${s}\x1b[22m`;
@@ -36,7 +38,7 @@ export class SidePanel implements Component {
   ) {}
 
   addSection(meta: SidePanelSectionMeta = {}): number {
-    this.sections.push({ meta, text: "" });
+    this.sections.push({ meta: { ...meta, order: meta.order ?? this.sections.length }, text: "" });
     return this.sections.length - 1;
   }
 
@@ -54,7 +56,8 @@ export class SidePanel implements Component {
     const inner = Math.max(1, width - 4); // "│ " … " │"
     const rows: string[] = [];
 
-    for (const { meta, text } of this.sections) {
+    const ordered = [...this.sections].sort((a, b) => (a.meta.order ?? 0) - (b.meta.order ?? 0));
+    for (const { meta, text } of ordered) {
       if (!text.trim() && !meta.title) continue;
       if (rows.length > 0) rows.push("");
 

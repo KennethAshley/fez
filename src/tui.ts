@@ -152,7 +152,7 @@ export class FezTUI {
     });
     setUiBackend({
       createSidePanel: (opts) => {
-        const section = this.sidePanel.addSection({ title: opts?.title, icon: opts?.icon });
+        const section = this.sidePanel.addSection({ title: opts?.title, icon: opts?.icon, order: opts?.order });
         if (opts?.width) this.sidePanelWidth = opts.width;
         this.sidePanelUsed = true;
         return {

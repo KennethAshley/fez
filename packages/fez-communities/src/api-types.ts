@@ -66,7 +66,7 @@ export interface FezExtensionAPI {
   nostr?: NostrAccess;
   ui: {
     setStatus(key: string, value: string): void;
-    createSidePanel(opts?: { width?: number; title?: string; icon?: string }): PanelHandle;
+    createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
     appendMessage(author: string, content: string): MessageHandle;
     notify(text: string): void;
     clearLog(): void;
