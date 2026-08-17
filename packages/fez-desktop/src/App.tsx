@@ -20,6 +20,7 @@ import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import Avatar from "./Avatar";
 import { uploadFile, shareLine } from "./upload";
+import { runCommand } from "./commands";
 import Onboarding from "./Onboarding";
 import "./App.css";
 
@@ -271,13 +272,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
     }) as never);
   }, [client, render]);
 
-  // ⌘K — Buzz's topbar search, as a palette.
-  const [searchOpen, setSearchOpen] = useState(false);
+  // ⌘K — Buzz's topbar search, as a palette (also /search <words>).
+  const [searchOpen, setSearchOpen] = useState<false | { query: string }>(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setSearchOpen((open) => !open);
+        setSearchOpen((open) => (open ? false : { query: "" }));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -300,6 +301,27 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
     setView({ kind: "dm", convoKey });
     render();
   };
+
+  /** Slash commands from the composer — routing over surfaces the GUI already has. */
+  const runSlash = (text: string) =>
+    runCommand(text, {
+      client,
+      wire,
+      channelId: scope?.channelId,
+      communityId: scope?.communityId,
+      ui: {
+        openSearch: (query) => setSearchOpen({ query }),
+        watch: (agent) => setPane({ kind: "watch", agent }),
+        openDocs: () => {
+          if (scope) setPane({ kind: "docs", channelId: scope.channelId, communityId: scope.communityId });
+        },
+        openAgents: () => setPane({ kind: "agents" }),
+        openDm,
+        goHome: () => setView({ kind: "home" }),
+        goPulse: () => setView({ kind: "pulse" }),
+        toggleMute,
+      },
+    });
 
   const cancelAgent = async (agentName: string) => {
     const pk = client.pkByName(agentName);
@@ -351,7 +373,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <div className="brand">
           <span className="brand-word">fez</span>{" "}
           <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />
-          <button className="rail-tool" title="search (⌘K)" onClick={() => setSearchOpen(true)}>
+          <button className="rail-tool" title="search (⌘K)" onClick={() => setSearchOpen({ query: "" })}>
             ⌕
           </button>
           <button className="rail-tool" title="agents" onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}>
@@ -459,6 +481,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
                 : { kind: "docs", channelId: scope.channelId, communityId: scope.communityId }
             )
           }
+          onCommand={runSlash}
         />
       )}
       {view.kind === "dm" && (
@@ -582,6 +605,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <SearchOverlay
           client={client}
           wire={wire}
+          initialQuery={searchOpen.query}
           onJump={(communityId, channelId, msgId) => void openChannel(communityId, channelId, msgId)}
           onClose={() => setSearchOpen(false)}
         />
@@ -635,6 +659,7 @@ function ChannelView({
   onManage,
   onProfile,
   onDocs,
+  onCommand,
   focusId,
 }: {
   client: FezClient;
@@ -647,6 +672,7 @@ function ChannelView({
   onManage: () => void;
   onProfile: (pk: string) => void;
   onDocs: () => void;
+  onCommand: (text: string) => Promise<string>;
 }) {
   // Drafts persist per channel (Buzz's DraftsPanel decision, minimal
   // form): switching channels no longer eats half-typed messages.
@@ -690,10 +716,20 @@ function ChannelView({
     if (el) nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
+  const [cmdNotice, setCmdNotice] = useState<string>();
+
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
     setDraft("");
+    if (!editing && text.startsWith("/")) {
+      const feedback = await onCommand(text);
+      if (feedback) {
+        setCmdNotice(feedback);
+        setTimeout(() => setCmdNotice(undefined), 8000);
+      }
+      return;
+    }
     if (editing) {
       const target = editing;
       setEditing(undefined);
@@ -812,12 +848,14 @@ function ChannelView({
         </div>
       )}
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
+      {cmdNotice && <div className="edit-banner cmd-notice">{cmdNotice}</div>}
       <Composer
         client={client}
         value={draft}
         onChange={setDraft}
         onSend={() => void send()}
-        placeholder={threadRoot ? "reply in thread…" : `message #${channelName} — @name summons an agent`}
+        commandsEnabled
+        placeholder={threadRoot ? "reply in thread…" : `message #${channelName} — @name summons an agent · / for commands`}
         editing={!!editing}
         onArrowUpEmpty={editing ? undefined : startEditLast}
         onEscape={

@@ -27,15 +27,17 @@ interface Row {
 export default function SearchOverlay({
   client,
   wire,
+  initialQuery,
   onJump,
   onClose,
 }: {
   client: FezClient;
   wire: BrowserWire;
+  initialQuery?: string;
   onJump: (communityId: string, channelId: string, msgId?: string) => void;
   onClose: () => void;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [rows, setRows] = useState<Row[] | undefined>();
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);

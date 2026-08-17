@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient } from "@fez/client";
 import { EMOJI, searchEmoji, type EmojiEntry } from "./emoji";
+import { COMMANDS, type CommandMeta } from "./commands";
 
 /**
  * The message composer, Buzz-shaped: multiline textarea (Enter sends,
@@ -26,6 +27,7 @@ export default function Composer({
   onEscape,
   onFiles,
   disabled,
+  commandsEnabled,
 }: {
   client: FezClient;
   value: string;
@@ -37,6 +39,7 @@ export default function Composer({
   onEscape?: () => void;
   onFiles?: (files: File[]) => void;
   disabled?: boolean;
+  commandsEnabled?: boolean;
 }) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = useState(0);
@@ -54,15 +57,18 @@ export default function Composer({
     area.style.height = `${Math.min(area.scrollHeight, 140)}px`;
   }, [value]);
 
-  // The token under the caret drives the popup: @name or :emoji:.
+  // The token under the caret drives the popup: /command (only at the
+  // very start), @name, or :emoji:.
   const token = useMemo(() => {
     const upto = value.slice(0, caret);
+    const command = /^\/([a-z]*)$/.exec(upto);
+    if (command && commandsEnabled) return { type: "command" as const, partial: command[1], start: 0 };
     const mention = /(^|\s)@([\w-]*)$/.exec(upto);
     if (mention) return { type: "mention" as const, partial: mention[2], start: upto.length - mention[2].length - 1 };
     const emoji = /(^|\s):([a-z0-9_+-]{2,})$/.exec(upto);
     if (emoji) return { type: "emoji" as const, partial: emoji[2], start: upto.length - emoji[2].length - 1 };
     return undefined;
-  }, [value, caret]);
+  }, [value, caret, commandsEnabled]);
 
   const mentionCandidates = useMemo(() => {
     if (token?.type !== "mention") return [];
@@ -91,7 +97,20 @@ export default function Composer({
     [token]
   );
 
-  const popupSize = token?.type === "mention" ? mentionCandidates.length : emojiCandidates.length;
+  const commandCandidates = useMemo(
+    () =>
+      token?.type === "command"
+        ? COMMANDS.filter((c) => c.name.startsWith(token.partial)).slice(0, 9)
+        : [],
+    [token]
+  );
+
+  const popupSize =
+    token?.type === "mention"
+      ? mentionCandidates.length
+      : token?.type === "emoji"
+        ? emojiCandidates.length
+        : commandCandidates.length;
 
   useEffect(() => {
     setPickIndex(0);
@@ -122,6 +141,9 @@ export default function Composer({
     } else if (token?.type === "emoji") {
       const candidate = emojiCandidates[index];
       if (candidate) replaceToken(candidate.char);
+    } else if (token?.type === "command") {
+      const candidate = commandCandidates[index];
+      if (candidate) replaceToken(candidate.args ? `/${candidate.name} ` : `/${candidate.name}`);
     }
   };
 
@@ -173,6 +195,21 @@ export default function Composer({
               >
                 @{candidate.name}
                 {client.isOnline(candidate.pk) && <span className="dot on" />}
+              </button>
+            ))}
+          {token?.type === "command" &&
+            commandCandidates.map((candidate: CommandMeta, index) => (
+              <button
+                key={candidate.name}
+                className={index === pickIndex ? "mention-item cmd-item active" : "mention-item cmd-item"}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(index);
+                }}
+              >
+                <span className="cmd-name">/{candidate.name}</span>
+                {candidate.args && <span className="cmd-args">{candidate.args}</span>}
+                <span className="cmd-desc">{candidate.description}</span>
               </button>
             ))}
           {token?.type === "emoji" &&

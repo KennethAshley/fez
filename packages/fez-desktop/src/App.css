@@ -714,3 +714,10 @@ button.author:hover { text-decoration: underline; }
   background: var(--red); border: 0; color: var(--bg0); font: inherit; font-size: 12px;
   font-weight: 700; padding: 6px 10px; border-radius: 6px; cursor: pointer;
 }
+
+/* ── slash command hints ───────────────────────────────────── */
+.cmd-item { display: flex; align-items: baseline; gap: 8px; }
+.cmd-name { color: var(--accent); font-weight: 700; }
+.cmd-args { color: var(--yellow); font-size: 11px; }
+.cmd-desc { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
+.cmd-notice { font-family: var(--font-mono); }
