@@ -1,0 +1,13 @@
+{
+  "name": "@fez/dms",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private DM view for fez — /dm, DMS sidebar with presence. A pure view over @fez/client.",
+  "type": "module",
+  "fez": { "type": "extension", "extension": { "entry": "dist/index.js" } },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": { "esbuild": "^0.21.5", "typescript": "^5.6.0" }
+}

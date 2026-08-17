@@ -65,6 +65,43 @@ export interface MessageHandle {
   setMeta(text: string): void;
 }
 
+/**
+ * Cross-extension view ownership for the chat log. Exactly one owner at
+ * a time; "channel" is the default timeline (fez-communities). An
+ * extension opening a full-screen view (doc, DM conversation) claims
+ * with a namespaced owner string, renders (clearLog + its content),
+ * and every other extension checks the owner before painting into the
+ * log. /back (communities) releases ANY owner; onChange fires so the
+ * default timeline repaints and the leaving owner drops its handles.
+ */
+export interface ViewBus {
+  owner(): string;
+  claim(owner: string): void;
+  release(): void;
+  onChange(cb: (owner: string) => void): void;
+}
+
+const viewChangeCbs: ((owner: string) => void)[] = [];
+let viewOwner = "channel";
+const viewBus: ViewBus = {
+  owner: () => viewOwner,
+  claim(owner: string) {
+    if (viewOwner === owner) return;
+    viewOwner = owner;
+    for (const cb of viewChangeCbs) {
+      try {
+        cb(owner);
+      } catch { /* one broken view must not break the rest */ }
+    }
+  },
+  release() {
+    viewBus.claim("channel");
+  },
+  onChange(cb) {
+    viewChangeCbs.push(cb);
+  },
+};
+
 export type InputHandler = (text: string) => Promise<boolean>;
 
 export type UrlHandler = (url: string) => void;
@@ -152,6 +189,8 @@ export interface FezExtensionAPI {
     notify(text: string): void;
     /** Wipe the chat log — view switching (e.g. a thread view repainting the timeline). */
     clearLog(): void;
+    /** Cross-extension view ownership — see ViewBus. */
+    viewBus: ViewBus;
   };
 }
 
@@ -225,6 +264,7 @@ function buildApi(): FezExtensionAPI {
       onLogScrollTop: (handler) => uiBackend?.onLogScrollTop(handler),
       notify: (text) => uiBackend?.notify(text),
       clearLog: () => uiBackend?.clearLog(),
+      viewBus,
     },
   };
 }

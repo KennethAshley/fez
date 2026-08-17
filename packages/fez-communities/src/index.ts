@@ -8,18 +8,20 @@ import type { FezClient, Msg, Job } from "@fez/client";
  * Fez communities — the TUI VIEW over @fez/client. All protocol state,
  * trust rules, and actions live in the client (api.client, one shared
  * instance per process); this file only renders and registers commands.
- * The type import of @fez/client is type-only and erased at bundle
- * time — the runtime instance arrives through the API object.
+ * Docs and DMs are their OWN extensions (fez-docs, fez-dms) — this one
+ * covers channels, threads, jobs, /watch, and message ops, and owns
+ * the default "channel" view on the view bus (/back releases any
+ * foreign view back to it).
  *
  * /community create <name> | list | join <id>
  * /channels | /join | /leave | /members | /invite
  * /thread(s) | /back | /watch | /jobs | /memory
- * /dm | /doc | /edit | /pin(s) | /unpin | /bookmark(s)
- * /schedule | /remind
+ * /edit | /pin(s) | /unpin | /bookmark(s) | /schedule | /remind
  */
 export default function communities(api: FezExtensionAPI): void {
   if (!api.client) return; // CLI subcommand context — nothing chat-shaped to do
   const client = api.client as FezClient;
+  const views = api.ui.viewBus;
 
   const DIM = (s: string) => `\x1b[2m${s}\x1b[22m`;
   const OSC8 = (url: string, label: string) => `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
@@ -36,8 +38,20 @@ export default function communities(api: FezExtensionAPI): void {
     | { mode: "thread"; rootId: string }
     | { mode: "watch"; agent: string }
     | { mode: "jobs" }
-    | { mode: "dm"; peerPk: string }
-    | { mode: "doc" } = { mode: "channel" };
+    /** A foreign extension (docs, dms) owns the log — we only notify. */
+    | { mode: "external" } = { mode: "channel" };
+
+  views.onChange((owner) => {
+    if (owner === "channel") {
+      view = { mode: "channel" };
+      const current = client.state.currentChannel();
+      if (current) renderChannelTimeline(current.channel.id);
+      else api.ui.clearLog();
+      refreshUi();
+    } else if (!owner.startsWith("communities:")) {
+      view = { mode: "external" };
+    }
+  });
 
   // Live-updatable UI handles — die with every clearLog repaint.
   let bubbleHandles = new Map<string, MessageHandle>();
@@ -48,8 +62,6 @@ export default function communities(api: FezExtensionAPI): void {
   let watchTextBubble: MessageHandle | undefined;
 
   const panel = api.ui.createSidePanel({ width: 30, title: "channels", icon: "🗨️" });
-  const dmPanel = api.ui.createSidePanel({ title: "dms", icon: "✉️", order: 30 });
-  const docsPanel = api.ui.createSidePanel({ title: "docs", icon: "📄", order: 20 });
 
   function resetHandles(): void {
     api.ui.clearLog();
@@ -172,24 +184,6 @@ export default function communities(api: FezExtensionAPI): void {
     api.ui.notify("— the job board assembles from wire events; /back returns —");
   }
 
-  function renderDmView(peerPk: string): void {
-    resetHandles();
-    api.ui.notify(`— private DM with @${client.displayName(peerPk)} · end-to-end encrypted, no channel involved · plain messages send here, /back returns —`);
-    for (const m of client.dmConversations().get(peerPk)?.msgs ?? []) {
-      api.ui.appendMessage(client.displayName(m.senderPk), m.text, m.ts);
-    }
-  }
-
-  function renderDocView(doc: NostrEvent | undefined, versionNo: number, total: number, channelName: string): void {
-    resetHandles();
-    if (!doc) {
-      api.ui.appendMessage("doc", `#${channelName} has no doc yet. Start one: /doc set <text> — one living document per channel, editable by any member (agents included). /back returns.`);
-      return;
-    }
-    api.ui.notify(`— #${channelName} doc · v${versionNo}/${total} · last edit by ${client.displayName(doc.pubkey)} — /doc history · /doc set|append <text> · /back —`);
-    api.ui.appendMessage(client.displayName(doc.pubkey), doc.content, doc.created_at);
-  }
-
   function refreshUi(): void {
     const busy = new Map<string, Job>();
     for (const job of client.activeJobs()) busy.set(job.agentPk, job);
@@ -201,10 +195,8 @@ export default function communities(api: FezExtensionAPI): void {
         (statusLines.length > 0 ? `\n\n Working\n${statusLines.join("\n")}\n — /jobs` : "")
     );
     const current = client.state.currentChannel();
-    if (view.mode === "dm") {
-      api.ui.setStatus("scope", `✉ @${client.displayName(view.peerPk)} · private`);
-      return;
-    }
+    // A foreign view (doc, DM) sets its own scope footer — leave it be.
+    if (view.mode === "external") return;
     const suffix =
       view.mode === "thread"
         ? ` ▸ thread #${client.threadNo(view.rootId)}`
@@ -212,33 +204,8 @@ export default function communities(api: FezExtensionAPI): void {
           ? ` ▸ watching @${view.agent}`
           : view.mode === "jobs"
             ? " ▸ jobs"
-            : view.mode === "doc"
-              ? " ▸ doc"
-              : "";
+            : "";
     api.ui.setStatus("scope", current ? `${current.community.name}/#${current.channel.name}${suffix}` : "");
-  }
-
-  function refreshDmPanel(): void {
-    const convos = client.dmConversations();
-    if (convos.size === 0) {
-      dmPanel.setText(" (none — /dm <agent>)");
-      return;
-    }
-    const lines = [...convos.entries()]
-      .sort((a, b) => (b[1].msgs.at(-1)?.ts ?? 0) - (a[1].msgs.at(-1)?.ts ?? 0))
-      .slice(0, 12)
-      .map(([pk, c]) => ` ${presenceDot(pk)} ${OSC8(`fez-dm://open/${pk}`, `@${client.displayName(pk)}`)}${c.unread > 0 ? ` (${c.unread})` : ""}`);
-    dmPanel.setText(lines.join("\n"));
-  }
-
-  function refreshDocsPanel(): void {
-    const rows: string[] = [];
-    for (const [channelId, info] of client.docsByChannel()) {
-      const ref = client.channelRef(channelId);
-      if (!ref) continue;
-      rows.push(` ${OSC8(`fez-doc://open/${channelId}`, `#${ref.name}`)} ${DIM(`v${info.count} · ${info.latestAuthor === client.pubkey ? "you" : client.displayName(info.latestAuthor)}`)}`);
-    }
-    docsPanel.setText(rows.length > 0 ? rows.join("\n") : " (none — /doc set)");
   }
 
   function renderTyping(): void {
@@ -268,73 +235,12 @@ export default function communities(api: FezExtensionAPI): void {
     }, 200);
   }
 
-  // ── Doc disk mirror: ~/.fez/docs/<community>/<channel>.md, both ways ───
-
-  const DOCS_DIR = path.join(os.homedir(), ".fez", "docs");
-  const mirrorPathByChannel = new Map<string, string>();
-  const lastMirrored = new Map<string, string>();
-  const sanitizeName = (s: string) => s.replace(/[^\w.-]+/g, "_");
-
-  function mirrorWrite(channelId: string): void {
-    const info = client.docsByChannel().get(channelId);
-    const ref = client.channelRef(channelId);
-    if (!info || !ref) return;
-    try {
-      const dir = path.join(DOCS_DIR, sanitizeName(ref.communityName));
-      const file = path.join(dir, `${sanitizeName(ref.name)}.md`);
-      mirrorPathByChannel.set(channelId, file);
-      if (lastMirrored.get(file) === info.latestContent) return;
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(file, info.latestContent);
-      lastMirrored.set(file, info.latestContent);
-    } catch { /* disk trouble — mirror is a convenience, the relay is canonical */ }
-  }
-
-  const watchDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  try {
-    fs.mkdirSync(DOCS_DIR, { recursive: true });
-    fs.watch(DOCS_DIR, { recursive: true }, (_eventType, fname) => {
-      if (!fname || !fname.toString().endsWith(".md")) return;
-      const full = path.join(DOCS_DIR, fname.toString());
-      clearTimeout(watchDebounce.get(full));
-      watchDebounce.set(
-        full,
-        setTimeout(() => {
-          const channelId = [...mirrorPathByChannel.entries()].find(([, p]) => p === full)?.[0];
-          if (!channelId) return;
-          let content: string;
-          try {
-            content = fs.readFileSync(full, "utf-8");
-          } catch {
-            return;
-          }
-          if (content === lastMirrored.get(full)) return; // our own write
-          const info = client.docsByChannel().get(channelId);
-          const ref = client.channelRef(channelId);
-          if (!ref || content.trim() === (info?.latestContent ?? "").trim()) return;
-          lastMirrored.set(full, content);
-          void client
-            .publishDoc(channelId, ref.communityId, content, info?.latestId || undefined)
-            .then(() => api.ui.notify(`📄 ${path.basename(full)} saved → published doc v${(info?.count ?? 0) + 1} to #${ref.name}`))
-            .catch(() => api.ui.notify(`⚠️ couldn't publish ${path.basename(full)} — relay unreachable?`));
-        }, 400)
-      );
-    });
-  } catch { /* fs.watch unavailable — mirror stays read-only */ }
-
   // ── Client event wiring — the whole view reacts through these ─────────
 
   client.on("notice", (text) => api.ui.notify(text));
   client.on("typingChanged", renderTyping);
   client.on("unreadsChanged", refreshUi);
-  client.on("presenceChanged", () => {
-    refreshDmPanel();
-    refreshDocsPanel();
-  });
-  client.on("channelsChanged", () => {
-    refreshUi();
-    refreshDocsPanel();
-  });
+  client.on("channelsChanged", refreshUi);
   client.on("jobsChanged", () => {
     if (view.mode === "jobs") renderJobsView();
     refreshUi();
@@ -353,7 +259,7 @@ export default function communities(api: FezExtensionAPI): void {
       refreshUi(); // badge bump
       return;
     }
-    if (view.mode === "watch" || view.mode === "doc" || view.mode === "dm") {
+    if (view.mode === "watch" || view.mode === "external") {
       api.ui.notify(`(in #channel: ${msg.authorName}: ${snippet(msg.content)})`);
       return;
     }
@@ -432,35 +338,6 @@ export default function communities(api: FezExtensionAPI): void {
     }
   });
 
-  client.on("dmMessage", (dm, ctx) => {
-    if (view.mode === "dm" && view.peerPk === dm.peerPk) {
-      client.markDmRead(dm.peerPk);
-      if (ctx.live) api.ui.appendMessage(client.displayName(dm.senderPk), dm.text, dm.ts);
-    } else if (ctx.live && dm.senderPk !== client.pubkey) {
-      api.ui.notify(`✉️  DM from ${client.displayName(dm.senderPk)}: ${snippet(dm.text)} — /dm ${client.displayName(dm.senderPk)}`);
-    }
-    refreshDmPanel();
-  });
-
-  client.on("docChanged", (channelId) => {
-    refreshDocsPanel();
-    mirrorWrite(channelId);
-    if (view.mode === "doc" && client.state.scope?.channelId === channelId) {
-      const ref = client.channelRef(channelId);
-      if (!ref) return;
-      void client.docVersions(channelId, ref.communityId).then((versions) => {
-        if (view.mode !== "doc" || client.state.scope?.channelId !== channelId) return;
-        renderDocView(versions.at(-1), versions.length, versions.length, ref.name);
-        refreshUi();
-      });
-    } else if (client.docsByChannel().get(channelId)?.latestAuthor !== client.pubkey) {
-      const ref = client.channelRef(channelId);
-      if (ref && client.state.scope?.channelId === channelId) {
-        api.ui.notify(`📄 ${client.displayName(client.docsByChannel().get(channelId)!.latestAuthor)} updated the channel doc — /doc`);
-      }
-    }
-  });
-
   client.on("observerFrame", (agent, frame) => {
     renderObserverStatus();
     // Inline tool activity on a streaming draft bubble.
@@ -492,33 +369,10 @@ export default function communities(api: FezExtensionAPI): void {
     const current = client.state.currentChannel();
     if (!rootId || !current) return;
     view = { mode: "thread", rootId };
+    views.claim("communities:thread");
     renderThreadView(current.channel.id, rootId);
     refreshUi();
   });
-
-  api.registerUrlHandler("fez-dm://open/", (url) => {
-    openDm(url.slice("fez-dm://open/".length));
-  });
-
-  api.registerUrlHandler("fez-doc://open/", (url) => {
-    const channelId = url.slice("fez-doc://open/".length);
-    const ref = client.channelRef(channelId);
-    if (!ref) return;
-    client.setScope(ref.communityId, channelId);
-    void client.docVersions(channelId, ref.communityId).then((versions) => {
-      view = { mode: "doc" };
-      renderDocView(versions.at(-1), versions.length, versions.length, ref.name);
-      refreshUi();
-    });
-  });
-
-  function openDm(peerPk: string): void {
-    view = { mode: "dm", peerPk };
-    client.markDmRead(peerPk);
-    renderDmView(peerPk);
-    refreshDmPanel();
-    refreshUi();
-  }
 
   // ── Commands ────────────────────────────────────────────────────────────
 
@@ -570,6 +424,7 @@ export default function communities(api: FezExtensionAPI): void {
     const wanted = args.trim();
     if (!wanted) return ctx.reply("Usage: /join <channel-name>");
     view = { mode: "channel" };
+    views.claim("channel");
     const joined = await client.joinChannel(wanted);
     if (!joined) return ctx.reply(`No channel named "${wanted}" in your joined communities.`);
     refreshUi();
@@ -592,6 +447,7 @@ export default function communities(api: FezExtensionAPI): void {
     const rootId = client.rootByThreadNo(no);
     if (!rootId) return ctx.reply(`No thread #${args.trim() || "?"} — /threads lists them.`);
     view = { mode: "thread", rootId };
+    views.claim("communities:thread");
     renderThreadView(current.channel.id, rootId);
     refreshUi();
   });
@@ -614,20 +470,19 @@ export default function communities(api: FezExtensionAPI): void {
   });
 
   api.registerCommand("back", async (_args, ctx) => {
-    if (view.mode === "channel") return ctx.reply("Not in a thread, watch, jobs, doc, or DM view.");
-    const current = client.state.currentChannel();
-    view = { mode: "channel" };
+    if (views.owner() === "channel") return ctx.reply("Not in a thread, watch, jobs, doc, or DM view.");
     watchThoughtBubble = undefined;
     watchTextBubble = undefined;
-    if (current) renderChannelTimeline(current.channel.id);
-    else api.ui.clearLog();
-    refreshUi();
+    // Releasing repaints the channel timeline via the onChange handler —
+    // works no matter which extension owned the view.
+    views.release();
   });
 
   api.registerCommand("watch", async (args, ctx) => {
     const agent = args.trim().replace(/^@/, "");
     if (!agent) return ctx.reply("Usage: /watch <agent-name> — live encrypted view of an agent you own. /back to leave.");
     view = { mode: "watch", agent };
+    views.claim("communities:watch");
     watchThoughtBubble = undefined;
     watchTextBubble = undefined;
     resetHandles();
@@ -641,6 +496,7 @@ export default function communities(api: FezExtensionAPI): void {
 
   api.registerCommand("jobs", async (_args, _ctx) => {
     view = { mode: "jobs" };
+    views.claim("communities:jobs");
     refreshUi();
     renderJobsView();
   });
@@ -696,79 +552,6 @@ export default function communities(api: FezExtensionAPI): void {
     }
     entries.sort((a, b) => a.slug.localeCompare(b.slug));
     ctx.reply([`**@${name} — memory**`, core ? `**core**\n${core}` : "_(core not set)_", ...entries.map((b) => `**${b.slug}**\n${b.value}`)].join("\n\n"));
-  });
-
-  api.registerCommand("dm", async (args, ctx) => {
-    const target = args.trim().replace(/^@/, "");
-    if (!target) {
-      const convos = client.dmConversations();
-      if (convos.size === 0) {
-        return ctx.reply("No DM conversations yet. /dm <agent-name|pubkey> starts one — private and end-to-end encrypted, no channel involved.");
-      }
-      return ctx.reply(
-        [...convos.entries()]
-          .map(([pk, c]) => `• @${client.displayName(pk)}${c.unread > 0 ? ` — ${c.unread} unread` : ""} (/dm ${client.displayName(pk)})`)
-          .join("\n")
-      );
-    }
-    const peerPk = /^[0-9a-f]{64}$/i.test(target) ? target.toLowerCase() : client.pkByName(target);
-    if (!peerPk) return ctx.reply(`No one named "${target}" seen on this relay — a 64-char hex pubkey works for anyone unnamed.`);
-    if (peerPk === client.pubkey) return ctx.reply("That's you.");
-    openDm(peerPk);
-  });
-
-  api.registerCommand("doc", async (args, ctx) => {
-    const current = client.state.currentChannel();
-    if (!current) return ctx.reply("Not in a channel — /join <channel> first.");
-    const [sub, ...rest] = args.trim().split(/\s+/);
-
-    if (sub === "set" || sub === "append") {
-      const text = args.trim().slice(sub.length).trim().replace(/\\n/g, "\n");
-      if (!text) return ctx.reply(`Usage: /doc ${sub} <markdown — \\n for newlines>`);
-      const versions = await client.docVersions(current.channel.id, current.community.id);
-      const latest = versions.at(-1);
-      const content = sub === "append" && latest ? `${latest.content}\n\n${text}` : text;
-      await client.publishDoc(current.channel.id, current.community.id, content, latest?.id);
-      ctx.reply(`📄 doc ${sub === "append" ? "appended" : "updated"} (v${versions.length + 1}). /doc to read.`);
-      return;
-    }
-
-    if (sub === "history") {
-      const versions = await client.docVersions(current.channel.id, current.community.id);
-      if (versions.length === 0) return ctx.reply("No doc yet — /doc set <text> starts one.");
-      const baseOf = (v: { tags: string[][] }) => v.tags.find((t) => t[0] === "base")?.[1];
-      const childrenByBase = new Map<string, number>();
-      for (const v of versions) {
-        const b = baseOf(v);
-        if (b) childrenByBase.set(b, (childrenByBase.get(b) ?? 0) + 1);
-      }
-      ctx.reply(
-        versions
-          .map((v, i) => {
-            const b = baseOf(v);
-            const fork = b && (childrenByBase.get(b) ?? 0) > 1 ? " ⑂ concurrent edit" : "";
-            return `• v${i + 1} — ${client.displayName(v.pubkey)}, ${new Date(v.created_at * 1000).toLocaleString()} (${v.content.length} chars)${fork}${i === versions.length - 1 ? " ← current" : ` — /doc show ${i + 1}`}`;
-          })
-          .join("\n")
-      );
-      return;
-    }
-
-    if (sub === "show") {
-      const versions = await client.docVersions(current.channel.id, current.community.id);
-      const no = Number(rest[0]);
-      const doc = versions[no - 1];
-      if (!doc) return ctx.reply(`No v${rest[0] || "?"} — /doc history lists versions.`);
-      view = { mode: "doc" };
-      renderDocView(doc as NostrEvent, no, versions.length, current.channel.name);
-      refreshUi();
-      return;
-    }
-
-    const versions = await client.docVersions(current.channel.id, current.community.id);
-    view = { mode: "doc" };
-    renderDocView(versions.at(-1) as NostrEvent | undefined, versions.length, versions.length, current.channel.name);
-    refreshUi();
   });
 
   function lastMessage(channelId: string, mine: boolean): Msg | undefined {
@@ -893,13 +676,9 @@ export default function communities(api: FezExtensionAPI): void {
   // ── Chat input ─────────────────────────────────────────────────────────
 
   api.registerInputHandler(async (text) => {
-    if (view.mode === "dm") {
-      const peerPk = view.peerPk;
-      await client.sendDm(peerPk, text);
-      api.ui.appendMessage("You", text);
-      refreshDmPanel();
-      return true;
-    }
+    // Only handle input when WE own the view — a DM conversation's
+    // input belongs to fez-dms.
+    if (view.mode === "external") return false;
     const current = client.state.currentChannel();
     if (!current) return false;
     if (!current.channel.members.has(client.pubkey)) {
@@ -952,6 +731,4 @@ export default function communities(api: FezExtensionAPI): void {
 
   // Initial paint.
   refreshUi();
-  refreshDmPanel();
-  refreshDocsPanel();
 }

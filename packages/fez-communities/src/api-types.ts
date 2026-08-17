@@ -58,6 +58,13 @@ export interface MessageHandle {
   setMeta(text: string): void;
 }
 
+export interface ViewBus {
+  owner(): string;
+  claim(owner: string): void;
+  release(): void;
+  onChange(cb: (owner: string) => void): void;
+}
+
 export interface CommandContext {
   reply(content: string): void;
 }
@@ -77,5 +84,7 @@ export interface FezExtensionAPI {
     onLogScrollTop(handler: () => Promise<void>): void;
     notify(text: string): void;
     clearLog(): void;
+    /** Cross-extension view ownership for the chat log. */
+    viewBus: ViewBus;
   };
 }
