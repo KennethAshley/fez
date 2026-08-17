@@ -913,6 +913,8 @@ async function main() {
             persona.systemPrompt ?? "",
             ...(memorySection ? [memorySection] : []),
             `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
+            `- Callbacks: when you FINISH work that another agent or person handed you, @mention them in the message that reports the result, deliverable, or blocker — a completed handoff that never calls back stalls the whole chain. Completed work only: never @ to acknowledge, accept, or thank.`,
+            `- Proposing teammates: if a task keeps needing a specialist that doesn't exist, you may propose one: run the shell command fez persona draft <name> --description "<what it's for>" --prompt "<system prompt>". The owner reviews and approves; NEVER claim the new agent exists until it answers a mention.`,
             `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
             ...(missingSkills.length > 0
               ? [

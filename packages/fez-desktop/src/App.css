@@ -772,3 +772,9 @@ button.author:hover { text-decoration: underline; }
   color: var(--fg-dim);
 }
 .warn-invite { margin-left: auto; background: var(--yellow); color: var(--bg0); font-weight: 700; }
+.draft-row { border: 1px dashed color-mix(in srgb, var(--yellow) 40%, var(--hairline)); border-radius: 8px; }
+.draft-content {
+  background: var(--bg0); border: 1px solid var(--hairline); border-radius: 6px;
+  padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word; margin-bottom: 10px; max-height: 45vh; overflow-y: auto;
+}

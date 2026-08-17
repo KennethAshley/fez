@@ -1019,6 +1019,93 @@ pair
 const persona = program.command("persona").description("Manage named agent identities");
 
 persona
+  .command("draft <name>")
+  .description("Propose a persona for owner review (agents run this from their shell; nothing spawns until approved)")
+  .option("--harness <name>", "harness for the agent", "claude-code")
+  .option("--description <text>", "what it's for — this is the routing signal")
+  .option("--prompt <text>", "system prompt")
+  .option("--skills <list>", "comma-separated mcpServers")
+  .option("--file <path>", "read the complete persona md from a file instead of flags")
+  .action(async (name: string, options) => {
+    const { writeDraft } = await import("./persona-drafts.js");
+    const proposedBy = process.env.FEZ_AGENT_PERSONA ?? "owner";
+    let content: string;
+    if (options.file) {
+      content = await fs.readFile(options.file, "utf-8");
+      if (!/^proposedBy:/m.test(content)) {
+        content = content.replace(/^---\r?\n/, `---\nproposedBy: ${proposedBy}\nproposedAt: ${new Date().toISOString()}\n`);
+      }
+    } else {
+      const skills = (options.skills as string | undefined)?.split(",").map((s: string) => s.trim()).filter(Boolean) ?? [];
+      content = [
+        "---",
+        `harness: ${options.harness}`,
+        ...(options.description ? [`description: ${options.description}`] : []),
+        ...(skills.length ? [`mcpServers: [${skills.join(", ")}]`] : []),
+        `proposedBy: ${proposedBy}`,
+        `proposedAt: ${new Date().toISOString()}`,
+        "---",
+        "",
+        (options.prompt as string | undefined)?.trim() || `You are ${name}.`,
+        "",
+      ].join("\n");
+    }
+    try {
+      writeDraft(name, content);
+      console.log(`📝 draft "${name}" written (proposed by ${proposedBy}).`);
+      console.log(`   The owner reviews it: fez persona drafts · fez persona approve ${name} · fez persona reject ${name}`);
+      console.log(`   Nothing spawns until approved — don't claim @${name} exists yet.`);
+    } catch (err) {
+      console.error(`❌ ${err instanceof Error ? err.message : err}`);
+      process.exitCode = 1;
+    }
+  });
+
+persona
+  .command("drafts")
+  .description("List proposed personas awaiting review")
+  .action(async () => {
+    const { listDrafts } = await import("./persona-drafts.js");
+    const drafts = listDrafts();
+    if (drafts.length === 0) return console.log("No drafts — agents propose with `fez persona draft <name> ...`.");
+    for (const draft of drafts) {
+      console.log(`  ${chalk.yellow(draft.id.padEnd(20))} by ${draft.proposedBy ?? "?"}${draft.description ? ` — ${draft.description}` : ""}`);
+    }
+    console.log(chalk.dim(`\n  fez persona approve <name> · fez persona reject <name> · cat ~/.fez/personas/drafts/<name>.md`));
+  });
+
+persona
+  .command("approve <name>")
+  .description("Approve a draft — validates, installs it as a live persona (@mention then summons it)")
+  .action(async (name: string) => {
+    const { approveDraft } = await import("./persona-drafts.js");
+    const { registerBuiltinHarnesses, listHarnesses } = await import("./harness.js");
+    try {
+      registerBuiltinHarnesses();
+      const { warnings } = approveDraft(name, listHarnesses().map((h) => h.id));
+      for (const warning of warnings) console.log(chalk.yellow(`  ⚠ ${warning}`));
+      console.log(`✅ @${name} approved — mention @${name} in a channel to summon it.`);
+    } catch (err) {
+      console.error(`❌ ${err instanceof Error ? err.message : err}`);
+      process.exitCode = 1;
+    }
+  });
+
+persona
+  .command("reject <name>")
+  .description("Reject and delete a draft")
+  .action(async (name: string) => {
+    const { rejectDraft } = await import("./persona-drafts.js");
+    try {
+      rejectDraft(name);
+      console.log(`🗑  draft "${name}" rejected.`);
+    } catch (err) {
+      console.error(`❌ ${err instanceof Error ? err.message : err}`);
+      process.exitCode = 1;
+    }
+  });
+
+persona
   .command("validate [name]")
   .description("Lint persona files: errors fail, unknown keys / missing description warn (Buzz's pack-validate split)")
   .option("--all", "validate every persona in ~/.fez/personas")

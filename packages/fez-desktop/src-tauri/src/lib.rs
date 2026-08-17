@@ -157,12 +157,80 @@ fn delete_persona(name: String) -> Result<(), String> {
     std::fs::remove_file(&path).map_err(|e| format!("delete failed: {e}"))
 }
 
+fn drafts_dir() -> Result<std::path::PathBuf, String> {
+    Ok(persona_dir()?.join("drafts"))
+}
+
+/// Agent-proposed personas awaiting the owner's review (core owns the
+/// lifecycle — `fez persona draft/approve/reject`; this is the GUI's
+/// window onto the same files).
+#[tauri::command]
+fn list_persona_drafts() -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(drafts_dir()?) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    names.push(stem.to_string());
+                }
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+#[tauri::command]
+fn read_persona_draft(name: String) -> Result<String, String> {
+    if !valid_persona_name(&name) {
+        return Err("bad draft name".to_string());
+    }
+    std::fs::read_to_string(drafts_dir()?.join(format!("{name}.md")))
+        .map_err(|e| format!("couldn't read draft \"{name}\": {e}"))
+}
+
+/// Approve: strip draft-meta, install if the name is free. Lighter
+/// validation than the CLI (harness line present) — the CLI remains the
+/// thorough path; this covers the common approve-what-I-just-read case.
+#[tauri::command]
+fn approve_persona_draft(name: String) -> Result<(), String> {
+    if !valid_persona_name(&name) {
+        return Err("bad draft name".to_string());
+    }
+    let raw = std::fs::read_to_string(drafts_dir()?.join(format!("{name}.md")))
+        .map_err(|e| format!("couldn't read draft: {e}"))?;
+    let cleaned: String = raw
+        .lines()
+        .filter(|line| !line.starts_with("proposedBy:") && !line.starts_with("proposedAt:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    if !cleaned.lines().any(|l| l.starts_with("harness:")) {
+        return Err("draft has no harness: line — fix it (or use fez persona approve for full validation)".to_string());
+    }
+    let target = persona_dir()?.join(format!("{name}.md"));
+    if target.exists() {
+        return Err(format!("a live persona named \"{name}\" already exists"));
+    }
+    std::fs::write(&target, cleaned).map_err(|e| format!("install failed: {e}"))?;
+    std::fs::remove_file(drafts_dir()?.join(format!("{name}.md"))).map_err(|e| format!("cleanup failed: {e}"))
+}
+
+#[tauri::command]
+fn reject_persona_draft(name: String) -> Result<(), String> {
+    if !valid_persona_name(&name) {
+        return Err("bad draft name".to_string());
+    }
+    std::fs::remove_file(drafts_dir()?.join(format!("{name}.md"))).map_err(|e| format!("delete failed: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, delete_persona])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, delete_persona, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

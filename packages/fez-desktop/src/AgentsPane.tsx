@@ -54,9 +54,12 @@ export default function AgentsPane({
   // Persona files on disk — includes agents that have never spawned
   // (no 47000 metadata yet), which would otherwise be invisible here.
   const [localPersonas, setLocalPersonas] = useState<string[]>([]);
+  const [drafts, setDrafts] = useState<string[]>([]);
+  const [reviewing, setReviewing] = useState<string>();
   const [personaNonce, setPersonaNonce] = useState(0);
   useEffect(() => {
     void invoke<string[]>("list_personas").then(setLocalPersonas).catch(() => setLocalPersonas([]));
+    void invoke<string[]>("list_persona_drafts").then(setDrafts).catch(() => setDrafts([]));
   }, [personaNonce]);
   const roster = useMemo(
     () =>
@@ -72,18 +75,27 @@ export default function AgentsPane({
   return (
     <aside className="pane">
       <header className="pane-head">
-        {current || creating || editingPersona ? (
-          <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); setEditingPersona(undefined); }}>
+        {current || creating || editingPersona || reviewing ? (
+          <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); setEditingPersona(undefined); setReviewing(undefined); }}>
             ← agents
           </button>
         ) : (
           <span>@ agents</span>
         )}
-        {!current && !creating && !editingPersona && (
+        {!current && !creating && !editingPersona && !reviewing && (
           <button className="agent-action" onClick={() => setCreating(true)}>+ new agent</button>
         )}
         <button className="pane-close" onClick={onClose}>✕</button>
       </header>
+      {reviewing && (
+        <DraftReview
+          name={reviewing}
+          onDone={() => {
+            setReviewing(undefined);
+            setPersonaNonce((n) => n + 1);
+          }}
+        />
+      )}
       {editingPersona && (
         <PersonaEditor
           name={editingPersona}
@@ -101,8 +113,20 @@ export default function AgentsPane({
           }}
         />
       )}
-      {!current && !creating && !editingPersona && (
+      {!current && !creating && !editingPersona && !reviewing && (
         <div className="pane-body">
+          {drafts.length > 0 && (
+            <>
+              <div className="manage-section">proposed — awaiting your review</div>
+              {drafts.map((name) => (
+                <button key={name} className="agent-row draft-row" onClick={() => setReviewing(name)}>
+                  <span className="agent-ghost">📝︎</span>
+                  <span className="agent-name">@{name}</span>
+                  <span className="agent-sub">an agent proposed this — click to review</span>
+                </button>
+              ))}
+            </>
+          )}
           {roster.length === 0 && (
             <div className="pane-empty">no agents known yet — they appear when their 47000 metadata reaches your relay</div>
           )}
@@ -135,7 +159,7 @@ export default function AgentsPane({
           )}
         </div>
       )}
-      {current && !creating && !editingPersona && (
+      {current && !creating && !editingPersona && !reviewing && (
         <AgentDetail
           client={client}
           wire={wire}
@@ -441,6 +465,58 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
           {state === "saving" ? "creating…" : "create agent"}
         </button>
         <button className="agent-action" onClick={onDone}>cancel</button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Review an agent-proposed persona — Buzz's draft-create flow: the
+ * fleet can grow itself, the owner keeps signing authority. The full
+ * draft renders verbatim (you're approving a system prompt — read it).
+ */
+function DraftReview({ name, onDone }: { name: string; onDone: () => void }) {
+  const [content, setContent] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void invoke<string>("read_persona_draft", { name })
+      .then(setContent)
+      .catch((err) => setError(String(err)));
+  }, [name]);
+
+  const act = async (command: string) => {
+    setBusy(true);
+    try {
+      await invoke(command, { name });
+      onDone();
+    } catch (err) {
+      setError(String(err));
+      setBusy(false);
+    }
+  };
+
+  const proposedBy = content?.match(/^proposedBy:\s*(.+)$/m)?.[1];
+
+  return (
+    <div className="pane-body">
+      <div className="settings-hint">
+        {proposedBy ? <>Proposed by <b>@{proposedBy}</b>. </> : null}
+        Approving installs @{name} as a live persona — the next mention summons it with its own key. Read the
+        prompt like you'd read a PR.
+      </div>
+      {!content && !error && <div className="pane-empty">loading…</div>}
+      {content && <pre className="draft-content">{content}</pre>}
+      {error && <div className="ob-error">{error}</div>}
+      <div className="agent-actions">
+        <button className="agent-action" disabled={busy || !content} onClick={() => void act("approve_persona_draft")}>
+          ✓ approve
+        </button>
+        <button className="agent-action" disabled={busy} onClick={() => void act("reject_persona_draft")}>
+          ✕ reject
+        </button>
+        <button className="agent-action" onClick={onDone}>later</button>
       </div>
     </div>
   );
