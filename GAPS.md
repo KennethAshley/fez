@@ -5,6 +5,9 @@ thinner, and what fez deliberately skips. This is the standing
 roadmap-against-reference: update it as gaps close.
 
 - Audited: Buzz `8b8445f5e` (2026-08-14) against fez `701cb3f` (2026-08-15).
+- **Update 2026-08-17 (late)**: items 18 (persona packs, `eb48d5f`) and 19
+  (device pairing, `bb310b4`) closed — 17 of 20 done. Remaining: 17 (remote
+  bodies), 20 (activity feed), and the §2.7 runtime leftovers.
 - **Update 2026-08-17 (night)**: items 15 (fez-mcp, `6e019ff`) and 14
   (workflow vocabulary + durable gates, see log) closed — 14 of 20 done.
 - **Update 2026-08-17 (later)**: items 11 (turn metrics 47030 + observer
@@ -288,8 +291,8 @@ Consolidated from all six audits. Effort ≈ S (<1 day) / M (days) / L (week+).
 | 15 | ✅ CLOSED `6e019ff` — Fez MCP server for harness agents (§3) | M | Agents currently can't act on fez itself mid-turn. |
 | 16 | ✅ CLOSED `2524a65` — Encrypted reminders (privacy fix) (§3) | S | Private data currently plaintext on the relay. |
 | 17 | Remote agent bodies: provider wire contract + `fez-remote` (§3) | L | The most vision-aligned L; sentinel seam is ready. |
-| 18 | Persona packs + `persona validate` (§3, #35) | M | Store-model coherence. |
-| 19 | Device pairing (NIP-AB) (§3) | M | Second-device onboarding for keychain-held roots. |
+| 18 | ✅ CLOSED `eb48d5f` — Persona packs + `persona validate` (§3, #35) | M | Store-model coherence. |
+| 19 | ✅ CLOSED `bb310b4` — Device pairing (NIP-AB) (§3) | M | Second-device onboarding for keychain-held roots. |
 | 20 | Activity feed taxonomy in the TUI (§3) | L | Buzz's best product thinking applied to fez's core thesis. |
 
 Deliberately unranked until their preconditions exist: forum, pulse, custom
