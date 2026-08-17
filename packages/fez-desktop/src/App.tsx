@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { FezClient, setStatePersistence, type Msg } from "@fez/client";
+import { FezClient, setStatePersistence, type Msg, type ObserverEntry } from "@fez/client";
 import { BrowserWire } from "./wire";
 import "./App.css";
 
 /**
  * fez-desktop — the GUI over the same headless brain as the TUI (#30).
- * Buzz's visual skeleton (left rail, timeline, composer), fez's client:
- * every trust rule, thread, presence dot, and unread badge below comes
- * from @fez/client events — this file only renders.
+ * Buzz's visual skeleton (left rail, timeline, right pane), fez's
+ * client: every trust rule, thread, presence dot, unread badge, DM, and
+ * observer frame below comes from @fez/client — this file only renders.
  */
 
 const RELAY_URL = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_RELAY ?? "ws://localhost:7777";
+const KIND_TURN_METRIC = 47030;
+const KIND_OBSERVER_CONTROL = 20005;
 
-// Browser persistence for joined/scope — the seam's localStorage impl.
 setStatePersistence({
   exists: () => localStorage.getItem("fez-state") !== null,
   read: () => localStorage.getItem("fez-state") ?? undefined,
@@ -24,6 +25,9 @@ type Boot =
   | { phase: "loading" }
   | { phase: "error"; message: string }
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
+
+type MainView = { kind: "channel" } | { kind: "dm"; convoKey: string };
+type SidePane = { kind: "watch"; agent: string } | { kind: "costs" } | undefined;
 
 function useForceRender(): () => void {
   const [, bump] = useReducer((n: number) => n + 1, 0);
@@ -43,9 +47,6 @@ export default function App() {
         wire.onStatus = setConnected;
         const client = new FezClient(wire);
         await client.start();
-        // First run in the webview: adopt every community on the relay
-        // (it's the user's own relay; the TUI's Home included). Real
-        // multi-tenant onboarding comes later.
         if (client.state.joined.size === 0) {
           for (const community of await client.listCommunities()) {
             await client.joinCommunity(community.id);
@@ -66,44 +67,72 @@ export default function App() {
 
   if (boot.phase === "loading") return <div className="boot">connecting…</div>;
   if (boot.phase === "error") return <div className="boot error">{boot.message}</div>;
-  return <Shell client={boot.client} connected={connected} />;
+  return <Shell client={boot.client} wire={boot.wire} connected={connected} />;
 }
 
-function Shell({ client, connected }: { client: FezClient; connected: boolean }) {
+function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWire; connected: boolean }) {
   const render = useForceRender();
+  const [view, setView] = useState<MainView>({ kind: "channel" });
+  const [pane, setPane] = useState<SidePane>();
+  // Rolling observer activity per agent — the client emits frames; the
+  // GUI keeps the last 200 per agent for the watch pane.
+  const activityRef = useRef(new Map<string, ObserverEntry[]>());
 
   useEffect(() => {
     const events = [
-      "message",
-      "messageEdited",
-      "messageDeleted",
-      "metaChanged",
-      "reaction",
-      "channelsChanged",
-      "presenceChanged",
-      "unreadsChanged",
-      "typingChanged",
-      "notice",
+      "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
+      "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
+      "dmMessage", "jobsChanged", "notice",
     ] as const;
     for (const name of events) client.on(name, render as never);
-    // FezClient listeners have no off() yet — the Shell lives for the
-    // window's lifetime, so leaking on unmount is acceptable v1.
+    client.on("observerFrame", ((agent: string, frame: ObserverEntry) => {
+      const list = activityRef.current.get(agent) ?? [];
+      list.push(frame);
+      if (list.length > 200) list.splice(0, list.length - 200);
+      activityRef.current.set(agent, list);
+      render();
+    }) as never);
   }, [client, render]);
 
   const scope = client.state.scope;
   const unreads = client.unreadCounts();
+  const working = client.workingAgents();
 
   const openChannel = async (communityId: string, channelId: string) => {
     client.setScope(communityId, channelId);
+    setView({ kind: "channel" });
     await client.loadChannelHistory(channelId, communityId);
     render();
   };
+
+  const openDm = (convoKey: string) => {
+    client.markDmRead(convoKey);
+    setView({ kind: "dm", convoKey });
+    render();
+  };
+
+  const cancelAgent = async (agentName: string) => {
+    const pk = client.pkByName(agentName);
+    if (!pk) return;
+    await wire.publish({
+      kind: KIND_OBSERVER_CONTROL,
+      tags: [["p", pk]],
+      content: wire.encrypt(pk, JSON.stringify({ cmd: "cancel", ts: Date.now() })),
+    });
+  };
+
+  const dmConvos = [...client.dmConversations().entries()].sort(
+    (a, b) => (b[1].msgs.at(-1)?.ts ?? 0) - (a[1].msgs.at(-1)?.ts ?? 0)
+  );
 
   return (
     <div className="shell">
       <aside className="rail">
         <div className="brand">
           fez <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />
+          <button className="rail-tool" title="agent costs" onClick={() => setPane(pane?.kind === "costs" ? undefined : { kind: "costs" })}>
+            $
+          </button>
         </div>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))
@@ -111,14 +140,10 @@ function Shell({ client, connected }: { client: FezClient; connected: boolean })
             <div key={community.id} className="community">
               <div className="community-name">{community.name}</div>
               {[...community.channels.values()].map((channel) => {
-                const active = scope?.channelId === channel.id;
+                const active = view.kind === "channel" && scope?.channelId === channel.id;
                 const unread = unreads.get(channel.id) ?? 0;
                 return (
-                  <button
-                    key={channel.id}
-                    className={active ? "channel active" : "channel"}
-                    onClick={() => void openChannel(community.id, channel.id)}
-                  >
+                  <button key={channel.id} className={active ? "channel active" : "channel"} onClick={() => void openChannel(community.id, channel.id)}>
                     <span className="hash">#</span> {channel.name}
                     {unread > 0 && !active && <span className="badge">{unread}</span>}
                   </button>
@@ -126,39 +151,81 @@ function Shell({ client, connected }: { client: FezClient; connected: boolean })
               })}
             </div>
           ))}
-        <AgentRail client={client} />
+        {dmConvos.length > 0 && (
+          <div className="community">
+            <div className="community-name">dms</div>
+            {dmConvos.slice(0, 10).map(([key, convo]) => {
+              const group = key.includes("+");
+              const active = view.kind === "dm" && view.convoKey === key;
+              return (
+                <button key={key} className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
+                  {group ? "👥" : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
+                  {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <MemberRail
+          client={client}
+          working={working}
+          onWatch={(agent) => setPane(pane?.kind === "watch" && pane.agent === agent ? undefined : { kind: "watch", agent })}
+        />
       </aside>
-      {scope ? <Timeline key={scope.channelId} client={client} channelId={scope.channelId} communityId={scope.communityId} /> : <div className="boot">no channel — join one from the rail</div>}
+
+      {view.kind === "channel" && scope && <ChannelView key={scope.channelId} client={client} channelId={scope.channelId} />}
+      {view.kind === "dm" && <DmView key={view.convoKey} client={client} convoKey={view.convoKey} />}
+      {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
+
+      {pane?.kind === "watch" && (
+        <WatchPane
+          agent={pane.agent}
+          entries={activityRef.current.get(pane.agent) ?? []}
+          working={working.has(pane.agent)}
+          onCancel={() => void cancelAgent(pane.agent)}
+          onClose={() => setPane(undefined)}
+        />
+      )}
+      {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
     </div>
   );
 }
 
-function AgentRail({ client }: { client: FezClient }) {
-  const agents = useMemo(() => {
-    const current = client.state.currentChannel();
-    if (!current) return [] as { pk: string; name: string; online: boolean }[];
-    return [...current.channel.members.keys()]
-      .filter((pk) => pk !== client.pubkey)
-      .map((pk) => ({ pk, name: client.displayName(pk), online: client.isOnline(pk) }))
-      .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
-    // presenceChanged re-renders the parent, recomputing this
-  }, [client, client.state.scope?.channelId, client.unreadCounts()]);
-
-  if (agents.length === 0) return null;
+function MemberRail({
+  client,
+  working,
+  onWatch,
+}: {
+  client: FezClient;
+  working: ReadonlyMap<string, { activity: string; ts: number }>;
+  onWatch: (agent: string) => void;
+}) {
+  const current = client.state.currentChannel();
+  if (!current) return null;
+  const members = [...current.channel.members.keys()]
+    .filter((pk) => pk !== client.pubkey)
+    .map((pk) => ({ pk, name: client.displayName(pk), online: client.isOnline(pk) }))
+    .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
+  if (members.length === 0) return null;
   return (
     <div className="community">
       <div className="community-name">members</div>
-      {agents.map((agent) => (
-        <div key={agent.pk} className="member">
-          <span className={agent.online ? "dot on" : "dot off"} /> {agent.name}
-          {client.statusOf(agent.pk) && <span className="status">— {client.statusOf(agent.pk)}</span>}
-        </div>
-      ))}
+      {members.map((member) => {
+        const activity = working.get(member.name);
+        const busy = activity && Date.now() - activity.ts < 30_000;
+        return (
+          <button key={member.pk} className="channel member-row" title={busy ? activity.activity : "open live activity"} onClick={() => onWatch(member.name)}>
+            <span className={member.online ? "dot on" : "dot off"} /> {member.name}
+            {busy && <span className="working">⚙</span>}
+            {client.statusOf(member.pk) && <span className="status">{client.statusOf(member.pk)}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function Timeline({ client, channelId }: { client: FezClient; channelId: string; communityId: string }) {
+function ChannelView({ client, channelId }: { client: FezClient; channelId: string }) {
   const [draft, setDraft] = useState("");
   const [threadRoot, setThreadRoot] = useState<string | undefined>();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -173,7 +240,6 @@ function Timeline({ client, channelId }: { client: FezClient; channelId: string;
     const text = draft.trim();
     if (!text) return;
     setDraft("");
-    // @names → p tags so mentions summon agents, same as the TUI.
     const mentionPks = [...text.matchAll(/@([\w-]+)/g)]
       .map((match) => client.pkByName(match[1]))
       .filter((pk): pk is string => !!pk);
@@ -188,21 +254,12 @@ function Timeline({ client, channelId }: { client: FezClient; channelId: string;
       <header className="topbar">
         <span className="hash">#</span> {channelName}
         {threadRoot && (
-          <button className="thread-exit" onClick={() => setThreadRoot(undefined)}>
-            ← thread · back to channel
-          </button>
+          <button className="thread-exit" onClick={() => setThreadRoot(undefined)}>← back to channel</button>
         )}
       </header>
       <div className="timeline">
         {shown.map((msg) => (
-          <Bubble
-            key={msg.id}
-            client={client}
-            channelId={channelId}
-            msg={msg}
-            inThread={!!threadRoot}
-            onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)}
-          />
+          <Bubble key={msg.id} client={client} channelId={channelId} msg={msg} inThread={!!threadRoot} onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -218,6 +275,179 @@ function Timeline({ client, channelId }: { client: FezClient; channelId: string;
         />
       </div>
     </main>
+  );
+}
+
+function DmView({ client, convoKey }: { client: FezClient; convoKey: string }) {
+  const [draft, setDraft] = useState("");
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const convo = client.dmConversations().get(convoKey);
+  const group = convoKey.includes("+");
+  const peers = client.dmPeers(convoKey);
+
+  useEffect(() => {
+    client.markDmRead(convoKey);
+    bottomRef.current?.scrollIntoView({ behavior: "auto" });
+  });
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text) return;
+    setDraft("");
+    if (group) await client.sendGroupDm(peers, text);
+    else await client.sendDm(convoKey, text);
+  };
+
+  return (
+    <main className="main">
+      <header className="topbar">
+        ✉ {group && "👥 "}
+        {client.dmTitle(convoKey)}
+        <span className="dm-note">end-to-end encrypted{group ? " · every participant sees every message" : ""}</span>
+      </header>
+      <div className="timeline">
+        {(convo?.msgs ?? []).map((msg) => {
+          const mine = msg.senderPk === client.pubkey;
+          return (
+            <div key={msg.id} className={mine ? "bubble mine" : "bubble"}>
+              <div className="bubble-head">
+                <span className="author">{client.displayName(msg.senderPk)}</span>
+                <span className="time">{new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+              </div>
+              <div className="bubble-body">{renderMentions(msg.text)}</div>
+            </div>
+          );
+        })}
+        <div ref={bottomRef} />
+      </div>
+      <div className="composer">
+        <input
+          value={draft}
+          placeholder={`message ${client.dmTitle(convoKey)} — encrypted`}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) void send();
+          }}
+        />
+      </div>
+    </main>
+  );
+}
+
+function WatchPane({
+  agent,
+  entries,
+  working,
+  onCancel,
+  onClose,
+}: {
+  agent: string;
+  entries: ObserverEntry[];
+  working: boolean;
+  onCancel: () => void;
+  onClose: () => void;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "auto" });
+  });
+  return (
+    <aside className="pane">
+      <header className="pane-head">
+        <span>⚙ watching @{agent}</span>
+        <div className="pane-actions">
+          {working && (
+            <button className="cancel" title="abort the in-flight turn (owner-signed)" onClick={onCancel}>⏹ cancel turn</button>
+          )}
+          <button className="pane-close" onClick={onClose}>✕</button>
+        </div>
+      </header>
+      <div className="pane-body">
+        {entries.length === 0 && <div className="pane-empty">no activity yet — frames stream here while @{agent} works (encrypted to you)</div>}
+        {entries.map((entry, index) => {
+          if (entry.type === "turn") {
+            return <div key={index} className={`turn-marker ${entry.status ?? ""}`}>— turn {entry.status} —</div>;
+          }
+          if (entry.type === "tool") {
+            return (
+              <div key={index} className="tool-line">
+                ⚙ {entry.title ?? "tool"} {entry.status && <span className="time">{entry.status}</span>}
+              </div>
+            );
+          }
+          if (entry.type === "thought") {
+            return <div key={index} className="thought">{entry.text?.slice(-400)}</div>;
+          }
+          if (entry.type === "text") {
+            return <div key={index} className="reply-preview">{entry.text?.slice(-400)}</div>;
+          }
+          return null;
+        })}
+        <div ref={bottomRef} />
+      </div>
+    </aside>
+  );
+}
+
+interface MetricRow {
+  agent: string;
+  turns: number;
+  done: number;
+  failed: number;
+  cancelled: number;
+  ms: number;
+  recent: number;
+}
+
+function CostsPane({ client, wire, onClose }: { client: FezClient; wire: BrowserWire; onClose: () => void }) {
+  const [rows, setRows] = useState<MetricRow[] | undefined>();
+
+  useEffect(() => {
+    void (async () => {
+      const events = await wire.query([{ kinds: [KIND_TURN_METRIC], "#p": [client.pubkey], limit: 500 }]);
+      const byAgent = new Map<string, MetricRow>();
+      const dayAgo = Date.now() - 24 * 3600_000;
+      for (const event of events) {
+        try {
+          const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as {
+            agent?: string;
+            status?: string;
+            durationMs?: number;
+            ts?: number;
+          };
+          const agent = metric.agent ?? "?";
+          let row = byAgent.get(agent);
+          if (!row) byAgent.set(agent, (row = { agent, turns: 0, done: 0, failed: 0, cancelled: 0, ms: 0, recent: 0 }));
+          row.turns++;
+          if (metric.status === "done") row.done++;
+          else if (metric.status === "failed") row.failed++;
+          else if (metric.status === "cancelled") row.cancelled++;
+          row.ms += metric.durationMs ?? 0;
+          if ((metric.ts ?? 0) >= dayAgo) row.recent++;
+        } catch { /* not addressed to us */ }
+      }
+      setRows([...byAgent.values()].sort((a, b) => b.turns - a.turns));
+    })();
+  }, [client, wire]);
+
+  return (
+    <aside className="pane">
+      <header className="pane-head">
+        <span>$ turn costs</span>
+        <button className="pane-close" onClick={onClose}>✕</button>
+      </header>
+      <div className="pane-body">
+        {!rows && <div className="pane-empty">decrypting…</div>}
+        {rows?.length === 0 && <div className="pane-empty">no turn metrics yet — they accrue as your agents run</div>}
+        {rows?.map((row) => (
+          <div key={row.agent} className="cost-row">
+            <div className="cost-agent">@{row.agent}</div>
+            <div className="cost-detail">{row.turns} turns · {row.done} ok · {row.failed} failed · {row.cancelled} cancelled</div>
+            <div className="cost-detail">{(row.ms / 60_000).toFixed(1)} min compute · {row.recent} in last 24h</div>
+          </div>
+        ))}
+      </div>
+    </aside>
   );
 }
 
