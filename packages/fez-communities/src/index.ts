@@ -415,14 +415,14 @@ export default function communities(api: FezExtensionAPI): void {
   /** Bubble for a thread reply — indented author label, Buzz's connector glyph. */
   function threadBubble(msg: Msg): MessageHandle {
     const indent = "  ".repeat(Math.max(0, depthOf(msg) - 1));
-    const handle = api.ui.appendMessage(`${indent}↳ ${msg.authorName}`, msg.content);
+    const handle = api.ui.appendMessage(`${indent}↳ ${msg.authorName}`, msg.content, msg.ts);
     handle.setFooter(reactionFooter(msg.id));
     return handle;
   }
 
   /** Register a freshly painted bubble so late reactions land on it. */
   function paintBubble(msg: Msg): void {
-    const handle = api.ui.appendMessage(msg.authorName, msg.content);
+    const handle = api.ui.appendMessage(msg.authorName, msg.content, msg.ts);
     handle.setFooter(reactionFooter(msg.id));
     bubbleHandles.set(msg.id, handle);
   }
@@ -575,7 +575,7 @@ export default function communities(api: FezExtensionAPI): void {
       return;
     }
     if (!msg.parentId) {
-      bubbleHandles.set(msg.id, api.ui.appendMessage(msg.authorName, msg.content));
+      bubbleHandles.set(msg.id, api.ui.appendMessage(msg.authorName, msg.content, msg.ts));
     } else {
       // The final message ends this author's draft in that thread.
       draftersByRoot.get(msg.rootId!)?.delete(event.pubkey);
@@ -602,8 +602,8 @@ export default function communities(api: FezExtensionAPI): void {
     }
   }
 
-  /** Reactions (kind 7, Buzz's shape) — land live on the target's bubble footer. */
-  function handleReaction(event: NostrEvent): void {
+  /** Reactions (kind 7, Buzz's shape) — land live on the target's bubble footer. `live=false` for history replay: fold into footers but never open jobs (a stored 👀 from last week is not an active job). */
+  function handleReaction(event: NostrEvent, live = true): void {
     const targetId = event.tags.find((t) => t[0] === "e")?.[1];
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
@@ -620,7 +620,7 @@ export default function communities(api: FezExtensionAPI): void {
     bubbleHandles.get(targetId)?.setFooter(reactionFooter(targetId));
 
     // Status reactions open jobs: 👀 = accepted (seen), 💬 = turn running.
-    if (emoji === "👀" || emoji === "💬") {
+    if (live && (emoji === "👀" || emoji === "💬")) {
       const key = `${event.pubkey}:${targetId}`;
       const existing = jobs.get(key);
       if (existing) {
@@ -802,6 +802,37 @@ export default function communities(api: FezExtensionAPI): void {
     return ids;
   }
 
+  /**
+   * Backfill the scoped channel from relay storage — a fresh session
+   * opens onto the conversation, not a blank pane. Messages render with
+   * their REAL timestamps (date-prefixed when older than today); stored
+   * reactions/deletions fold into footers but never open jobs (a 👀
+   * from last week is history, not an active turn). The live
+   * subscription's since:now takes over from here; seenMessages dedupes
+   * the overlap.
+   */
+  const HISTORY_LIMIT = 50;
+  async function loadChannelHistory(channelId: string, communityId: string): Promise<void> {
+    const [msgs, reactions, deletions] = await Promise.all([
+      nostr!.query([{ kinds: [KIND_CHANNEL_MESSAGE], "#h": [channelId], limit: 200 }]),
+      nostr!.query([{ kinds: [KIND_REACTION], "#h": [channelId], limit: 300 }]),
+      nostr!.query([{ kinds: [KIND_DELETION], "#h": [channelId], limit: 300 }]),
+    ]);
+    const ordered = msgs
+      .filter((e) => state.isMember(communityId, channelId, e.pubkey))
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(-HISTORY_LIMIT);
+    for (const event of ordered) {
+      if (seenMessages.has(event.id)) continue;
+      seenMessages.add(event.id);
+      cacheMessage(channelId, event, event.pubkey === nostr!.pubkey ? "You" : displayName(event.pubkey));
+    }
+    if (view.mode === "channel" && state.scope?.channelId === channelId) renderChannelTimeline(channelId);
+    for (const event of reactions.sort((a, b) => a.created_at - b.created_at)) handleReaction(event, false);
+    for (const event of deletions) handleDeletion(event);
+    refreshUi();
+  }
+
   async function syncJoined(): Promise<void> {
     const ids = [...state.joined];
     if (ids.length === 0) return;
@@ -859,7 +890,7 @@ export default function communities(api: FezExtensionAPI): void {
     draftBubbles.clear();
     api.ui.notify(`— private DM with @${displayName(peerPk)} · end-to-end encrypted, no channel involved · plain messages send here, /back returns —`);
     for (const m of dmConvo(peerPk).msgs) {
-      api.ui.appendMessage(m.senderPk === nostr!.pubkey ? "You" : displayName(m.senderPk), m.text);
+      api.ui.appendMessage(m.senderPk === nostr!.pubkey ? "You" : displayName(m.senderPk), m.text, m.ts);
     }
   }
 
@@ -881,7 +912,7 @@ export default function communities(api: FezExtensionAPI): void {
     if (convo.msgs.length > 100) convo.msgs.splice(0, convo.msgs.length - 100);
     const live = dm.ts >= sessionStartS;
     if (view.mode === "dm" && view.peerPk === dm.peerPk) {
-      if (live) api.ui.appendMessage(dm.senderPk === nostr!.pubkey ? "You" : displayName(dm.senderPk), dm.text);
+      if (live) api.ui.appendMessage(dm.senderPk === nostr!.pubkey ? "You" : displayName(dm.senderPk), dm.text, dm.ts);
     } else if (live && dm.senderPk !== nostr!.pubkey) {
       convo.unread++;
       api.ui.notify(`✉️  DM from ${displayName(dm.senderPk)}: ${snippet(dm.text)} — /dm ${displayName(dm.senderPk)}`);
@@ -990,9 +1021,11 @@ export default function communities(api: FezExtensionAPI): void {
       const channel = state.findChannelByName(communityId, wanted);
       if (channel) {
         state.scope = { communityId, channelId: channel.id };
+        view = { mode: "channel" };
         state.save();
         refreshUi();
         ctx.reply(`Now in **#${channel.name}** — plain messages go to the channel. /leave to exit.`);
+        await loadChannelHistory(channel.id, communityId);
         return;
       }
     }
@@ -1259,6 +1292,9 @@ export default function communities(api: FezExtensionAPI): void {
     await syncJoined();
     resubscribe();
     refreshUi();
+    // A fresh session opens onto the conversation, not a blank pane.
+    const scope = state.scope;
+    if (scope) await loadChannelHistory(scope.channelId, scope.communityId);
   })();
 }
 

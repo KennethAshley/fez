@@ -162,7 +162,7 @@ export class FezTUI {
           },
         };
       },
-      appendMessage: (author, content) => this.appendBubble(author, content),
+      appendMessage: (author, content, ts) => this.appendBubble(author, content, ts),
       notify: (text) => this.systemLine(text),
       clearLog: () => {
         this.log.clear();
@@ -765,13 +765,21 @@ export class FezTUI {
    * re-lays-out: a streaming reply can start as a one-liner and grow into
    * a header+block shape.
    */
-  private appendBubble(author: string, content: string): MessageHandle {
+  private appendBubble(author: string, content: string, ts?: number): MessageHandle {
     if (!this.screen) {
       this.pendingBubbles.push({ author, content });
       // Pre-screen bubbles are startup notices — nothing updates them later.
       return { setAuthor: () => {}, setContent: () => {}, setFooter: () => {} };
     }
-    const stamp = timestamp(); // fixed at arrival
+    // Historical bubbles (channel backfill, DM replay) carry the event's
+    // real time; live ones stamp arrival. Older-than-today gets a date
+    // prefix so a restart doesn't render last week as "just now".
+    const when = ts ? new Date(ts * 1000) : new Date();
+    const datePrefix =
+      when.toDateString() === new Date().toDateString()
+        ? ""
+        : chalk.dim(when.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " ");
+    const stamp = datePrefix + timestamp(when);
     let currentAuthor = author;
     let footerText = "";
     // Slack's hierarchy: AUTHOR then a small dim timestamp on the header

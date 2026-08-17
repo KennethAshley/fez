@@ -132,7 +132,7 @@ export interface FezExtensionAPI {
   ui: {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
-    appendMessage(author: string, content: string): MessageHandle;
+    appendMessage(author: string, content: string, ts?: number): MessageHandle;
     /** Dim system one-liner — notices, not chat: no author bubble, no timestamp, clearly not a participant. */
     notify(text: string): void;
     /** Wipe the chat log — view switching (e.g. a thread view repainting the timeline). */
@@ -148,7 +148,7 @@ export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
 
 interface UiBackend {
   createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
-  appendMessage(author: string, content: string): MessageHandle;
+  appendMessage(author: string, content: string, ts?: number): MessageHandle;
   notify(text: string): void;
   clearLog(): void;
 }
@@ -194,8 +194,8 @@ function buildApi(): FezExtensionAPI {
       setStatus,
       createSidePanel: (opts) =>
         uiBackend ? uiBackend.createSidePanel(opts) : { setText: () => {} },
-      appendMessage: (author, content) =>
-        uiBackend ? uiBackend.appendMessage(author, content) : inertMessageHandle,
+      appendMessage: (author, content, ts) =>
+        uiBackend ? uiBackend.appendMessage(author, content, ts) : inertMessageHandle,
       notify: (text) => uiBackend?.notify(text),
       clearLog: () => uiBackend?.clearLog(),
     },
