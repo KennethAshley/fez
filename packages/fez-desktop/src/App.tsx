@@ -8,6 +8,8 @@ import { FezClient, setStatePersistence, type Msg, type ObserverEntry } from "@f
 import { BrowserWire } from "./wire";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
+import AgentsPane from "./AgentsPane";
+import ActivityFeed from "./ActivityFeed";
 import { uploadFile, shareLine } from "./upload";
 import Onboarding from "./Onboarding";
 import "./App.css";
@@ -41,7 +43,7 @@ type Boot =
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
 type MainView = { kind: "channel" } | { kind: "dm"; convoKey: string };
-type SidePane = { kind: "watch"; agent: string } | { kind: "costs" } | undefined;
+type SidePane = { kind: "watch"; agent: string } | { kind: "costs" } | { kind: "agents" } | undefined;
 
 function useForceRender(): () => void {
   const [, bump] = useReducer((n: number) => n + 1, 0);
@@ -288,6 +290,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           <button className="rail-tool" title="search (⌘K)" onClick={() => setSearchOpen(true)}>
             🔍
           </button>
+          <button className="rail-tool" title="agents" onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}>
+            🤖
+          </button>
           <button className="rail-tool" title="agent costs" onClick={() => setPane(pane?.kind === "costs" ? undefined : { kind: "costs" })}>
             $
           </button>
@@ -373,6 +378,17 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
+      {pane?.kind === "agents" && (
+        <AgentsPane
+          client={client}
+          wire={wire}
+          activity={activityRef.current}
+          working={working}
+          onCancel={(agent) => void cancelAgent(agent)}
+          onDm={(pk) => openDm(pk)}
+          onClose={() => setPane(undefined)}
+        />
+      )}
       {searchOpen && (
         <SearchOverlay
           client={client}
@@ -731,26 +747,7 @@ function WatchPane({
         </div>
       </header>
       <div className="pane-body">
-        {entries.length === 0 && <div className="pane-empty">no activity yet — frames stream here while @{agent} works (encrypted to you)</div>}
-        {entries.map((entry, index) => {
-          if (entry.type === "turn") {
-            return <div key={index} className={`turn-marker ${entry.status ?? ""}`}>— turn {entry.status} —</div>;
-          }
-          if (entry.type === "tool") {
-            return (
-              <div key={index} className="tool-line">
-                ⚙ {entry.title ?? "tool"} {entry.status && <span className="time">{entry.status}</span>}
-              </div>
-            );
-          }
-          if (entry.type === "thought") {
-            return <div key={index} className="thought">{entry.text?.slice(-400)}</div>;
-          }
-          if (entry.type === "text") {
-            return <div key={index} className="reply-preview">{entry.text?.slice(-400)}</div>;
-          }
-          return null;
-        })}
+        <ActivityFeed entries={entries} emptyNote={`no activity yet — frames stream here while @${agent} works (encrypted to you)`} />
         <div ref={bottomRef} />
       </div>
     </aside>

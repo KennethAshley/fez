@@ -321,3 +321,36 @@ body {
 .md table { border-collapse: collapse; margin: 6px 0; }
 .md th, .md td { border: 1px solid var(--bg2); padding: 3px 8px; font-size: 13px; }
 .md-img { max-width: 420px; max-height: 320px; border-radius: 8px; display: block; margin: 6px 0; }
+
+/* ── agents pane ───────────────────────────────────────────── */
+.pane-back { background: none; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
+.agent-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--fg); font: inherit; padding: 8px 10px;
+  border-radius: 6px; cursor: pointer;
+}
+.agent-row:hover { background: var(--bg2); }
+.agent-name { font-weight: 600; }
+.agent-sub {
+  margin-left: auto; color: var(--fg-dim); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;
+}
+.agent-head { padding: 12px 14px; border-bottom: 1px solid var(--bg2); }
+.agent-title { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.agent-headline { color: var(--fg-dim); font-size: 12px; margin-top: 2px; }
+.agent-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.agent-action {
+  background: var(--bg2); border: 0; color: var(--fg); font: inherit; font-size: 12px;
+  padding: 4px 10px; border-radius: 6px; cursor: pointer;
+}
+.agent-action:hover { color: var(--accent); }
+.agent-action:disabled { opacity: 0.6; cursor: default; }
+.agent-tabs { display: flex; gap: 4px; margin-top: 12px; }
+.agent-tab {
+  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 12px;
+  padding: 4px 10px; border-radius: 6px 6px 0 0; cursor: pointer; border-bottom: 2px solid transparent;
+}
+.agent-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.engram { margin-bottom: 14px; }
+.engram-slug { font-weight: 600; color: var(--yellow); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+.engram-body { white-space: pre-wrap; word-break: break-word; font-size: 13px; margin-top: 4px; }

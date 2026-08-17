@@ -297,6 +297,11 @@ export class FezClient {
   statusOf(pk: string): string | undefined {
     return this.statuses.get(pk);
   }
+  /** Agents we know of (kind-47000 metadata authors): pk → persona name. */
+  agents(): Map<string, string> {
+    return new Map(this.names);
+  }
+
   /** Every pubkey we can name (agents outrank profiles) — autocomplete fodder. */
   knownNames(): Map<string, string> {
     const merged = new Map<string, string>(this.profiles);
