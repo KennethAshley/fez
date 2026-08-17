@@ -192,6 +192,16 @@ async function main() {
       return undefined;
     }
   }
+  // Human display names (kind 0) — forwards carry WHO asked, and
+  // "(from 4d9a4f80)" is not a who.
+  const profileNames = new Map<string, string>();
+  for (const event of await relay.query([{ kinds: [0], limit: 200 }])) {
+    try {
+      const name = (JSON.parse(event.content) as { name?: string }).name;
+      if (name) profileNames.set(event.pubkey, name);
+    } catch { /* ignore */ }
+  }
+
   const metadataEvents = await relay.query([{ kinds: [KIND_AGENT_METADATA] }]);
   for (const event of metadataEvents.sort((a, b) => a.created_at - b.created_at)) absorbAgent(event);
 
@@ -398,13 +408,21 @@ async function main() {
       const picked = await route(cleaned || event.content);
       if (picked.length > 0) {
         const { byName } = buildTools();
+        // The forward names its origin: the routed agent's prompt would
+        // otherwise say the message came from fez, and "Ken asked via
+        // fez" vs "fez asked" changes how an agent should answer. The
+        // author tag carries the pubkey for machines; the (from …)
+        // prefix carries it for the model. No @ on the name — an @ is a
+        // summons, and the asker doesn't need summoning.
+        const askerName = roster.get(event.pubkey)?.name ?? profileNames.get(event.pubkey) ?? event.pubkey.slice(0, 8);
         for (const agentName of picked) {
           const agent = byName.get(agentName)!;
-          await say(channelId, communityId, `@${agentName} ${cleaned}`, [
+          await say(channelId, communityId, `@${agentName} (from ${askerName}) ${cleaned}`, [
             ...threadTags,
             ["p", agent.pubkey],
+            ["author", event.pubkey],
           ]);
-          console.log(`🎯 Routed to @${agentName}: ${cleaned.slice(0, 60)}`);
+          console.log(`🎯 Routed to @${agentName} (from ${askerName}): ${cleaned.slice(0, 60)}`);
         }
       } else {
         const names = routableNames();

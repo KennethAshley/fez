@@ -535,6 +535,92 @@ program
     console.log("✅ sentinel launchd service removed (any running instance was stopped).");
   });
 
+program
+  .command("orchestrator")
+  .description("Run @fez, the routing agent: mentions of @fez get routed to the best agent for the task")
+  .option("-r, --relay <url>", "Relay URL (default: settings/env)")
+  .action(async (options) => {
+    const { resolveRelay } = await import("./settings.js");
+    process.env.FEZ_RELAY = resolveRelay(options.relay);
+    const { fileURLToPath, pathToFileURL } = await import("node:url");
+    const { existsSync } = await import("node:fs");
+    const candidates = [
+      process.env.FEZ_ORCHESTRATOR_RUNTIME,
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/fez-orchestrator/dist/orchestrator.js"),
+    ].filter((p): p is string => !!p);
+    const runtime = candidates.find((p) => existsSync(p));
+    if (!runtime) {
+      console.error(`fez-orchestrator runtime not found (looked at: ${candidates.join(", ")}) — build it in packages/fez-orchestrator`);
+      process.exit(1);
+    }
+    await import(pathToFileURL(runtime).href);
+  });
+
+program
+  .command("orchestrator-install")
+  .description("Install @fez as a launchd agent: starts at login, always restarted (macOS)")
+  .option("-r, --relay <url>", "Relay URL baked into the service (default: settings/env)")
+  .action(async (options) => {
+    if (process.platform !== "darwin") {
+      console.error("launchd is macOS-only — on Linux, use a systemd user unit running `fez orchestrator`.");
+      process.exit(1);
+    }
+    const { resolveRelay } = await import("./settings.js");
+    const { execSync } = await import("node:child_process");
+    const fsSync = await import("node:fs");
+    const relayUrl = resolveRelay(options.relay);
+    const logDir = path.join(os.homedir(), ".fez", "logs");
+    fsSync.mkdirSync(logDir, { recursive: true });
+    const label = "com.fez.orchestrator";
+    const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
+    const cliPath = path.resolve(path.dirname(new URL(import.meta.url).pathname), "cli.js");
+    const pathEnv = `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`;
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${process.execPath}</string>
+    <string>${cliPath}</string>
+    <string>orchestrator</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>${pathEnv}</string>
+    <key>FEZ_RELAY</key><string>${relayUrl}</string>
+    <key>HOME</key><string>${os.homedir()}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>StandardOutPath</key><string>${path.join(logDir, "orchestrator.log")}</string>
+  <key>StandardErrorPath</key><string>${path.join(logDir, "orchestrator.log")}</string>
+</dict>
+</plist>
+`;
+    fsSync.writeFileSync(plistPath, plist);
+    try { execSync(`launchctl bootout gui/$(id -u) ${plistPath} 2>/dev/null`); } catch { /* not loaded */ }
+    execSync(`launchctl bootstrap gui/$(id -u) ${plistPath}`);
+    console.log(`✅ @fez installed as ${label} — starts at login, always restarted.`);
+    console.log(`   plist: ${plistPath}`);
+    console.log(`   logs:  ${path.join(logDir, "orchestrator.log")}`);
+    console.log(`   remove anytime: fez orchestrator-uninstall`);
+  });
+
+program
+  .command("orchestrator-uninstall")
+  .description("Remove the launchd @fez service")
+  .action(async () => {
+    const { execSync } = await import("node:child_process");
+    const fsSync = await import("node:fs");
+    const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "com.fez.orchestrator.plist");
+    try { execSync(`launchctl bootout gui/$(id -u) ${plistPath} 2>/dev/null`); } catch { /* not loaded */ }
+    fsSync.rmSync(plistPath, { force: true });
+    console.log("✅ @fez launchd service removed (any running instance was stopped).");
+  });
+
 // ─── doctor — is this machine ready to fez? ─────────────────────────────────
 
 program
