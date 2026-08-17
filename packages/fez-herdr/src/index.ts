@@ -1,4 +1,5 @@
 import net from "node:net";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -134,11 +135,20 @@ export default function herdr(api: FezExtensionAPI): void {
     const relay = process.env.FEZ_RELAY ?? "wss://relay.damus.io";
     // FEZ_AGENT_OWNER = the registering user: enables the encrypted
     // observer stream (/watch <persona>) for free on registered agents.
-    return `FEZ_AGENT_OWNER=${api.nostr!.pubkey} FEZ_RELAY=${relay} fez agent ${persona} -c ${channels.join(",")} --respond-to ${respondTo}\n`;
+    // No channels = DM-only mode (a DM summons wakes an agent into no
+    // channel at all — DMs are channel-free).
+    return `FEZ_AGENT_OWNER=${api.nostr!.pubkey} FEZ_RELAY=${relay} fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"} --respond-to ${respondTo}\n`;
   }
 
   /** Create the herdr tab and type the run command — shared by /herdr register and auto-spawn. */
   async function registerAgent(persona: string, channels: string[], respondTo: string): Promise<RegisteredTab> {
+    // Re-registering replaces the agent's tab — close the old one (its
+    // process is dead; that's why we're here) instead of orphaning a
+    // shell pane per summon.
+    const prior = registered.find((t) => t.persona === persona);
+    if (prior && liveTabIds.has(prior.tabId)) {
+      await herdrCall("tab.close", { tab_id: prior.tabId }).catch(() => {});
+    }
     const created = await herdrCall("tab.create", {
       label: `fez:${persona}`,
       cwd: process.cwd(),
@@ -180,7 +190,12 @@ export default function herdr(api: FezExtensionAPI): void {
   const KIND_AGENT_ATTESTATION = 47006;
   const KIND_CHANNEL_MESSAGE = 47103;
   const KIND_MEMBERSHIP = 47102;
+  const KIND_GIFT_WRAP = 1059; // NIP-59 wrap carrying a NIP-17 DM — see fez src/dm.ts
+  const DM_FUZZ_WINDOW_S = 2 * 86_400; // wrap timestamps fuzz up to 2 days BACK
   const spawning = new Set<string>();
+  // pubkey -> persona name, from 47000 announcements. Any DM-able agent
+  // has one (the sender needed its pubkey, and pubkeys travel via 47000).
+  const agentPkToName = new Map<string, string>();
   const pendingInvites = new Map<string, { channelId: string; communityId: string }>(); // persona -> where to invite
   const attested = new Set<string>(); // agent pubkeys attested this session
   // Pubkeys allowed to summon local personas via @mention (self is implicit):
@@ -209,6 +224,16 @@ export default function herdr(api: FezExtensionAPI): void {
    * launch a channel-agent that exits on the unknown harness and leave
    * a dead tab.
    */
+  /** Is a fez-acp process for this persona alive right now (herdr-managed or not)? */
+  function agentProcessAlive(persona: string): boolean {
+    try {
+      execSync(`pgrep -f "(fez|cli\\.js) agent ${persona}"`, { stdio: "pipe" });
+      return true;
+    } catch {
+      return false; // pgrep exits non-zero on no match
+    }
+  }
+
   function personaExists(name: string): boolean {
     try {
       const raw = fs.readFileSync(path.join(os.homedir(), ".fez", "personas", `${name}.md`), "utf-8");
@@ -248,6 +273,57 @@ export default function herdr(api: FezExtensionAPI): void {
         }
       })
       .catch(() => {});
+    // Hydrate the pubkey->persona roster from stored announcements — the
+    // DM watcher below needs it to recognize which wraps target OUR fleet.
+    void nostr
+      .query([{ kinds: [KIND_AGENT_METADATA], limit: 200 }])
+      .then((events) => {
+        for (const event of events) {
+          try {
+            const name = JSON.parse(event.content).name?.toLowerCase();
+            if (name) agentPkToName.set(event.pubkey, name);
+          } catch { /* ignore */ }
+        }
+      })
+      .catch(() => {});
+    // ── DM summons: a gift wrap addressed to a local persona's pubkey
+    // wakes it, same contract as a channel @mention. Sender, content,
+    // and depth are invisible here — that's the point of wraps — so the
+    // spawn is speculative: the agent itself gates the DM (owner ∪
+    // attested siblings) and idleExit reaps anything a stranger woke; a
+    // stranger's wrap can cost a process spawn, never a turn. Live
+    // wraps carry timestamps fuzzed up to 2 days back, so the watch
+    // must window back that far; the replayed history that causes is
+    // dropped via a short warmup — a stale DM wouldn't be answered
+    // anyway (agents only act on DMs fresher than their backfill
+    // window), so summoning for one would wake an agent into silence.
+    let dmWatchLive = false;
+    setTimeout(() => { dmWatchLive = true; }, 5000).unref?.();
+    nostr.subscribe(
+      [{ kinds: [KIND_GIFT_WRAP], since: Math.floor(Date.now() / 1000) - DM_FUZZ_WINDOW_S }],
+      (event) => {
+        if (!dmWatchLive) return;
+        const recipient = event.tags.find((t) => t[0] === "p")?.[1];
+        if (!recipient || recipient === nostr.pubkey) return; // our own inbox is the communities extension's business
+        const persona = agentPkToName.get(recipient);
+        if (!persona || spawning.has(persona) || !personaExists(persona)) return;
+        // Liveness = a real agent PROCESS, not a live herdr tab — a tab
+        // whose agent died (or an agent running outside herdr entirely)
+        // must not fool the summons either way.
+        if (agentProcessAlive(persona)) return;
+        const existing = registered.find((t) => t.persona === persona);
+        spawning.add(persona);
+        api.ui.notify("herdr · " + `✉️ DM for **@${persona}** — summoning it…`);
+        // Keep any previously served channels; a never-registered persona
+        // wakes DM-only (no channel to invite it into — DMs don't have one).
+        registerAgent(persona, existing?.channels ?? [], "owner")
+          .then(() => spawning.delete(persona))
+          .catch((err) => {
+            spawning.delete(persona);
+            api.ui.notify("herdr · " + `⚠️ couldn't summon @${persona}: ${err instanceof Error ? err.message : err}`);
+          });
+      }
+    );
     // Mentions in channel messages → summon mentioned-but-absent personas.
     nostr.subscribe(
       [{ kinds: [KIND_CHANNEL_MESSAGE], since: Math.floor(Date.now() / 1000) }],
@@ -301,6 +377,7 @@ export default function herdr(api: FezExtensionAPI): void {
           return;
         }
         if (!name) return;
+        agentPkToName.set(event.pubkey, name);
         // Any of our registered agents announcing itself gets an owner
         // attestation — makes it a verifiable sibling to the rest of the
         // fleet, regardless of how it was started.
@@ -353,7 +430,7 @@ export default function herdr(api: FezExtensionAPI): void {
       if (registered.length === 0) return ctx.reply("No fez agents registered with herdr.");
       ctx.reply(
         registered
-          .map((t) => `• @${t.persona} → ${t.channels.map((c) => "#" + c).join(", ")} — tab \`${t.tabId}\` ${liveTabIds.has(t.tabId) ? "(running)" : "(gone)"}`)
+          .map((t) => `• @${t.persona} → ${t.channels.length > 0 ? t.channels.map((c) => "#" + c).join(", ") : "dm-only"} — tab \`${t.tabId}\` ${liveTabIds.has(t.tabId) ? "(running)" : "(gone)"}`)
           .join("\n")
       );
       return;

@@ -287,7 +287,7 @@ mem
 program
   .command("agent <persona>")
   .description("Run a standing channel agent for a persona (fez-acp runtime)")
-  .option("-c, --channels <list>", "channel names/ids, comma-separated", "general")
+  .option("-c, --channels <list>", 'channel names/ids, comma-separated; "none" = DM-only', "general")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--respond-to <policy>", "anyone | owner | allowlist:<pk,...>", "owner")
   .option("--owner <pubkey>", "owner pubkey (default: your fez identity)")
@@ -296,7 +296,7 @@ program
     const { resolveRelay } = await import("./settings.js");
     process.env.FEZ_RELAY = resolveRelay(options.relay);
     process.env.FEZ_AGENT_PERSONA = personaId;
-    process.env.FEZ_AGENT_CHANNELS = options.channels;
+    process.env.FEZ_AGENT_CHANNELS = options.channels === "none" ? "" : options.channels;
     process.env.FEZ_AGENT_RESPOND_TO = options.respondTo;
     process.env.FEZ_AGENT_ON_BUSY = options.onBusy;
     // Owner defaults to the user's own identity — the observer stream

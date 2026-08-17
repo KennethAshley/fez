@@ -67,8 +67,11 @@ async function main() {
   const respondTo = process.env.FEZ_AGENT_RESPOND_TO || "owner";
   const owner = process.env.FEZ_AGENT_OWNER;
 
-  if (!personaId || channelSpecs.length === 0) {
-    console.error("Usage: fez agent <persona> [-c channels] — or set FEZ_AGENT_PERSONA / FEZ_AGENT_CHANNELS and fez run dist/agent.js");
+  // Empty channels = DM-only mode: the agent serves no channels and
+  // answers only gift-wrapped DMs (`fez agent <persona> -c none`) — the
+  // shape a DM summons wakes an agent into, since DMs are channel-free.
+  if (!personaId) {
+    console.error("Usage: fez agent <persona> [-c channels|none] — or set FEZ_AGENT_PERSONA / FEZ_AGENT_CHANNELS and fez run dist/agent.js");
     process.exit(1);
   }
 
@@ -177,7 +180,7 @@ async function main() {
     return memCache.section;
   }
 
-  const channels = await resolveChannels(relay, channelSpecs, relayUrl);
+  const channels = channelSpecs.length > 0 ? await resolveChannels(relay, channelSpecs, relayUrl) : [];
 
   const allowlist = respondTo.startsWith("allowlist:")
     ? new Set(respondTo.slice("allowlist:".length).split(",").map((s) => s.trim()))
@@ -270,7 +273,7 @@ async function main() {
     memberships.set(channelId, { createdAt: event.created_at, members });
   }
 
-  const membershipEvents = await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": channels }]);
+  const membershipEvents = channels.length > 0 ? await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": channels }]) : [];
   for (const event of membershipEvents) absorbMembership(event);
   for (const channelId of channels) {
     if (!memberships.get(channelId)?.members.has(myPubkey)) {
@@ -302,7 +305,7 @@ async function main() {
   await announce();
   const heartbeat = setInterval(announce, 12 * 60 * 60 * 1000);
 
-  console.log(`🟢 @${personaId} standing by in ${channels.length} channel(s) on ${relayUrl}`);
+  console.log(`🟢 @${personaId} standing by ${channels.length > 0 ? `in ${channels.length} channel(s)` : "DM-only"} on ${relayUrl}`);
   console.log(`   Pubkey: ${myPubkey} | respondTo: ${respondTo}`);
 
   // Observer stream: the owner-only activity firehose (thoughts, tool
@@ -732,8 +735,12 @@ async function main() {
 
   relay.subscribe(
     [
-      { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
-      { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+      ...(channels.length > 0
+        ? [
+            { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
+            { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+          ]
+        : []),
       { kinds: [KIND_GIFT_WRAP], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) - DM_FUZZ_WINDOW_S },
     ],
     (event) => {
@@ -756,7 +763,7 @@ async function main() {
   // summoned it — the live subscription (since: now) misses it. Pick up
   // the most recent unanswered mention from the last two minutes.
   const BACKFILL_WINDOW_S = 120;
-  const [recentMessages, ownReplies] = await Promise.all([
+  const [recentMessages, ownReplies] = channels.length === 0 ? [[], []] : await Promise.all([
     relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }]),
     relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }]),
   ]);
