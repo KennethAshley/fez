@@ -10,6 +10,8 @@ import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
 import ManagePane from "./ManagePane";
+import HomeView from "./HomeView";
+import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { uploadFile, shareLine } from "./upload";
 import Onboarding from "./Onboarding";
@@ -43,12 +45,13 @@ type Boot =
   | { phase: "error"; message: string }
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
-type MainView = { kind: "channel" } | { kind: "dm"; convoKey: string };
+type MainView = { kind: "channel" } | { kind: "dm"; convoKey: string } | { kind: "home" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
   | { kind: "agents" }
   | { kind: "manage" }
+  | { kind: "settings" }
   | undefined;
 
 function useForceRender(): () => void {
@@ -302,7 +305,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           <button className="rail-tool" title="agent costs" onClick={() => setPane(pane?.kind === "costs" ? undefined : { kind: "costs" })}>
             $
           </button>
+          <button className="rail-tool" title="settings" onClick={() => setPane(pane?.kind === "settings" ? undefined : { kind: "settings" })}>
+            ⚙
+          </button>
         </div>
+        <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
+          ⌂ home
+        </button>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))
           .map((community, _index, joined) => (
@@ -373,6 +382,14 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
       {view.kind === "dm" && <DmView key={view.convoKey} client={client} wire={wire} convoKey={view.convoKey} />}
+      {view.kind === "home" && (
+        <HomeView
+          client={client}
+          wire={wire}
+          onOpenChannel={(communityId, channelId) => void openChannel(communityId, channelId)}
+          onOpenDm={openDm}
+        />
+      )}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
 
       {pane?.kind === "watch" && (
@@ -385,6 +402,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
+      {pane?.kind === "settings" && <SettingsPane client={client} onClose={() => setPane(undefined)} />}
       {pane?.kind === "manage" && (
         <ManagePane
           client={client}
