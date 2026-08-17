@@ -779,6 +779,36 @@ function ChannelView({
 
   const [cmdNotice, setCmdNotice] = useState<string>();
 
+  // Local persona files — mentions of these SUMMON (sentinel spawns +
+  // invites), so an absent-but-summonable agent is info, not a warning.
+  const [localPersonas, setLocalPersonas] = useState<string[]>([]);
+  useEffect(() => {
+    void invoke<string[]>("list_personas").then(setLocalPersonas).catch(() => setLocalPersonas([]));
+  }, []);
+
+  /**
+   * The ghost-town guard, live (Buzz's NonMemberMentionDialog): every
+   * @name in the draft that can't hear you in THIS channel gets called
+   * out before you send — summonable, invitable, or unknown.
+   */
+  const members = client.state.currentChannel()?.channel.members;
+  const amCreator = client.state.currentChannel()?.community.creator === client.pubkey;
+  const mentionWarnings: { name: string; pk?: string; kind: "summon" | "absent" | "unknown" }[] = [];
+  if (members) {
+    const seen = new Set<string>();
+    for (const match of draft.matchAll(/@([\w-]+)/g)) {
+      const name = match[1];
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const pk = client.pkByName(name);
+      if (pk && members.has(pk)) continue;
+      if (pk) mentionWarnings.push({ name, pk, kind: "absent" });
+      else if (localPersonas.some((p) => p.toLowerCase() === key)) mentionWarnings.push({ name, kind: "summon" });
+      else mentionWarnings.push({ name, kind: "unknown" });
+    }
+  }
+
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
@@ -910,6 +940,27 @@ function ChannelView({
       )}
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
       {cmdNotice && <div className="edit-banner cmd-notice">{cmdNotice}</div>}
+      {mentionWarnings.map((warning) => (
+        <div key={warning.name} className={warning.kind === "summon" ? "mention-warn summon" : "mention-warn"}>
+          {warning.kind === "summon" && <>◌ @{warning.name} isn't here yet — sending will summon it into this channel</>}
+          {warning.kind === "unknown" && <>⚠ nobody named @{warning.name} is known — they won't see this</>}
+          {warning.kind === "absent" && (
+            <>
+              ⚠ @{warning.name} isn't in this channel and won't see this
+              {amCreator && warning.pk && (
+                <button
+                  className="mini warn-invite"
+                  onClick={() =>
+                    void client.invite(warning.pk!, client.agents().has(warning.pk!) ? "bot" : ("member" as never)).catch(() => {})
+                  }
+                >
+                  + invite
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      ))}
       <Composer
         client={client}
         value={draft}

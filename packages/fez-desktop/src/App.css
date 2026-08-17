@@ -757,3 +757,18 @@ button.author:hover { text-decoration: underline; }
   margin-bottom: 8px; cursor: pointer;
 }
 .settings-check input { margin-top: 2px; }
+
+/* ── ghost-town guard: mentions that can't hear you ────────── */
+.mention-warn {
+  margin: 0 18px 6px; padding: 6px 12px; border-radius: 6px;
+  background: color-mix(in srgb, var(--yellow) 12%, var(--bg1));
+  border: 1px solid color-mix(in srgb, var(--yellow) 35%, var(--hairline));
+  color: var(--fg); font-family: var(--font-mono); font-size: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.mention-warn.summon {
+  background: color-mix(in srgb, var(--phosphor) 9%, var(--bg1));
+  border-color: color-mix(in srgb, var(--phosphor) 30%, var(--hairline));
+  color: var(--fg-dim);
+}
+.warn-invite { margin-left: auto; background: var(--yellow); color: var(--bg0); font-weight: 700; }
