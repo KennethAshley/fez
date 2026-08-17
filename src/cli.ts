@@ -500,10 +500,11 @@ program
     <key>HOME</key><string>${os.homedir()}</string>
   </dict>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key><false/>
-  </dict>
+  <!-- Unconditional: a SIGTERM from logout/sleep teardown exits 0, and
+       SuccessfulExit=false read that as "meant to stop" — leaving the
+       sentinel dead until someone noticed (someone noticed). Deliberate
+       stops go through launchctl unload, which KeepAlive respects. -->
+  <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>15</integer>
   <key>StandardOutPath</key><string>${path.join(logDir, "sentinel.log")}</string>
   <key>StandardErrorPath</key><string>${path.join(logDir, "sentinel.log")}</string>
