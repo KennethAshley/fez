@@ -51,6 +51,27 @@ export interface HarnessAdapter {
     onUpdate?: (update: HarnessUpdate) => void,
     signal?: AbortSignal
   ): Promise<string>;
+  /**
+   * Open a PERSISTENT session: one live harness process whose
+   * conversation accumulates across prompt() calls — Buzz's per-channel
+   * session model. The caller owns the lifecycle (close on breaker
+   * trips, turn caps, idle reaping). Optional: adapters without it are
+   * one-shot only and callers fall back to invoke().
+   */
+  openSession?(cwd: string, mcpServers?: McpServer[]): Promise<HarnessSession>;
+}
+
+/** A live harness conversation. prompt() calls MUST be sequential (no overlap). */
+export interface HarnessSession {
+  /** False once the underlying process died or close() was called. */
+  readonly alive: boolean;
+  prompt(
+    instruction: string,
+    onProgress?: (textSoFar: string) => void,
+    onUpdate?: (update: HarnessUpdate) => void,
+    signal?: AbortSignal
+  ): Promise<string>;
+  close(): Promise<void>;
 }
 
 /**
@@ -155,6 +176,205 @@ interface AcpDescriptor {
   env: () => NodeJS.ProcessEnv;
 }
 
+/**
+ * Drive ONE prompt lifecycle on a live ACP session: fire the prompt,
+ * consume updates (idle + hard timeouts, abort racing) until "stop",
+ * return the accumulated text. Shared by one-shot invoke() and
+ * persistent sessions — the loop is identical, only the session's
+ * lifetime differs.
+ */
+async function drivePrompt(
+  session: { prompt(text: string): Promise<unknown>; nextUpdate(): Promise<any> },
+  command: string,
+  instruction: string,
+  onProgress?: (textSoFar: string) => void,
+  onUpdate?: (update: HarnessUpdate) => void,
+  signal?: AbortSignal
+): Promise<string> {
+  // Fire the prompt; drive completion through nextUpdate() rather than
+  // awaiting prompt() directly so each update can reset the idle timer.
+  session.prompt(instruction).catch(() => {});
+
+  const abortPromise = new Promise<never>((_, reject) => {
+    const onAbort = () => {
+      const err = new Error("turn aborted (steer)");
+      err.name = "AbortError";
+      reject(err);
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  abortPromise.catch(() => {});
+
+  const { idleMs, maxMs } = DEFAULT_TIMEOUTS;
+  const hardDeadline = Date.now() + maxMs;
+  let text = "";
+  let thought = "";
+  let lastProgressAt = 0;
+  let lastThoughtAt = 0;
+  let lastTextAt = 0;
+
+  while (true) {
+    const remaining = hardDeadline - Date.now();
+    if (remaining <= 0) {
+      throw new HarnessTimeoutError(`${command} hit the ${maxMs}ms hard deadline without finishing`);
+    }
+
+    let idleHandle: ReturnType<typeof setTimeout>;
+    const idleTimeout = new Promise<never>((_, reject) => {
+      idleHandle = setTimeout(
+        () => reject(new HarnessTimeoutError(`${command} went silent for ${idleMs}ms mid-turn`)),
+        Math.min(idleMs, remaining)
+      );
+    });
+
+    let message;
+    try {
+      message = await Promise.race([session.nextUpdate(), idleTimeout, abortPromise]);
+    } finally {
+      clearTimeout(idleHandle!);
+    }
+
+    if (message.kind === "stop") {
+      if (message.stopReason !== "end_turn") {
+        notice(`${command} stopped with reason: ${message.stopReason}`);
+      }
+      break;
+    }
+
+    const { update } = message;
+    if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+      text += update.content.text;
+      // Own timestamp — sharing lastProgressAt let frequent tool-call
+      // ticks starve text frames.
+      const now = Date.now();
+      if (onUpdate && now - lastTextAt >= PROGRESS_THROTTLE_MS) {
+        lastTextAt = now;
+        onUpdate({ type: "text", text });
+      }
+    } else if (update.sessionUpdate === "agent_thought_chunk" && update.content.type === "text") {
+      thought += update.content.text;
+      const now = Date.now();
+      if (onUpdate && now - lastThoughtAt >= PROGRESS_THROTTLE_MS) {
+        lastThoughtAt = now;
+        onUpdate({ type: "thought", text: thought });
+      }
+    } else if (update.sessionUpdate === "tool_call") {
+      onUpdate?.({ type: "tool", title: update.title, status: update.status ?? "started" });
+    } else if (update.sessionUpdate === "tool_call_update") {
+      onUpdate?.({ type: "tool", title: update.title ?? undefined, status: update.status ?? undefined });
+    } else if (update.sessionUpdate === "plan") {
+      onUpdate?.({ type: "plan" });
+    }
+
+    // Throttled, and fires on any update — even a tool-call-only stretch
+    // should tell the caller "still alive."
+    const now = Date.now();
+    if (onProgress && now - lastProgressAt >= PROGRESS_THROTTLE_MS) {
+      lastProgressAt = now;
+      onProgress(text);
+    }
+  }
+
+  // Final flush: text inside the last throttle window was never reported.
+  if (onProgress && text) onProgress(text);
+  if (onUpdate && thought) onUpdate({ type: "thought", text: thought });
+  if (onUpdate && text) onUpdate({ type: "text", text });
+
+  return text;
+}
+
+/**
+ * Open a persistent ACP session: spawn the adapter once, build the
+ * session, then PIN the connectWith scope open until close() — prompts
+ * flow into the same conversation, so turn N remembers turns 1..N-1
+ * (Buzz's per-channel session model; the cure for fresh-mind-per-turn).
+ */
+function openAcpSession(descriptor: AcpDescriptor, cwd: string, mcpServers?: McpServer[]): Promise<HarnessSession> {
+  const { command } = descriptor;
+  const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
+  child.stdin?.on("error", () => {});
+  child.stdout?.on("error", () => {});
+  child.stderr?.on("error", () => {});
+  let stderrTail = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+  });
+
+  return new Promise<HarnessSession>((resolveHandle, rejectHandle) => {
+    let settled = false;
+    let alive = true;
+    let releaseScope!: () => void;
+    const scopeHeld = new Promise<void>((r) => (releaseScope = r));
+
+    const stream = ndJsonStream(
+      Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
+      Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
+    );
+    const app = client({ name: "fez" });
+    app.onRequest("session/request_permission", async ({ params }) => {
+      const allow =
+        params.options.find((o) => (o as { kind?: string }).kind === "allow_once") ??
+        params.options.find((o) => String((o as { kind?: string }).kind ?? "").startsWith("allow")) ??
+        params.options[0];
+      return { outcome: { outcome: "selected" as const, optionId: allow.optionId } };
+    });
+
+    child.on("exit", () => {
+      alive = false;
+      releaseScope();
+    });
+
+    const run = app
+      .connectWith(stream, async (ctx) => {
+        let builder = ctx.buildSession(cwd);
+        for (const server of mcpServers ?? []) builder = builder.withMcpServer(server);
+        const session = await builder.start();
+
+        const handle: HarnessSession = {
+          get alive() {
+            return alive;
+          },
+          async prompt(instruction, onProgress, onUpdate, signal) {
+            if (!alive) throw new Error(`${command} session is closed`);
+            try {
+              return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal);
+            } catch (err) {
+              // A failed prompt may leave the session mid-stream — the
+              // caller decides whether to recycle; surface stderr context.
+              if (err instanceof Error && stderrTail && !err.message.includes(stderrTail.slice(-40))) {
+                err.message = `${err.message}${stderrTail ? ` (stderr: …${stderrTail.slice(-200)})` : ""}`;
+              }
+              throw err;
+            }
+          },
+          async close() {
+            alive = false;
+            releaseScope();
+            child.kill();
+          },
+        };
+        settled = true;
+        resolveHandle(handle);
+        await scopeHeld; // hold the ACP scope open for the session's lifetime
+      })
+      .catch((err) => {
+        alive = false;
+        if (!settled) {
+          settled = true;
+          rejectHandle(
+            new Error(`${command} session failed to open: ${err instanceof Error ? err.message : err}${stderrTail ? ` (stderr: …${stderrTail.slice(-200)})` : ""}`)
+          );
+        }
+      })
+      .finally(() => {
+        alive = false;
+        child.kill();
+      });
+    void run;
+  });
+}
+
 function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
   const { command } = descriptor;
 
@@ -163,6 +383,8 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
     aliases: descriptor.aliases,
     command,
     detect: () => spawnDetect(command, ["--version"]),
+
+    openSession: (cwd, mcpServers) => openAcpSession(descriptor, cwd, mcpServers),
 
     async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal) {
       const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
@@ -217,127 +439,7 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
             builder = builder.withMcpServer(server);
           }
           const session = await builder.start();
-
-          // Fire the prompt; drive completion through nextUpdate() rather than
-          // awaiting prompt() directly so each update can reset the idle timer.
-          // Unhandled here on purpose — completion surfaces as a "stop" message
-          // from nextUpdate(), which is what the loop below actually waits on.
-          session.prompt(instruction).catch(() => {});
-
-          // Abort (steering) races every update wait — created once so
-          // listeners don't pile up on the signal per loop iteration; the
-          // outer finally kills the child on any exit path. Guarded catch:
-          // nothing awaits this between iterations, so an abort firing
-          // there must not surface as an unhandled rejection.
-          const abortPromise = new Promise<never>((_, reject) => {
-            const onAbort = () => {
-              const err = new Error("turn aborted (steer)");
-              err.name = "AbortError";
-              reject(err);
-            };
-            if (signal?.aborted) onAbort();
-            else signal?.addEventListener("abort", onAbort, { once: true });
-          });
-          abortPromise.catch(() => {});
-
-          const { idleMs, maxMs } = DEFAULT_TIMEOUTS;
-          const hardDeadline = Date.now() + maxMs;
-          let text = "";
-          let thought = "";
-          let lastProgressAt = 0;
-          let lastThoughtAt = 0;
-          let lastTextAt = 0;
-
-          while (true) {
-            const remaining = hardDeadline - Date.now();
-            if (remaining <= 0) {
-              throw new HarnessTimeoutError(
-                `${command} hit the ${maxMs}ms hard deadline without finishing`
-              );
-            }
-
-            let idleHandle: ReturnType<typeof setTimeout>;
-            const idleTimeout = new Promise<never>((_, reject) => {
-              idleHandle = setTimeout(
-                () =>
-                  reject(
-                    new HarnessTimeoutError(
-                      `${command} went silent for ${idleMs}ms mid-turn`
-                    )
-                  ),
-                Math.min(idleMs, remaining)
-              );
-            });
-
-            let message;
-            try {
-              message = await Promise.race([session.nextUpdate(), idleTimeout, abortPromise]);
-            } finally {
-              clearTimeout(idleHandle!);
-            }
-
-            if (message.kind === "stop") {
-              if (message.stopReason !== "end_turn") {
-                notice(`${command} stopped with reason: ${message.stopReason}`);
-              }
-              break;
-            }
-
-            const { update } = message;
-            if (
-              update.sessionUpdate === "agent_message_chunk" &&
-              update.content.type === "text"
-            ) {
-              text += update.content.text;
-              // Own timestamp — sharing lastProgressAt let frequent
-              // tool-call ticks starve text frames (a whole reply could
-              // surface as ONE text update).
-              const now = Date.now();
-              if (onUpdate && now - lastTextAt >= PROGRESS_THROTTLE_MS) {
-                lastTextAt = now;
-                onUpdate({ type: "text", text });
-              }
-            } else if (
-              update.sessionUpdate === "agent_thought_chunk" &&
-              update.content.type === "text"
-            ) {
-              thought += update.content.text;
-              const now = Date.now();
-              if (onUpdate && now - lastThoughtAt >= PROGRESS_THROTTLE_MS) {
-                lastThoughtAt = now;
-                onUpdate({ type: "thought", text: thought });
-              }
-            } else if (update.sessionUpdate === "tool_call") {
-              onUpdate?.({ type: "tool", title: update.title, status: update.status ?? "started" });
-            } else if (update.sessionUpdate === "tool_call_update") {
-              onUpdate?.({
-                type: "tool",
-                title: update.title ?? undefined,
-                status: update.status ?? undefined,
-              });
-            } else if (update.sessionUpdate === "plan") {
-              onUpdate?.({ type: "plan" });
-            }
-
-            // Throttled, and fires on any update (not just text chunks) —
-            // even a tool-call-only stretch should tell the caller "still
-            // alive," not just go silent until the next text token.
-            const now = Date.now();
-            if (onProgress && now - lastProgressAt >= PROGRESS_THROTTLE_MS) {
-              lastProgressAt = now;
-              onProgress(text);
-            }
-          }
-
-          // Final flush: text that arrived inside the last throttle window
-          // was never reported — a short reply could otherwise complete
-          // with zero onProgress calls (bit for real: relay draft streaming
-          // saw nothing for one-chunk replies).
-          if (onProgress && text) onProgress(text);
-          if (onUpdate && thought) onUpdate({ type: "thought", text: thought });
-          if (onUpdate && text) onUpdate({ type: "text", text });
-
-          return text;
+          return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal);
         });
       } finally {
         child.kill();

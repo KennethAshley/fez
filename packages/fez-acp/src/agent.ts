@@ -24,6 +24,7 @@ import {
   KIND_GIFT_WRAP,
   DM_FUZZ_WINDOW_S,
   type DmRumor,
+  type HarnessSession,
   type HarnessUpdate,
 } from "@fez/protocol";
 import fs from "node:fs";
@@ -265,6 +266,7 @@ async function main() {
       if (busy || Date.now() - lastAcceptedAt < idleExitMs) return;
       console.log(`🌙 quiet for ${idleExitRaw} — signing off. Mention @${personaId} to re-summon.`);
       clearInterval(heartbeat);
+      closeAllSessions();
       relay.disconnect();
       process.exit(0);
     }, 60_000).unref?.();
@@ -345,6 +347,109 @@ async function main() {
       )
       .catch(() => {});
   };
+
+  // ── Session pool — Buzz's per-channel sessions, fez-shaped. One LIVE
+  // harness conversation per scope (channel or DM peer): the persona,
+  // memory, and conventions go in once at open; every later turn is
+  // just the new message, and the mind remembers its own earlier turns —
+  // including handoffs it issued. This replaces fresh-process-per-turn
+  // (inherited from the original one-shot invoke() contract), which
+  // paid full cold-start every message and had amnesia by construction.
+  interface PooledSession {
+    session: HarnessSession;
+    turns: number;
+    lastUsed: number;
+    /** Whether the priming prompt (persona + memory + conventions) has been sent. */
+    primed: boolean;
+  }
+  const sessionPool = new Map<string, PooledSession>();
+  const SESSION_LRU_CAP = 4; // live minds at once — memory bound
+  const SESSION_TURN_CAP = 20; // recycle before context grows unbounded (Buzz's max_turns_per_session)
+  const SESSION_IDLE_MS = 30 * 60_000;
+
+  function dropSession(scope: string): void {
+    const pooled = sessionPool.get(scope);
+    if (!pooled) return;
+    void pooled.session.close();
+    sessionPool.delete(scope);
+  }
+  function closeAllSessions(): void {
+    for (const key of [...sessionPool.keys()]) dropSession(key);
+  }
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, pooled] of sessionPool) {
+      if (now - pooled.lastUsed > SESSION_IDLE_MS) {
+        console.log(`🧠 reaping idle session ${key}`);
+        dropSession(key);
+      }
+    }
+  }, 60_000).unref?.();
+
+  async function getSession(scope: string): Promise<PooledSession> {
+    const existing = sessionPool.get(scope);
+    if (existing && existing.session.alive && existing.turns < SESSION_TURN_CAP) {
+      existing.lastUsed = Date.now();
+      return existing;
+    }
+    if (existing) dropSession(scope);
+    while (sessionPool.size >= SESSION_LRU_CAP) {
+      let oldestKey: string | undefined;
+      let oldest = Infinity;
+      for (const [key, pooled] of sessionPool) {
+        if (pooled.lastUsed < oldest) {
+          oldest = pooled.lastUsed;
+          oldestKey = key;
+        }
+      }
+      if (!oldestKey) break;
+      dropSession(oldestKey);
+    }
+    const session = await harness!.openSession!(workDir, mcpServers);
+    const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false };
+    sessionPool.set(scope, pooled);
+    console.log(`🧠 opened harness session for ${scope} (${sessionPool.size} live)`);
+    return pooled;
+  }
+
+  /**
+   * Prompt into the scope's live session. Transient failure = the
+   * session is presumed poisoned: recycle and replay ONCE with a fresh
+   * fully-primed prompt (Buzz's invalidate-don't-retry-into-poison
+   * rule). Aborts (steer) recycle without replay — the steer path
+   * re-dispatches its own merged turn. Falls back to one-shot
+   * invokeWithRetry for harnesses without session support.
+   */
+  async function promptSession(
+    scope: string,
+    buildPrompt: (fresh: boolean) => Promise<string>,
+    onProgress: ((text: string) => void) | undefined,
+    onUpdate: (update: HarnessUpdate) => void,
+    signal?: AbortSignal
+  ): Promise<string> {
+    if (!harness!.openSession) {
+      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal);
+    }
+    let pooled = await getSession(scope);
+    try {
+      const reply = await pooled.session.prompt(await buildPrompt(!pooled.primed), onProgress, onUpdate, signal);
+      pooled.primed = true;
+      pooled.turns++;
+      pooled.lastUsed = Date.now();
+      return reply;
+    } catch (err) {
+      const kind = classifyTurnError(err);
+      dropSession(scope); // failed or aborted mid-prompt — never reuse
+      if (kind !== "transient") throw err;
+      console.log(`↻ transient harness error — recycling session, replaying once: ${err instanceof Error ? err.message : err}`);
+      pooled = await getSession(scope);
+      const reply = await pooled.session.prompt(await buildPrompt(true), onProgress, onUpdate, signal);
+      pooled.primed = true;
+      pooled.turns++;
+      pooled.lastUsed = Date.now();
+      return reply;
+    }
+  }
 
   const recent = new Map<string, string[]>(); // channelId -> last few messages, as harness context
   // Event-id dedupe: relays can deliver an event more than once (and the
@@ -516,35 +621,52 @@ async function main() {
         ["depth", String(triggerDepth + 1)],
       ];
       try {
-        const memorySection = await coreMemorySection();
-        const prompt = [
-          persona.systemPrompt ?? "",
-          ...(memorySection ? [memorySection] : []),
-          `You are @${personaId}, responding in a group chat channel where humans and other agents talk. Two conventions matter:`,
-          `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
-          ...(missingSkills.length > 0
-            ? [
-                `- Capability honesty: your persona declares skills that are NOT available in this session: ${missingSkills.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
-              ]
-            : [
-                `- Capability honesty: if the task needs a tool or data source you don't have access to, say so plainly instead of improvising the result.`,
-              ]),
-          ...(memorySection
-            ? [
-                `- Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" (identity/rules/goals — a rewrite, not an append), fez mem set mem/<topic> "<note>" for individual facts, fez mem get <slug> / fez mem list to recall.`,
-              ]
-            : []),
-          `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
-          `Recent messages:`,
-          ...(recent.get(channelId) ?? []),
-          ...(steering.length > 0
-            ? [
-                `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
-                ...steering,
-              ]
-            : []),
-          `Reply to the last message that addressed you. Be concise — this is chat.`,
-        ].filter(Boolean).join("\n\n");
+        // fresh = first prompt into a session (or a replay into a recycled
+        // one): persona + memory + conventions + recent context. Later
+        // turns send just the new message — the session remembers.
+        const buildPrompt = async (fresh: boolean): Promise<string> => {
+          if (!fresh) {
+            return [
+              `New message in the channel from ${event.pubkey.slice(0, 8)}: ${event.content}`,
+              ...(steering.length > 0
+                ? [
+                    `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response:`,
+                    ...steering,
+                  ]
+                : []),
+              `Reply to it. The conventions from the start of this session still apply. Be concise — this is chat.`,
+            ].join("\n\n");
+          }
+          const memorySection = await coreMemorySection();
+          return [
+            persona.systemPrompt ?? "",
+            ...(memorySection ? [memorySection] : []),
+            `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
+            `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
+            ...(missingSkills.length > 0
+              ? [
+                  `- Capability honesty: your persona declares skills that are NOT available in this session: ${missingSkills.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
+                ]
+              : [
+                  `- Capability honesty: if the task needs a tool or data source you don't have access to, say so plainly instead of improvising the result.`,
+                ]),
+            ...(memorySection
+              ? [
+                  `- Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" (identity/rules/goals — a rewrite, not an append), fez mem set mem/<topic> "<note>" for individual facts, fez mem get <slug> / fez mem list to recall.`,
+                ]
+              : []),
+            `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
+            `Recent messages:`,
+            ...(recent.get(channelId) ?? []),
+            ...(steering.length > 0
+              ? [
+                  `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
+                  ...steering,
+                ]
+              : []),
+            `Reply to the last message that addressed you. Be concise — this is chat.`,
+          ].filter(Boolean).join("\n\n");
+        };
 
         console.log(`💬 Mention from ${event.pubkey.slice(0, 8)}… — invoking ${persona.harness}`);
         void react("💬"); // "working" — the turn is actually starting
@@ -564,7 +686,7 @@ async function main() {
 
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
-        const reply = await invokeWithRetry(harness, prompt, workDir, publishDraft, mcpServers, onUpdate, turnController.signal);
+        const reply = await promptSession(`ch:${channelId}`, buildPrompt, publishDraft, onUpdate, turnController.signal);
 
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
@@ -596,6 +718,7 @@ async function main() {
             breakerUntil = Date.now() + BREAKER_COOLDOWN_MS;
             consecutiveFailures = 0;
             console.error(`🛑 Breaker tripped — pausing ${BREAKER_COOLDOWN_MS / 60_000}m`);
+            closeAllSessions();
           }
           void relay
             .publish(
@@ -648,7 +771,7 @@ async function main() {
     await relay.publish(toSelf);
   };
 
-  const handleDm = async (dm: DmRumor): Promise<void> => {
+  const handleDm = async (dm: DmRumor, fromBacklog = false): Promise<void> => {
     if (seenEventIds.has(dm.id)) return;
     seenEventIds.add(dm.id);
     if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
@@ -665,7 +788,11 @@ async function main() {
 
     // Replayed history: context only, no turn.
     if (dm.ts < Math.floor(Date.now() / 1000) - DM_BACKFILL_WINDOW_S) return;
-    if ((dmLastSent.get(dm.peerPk) ?? 0) >= dm.ts) return; // already answered
+    // "Already answered" only guards the startup replay — a LIVE DM
+    // must always process (the id dedupe covers duplicates). Applying
+    // it live swallowed rapid follow-ups landing in the same second as
+    // our previous reply.
+    if (fromBacklog && (dmLastSent.get(dm.peerPk) ?? 0) >= dm.ts) return;
     if (!(await authorAllowed(dm.senderPk))) return;
     // Same loop guard as channels — agent↔agent DMs ping-pong just as
     // happily in private, with nobody watching. The depth rides INSIDE
@@ -692,25 +819,30 @@ async function main() {
     lastAcceptedAt = Date.now();
     turnTimes.push(Date.now());
     try {
-      const memorySection = await coreMemorySection();
-      const prompt = [
-        persona.systemPrompt ?? "",
-        ...(memorySection ? [memorySection] : []),
-        `You are @${personaId}, in a PRIVATE direct-message conversation — only you and your correspondent can read it. Reply to them directly; @names summon nobody here, and there is no channel audience. If a task needs a tool or data source you don't have, say so plainly instead of improvising.`,
-        ...(memorySection
-          ? [
-              `Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" or fez mem set mem/<topic> "<note>".`,
-            ]
-          : []),
-        `Conversation so far:`,
-        ...(dmRecent.get(dm.peerPk) ?? []),
-        `Reply to the last message. Be concise — this is chat.`,
-      ].filter(Boolean).join("\n\n");
+      const buildPrompt = async (fresh: boolean): Promise<string> => {
+        if (!fresh) {
+          return `New private message from ${dm.senderPk.slice(0, 8)}: ${dm.text}\n\nReply to it. Be concise — this is chat.`;
+        }
+        const memorySection = await coreMemorySection();
+        return [
+          persona.systemPrompt ?? "",
+          ...(memorySection ? [memorySection] : []),
+          `You are @${personaId}, in a PRIVATE direct-message conversation — only you and your correspondent can read it. This session is ONGOING — later messages arrive as new turns in the same conversation. Reply to them directly; @names summon nobody here, and there is no channel audience. If a task needs a tool or data source you don't have, say so plainly instead of improvising.`,
+          ...(memorySection
+            ? [
+                `Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" or fez mem set mem/<topic> "<note>".`,
+              ]
+            : []),
+          `Conversation so far:`,
+          ...(dmRecent.get(dm.peerPk) ?? []),
+          `Reply to the last message. Be concise — this is chat.`,
+        ].filter(Boolean).join("\n\n");
+      };
 
       console.log(`✉️  DM from ${dm.senderPk.slice(0, 8)}… — invoking ${persona.harness}`);
       publishObserver({ type: "turn", status: "started" });
       const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
-      const reply = await invokeWithRetry(harness, prompt, workDir, undefined, mcpServers, onUpdate);
+      const reply = await promptSession(`dm:${dm.peerPk}`, buildPrompt, undefined, onUpdate);
 
       await sendDmReply(dm.peerPk, reply, dm.depth + 1);
       dmLastSent.set(dm.peerPk, Math.floor(Date.now() / 1000));
@@ -729,6 +861,7 @@ async function main() {
         breakerUntil = Date.now() + BREAKER_COOLDOWN_MS;
         consecutiveFailures = 0;
         console.error(`🛑 Breaker tripped — pausing ${BREAKER_COOLDOWN_MS / 60_000}m`);
+        closeAllSessions();
       }
       // Failure notice goes back over the same private pipe.
       void sendDmReply(dm.peerPk, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
@@ -751,7 +884,7 @@ async function main() {
   setTimeout(() => {
     dmLive = true;
     dmBacklog.sort((a, b) => a.ts - b.ts);
-    for (const dm of dmBacklog.splice(0)) void handleDm(dm);
+    for (const dm of dmBacklog.splice(0)) void handleDm(dm, true);
   }, 2500);
 
   relay.subscribe(
@@ -807,6 +940,7 @@ async function main() {
 
   process.on("SIGINT", () => {
     clearInterval(heartbeat);
+    closeAllSessions();
     relay.disconnect();
     console.log(`\n🔴 @${personaId} stopped.`);
     process.exit(0);
