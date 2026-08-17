@@ -60,6 +60,8 @@ export interface MessageHandle {
   setContent(content: string): void;
   /** Dim single line under the bubble — reaction row, reply count, etc. Empty string hides it. */
   setFooter(text: string): void;
+  /** Extra segment on the message's action footer (after copy/quote) — reply counts, /thread links. Pre-styled by the caller; empty string clears. */
+  setMeta(text: string): void;
 }
 
 export type InputHandler = (text: string) => Promise<boolean>;
@@ -163,6 +165,7 @@ const inertMessageHandle: MessageHandle = {
   setAuthor: () => {},
   setContent: () => {},
   setFooter: () => {},
+  setMeta: () => {},
 };
 
 let nostrBackend: NostrAccess | undefined;

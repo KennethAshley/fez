@@ -593,24 +593,25 @@ export default function communities(api: FezExtensionAPI): void {
    * and latest-author snippet instead of appending another line.
    */
   /**
-   * Thread connector — a single bare dim line hanging under the root
-   * message, └─ binding it visually to what it belongs to, /thread N as
-   * a clickable link. Deliberately NOT message-shaped: no author, no
-   * timestamp, no actions — dressing navigation as messages was why
-   * messages and threads read identically on screen.
+   * Thread info rides the ROOT message's own action footer (setMeta):
+   * `⧉ copy  ↩ quote  ·  3 replies · /thread 40` — Ken's block model,
+   * one footer per message carrying everything you can do with it.
+   * /thread N is a clickable link. Only when the root isn't rendered
+   * (its page not loaded yet) does a bare └─ connector stand in.
    */
-  function threadSummaryText(channelId: string, rootId: string, latest?: Msg): string {
+  function threadMeta(channelId: string, rootId: string): string {
     const no = threadNo(rootId);
     const count = threadReplyCount(channelId, rootId);
-    const latestNote = latest ?? threadReplies(channelId, rootId).at(-1);
-    return (
-      DIM(`  └─ ${count} repl${count === 1 ? "y" : "ies"}${latestNote ? ` · ${latestNote.authorName}: ${snippet(latestNote.content, 48)}` : ""} · `) +
-      OSC8(`fez-thread://open/${no}`, `/thread ${no}`)
-    );
+    return DIM(`${count} repl${count === 1 ? "y" : "ies"} · `) + OSC8(`fez-thread://open/${no}`, `/thread ${no}`);
   }
 
-  function updateOrAppendSummaryLine(channelId: string, rootId: string, latest?: Msg): void {
-    const text = threadSummaryText(channelId, rootId, latest);
+  function updateOrAppendSummaryLine(channelId: string, rootId: string, _latest?: Msg): void {
+    const root = bubbleHandles.get(rootId);
+    if (root) {
+      root.setMeta(threadMeta(channelId, rootId));
+      return;
+    }
+    const text = DIM("└─ ") + threadMeta(channelId, rootId);
     const existing = summaryLineHandles.get(rootId);
     if (existing) {
       existing.setContent(text);
@@ -713,15 +714,20 @@ export default function communities(api: FezExtensionAPI): void {
       let drafters = draftersByRoot.get(rootId);
       if (!drafters) draftersByRoot.set(rootId, (drafters = new Map()));
       drafters.set(event.pubkey, snippet(event.content, 60));
-      const text =
+      const meta =
         DIM(
           drafters.size === 1
-            ? `  └─ ✍ ${displayName(event.pubkey)}: ${drafters.get(event.pubkey)} · `
-            : `  └─ ✍ ${[...drafters.keys()].map(displayName).join(", ")} are replying… · `
+            ? `✍ ${displayName(event.pubkey)}: ${drafters.get(event.pubkey)} · `
+            : `✍ ${[...drafters.keys()].map(displayName).join(", ")} are replying… · `
         ) + OSC8(`fez-thread://open/${no}`, `/thread ${no}`);
-      const existing = summaryLineHandles.get(rootId);
-      if (existing) existing.setContent(text);
-      else summaryLineHandles.set(rootId, api.ui.appendMessage("", text, undefined, { bare: true }));
+      const root = bubbleHandles.get(rootId);
+      if (root) {
+        root.setMeta(meta);
+      } else {
+        const existing = summaryLineHandles.get(rootId);
+        if (existing) existing.setContent(DIM("└─ ") + meta);
+        else summaryLineHandles.set(rootId, api.ui.appendMessage("", DIM("└─ ") + meta, undefined, { bare: true }));
+      }
     }
   }
 
@@ -952,11 +958,14 @@ export default function communities(api: FezExtensionAPI): void {
       if (summaryLineHandles.has(rootId)) {
         if (!summarized.has(rootId)) updateOrAppendSummaryLine(channelId, rootId);
         summarized.add(rootId);
-      } else if (msgById.has(rootId) && !summarized.has(rootId)) {
+      } else if (bubbleHandles.has(rootId) && !summarized.has(rootId)) {
+        summarized.add(rootId);
+        bubbleHandles.get(rootId)!.setMeta(threadMeta(channelId, rootId));
+      } else if (!summarized.has(rootId)) {
         summarized.add(rootId);
         summaryLineHandles.set(
           rootId,
-          api.ui.prependMessage("", threadSummaryText(channelId, rootId), undefined, { bare: true })
+          api.ui.prependMessage("", DIM("└─ ") + threadMeta(channelId, rootId), undefined, { bare: true })
         );
       }
     }

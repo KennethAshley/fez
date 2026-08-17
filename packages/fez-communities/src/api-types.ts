@@ -54,6 +54,8 @@ export interface MessageHandle {
   setAuthor(author: string): void;
   setContent(content: string): void;
   setFooter(text: string): void;
+  /** Extra segment on the action footer (after copy/quote) — reply counts, /thread links. */
+  setMeta(text: string): void;
 }
 
 export interface CommandContext {

@@ -844,7 +844,7 @@ export class FezTUI {
     if (!this.screen) {
       this.pendingBubbles.push({ author, content });
       // Pre-screen bubbles are startup notices — nothing updates them later.
-      return { setAuthor: () => {}, setContent: () => {}, setFooter: () => {} };
+      return { setAuthor: () => {}, setContent: () => {}, setFooter: () => {}, setMeta: () => {} };
     }
     // Historical bubbles (channel backfill, DM replay) carry the event's
     // real time; live ones stamp arrival. Older-than-today gets a date
@@ -872,20 +872,19 @@ export class FezTUI {
       this.bubbleContents.delete(this.bubbleContents.keys().next().value as string);
     }
     const osc8 = (url: string, label: string) => `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
-    // Actions live ON the header line, after the timestamp — a dim
-    // cluster of glyph links, zero extra rows. A per-message action ROW
-    // repeated down the timeline drowned the content (nine identical
-    // "⧉copy · ↩ quote" lines on one screen); inline, the affordance is
-    // still clickable but the timeline is messages again.
-    const inlineActions = (hasCode: boolean) =>
+    // HTML block model, Ken's spec: header block, full-width text block,
+    // then ONE footer block per message — the action icons plus whatever
+    // meta the owner attaches (reply count, /thread link via setMeta).
+    // A single owned footer per message, not chrome scattered around it.
+    let metaText = "";
+    const actionsFooter = (hasCode: boolean) =>
       chalk.dim(
-        "   " +
-          [
-            osc8(`fez-copy://${actionId}`, "⧉"),
-            ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, "⧉code")] : []),
-            osc8(`fez-quote://${actionId}`, "↩"),
-          ].join(" ")
-      );
+        [
+          osc8(`fez-copy://${actionId}`, "⧉ copy"),
+          ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, "⧉ code")] : []),
+          osc8(`fez-quote://${actionId}`, "↩ quote"),
+        ].join("  ")
+      ) + (metaText ? chalk.dim("  ·  ") + metaText : "");
     const bubble = new Container();
     const layout = (c: string) => {
       bubble.clear();
@@ -905,17 +904,19 @@ export class FezTUI {
         // pi's userMessageBg: your own messages render as a full-width
         // tinted block (header + content inside the tint). The ​ spacer
         // keeps the gap OUTSIDE the tint — a leading \n inside would
-        // paint an empty tinted row.
+        // paint an empty tinted row. Footer sits below the tint.
         bubble.addChild(new Text("​", 0, 0));
-        bubble.addChild(new Text(headText() + inlineActions(codeBlocks.length > 0) + "\n" + c, 1, 0, (s) => getActiveTheme().userMessageBg(s)));
+        bubble.addChild(new Text(headText() + "\n" + c, 1, 0, (s) => getActiveTheme().userMessageBg(s)));
+        bubble.addChild(new Text(" " + actionsFooter(codeBlocks.length > 0), 0, 0));
       } else {
-        bubble.addChild(new Text("\n" + headText() + inlineActions(codeBlocks.length > 0), 0, 0));
+        bubble.addChild(new Text("\n" + headText(), 0, 0));
         // Body indents two columns under the header — author names hang
         // at the margin, content forms its own edge: the left-to-right
         // hierarchy (who → what) the flat layout lacked.
         const body =
           !c.includes("\n") && c.length <= 100 ? new Text(c, 0, 0) : new Markdown(c, 0, 0, markdownTheme);
         bubble.addChild(new LinePrefix(body, "  "));
+        bubble.addChild(new Text("  " + actionsFooter(codeBlocks.length > 0), 0, 0));
       }
       // An empty Text still renders one blank line — only mount the footer
       // when it has content, or every message drags a stray gap under it.
@@ -972,6 +973,11 @@ export class FezTUI {
         }
         target = c;
         if (!tween) tween = setInterval(step, 33);
+      },
+      setMeta: (m) => {
+        metaText = m;
+        layout(shown >= target.length ? target : target.slice(0, shown));
+        rerender();
       },
       setFooter: (f) => {
         footerText = f;
