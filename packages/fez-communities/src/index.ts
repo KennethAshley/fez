@@ -34,6 +34,8 @@ const KIND_DOC = 40100;
 const KIND_MSG_EDIT = 40003;     // ["e", target] — content = replacement text
 const KIND_MSG_PIN = 40004;      // ["e", target], ["h"], ["c"] — channel pin
 const KIND_MSG_BOOKMARK = 40005; // ["e", target] — personal bookmark (only your own render)
+const KIND_SCHEDULED = 40006;    // ["h"],["c"],["send_at"] — the sentinel publishes the real 47103 at send_at, then tombstones this
+const KIND_REMINDER = 40007;     // ["p", me],["remind_at"],["e", about?] — the sentinel notifies at remind_at, then tombstones
 const KIND_PRESENCE = 20001;     // ephemeral heartbeat — online = heard from within the TTL
 const KIND_READ_STATE = 30078;   // addressable, d = channelId; content = NIP-44 SELF-encrypted {last_read} — read habits are nobody's business
 const PRESENCE_TTL_MS = 90_000;
@@ -607,7 +609,10 @@ export default function communities(api: FezExtensionAPI): void {
       refreshUi();
     }
 
-    if (event.pubkey === nostr!.pubkey) return; // own message, already echoed on send
+    // NOTE: own-pubkey messages are NOT skipped here — locally-sent ones
+    // already returned via the seenMessages dedupe at the top, so what
+    // reaches this point authored by us came from ANOTHER device or the
+    // sentinel delivering a scheduled message. Those must render.
 
     const scope = state.scope;
     if (!scope || scope.channelId !== channelId || scope.communityId !== communityId) return;
@@ -1743,6 +1748,59 @@ export default function communities(api: FezExtensionAPI): void {
         })
         .join("\n")
     );
+  });
+
+  // ── Scheduled messages + reminders. The TUI only records the INTENT
+  // as an event; the sentinel (the always-on half) executes at the
+  // appointed time and tombstones the intent. No sentinel = nothing
+  // fires, so the commands warn when it isn't running.
+  function parseDelay(s: string): number | undefined {
+    const m = s.match(/^(\d+)(s|m|h|d)$/);
+    if (!m) return undefined;
+    return Number(m[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[m[2] as "s" | "m" | "h" | "d"];
+  }
+  function sentinelRunning(): boolean {
+    try {
+      const pid = Number(fs.readFileSync(path.join(os.homedir(), ".fez", "sentinel.pid"), "utf-8").trim());
+      if (pid > 0) {
+        process.kill(pid, 0);
+        return true;
+      }
+    } catch { /* no pidfile or dead */ }
+    return false;
+  }
+  const SENTINEL_WARNING = " — ⚠️ the sentinel executes these and it isn't running (`fez sentinel`)";
+
+  api.registerCommand("schedule", async (args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel.");
+    const [delayRaw, ...rest] = args.trim().split(/\s+/);
+    const delay = parseDelay(delayRaw ?? "");
+    const text = rest.join(" ").replace(/\\n/g, "\n");
+    if (!delay || !text) return ctx.reply("Usage: /schedule <30s|10m|2h|1d> <message>");
+    const sendAt = Math.floor(Date.now() / 1000) + delay;
+    await nostr.publish({
+      kind: KIND_SCHEDULED,
+      tags: [["h", current.channel.id], ["c", current.community.id], ["send_at", String(sendAt)]],
+      content: text,
+    });
+    ctx.reply(`⏲ scheduled for ${new Date(sendAt * 1000).toLocaleTimeString()} in #${current.channel.name}${sentinelRunning() ? "" : SENTINEL_WARNING}`);
+  });
+
+  api.registerCommand("remind", async (args, ctx) => {
+    const [delayRaw, ...rest] = args.trim().split(/\s+/);
+    const delay = parseDelay(delayRaw ?? "");
+    if (!delay) return ctx.reply("Usage: /remind <30s|10m|2h> [note] — with no note, the latest message here is the subject");
+    const current = state.currentChannel();
+    const target = current ? lastMessage(current.channel.id, false) : undefined;
+    const note = rest.join(" ") || (target ? `${target.authorName}: ${snippet(target.content, 80)}` : "(reminder)");
+    const remindAt = Math.floor(Date.now() / 1000) + delay;
+    await nostr.publish({
+      kind: KIND_REMINDER,
+      tags: [["p", nostr.pubkey], ["remind_at", String(remindAt)], ...(target && !rest.length ? [["e", target.id]] : [])],
+      content: note,
+    });
+    ctx.reply(`⏰ reminder at ${new Date(remindAt * 1000).toLocaleTimeString()}: "${snippet(note, 60)}"${sentinelRunning() ? "" : SENTINEL_WARNING}`);
   });
 
   api.registerCommand("jobs", async (_args, _ctx) => {

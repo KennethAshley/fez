@@ -348,7 +348,57 @@ async function main() {
     }
   );
 
-  console.log(`   watching: DM summons · mention summons · notifications. Ctrl+C to stop.`);
+  // ── Scheduled messages (40006) + reminders (40007): the TUI records
+  // the intent; we execute at the appointed time — publish the real
+  // channel message (signed as the owner, whose key we run with) or
+  // fire the notification — then tombstone the intent (kind 5) so a
+  // restart never refires it. Overdue intents (we were down) fire
+  // immediately on hydrate.
+  const KIND_SCHEDULED = 40006;
+  const KIND_REMINDER = 40007;
+  const KIND_CHANNEL_MSG = 47103;
+  const armedTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const firedIntents = new Set<string>();
+
+  type IntentEvent = { id: string; kind: number; content: string; tags: string[][] };
+  async function fireIntent(intent: IntentEvent): Promise<void> {
+    armedTimers.delete(intent.id);
+    if (firedIntents.has(intent.id)) return;
+    firedIntents.add(intent.id);
+    if (intent.kind === KIND_SCHEDULED) {
+      const h = intent.tags.find((t) => t[0] === "h")?.[1];
+      const c = intent.tags.find((t) => t[0] === "c")?.[1];
+      if (h && c) {
+        await relay.publish(client.signEvent({ kind: KIND_CHANNEL_MSG, tags: [["h", h], ["c", c]], content: intent.content }));
+        console.log(`⏲ delivered scheduled message to channel ${h.slice(0, 8)}…`);
+      }
+    } else {
+      deliver("⏰ reminder", intent.content || "(reminder)");
+      console.log(`⏰ fired reminder: ${intent.content.slice(0, 60)}`);
+    }
+    await relay.publish(client.signEvent({ kind: 5, tags: [["e", intent.id]], content: "" })).catch(() => {});
+  }
+
+  function armIntent(intent: IntentEvent): void {
+    if (firedIntents.has(intent.id) || armedTimers.has(intent.id)) return;
+    const at = Number(intent.tags.find((t) => t[0] === "send_at" || t[0] === "remind_at")?.[1]);
+    if (!at) return;
+    const delayMs = Math.min(Math.max(0, at * 1000 - Date.now()), 2 ** 31 - 1);
+    armedTimers.set(intent.id, setTimeout(() => void fireIntent(intent), delayMs));
+    console.log(`⏲ armed ${intent.kind === KIND_SCHEDULED ? "scheduled message" : "reminder"} (fires in ${Math.round(delayMs / 1000)}s)`);
+  }
+
+  relay.subscribe([{ kinds: [KIND_SCHEDULED, KIND_REMINDER], authors: [myPubkey], since: sessionStartS }], (event) =>
+    armIntent(event)
+  );
+  const [intents, tombstones] = await Promise.all([
+    relay.query([{ kinds: [KIND_SCHEDULED, KIND_REMINDER], authors: [myPubkey] }]),
+    relay.query([{ kinds: [5], authors: [myPubkey] }]),
+  ]);
+  const dead = new Set(tombstones.flatMap((t) => t.tags.filter((x) => x[0] === "e").map((x) => x[1])));
+  for (const intent of intents) if (!dead.has(intent.id)) armIntent(intent);
+
+  console.log(`   watching: DM summons · mention summons · notifications · schedules/reminders. Ctrl+C to stop.`);
 }
 
 main().catch((err) => {
