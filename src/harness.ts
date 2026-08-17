@@ -13,13 +13,17 @@ import { notice } from "./notices.js";
  * text (coalesced like onProgress); tool/plan events are discrete.
  */
 export interface HarnessUpdate {
-  type: "text" | "thought" | "tool" | "plan";
+  type: "text" | "thought" | "tool" | "plan" | "usage";
   /** Accumulated text so far (text/thought types). */
   text?: string;
   /** Tool call title (tool type). */
   title?: string;
   /** Tool call status (tool type, from tool_call_update). */
   status?: string;
+  /** Token/cost figures when the harness surfaces them (usage type). Never estimated. */
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
 }
 
 /**
@@ -282,6 +286,26 @@ async function drivePrompt(
       onUpdate?.({ type: "tool", title: update.title ?? undefined, status: update.status ?? undefined });
     } else if (update.sessionUpdate === "plan") {
       onUpdate?.({ type: "plan" });
+    }
+
+    // Usage sniffing: ACP doesn't standardize token counts, but several
+    // adapters attach them to updates under obvious names. Forward what's
+    // actually there — never estimate (Buzz's fail-closed usage rule).
+    if (onUpdate) {
+      const raw = (update as Record<string, unknown>).usage ?? (update as Record<string, unknown>).tokenUsage;
+      if (raw && typeof raw === "object") {
+        const u = raw as Record<string, unknown>;
+        const num = (...keys: string[]) => {
+          for (const key of keys) if (typeof u[key] === "number") return u[key] as number;
+          return undefined;
+        };
+        const inputTokens = num("inputTokens", "input_tokens", "promptTokens", "prompt_tokens");
+        const outputTokens = num("outputTokens", "output_tokens", "completionTokens", "completion_tokens");
+        const costUsd = num("costUsd", "cost_usd", "totalCostUsd", "total_cost_usd");
+        if (inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined) {
+          onUpdate({ type: "usage", inputTokens, outputTokens, costUsd });
+        }
+      }
     }
 
     // Throttled, and fires on any update — even a tool-call-only stretch

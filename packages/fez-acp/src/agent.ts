@@ -19,6 +19,8 @@ import {
   KIND_DRAFT,
   KIND_MEMBERSHIP,
   KIND_OBSERVER,
+  KIND_OBSERVER_CONTROL,
+  KIND_TURN_METRIC,
   KIND_REACTION,
   KIND_TYPING,
   KIND_PRESENCE,
@@ -371,6 +373,68 @@ async function main() {
       .catch(() => {});
   };
 
+  // ── Turn metrics (Buzz's 44200 decision, fez kind 47030): one durable
+  // encrypted-to-owner record per turn — cost visibility without leaking
+  // cost data to the relay. Usage figures come only from what the harness
+  // actually surfaced (fail-closed: absent, never estimated).
+  let turnUsage: { inputTokens?: number; outputTokens?: number; costUsd?: number } | undefined;
+  const publishTurnMetric = (scope: string, status: string, startedAtMs: number, replyChars: number) => {
+    if (!owner) return;
+    void relay
+      .publish(
+        client.signEvent({
+          kind: KIND_TURN_METRIC,
+          tags: [["p", owner], ["agent", personaId!]],
+          content: client.encryptTo(
+            owner,
+            JSON.stringify({
+              agent: personaId,
+              scope,
+              status,
+              durationMs: Date.now() - startedAtMs,
+              replyChars,
+              ...(turnUsage ? { usage: turnUsage } : {}),
+              ts: Date.now(),
+            })
+          ),
+        })
+      )
+      .catch(() => {});
+  };
+  /** Observer forwarding that also folds usage frames into the turn metric. */
+  const makeOnUpdate = () => (update: HarnessUpdate) => {
+    if (update.type === "usage") {
+      turnUsage = {
+        inputTokens: update.inputTokens ?? turnUsage?.inputTokens,
+        outputTokens: update.outputTokens ?? turnUsage?.outputTokens,
+        costUsd: update.costUsd ?? turnUsage?.costUsd,
+      };
+    }
+    publishObserver({ ...update });
+  };
+
+  // ── Observer CONTROL (kind 20005) — the reverse pipe: owner-encrypted
+  // ephemeral commands. Decryption under the owner conversation key IS the
+  // authorization; the ±60s freshness window stops replays. v1: cancel.
+  let cancelRequested = false;
+  if (owner) {
+    relay.subscribe([{ kinds: [KIND_OBSERVER_CONTROL], "#p": [myPubkey] }], (event) => {
+      try {
+        const frame = JSON.parse(client.decryptFrom(owner, event.content)) as { cmd?: string; ts?: number };
+        if (Math.abs(Date.now() - (frame.ts ?? 0)) > 60_000) return;
+        if (frame.cmd === "cancel") {
+          if (busy && turnController) {
+            cancelRequested = true;
+            turnController.abort();
+            console.log("⏹ owner cancelled the in-flight turn");
+          } else {
+            console.log("⏹ cancel received — no turn in flight");
+          }
+        }
+      } catch { /* not from our owner — ignore */ }
+    });
+  }
+
   // ── Session pool — Buzz's per-channel sessions, fez-shaped. One LIVE
   // harness conversation per scope (channel or DM peer): the persona,
   // memory, and conventions go in once at open; every later turn is
@@ -542,6 +606,7 @@ async function main() {
   // FEZ_AGENT_ON_BUSY=queue restores the queue-only behavior.
   const onBusy = process.env.FEZ_AGENT_ON_BUSY === "queue" ? "queue" : "steer";
   let turnController: AbortController | undefined;
+  let turnKind: "ch" | "dm" | undefined; // steer may only abort CHANNEL turns; cancel aborts either
   let steerMessages: string[] = [];
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
@@ -607,7 +672,7 @@ async function main() {
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
       if (busy) {
-        if (onBusy === "steer" && turnController) {
+        if (onBusy === "steer" && turnController && turnKind === "ch") {
           steerMessages.push(`${event.pubkey.slice(0, 8)}: ${event.content}`);
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
@@ -679,6 +744,10 @@ async function main() {
           .catch(() => {});
       }, 3000);
       turnController = new AbortController();
+      turnKind = "ch";
+      cancelRequested = false;
+      turnUsage = undefined;
+      const turnStartedAt = Date.now();
       // Steering guidance consumed into this turn's prompt (Buzz frames
       // steered messages as "arrived while you were working — weave in").
       const steering = steerMessages.splice(0);
@@ -760,7 +829,7 @@ async function main() {
         };
 
         publishObserver({ type: "turn", status: "started" });
-        const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
+        const onUpdate = makeOnUpdate();
         const reply = await promptSession(`ch:${channelId}`, buildPrompt, publishDraft, onUpdate, turnController.signal);
 
         const replyEvent = client.signEvent({
@@ -770,14 +839,26 @@ async function main() {
         });
         await relay.publish(replyEvent);
         publishObserver({ type: "turn", status: "done" });
+        publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, reply.length);
         consecutiveFailures = 0;
         console.log(`✅ Replied (${reply.length} chars)`);
       } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") {
+        if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
+          // Owner cancel — the turn just STOPS. No steer re-dispatch, and
+          // an honest threaded notice instead of silence.
+          publishObserver({ type: "turn", status: "cancelled" });
+          publishTurnMetric(`ch:${channelId}`, "cancelled", turnStartedAt, 0);
+          console.log("⏹ Turn cancelled by owner");
+          void relay
+            .publish(client.signEvent({ kind: KIND_CHANNEL_MESSAGE, tags: replyTags, content: "⏹ stopped by my owner mid-turn." }))
+            .catch(() => {});
+        } else if (err instanceof Error && err.name === "AbortError") {
           publishObserver({ type: "turn", status: "steered" });
+          publishTurnMetric(`ch:${channelId}`, "steered", turnStartedAt, 0);
           console.log(`🔀 Turn cancelled for steering — re-dispatching merged prompt`);
         } else {
           publishObserver({ type: "turn", status: "failed" });
+          publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, 0);
           const reason = err instanceof Error ? err.message : String(err);
           console.error(`❌ Turn failed (${classifyTurnError(err)}):`, reason);
           // Failures are LOUD in the channel. Silence is a valid outcome
@@ -813,6 +894,7 @@ async function main() {
         clearStatusReactions();
         clearInterval(typing);
         turnController = undefined;
+        turnKind = undefined;
         busy = false;
         if (steerMessages.length > 0) {
           // Steered: re-dispatch the SAME trigger — the unconsumed steer
@@ -907,6 +989,11 @@ async function main() {
     busy = true;
     lastAcceptedAt = Date.now();
     turnTimes.push(Date.now());
+    turnController = new AbortController();
+    turnKind = "dm";
+    cancelRequested = false;
+    turnUsage = undefined;
+    const turnStartedAt = Date.now();
     try {
       const buildPrompt = async (fresh: boolean): Promise<string> => {
         if (!fresh) {
@@ -935,8 +1022,8 @@ async function main() {
 
       console.log(`✉️  DM from ${dm.senderPk.slice(0, 8)}… — invoking ${persona.harness}`);
       publishObserver({ type: "turn", status: "started" });
-      const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
-      const reply = await promptSession(`dm:${convoKey}`, buildPrompt, undefined, onUpdate);
+      const onUpdate = makeOnUpdate();
+      const reply = await promptSession(`dm:${convoKey}`, buildPrompt, undefined, onUpdate, turnController.signal);
 
       await sendDmReply(replyTargets, reply, dm.depth + 1);
       dmLastSent.set(convoKey, Math.floor(Date.now() / 1000));
@@ -944,10 +1031,19 @@ async function main() {
       myContext.push(`me: ${reply}`);
       dmRecent.set(convoKey, myContext.slice(-10));
       publishObserver({ type: "turn", status: "done" });
+      publishTurnMetric(`dm:${convoKey}`, "done", turnStartedAt, reply.length);
       consecutiveFailures = 0;
       console.log(`✅ DM reply sent (${reply.length} chars)`);
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
+        publishObserver({ type: "turn", status: "cancelled" });
+        publishTurnMetric(`dm:${convoKey}`, "cancelled", turnStartedAt, 0);
+        console.log("⏹ DM turn cancelled by owner");
+        void sendDmReply(replyTargets, "⏹ stopped by my owner mid-turn.", dm.depth + 1).catch(() => {});
+        return;
+      }
       publishObserver({ type: "turn", status: "failed" });
+      publishTurnMetric(`dm:${convoKey}`, "failed", turnStartedAt, 0);
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`❌ DM turn failed (${classifyTurnError(err)}):`, reason);
       consecutiveFailures++;
@@ -961,6 +1057,8 @@ async function main() {
       void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
     } finally {
       busy = false;
+      turnController = undefined;
+      turnKind = undefined;
       const next = pendingDms.shift();
       if (next) {
         seenEventIds.delete(next.id);

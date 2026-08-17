@@ -493,6 +493,59 @@ export default function communities(api: FezExtensionAPI): void {
     views.release();
   });
 
+  api.registerCommand("cancel", async (args, ctx) => {
+    const name = args.trim().replace(/^@/, "");
+    if (!name) return ctx.reply("Usage: /cancel <agent> — aborts that agent's in-flight turn (owner-signed, ±60s window).");
+    const agentPk = /^[0-9a-f]{64}$/i.test(name) ? name.toLowerCase() : client.pkByName(name);
+    if (!agentPk) return ctx.reply(`No agent named "${name}" on this relay.`);
+    if (!api.nostr) return ctx.reply("No nostr backend available.");
+    await api.nostr.publish({
+      kind: 20005, // KIND_OBSERVER_CONTROL — encrypted-to-agent owner command, ephemeral
+      tags: [["p", agentPk]],
+      content: api.nostr.encrypt(agentPk, JSON.stringify({ cmd: "cancel", ts: Date.now() })),
+    });
+    ctx.reply(`⏹ cancel sent to @${client.displayName(agentPk)} — bites only if a turn is in flight.`);
+  });
+
+  api.registerCommand("costs", async (_args, ctx) => {
+    if (!api.nostr) return ctx.reply("No nostr backend available.");
+    const events = await api.nostr.query([{ kinds: [47030], "#p": [client.pubkey], limit: 500 }]);
+    type Metric = { agent?: string; scope?: string; status?: string; durationMs?: number; replyChars?: number; usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number }; ts?: number };
+    const metrics: Metric[] = [];
+    for (const event of events) {
+      try {
+        metrics.push(JSON.parse(api.nostr.decrypt(event.pubkey, event.content)));
+      } catch { /* not encrypted to us */ }
+    }
+    if (metrics.length === 0) return ctx.reply("No turn metrics yet — they accrue as your agents (with FEZ_AGENT_OWNER set) run turns.");
+    const dayAgo = Date.now() - 24 * 3600_000;
+    const byAgent = new Map<string, { turns: number; done: number; failed: number; cancelled: number; ms: number; inTok: number; outTok: number; usd: number; recent: number }>();
+    for (const m of metrics) {
+      const agent = m.agent ?? "?";
+      let row = byAgent.get(agent);
+      if (!row) byAgent.set(agent, (row = { turns: 0, done: 0, failed: 0, cancelled: 0, ms: 0, inTok: 0, outTok: 0, usd: 0, recent: 0 }));
+      row.turns++;
+      if (m.status === "done") row.done++;
+      else if (m.status === "failed") row.failed++;
+      else if (m.status === "cancelled") row.cancelled++;
+      row.ms += m.durationMs ?? 0;
+      row.inTok += m.usage?.inputTokens ?? 0;
+      row.outTok += m.usage?.outputTokens ?? 0;
+      row.usd += m.usage?.costUsd ?? 0;
+      if ((m.ts ?? 0) >= dayAgo) row.recent++;
+    }
+    const mins = (ms: number) => (ms / 60_000).toFixed(1);
+    ctx.reply(
+      [
+        `**Turn costs** (${metrics.length} recorded turns; token/cost figures only where the harness reported them)`,
+        ...[...byAgent.entries()].map(
+          ([agent, r]) =>
+            `• @${agent}: ${r.turns} turns (${r.done} ok · ${r.failed} failed · ${r.cancelled} cancelled) · ${mins(r.ms)}min compute · ${r.recent} in last 24h${r.inTok || r.outTok ? ` · ${r.inTok}→${r.outTok} tokens` : ""}${r.usd ? ` · $${r.usd.toFixed(4)}` : ""}`
+        ),
+      ].join("\n")
+    );
+  });
+
   api.registerCommand("watch", async (args, ctx) => {
     const agent = args.trim().replace(/^@/, "");
     if (!agent) return ctx.reply("Usage: /watch <agent-name> — live encrypted view of an agent you own. /back to leave.");

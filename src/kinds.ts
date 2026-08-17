@@ -25,6 +25,29 @@ export const KIND_AGENT_CANCEL = 47012;
 export const KIND_AGENT_AUDIT = 47020;
 
 /**
+ * Turn metric — durable per-turn cost/effort record (Buzz's kind 44200
+ * decision, fez-numbered): published by the agent runtime after EVERY
+ * turn, NIP-44-encrypted to the OWNER (cost data is private). Regular
+ * kind = full history; /costs aggregates. Tags ["p", ownerPk],
+ * ["agent", personaName]; content = nip44(agent↔owner) of {agent, scope,
+ * status, durationMs, replyChars, usage?, ts} — usage carries whatever
+ * token/cost figures the harness surfaced (absent when it surfaced none:
+ * fail-closed, never estimated).
+ */
+export const KIND_TURN_METRIC = 47030;
+
+/**
+ * Observer control — the reverse half of the observer stream (20004):
+ * OWNER → agent commands as ephemeral NIP-44-encrypted frames. v1: {cmd:
+ * "cancel", ts} aborts the in-flight turn (no steer re-dispatch — the
+ * turn just stops, with a threaded notice). Freshness-windowed (±60s,
+ * Buzz's decision) so a replayed frame can't cancel a future turn.
+ * Encryption to the agent under the OWNER's key is the authorization —
+ * nobody else can produce a frame that decrypts.
+ */
+export const KIND_OBSERVER_CONTROL = 20005;
+
+/**
  * Communities/channels (471xx). Client-side trust model — every participant
  * runs fez, so all clients apply the same rules; the relay is dumb storage:
  *
