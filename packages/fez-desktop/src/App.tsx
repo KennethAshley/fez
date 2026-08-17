@@ -12,6 +12,7 @@ import AgentsPane from "./AgentsPane";
 import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
 import PulseView from "./PulseView";
+import ProfilePane from "./ProfilePane";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { uploadFile, shareLine } from "./upload";
@@ -53,6 +54,7 @@ type SidePane =
   | { kind: "agents" }
   | { kind: "manage" }
   | { kind: "settings" }
+  | { kind: "profile"; pk: string }
   | undefined;
 
 function useForceRender(): () => void {
@@ -370,7 +372,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <MemberRail
           client={client}
           working={working}
-          onWatch={(agent) => setPane(pane?.kind === "watch" && pane.agent === agent ? undefined : { kind: "watch", agent })}
+          onProfile={(pk) => setPane(pane?.kind === "profile" && pane.pk === pk ? undefined : { kind: "profile", pk })}
         />
       </aside>
 
@@ -384,9 +386,18 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           working={working}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
           onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
+          onProfile={(pk) => setPane({ kind: "profile", pk })}
         />
       )}
-      {view.kind === "dm" && <DmView key={view.convoKey} client={client} wire={wire} convoKey={view.convoKey} />}
+      {view.kind === "dm" && (
+        <DmView
+          key={view.convoKey}
+          client={client}
+          wire={wire}
+          convoKey={view.convoKey}
+          onProfile={(pk) => setPane({ kind: "profile", pk })}
+        />
+      )}
       {view.kind === "home" && (
         <HomeView
           client={client}
@@ -417,6 +428,17 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
       {pane?.kind === "settings" && <SettingsPane client={client} onClose={() => setPane(undefined)} />}
+      {pane?.kind === "profile" && (
+        <ProfilePane
+          client={client}
+          pk={pane.pk}
+          working={working}
+          onDm={openDm}
+          onWatch={(agent) => setPane({ kind: "watch", agent })}
+          onSettings={() => setPane({ kind: "settings" })}
+          onClose={() => setPane(undefined)}
+        />
+      )}
       {pane?.kind === "manage" && (
         <ManagePane
           client={client}
@@ -450,18 +472,17 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
 function MemberRail({
   client,
   working,
-  onWatch,
+  onProfile,
 }: {
   client: FezClient;
   working: ReadonlyMap<string, { activity: string; ts: number }>;
-  onWatch: (agent: string) => void;
+  onProfile: (pk: string) => void;
 }) {
   const current = client.state.currentChannel();
   if (!current) return null;
   const members = [...current.channel.members.keys()]
-    .filter((pk) => pk !== client.pubkey)
-    .map((pk) => ({ pk, name: client.displayName(pk), online: client.isOnline(pk) }))
-    .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
+    .map((pk) => ({ pk, name: client.displayName(pk), self: pk === client.pubkey, online: pk === client.pubkey || client.isOnline(pk) }))
+    .sort((a, b) => Number(b.self) - Number(a.self) || Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
   if (members.length === 0) return null;
   return (
     <div className="community">
@@ -470,8 +491,9 @@ function MemberRail({
         const activity = working.get(member.name);
         const busy = activity && Date.now() - activity.ts < 30_000;
         return (
-          <button key={member.pk} className="channel member-row" title={busy ? activity.activity : "open live activity"} onClick={() => onWatch(member.name)}>
+          <button key={member.pk} className="channel member-row" title={busy ? activity.activity : "profile"} onClick={() => onProfile(member.pk)}>
             <span className={member.online ? "dot on" : "dot off"} /> {member.name}
+            {member.self && <span className="profile-you">you</span>}
             {busy && <span className="working">⚙</span>}
             {client.statusOf(member.pk) && <span className="status">{client.statusOf(member.pk)}</span>}
           </button>
@@ -489,6 +511,7 @@ function ChannelView({
   working,
   onWatch,
   onManage,
+  onProfile,
 }: {
   client: FezClient;
   wire: BrowserWire;
@@ -497,6 +520,7 @@ function ChannelView({
   working: ReadonlyMap<string, { activity: string; ts: number }>;
   onWatch: (agent: string) => void;
   onManage: () => void;
+  onProfile: (pk: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [uploading, setUploading] = useState<string>();
@@ -592,6 +616,7 @@ function ChannelView({
               inThread={!!threadRoot}
               onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)}
               onEdit={() => beginEdit(msg)}
+              onAuthor={() => onProfile(msg.authorPk)}
             />
             {!threadRoot && <RootLiveArea client={client} channelId={channelId} rootId={msg.id} drafts={draftsForRoot(msg.id)} onOpenThread={() => setThreadRoot(msg.id)} />}
           </div>
@@ -697,7 +722,17 @@ function StreamingBubble({ author, text, compact }: { author: string; text: stri
   );
 }
 
-function DmView({ client, wire, convoKey }: { client: FezClient; wire: BrowserWire; convoKey: string }) {
+function DmView({
+  client,
+  wire,
+  convoKey,
+  onProfile,
+}: {
+  client: FezClient;
+  wire: BrowserWire;
+  convoKey: string;
+  onProfile: (pk: string) => void;
+}) {
   const [draft, setDraft] = useState("");
   const [uploading, setUploading] = useState<string>();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -740,7 +775,11 @@ function DmView({ client, wire, convoKey }: { client: FezClient; wire: BrowserWi
     <main className="main">
       <header className="topbar">
         ✉ {group && <span className="group-mark">& </span>}
-        {client.dmTitle(convoKey)}
+        {group ? (
+          client.dmTitle(convoKey)
+        ) : (
+          <button className="author" title="profile" onClick={() => onProfile(convoKey)}>{client.dmTitle(convoKey)}</button>
+        )}
         <span className="dm-note">end-to-end encrypted{group ? " · every participant sees every message" : ""}</span>
       </header>
       <div className="timeline">
@@ -749,7 +788,7 @@ function DmView({ client, wire, convoKey }: { client: FezClient; wire: BrowserWi
           return (
             <div key={msg.id} className={mine ? "bubble mine" : "bubble"}>
               <div className="bubble-head">
-                <span className="author">{client.displayName(msg.senderPk)}</span>
+                <button className="author" title="profile" onClick={() => onProfile(msg.senderPk)}>{client.displayName(msg.senderPk)}</button>
                 <span className="time">{new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
               <div className="bubble-body md"><MdBody text={msg.text} /></div>
@@ -879,6 +918,7 @@ function Bubble({
   inThread,
   onOpenThread,
   onEdit,
+  onAuthor,
 }: {
   client: FezClient;
   channelId: string;
@@ -887,6 +927,7 @@ function Bubble({
   inThread: boolean;
   onOpenThread: () => void;
   onEdit?: () => void;
+  onAuthor?: () => void;
 }) {
   const mine = msg.authorPk === client.pubkey;
   const replies = client.threadReplyCount(channelId, msg.id);
@@ -903,7 +944,7 @@ function Bubble({
   return (
     <div className={mine ? "bubble mine" : "bubble"}>
       <div className="bubble-head">
-        <span className="author">{msg.authorName}</span>
+        <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
         <span className="time">{time}</span>
         {msg.edited && <span className="time">edited</span>}
         {pinned && <span className="pin-mark" title="pinned">⚑</span>}
