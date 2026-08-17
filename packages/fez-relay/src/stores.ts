@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { createRequire } from "node:module";
+import type { DatabaseSync } from "node:sqlite";
 import type { StoredEvent } from "./relay.js";
 
 /**
@@ -42,7 +43,13 @@ export class SqliteEventStore implements EventStore {
   private insert;
 
   constructor(file: string) {
-    this.db = new DatabaseSync(file);
+    // Lazy-loaded at construction: node:sqlite is a prefix-only builtin
+    // that bundlers (vite/vitest) mis-resolve at module scope, and a JSONL
+    // operator shouldn't pay for (or need Node support for) sqlite at all.
+    const { DatabaseSync: Db } = createRequire(import.meta.url)("node:sqlite") as {
+      DatabaseSync: typeof DatabaseSync;
+    };
+    this.db = new Db(file);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,

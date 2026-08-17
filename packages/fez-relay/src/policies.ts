@@ -138,10 +138,41 @@ export function rateLimitPolicy(opts?: { perMinute?: number; ephemeralPerMinute?
   };
 }
 
+/**
+ * created_at drift fence (Buzz ingest.rs ±900s decision). Every client-side
+ * latest-wins derivation — membership rosters, edits, read state — trusts
+ * created_at, so a backdated or future-dated event is fez's equivalent of a
+ * database-integrity attack. Fence it at the door.
+ *
+ * The asymmetric exemption matters: NIP-17 gift wraps (kind 1059) carry
+ * DELIBERATELY backdated created_at (fuzzed up to 2 days) — the past fence
+ * must not see them. The future fence applies to everything; nothing
+ * legitimate is stamped ahead of the relay's clock.
+ */
+export function createdAtFencePolicy(opts?: { maxDriftS?: number; pastExemptKinds?: number[] }): RelayPolicy {
+  const maxDriftS = opts?.maxDriftS ?? 900;
+  const pastExempt = new Set(opts?.pastExemptKinds ?? [1059]);
+  return {
+    name: "created-at-fence",
+    onEvent(event) {
+      const now = Math.floor(Date.now() / 1000);
+      if (event.created_at > now + maxDriftS) {
+        return reject("invalid: created_at too far in the future");
+      }
+      if (!pastExempt.has(event.kind) && event.created_at < now - maxDriftS) {
+        return reject("invalid: created_at too far in the past");
+      }
+      return ok;
+    },
+  };
+}
+
 /** Registry for --policy flags on the CLI. */
 export const builtinPolicies: Record<string, (arg?: string) => RelayPolicy> = {
   membership: () => membershipPolicy(),
   "rate-limit": (arg) => rateLimitPolicy(arg ? { perMinute: Number(arg) } : undefined),
   "kind-whitelist": (arg) =>
     kindWhitelistPolicy((arg ?? "").split(",").map(Number).filter(Number.isFinite)),
+  "created-at-fence": (arg) =>
+    createdAtFencePolicy(arg ? { maxDriftS: Number(arg) } : undefined),
 };
