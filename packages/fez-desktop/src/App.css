@@ -514,3 +514,52 @@ body {
 /* monochrome chrome glyphs (no color emoji in the terminal) */
 .rail-tool { font-family: var(--font-mono); font-size: 13px; line-height: 1; }
 .group-mark { color: var(--fg-dim); font-family: var(--font-mono); font-weight: 700; }
+
+/* ── classified transcripts (turns, tools, diffs) ──────────── */
+.turn { margin-bottom: 10px; border-left: 2px solid var(--hairline); padding-left: 10px; }
+.turn.live { border-left-color: var(--phosphor); }
+.turn.failed { border-left-color: var(--red); }
+.turn-head { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px; padding: 2px 0 4px; }
+.turn-head::-webkit-details-marker { display: none; }
+.turn-status { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim); }
+.turn-status.live { color: var(--phosphor); }
+.turn-status.failed { color: var(--red); }
+.turn-status.done { color: var(--fg-dim); }
+.turn-count { font-family: var(--font-mono); font-size: 11px; color: var(--bg2); }
+.turn[open] .turn-count { color: var(--fg-dim); }
+.tool-kind { color: var(--accent); font-weight: 700; }
+.tool-line.failed { color: var(--red); }
+.tool-path { color: var(--fg-dim); }
+.tool-mark.completed { color: var(--green); }
+.tool-mark.failed { color: var(--red); }
+.tool-mark.pending, .tool-mark.in_progress { color: var(--yellow); }
+.diff {
+  margin: 4px 0 8px; background: var(--bg0); border: 1px solid var(--hairline);
+  border-radius: 6px; overflow-x: auto; font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+}
+.diff-path { padding: 4px 10px; color: var(--fg-dim); border-bottom: 1px solid var(--hairline); }
+.diff-line { padding: 0 10px; white-space: pre; }
+.diff-line.add { background: color-mix(in srgb, var(--green) 12%, transparent); color: color-mix(in srgb, var(--green) 70%, var(--fg)); }
+.diff-line.del { background: color-mix(in srgb, var(--red) 10%, transparent); color: color-mix(in srgb, var(--red) 65%, var(--fg)); }
+.diff-line.skip { color: var(--bg2); font-style: italic; }
+.diff-sign { display: inline-block; width: 14px; color: inherit; opacity: 0.8; }
+
+/* ── pulse ─────────────────────────────────────────────────── */
+.pulse-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.pulse-card {
+  display: flex; flex-direction: column; gap: 6px; text-align: left;
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
+  color: var(--fg); font: inherit; padding: 12px 14px; cursor: pointer;
+}
+.pulse-card:hover { border-color: var(--accent); }
+.pulse-card.live { border-color: color-mix(in srgb, var(--phosphor) 55%, var(--hairline)); }
+.pulse-head { display: flex; align-items: center; gap: 7px; }
+.pulse-name { font-family: var(--font-mono); font-weight: 700; }
+.pulse-headline { font-family: var(--font-mono); font-size: 12px; }
+.pulse-headline.dim { color: var(--fg-dim); }
+.pulse-tools { display: flex; flex-direction: column; gap: 1px; }
+.pulse-tool {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pulse-stats { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); margin-top: auto; }

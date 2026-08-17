@@ -20,6 +20,14 @@ export interface HarnessUpdate {
   title?: string;
   /** Tool call status (tool type, from tool_call_update). */
   status?: string;
+  /** ACP ToolKind (read|edit|delete|move|search|execute|think|fetch|other) — lets renderers classify without parsing titles. */
+  kind?: string;
+  /** Correlates tool_call_update frames with their originating tool_call. */
+  callId?: string;
+  /** First file path the tool touches (from ACP locations). */
+  path?: string;
+  /** File modification for edit-class tools, truncated at the source (observer frames stay small). */
+  diff?: { path: string; oldText?: string; newText: string };
   /** Token/cost figures when the harness surfaces them (usage type). Never estimated. */
   inputTokens?: number;
   outputTokens?: number;
@@ -111,6 +119,24 @@ export const SESSION_TIMEOUTS: TimeoutOptions = { idleMs: 900_000, maxMs: 2 * 60
 const ONE_SHOT_TIMEOUTS: TimeoutOptions = { idleMs: 300_000, maxMs: 30 * 60_000 };
 
 class HarnessTimeoutError extends Error {}
+
+/**
+ * Pull the diff (if any) out of a tool call's content collection,
+ * truncated hard: observer frames ride an encrypted relay wire with
+ * size caps, and the working tree is the durable artifact anyway.
+ */
+const DIFF_SIDE_CAP = 1500;
+function extractDiff(
+  content: { type: string; path?: string; oldText?: string | null; newText?: string }[] | null | undefined
+): { path: string; oldText?: string; newText: string } | undefined {
+  const diff = content?.find((item) => item.type === "diff");
+  if (!diff?.path || typeof diff.newText !== "string") return undefined;
+  return {
+    path: diff.path,
+    oldText: diff.oldText != null ? diff.oldText.slice(0, DIFF_SIDE_CAP) : undefined,
+    newText: diff.newText.slice(0, DIFF_SIDE_CAP),
+  };
+}
 
 function spawnDetect(command: string, args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
@@ -281,9 +307,25 @@ async function drivePrompt(
         onUpdate({ type: "thought", text: thought });
       }
     } else if (update.sessionUpdate === "tool_call") {
-      onUpdate?.({ type: "tool", title: update.title, status: update.status ?? "started" });
+      onUpdate?.({
+        type: "tool",
+        callId: update.toolCallId,
+        title: update.title,
+        status: update.status ?? "pending",
+        kind: update.kind ?? undefined,
+        path: update.locations?.[0]?.path ?? undefined,
+        diff: extractDiff(update.content),
+      });
     } else if (update.sessionUpdate === "tool_call_update") {
-      onUpdate?.({ type: "tool", title: update.title ?? undefined, status: update.status ?? undefined });
+      onUpdate?.({
+        type: "tool",
+        callId: update.toolCallId,
+        title: update.title ?? undefined,
+        status: update.status ?? undefined,
+        kind: update.kind ?? undefined,
+        path: update.locations?.[0]?.path ?? undefined,
+        diff: extractDiff(update.content),
+      });
     } else if (update.sessionUpdate === "plan") {
       onUpdate?.({ type: "plan" });
     }

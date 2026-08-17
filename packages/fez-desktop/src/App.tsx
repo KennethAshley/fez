@@ -11,6 +11,7 @@ import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
 import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
+import PulseView from "./PulseView";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { uploadFile, shareLine } from "./upload";
@@ -45,7 +46,7 @@ type Boot =
   | { phase: "error"; message: string }
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
-type MainView = { kind: "channel" } | { kind: "dm"; convoKey: string } | { kind: "home" };
+type MainView = { kind: "channel" } | { kind: "dm"; convoKey: string } | { kind: "home" } | { kind: "pulse" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
@@ -313,6 +314,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           ⌂ home
         </button>
+        <button className={view.kind === "pulse" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "pulse" })}>
+          ◉ pulse
+        </button>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))
           .map((community, _index, joined) => (
@@ -389,6 +393,15 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           wire={wire}
           onOpenChannel={(communityId, channelId) => void openChannel(communityId, channelId)}
           onOpenDm={openDm}
+        />
+      )}
+      {view.kind === "pulse" && (
+        <PulseView
+          client={client}
+          wire={wire}
+          activity={activityRef.current}
+          working={working}
+          onWatch={(agent) => setPane({ kind: "watch", agent })}
         />
       )}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}

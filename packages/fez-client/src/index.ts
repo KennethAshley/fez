@@ -145,6 +145,14 @@ export interface ObserverEntry {
   text?: string;
   title?: string;
   status?: string;
+  /** ACP ToolKind classification (read|edit|execute|search|…). */
+  kind?: string;
+  /** Correlates update frames with their tool call — renderers merge on this. */
+  callId?: string;
+  /** First file path the tool touches. */
+  path?: string;
+  /** Source-truncated file modification for edit-class tools. */
+  diff?: { path: string; oldText?: string; newText: string };
   ts: number;
 }
 
