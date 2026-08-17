@@ -1,4 +1,5 @@
 import net from "node:net";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -75,8 +76,25 @@ export default function notifications(api: FezExtensionAPI): void {
 
   let muted = false;
   let lastAt = 0;
+  // The sentinel (fez sentinel, ~/.fez/sentinel.pid) delivers the same
+  // toasts while it runs — defer to it, or every event toasts twice.
+  let sentinelCache = { verdict: false, at: 0 };
+  const sentinelAlive = (): boolean => {
+    if (Date.now() - sentinelCache.at < 5000) return sentinelCache.verdict;
+    let verdict = false;
+    try {
+      const pid = Number(fs.readFileSync(path.join(os.homedir(), ".fez", "sentinel.pid"), "utf-8").trim());
+      if (pid > 0) {
+        process.kill(pid, 0);
+        verdict = true;
+      }
+    } catch { /* no pidfile or dead pid */ }
+    sentinelCache = { verdict, at: Date.now() };
+    return verdict;
+  };
+
   const deliver = (title: string, body: string): void => {
-    if (muted) return;
+    if (muted || sentinelAlive()) return;
     // Blunt flood guard: a chatty burst (agent chain, backlog surge)
     // becomes at most one toast per 2s — later ones drop, the TUI log
     // still has everything.

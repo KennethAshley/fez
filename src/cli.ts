@@ -328,6 +328,27 @@ program
     await import(pathToFileURL(runtime).href);
   });
 
+program
+  .command("sentinel")
+  .description("Run the always-on watcher: wakes sleeping agents on DMs/mentions, delivers desktop notifications — no TUI needed")
+  .option("-r, --relay <url>", "Relay URL (default: settings/env)")
+  .action(async (options) => {
+    const { resolveRelay } = await import("./settings.js");
+    process.env.FEZ_RELAY = resolveRelay(options.relay);
+    const { fileURLToPath, pathToFileURL } = await import("node:url");
+    const { existsSync } = await import("node:fs");
+    const candidates = [
+      process.env.FEZ_SENTINEL_RUNTIME,
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../packages/fez-sentinel/dist/index.js"),
+    ].filter((p): p is string => !!p);
+    const runtime = candidates.find((p) => existsSync(p));
+    if (!runtime) {
+      console.error(`fez-sentinel runtime not found (looked at: ${candidates.join(", ")}) — build it in packages/fez-sentinel`);
+      process.exit(1);
+    }
+    await import(pathToFileURL(runtime).href);
+  });
+
 // ─── doctor — is this machine ready to fez? ─────────────────────────────────
 
 program

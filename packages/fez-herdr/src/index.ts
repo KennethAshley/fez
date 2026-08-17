@@ -224,6 +224,25 @@ export default function herdr(api: FezExtensionAPI): void {
    * launch a channel-agent that exits on the unknown harness and leave
    * a dead tab.
    */
+  // The sentinel (fez sentinel, ~/.fez/sentinel.pid) owns react-while-
+  // unattended duties when it's running — this extension's watchers
+  // defer to it instead of double-summoning. TUI-only setups (no
+  // sentinel) keep the in-window behavior.
+  let sentinelCache = { verdict: false, at: 0 };
+  function sentinelAlive(): boolean {
+    if (Date.now() - sentinelCache.at < 5000) return sentinelCache.verdict;
+    let verdict = false;
+    try {
+      const pid = Number(fs.readFileSync(path.join(os.homedir(), ".fez", "sentinel.pid"), "utf-8").trim());
+      if (pid > 0) {
+        process.kill(pid, 0);
+        verdict = true;
+      }
+    } catch { /* no pidfile or dead pid */ }
+    sentinelCache = { verdict, at: Date.now() };
+    return verdict;
+  }
+
   /** Is a fez-acp process for this persona alive right now (herdr-managed or not)? */
   function agentProcessAlive(persona: string): boolean {
     try {
@@ -347,7 +366,7 @@ export default function herdr(api: FezExtensionAPI): void {
     nostr.subscribe(
       [{ kinds: [KIND_GIFT_WRAP], since: Math.floor(Date.now() / 1000) - DM_FUZZ_WINDOW_S }],
       (event) => {
-        if (!dmWatchLive) return;
+        if (!dmWatchLive || sentinelAlive()) return; // sentinel owns DM summons while it runs
         const recipient = event.tags.find((t) => t[0] === "p")?.[1];
         if (!recipient || recipient === nostr.pubkey) return; // our own inbox is the communities extension's business
         const persona = agentPkToName.get(recipient);
@@ -373,6 +392,7 @@ export default function herdr(api: FezExtensionAPI): void {
     nostr.subscribe(
       [{ kinds: [KIND_CHANNEL_MESSAGE], since: Math.floor(Date.now() / 1000) }],
       (event) => {
+        if (sentinelAlive()) return; // the sentinel owns summons while it runs
         if (event.pubkey !== nostr.pubkey && !attestedSiblings.has(event.pubkey)) return;
         // Chain-capped events don't summon — same loop guard agents use.
         if (Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0) >= 5) return;
