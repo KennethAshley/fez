@@ -21,9 +21,34 @@ import {
   setActiveTheme,
   SidePanel,
   timestamp,
+  visibleWidth,
+  type Component,
   type FezTheme,
   type ThemeJson,
 } from "../packages/fez-tui/dist/index.js";
+
+/**
+ * Per-line prefix wrapper (reddix's comment-tree recipe): the child
+ * renders at a narrowed width and every produced line gets the prefix —
+ * spaces for thread depth, two columns for message bodies under their
+ * header. Prefixing rendered OUTPUT keeps markdown intact (indenting
+ * markdown SOURCE four spaces would turn it into a code block).
+ */
+class LinePrefix implements Component {
+  private prefixWidth: number;
+  constructor(
+    private child: Component & { invalidate?: () => void },
+    private prefix: string
+  ) {
+    this.prefixWidth = visibleWidth(prefix);
+  }
+  invalidate(): void {
+    this.child.invalidate?.();
+  }
+  render(width: number): string[] {
+    return this.child.render(Math.max(1, width - this.prefixWidth)).map((line) => this.prefix + line);
+  }
+}
 import { CapabilityClient } from "./client.js";
 import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
@@ -164,8 +189,8 @@ export class FezTUI {
           },
         };
       },
-      appendMessage: (author, content, ts) => this.appendBubble(author, content, ts),
-      prependMessage: (author, content, ts) => this.appendBubble(author, content, ts, "prepend"),
+      appendMessage: (author, content, ts, opts) => this.appendBubble(author, content, ts, "append", opts),
+      prependMessage: (author, content, ts, opts) => this.appendBubble(author, content, ts, "prepend", opts),
       onLogScrollTop: (handler) => this.scrollTopHandlers.push(handler),
       notify: (text) => this.systemLine(text),
       clearLog: () => {
@@ -809,7 +834,13 @@ export class FezTUI {
    * re-lays-out: a streaming reply can start as a one-liner and grow into
    * a header+block shape.
    */
-  private appendBubble(author: string, content: string, ts?: number, position: "append" | "prepend" = "append"): MessageHandle {
+  private appendBubble(
+    author: string,
+    content: string,
+    ts?: number,
+    position: "append" | "prepend" = "append",
+    opts?: { linePrefix?: string; bare?: boolean }
+  ): MessageHandle {
     if (!this.screen) {
       this.pendingBubbles.push({ author, content });
       // Pre-screen bubbles are startup notices — nothing updates them later.
@@ -841,20 +872,19 @@ export class FezTUI {
       this.bubbleContents.delete(this.bubbleContents.keys().next().value as string);
     }
     const osc8 = (url: string, label: string) => `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
-    // Claude's pattern, quieter: the action row sits BELOW the content
-    // with a blank line of air (it was hugging the text block), indented
-    // and condensed — mid-dot separators, one glyph each — so it reads
-    // as a footnote, not a second line of message. Terminal fonts can't
-    // shrink, so "smaller" is fewer characters and more distance.
-    const actionRow = (hasCode: boolean) =>
-      "\n" +
+    // Actions live ON the header line, after the timestamp — a dim
+    // cluster of glyph links, zero extra rows. A per-message action ROW
+    // repeated down the timeline drowned the content (nine identical
+    // "⧉copy · ↩ quote" lines on one screen); inline, the affordance is
+    // still clickable but the timeline is messages again.
+    const inlineActions = (hasCode: boolean) =>
       chalk.dim(
-        "    " +
+        "   " +
           [
-            osc8(`fez-copy://${actionId}`, "⧉ copy"),
-            ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, "⧉ code")] : []),
-            osc8(`fez-quote://${actionId}`, "↩ quote"),
-          ].join("  ·  ")
+            osc8(`fez-copy://${actionId}`, "⧉"),
+            ...(hasCode ? [osc8(`fez-copy://${actionId}.code`, "⧉code")] : []),
+            osc8(`fez-quote://${actionId}`, "↩"),
+          ].join(" ")
       );
     const bubble = new Container();
     const layout = (c: string) => {
@@ -864,29 +894,41 @@ export class FezTUI {
       // updates keep this fresh so the final code is what copies.
       const codeBlocks = [...c.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1].replace(/\n$/, ""));
       if (codeBlocks.length > 0) this.bubbleContents.set(`${actionId}.code`, codeBlocks.join("\n\n"));
-      if (currentAuthor === "You") {
+      if (opts?.bare) {
+        // Bare: content only — no header, no timestamp, no actions. For
+        // timeline chrome that is NAVIGATION, not conversation (thread
+        // connector lines, beginning-of-channel markers): dressing those
+        // as messages was why messages and threads read identically.
+        if (!c.includes("\n") && c.length <= 160) bubble.addChild(new Text(c, 0, 0));
+        else bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
+      } else if (currentAuthor === "You") {
         // pi's userMessageBg: your own messages render as a full-width
         // tinted block (header + content inside the tint). The ​ spacer
         // keeps the gap OUTSIDE the tint — a leading \n inside would
         // paint an empty tinted row.
         bubble.addChild(new Text("​", 0, 0));
-        bubble.addChild(new Text(headText() + "\n" + c, 1, 0, (s) => getActiveTheme().userMessageBg(s)));
-        bubble.addChild(new Text(actionRow(codeBlocks.length > 0), 1, 0));
+        bubble.addChild(new Text(headText() + inlineActions(codeBlocks.length > 0) + "\n" + c, 1, 0, (s) => getActiveTheme().userMessageBg(s)));
       } else {
-        bubble.addChild(new Text("\n" + headText(), 0, 0));
-        if (!c.includes("\n") && c.length <= 100) bubble.addChild(new Text(c, 0, 0));
-        else bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
-        bubble.addChild(new Text(actionRow(codeBlocks.length > 0), 0, 0));
+        bubble.addChild(new Text("\n" + headText() + inlineActions(codeBlocks.length > 0), 0, 0));
+        // Body indents two columns under the header — author names hang
+        // at the margin, content forms its own edge: the left-to-right
+        // hierarchy (who → what) the flat layout lacked.
+        const body =
+          !c.includes("\n") && c.length <= 100 ? new Text(c, 0, 0) : new Markdown(c, 0, 0, markdownTheme);
+        bubble.addChild(new LinePrefix(body, "  "));
       }
       // An empty Text still renders one blank line — only mount the footer
       // when it has content, or every message drags a stray gap under it.
       if (footerText) bubble.addChild(new Text(chalk.dim(footerText), 0, 0));
     };
     layout(content);
+    // linePrefix (thread depth): the whole bubble renders narrowed and
+    // prefixed per line — reddix's mechanism, with plain spaces.
+    const mounted = opts?.linePrefix ? new LinePrefix(bubble, opts.linePrefix) : bubble;
     // Older-page loading inserts ABOVE the existing timeline — Container
     // children are a plain array, so prepend is an unshift.
-    if (position === "prepend") this.log.children.unshift(bubble);
-    else this.log.addChild(bubble);
+    if (position === "prepend") this.log.children.unshift(mounted);
+    else this.log.addChild(mounted);
     this.screen.requestRender();
     const rerender = () => this.screen.requestRender();
 

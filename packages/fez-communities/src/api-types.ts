@@ -68,8 +68,8 @@ export interface FezExtensionAPI {
   ui: {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
-    appendMessage(author: string, content: string, ts?: number): MessageHandle;
-    prependMessage(author: string, content: string, ts?: number): MessageHandle;
+    appendMessage(author: string, content: string, ts?: number, opts?: { linePrefix?: string; bare?: boolean }): MessageHandle;
+    prependMessage(author: string, content: string, ts?: number, opts?: { linePrefix?: string; bare?: boolean }): MessageHandle;
     onLogScrollTop(handler: () => Promise<void>): void;
     notify(text: string): void;
     clearLog(): void;

@@ -423,10 +423,15 @@ export default function communities(api: FezExtensionAPI): void {
     );
   }
 
-  /** Bubble for a thread reply — indented author label, Buzz's connector glyph. */
+  /**
+   * Bubble for a thread reply — the WHOLE comment (header, body) indents
+   * per depth (reddix's mechanism: plain spaces, applied to rendered
+   * lines so markdown stays intact). Depth capped at 3 — deeper chains
+   * stay readable instead of marching off the right edge.
+   */
+  const threadIndent = (depth: number) => "   ".repeat(Math.min(3, Math.max(1, depth)));
   function threadBubble(msg: Msg): MessageHandle {
-    const indent = "  ".repeat(Math.max(0, depthOf(msg) - 1));
-    const handle = api.ui.appendMessage(`${indent}↳ ${msg.authorName}`, msg.content, msg.ts);
+    const handle = api.ui.appendMessage(msg.authorName, msg.content, msg.ts, { linePrefix: threadIndent(depthOf(msg)) });
     handle.setFooter(reactionFooter(msg.id));
     return handle;
   }
@@ -599,19 +604,42 @@ export default function communities(api: FezExtensionAPI): void {
    * updated in place via its MessageHandle — new replies bump the count
    * and latest-author snippet instead of appending another line.
    */
-  function updateOrAppendSummaryLine(channelId: string, rootId: string, latest?: Msg): void {
+  /**
+   * Thread connector — a single bare dim line hanging under the root
+   * message, └─ binding it visually to what it belongs to, /thread N as
+   * a clickable link. Deliberately NOT message-shaped: no author, no
+   * timestamp, no actions — dressing navigation as messages was why
+   * messages and threads read identically on screen.
+   */
+  function threadSummaryText(channelId: string, rootId: string, latest?: Msg): string {
     const no = threadNo(rootId);
     const count = threadReplyCount(channelId, rootId);
-    const root = msgById.get(rootId);
-    const latestNote = latest ? `↳ ${latest.authorName}: ${snippet(latest.content)} · ` : "";
-    const text = `${latestNote}${count} repl${count === 1 ? "y" : "ies"} to "${snippet(root?.content ?? "(not seen)")}" — /thread ${no}`;
+    const latestNote = latest ?? threadReplies(channelId, rootId).at(-1);
+    return (
+      DIM(`  └─ ${count} repl${count === 1 ? "y" : "ies"}${latestNote ? ` · ${latestNote.authorName}: ${snippet(latestNote.content, 48)}` : ""} · `) +
+      OSC8(`fez-thread://open/${no}`, `/thread ${no}`)
+    );
+  }
+
+  function updateOrAppendSummaryLine(channelId: string, rootId: string, latest?: Msg): void {
+    const text = threadSummaryText(channelId, rootId, latest);
     const existing = summaryLineHandles.get(rootId);
     if (existing) {
       existing.setContent(text);
     } else {
-      summaryLineHandles.set(rootId, api.ui.appendMessage(`thread #${no}`, text));
+      summaryLineHandles.set(rootId, api.ui.appendMessage("", text, undefined, { bare: true }));
     }
   }
+
+  api.registerUrlHandler("fez-thread://open/", (url) => {
+    const no = Number(url.slice("fez-thread://open/".length));
+    const rootId = rootByThreadNo.get(no);
+    const current = state.currentChannel();
+    if (!rootId || !current) return;
+    view = { mode: "thread", rootId };
+    renderThreadView(current.channel.id, rootId);
+    refreshUi();
+  });
 
   /** Reactions (kind 7, Buzz's shape) — land live on the target's bubble footer. `live=false` for history replay: fold into footers but never open jobs (a stored 👀 from last week is not an active job). */
   function handleReaction(event: NostrEvent, live = true): void {
@@ -682,7 +710,7 @@ export default function communities(api: FezExtensionAPI): void {
     if (view.mode === "thread" && rootId === view.rootId) {
       let draft = draftBubbles.get(event.pubkey);
       if (!draft) {
-        const handle = api.ui.appendMessage(`↳ ${displayName(event.pubkey)}`, event.content);
+        const handle = api.ui.appendMessage(displayName(event.pubkey), event.content, undefined, { linePrefix: threadIndent(1) });
         handle.setFooter("✍ typing…");
         draft = { handle, rootId };
         draftBubbles.set(event.pubkey, draft);
@@ -698,12 +726,14 @@ export default function communities(api: FezExtensionAPI): void {
       if (!drafters) draftersByRoot.set(rootId, (drafters = new Map()));
       drafters.set(event.pubkey, snippet(event.content, 60));
       const text =
-        drafters.size === 1
-          ? `✍ ${displayName(event.pubkey)}: ${drafters.get(event.pubkey)} — /thread ${no}`
-          : `✍ ${[...drafters.keys()].map(displayName).join(", ")} are replying… — /thread ${no}`;
+        DIM(
+          drafters.size === 1
+            ? `  └─ ✍ ${displayName(event.pubkey)}: ${drafters.get(event.pubkey)} · `
+            : `  └─ ✍ ${[...drafters.keys()].map(displayName).join(", ")} are replying… · `
+        ) + OSC8(`fez-thread://open/${no}`, `/thread ${no}`);
       const existing = summaryLineHandles.get(rootId);
       if (existing) existing.setContent(text);
-      else summaryLineHandles.set(rootId, api.ui.appendMessage(`thread #${no}`, text));
+      else summaryLineHandles.set(rootId, api.ui.appendMessage("", text, undefined, { bare: true }));
     }
   }
 
@@ -936,21 +966,14 @@ export default function communities(api: FezExtensionAPI): void {
         summarized.add(rootId);
       } else if (msgById.has(rootId) && !summarized.has(rootId)) {
         summarized.add(rootId);
-        const no = threadNo(rootId);
-        const count = threadReplyCount(channelId, rootId);
-        const root = msgById.get(rootId);
         summaryLineHandles.set(
           rootId,
-          api.ui.prependMessage(
-            `thread #${no}`,
-            `${count} repl${count === 1 ? "y" : "ies"} to "${snippet(root?.content ?? "(not seen)")}" — /thread ${no}`,
-            msg.ts
-          )
+          api.ui.prependMessage("", threadSummaryText(channelId, rootId), undefined, { bare: true })
         );
       }
     }
     if (exhaustedChannels.has(channelId)) {
-      api.ui.prependMessage("history", `— beginning of the channel — nothing older on the relay —`);
+      api.ui.prependMessage("", DIM(`— beginning of the channel — nothing older on the relay —`), undefined, { bare: true });
     }
   }
 

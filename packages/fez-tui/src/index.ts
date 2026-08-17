@@ -21,6 +21,7 @@ export {
   Loader,
   Markdown,
   Editor,
+  visibleWidth,
   type Component,
   type TUI,
   type EditorTheme,
