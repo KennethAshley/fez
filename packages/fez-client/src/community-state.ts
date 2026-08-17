@@ -51,6 +51,14 @@ export class CommunityState {
     return fs.existsSync(STATE_FILE);
   }
 
+  /** Which community a channel belongs to (undefined if unknown). */
+  communityOfChannel(channelId: string): string | undefined {
+    for (const community of this.communities.values()) {
+      if (community.channels.has(channelId)) return community.id;
+    }
+    return undefined;
+  }
+
   load(): void {
     try {
       const raw: Persisted = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));

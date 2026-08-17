@@ -129,6 +129,98 @@ describe("NIP-01 REQ limit", () => {
   });
 });
 
+
+describe("NIP-09 deletion masking", () => {
+  const other = generateSecretKey();
+  const signAs = (key: Uint8Array, kind: number, content: string, tags: string[][] = []) =>
+    finalizeEvent({ kind, created_at: now(), tags, content }, key);
+
+  async function publish(probe: Probe, event: ReturnType<typeof sign>): Promise<void> {
+    probe.send(["EVENT", event]);
+    await probe.waitFor((m) => m[0] === "OK" && m[1] === event.id);
+  }
+
+  async function reqIds(probe: Probe, subId: string, filter: Record<string, unknown>): Promise<string[]> {
+    probe.send(["REQ", subId, filter]);
+    await probe.waitFor((m) => m[0] === "EOSE" && m[1] === subId);
+    return probe.messages.filter((m) => m[0] === "EVENT" && m[1] === subId).map((m) => (m[2] as { id: string }).id);
+  }
+
+  test("author's kind 5 masks their message from REQ; the kind 5 itself still serves", async () => {
+    const probe = new Probe();
+    await probe.open();
+    const msg = signAs(sk, 47103, "regrettable", [["h", "chan-x"]]);
+    await publish(probe, msg);
+    const del = signAs(sk, 5, "", [["e", msg.id], ["h", "chan-x"]]);
+    await publish(probe, del);
+
+    const served = await reqIds(probe, "after-del", { kinds: [47103], "#h": ["chan-x"] });
+    expect(served).not.toContain(msg.id);
+    const deletions = await reqIds(probe, "del-events", { kinds: [5], "#h": ["chan-x"] });
+    expect(deletions).toContain(del.id); // clients need it for their tombstones
+    probe.close();
+  });
+
+  test("someone else's kind 5 does not mask (author-match only at the relay)", async () => {
+    const probe = new Probe();
+    await probe.open();
+    const msg = signAs(sk, 47103, "stays put", [["h", "chan-y"]]);
+    await publish(probe, msg);
+    const foreignDel = signAs(other, 5, "", [["e", msg.id], ["h", "chan-y"]]);
+    await publish(probe, foreignDel);
+    const served = await reqIds(probe, "foreign", { kinds: [47103], "#h": ["chan-y"] });
+    expect(served).toContain(msg.id); // creator-moderation is a CLIENT rule; relay stays author-only
+    probe.close();
+  });
+
+  test("trust-chain kinds (47102 roster) are never masked, even by their author", async () => {
+    const probe = new Probe();
+    await probe.open();
+    const roster = signAs(sk, 47102, "", [["d", "chan-z"], ["c", "comm-z"], ["p", "someone"]]);
+    await publish(probe, roster);
+    const del = signAs(sk, 5, "", [["e", roster.id]]);
+    await publish(probe, del);
+    const served = await reqIds(probe, "roster", { kinds: [47102], "#d": ["chan-z"] });
+    expect(served).toContain(roster.id); // masking a roster would resurrect an older roster
+    probe.close();
+  });
+});
+
+describe("created_at drift fence policy", () => {
+  const fence = createdAtFencePolicy();
+  const ctx = { query: () => [] };
+
+  test("future-dated event rejected", () => {
+    const verdict = fence.onEvent(sign(30312, "future", now() + 3600), ctx) as { accept: boolean; reason?: string };
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toMatch(/future/);
+  });
+
+  test("backdated event rejected", () => {
+    const verdict = fence.onEvent(sign(30312, "stale", now() - 3600), ctx) as { accept: boolean };
+    expect(verdict.accept).toBe(false);
+  });
+
+  test("in-window event accepted", () => {
+    const verdict = fence.onEvent(sign(30312, "fresh", now() - 60), ctx) as { accept: boolean };
+    expect(verdict.accept).toBe(true);
+  });
+
+  test("gift wrap (1059) passes the past fence — NIP-17 fuzz is legitimate", () => {
+    const wrap = sign(1059, "ciphertext", now() - 36 * 3600); // fuzzed 1.5 days back
+    const verdict = fence.onEvent(wrap, ctx) as { accept: boolean };
+    expect(verdict.accept).toBe(true);
+  });
+
+  test("gift wrap still fenced on the future side", () => {
+    const wrap = sign(1059, "ciphertext", now() + 3600);
+    const verdict = fence.onEvent(wrap, ctx) as { accept: boolean };
+    expect(verdict.accept).toBe(false);
+  });
+});
+
+// Runs LAST: it saturates the connection cap, and just-closed sockets
+// still count against maxConns for a beat — later connects would race it.
 describe("per-connection ceilings", () => {
   test("filters-per-REQ cap → CLOSED", async () => {
     const probe = new Probe();
@@ -168,38 +260,5 @@ describe("per-connection ceilings", () => {
     });
     expect(closed).toBe(true);
     probes.forEach((p) => p.close());
-  });
-});
-
-describe("created_at drift fence policy", () => {
-  const fence = createdAtFencePolicy();
-  const ctx = { query: () => [] };
-
-  test("future-dated event rejected", () => {
-    const verdict = fence.onEvent(sign(30312, "future", now() + 3600), ctx) as { accept: boolean; reason?: string };
-    expect(verdict.accept).toBe(false);
-    expect(verdict.reason).toMatch(/future/);
-  });
-
-  test("backdated event rejected", () => {
-    const verdict = fence.onEvent(sign(30312, "stale", now() - 3600), ctx) as { accept: boolean };
-    expect(verdict.accept).toBe(false);
-  });
-
-  test("in-window event accepted", () => {
-    const verdict = fence.onEvent(sign(30312, "fresh", now() - 60), ctx) as { accept: boolean };
-    expect(verdict.accept).toBe(true);
-  });
-
-  test("gift wrap (1059) passes the past fence — NIP-17 fuzz is legitimate", () => {
-    const wrap = sign(1059, "ciphertext", now() - 36 * 3600); // fuzzed 1.5 days back
-    const verdict = fence.onEvent(wrap, ctx) as { accept: boolean };
-    expect(verdict.accept).toBe(true);
-  });
-
-  test("gift wrap still fenced on the future side", () => {
-    const wrap = sign(1059, "ciphertext", now() + 3600);
-    const verdict = fence.onEvent(wrap, ctx) as { accept: boolean };
-    expect(verdict.accept).toBe(false);
   });
 });

@@ -85,6 +85,32 @@ export interface RelayOptions {
 
 const isEphemeral = (kind: number) => kind >= 20000 && kind < 30000;
 
+/**
+ * Kinds a NIP-09 deletion may mask from REQ replies (author-match only).
+ * Deliberately excludes the community trust chain (47100-47102) — masking
+ * a roster event would resurrect an older roster, so those are immutable
+ * here regardless of who signs the deletion. Creator-moderation deletes
+ * of other people's messages are a CLIENT trust rule (tombstones); the
+ * relay masks only what NIP-09 itself authorizes: your own events.
+ */
+const DELETABLE_KINDS = new Set([7, 47103, 40003, 40004, 40005]);
+
+function applyDeletions(list: StoredEvent[]): StoredEvent[] {
+  const byId = new Map(list.map((e) => [e.id, e]));
+  const masked = new Set<string>();
+  for (const event of list) {
+    if (event.kind !== 5) continue;
+    for (const tag of event.tags) {
+      if (tag[0] !== "e" || !tag[1]) continue;
+      const target = byId.get(tag[1]);
+      if (target && target.pubkey === event.pubkey && DELETABLE_KINDS.has(target.kind)) {
+        masked.add(tag[1]);
+      }
+    }
+  }
+  return masked.size ? list.filter((e) => !masked.has(e.id)) : list;
+}
+
 export function matches(event: StoredEvent, filter: Filter): boolean {
   if (Array.isArray(filter.kinds) && !filter.kinds.includes(event.kind)) return false;
   if (Array.isArray(filter.authors) && !filter.authors.includes(event.pubkey)) return false;
@@ -113,13 +139,15 @@ export function startRelay(options: RelayOptions): RelayHandle {
   const limits = { ...LIMIT_DEFAULTS, ...options.limits };
 
   const store = options.eventStore ?? (options.store ? storeForPath(options.store) : undefined);
-  const events: StoredEvent[] = store ? store.load() : [];
-  if (store) log(`📂 loaded ${events.length} events from ${options.store ?? "operator store"}`);
-
+  const loaded: StoredEvent[] = store ? store.load() : [];
   // Ingest dedup: a replayed EVENT (client publish-retry, reconnect echo)
   // must not double-store or re-fan-out. Duplicates still get OK=true —
   // the event IS accepted, the client's retry succeeded (NIP-20 semantics).
-  const known = new Set<string>(events.map((e) => e.id));
+  // Seeded BEFORE deletion masking: a masked event must stay known, or a
+  // replay would resurrect it.
+  const known = new Set<string>(loaded.map((e) => e.id));
+  const events: StoredEvent[] = applyDeletions(loaded);
+  if (store) log(`📂 loaded ${events.length} events from ${options.store ?? "operator store"} (${loaded.length - events.length} deletion-masked)`);
   const ephemeralSeen = new Set<string>();
 
   const ctx: PolicyContext = {
@@ -193,6 +221,19 @@ export function startRelay(options: RelayOptions): RelayHandle {
             known.add(event.id);
             events.push(event);
             store?.append(event);
+            // NIP-09: an accepted deletion masks the author's own events
+            // from future REQs immediately (the JSONL keeps both — masking
+            // re-derives at load). The kind 5 itself still stores + fans
+            // out so clients can tombstone.
+            if (event.kind === 5) {
+              for (const tag of event.tags) {
+                if (tag[0] !== "e" || !tag[1]) continue;
+                const idx = events.findIndex((e) => e.id === tag[1]);
+                if (idx >= 0 && events[idx].pubkey === event.pubkey && DELETABLE_KINDS.has(events[idx].kind)) {
+                  events.splice(idx, 1);
+                }
+              }
+            }
           }
           ws.send(JSON.stringify(["OK", event.id, true, ""]));
           for (const [client, clientSubs] of subs) {

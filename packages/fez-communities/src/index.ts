@@ -16,7 +16,7 @@ import type { FezClient, Msg, Job } from "@fez/client";
  * /community create <name> | list | join <id>
  * /channels | /join | /leave | /members | /invite
  * /thread(s) | /back | /watch | /jobs | /memory
- * /edit | /pin(s) | /unpin | /bookmark(s) | /schedule | /remind
+ * /edit | /delete | /pin(s) | /unpin | /bookmark(s) | /schedule | /remind
  */
 export default function communities(api: FezExtensionAPI): void {
   if (!api.client) return; // CLI subcommand context — nothing chat-shaped to do
@@ -94,15 +94,21 @@ export default function communities(api: FezExtensionAPI): void {
 
   // ── Renders ─────────────────────────────────────────────────────────────
 
+  // Honest tombstone, never a silent hole: the message keeps its slot in
+  // the timeline (thread structure survives), the removal is attributed.
+  const tombstoneText = (msg: Msg) =>
+    DIM(`⌫ removed by ${msg.deletedBy === "moderator" ? "a moderator" : "its author"}`);
+  const bubbleBody = (msg: Msg) => (msg.deletedBy ? tombstoneText(msg) : msg.content);
+
   function paintBubble(msg: Msg): void {
-    const handle = api.ui.appendMessage(msg.authorName, msg.content, msg.ts);
-    handle.setFooter(reactionFooter(msg.id));
+    const handle = api.ui.appendMessage(msg.authorName, bubbleBody(msg), msg.ts);
+    if (!msg.deletedBy) handle.setFooter(reactionFooter(msg.id));
     bubbleHandles.set(msg.id, handle);
   }
 
   function threadBubble(msg: Msg): MessageHandle {
-    const handle = api.ui.appendMessage(msg.authorName, msg.content, msg.ts);
-    handle.setFooter(reactionFooter(msg.id));
+    const handle = api.ui.appendMessage(msg.authorName, bubbleBody(msg), msg.ts);
+    if (!msg.deletedBy) handle.setFooter(reactionFooter(msg.id));
     return handle;
   }
 
@@ -290,6 +296,14 @@ export default function communities(api: FezExtensionAPI): void {
 
   client.on("messageEdited", (_channelId, msg) => {
     bubbleHandles.get(msg.id)?.setContent(msg.content);
+  });
+
+  client.on("messageDeleted", (_channelId, msg) => {
+    const handle = bubbleHandles.get(msg.id);
+    if (!handle) return;
+    handle.setContent(tombstoneText(msg));
+    handle.setFooter("");
+    handle.setMeta("");
   });
 
   client.on("metaChanged", (channelId, msgId) => {
@@ -555,9 +569,26 @@ export default function communities(api: FezExtensionAPI): void {
   });
 
   function lastMessage(channelId: string, mine: boolean): Msg | undefined {
-    const list = client.messages(channelId);
+    const list = client.messages(channelId).filter((m) => !m.deletedBy);
     return mine ? list.filter((m) => m.authorPk === client.pubkey).at(-1) : list.at(-1);
   }
+
+  api.registerCommand("delete", async (args, ctx) => {
+    const current = client.state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel.");
+    const arg = args.trim();
+    if (arg && arg !== "last") {
+      return ctx.reply("Usage: /delete — removes your latest message here · /delete last — (creator) removes the channel's latest message");
+    }
+    const target = lastMessage(current.channel.id, arg !== "last");
+    if (!target) return ctx.reply(arg === "last" ? "Nothing here to delete." : "No message of yours here to delete.");
+    if (!client.canDeleteMessage(current.community.id, target)) {
+      return ctx.reply("Only the author or the community creator can delete that.");
+    }
+    const preview = snippet(target.content); // before the tombstone blanks it
+    await client.deleteMessage(current.channel.id, current.community.id, target.id);
+    ctx.reply(`⌫ removed ${target.authorPk === client.pubkey ? "your message" : `${target.authorName}'s message`} ("${preview}").`);
+  });
 
   api.registerCommand("edit", async (args, ctx) => {
     const current = client.state.currentChannel();

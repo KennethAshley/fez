@@ -107,6 +107,8 @@ export interface Msg {
   ts: number;
   edited?: boolean;
   editTs?: number;
+  /** Honest tombstone (Buzz's decision: a visible removal, not a silent hole). */
+  deletedBy?: "author" | "moderator";
 }
 
 export interface Job {
@@ -162,6 +164,8 @@ export interface ClientEvents {
   message: (channelId: string, msg: Msg, ctx: { live: boolean; prepend: boolean }) => void;
   /** Content of an existing message changed (40003 edit). */
   messageEdited: (channelId: string, msg: Msg) => void;
+  /** A message became a tombstone (kind 5 from its author or the community creator). */
+  messageDeleted: (channelId: string, msg: Msg) => void;
   /** Something on a message's footer changed: pin, thread count, edit marker. */
   metaChanged: (channelId: string, msgId: string) => void;
   /** Reactions on a target changed (add or retract). */
@@ -421,6 +425,25 @@ export class FezClient {
       content: "",
     });
     this.handleDeletion(event);
+  }
+
+  /**
+   * Publish a kind-5 deletion for a channel message. The trust rule
+   * (author-or-creator) is enforced on READ in handleDeletion by every
+   * client — publishing without standing just produces an event everyone
+   * ignores. Callers should still gate the UI on canDeleteMessage().
+   */
+  async deleteMessage(channelId: string, communityId: string, targetId: string): Promise<void> {
+    const event = await this.wire.publish({
+      kind: K.DELETION,
+      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      content: "",
+    });
+    this.handleDeletion(event);
+  }
+
+  canDeleteMessage(communityId: string, msg: Msg): boolean {
+    return msg.authorPk === this.pubkey || this.state.communities.get(communityId)?.creator === this.pubkey;
   }
 
   async bookmarkMessage(channelId: string, communityId: string, targetId: string): Promise<void> {
@@ -923,14 +946,44 @@ export class FezClient {
         continue;
       }
       const entry = this.reactionIndex.get(tag[1]);
-      if (!entry || entry.authorPk !== event.pubkey) continue;
-      this.reactionIndex.delete(tag[1]);
-      const who = this.reactionsByTarget.get(entry.targetId)?.get(entry.emoji);
-      who?.delete(this.displayName(entry.authorPk));
-      if (who && who.size === 0) this.reactionsByTarget.get(entry.targetId)?.delete(entry.emoji);
-      const channelId = event.tags.find((t) => t[0] === "h")?.[1] ?? "";
-      this.emit("reaction", channelId, entry.targetId);
+      if (entry && entry.authorPk === event.pubkey) {
+        this.reactionIndex.delete(tag[1]);
+        const who = this.reactionsByTarget.get(entry.targetId)?.get(entry.emoji);
+        who?.delete(this.displayName(entry.authorPk));
+        if (who && who.size === 0) this.reactionsByTarget.get(entry.targetId)?.delete(entry.emoji);
+        const channelId = event.tags.find((t) => t[0] === "h")?.[1] ?? "";
+        this.emit("reaction", channelId, entry.targetId);
+        continue;
+      }
+
+      // Channel messages tombstone under the trust rule: the author may
+      // delete their own; the community creator may delete anyone's (the
+      // moderation analog — same authority that signs the roster). Anyone
+      // else's kind 5 is ignored. The tombstone stays visible ("removed
+      // by …"), never a silent hole.
+      const msg = this.msgByIdMap.get(tag[1]);
+      if (!msg || msg.deletedBy) continue;
+      const channelId =
+        event.tags.find((t) => t[0] === "h")?.[1] ?? this.channelOfMessage(tag[1]);
+      if (!channelId) continue;
+      const isAuthor = event.pubkey === msg.authorPk;
+      const communityId =
+        event.tags.find((t) => t[0] === "c")?.[1] ?? this.state.communityOfChannel(channelId);
+      const isCreator =
+        communityId !== undefined && this.state.communities.get(communityId)?.creator === event.pubkey;
+      if (!isAuthor && !isCreator) continue;
+      msg.deletedBy = isAuthor ? "author" : "moderator";
+      msg.content = "";
+      this.emit("messageDeleted", channelId, msg);
+      this.emit("metaChanged", channelId, msg.id);
     }
+  }
+
+  private channelOfMessage(msgId: string): string | undefined {
+    for (const [channelId, list] of this.messagesByChannel) {
+      if (list.some((m) => m.id === msgId)) return channelId;
+    }
+    return undefined;
   }
 
   private handleMsgEdit(event: WireEvent): void {
