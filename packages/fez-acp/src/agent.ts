@@ -382,8 +382,23 @@ async function main() {
   // observer bus, decentralized. Owner absent = stream off.
   if (owner) console.log(`   Observer stream → ${owner.slice(0, 12)}… (/watch ${personaId} in fez)`);
   else console.log(`   Observer stream off (set FEZ_AGENT_OWNER=<pubkey> to enable /watch)`);
+  // Text/thought frames carry the FULL accumulated text each time (the
+  // /watch consumer replaces content) — unthrottled that's O(n²) bytes
+  // over a long turn. Diet: at most one text/thought frame per second,
+  // and only when meaningfully grown; everything else passes untouched.
+  // The final channel message is the durable artifact, so a swallowed
+  // last sliver costs nothing.
+  let lastTextFrameAt = 0;
+  let lastTextFrameLen = 0;
   const publishObserver = (frame: Record<string, unknown>) => {
     if (!owner) return;
+    if (frame.type === "text" || frame.type === "thought") {
+      const len = typeof frame.text === "string" ? frame.text.length : 0;
+      const now = Date.now();
+      if (now - lastTextFrameAt < 1_000 && len - lastTextFrameLen < 800) return;
+      lastTextFrameAt = now;
+      lastTextFrameLen = len;
+    }
     void relay
       .publish(
         client.signEvent({
@@ -619,7 +634,97 @@ async function main() {
   // — observed live as an agent "re-posting the same result".
   const seenEventIds = new Set<string>();
   let busy = false;
-  const pendingMentions: { id: string; pubkey: string; created_at: number; content: string; tags: string[][] }[] = [];
+
+  // ── Per-scope queues with batching (Buzz's queue.rs decisions): one
+  // FIFO-fair queue per conversation scope instead of a single 3-slot
+  // global list. Draining a scope takes EVERYTHING ready and merges it
+  // into one coherent turn. Transient turn failures requeue with a
+  // backoff ladder (5s → 30s → 120s) before dead-lettering loudly.
+  type ChEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
+  interface PendingItem {
+    scope: string;
+    kind: "ch" | "dm";
+    chEvent?: ChEvent;
+    chChannelId?: string;
+    dm?: DmRumor;
+    attempts: number;
+    notBefore: number;
+  }
+  const SCOPE_QUEUE_CAP = 20;
+  const RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
+  const pendingByScope = new Map<string, PendingItem[]>();
+  const scopeOrder: string[] = [];
+
+  function enqueue(item: PendingItem): void {
+    let list = pendingByScope.get(item.scope);
+    if (!list) pendingByScope.set(item.scope, (list = []));
+    const dedupeId = item.chEvent?.id ?? item.dm?.id;
+    if (list.some((existing) => (existing.chEvent?.id ?? existing.dm?.id) === dedupeId)) return;
+    if (list.length >= SCOPE_QUEUE_CAP) {
+      const dropped = list.shift();
+      console.warn(`⚠️  queue for ${item.scope} full — dropped oldest (${(dropped?.chEvent?.id ?? dropped?.dm?.id ?? "?").slice(0, 8)})`);
+    }
+    list.push(item);
+    if (!scopeOrder.includes(item.scope)) scopeOrder.push(item.scope);
+    console.log(`⏳ queued for ${item.scope} (${list.length} pending${item.attempts ? `, attempt ${item.attempts + 1}` : ""})`);
+  }
+
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  function drainNext(): void {
+    if (busy) return;
+    const now = Date.now();
+    for (let i = 0; i < scopeOrder.length; i++) {
+      const scope = scopeOrder[i];
+      const list = pendingByScope.get(scope) ?? [];
+      const ready = list.filter((item) => item.notBefore <= now);
+      if (ready.length === 0) {
+        if (list.length === 0) {
+          pendingByScope.delete(scope);
+          scopeOrder.splice(i, 1);
+          i--;
+        }
+        continue;
+      }
+      pendingByScope.set(scope, list.filter((item) => item.notBefore > now));
+      scopeOrder.splice(i, 1);
+      scopeOrder.push(scope); // rotate: next drain favors other scopes
+      dispatchBatch(scope, ready);
+      return;
+    }
+    // Nothing ready — wake when the earliest backoff expires.
+    let earliest = Infinity;
+    for (const list of pendingByScope.values()) {
+      for (const item of list) earliest = Math.min(earliest, item.notBefore);
+    }
+    if (earliest < Infinity) {
+      clearTimeout(drainTimer);
+      drainTimer = setTimeout(drainNext, Math.max(50, earliest - now));
+      drainTimer.unref?.();
+    }
+  }
+
+  function dispatchBatch(scope: string, items: PendingItem[]): void {
+    const attempts = Math.max(...items.map((item) => item.attempts));
+    if (items[0].kind === "ch") {
+      // Batch: earlier messages ride the steering channel (the prompt
+      // already frames them as "these also arrived — weave them in").
+      const last = items[items.length - 1];
+      for (const item of items.slice(0, -1)) {
+        steerMessages.push(`${item.chEvent!.pubkey.slice(0, 8)}: ${item.chEvent!.content}`);
+      }
+      if (items.length > 1) console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
+      setTimeout(() => void handleChannelMessage(last.chEvent!, true, attempts), 100);
+    } else {
+      const last = items[items.length - 1];
+      const merged: DmRumor =
+        items.length > 1
+          ? { ...last.dm!, text: items.map((item) => `${item.dm!.senderPk.slice(0, 8)}: ${item.dm!.text}`).join("\n") }
+          : last.dm!;
+      if (items.length > 1) console.log(`📦 batching ${items.length} queued DMs for ${scope} into one turn`);
+      seenEventIds.delete(merged.id);
+      setTimeout(() => void handleDm(merged, false, attempts), 100);
+    }
+  }
 
   // Steering (Buzz's MultipleEventHandling::Steer, its default): an
   // admitted mention arriving mid-turn CANCELS the in-flight turn and
@@ -650,7 +755,8 @@ async function main() {
       tags: string[][];
     },
     /** true for our own deliberate re-entries (steer re-dispatch, queue drain) — they reuse a seen event. */
-    redispatch = false
+    redispatch = false,
+    attempts = 0
   ): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       const communityId = event.tags.find((t) => t[0] === "c")?.[1];
@@ -698,9 +804,8 @@ async function main() {
           steerMessages.push(`${event.pubkey.slice(0, 8)}: ${event.content}`);
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
-        } else if (pendingMentions.length < 3 && !pendingMentions.some((p) => p.id === event.id)) {
-          pendingMentions.push(event);
-          console.log(`⏳ Busy — queued mention from ${event.pubkey.slice(0, 8)}… (${pendingMentions.length} pending)`);
+        } else {
+          enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: 0, notBefore: 0 });
         }
         return;
       }
@@ -879,6 +984,15 @@ async function main() {
           publishObserver({ type: "turn", status: "steered" });
           publishTurnMetric(`ch:${channelId}`, "steered", turnStartedAt, 0);
           console.log(`🔀 Turn cancelled for steering — re-dispatching merged prompt`);
+        } else if (classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
+          // Retry ladder (Buzz's requeue-with-backoff): a relay blip or
+          // harness hiccup gets 3 spaced retries before dead-lettering.
+          // No breaker count, no failure notice — this is recovery, not
+          // failure yet.
+          publishObserver({ type: "turn", status: "retrying" });
+          const delay = RETRY_DELAYS_MS[attempts];
+          console.warn(`↻ transient turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
+          enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: attempts + 1, notBefore: Date.now() + delay });
         } else {
           publishObserver({ type: "turn", status: "failed" });
           publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, 0);
@@ -924,10 +1038,8 @@ async function main() {
           // messages get woven into the merged prompt.
           setTimeout(() => void handleChannelMessage(event, true), 250);
         } else {
-          // Drain the queue: next pending mention gets its own full turn,
-          // with the exchange that just finished already in context.
-          const next = pendingMentions.shift();
-          if (next) setTimeout(() => void handleChannelMessage(next, true), 250);
+          // Drain: the next scope with ready work gets a (batched) turn.
+          setTimeout(drainNext, 250);
         }
       }
   };
@@ -942,7 +1054,6 @@ async function main() {
   // decide to answer it again.
   const dmRecent = new Map<string, string[]>(); // peerPk -> conversation context
   const dmLastSent = new Map<string, number>(); // peerPk -> ts of our last reply
-  const pendingDms: DmRumor[] = [];
   const DM_BACKFILL_WINDOW_S = 120;
 
   // Group DMs: reply-all. The conversation is the participant SET — one
@@ -959,7 +1070,7 @@ async function main() {
     await relay.publish(toSelf);
   };
 
-  const handleDm = async (dm: DmRumor, fromBacklog = false): Promise<void> => {
+  const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0): Promise<void> => {
     if (seenEventIds.has(dm.id)) return;
     seenEventIds.add(dm.id);
     if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
@@ -1002,10 +1113,7 @@ async function main() {
     if (Date.now() < breakerUntil) return;
 
     if (busy) {
-      if (pendingDms.length < 3 && !pendingDms.some((p) => p.id === dm.id)) {
-        pendingDms.push(dm);
-        console.log(`⏳ Busy — queued DM from ${dm.senderPk.slice(0, 8)}… (${pendingDms.length} pending)`);
-      }
+      enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts: 0, notBefore: 0 });
       return;
     }
 
@@ -1066,6 +1174,13 @@ async function main() {
         void sendDmReply(replyTargets, "⏹ stopped by my owner mid-turn.", dm.depth + 1).catch(() => {});
         return;
       }
+      if (classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
+        publishObserver({ type: "turn", status: "retrying" });
+        const delay = RETRY_DELAYS_MS[attempts];
+        console.warn(`↻ transient DM turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s`);
+        enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts: attempts + 1, notBefore: Date.now() + delay });
+        return;
+      }
       publishObserver({ type: "turn", status: "failed" });
       publishTurnMetric(`dm:${convoKey}`, "failed", turnStartedAt, 0);
       const reason = err instanceof Error ? err.message : String(err);
@@ -1083,11 +1198,7 @@ async function main() {
       busy = false;
       turnController = undefined;
       turnKind = undefined;
-      const next = pendingDms.shift();
-      if (next) {
-        seenEventIds.delete(next.id);
-        setTimeout(() => void handleDm(next), 250);
-      }
+      setTimeout(drainNext, 250);
     }
   };
 
