@@ -86,6 +86,7 @@ export class CommunityState {
    * signature validity is nostr-tools' job upstream.
    */
   absorb(event: {
+    id: string;
     kind: number;
     pubkey: string;
     created_at: number;

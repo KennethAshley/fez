@@ -1,7 +1,7 @@
 import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey, nip44 } from "nostr-tools";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
-import { buildDmWraps, unwrapDm, type DmRumor } from "./dm.js";
+import { buildDmWraps, buildGroupDmWraps, unwrapDm, type DmRumor } from "./dm.js";
 
 export interface ClientConfig {
   /** Relay URL */
@@ -141,6 +141,17 @@ export class CapabilityClient {
   wrapDm(recipientPubkey: string, text: string, depth = 0): { toPeer: Event; toSelf: Event; id: string } {
     const { toPeer, toSelf } = buildDmWraps(this.privateKey, recipientPubkey, text, depth);
     return { toPeer, toSelf, id: unwrapDm(toSelf, this.privateKey)?.id ?? "" };
+  }
+
+  /** Group DM: one rumor to every recipient, one wrap each + self-copy. */
+  wrapGroupDm(recipientPubkeys: string[], text: string, depth = 0): { wraps: Event[]; id: string } {
+    return buildGroupDmWraps(this.privateKey, recipientPubkeys, text, depth);
+  }
+
+  async sendGroupDm(recipientPubkeys: string[], text: string, depth = 0): Promise<string> {
+    const { wraps, id } = this.wrapGroupDm(recipientPubkeys, text, depth);
+    for (const wrap of wraps) await this.relay.publish(wrap);
+    return id;
   }
 
   /** Unwrap a kind-1059 gift wrap addressed to us; undefined if not ours / not a DM. */

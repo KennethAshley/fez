@@ -47,6 +47,22 @@ export interface DmRumor {
   depth: number;
   /** Rumor id — stable across the peer copy and the self-copy (same rumor, two wraps). */
   id: string;
+  /**
+   * The full conversation set — sender + every p-tagged recipient, sorted
+   * unique. Two entries = classic 1:1; more = a group DM (one rumor,
+   * one wrap per participant — still pure NIP-17, no relay involvement).
+   */
+  participants: string[];
+}
+
+/**
+ * A conversation's stable key from MY point of view: the OTHER
+ * participants, sorted, joined with "+". One other = their bare pubkey —
+ * exactly the key 1:1 conversations always used, so group support
+ * changes nothing for existing state.
+ */
+export function dmConvoKey(participants: string[], myPk: string): string {
+  return [...new Set(participants)].filter((pk) => pk !== myPk).sort().join("+");
 }
 
 /** Build both wraps for one DM: to the peer, and the sender's self-copy. */
@@ -56,19 +72,38 @@ export function buildDmWraps(
   text: string,
   depth = 0
 ): { toPeer: Event; toSelf: Event } {
+  const { wraps } = buildGroupDmWraps(senderSecret, [recipientPubkey], text, depth);
+  return { toPeer: wraps[0], toSelf: wraps[wraps.length - 1] };
+}
+
+/**
+ * Group DM: ONE rumor p-tagging every recipient, wrapped separately for
+ * each of them plus the sender's self-copy (last element). Everyone
+ * decrypts the same rumor id and sees the same participant set, so all
+ * clients derive the same conversation. Still nothing for the relay to
+ * know: each wrap p-tags one recipient under a one-time key.
+ */
+export function buildGroupDmWraps(
+  senderSecret: Uint8Array,
+  recipientPubkeys: string[],
+  text: string,
+  depth = 0
+): { wraps: Event[]; id: string } {
+  const senderPk = getPublicKey(senderSecret);
+  const others = [...new Set(recipientPubkeys)].filter((pk) => pk !== senderPk);
+  if (others.length === 0) throw new Error("group DM needs at least one recipient besides the sender");
   const rumor = nip59.createRumor(
     {
       kind: KIND_DM,
-      tags: [["p", recipientPubkey], ...(depth > 0 ? [["depth", String(depth)]] : [])],
+      tags: [...others.map((pk) => ["p", pk]), ...(depth > 0 ? [["depth", String(depth)]] : [])],
       content: text,
     },
     senderSecret
   );
-  const senderPk = getPublicKey(senderSecret);
-  return {
-    toPeer: nip59.createWrap(nip59.createSeal(rumor, senderSecret, recipientPubkey), recipientPubkey) as Event,
-    toSelf: nip59.createWrap(nip59.createSeal(rumor, senderSecret, senderPk), senderPk) as Event,
-  };
+  const wraps = [...others, senderPk].map(
+    (pk) => nip59.createWrap(nip59.createSeal(rumor, senderSecret, pk), pk) as Event
+  );
+  return { wraps, id: (rumor as { id: string }).id };
 }
 
 /**
@@ -89,7 +124,8 @@ export function unwrapDm(event: Event, mySecret: Uint8Array): DmRumor | undefine
     };
     if (rumor.kind !== KIND_DM || typeof rumor.content !== "string") return undefined;
     const myPk = getPublicKey(mySecret);
-    const recipient = rumor.tags.find((t) => t[0] === "p")?.[1];
+    const recipients = rumor.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]);
+    const recipient = recipients[0];
     const peerPk = rumor.pubkey === myPk ? recipient : rumor.pubkey;
     if (!peerPk) return undefined;
     return {
@@ -99,6 +135,7 @@ export function unwrapDm(event: Event, mySecret: Uint8Array): DmRumor | undefine
       ts: rumor.created_at,
       depth: Number(rumor.tags.find((t) => t[0] === "depth")?.[1] ?? 0),
       id: rumor.id,
+      participants: [...new Set([rumor.pubkey, ...recipients])].sort(),
     };
   } catch {
     return undefined;

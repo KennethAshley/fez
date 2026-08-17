@@ -212,6 +212,11 @@ export class FezTUI {
       query: (filters: Parameters<RelayConnection["query"]>[0]) => this.relay.query(filters),
       encrypt: (peer: string, plaintext: string) => this.client.encryptTo(peer, plaintext),
       decrypt: (peer: string, ciphertext: string) => this.client.decryptFrom(peer, ciphertext),
+      sendGroupDm: async (recipients: string[], text: string) => {
+        const { wraps, id } = this.client.wrapGroupDm(recipients, text);
+        for (const wrap of wraps) await this.relay.publish(wrap);
+        return id;
+      },
       sendDm: async (recipient: string, text: string) => {
         const { toPeer, toSelf, id } = this.client.wrapDm(recipient, text);
         await this.relay.publish(toPeer);

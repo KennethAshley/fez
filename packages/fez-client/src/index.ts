@@ -46,6 +46,13 @@ export interface DmRumor {
   ts: number;
   depth: number;
   id: string;
+  /** Full conversation set (sender + recipients, sorted). >2 = group DM. */
+  participants?: string[];
+}
+
+/** Conversation key from MY side: other participants sorted, "+"-joined (1:1 = bare peer pk). */
+export function dmConvoKey(participants: string[], myPk: string): string {
+  return [...new Set(participants)].filter((pk) => pk !== myPk).sort().join("+");
 }
 
 /** Exactly the TUI's NostrAccess backend shape — the client's only dependency. */
@@ -57,6 +64,8 @@ export interface Wire {
   encrypt(peerPubkey: string, plaintext: string): string;
   decrypt(peerPubkey: string, ciphertext: string): string;
   sendDm(recipientPubkey: string, text: string): Promise<string>;
+  /** Group DM (one rumor, one wrap per recipient + self-copy). Optional — older backends are 1:1 only. */
+  sendGroupDm?(recipientPubkeys: string[], text: string): Promise<string>;
   unwrapDm(event: WireEvent): DmRumor | undefined;
 }
 
@@ -238,7 +247,7 @@ export class FezClient {
   private workflowRunsMap = new Map<string, WorkflowRunInfo>();
 
   // DMs
-  private dmConvos = new Map<string, { msgs: DmMessage[]; unread: number }>();
+  private dmConvos = new Map<string, { msgs: DmMessage[]; unread: number; participants?: string[] }>();
   private seenDmIds = new Set<string>();
 
   // docs
@@ -499,6 +508,27 @@ export class FezClient {
     if (id) this.seenDmIds.add(id);
     const convo = this.dmConvo(peerPk);
     convo.msgs.push({ id, senderPk: this.pubkey, text, ts: Math.floor(Date.now() / 1000) });
+  }
+
+  /** Send into a group conversation (2+ other participants). */
+  async sendGroupDm(recipientPks: string[], text: string): Promise<void> {
+    if (!this.wire.sendGroupDm) throw new Error("this wire backend doesn't support group DMs");
+    const id = await this.wire.sendGroupDm(recipientPks, text);
+    if (id) this.seenDmIds.add(id);
+    const participants = [...new Set([this.pubkey, ...recipientPks])].sort();
+    const convo = this.dmConvo(dmConvoKey(participants, this.pubkey));
+    convo.participants = participants;
+    convo.msgs.push({ id, senderPk: this.pubkey, text, ts: Math.floor(Date.now() / 1000) });
+  }
+
+  /** Human-readable conversation title for a convo key ("alice + bob" for groups). */
+  dmTitle(key: string): string {
+    return key.split("+").map((pk) => this.displayName(pk)).join(" + ");
+  }
+
+  /** The other participants behind a convo key. */
+  dmPeers(key: string): string[] {
+    return key.split("+").filter(Boolean);
   }
 
   markDmRead(peerPk: string): void {
@@ -831,9 +861,9 @@ export class FezClient {
     return msg;
   }
 
-  private dmConvo(peerPk: string): { msgs: DmMessage[]; unread: number } {
-    let convo = this.dmConvos.get(peerPk);
-    if (!convo) this.dmConvos.set(peerPk, (convo = { msgs: [], unread: 0 }));
+  private dmConvo(key: string): { msgs: DmMessage[]; unread: number; participants?: string[] } {
+    let convo = this.dmConvos.get(key);
+    if (!convo) this.dmConvos.set(key, (convo = { msgs: [], unread: 0 }));
     return convo;
   }
 
@@ -1233,13 +1263,18 @@ export class FezClient {
     const dm = this.wire.unwrapDm(event);
     if (!dm || this.seenDmIds.has(dm.id)) return;
     this.seenDmIds.add(dm.id);
-    const convo = this.dmConvo(dm.peerPk);
+    // Conversation = the participant SET, so every member of a group DM
+    // derives the same thread. 1:1 keys stay the bare peer pubkey.
+    const participants = dm.participants ?? [dm.senderPk, dm.peerPk];
+    const key = dmConvoKey(participants, this.pubkey) || dm.peerPk;
+    const convo = this.dmConvo(key);
+    convo.participants = participants;
     convo.msgs.push({ id: dm.id, senderPk: dm.senderPk, text: dm.text, ts: dm.ts });
     convo.msgs.sort((a, b) => a.ts - b.ts);
     if (convo.msgs.length > 100) convo.msgs.splice(0, convo.msgs.length - 100);
     const live = dm.ts >= this.sessionStartS;
     if (live && dm.senderPk !== this.pubkey) convo.unread++;
-    this.emit("dmMessage", { id: dm.id, senderPk: dm.senderPk, text: dm.text, ts: dm.ts, peerPk: dm.peerPk }, { live });
+    this.emit("dmMessage", { id: dm.id, senderPk: dm.senderPk, text: dm.text, ts: dm.ts, peerPk: key }, { live });
   }
 
   private absorbDocEvent(event: WireEvent): string | undefined {

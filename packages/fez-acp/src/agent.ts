@@ -24,6 +24,7 @@ import {
   KIND_PRESENCE,
   KIND_GIFT_WRAP,
   DM_FUZZ_WINDOW_S,
+  dmConvoKey,
   type DmRumor,
   type HarnessSession,
   type HarnessUpdate,
@@ -839,8 +840,16 @@ async function main() {
   const pendingDms: DmRumor[] = [];
   const DM_BACKFILL_WINDOW_S = 120;
 
-  const sendDmReply = async (peerPk: string, text: string, depth: number) => {
-    const { toPeer, toSelf } = client.wrapDm(peerPk, text, depth);
+  // Group DMs: reply-all. The conversation is the participant SET — one
+  // reply, wrapped for every other participant, so nobody in the group
+  // is left out of the agent's answer.
+  const sendDmReply = async (targets: string[], text: string, depth: number) => {
+    if (targets.length > 1) {
+      const { wraps } = client.wrapGroupDm(targets, text, depth);
+      for (const wrap of wraps) await relay.publish(wrap);
+      return;
+    }
+    const { toPeer, toSelf } = client.wrapDm(targets[0], text, depth);
     await relay.publish(toPeer);
     await relay.publish(toSelf);
   };
@@ -850,15 +859,21 @@ async function main() {
     seenEventIds.add(dm.id);
     if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
 
+    // Conversation key + reply set from the participant list (1:1 keys
+    // stay the bare peer pk — same map keys as before groups existed).
+    const participants = dm.participants ?? [dm.senderPk, dm.peerPk];
+    const convoKey = dmConvoKey(participants, myPubkey) || dm.peerPk;
+    const replyTargets = participants.filter((pk) => pk !== myPubkey);
+
     if (dm.senderPk === myPubkey) {
       // Our own self-copy — record it as "answered up to here", don't respond.
-      dmLastSent.set(dm.peerPk, Math.max(dmLastSent.get(dm.peerPk) ?? 0, dm.ts));
+      dmLastSent.set(convoKey, Math.max(dmLastSent.get(convoKey) ?? 0, dm.ts));
       return;
     }
 
-    const context = dmRecent.get(dm.peerPk) ?? [];
+    const context = dmRecent.get(convoKey) ?? [];
     context.push(`${dm.senderPk.slice(0, 8)}: ${dm.text}`);
-    dmRecent.set(dm.peerPk, context.slice(-10));
+    dmRecent.set(convoKey, context.slice(-10));
 
     // Replayed history: context only, no turn.
     if (dm.ts < Math.floor(Date.now() / 1000) - DM_BACKFILL_WINDOW_S) return;
@@ -866,7 +881,7 @@ async function main() {
     // must always process (the id dedupe covers duplicates). Applying
     // it live swallowed rapid follow-ups landing in the same second as
     // our previous reply.
-    if (fromBacklog && (dmLastSent.get(dm.peerPk) ?? 0) >= dm.ts) return;
+    if (fromBacklog && (dmLastSent.get(convoKey) ?? 0) >= dm.ts) return;
     if (!(await authorAllowed(dm.senderPk))) return;
     // Same loop guard as channels — agent↔agent DMs ping-pong just as
     // happily in private, with nobody watching. The depth rides INSIDE
@@ -897,18 +912,23 @@ async function main() {
         if (!fresh) {
           return `New private message from ${dm.senderPk.slice(0, 8)}: ${dm.text}\n\nReply to it. Be concise — this is chat.`;
         }
+        const groupNote =
+          replyTargets.length > 1
+            ? `This is a GROUP conversation with ${replyTargets.length + 1} participants (${replyTargets.map((pk) => pk.slice(0, 8)).join(", ")} and you) — your reply is delivered to everyone in it.`
+            : undefined;
         const memorySection = await coreMemorySection();
         return [
           persona.systemPrompt ?? "",
           ...(memorySection ? [memorySection] : []),
-          `You are @${personaId}, in a PRIVATE direct-message conversation — only you and your correspondent can read it. This session is ONGOING — later messages arrive as new turns in the same conversation. Reply to them directly; @names summon nobody here, and there is no channel audience. If a task needs a tool or data source you don't have, say so plainly instead of improvising.`,
+          groupNote ?? "",
+          `You are @${personaId}, in a PRIVATE direct-message conversation — only the participants can read it. This session is ONGOING — later messages arrive as new turns in the same conversation. Reply to them directly; @names summon nobody here, and there is no channel audience. If a task needs a tool or data source you don't have, say so plainly instead of improvising.`,
           ...(memorySection
             ? [
                 `Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" or fez mem set mem/<topic> "<note>".`,
               ]
             : []),
           `Conversation so far:`,
-          ...(dmRecent.get(dm.peerPk) ?? []),
+          ...(dmRecent.get(convoKey) ?? []),
           `Reply to the last message. Be concise — this is chat.`,
         ].filter(Boolean).join("\n\n");
       };
@@ -916,13 +936,13 @@ async function main() {
       console.log(`✉️  DM from ${dm.senderPk.slice(0, 8)}… — invoking ${persona.harness}`);
       publishObserver({ type: "turn", status: "started" });
       const onUpdate = (update: HarnessUpdate) => publishObserver({ ...update });
-      const reply = await promptSession(`dm:${dm.peerPk}`, buildPrompt, undefined, onUpdate);
+      const reply = await promptSession(`dm:${convoKey}`, buildPrompt, undefined, onUpdate);
 
-      await sendDmReply(dm.peerPk, reply, dm.depth + 1);
-      dmLastSent.set(dm.peerPk, Math.floor(Date.now() / 1000));
-      const myContext = dmRecent.get(dm.peerPk) ?? [];
+      await sendDmReply(replyTargets, reply, dm.depth + 1);
+      dmLastSent.set(convoKey, Math.floor(Date.now() / 1000));
+      const myContext = dmRecent.get(convoKey) ?? [];
       myContext.push(`me: ${reply}`);
-      dmRecent.set(dm.peerPk, myContext.slice(-10));
+      dmRecent.set(convoKey, myContext.slice(-10));
       publishObserver({ type: "turn", status: "done" });
       consecutiveFailures = 0;
       console.log(`✅ DM reply sent (${reply.length} chars)`);
@@ -938,7 +958,7 @@ async function main() {
         closeAllSessions();
       }
       // Failure notice goes back over the same private pipe.
-      void sendDmReply(dm.peerPk, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
+      void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
     } finally {
       busy = false;
       const next = pendingDms.shift();

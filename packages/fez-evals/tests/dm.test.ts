@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
-import { buildDmWraps, unwrapDm, KIND_GIFT_WRAP, KIND_DM } from "@fez/protocol";
+import { buildDmWraps, buildGroupDmWraps, dmConvoKey, unwrapDm, KIND_GIFT_WRAP, KIND_DM } from "@fez/protocol";
 
 /**
  * NIP-17 DM gate — the real wrap/unwrap helpers fez ships (src/dm.ts),
@@ -68,5 +68,48 @@ describe("NIP-17 DM wrap/unwrap", () => {
     const { toPeer } = buildDmWraps(alice, bobPk, "x");
     expect(unwrapDm({ ...toPeer, kind: KIND_DM }, bob)).toBeUndefined();
     expect(unwrapDm({ ...toPeer, content: "corrupted" }, bob)).toBeUndefined();
+  });
+});
+
+describe("NIP-17 group DMs", () => {
+  const carol = generateSecretKey();
+  const carolPk = getPublicKey(carol);
+
+  test("one rumor, a wrap per recipient + self-copy — everyone reads the same message", () => {
+    const { wraps, id } = buildGroupDmWraps(alice, [bobPk, carolPk], "team huddle", 0);
+    expect(wraps).toHaveLength(3); // bob, carol, self
+    const forBob = unwrapDm(wraps[0], bob)!;
+    const forCarol = unwrapDm(wraps[1], carol)!;
+    const forAlice = unwrapDm(wraps[2], alice)!;
+    for (const dm of [forBob, forCarol, forAlice]) {
+      expect(dm.text).toBe("team huddle");
+      expect(dm.id).toBe(id); // same rumor everywhere
+      expect(dm.senderPk).toBe(alicePk);
+      expect(dm.participants).toEqual([alicePk, bobPk, carolPk].sort());
+    }
+  });
+
+  test("every participant derives the same conversation (their convo keys mirror each other)", () => {
+    const participants = [alicePk, bobPk, carolPk].sort();
+    expect(dmConvoKey(participants, alicePk)).toBe([bobPk, carolPk].sort().join("+"));
+    expect(dmConvoKey(participants, bobPk)).toBe([alicePk, carolPk].sort().join("+"));
+    // 1:1 stays the bare peer pk — group support changes nothing for old convos
+    expect(dmConvoKey([alicePk, bobPk], alicePk)).toBe(bobPk);
+  });
+
+  test("a non-participant cannot unwrap any of the wraps", () => {
+    const { wraps } = buildGroupDmWraps(alice, [bobPk, carolPk], "secret", 0);
+    for (const wrap of wraps) expect(unwrapDm(wrap, mallory)).toBeUndefined();
+  });
+
+  test("depth loop-guard rides inside group rumors too", () => {
+    const { wraps } = buildGroupDmWraps(alice, [bobPk, carolPk], "agent chatter", 3);
+    expect(unwrapDm(wraps[0], bob)!.depth).toBe(3);
+  });
+
+  test("sender is excluded from recipients; empty group throws", () => {
+    const { wraps } = buildGroupDmWraps(alice, [alicePk, bobPk], "dedup me", 0);
+    expect(wraps).toHaveLength(2); // bob + self, alice-as-recipient collapsed
+    expect(() => buildGroupDmWraps(alice, [alicePk], "just me", 0)).toThrow(/recipient/);
   });
 });

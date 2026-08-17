@@ -22,6 +22,13 @@ export default function dms(api: FezExtensionAPI): void {
     return one.length > n ? `${one.slice(0, n)}…` : one;
   };
 
+  // Convo keys are "+"-joined pubkey sets for groups, bare pk for 1:1.
+  const isGroup = (key: string) => key.includes("+");
+  const titleOf = (key: string) =>
+    key.split("+").map((pk) => client.displayName(pk)).join(" + ");
+  const groupDot = (key: string) =>
+    key.split("+").every((pk) => client.isOnline(pk)) ? "\x1b[32m●\x1b[39m" : DIM("○");
+
   const dmPanel = api.ui.createSidePanel({ title: "dms", icon: "✉️", order: 30 });
   const OWNER_PREFIX = "dm:";
   const viewingPeer = () => (views.owner().startsWith(OWNER_PREFIX) ? views.owner().slice(OWNER_PREFIX.length) : undefined);
@@ -35,19 +42,24 @@ export default function dms(api: FezExtensionAPI): void {
     const lines = [...convos.entries()]
       .sort((a, b) => (b[1].msgs.at(-1)?.ts ?? 0) - (a[1].msgs.at(-1)?.ts ?? 0))
       .slice(0, 12)
-      .map(([pk, c]) => ` ${presenceDot(pk)} ${OSC8(`fez-dm://open/${pk}`, `@${client.displayName(pk)}`)}${c.unread > 0 ? ` (${c.unread})` : ""}`);
+      .map(([key, c]) => ` ${isGroup(key) ? groupDot(key) : presenceDot(key)} ${OSC8(`fez-dm://open/${key}`, `${isGroup(key) ? "👥" : "@"}${titleOf(key)}`)}${c.unread > 0 ? ` (${c.unread})` : ""}`);
     dmPanel.setText(lines.join("\n"));
   }
 
-  function openDm(peerPk: string): void {
-    views.claim(OWNER_PREFIX + peerPk);
-    client.markDmRead(peerPk);
+  function openDm(key: string): void {
+    views.claim(OWNER_PREFIX + key);
+    client.markDmRead(key);
     api.ui.clearLog();
-    api.ui.notify(`— private DM with @${client.displayName(peerPk)} · end-to-end encrypted, no channel involved · plain messages send here, /back returns —`);
-    for (const m of client.dmConversations().get(peerPk)?.msgs ?? []) {
+    const who = titleOf(key);
+    api.ui.notify(
+      isGroup(key)
+        ? `— group DM with ${who} · end-to-end encrypted, every participant sees every message · plain messages send here, /back returns —`
+        : `— private DM with @${who} · end-to-end encrypted, no channel involved · plain messages send here, /back returns —`
+    );
+    for (const m of client.dmConversations().get(key)?.msgs ?? []) {
       api.ui.appendMessage(client.displayName(m.senderPk), m.text, m.ts);
     }
-    api.ui.setStatus("scope", `✉ @${client.displayName(peerPk)} · private`);
+    api.ui.setStatus("scope", `✉ ${isGroup(key) ? "👥 " : "@"}${who} · private`);
     refreshDmPanel();
   }
 
@@ -56,7 +68,9 @@ export default function dms(api: FezExtensionAPI): void {
       client.markDmRead(dm.peerPk);
       if (ctx.live) api.ui.appendMessage(client.displayName(dm.senderPk), dm.text, dm.ts);
     } else if (ctx.live && dm.senderPk !== client.pubkey) {
-      api.ui.notify(`✉️  DM from ${client.displayName(dm.senderPk)}: ${snippet(dm.text)} — /dm ${client.displayName(dm.senderPk)}`);
+      const from = client.displayName(dm.senderPk);
+      const where = isGroup(dm.peerPk) ? ` in 👥 ${titleOf(dm.peerPk)}` : "";
+      api.ui.notify(`✉️  DM from ${from}${where}: ${snippet(dm.text)} — /dm ${isGroup(dm.peerPk) ? dm.peerPk : from}`);
     }
     refreshDmPanel();
   });
@@ -75,21 +89,29 @@ export default function dms(api: FezExtensionAPI): void {
       }
       return ctx.reply(
         [...convos.entries()]
-          .map(([pk, c]) => `• @${client.displayName(pk)}${c.unread > 0 ? ` — ${c.unread} unread` : ""} (/dm ${client.displayName(pk)})`)
+          .map(([key, c]) => `• ${isGroup(key) ? "👥 " : "@"}${titleOf(key)}${c.unread > 0 ? ` — ${c.unread} unread` : ""} (/dm ${isGroup(key) ? key : titleOf(key)})`)
           .join("\n")
       );
     }
-    const peerPk = /^[0-9a-f]{64}$/i.test(target) ? target.toLowerCase() : client.pkByName(target);
-    if (!peerPk) return ctx.reply(`No one named "${target}" seen on this relay — a 64-char hex pubkey works for anyone unnamed.`);
-    if (peerPk === client.pubkey) return ctx.reply("That's you.");
-    openDm(peerPk);
+    // /dm a b c → group conversation with everyone named. A "+"-joined
+    // key from the panel/list reopens an existing group directly.
+    const names = target.includes("+") ? target.split("+") : target.split(/\s+/);
+    const pks: string[] = [];
+    for (const raw of names.map((n) => n.trim().replace(/^@/, "")).filter(Boolean)) {
+      const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw);
+      if (!pk) return ctx.reply(`No one named "${raw}" seen on this relay — a 64-char hex pubkey works for anyone unnamed.`);
+      if (pk !== client.pubkey) pks.push(pk);
+    }
+    if (pks.length === 0) return ctx.reply("That's you.");
+    openDm([...new Set(pks)].sort().join("+"));
   });
 
   // Plain input while a DM conversation is open goes over the pipe.
   api.registerInputHandler(async (text) => {
-    const peerPk = viewingPeer();
-    if (!peerPk) return false;
-    await client.sendDm(peerPk, text);
+    const key = viewingPeer();
+    if (!key) return false;
+    if (isGroup(key)) await client.sendGroupDm(key.split("+"), text);
+    else await client.sendDm(key, text);
     api.ui.appendMessage("You", text);
     refreshDmPanel();
     return true;
