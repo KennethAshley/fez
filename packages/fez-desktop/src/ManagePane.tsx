@@ -55,7 +55,9 @@ export default function ManagePane({
         </header>
         <div className="pane-body">
           <div className="pane-empty">no channel scope — pick a channel first</div>
+          {notice && <div className="manage-notice">{notice}</div>}
           <CreateCommunity client={client} onOpenChannel={onOpenChannel} onResult={flash} />
+          <JoinByCode client={client} onOpenChannel={onOpenChannel} onResult={flash} />
         </div>
       </aside>
     );
@@ -126,6 +128,9 @@ export default function ManagePane({
           </>
         )}
 
+        <div className="manage-section">invite link</div>
+        <InviteCode communityId={community.id} communityName={community.name} />
+
         {amCreator && (
           <CreateRow
             label="new channel"
@@ -140,8 +145,79 @@ export default function ManagePane({
         )}
 
         <CreateCommunity client={client} onOpenChannel={onOpenChannel} onResult={flash} />
+        <JoinByCode client={client} onOpenChannel={onOpenChannel} onResult={flash} />
       </div>
     </aside>
+  );
+}
+
+/** A fez invite is a URI, not a hosted link — there's no server to host one. */
+function InviteCode({ communityId, communityName }: { communityId: string; communityName: string }) {
+  const [copied, setCopied] = useState(false);
+  const code = `fez-join:${localStorage.getItem("fez-relay") ?? "ws://localhost:7777"}#${communityId}`;
+  return (
+    <>
+      <code
+        className="pk-code"
+        title="click to copy — anyone on this relay can join with it"
+        onClick={() => {
+          void navigator.clipboard.writeText(code);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        }}
+      >
+        {copied ? "✓ copied" : code}
+      </code>
+      <div className="settings-hint">Send this to someone — they paste it under "join community" (or onboard with it) and land in {communityName}.</div>
+    </>
+  );
+}
+
+function JoinByCode({
+  client,
+  onOpenChannel,
+  onResult,
+}: {
+  client: FezClient;
+  onOpenChannel: (communityId: string, channelId: string) => void;
+  onResult: (text: string) => void;
+}) {
+  const [code, setCode] = useState("");
+  const join = async () => {
+    const match = /^fez-join:(.+)#([0-9a-f-]+)$/i.exec(code.trim());
+    if (!match) return onResult("✗ not an invite code — expected fez-join:<relay>#<community>");
+    const [, relay, communityId] = match;
+    const myRelay = localStorage.getItem("fez-relay") ?? "ws://localhost:7777";
+    if (relay !== myRelay) {
+      return onResult(`✗ that community lives on ${relay} — switch relay in settings first (you're on ${myRelay})`);
+    }
+    setCode("");
+    const known = await client.joinCommunity(communityId);
+    if (!known) return onResult("✗ joined, but the community hasn't reached this relay yet — it appears when its events do");
+    const community = client.state.communities.get(communityId);
+    const channel = community ? [...community.channels.values()][0] : undefined;
+    if (community && channel) {
+      onOpenChannel(communityId, channel.id);
+      onResult(`✓ joined ${community.name}`);
+    }
+  };
+  return (
+    <>
+      <div className="manage-section">join community</div>
+      <div className="manage-form">
+        <input
+          className="manage-input"
+          value={code}
+          placeholder="fez-join:wss://…#…"
+          spellCheck={false}
+          onChange={(e) => setCode(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void join();
+          }}
+        />
+        <button className="agent-action" onClick={() => void join()}>join</button>
+      </div>
+    </>
   );
 }
 

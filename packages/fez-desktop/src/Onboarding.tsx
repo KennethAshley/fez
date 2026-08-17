@@ -5,6 +5,7 @@ import { nip44 } from "nostr-tools";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { BrowserWire } from "./wire";
+import { openBackup } from "./backup";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -28,7 +29,7 @@ export function deriveSas(a: string, b: string): string {
   return String(n % 1_000_000).padStart(6, "0");
 }
 
-type Step = "welcome" | "relay" | "identity" | "pairing" | "name" | "done";
+type Step = "welcome" | "relay" | "identity" | "pairing" | "restore" | "name" | "done";
 
 export default function Onboarding({ onComplete }: { onComplete: (relayUrl: string) => void }) {
   const [step, setStep] = useState<Step>("welcome");
@@ -134,6 +135,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
             {error && <p className="ob-error">{error}</p>}
             <button className="ob-primary" onClick={() => void createIdentity()}>I'm new — create my key</button>
             <button className="ob-secondary" onClick={() => setStep("pairing")}>I use fez on another device</button>
+            <button className="ob-secondary" onClick={() => setStep("restore")}>restore from a backup file</button>
           </>
         )}
 
@@ -141,6 +143,16 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           <PairingStep
             relayUrl={relayUrl}
             onPaired={(hex) => {
+              setKeyHex(hex);
+              setStep("done");
+            }}
+            onBack={() => setStep("identity")}
+          />
+        )}
+
+        {step === "restore" && (
+          <RestoreStep
+            onRestored={(hex) => {
               setKeyHex(hex);
               setStep("done");
             }}
@@ -190,6 +202,52 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         )}
       </div>
     </div>
+  );
+}
+
+/** Restore from the encrypted backup created in settings. */
+function RestoreStep({ onRestored, onBack }: { onRestored: (hex: string) => void; onBack: () => void }) {
+  const [file, setFile] = useState<File>();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+
+  const restore = async () => {
+    if (!file || !password) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const hex = await openBackup(await file.text(), password);
+      await invoke("set_identity", { hex, account: ACCOUNT });
+      onRestored(hex);
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <h2>Restore from backup</h2>
+      <p className="ob-lede">The fez-backup.json you created in settings, plus its password.</p>
+      <input className="ob-input" type="file" accept=".json" onChange={(e) => setFile(e.target.files?.[0])} />
+      <input
+        className="ob-input"
+        type="password"
+        value={password}
+        placeholder="backup password"
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void restore();
+        }}
+      />
+      {error && <p className="ob-error">{error}</p>}
+      <button className="ob-primary" onClick={() => void restore()} disabled={busy || !file || !password}>
+        {busy ? "decrypting…" : "restore identity"}
+      </button>
+      <button className="ob-secondary" onClick={onBack}>back</button>
+    </>
   );
 }
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fez/client";
 import { mediaServer } from "./upload";
+import { createBackup, openBackup, downloadText } from "./backup";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -81,6 +82,9 @@ export default function SettingsPane({ client, onClose }: { client: FezClient; o
         </div>
         <button className="agent-action" onClick={saveServers}>save</button>
 
+        <div className="manage-section">encrypted backup</div>
+        <BackupFlow account={ACCOUNT} onNotice={flash} />
+
         <div className="manage-section">identity</div>
         <div className="settings-hint">
           Your key lives in the macOS keychain (service "fez-keys"). Anyone holding the backup IS you — reveal it
@@ -95,5 +99,110 @@ export default function SettingsPane({ client, onClose }: { client: FezClient; o
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * Create-then-VERIFY backup (Buzz's BackupTestFlow): a backup you never
+ * test is a wish. Step 1 downloads the passworded file; step 2 makes
+ * you decrypt it before we call it done.
+ */
+function BackupFlow({ account, onNotice }: { account: string; onNotice: (text: string) => void }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [phase, setPhase] = useState<"idle" | "created" | "verified">("idle");
+  const [busy, setBusy] = useState(false);
+
+  const create = async () => {
+    if (password.length < 8) return onNotice("✗ password needs at least 8 characters");
+    if (password !== confirm) return onNotice("✗ passwords don't match");
+    setBusy(true);
+    try {
+      const keyHex = await invoke<string>("get_identity", { account });
+      downloadText("fez-backup.json", await createBackup(keyHex, password));
+      setPhase("created");
+      onNotice("✓ downloaded fez-backup.json — now verify it below");
+    } catch (err) {
+      onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async (file: File | undefined, testPassword: string) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const keyHex = await invoke<string>("get_identity", { account });
+      const restored = await openBackup(await file.text(), testPassword);
+      if (restored !== keyHex) throw new Error("decrypted key doesn't match this identity");
+      setPhase("verified");
+      onNotice("✓ backup verified — it restores this exact identity");
+    } catch (err) {
+      onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (phase === "verified") {
+    return <div className="settings-hint">✓ backup created and verified. Stash fez-backup.json somewhere safe — with the password, it IS your identity.</div>;
+  }
+
+  return (
+    <>
+      <div className="settings-hint">
+        A passworded file that restores your identity on any machine (onboarding → "restore from backup").
+      </div>
+      <div className="settings-field">
+        <input
+          className="manage-input"
+          type="password"
+          value={password}
+          placeholder="backup password (8+ chars)"
+          onChange={(e) => setPassword(e.target.value)}
+        />
+      </div>
+      <div className="settings-field">
+        <input
+          className="manage-input"
+          type="password"
+          value={confirm}
+          placeholder="repeat it"
+          onChange={(e) => setConfirm(e.target.value)}
+        />
+      </div>
+      <button className="agent-action" disabled={busy} onClick={() => void create()}>
+        {busy ? "working…" : "create + download"}
+      </button>
+      {phase === "created" && (
+        <VerifyRow busy={busy} onVerify={(file, pw) => void verify(file, pw)} />
+      )}
+    </>
+  );
+}
+
+function VerifyRow({ busy, onVerify }: { busy: boolean; onVerify: (file: File | undefined, password: string) => void }) {
+  const [file, setFile] = useState<File>();
+  const [password, setPassword] = useState("");
+  return (
+    <>
+      <div className="manage-section">verify it</div>
+      <div className="settings-field">
+        <input className="manage-input" type="file" accept=".json" onChange={(e) => setFile(e.target.files?.[0])} />
+      </div>
+      <div className="settings-field">
+        <input
+          className="manage-input"
+          type="password"
+          value={password}
+          placeholder="the password again"
+          onChange={(e) => setPassword(e.target.value)}
+        />
+      </div>
+      <button className="agent-action" disabled={busy || !file || !password} onClick={() => onVerify(file, password)}>
+        verify backup
+      </button>
+    </>
   );
 }

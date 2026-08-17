@@ -12,6 +12,7 @@ import AgentsPane from "./AgentsPane";
 import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
 import PulseView from "./PulseView";
+import WorkflowsView from "./WorkflowsView";
 import ProfilePane from "./ProfilePane";
 import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
@@ -50,7 +51,12 @@ type Boot =
   | { phase: "error"; message: string }
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
-type MainView = { kind: "channel"; focus?: string } | { kind: "dm"; convoKey: string } | { kind: "home" } | { kind: "pulse" };
+type MainView =
+  | { kind: "channel"; focus?: string }
+  | { kind: "dm"; convoKey: string }
+  | { kind: "home" }
+  | { kind: "pulse" }
+  | { kind: "workflows" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
@@ -191,6 +197,32 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
       setTimeout(() => setBanner(undefined), 6000);
     };
   }, [wire]);
+  // Channel mutes are a VIEW preference, not protocol state — GUI-local
+  // (Buzz's ChannelContextMenu decision): muted channels lose their
+  // badge and never notify, events still flow.
+  const [muted, setMuted] = useState<Set<string>>(
+    () => new Set<string>(JSON.parse(localStorage.getItem("fez-muted") ?? "[]") as string[])
+  );
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
+  const toggleMute = (channelId: string) => {
+    const next = new Set(muted);
+    if (!next.delete(channelId)) next.add(channelId);
+    localStorage.setItem("fez-muted", JSON.stringify([...next]));
+    setMuted(next);
+  };
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; channelId: string; communityId: string }>();
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(undefined);
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+    };
+  }, [ctxMenu]);
+
   // Rolling observer activity per agent — the client emits frames; the
   // GUI keeps the last 200 per agent for the watch pane.
   const activityRef = useRef(new Map<string, ObserverEntry[]>());
@@ -203,7 +235,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
       "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
-      "dmMessage", "jobsChanged", "notice",
+      "dmMessage", "jobsChanged", "notice", "workflowRunsChanged",
     ] as const;
     for (const name of events) client.on(name, render as never);
     client.on("draft", ((channelId: string, authorPk: string, content: string, rootId?: string) => {
@@ -225,8 +257,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
     }) as never);
     // Native notifications when the window isn't focused: @you in a
     // channel, or any live DM. Backfill/history never notifies.
-    client.on("message", ((_channelId: string, msg: Msg, meta?: { live?: boolean }) => {
+    client.on("message", ((channelId: string, msg: Msg, meta?: { live?: boolean }) => {
       if (!meta?.live || msg.authorPk === client.pubkey || document.hasFocus()) return;
+      if (mutedRef.current.has(channelId)) return;
       const myName = client.displayName(client.pubkey);
       if (myName && new RegExp(`@${escapeRe(myName)}\\b`, "i").test(msg.content)) {
         void notify(`${msg.authorName} mentioned you`, msg.content);
@@ -340,6 +373,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <button className={view.kind === "pulse" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "pulse" })}>
           ◉ pulse
         </button>
+        <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
+          » workflows
+        </button>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))
           .map((community, _index, joined) => (
@@ -363,13 +399,19 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
                 return (
                   <button
                     key={channel.id}
-                    className={active ? "channel active" : "channel"}
-                    title={`${channel.members.size} member${channel.members.size === 1 ? "" : "s"}`}
+                    className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}`}
+                    title={`${channel.members.size} member${channel.members.size === 1 ? "" : "s"} — right-click for options`}
                     onClick={() => void openChannel(community.id, channel.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCtxMenu({ x: e.clientX, y: e.clientY, channelId: channel.id, communityId: community.id });
+                    }}
                   >
                     <span className="hash">#</span> {channel.name}
+                    {muted.has(channel.id) && <span className="mute-mark" title="muted">✕</span>}
                     {channel.members.size <= 1 && <span className="ghost" title="nobody else is in this channel">∅</span>}
-                    {unread > 0 && !active && <span className="badge">{unread}</span>}
+                    {unread > 0 && !active && !muted.has(channel.id) && <span className="badge">{unread}</span>}
                   </button>
                 );
               })}
@@ -445,7 +487,29 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           onWatch={(agent) => setPane({ kind: "watch", agent })}
         />
       )}
+      {view.kind === "workflows" && <WorkflowsView client={client} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
+      {ctxMenu && (
+        <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+          <button
+            onClick={() => {
+              const newest = client.messages(ctxMenu.channelId).at(-1);
+              if (newest) client.markRead(ctxMenu.channelId, newest.ts);
+              setCtxMenu(undefined);
+            }}
+          >
+            ✓ mark read
+          </button>
+          <button
+            onClick={() => {
+              toggleMute(ctxMenu.channelId);
+              setCtxMenu(undefined);
+            }}
+          >
+            {muted.has(ctxMenu.channelId) ? "🔔︎ unmute" : "✕ mute"}
+          </button>
+        </div>
+      )}
 
       {pane?.kind === "watch" && (
         <WatchPane
@@ -718,6 +782,7 @@ function ChannelView({
               channelId={channelId}
               communityId={communityId}
               msg={msg}
+              wire={wire}
               inThread={!!threadRoot}
               onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)}
               onEdit={() => beginEdit(msg)}
@@ -1042,6 +1107,7 @@ function Bubble({
   channelId,
   communityId,
   msg,
+  wire,
   inThread,
   onOpenThread,
   onEdit,
@@ -1051,6 +1117,7 @@ function Bubble({
   channelId: string;
   communityId: string;
   msg: Msg;
+  wire: BrowserWire;
   inThread: boolean;
   onOpenThread: () => void;
   onEdit?: () => void;
@@ -1065,6 +1132,25 @@ function Bubble({
   const [remindOpen, setRemindOpen] = useState(false);
   const [remindSet, setRemindSet] = useState(false);
   const [armedDelete, setArmedDelete] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  const [reported, setReported] = useState(false);
+
+  /** fez-moderation's /report: 1984, reason NIP-44'd to the community creator. */
+  const sendReport = async () => {
+    const creator = client.state.communities.get(communityId)?.creator;
+    const reason = reportReason.trim();
+    if (!creator || !reason) return;
+    setReportOpen(false);
+    setReportReason("");
+    await wire.publish({
+      kind: 1984,
+      tags: [["c", communityId], ["p", creator]],
+      content: wire.encrypt(creator, JSON.stringify({ targetPk: msg.authorPk, reason: `${reason} (msg: ${msg.content.slice(0, 60)})`, ts: Date.now() })),
+    });
+    setReported(true);
+    setTimeout(() => setReported(false), 2500);
+  };
 
   const react = (emoji: string) => {
     setPickerOpen(false);
@@ -1101,6 +1187,11 @@ function Bubble({
           <div className="actions">
             <button title="react" onClick={() => setPickerOpen(!pickerOpen)}>☺</button>
             <button title="remind me about this" onClick={() => setRemindOpen(!remindOpen)}>{remindSet ? "✓" : "◷"}</button>
+            {!mine && (
+              <button title="report to the community creator (encrypted)" onClick={() => setReportOpen(!reportOpen)}>
+                {reported ? "✓" : "⚑!"}
+              </button>
+            )}
             {!inThread && <button title="reply in thread" onClick={onOpenThread}>↩</button>}
             {mine && onEdit && <button title="edit (↑ also edits your last)" onClick={onEdit}>✎</button>}
             <button
@@ -1131,6 +1222,22 @@ function Bubble({
           </div>
         )}
       </div>
+      {reportOpen && (
+        <div className="emoji-picker report-form">
+          <input
+            className="manage-input"
+            value={reportReason}
+            autoFocus
+            placeholder="why? only the community creator can read this"
+            onChange={(e) => setReportReason(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void sendReport();
+              if (e.key === "Escape") setReportOpen(false);
+            }}
+          />
+          <button onClick={() => void sendReport()}>report</button>
+        </div>
+      )}
       {remindOpen && (
         <div className="emoji-picker remind-picker">
           <button onClick={() => remind(20 * 60)}>20m</button>

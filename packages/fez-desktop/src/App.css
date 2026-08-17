@@ -678,3 +678,39 @@ button.author:hover { text-decoration: underline; }
 .md :not(pre) > code { background: var(--bg1); border-radius: 4px; padding: 1px 5px; }
 .md-diff { display: block; font-family: var(--font-mono); }
 .md-diff .diff-line { display: block; margin: 0 -12px; padding: 0 12px; }
+
+/* ── context menu, workflows, report ───────────────────────── */
+.ctx-menu {
+  position: fixed; z-index: 60; min-width: 150px;
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5); overflow: hidden; padding: 4px;
+}
+.ctx-menu button {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 7px 10px;
+  border-radius: 5px; cursor: pointer;
+}
+.ctx-menu button:hover { background: var(--bg2); }
+.channel.muted { opacity: 0.5; }
+.mute-mark { font-size: 10px; color: var(--fg-dim); }
+.wf-card {
+  display: flex; flex-direction: column; gap: 5px; background: var(--bg1);
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 12px 14px;
+}
+.wf-card.wait { border-color: color-mix(in srgb, var(--yellow) 45%, var(--hairline)); }
+.wf-card.bad { border-color: color-mix(in srgb, var(--red) 45%, var(--hairline)); }
+.wf-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.wf-name { font-family: var(--font-mono); font-weight: 700; }
+.wf-status { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+.wf-status.live { color: var(--phosphor); }
+.wf-status.wait { color: var(--yellow); }
+.wf-status.ok { color: var(--green); }
+.wf-status.bad { color: var(--red); }
+.wf-detail { font-size: 13px; color: var(--fg); }
+.wf-meta { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
+.report-form { display: flex; gap: 6px; align-items: center; }
+.report-form input { flex: 1; }
+.report-form button {
+  background: var(--red); border: 0; color: var(--bg0); font: inherit; font-size: 12px;
+  font-weight: 700; padding: 6px 10px; border-radius: 6px; cursor: pointer;
+}
