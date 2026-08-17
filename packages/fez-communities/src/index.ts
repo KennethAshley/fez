@@ -27,6 +27,13 @@ const KIND_AGENT_ENGRAM = 30174; // NIP-AE agent memory — see fez src/engram.t
 // /doc history is free. Latest member-authored version wins client-side
 // (created_at desc, tie → lowest id), same trust rules as messages.
 const KIND_DOC = 40100;
+// Stream-message operations (Buzz's 4000x family) — all client-side
+// trust like everything else: an edit counts only from the original
+// author; pins/bookmarks count from members; kind 5 by the op's author
+// retracts it.
+const KIND_MSG_EDIT = 40003;     // ["e", target] — content = replacement text
+const KIND_MSG_PIN = 40004;      // ["e", target], ["h"], ["c"] — channel pin
+const KIND_MSG_BOOKMARK = 40005; // ["e", target] — personal bookmark (only your own render)
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -66,6 +73,9 @@ export default function communities(api: FezExtensionAPI): void {
     parentId?: string;
     rootId?: string; // set iff the message is part of a thread
     ts: number;
+    /** Set when a 40003 edit has replaced the content. */
+    edited?: boolean;
+    editTs?: number;
   }
   const MSG_CACHE_CAP = 1000; // sized for scroll-up paging — pages accumulate until eviction
   const messagesByChannel = new Map<string, Msg[]>();
@@ -607,10 +617,68 @@ export default function communities(api: FezExtensionAPI): void {
     return DIM(`${count} repl${count === 1 ? "y" : "ies"} · `) + OSC8(`fez-thread://open/${no}`, DIM(`/thread ${no}`));
   }
 
+  // ── Message ops (Buzz's stream-message family): edits, pins,
+  // bookmarks. Everything a message accumulates surfaces on its own
+  // footer meta — edited marker, ⚑ pin, thread info — one line.
+  const pinsByChannel = new Map<string, Map<string, { opId: string; by: string; ts: number }>>();
+  const myBookmarks = new Map<string, { opId: string; ts: number; channelId: string }>();
+  /** op event id -> what it did, for kind-5 retraction (author-only). */
+  const opIndex = new Map<string, { type: "pin" | "bookmark"; channelId: string; targetId: string; by: string }>();
+
+  function messageMeta(channelId: string, msgId: string): string {
+    const parts: string[] = [];
+    if (msgById.get(msgId)?.edited) parts.push(DIM("edited"));
+    if (pinsByChannel.get(channelId)?.has(msgId)) parts.push(DIM("⚑ pinned"));
+    if (threadReplyCount(channelId, msgId) > 0) parts.push(threadMeta(channelId, msgId));
+    return parts.join(DIM("  ·  "));
+  }
+
+  /** 40003 — author-only, latest edit wins; content swaps in place, "edited" rides the footer. */
+  function handleMsgEdit(event: NostrEvent): void {
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    if (!targetId || !channelId) return;
+    const target = msgById.get(targetId);
+    if (!target || event.pubkey !== target.authorPk) return;
+    if (event.created_at < (target.editTs ?? 0)) return;
+    target.content = event.content;
+    target.edited = true;
+    target.editTs = event.created_at;
+    const handle = bubbleHandles.get(targetId);
+    if (handle) {
+      handle.setContent(event.content);
+      handle.setMeta(messageMeta(channelId, targetId));
+    }
+  }
+
+  /** 40004 — member-gated channel pin. */
+  function handleMsgPin(event: NostrEvent): void {
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!targetId || !channelId || !communityId) return;
+    if (!state.isMember(communityId, channelId, event.pubkey)) return;
+    let pins = pinsByChannel.get(channelId);
+    if (!pins) pinsByChannel.set(channelId, (pins = new Map()));
+    pins.set(targetId, { opId: event.id, by: event.pubkey, ts: event.created_at });
+    opIndex.set(event.id, { type: "pin", channelId, targetId, by: event.pubkey });
+    bubbleHandles.get(targetId)?.setMeta(messageMeta(channelId, targetId));
+  }
+
+  /** 40005 — personal: only YOUR bookmarks are tracked/rendered. */
+  function handleMsgBookmark(event: NostrEvent): void {
+    if (event.pubkey !== nostr!.pubkey) return;
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1] ?? "";
+    if (!targetId) return;
+    myBookmarks.set(targetId, { opId: event.id, ts: event.created_at, channelId });
+    opIndex.set(event.id, { type: "bookmark", channelId, targetId, by: event.pubkey });
+  }
+
   function updateOrAppendSummaryLine(channelId: string, rootId: string, _latest?: Msg): void {
     const root = bubbleHandles.get(rootId);
     if (root) {
-      root.setMeta(threadMeta(channelId, rootId));
+      root.setMeta(messageMeta(channelId, rootId));
       return;
     }
     const text = DIM("└─ ") + threadMeta(channelId, rootId);
@@ -733,10 +801,22 @@ export default function communities(api: FezExtensionAPI): void {
     }
   }
 
-  /** Kind-5 deletion — only honored for the deleter's own reactions (standard nostr rule). */
+  /** Kind-5 deletion — only honored for the deleter's own reactions/ops (standard nostr rule). */
   function handleDeletion(event: NostrEvent): void {
     for (const tag of event.tags) {
       if (tag[0] !== "e" || !tag[1]) continue;
+      // Message-op retraction (unpin, un-bookmark) — author-only.
+      const op = opIndex.get(tag[1]);
+      if (op && op.by === event.pubkey) {
+        opIndex.delete(tag[1]);
+        if (op.type === "pin") {
+          pinsByChannel.get(op.channelId)?.delete(op.targetId);
+          bubbleHandles.get(op.targetId)?.setMeta(messageMeta(op.channelId, op.targetId));
+        } else {
+          myBookmarks.delete(op.targetId);
+        }
+        continue;
+      }
       const entry = reactionIndex.get(tag[1]);
       if (!entry || entry.authorPk !== event.pubkey) continue;
       reactionIndex.delete(tag[1]);
@@ -775,7 +855,7 @@ export default function communities(api: FezExtensionAPI): void {
       filters.push(
         { kinds: [KIND_COMMUNITY, KIND_CHANNEL, KIND_MEMBERSHIP], "#c": ids },
         { kinds: [KIND_COMMUNITY], "#d": ids },
-        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION, KIND_DRAFT, KIND_WORKFLOW_RUN, KIND_DOC], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
+        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION, KIND_DRAFT, KIND_WORKFLOW_RUN, KIND_DOC, KIND_MSG_EDIT, KIND_MSG_PIN, KIND_MSG_BOOKMARK], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
         { kinds: [KIND_THREAD_SUMMARY], "#h": channelIdsOfJoined() }
       );
     }
@@ -802,6 +882,18 @@ export default function communities(api: FezExtensionAPI): void {
       }
       if (event.kind === KIND_DRAFT) {
         handleDraft(event);
+        return;
+      }
+      if (event.kind === KIND_MSG_EDIT) {
+        handleMsgEdit(event);
+        return;
+      }
+      if (event.kind === KIND_MSG_PIN) {
+        handleMsgPin(event);
+        return;
+      }
+      if (event.kind === KIND_MSG_BOOKMARK) {
+        handleMsgBookmark(event);
         return;
       }
       if (event.kind === KIND_DOC) {
@@ -875,10 +967,11 @@ export default function communities(api: FezExtensionAPI): void {
    */
   const HISTORY_LIMIT = 50;
   async function loadChannelHistory(channelId: string, communityId: string): Promise<void> {
-    const [msgs, reactions, deletions] = await Promise.all([
+    const [msgs, reactions, deletions, ops] = await Promise.all([
       nostr!.query([{ kinds: [KIND_CHANNEL_MESSAGE], "#h": [channelId], limit: 200 }]),
       nostr!.query([{ kinds: [KIND_REACTION], "#h": [channelId], limit: 300 }]),
       nostr!.query([{ kinds: [KIND_DELETION], "#h": [channelId], limit: 300 }]),
+      nostr!.query([{ kinds: [KIND_MSG_EDIT, KIND_MSG_PIN, KIND_MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
     ]);
     const ordered = msgs
       .filter((e) => state.isMember(communityId, channelId, e.pubkey))
@@ -889,8 +982,16 @@ export default function communities(api: FezExtensionAPI): void {
       seenMessages.add(event.id);
       cacheMessage(channelId, event, event.pubkey === nostr!.pubkey ? "You" : displayName(event.pubkey));
     }
+    // Edits fold into the cache BEFORE painting; pins/bookmarks after
+    // (they land on rendered bubbles' meta). Deletions last so
+    // retracted ops disappear.
+    for (const event of ops.filter((e) => e.kind === KIND_MSG_EDIT).sort((a, b) => a.created_at - b.created_at)) handleMsgEdit(event);
     if (view.mode === "channel" && state.scope?.channelId === channelId) renderChannelTimeline(channelId);
     for (const event of reactions.sort((a, b) => a.created_at - b.created_at)) handleReaction(event, false);
+    for (const event of ops) {
+      if (event.kind === KIND_MSG_PIN) handleMsgPin(event);
+      else if (event.kind === KIND_MSG_BOOKMARK) handleMsgBookmark(event);
+    }
     for (const event of deletions) handleDeletion(event);
     refreshUi();
   }
@@ -1487,6 +1588,104 @@ export default function communities(api: FezExtensionAPI): void {
     view = { mode: "doc" };
     renderDocView(versions.at(-1), versions.length, versions.length, current.channel.name);
     refreshUi();
+  });
+
+  // ── Message ops commands. "Last message" targeting keeps the TUI
+  // ergonomic — no message ids to type.
+  function lastMessage(channelId: string, mine: boolean): Msg | undefined {
+    const list = messagesByChannel.get(channelId) ?? [];
+    return mine ? list.filter((m) => m.authorPk === nostr!.pubkey).at(-1) : list.at(-1);
+  }
+
+  api.registerCommand("edit", async (args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel.");
+    const text = args.trim().replace(/\\n/g, "\n");
+    if (!text) return ctx.reply("Usage: /edit <new text> — replaces your most recent message here.");
+    const target = lastMessage(current.channel.id, true);
+    if (!target) return ctx.reply("No message of yours here to edit.");
+    const event = await nostr.publish({
+      kind: KIND_MSG_EDIT,
+      tags: [["e", target.id], ["h", current.channel.id], ["c", current.community.id]],
+      content: text,
+    });
+    handleMsgEdit(event);
+    ctx.reply(`✏️ edited ("${snippet(text)}").`);
+  });
+
+  api.registerCommand("pin", async (_args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel.");
+    const target = lastMessage(current.channel.id, false);
+    if (!target) return ctx.reply("Nothing here to pin.");
+    if (pinsByChannel.get(current.channel.id)?.has(target.id)) return ctx.reply("Already pinned.");
+    const event = await nostr.publish({
+      kind: KIND_MSG_PIN,
+      tags: [["e", target.id], ["h", current.channel.id], ["c", current.community.id]],
+      content: "",
+    });
+    handleMsgPin(event);
+    ctx.reply(`⚑ pinned ${target.authorName}: "${snippet(target.content)}" — /pins lists them.`);
+  });
+
+  api.registerCommand("pins", async (_args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel.");
+    const pins = [...(pinsByChannel.get(current.channel.id) ?? new Map()).entries()];
+    if (pins.length === 0) return ctx.reply("No pins in this channel — /pin pins the latest message.");
+    ctx.reply(
+      pins
+        .map(([targetId, pin], i) => {
+          const msg = msgById.get(targetId);
+          return `${i + 1}. ${msg ? `${msg.authorName}: "${snippet(msg.content, 60)}"` : "(message not loaded)"} — pinned by ${pin.by === nostr.pubkey ? "you" : displayName(pin.by)}${pin.by === nostr.pubkey ? ` (/unpin ${i + 1})` : ""}`;
+        })
+        .join("\n")
+    );
+  });
+
+  api.registerCommand("unpin", async (args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel.");
+    const pins = [...(pinsByChannel.get(current.channel.id) ?? new Map()).entries()];
+    const pick = pins[Number(args.trim()) - 1];
+    if (!pick) return ctx.reply("Usage: /unpin <number from /pins>");
+    const [, pin] = pick;
+    if (pin.by !== nostr.pubkey) return ctx.reply("Only the pinner can unpin.");
+    const event = await nostr.publish({
+      kind: KIND_DELETION,
+      tags: [["e", pin.opId], ["h", current.channel.id], ["c", current.community.id]],
+      content: "",
+    });
+    handleDeletion(event);
+    ctx.reply("⚑ unpinned.");
+  });
+
+  api.registerCommand("bookmark", async (_args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel.");
+    const target = lastMessage(current.channel.id, false);
+    if (!target) return ctx.reply("Nothing here to bookmark.");
+    const event = await nostr.publish({
+      kind: KIND_MSG_BOOKMARK,
+      tags: [["e", target.id], ["h", current.channel.id], ["c", current.community.id]],
+      content: "",
+    });
+    handleMsgBookmark(event);
+    ctx.reply(`🔖 bookmarked "${snippet(target.content)}" — /bookmarks lists yours.`);
+  });
+
+  api.registerCommand("bookmarks", async (_args, ctx) => {
+    if (myBookmarks.size === 0) return ctx.reply("No bookmarks — /bookmark saves the latest message in a channel.");
+    ctx.reply(
+      [...myBookmarks.entries()]
+        .sort((a, b) => b[1].ts - a[1].ts)
+        .map(([targetId, bm]) => {
+          const msg = msgById.get(targetId);
+          const where = channelRef(bm.channelId)?.name;
+          return `• ${msg ? `${msg.authorName}: "${snippet(msg.content, 60)}"` : "(message not loaded)"}${where ? ` — #${where}` : ""}`;
+        })
+        .join("\n")
+    );
   });
 
   api.registerCommand("jobs", async (_args, _ctx) => {
