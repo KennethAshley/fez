@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FezClient, setStatePersistence, type Msg, type ObserverEntry } from "@fez/client";
 import { BrowserWire } from "./wire";
+import Onboarding from "./Onboarding";
 import "./App.css";
 
 /**
@@ -11,7 +12,12 @@ import "./App.css";
  * observer frame below comes from @fez/client — this file only renders.
  */
 
-const RELAY_URL = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_RELAY ?? "ws://localhost:7777";
+const RELAY_URL =
+  (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_RELAY ??
+  localStorage.getItem("fez-relay") ??
+  "ws://localhost:7777";
+/** Keychain account — override with VITE_FEZ_ACCOUNT=demo to walk onboarding as a fresh user without touching your real identity. */
+const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 const KIND_TURN_METRIC = 47030;
 const KIND_OBSERVER_CONTROL = 20005;
 
@@ -23,6 +29,7 @@ setStatePersistence({
 
 type Boot =
   | { phase: "loading" }
+  | { phase: "onboarding" }
   | { phase: "error"; message: string }
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
@@ -37,13 +44,15 @@ function useForceRender(): () => void {
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [connected, setConnected] = useState(true);
+  const [bootNonce, setBootNonce] = useState(0);
 
   useEffect(() => {
     let wire: BrowserWire | undefined;
     (async () => {
       try {
-        const keyHex = await invoke<string>("get_identity", {});
-        wire = new BrowserWire(RELAY_URL, keyHex);
+        const keyHex = await invoke<string>("get_identity", { account: ACCOUNT });
+        const relayUrl = localStorage.getItem("fez-relay") ?? RELAY_URL;
+        wire = new BrowserWire(relayUrl, keyHex);
         wire.onStatus = setConnected;
         const client = new FezClient(wire);
         await client.start();
@@ -59,13 +68,27 @@ export default function App() {
         if (scope) await client.loadChannelHistory(scope.channelId, scope.communityId);
         setBoot({ phase: "ready", client, wire });
       } catch (err) {
-        setBoot({ phase: "error", message: err instanceof Error ? err.message : String(err) });
+        const message = err instanceof Error ? err.message : String(err);
+        // No keychain identity = a NEW USER, not an error — onboarding.
+        if (/no fez identity/i.test(message)) setBoot({ phase: "onboarding" });
+        else setBoot({ phase: "error", message });
       }
     })();
     return () => wire?.close();
-  }, []);
+  }, [bootNonce]);
 
   if (boot.phase === "loading") return <div className="boot">connecting…</div>;
+  if (boot.phase === "onboarding") {
+    return (
+      <Onboarding
+        onComplete={(relayUrl) => {
+          localStorage.setItem("fez-relay", relayUrl);
+          setBoot({ phase: "loading" });
+          setBootNonce((n) => n + 1); // re-run the boot effect with the new identity
+        }}
+      />
+    );
+  }
   if (boot.phase === "error") return <div className="boot error">{boot.message}</div>;
   return <Shell client={boot.client} wire={boot.wire} connected={connected} />;
 }

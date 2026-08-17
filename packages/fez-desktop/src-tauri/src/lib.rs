@@ -30,11 +30,42 @@ fn get_identity(account: Option<String>) -> Result<String, String> {
     Ok(hex)
 }
 
+/// Store a newly generated (or paired-in) identity in the keychain —
+/// the onboarding writer. Refuses to overwrite: an existing identity is
+/// never silently replaced from the GUI.
+#[tauri::command]
+fn set_identity(account: Option<String>, hex: String) -> Result<(), String> {
+    let account = account.unwrap_or_else(|| "default".to_string());
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("not a 64-hex key".to_string());
+    }
+    if get_identity(Some(account.clone())).is_ok() {
+        return Err(format!("account \"{account}\" already holds an identity"));
+    }
+    let status = Command::new("security")
+        .args([
+            "add-generic-password",
+            "-s",
+            "fez-keys",
+            "-a",
+            &account,
+            "-w",
+            &hex,
+            "-U",
+        ])
+        .status()
+        .map_err(|e| format!("couldn't run security: {e}"))?;
+    if !status.success() {
+        return Err("keychain write failed".to_string());
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_identity])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
