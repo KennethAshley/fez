@@ -5,6 +5,9 @@ thinner, and what fez deliberately skips. This is the standing
 roadmap-against-reference: update it as gaps close.
 
 - Audited: Buzz `8b8445f5e` (2026-08-14) against fez `701cb3f` (2026-08-15).
+- **Update 2026-08-17 (evening)**: items 7 (read-side seam: NIP-42 +
+  onDeliver + membership read gating, `f72ef07`), 9 in full (group DMs,
+  `f993d65`), and 10 (fez-media/Blossom, `701e642`) also closed.
 - **Update 2026-08-17**: roadmap items 1–6, 8, 16, and most of 9 closed in
   the overnight hardening pass (commits `1878cb1`…`3996a8f`) — reconnect,
   ingest hygiene, timeouts, deletion, trust-boundary tests + CI,
@@ -269,10 +272,10 @@ Consolidated from all six audits. Effort ≈ S (<1 day) / M (days) / L (week+).
 | 4 | ✅ CLOSED `a7c7e82` — Message deletion + tombstones + `/delete` (§2.4) | M | Smallest port, largest trust payoff; needs client + store masking. |
 | 5 | ✅ CLOSED `575faf4` — Trust-boundary tests over `dev/local-relay.ts` + CI + registry integrity test (§2.5, §2.6) | M | The security boundary is unexercised; infra already exists. |
 | 6 | ✅ CLOSED `575faf4` — Replaceable-event compaction in fez-relay (§2.2) | M | Unbounded growth from our own chattiest kinds. |
-| 7 | Read-side policy seam (`onDeliver`/connection hook) → read privacy, deletion masking, NIP-42 (§2.3) | M | One seam, four gaps; the only enforcement clients can't do for each other. |
+| 7 | ✅ CLOSED `f72ef07` — Read-side policy seam (`onDeliver`/connection hook) → read privacy, deletion masking, NIP-42 (§2.3) | M | One seam, four gaps; the only enforcement clients can't do for each other. |
 | 8 | ✅ CLOSED `56558c9` — Session handoff summary on recycle (§2.7) | S | Turn 21 amnesia; prompt the dying session, fold into prime. |
-| 9 | ◐ PARTIAL `3996a8f` (profiles, /status, /kick done; group DMs remain) — Profiles (kind 0) + group DMs + roster removal + `/status` (§3) | M | Rounds out the chat core for the second human. |
-| 10 | fez-media (Blossom) extension (§3) | M | Biggest UX gap; zero relay changes. |
+| 9 | ✅ CLOSED `3996a8f`+`f993d65` (profiles, /status, /kick, group DMs) — Profiles (kind 0) + group DMs + roster removal + `/status` (§3) | M | Rounds out the chat core for the second human. |
+| 10 | ✅ CLOSED `701e642` — fez-media (Blossom) extension (§3) | M | Biggest UX gap; zero relay changes. |
 | 11 | Usage metrics (per-turn encrypted frames, fail-closed deltas) + observer control channel (§2.7) | M | Cost visibility + the ability to stop a bad turn. |
 | 12 | fez-search (FTS5 + NIP-50) (§3, #43) | M | Candidates-not-authority model matches fez trust exactly. |
 | 13 | fez-moderation: encrypted reports + signed ban lists + relay policy (§3, #42) | M | Enforcement half needs zero new seams. |
