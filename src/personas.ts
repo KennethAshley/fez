@@ -125,6 +125,104 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
   }
 }
 
+/**
+ * `extra` keys some fez consumer actually reads — the advisory whitelist
+ * for validation (Buzz's error/warning split: unknown keys WARN, they
+ * don't fail — extensions may own keys core doesn't know about, but a
+ * typo'd `idleexit:` silently doing nothing is the bug class this catches).
+ */
+export const KNOWN_EXTRA_KEYS = new Set([
+  "workdir", // fez-acp: per-persona working directory
+  "provider", // pi: defaultProvider
+  "model", // pi: defaultModel
+  "packages", // pi: registry packages
+  "idleExit", // fez-acp: self-exit after quiet period
+  "idleTimeoutS", // fez-acp: turn idle deadline override
+  "turnTimeoutS", // fez-acp: turn hard deadline override
+  "url", // orchestrator: router endpoint
+  "channels", // orchestrator/services: channel list
+  "owner", // orchestrator/services: owner pubkey override
+  "respondTo", // services: trigger policy
+]);
+
+const MAX_BODY_BYTES = 256 * 1024; // Buzz's persona body bound
+const MAX_FRONTMATTER_BYTES = 64 * 1024;
+
+export interface PersonaValidation {
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Structural validation for a persona file — pure, so packs can validate
+ * BEFORE installing and `fez persona validate` can lint what's on disk.
+ * knownHarnesses (optional) enables the harness-exists check.
+ */
+export function validatePersonaFile(raw: string, id: string, knownHarnesses?: string[]): PersonaValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!/^[\w-]+$/.test(id)) {
+    errors.push(`persona id "${id}" — only letters, digits, _ and - (path safety)`);
+  }
+  const parsed = parseFrontmatter(raw);
+  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fmMatch) {
+    errors.push("no frontmatter block (--- ... ---) — at minimum `harness:` is required");
+    return { errors, warnings };
+  }
+  if (Buffer.byteLength(fmMatch[1]) > MAX_FRONTMATTER_BYTES) {
+    errors.push(`frontmatter exceeds ${MAX_FRONTMATTER_BYTES / 1024}KB`);
+  }
+  if (Buffer.byteLength(parsed.body) > MAX_BODY_BYTES) {
+    errors.push(`system prompt exceeds ${MAX_BODY_BYTES / 1024}KB`);
+  }
+  if (!parsed.harness) {
+    errors.push(`"harness:" is required (e.g. harness: claude-code)`);
+  } else if (knownHarnesses && !knownHarnesses.includes(parsed.harness)) {
+    // A warning, not an error: extensions register harnesses too, and the
+    // validator may run in a process that hasn't loaded them (the
+    // orchestrator's "router" is the canonical case).
+    warnings.push(`harness "${parsed.harness}" is not registered here (known: ${knownHarnesses.join(", ")}) — fine if an extension or service provides it`);
+  }
+  if (!parsed.description) {
+    warnings.push(
+      `no "description:" — orchestrators route on it; verb phrases ("search the web, find papers") route measurably better than nothing`
+    );
+  }
+  if (!parsed.body.trim()) {
+    warnings.push("empty system prompt — the persona will run on harness defaults alone");
+  }
+  for (const key of Object.keys(parsed.extra)) {
+    if (!KNOWN_EXTRA_KEYS.has(key)) {
+      warnings.push(`unknown frontmatter key "${key}" — no fez consumer reads it (typo? extensions that own it can ignore this)`);
+    }
+  }
+  return { errors, warnings };
+}
+
+/**
+ * Merge pack-level defaults under a persona's frontmatter — the persona's
+ * own keys always win (Buzz's pack merge policy). Textual: inserts
+ * `key: value` lines before the closing --- for keys the file lacks.
+ */
+export function mergeDefaults(raw: string, defaults: Record<string, string>): string {
+  const match = raw.match(/^(---\r?\n)([\s\S]*?)(\r?\n---\r?\n?)([\s\S]*)$/);
+  if (!match) {
+    const lines = Object.entries(defaults).map(([k, v]) => `${k}: ${v}`).join("\n");
+    return `---\n${lines}\n---\n${raw}`;
+  }
+  const [, open, frontmatter, close, body] = match;
+  const present = new Set(
+    frontmatter.split(/\r?\n/).map((line) => line.match(/^([\w-]+):/)?.[1]).filter(Boolean)
+  );
+  const additions = Object.entries(defaults)
+    .filter(([k]) => !present.has(k))
+    .map(([k, v]) => `${k}: ${v}`);
+  if (additions.length === 0) return raw;
+  return `${open}${frontmatter}\n${additions.join("\n")}${close}${body}`;
+}
+
 export async function listPersonas(): Promise<Persona[]> {
   let entries: string[];
   try {

@@ -14,14 +14,27 @@ export interface FezPackage {
   name: string;
   version: string;
   source: string; // npm:@fez/claude-code or git:github.com/user/repo
-  type: "integration" | "agent" | "extension";
+  type: "integration" | "agent" | "extension" | "persona-pack";
   installedAt: string;
   config?: Record<string, unknown>;
+  /** persona-pack: the persona ids this pack installed (removed on uninstall). */
+  installedPersonas?: string[];
 }
 
 export interface FezManifest {
   fez: {
-    type: "integration" | "agent" | "extension";
+    type: "integration" | "agent" | "extension" | "persona-pack";
+    /**
+     * Persona packs: a directory of persona .md files installed into
+     * ~/.fez/personas as a team bundle. Every persona is VALIDATED before
+     * anything installs (one bad file rejects the pack); `defaults` merge
+     * under each persona's frontmatter, persona keys winning (Buzz's pack
+     * merge policy) — a pack can pin `harness: pi` once instead of per file.
+     */
+    personas?: {
+      dir?: string; // default "personas"
+      defaults?: Record<string, string>;
+    };
     // For integrations: config files to install
     integrations?: {
       claudeCode?: { commands?: string; evals?: string };
@@ -96,20 +109,27 @@ export class PackageManager {
       throw new Error(`Unknown source format: ${resolved}. Use npm: or git:`);
     }
 
-    // Read manifest and run install hook
-    const manifest = await this.readManifest(name);
-    await this.runInstallHook(name, manifest);
-
+    // Register BEFORE the hooks run — readManifest and every install hook
+    // resolve paths through this.packages.get(name). (The old order made
+    // readManifest return null on first install: hooks were dead code.)
     const pkg: FezPackage = {
       name,
       version: options.version || "latest",
       source: resolved,
-      type: manifest?.fez?.type || "extension",
+      type: "extension",
       installedAt: new Date().toISOString(),
-      config: manifest?.fez,
     };
-
     this.packages.set(name, pkg);
+
+    const manifest = await this.readManifest(name);
+    pkg.type = manifest?.fez?.type || "extension";
+    pkg.config = manifest?.fez;
+    try {
+      await this.runInstallHook(name, manifest);
+    } catch (err) {
+      this.packages.delete(name); // failed install leaves no registry ghost
+      throw err;
+    }
     await this.saveRegistry();
 
     console.log(chalk.green(`✅ Installed ${name}`));
@@ -235,8 +255,7 @@ export class PackageManager {
     const pkg = this.packages.get(name);
     if (!pkg) return null;
 
-    const installDir = this.getInstallDir(pkg);
-    const manifestPath = path.join(installDir, "package.json");
+    const manifestPath = path.join(this.getContentDir(pkg), "package.json");
 
     try {
       const content = await fs.readFile(manifestPath, "utf-8");
@@ -267,6 +286,11 @@ export class PackageManager {
       await this.installFezExtension(name, manifest.fez.extension);
     }
 
+    // Persona pack — a team bundle of persona .md files
+    if (manifest.fez.personas) {
+      await this.installPersonaPack(name, manifest.fez.personas);
+    }
+
     // Agent registration
     if (manifest.fez.agent) {
       console.log(chalk.blue(`🤖 Registering agent: ${manifest.fez.agent.entry}`));
@@ -289,6 +313,70 @@ export class PackageManager {
     if (manifest.fez.extension) {
       await this.removeFezExtension(pkg.name);
     }
+    if (pkg.installedPersonas?.length) {
+      const personasDir = path.join(os.homedir(), ".fez", "personas");
+      for (const id of pkg.installedPersonas) {
+        await fs.rm(path.join(personasDir, `${id}.md`), { force: true });
+        console.log(chalk.dim(`   Removed persona ${id}`));
+      }
+    }
+  }
+
+  /**
+   * Install a pack's personas into ~/.fez/personas. All-or-nothing on
+   * validation: one broken persona rejects the pack (a half-installed
+   * team is worse than none). Existing personas are never overwritten —
+   * a collision skips that file loudly (hand-written personas outrank
+   * pack contents). Installed ids are tracked for clean uninstall.
+   */
+  private async installPersonaPack(name: string, config: { dir?: string; defaults?: Record<string, string> }): Promise<void> {
+    const { validatePersonaFile, mergeDefaults } = await import("./personas.js");
+    const { listHarnesses } = await import("./harness.js");
+    const pkgDir = this.getContentDir(this.packages.get(name)!);
+    const sourceDir = path.resolve(pkgDir, config.dir ?? "personas");
+    if (!sourceDir.startsWith(path.resolve(pkgDir))) {
+      throw new Error(`persona dir escapes the package (path traversal): ${config.dir}`);
+    }
+    let files: string[];
+    try {
+      files = (await fs.readdir(sourceDir)).filter((f) => f.endsWith(".md"));
+    } catch {
+      throw new Error(`persona pack "${name}" has no ${config.dir ?? "personas"}/ directory`);
+    }
+    if (files.length === 0) throw new Error(`persona pack "${name}" contains no persona .md files`);
+
+    const knownHarnesses = listHarnesses().map((h) => h.id);
+    const prepared: { id: string; content: string }[] = [];
+    let anyErrors = false;
+    for (const file of files) {
+      const id = path.basename(file, ".md").toLowerCase();
+      const raw = await fs.readFile(path.join(sourceDir, file), "utf-8");
+      const merged = config.defaults ? mergeDefaults(raw, config.defaults) : raw;
+      const { errors, warnings } = validatePersonaFile(merged, id, knownHarnesses.length ? knownHarnesses : undefined);
+      for (const warning of warnings) console.log(chalk.yellow(`   ⚠ ${id}: ${warning}`));
+      for (const error of errors) {
+        console.error(chalk.red(`   ✗ ${id}: ${error}`));
+        anyErrors = true;
+      }
+      prepared.push({ id, content: merged });
+    }
+    if (anyErrors) throw new Error(`persona pack "${name}" failed validation — nothing installed`);
+
+    const personasDir = path.join(os.homedir(), ".fez", "personas");
+    await fs.mkdir(personasDir, { recursive: true });
+    const installed: string[] = [];
+    for (const { id, content } of prepared) {
+      const dest = path.join(personasDir, `${id}.md`);
+      if (await this.pathExists(dest)) {
+        console.log(chalk.yellow(`   ⚠ persona "${id}" already exists — kept yours, pack copy skipped`));
+        continue;
+      }
+      await fs.writeFile(dest, content, "utf-8");
+      installed.push(id);
+      console.log(chalk.dim(`   Installed persona ${id}`));
+    }
+    this.packages.get(name)!.installedPersonas = installed;
+    console.log(chalk.green(`   👥 ${installed.length} persona(s) from pack "${name}" — fez agent <name> to run one`));
   }
 
   private async installClaudeCodeIntegration(name: string, config: { commands?: string; evals?: string }): Promise<void> {
@@ -300,7 +388,7 @@ export class PackageManager {
     await fs.mkdir(commandsDir, { recursive: true });
     await fs.mkdir(evalsDir, { recursive: true });
 
-    const pkgDir = this.getInstallDir(this.packages.get(name)!);
+    const pkgDir = this.getContentDir(this.packages.get(name)!);
 
     if (config.commands) {
       const src = path.join(pkgDir, config.commands);
@@ -330,7 +418,7 @@ export class PackageManager {
     const piDir = path.join(home, ".pi", "agent", "extensions");
     await fs.mkdir(piDir, { recursive: true });
 
-    const pkgDir = this.getInstallDir(this.packages.get(name)!);
+    const pkgDir = this.getContentDir(this.packages.get(name)!);
 
     if (config.extensions) {
       const src = path.join(pkgDir, config.extensions);
@@ -350,7 +438,7 @@ export class PackageManager {
     const extensionsDir = path.join(home, ".fez", "extensions");
     await fs.mkdir(extensionsDir, { recursive: true });
 
-    const pkgDir = this.getInstallDir(this.packages.get(name)!);
+    const pkgDir = this.getContentDir(this.packages.get(name)!);
 
     if (config.entry) {
       // Preserve the entry's real extension — a bundled package ships a .js
@@ -374,6 +462,19 @@ export class PackageManager {
   private getInstallDir(pkg: FezPackage): string {
     if (pkg.source.startsWith("npm:")) {
       return path.join(NPM_DIR, pkg.name);
+    }
+    return path.join(GIT_DIR, pkg.name);
+  }
+
+  /**
+   * Where the PACKAGE'S OWN files live. npm installs wrap the real
+   * package under node_modules/<npmName> (the top-level package.json is
+   * fez's shim — reading it was the second dead-code bug); git clones
+   * ARE the content.
+   */
+  private getContentDir(pkg: FezPackage): string {
+    if (pkg.source.startsWith("npm:")) {
+      return path.join(NPM_DIR, pkg.name, "node_modules", pkg.source.replace("npm:", ""));
     }
     return path.join(GIT_DIR, pkg.name);
   }

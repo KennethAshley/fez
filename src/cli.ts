@@ -797,6 +797,45 @@ import { loadExtensions } from "./extensions.js";
 const persona = program.command("persona").description("Manage named agent identities");
 
 persona
+  .command("validate [name]")
+  .description("Lint persona files: errors fail, unknown keys / missing description warn (Buzz's pack-validate split)")
+  .option("--all", "validate every persona in ~/.fez/personas")
+  .action(async (name: string | undefined, options: { all?: boolean }) => {
+    const { validatePersonaFile } = await import("./personas.js");
+    const { registerBuiltinHarnesses, listHarnesses } = await import("./harness.js");
+    const fsSync = await import("node:fs");
+    const os = await import("node:os");
+    const pathMod = await import("node:path");
+    registerBuiltinHarnesses();
+    const knownHarnesses = listHarnesses().map((h) => h.id);
+    const dir = pathMod.join(os.homedir(), ".fez", "personas");
+    const targets = options.all || !name
+      ? fsSync.readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => pathMod.basename(f, ".md"))
+      : [name.toLowerCase()];
+    let failed = 0;
+    for (const id of targets) {
+      const file = pathMod.join(dir, `${id}.md`);
+      let raw: string;
+      try {
+        raw = fsSync.readFileSync(file, "utf-8");
+      } catch {
+        console.error(`✗ ${id}: no such persona (${file})`);
+        failed++;
+        continue;
+      }
+      const { errors, warnings } = validatePersonaFile(raw, id, knownHarnesses);
+      if (errors.length === 0 && warnings.length === 0) {
+        console.log(`✓ ${id}`);
+        continue;
+      }
+      for (const error of errors) console.error(`✗ ${id}: ${error}`);
+      for (const warning of warnings) console.warn(`⚠ ${id}: ${warning}`);
+      if (errors.length > 0) failed++;
+    }
+    if (failed > 0) process.exit(1);
+  });
+
+persona
   .command("create <name>")
   .description("Create a named persona backed by a harness (e.g. claude-code)")
   .requiredOption("-h, --harness <id>", "Harness id this persona runs on (see: fez persona harnesses)")
