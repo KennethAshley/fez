@@ -13,6 +13,8 @@ import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
 import PulseView from "./PulseView";
 import ProfilePane from "./ProfilePane";
+import RemindersPane from "./RemindersPane";
+import DocsPane from "./DocsPane";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { uploadFile, shareLine } from "./upload";
@@ -47,7 +49,7 @@ type Boot =
   | { phase: "error"; message: string }
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
-type MainView = { kind: "channel" } | { kind: "dm"; convoKey: string } | { kind: "home" } | { kind: "pulse" };
+type MainView = { kind: "channel"; focus?: string } | { kind: "dm"; convoKey: string } | { kind: "home" } | { kind: "pulse" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
@@ -55,6 +57,8 @@ type SidePane =
   | { kind: "manage" }
   | { kind: "settings" }
   | { kind: "profile"; pk: string }
+  | { kind: "reminders" }
+  | { kind: "docs"; channelId: string; communityId: string }
   | undefined;
 
 function useForceRender(): () => void {
@@ -237,9 +241,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
   const unreads = client.unreadCounts();
   const working = client.workingAgents();
 
-  const openChannel = async (communityId: string, channelId: string) => {
+  const openChannel = async (communityId: string, channelId: string, focus?: string) => {
     client.setScope(communityId, channelId);
-    setView({ kind: "channel" });
+    setView({ kind: "channel", focus });
     await client.loadChannelHistory(channelId, communityId);
     render();
   };
@@ -308,6 +312,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           </button>
           <button className="rail-tool" title="agent costs" onClick={() => setPane(pane?.kind === "costs" ? undefined : { kind: "costs" })}>
             $
+          </button>
+          <button className="rail-tool" title="reminders" onClick={() => setPane(pane?.kind === "reminders" ? undefined : { kind: "reminders" })}>
+            ◷
           </button>
           <button className="rail-tool" title="settings" onClick={() => setPane(pane?.kind === "settings" ? undefined : { kind: "settings" })}>
             ⚙
@@ -378,7 +385,8 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
 
       {view.kind === "channel" && scope && (
         <ChannelView
-          key={scope.channelId}
+          key={scope.channelId + (view.focus ?? "")}
+          focusId={view.focus}
           client={client}
           wire={wire}
           channelId={scope.channelId}
@@ -387,6 +395,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           onWatch={(agent) => setPane({ kind: "watch", agent })}
           onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
+          onDocs={() =>
+            setPane(
+              pane?.kind === "docs" && pane.channelId === scope.channelId
+                ? undefined
+                : { kind: "docs", channelId: scope.channelId, communityId: scope.communityId }
+            )
+          }
         />
       )}
       {view.kind === "dm" && (
@@ -402,7 +417,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <HomeView
           client={client}
           wire={wire}
-          onOpenChannel={(communityId, channelId) => void openChannel(communityId, channelId)}
+          onOpenChannel={(communityId, channelId, msgId) => void openChannel(communityId, channelId, msgId)}
           onOpenDm={openDm}
         />
       )}
@@ -428,6 +443,33 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
       {pane?.kind === "settings" && <SettingsPane client={client} onClose={() => setPane(undefined)} />}
+      {pane?.kind === "reminders" && (
+        <RemindersPane
+          client={client}
+          wire={wire}
+          onJumpToMessage={(msgId) => {
+            for (const communityId of client.state.joined) {
+              const community = client.state.community(communityId);
+              for (const channel of community?.channels.values() ?? []) {
+                if (client.messages(channel.id).some((m) => m.id === msgId)) {
+                  void openChannel(communityId, channel.id, msgId);
+                  return;
+                }
+              }
+            }
+          }}
+          onClose={() => setPane(undefined)}
+        />
+      )}
+      {pane?.kind === "docs" && (
+        <DocsPane
+          client={client}
+          channelId={pane.channelId}
+          communityId={pane.communityId}
+          renderMd={(text) => <MdBody text={text} />}
+          onClose={() => setPane(undefined)}
+        />
+      )}
       {pane?.kind === "profile" && (
         <ProfilePane
           client={client}
@@ -461,7 +503,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <SearchOverlay
           client={client}
           wire={wire}
-          onJump={(communityId, channelId) => void openChannel(communityId, channelId)}
+          onJump={(communityId, channelId, msgId) => void openChannel(communityId, channelId, msgId)}
           onClose={() => setSearchOpen(false)}
         />
       )}
@@ -512,19 +554,28 @@ function ChannelView({
   onWatch,
   onManage,
   onProfile,
+  onDocs,
+  focusId,
 }: {
   client: FezClient;
   wire: BrowserWire;
   channelId: string;
+  focusId?: string;
   drafts?: Map<string, { content: string; rootId?: string; ts: number }>;
   working: ReadonlyMap<string, { activity: string; ts: number }>;
   onWatch: (agent: string) => void;
   onManage: () => void;
   onProfile: (pk: string) => void;
+  onDocs: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [uploading, setUploading] = useState<string>();
-  const [threadRoot, setThreadRoot] = useState<string | undefined>();
+  // A focused thread reply opens inside its thread (the channel view
+  // only shows roots); the component remounts per focus so lazy init is enough.
+  const [threadRoot, setThreadRoot] = useState<string | undefined>(() => {
+    if (!focusId) return undefined;
+    return client.messages(channelId).find((m) => m.id === focusId)?.rootId;
+  });
   const [editing, setEditing] = useState<{ id: string; original: string } | undefined>();
   const communityId = client.state.scope?.communityId ?? "";
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -535,7 +586,13 @@ function ChannelView({
   const draftsForRoot = (rootId: string) => liveDrafts.filter(([, d]) => d.rootId === rootId);
   const workingNow = [...working.entries()].filter(([, w]) => now - w.ts < 30_000);
 
+  // A focused jump (search/inbox hit) pins the view on that message —
+  // auto-stick-to-bottom would yank the reader away on the next render.
   useEffect(() => {
+    if (focusId) {
+      document.getElementById(`msg-${focusId}`)?.scrollIntoView({ behavior: "auto", block: "center" });
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: "auto" });
   });
 
@@ -595,9 +652,14 @@ function ChannelView({
           <button className="thread-exit" onClick={() => setThreadRoot(undefined)}>← back to channel</button>
         )}
         {!threadRoot && (
-          <button className="topbar-tool" title="channel settings — members, invites, moderation" onClick={onManage}>
-            ⚙
-          </button>
+          <span className="topbar-tools">
+            <button className="topbar-tool" title="channel doc" onClick={onDocs}>
+              ≡{client.docsByChannel().has(channelId) && <span className="doc-dot" />}
+            </button>
+            <button className="topbar-tool" title="channel settings — members, invites, moderation" onClick={onManage}>
+              ⚙
+            </button>
+          </span>
         )}
       </header>
       <div className="timeline">
@@ -607,7 +669,7 @@ function ChannelView({
           </div>
         )}
         {shown.map((msg) => (
-          <div key={msg.id}>
+          <div key={msg.id} id={`msg-${msg.id}`} className={msg.id === focusId ? "focus-flash" : undefined}>
             <Bubble
               client={client}
               channelId={channelId}
@@ -935,10 +997,28 @@ function Bubble({
   const pinned = client.isPinned(channelId, msg.id);
   const time = new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [remindOpen, setRemindOpen] = useState(false);
+  const [remindSet, setRemindSet] = useState(false);
 
   const react = (emoji: string) => {
     setPickerOpen(false);
     void client.toggleReaction(channelId, communityId, msg.id, emoji);
+  };
+
+  /** Buzz's remind-me-later: a preset menu, subject = this message. */
+  const remind = (deltaS: number) => {
+    setRemindOpen(false);
+    const note = `${msg.authorName}: ${msg.content.replace(/\s+/g, " ").slice(0, 80)}`;
+    void client.setReminder(Math.floor(Date.now() / 1000) + deltaS, note, msg.id).then(() => {
+      setRemindSet(true);
+      setTimeout(() => setRemindSet(false), 2500);
+    });
+  };
+  const tomorrow9 = () => {
+    const date = new Date();
+    date.setDate(date.getDate() + 1);
+    date.setHours(9, 0, 0, 0);
+    return Math.floor((date.getTime() - Date.now()) / 1000);
   };
 
   return (
@@ -951,6 +1031,7 @@ function Bubble({
         {!msg.deletedBy && (
           <div className="actions">
             <button title="react" onClick={() => setPickerOpen(!pickerOpen)}>☺</button>
+            <button title="remind me about this" onClick={() => setRemindOpen(!remindOpen)}>{remindSet ? "✓" : "◷"}</button>
             {!inThread && <button title="reply in thread" onClick={onOpenThread}>↩</button>}
             {mine && onEdit && <button title="edit (↑ also edits your last)" onClick={onEdit}>✎</button>}
             <button
@@ -969,6 +1050,14 @@ function Bubble({
           </div>
         )}
       </div>
+      {remindOpen && (
+        <div className="emoji-picker remind-picker">
+          <button onClick={() => remind(20 * 60)}>20m</button>
+          <button onClick={() => remind(60 * 60)}>1h</button>
+          <button onClick={() => remind(3 * 60 * 60)}>3h</button>
+          <button onClick={() => remind(tomorrow9())}>tmrw 9a</button>
+        </div>
+      )}
       {pickerOpen && (
         <div className="emoji-picker">
           {QUICK_EMOJI.map((emoji) => (

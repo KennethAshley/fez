@@ -30,7 +30,7 @@ export default function HomeView({
 }: {
   client: FezClient;
   wire: BrowserWire;
-  onOpenChannel: (communityId: string, channelId: string) => void;
+  onOpenChannel: (communityId: string, channelId: string, msgId?: string) => void;
   onOpenDm: (convoKey: string) => void;
 }) {
   const [mentions, setMentions] = useState<MentionRow[] | undefined>();
@@ -95,7 +95,7 @@ export default function HomeView({
           <div className="pane-empty">nothing addressed to you yet — @mentions from any joined channel land here</div>
         )}
         {mentions?.map((row) => (
-          <button key={row.id} className="inbox-row" onClick={() => onOpenChannel(row.communityId, row.channelId)}>
+          <button key={row.id} className="inbox-row" onClick={() => onOpenChannel(row.communityId, row.channelId, row.id)}>
             <span className="search-meta">
               # {row.channelName} · <span className="inbox-author">{row.author}</span> · {when(row.ts)}
             </span>

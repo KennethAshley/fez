@@ -32,7 +32,7 @@ export default function SearchOverlay({
 }: {
   client: FezClient;
   wire: BrowserWire;
-  onJump: (communityId: string, channelId: string) => void;
+  onJump: (communityId: string, channelId: string, msgId?: string) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -94,7 +94,7 @@ export default function SearchOverlay({
   }, [query, wire, channels, client]);
 
   const jump = (row: Row) => {
-    onJump(row.communityId, row.channelId);
+    onJump(row.communityId, row.channelId, row.kind === KIND_CHANNEL_MESSAGE ? row.id : undefined);
     onClose();
   };
 
@@ -136,7 +136,7 @@ export default function SearchOverlay({
               onClick={() => jump(row)}
             >
               <span className="search-meta">
-                {row.kind === KIND_DOC ? "📄" : "#"} {row.channelName} · {row.author} ·{" "}
+                {row.kind === KIND_DOC ? "≡" : "#"} {row.channelName} · {row.author} ·{" "}
                 {new Date(row.ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}
               </span>
               <span className="search-snippet">{row.snippet}</span>

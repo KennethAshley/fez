@@ -61,12 +61,38 @@ fn set_identity(account: Option<String>, hex: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Create a persona file (~/.fez/personas/<name>.md) — the GUI's agent
+/// creation. The MD file is the whole contract: herdr/sentinel spawn the
+/// agent on its first @mention. Refuses overwrite; existing personas are
+/// edited in an editor, not silently replaced from a dialog.
+#[tauri::command]
+fn write_persona(name: String, content: String) -> Result<String, String> {
+    if name.len() < 2
+        || name.len() > 32
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        || name.starts_with('-')
+    {
+        return Err("name must be 2-32 chars of a-z, 0-9, - (it becomes the @mention)".to_string());
+    }
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    let dir = std::path::Path::new(&home).join(".fez").join("personas");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create {}: {e}", dir.display()))?;
+    let path = dir.join(format!("{name}.md"));
+    if path.exists() {
+        return Err(format!("persona \"{name}\" already exists"));
+    }
+    std::fs::write(&path, content).map_err(|e| format!("write failed: {e}"))?;
+    Ok(path.display().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

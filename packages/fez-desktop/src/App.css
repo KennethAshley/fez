@@ -584,3 +584,46 @@ button.author:hover { text-decoration: underline; }
   border-radius: 6px; padding: 8px 10px; font-family: var(--font-mono); font-size: 11px; cursor: pointer;
 }
 .pk-code:hover { border-color: var(--accent); }
+
+/* jump-to-message landing flash */
+.focus-flash > .bubble { animation: focus-fade 2.4s ease-out; border-radius: 6px; }
+@keyframes focus-fade {
+  from { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  to { background: transparent; }
+}
+
+/* ── reminders + docs panes ────────────────────────────────── */
+.topbar-tools { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.topbar-tools .topbar-tool { margin-left: 0; position: relative; }
+.doc-dot {
+  position: absolute; top: 1px; right: -3px; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--accent);
+}
+.remind-picker button { font-family: var(--font-mono); font-size: 12px; }
+.reminder-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--fg); font: inherit; padding: 7px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--bg2) 40%, transparent); cursor: pointer;
+}
+.reminder-row.dim { color: var(--fg-dim); }
+.reminder-when { font-family: var(--font-mono); font-size: 11px; color: var(--yellow); }
+.reminder-row.dim .reminder-when { color: var(--fg-dim); }
+.reminder-note { font-size: 13px; }
+.docs-pane { width: 420px; min-width: 420px; }
+.doc-meta { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); margin-bottom: 8px; }
+.doc-old { color: var(--yellow); }
+.doc-body { font-size: 13px; }
+.doc-editor { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.doc-textarea {
+  flex: 1; min-height: 300px; background: var(--bg0); border: 1px solid var(--hairline);
+  border-radius: 6px; color: var(--fg); font-family: var(--font-mono); font-size: 12.5px;
+  line-height: 1.5; padding: 10px 12px; outline: none; resize: none;
+}
+.doc-textarea:focus { border-color: var(--accent); }
+.version-row {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--fg-dim); font-family: var(--font-mono); font-size: 11px; padding: 4px 2px; cursor: pointer;
+}
+.version-row:hover, .version-row.active { color: var(--fg); }
+.persona-prompt { min-height: 140px; flex: none; }
+.pane .ob-error { color: var(--red); font-size: 12px; margin-bottom: 8px; }

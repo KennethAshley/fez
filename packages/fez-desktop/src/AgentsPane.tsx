@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { FezClient, ObserverEntry, WireEvent } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import ActivityFeed from "./ActivityFeed";
@@ -46,6 +47,7 @@ export default function AgentsPane({
   onClose: () => void;
 }) {
   const [selected, setSelected] = useState<string>(); // agent pk
+  const [creating, setCreating] = useState(false);
   const roster = useMemo(
     () =>
       [...client.agents().entries()]
@@ -58,14 +60,18 @@ export default function AgentsPane({
   return (
     <aside className="pane">
       <header className="pane-head">
-        {current ? (
-          <button className="pane-back" onClick={() => setSelected(undefined)}>← agents</button>
+        {current || creating ? (
+          <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); }}>← agents</button>
         ) : (
-          <span>🤖 agents</span>
+          <span>@ agents</span>
+        )}
+        {!current && !creating && (
+          <button className="agent-action" onClick={() => setCreating(true)}>+ new agent</button>
         )}
         <button className="pane-close" onClick={onClose}>✕</button>
       </header>
-      {!current && (
+      {creating && <CreateAgentForm onDone={() => setCreating(false)} />}
+      {!current && !creating && (
         <div className="pane-body">
           {roster.length === 0 && (
             <div className="pane-empty">no agents known yet — they appear when their 47000 metadata reaches your relay</div>
@@ -86,7 +92,7 @@ export default function AgentsPane({
           })}
         </div>
       )}
-      {current && (
+      {current && !creating && (
         <AgentDetail
           client={client}
           wire={wire}
@@ -291,5 +297,99 @@ function AgentDetail({
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * Agent creation, GUI-side — Buzz's AgentDefinitionDialog reduced to the
+ * fez contract: the persona MD file IS the agent. The shell writes
+ * ~/.fez/personas/<name>.md (refusing overwrite); herdr/sentinel spawn
+ * it on its first @mention, with its own stable key. No daemon to
+ * configure, nothing to start.
+ */
+function CreateAgentForm({ onDone }: { onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [harness, setHarness] = useState("claude-code");
+  const [description, setDescription] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [state, setState] = useState<"idle" | "saving" | "done" | string>("idle");
+
+  const create = async () => {
+    setState("saving");
+    const front = [
+      "---",
+      `harness: ${harness}`,
+      ...(description.trim() ? [`description: ${description.trim().replace(/\n/g, " ")}`] : []),
+      "---",
+      "",
+    ].join("\n");
+    try {
+      await invoke<string>("write_persona", { name: name.trim(), content: front + (prompt.trim() || `You are ${name.trim()}.`) + "\n" });
+      setState("done");
+    } catch (err) {
+      setState(String(err));
+    }
+  };
+
+  if (state === "done") {
+    return (
+      <div className="pane-body">
+        <div className="manage-notice">✓ @{name.trim()} created</div>
+        <div className="settings-hint">
+          Mention @{name.trim()} in any channel and it spawns with its own key, introduces itself, and joins the
+          roster. The persona lives at ~/.fez/personas/{name.trim()}.md — edit it there anytime.
+        </div>
+        <button className="agent-action" onClick={onDone}>back to agents</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pane-body">
+      <div className="settings-field">
+        <label>name (becomes the @mention)</label>
+        <input
+          className="manage-input"
+          value={name}
+          autoFocus
+          spellCheck={false}
+          placeholder="scout"
+          onChange={(e) => setName(e.target.value.toLowerCase())}
+        />
+      </div>
+      <div className="settings-field">
+        <label>harness</label>
+        <select className="manage-select" value={harness} onChange={(e) => setHarness(e.target.value)}>
+          <option value="claude-code">claude-code</option>
+          <option value="pi">pi</option>
+        </select>
+      </div>
+      <div className="settings-field">
+        <label>description (helps @fez route to it)</label>
+        <input
+          className="manage-input"
+          value={description}
+          placeholder="what this agent is for"
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </div>
+      <div className="settings-field">
+        <label>system prompt</label>
+        <textarea
+          className="doc-textarea persona-prompt"
+          value={prompt}
+          spellCheck={false}
+          placeholder="You are…"
+          onChange={(e) => setPrompt(e.target.value)}
+        />
+      </div>
+      {state !== "idle" && state !== "saving" && <div className="ob-error">{state}</div>}
+      <div className="agent-actions">
+        <button className="agent-action" disabled={!name.trim() || state === "saving"} onClick={() => void create()}>
+          {state === "saving" ? "creating…" : "create agent"}
+        </button>
+        <button className="agent-action" onClick={onDone}>cancel</button>
+      </div>
+    </div>
   );
 }
