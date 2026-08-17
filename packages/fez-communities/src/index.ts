@@ -21,6 +21,12 @@ const KIND_DRAFT = 20003; // ephemeral streaming preview of a message being comp
 const KIND_OBSERVER = 20004; // ephemeral owner-encrypted agent activity frames — see fez src/kinds.ts
 const KIND_WORKFLOW_RUN = 47200; // workflow run traces — see fez src/kinds.ts
 const KIND_AGENT_ENGRAM = 30174; // NIP-AE agent memory — see fez src/engram.ts
+// Channel doc — Buzz's canvas (kind 40100): ONE living markdown document
+// per channel, editable by any member, humans and agents alike. Regular
+// (non-replaceable) kind on a dumb relay means every version is stored —
+// /doc history is free. Latest member-authored version wins client-side
+// (created_at desc, tie → lowest id), same trust rules as messages.
+const KIND_DOC = 40100;
 
 /** How long a typing indicator survives without a fresh heartbeat (Buzz: 8s TTL on a 3s publish interval). */
 const TYPING_TTL_MS = 8000;
@@ -75,7 +81,8 @@ export default function communities(api: FezExtensionAPI): void {
     | { mode: "thread"; rootId: string }
     | { mode: "watch"; agent: string }
     | { mode: "jobs" }
-    | { mode: "dm"; peerPk: string } = { mode: "channel" };
+    | { mode: "dm"; peerPk: string }
+    | { mode: "doc" } = { mode: "channel" };
 
   // ── Jobs: units of agent work, ASSEMBLED from events already on the
   // wire — nothing publishes "a job". A mention an agent accepts (its 👀
@@ -375,6 +382,8 @@ export default function communities(api: FezExtensionAPI): void {
   // take insertion order ~2) — DMs are conversations WITH those agents,
   // so they read as a sub-concern of the fleet, per the user's layout.
   const dmPanel = api.ui.createSidePanel({ title: "dms", icon: "✉️", order: 30 });
+  // order 20: docs sit between AGENTS and DMS.
+  const docsPanel = api.ui.createSidePanel({ title: "docs", icon: "📄", order: 20 });
 
   function displayName(pubkey: string): string {
     return names.get(pubkey) ?? `${pubkey.slice(0, 8)}…`;
@@ -405,7 +414,9 @@ export default function communities(api: FezExtensionAPI): void {
           ? ` ▸ watching @${view.agent}`
           : view.mode === "jobs"
             ? " ▸ jobs"
-            : "";
+            : view.mode === "doc"
+              ? " ▸ doc"
+              : "";
     api.ui.setStatus(
       "scope",
       current ? `${current.community.name}/#${current.channel.name}${threadSuffix}` : ""
@@ -738,7 +749,7 @@ export default function communities(api: FezExtensionAPI): void {
       filters.push(
         { kinds: [KIND_COMMUNITY, KIND_CHANNEL, KIND_MEMBERSHIP], "#c": ids },
         { kinds: [KIND_COMMUNITY], "#d": ids },
-        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION, KIND_DRAFT, KIND_WORKFLOW_RUN], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
+        { kinds: [KIND_CHANNEL_MESSAGE, KIND_TYPING, KIND_REACTION, KIND_DELETION, KIND_DRAFT, KIND_WORKFLOW_RUN, KIND_DOC], "#h": channelIdsOfJoined(), since: Math.floor(Date.now() / 1000) },
         { kinds: [KIND_THREAD_SUMMARY], "#h": channelIdsOfJoined() }
       );
     }
@@ -767,10 +778,35 @@ export default function communities(api: FezExtensionAPI): void {
         handleDraft(event);
         return;
       }
+      if (event.kind === KIND_DOC) {
+        const channelId = absorbDocEvent(event);
+        const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+        if (!channelId || !communityId) return;
+        refreshDocsPanel();
+        mirrorWrite(channelId);
+        if (state.scope?.channelId !== channelId) return;
+        if (view.mode === "doc") {
+          // Live re-render — an agent editing while you read is the point.
+          void docVersions(channelId, communityId).then((versions) => {
+            if (view.mode !== "doc" || state.scope?.channelId !== channelId) return;
+            renderDocView(versions.at(-1), versions.length, versions.length, state.currentChannel()?.channel.name ?? "?");
+          });
+        } else if (event.pubkey !== nostr!.pubkey) {
+          api.ui.notify(`📄 ${displayName(event.pubkey)} updated the channel doc — /doc`);
+        }
+        return;
+      }
       if (event.kind === KIND_AGENT_METADATA) {
         try {
           const name = JSON.parse(event.content).name;
-          if (name) names.set(event.pubkey, name);
+          if (name && names.get(event.pubkey) !== name) {
+            names.set(event.pubkey, name);
+            // Panels resolved this pubkey before the announcement arrived
+            // (seen live as a raw hex id in the DMS box) — re-render now
+            // that it has a name.
+            refreshDmPanel();
+            refreshDocsPanel();
+          }
         } catch { /* ignore */ }
         return;
       }
@@ -1034,6 +1070,135 @@ export default function communities(api: FezExtensionAPI): void {
 
   api.registerUrlHandler("fez-dm://open/", (url) => openDm(url.slice("fez-dm://open/".length)));
 
+  // ── Channel docs, standing state (the /doc command below is the view;
+  // this is the sidebar + disk mirror). One entry per channel that has a
+  // doc: version count and the latest member-authored version (base for
+  // the next edit). The mirror keeps ~/.fez/docs/<community>/<channel>.md
+  // in sync both ways — saving the file publishes the next version, so
+  // any markdown editor (vim, VS Code, Obsidian-on-the-folder) is a doc
+  // editor. Loop guard: we remember what we wrote; our own mirror writes
+  // and our own published versions round-tripping through the relay
+  // never re-publish.
+  interface DocInfo {
+    count: number;
+    latestId: string;
+    latestTs: number;
+    latestAuthor: string;
+    latestContent: string;
+  }
+  const docsByChannel = new Map<string, DocInfo>();
+  const seenDocIds = new Set<string>();
+  const DOCS_DIR = path.join(os.homedir(), ".fez", "docs");
+  const mirrorPathByChannel = new Map<string, string>();
+  const lastMirrored = new Map<string, string>();
+  const DIM = (s: string) => `\x1b[2m${s}\x1b[22m`;
+  const sanitizeName = (s: string) => s.replace(/[^\w.-]+/g, "_");
+
+  function channelRef(channelId: string): { communityId: string; name: string; communityName: string } | undefined {
+    for (const communityId of state.joined) {
+      const community = state.community(communityId);
+      const channel = community?.channels.get(channelId);
+      if (community && channel) return { communityId, name: channel.name, communityName: community.name };
+    }
+    return undefined;
+  }
+
+  function absorbDocEvent(event: NostrEvent): string | undefined {
+    if (seenDocIds.has(event.id)) return undefined;
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!channelId || !communityId || !state.isMember(communityId, channelId, event.pubkey)) return undefined;
+    seenDocIds.add(event.id);
+    let info = docsByChannel.get(channelId);
+    if (!info) docsByChannel.set(channelId, (info = { count: 0, latestId: "", latestTs: 0, latestAuthor: "", latestContent: "" }));
+    info.count++;
+    if (event.created_at > info.latestTs || (event.created_at === info.latestTs && event.id < info.latestId)) {
+      info.latestTs = event.created_at;
+      info.latestId = event.id;
+      info.latestAuthor = event.pubkey;
+      info.latestContent = event.content;
+    }
+    return channelId;
+  }
+
+  function refreshDocsPanel(): void {
+    const rows: string[] = [];
+    for (const [channelId, info] of docsByChannel) {
+      const ref = channelRef(channelId);
+      if (!ref) continue;
+      rows.push(` ${OSC8(`fez-doc://open/${channelId}`, `#${ref.name}`)} ${DIM(`v${info.count} · ${displayName(info.latestAuthor)}`)}`);
+    }
+    docsPanel.setText(rows.length > 0 ? rows.join("\n") : " (none — /doc set)");
+  }
+
+  function mirrorWrite(channelId: string): void {
+    const info = docsByChannel.get(channelId);
+    const ref = channelRef(channelId);
+    if (!info || !ref) return;
+    try {
+      const dir = path.join(DOCS_DIR, sanitizeName(ref.communityName));
+      const file = path.join(dir, `${sanitizeName(ref.name)}.md`);
+      mirrorPathByChannel.set(channelId, file);
+      if (lastMirrored.get(file) === info.latestContent) return;
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(file, info.latestContent);
+      lastMirrored.set(file, info.latestContent);
+    } catch { /* disk trouble — the mirror is a convenience, the relay is canonical */ }
+  }
+
+  // Save-to-publish: watch the mirror folder; a changed .md that maps to
+  // a known doc publishes the next version (base-tagged for conflict
+  // visibility). Debounced — editors write files more than once per save.
+  const watchDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  try {
+    fs.mkdirSync(DOCS_DIR, { recursive: true });
+    fs.watch(DOCS_DIR, { recursive: true }, (_eventType, fname) => {
+      if (!fname || !fname.toString().endsWith(".md")) return;
+      const full = path.join(DOCS_DIR, fname.toString());
+      clearTimeout(watchDebounce.get(full));
+      watchDebounce.set(
+        full,
+        setTimeout(() => {
+          const channelId = [...mirrorPathByChannel.entries()].find(([, p]) => p === full)?.[0];
+          if (!channelId) return; // unmapped file — /doc set starts a doc, files don't
+          let content: string;
+          try {
+            content = fs.readFileSync(full, "utf-8");
+          } catch {
+            return;
+          }
+          if (content === lastMirrored.get(full)) return; // our own write
+          const info = docsByChannel.get(channelId);
+          const ref = channelRef(channelId);
+          if (!ref || content.trim() === (info?.latestContent ?? "").trim()) return;
+          lastMirrored.set(full, content);
+          void nostr!
+            .publish({
+              kind: KIND_DOC,
+              tags: [["h", channelId], ["c", ref.communityId], ...(info?.latestId ? [["base", info.latestId]] : [])],
+              content,
+            })
+            .then(() => api.ui.notify(`📄 ${path.basename(full)} saved → published doc v${(info?.count ?? 0) + 1} to #${ref.name}`))
+            .catch(() => api.ui.notify(`⚠️ couldn't publish ${path.basename(full)} — relay unreachable?`));
+        }, 400)
+      );
+    });
+  } catch { /* fs.watch unavailable — mirror stays read-only */ }
+
+  // Sidebar click → jump straight into that channel's doc view.
+  api.registerUrlHandler("fez-doc://open/", (url) => {
+    const channelId = url.slice("fez-doc://open/".length);
+    const ref = channelRef(channelId);
+    if (!ref) return;
+    state.scope = { communityId: ref.communityId, channelId };
+    state.save();
+    void docVersions(channelId, ref.communityId).then((versions) => {
+      view = { mode: "doc" };
+      renderDocView(versions.at(-1), versions.length, versions.length, ref.name);
+      refreshUi();
+    });
+  });
+
   // ── Commands ─────────────────────────────────────────────────────────────
 
   api.registerCommand("community", async (args, ctx) => {
@@ -1214,6 +1379,94 @@ export default function communities(api: FezExtensionAPI): void {
     );
   });
 
+  // ── Channel doc (Buzz's canvas, decentralized). Query-on-demand: the
+  // relay stores every 40100 version, so "the doc" is derived fresh each
+  // view — no cache to go stale. Members-only versions count.
+  async function docVersions(channelId: string, communityId: string): Promise<NostrEvent[]> {
+    const events = await nostr!.query([{ kinds: [KIND_DOC], "#h": [channelId], limit: 200 }]);
+    return events
+      .filter((e) => state.isMember(communityId, channelId, e.pubkey))
+      .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1)); // asc; ties: lowest id LAST = wins as latest
+  }
+
+  function renderDocView(doc: NostrEvent | undefined, versionNo: number, total: number, channelName: string): void {
+    api.ui.clearLog();
+    bubbleHandles = new Map();
+    summaryLineHandles = new Map();
+    draftBubbles.clear();
+    if (!doc) {
+      api.ui.appendMessage("doc", `#${channelName} has no doc yet. Start one: /doc set <text> — one living document per channel, editable by any member (agents included). /back returns.`);
+      return;
+    }
+    api.ui.notify(`— #${channelName} doc · v${versionNo}/${total} · last edit by ${displayName(doc.pubkey)} — /doc history · /doc set|append <text> · /back —`);
+    api.ui.appendMessage(displayName(doc.pubkey), doc.content, doc.created_at);
+  }
+
+  api.registerCommand("doc", async (args, ctx) => {
+    const current = state.currentChannel();
+    if (!current) return ctx.reply("Not in a channel — /join <channel> first.");
+    const [sub, ...rest] = args.trim().split(/\s+/);
+    const body = rest.join(" ");
+
+    if (sub === "set" || sub === "append") {
+      const text = args.trim().slice(sub.length).trim().replace(/\\n/g, "\n");
+      if (!text) return ctx.reply(`Usage: /doc ${sub} <markdown — \\n for newlines>`);
+      const versions = await docVersions(current.channel.id, current.community.id);
+      const latest = versions.at(-1);
+      const content = sub === "append" && latest ? `${latest.content}\n\n${text}` : text;
+      await nostr.publish({
+        kind: KIND_DOC,
+        // base = the version this edit was made against — lets clients
+        // SEE concurrent edits (two versions sharing a base = a fork)
+        // instead of silently last-write-winning.
+        tags: [["h", current.channel.id], ["c", current.community.id], ...(latest ? [["base", latest.id]] : [])],
+        content,
+      });
+      ctx.reply(`📄 doc ${sub === "append" ? "appended" : "updated"} (v${versions.length + 1}). /doc to read.`);
+      return;
+    }
+
+    if (sub === "history") {
+      const versions = await docVersions(current.channel.id, current.community.id);
+      if (versions.length === 0) return ctx.reply("No doc yet — /doc set <text> starts one.");
+      // Fork visibility: two versions sharing a base were written
+      // concurrently — the later one won, but neither is hidden.
+      const baseOf = (v: NostrEvent) => v.tags.find((t) => t[0] === "base")?.[1];
+      const childrenByBase = new Map<string, number>();
+      for (const v of versions) {
+        const b = baseOf(v);
+        if (b) childrenByBase.set(b, (childrenByBase.get(b) ?? 0) + 1);
+      }
+      ctx.reply(
+        versions
+          .map((v, i) => {
+            const b = baseOf(v);
+            const fork = b && (childrenByBase.get(b) ?? 0) > 1 ? " ⑂ concurrent edit" : "";
+            return `• v${i + 1} — ${displayName(v.pubkey)}, ${new Date(v.created_at * 1000).toLocaleString()} (${v.content.length} chars)${fork}${i === versions.length - 1 ? " ← current" : ` — /doc show ${i + 1}`}`;
+          })
+          .join("\n")
+      );
+      return;
+    }
+
+    if (sub === "show") {
+      const versions = await docVersions(current.channel.id, current.community.id);
+      const no = Number(rest[0]);
+      const doc = versions[no - 1];
+      if (!doc) return ctx.reply(`No v${rest[0] || "?"} — /doc history lists versions.`);
+      view = { mode: "doc" };
+      renderDocView(doc, no, versions.length, current.channel.name);
+      refreshUi();
+      return;
+    }
+
+    // Bare /doc — the living document.
+    const versions = await docVersions(current.channel.id, current.community.id);
+    view = { mode: "doc" };
+    renderDocView(versions.at(-1), versions.length, versions.length, current.channel.name);
+    refreshUi();
+  });
+
   api.registerCommand("jobs", async (_args, _ctx) => {
     view = { mode: "jobs" };
     refreshUi();
@@ -1352,6 +1605,7 @@ export default function communities(api: FezExtensionAPI): void {
         if (name) names.set(event.pubkey, name);
       } catch { /* ignore */ }
     }
+    refreshDmPanel(); // DM conversations replayed before names hydrated show hex ids otherwise
 
     // First-run bootstrap: a brand-new user (no saved state, nothing
     // joined) lands in a working room instead of an empty TUI — their
@@ -1384,6 +1638,13 @@ export default function communities(api: FezExtensionAPI): void {
     await syncJoined();
     resubscribe();
     refreshUi();
+    // Docs sidebar + disk mirror hydrate from stored versions.
+    try {
+      const docEvents = await nostr.query([{ kinds: [KIND_DOC], "#h": channelIdsOfJoined(), limit: 500 }]);
+      for (const event of docEvents) absorbDocEvent(event);
+      refreshDocsPanel();
+      for (const channelId of docsByChannel.keys()) mirrorWrite(channelId);
+    } catch { /* relay hiccup — the live stream fills the panel */ }
     // A fresh session opens onto the conversation, not a blank pane.
     const scope = state.scope;
     if (scope) await loadChannelHistory(scope.channelId, scope.communityId);

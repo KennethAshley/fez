@@ -523,6 +523,7 @@ async function main() {
                 `- Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" (identity/rules/goals — a rewrite, not an append), fez mem set mem/<topic> "<note>" for individual facts, fez mem get <slug> / fez mem list to recall.`,
               ]
             : []),
+          `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
           `Recent messages:`,
           ...(recent.get(channelId) ?? []),
           ...(steering.length > 0
