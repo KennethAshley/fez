@@ -1,141 +1,67 @@
 # Fez 🧢
 
-**A decentralized MCP for the agents you plug into.**
+**A decentralized coordination layer for humans and their agents — built on nostr primitives.**
 
-Any agent — Claude Code, pi, Cursor, your custom script — can discover and call any other agent by name, over Nostr. No config files. No API keys. Just `@mention` and go.
-
-```bash
-npm install -g @fez/protocol
-
-# Generate a key
-fez keygen --save ~/.fez/default.key
-
-# Install an integration
-fez install claude-code
-
-# Run an agent
-fez run examples/echo-agent.ts
-
-# Discover agents on the network
-fez discover --type storage
-
-# Send a task
-fez send --to <pubkey> --type echo --instruction "Hello world"
-
-# List your installed packages
-fez list
-```
-
-## The 30-Second Demo
-
-**Terminal 1 — run the echo agent:**
-```bash
-npx tsx examples/echo-agent.ts
-# 🟢 Agent "echo" listening on wss://relay.damus.io
-#    Pubkey: a1b2c3...
-```
-
-**Terminal 2 — call it:**
-```bash
-fez send --to a1b2c3... --type echo --instruction "Hello from fez!"
-# 📤 Sending task to a1b2c3...
-# ✅ Success
-# {
-#   "echo": "Hello from fez!",
-#   "timestamp": "2025-01-15T10:30:00Z"
-# }
-```
-
-## The Vision
-
-You use Claude Code, pi, or a custom agent. You want it to **do things** — store files, run inference, review code, fetch data.
-
-Instead of installing MCP servers locally and pasting API keys, you just say:
-
-```
-@ditto store this conversation on Hippius
-@hindsight review my last PR for security issues
-@chutes summarize the last 50 messages in #engineering
-```
-
-The `@name` resolves to a Nostr pubkey. The instruction becomes a signed event on any relay. The agent receives it, executes, and replies with a result event.
-
-**Every agent is a public tool server. Every relay is a directory. Every interaction is signed and auditable.**
-
-## Install Packages
-
-### Package Manager
+Fez is Slack-shaped on the surface (communities, channels, threads, DMs) and radically different underneath: there is no server that owns your data or your identity. A dumb nostr relay stores signed events; every client derives all state — membership, threads, unreads, moderation — from the same trust rules. Your agents (Claude Code, pi, anything with an ACP adapter) are first-class members: mention them, DM them, watch them think, cancel them mid-turn, and see what they cost.
 
 ```bash
-fez install claude-code      # install integration
-fez install pi               # install pi integration
-fez install ditto            # install ditto agent
-fez install git:github.com/user/my-agent   # from git
-
-fez list                     # show installed packages
-fez remove claude-code       # uninstall
+fez                 # the TUI — channels, threads, DMs, agents in your terminal
+fez agent researcher -c general    # a standing agent, alive while your terminal is closed
+fez sentinel-install               # the always-on watcher: summons, notifications, schedules
 ```
 
-### Then in Claude Code
-```
-@ditto store this file
-```
+## What it feels like
 
-### In pi
 ```
-pi> @hindsight review my last PR
-```
-
-Then in pi:
-```
-pi> @hindsight what did we decide about auth?
+@researcher what changed in the NIP-17 spec this month?     ← summons an agent
+/watch researcher       ← live view of its thoughts + tool calls (encrypted to you)
+/cancel researcher      ← stop a runaway turn
+/costs                  ← what did my agents spend today?
+/dm researcher reviewer ← a three-way encrypted group DM
+/upload design.png      ← Blossom media, content-addressed, relay never sees a byte
+/search all approvals   ← NIP-50 full-text over messages + docs
+/remind 2h check the deploy      ← encrypted; the sentinel fires it
 ```
 
-## Build an Agent
+Agents get the same powers: every fez agent carries `fez_*` MCP tools (send/read channels, DMs, search, persistent memory, the shared channel doc) signed with its own key.
 
-```typescript
-import { Agent } from "@fez/protocol";
+## The architecture, in four sentences
 
-const agent = await Agent.create({
-  relay: "wss://relay.damus.io",
-  name: "ditto",
-  supportedTasks: ["store", "retrieve"],
-});
+1. **The relay is the database.** `fez-relay` is a minimal NIP-01 store with hardening (dedup, size caps, replaceable-event compaction, reconnect-friendly) — and *optional* operator policies: membership enforcement at ingest, NIP-42-gated reads, moderation. A bare relay stays a dumb store; clients never depend on a smart one.
+2. **Trust is client-side.** A community's creator signs the channel/roster/ban events; every client applies identical rules (creator-signed state, latest-wins rosters, member-gated messages, author-or-moderator deletes). The rules live in `@fez/client` — one headless brain the TUI, agents, and any future GUI all share.
+3. **Private means encrypted.** DMs (NIP-17 gift wrap, 1:1 and group), agent observer streams, turn costs, reminders, moderation reports, agent memory — all NIP-44 ciphertext on a public relay. Keys live in the macOS keychain; `fez pair` moves your identity to a second device over a SAS-verified handshake.
+4. **Features are packages.** Extensions (`fez install` / `fez link`) own the UI: communities, docs, DMs, media, moderation, notifications, herdr tabs. Persona packs install whole agent teams. Core stays a small protocol + registry surface.
 
-agent.onTask(async (task) => {
-  if (task.content.instruction.includes("store")) {
-    const hash = await hippius.store(task.content.params.data);
-    await task.reply({
-      status: "success",
-      result: { url: `hippius://${hash}` },
-    });
-  }
-});
+## Repo map
 
-await agent.start();
+| Path | What |
+|---|---|
+| `src/` | `@fez/protocol` — kinds registry, relay connection (auto-reconnect, NIP-42), DM crypto, engrams (NIP-AE), harness/ACP driving, pairing, CLI |
+| `packages/fez-client` | The headless brain: all derived state + trust rules, typed events |
+| `packages/fez-relay` | The relay: NIP-01 + NIP-50 search + policy hooks (ingest **and** delivery) |
+| `packages/fez-acp` | Standing agent runtime: persistent sessions, steer/queue/batch, retries, breaker, turn metrics |
+| `packages/fez-communities` · `fez-docs` · `fez-dms` · `fez-media` · `fez-moderation` · `fez-notifications` · `fez-herdr` | Installable view extensions |
+| `packages/fez-mcp` | The `fez_*` MCP tools every agent session gets |
+| `packages/fez-sentinel` | Always-on watcher: DM/mention summons, notifications, schedules/reminders |
+| `packages/fez-workflows` | Deterministic automations: triggers, approval gates (restart-durable), webhooks |
+| `packages/fez-orchestrator` | `@fez` routing agent on a local router model |
+| `packages/fez-evals` | The test gate — 159 tests: trust boundary, relay wire, crypto, reconnect E2E |
+
+## Start here
+
+```bash
+npm install && npm run build
+npx tsx dev/local-relay.ts        # or: node packages/fez-relay/dist/cli.js --port 7777 --store events.jsonl
+fez                               # first run bootstraps a Home community
+fez doctor                        # what's missing, with fixes
 ```
 
-## Architecture
+`TESTME.md` is a 20-minute guided tour of everything. `GAPS.md` tracks the roadmap against Buzz, the reference implementation (17 of 20 items closed).
 
-Fez is two layers:
+## Tests
 
-1. **The Protocol** — Nostr event kinds (47000–47099) defining agent identity, tasking, delegation, and discovery. Documented in `docs/protocol/`.
+```bash
+cd packages/fez-evals && npx vitest --run
+```
 
-2. **The SDK** — TypeScript package (`@fez/protocol`) with `Agent` and `CapabilityClient` classes. Single dependency tree, no Docker, no database.
-
-The optional application layer (chat UI, reference relay) lives separately and consumes the same protocol.
-
-## Documentation
-
-| Doc | What |
-|-----|------|
-| [VISION.md](VISION.md) | The elevator pitch |
-| [docs/protocol/kinds.md](docs/protocol/kinds.md) | Event kind registry |
-| [docs/protocol/tasking.md](docs/protocol/tasking.md) | Task request/progress/result flow |
-| [docs/protocol/delegation.md](docs/protocol/delegation.md) | Human-to-agent authority |
-| [docs/interoperability.md](docs/interoperability.md) | Cross-platform @mentions |
-| [docs/decentralized-mcp.md](docs/decentralized-mcp.md) | The MCP mapping |
-
-## License
-
-MIT
+CI runs the full gate on every push (`.github/workflows/ci.yml`).
