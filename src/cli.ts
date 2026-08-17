@@ -595,6 +595,55 @@ program
   });
 
 program
+  .command("link <dir>")
+  .description("Dev-install a local extension package: build, copy its entry to ~/.fez/extensions, smoke-import the result")
+  .option("--no-build", "Skip the package's npm build script")
+  .action(async (dir: string, options) => {
+    const { execSync } = await import("node:child_process");
+    const { pathToFileURL } = await import("node:url");
+    const fsSync = await import("node:fs");
+    const pkgDir = path.resolve(dir);
+    let manifest: { name?: string; scripts?: Record<string, string>; fez?: { extension?: { entry?: string } } };
+    try {
+      manifest = JSON.parse(fsSync.readFileSync(path.join(pkgDir, "package.json"), "utf-8"));
+    } catch {
+      console.error(chalk.red(`No readable package.json in ${pkgDir}`));
+      process.exit(1);
+    }
+    const entry = manifest.fez?.extension?.entry;
+    if (!entry) {
+      console.error(chalk.red(`${manifest.name ?? pkgDir} declares no fez.extension.entry — nothing to link.`));
+      process.exit(1);
+    }
+    if (options.build !== false && manifest.scripts?.build) {
+      // cwd pinned to the package — the copy-from-the-wrong-directory
+      // foot-gun is the reason this command exists.
+      execSync("npm run build", { cwd: pkgDir, stdio: "inherit" });
+    }
+    const name = path.basename(pkgDir);
+    const ext = path.extname(entry) || ".js";
+    const extensionsDir = path.join(os.homedir(), ".fez", "extensions");
+    fsSync.mkdirSync(extensionsDir, { recursive: true });
+    // Stage next to the destination (same dir, so the {"type":"module"}
+    // marker applies), smoke-import, and only then replace the installed
+    // bundle — a broken build must never clobber a working extension.
+    const staged = path.join(extensionsDir, `.staged-${name}${ext}`);
+    fsSync.copyFileSync(path.join(pkgDir, entry), staged);
+    if (ext === ".js" || ext === ".mjs") {
+      try {
+        await import(pathToFileURL(staged).href);
+      } catch (err) {
+        fsSync.rmSync(staged, { force: true });
+        console.error(chalk.red(`✗ built bundle fails to import — not installed: ${err instanceof Error ? err.message : err}`));
+        process.exit(1);
+      }
+    }
+    const dest = path.join(extensionsDir, `${name}${ext}`);
+    fsSync.renameSync(staged, dest);
+    console.log(chalk.green(`✓ linked ${name}${ext} (${(fsSync.statSync(dest).size / 1024).toFixed(1)}kb) → ~/.fez/extensions/`));
+  });
+
+program
   .command("list")
   .description("List installed fez packages")
   .action(async () => {
