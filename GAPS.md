@@ -5,6 +5,9 @@ thinner, and what fez deliberately skips. This is the standing
 roadmap-against-reference: update it as gaps close.
 
 - Audited: Buzz `8b8445f5e` (2026-08-14) against fez `701cb3f` (2026-08-15).
+- **Update 2026-08-17 (later)**: items 11 (turn metrics 47030 + observer
+  control /cancel + /costs, `1d4b6a7`), 13 (fez-moderation, `698f417`),
+  and 12 (fez-search NIP-50, see log) closed. 12 of 20 roadmap items done.
 - **Update 2026-08-17 (evening)**: items 7 (read-side seam: NIP-42 +
   onDeliver + membership read gating, `f72ef07`), 9 in full (group DMs,
   `f993d65`), and 10 (fez-media/Blossom, `701e642`) also closed.
@@ -276,9 +279,9 @@ Consolidated from all six audits. Effort ≈ S (<1 day) / M (days) / L (week+).
 | 8 | ✅ CLOSED `56558c9` — Session handoff summary on recycle (§2.7) | S | Turn 21 amnesia; prompt the dying session, fold into prime. |
 | 9 | ✅ CLOSED `3996a8f`+`f993d65` (profiles, /status, /kick, group DMs) — Profiles (kind 0) + group DMs + roster removal + `/status` (§3) | M | Rounds out the chat core for the second human. |
 | 10 | ✅ CLOSED `701e642` — fez-media (Blossom) extension (§3) | M | Biggest UX gap; zero relay changes. |
-| 11 | Usage metrics (per-turn encrypted frames, fail-closed deltas) + observer control channel (§2.7) | M | Cost visibility + the ability to stop a bad turn. |
-| 12 | fez-search (FTS5 + NIP-50) (§3, #43) | M | Candidates-not-authority model matches fez trust exactly. |
-| 13 | fez-moderation: encrypted reports + signed ban lists + relay policy (§3, #42) | M | Enforcement half needs zero new seams. |
+| 11 | ✅ CLOSED `1d4b6a7` — Usage metrics (per-turn encrypted frames, fail-closed deltas) + observer control channel (§2.7) | M | Cost visibility + the ability to stop a bad turn. |
+| 12 | ✅ CLOSED `search` — fez-search (FTS5 + NIP-50) (§3, #43) | M | Candidates-not-authority model matches fez trust exactly. |
+| 13 | ✅ CLOSED `698f417` — fez-moderation: encrypted reports + signed ban lists + relay policy (§3, #42) | M | Enforcement half needs zero new seams. |
 | 14 | Workflow vocabulary fill-in + durable runs (§3) | M | Skeleton at parity; fill proven vocabulary. |
 | 15 | Fez MCP server for harness agents (§3) | M | Agents currently can't act on fez itself mid-turn. |
 | 16 | ✅ CLOSED `2524a65` — Encrypted reminders (privacy fix) (§3) | S | Private data currently plaintext on the relay. |
