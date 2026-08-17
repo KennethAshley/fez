@@ -267,3 +267,19 @@ describe("ban list trust rule (kind 30047)", () => {
     expect(client.state.isBanned(COMM, BOB)).toBe(false);
   });
 });
+
+describe("leaveCommunity", () => {
+  test("drops the community locally; scope clears; roster untouched; rejoin restores", async () => {
+    expect(client.state.joined.has(COMM)).toBe(true);
+    client.state.scope = { communityId: COMM, channelId: CHAN };
+    client.leaveCommunity(COMM);
+    expect(client.state.joined.has(COMM)).toBe(false);
+    expect(client.state.scope).toBeNull();
+    // Nothing was published — leaving is local, the roster still lists us.
+    expect(wire.published.filter((e) => e.kind === 47102).every((e) => e.tags.some((t) => t[0] === "p" && t[1] === ALICE))).toBe(true);
+    expect(client.state.communities.get(COMM)?.channels.get(CHAN)?.members.has(ALICE)).toBe(true);
+    // Rejoin restores.
+    await client.joinCommunity(COMM);
+    expect(client.state.joined.has(COMM)).toBe(true);
+  });
+});

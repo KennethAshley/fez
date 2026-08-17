@@ -193,3 +193,13 @@ body {
 }
 .thread-link.quiet { color: transparent; }
 .bubble:hover .thread-link.quiet { color: var(--fg-dim); }
+
+/* ── leave community ────────────────────────────────────────── */
+.community-name { display: flex; align-items: center; gap: 4px; }
+.leave {
+  margin-left: auto; background: none; border: 0; color: transparent;
+  font: inherit; font-size: 12px; cursor: pointer; padding: 0 2px; border-radius: 4px;
+}
+.community:hover .leave { color: var(--fg-dim); }
+.leave:hover { color: var(--red); }
+.leave.armed { color: var(--bg0); background: var(--red); font-weight: 700; padding: 0 6px; }

@@ -188,6 +188,34 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
     (a, b) => (b[1].msgs.at(-1)?.ts ?? 0) - (a[1].msgs.at(-1)?.ts ?? 0)
   );
 
+  // Leave uses a two-click confirm (webview dialogs are ugly): first ×
+  // arms it, the second click within 4s commits.
+  const [armedLeave, setArmedLeave] = useState<string>();
+  const leaveCommunity = (communityId: string) => {
+    if (armedLeave !== communityId) {
+      setArmedLeave(communityId);
+      setTimeout(() => setArmedLeave((current) => (current === communityId ? undefined : current)), 4000);
+      return;
+    }
+    setArmedLeave(undefined);
+    client.leaveCommunity(communityId);
+    // If we just left the room we were in, hop to the liveliest remaining.
+    if (!client.state.scope) {
+      let best: { communityId: string; channelId: string; members: number } | undefined;
+      for (const community of client.state.communities.values()) {
+        if (!client.state.joined.has(community.id)) continue;
+        for (const channel of community.channels.values()) {
+          if (!channel.members.has(client.pubkey)) continue;
+          if (!best || channel.members.size > best.members) {
+            best = { communityId: community.id, channelId: channel.id, members: channel.members.size };
+          }
+        }
+      }
+      if (best) void openChannel(best.communityId, best.channelId);
+    }
+    render();
+  };
+
   return (
     <div className="shell">
       {!connected && <div className="conn-bar">relay disconnected — reconnecting…</div>}
@@ -208,6 +236,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
                 {joined.filter((other) => other.name === community.name).length > 1 && (
                   <span className="community-id"> ·{community.id.slice(0, 4)}</span>
                 )}
+                <button
+                  className={armedLeave === community.id ? "leave armed" : "leave"}
+                  title={armedLeave === community.id ? "click again to leave" : `leave ${community.name} (local — rejoin anytime)`}
+                  onClick={() => leaveCommunity(community.id)}
+                >
+                  {armedLeave === community.id ? "leave?" : "×"}
+                </button>
               </div>
               {[...community.channels.values()].map((channel) => {
                 const active = view.kind === "channel" && scope?.channelId === channel.id;

@@ -632,6 +632,20 @@ export class FezClient {
     this.emit("channelsChanged");
   }
 
+  /**
+   * Leave a community: stop subscribing to its channels and drop it from
+   * the sidebar. Purely local — nothing is published; the roster still
+   * lists you (only the creator edits rosters), and re-joining restores
+   * everything from the relay. The community itself is untouched.
+   */
+  leaveCommunity(communityId: string): void {
+    if (!this.state.joined.delete(communityId)) return;
+    if (this.state.scope?.communityId === communityId) this.state.scope = null;
+    this.state.save();
+    this.resubscribe(); // shed the left channels from the live filters
+    this.emit("channelsChanged");
+  }
+
   setScope(communityId: string, channelId: string): void {
     this.state.scope = { communityId, channelId };
     this.state.save();
