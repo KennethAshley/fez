@@ -22,6 +22,7 @@ import {
   SidePanel,
   timestamp,
   visibleWidth,
+  applyBackgroundToLine,
   type Component,
   type FezTheme,
   type ThemeJson,
@@ -34,6 +35,43 @@ import {
  * header. Prefixing rendered OUTPUT keeps markdown intact (indenting
  * markdown SOURCE four spaces would turn it into a code block).
  */
+/**
+ * Full-width block background behind a rendered component — pi-tui's own
+ * ANSI-safe painter (applyBackgroundToLine, the mechanism inside Text's
+ * customBgFn), applied to any child incl. Markdown. Powers the two-tone
+ * timeline: userMessageBg behind yours, agentMessageBg behind theirs.
+ */
+class BlockBg implements Component {
+  constructor(
+    private child: Component & { invalidate?: () => void },
+    private bgFn: () => (s: string) => string
+  ) {}
+  invalidate(): void {
+    this.child.invalidate?.();
+  }
+  render(width: number): string[] {
+    const bg = this.bgFn();
+    return this.child.render(width).map((line) => applyBackgroundToLine(line, width, bg));
+  }
+}
+
+/**
+ * @mention coloring on rendered lines — "@researcher" pops in the
+ * accent color inside any message body. Post-render so markdown parsing
+ * never sees ANSI; fg-only close (chalk's 39) so a painted block
+ * background survives the colored span.
+ */
+class MentionColor implements Component {
+  constructor(private child: Component & { invalidate?: () => void }) {}
+  invalidate(): void {
+    this.child.invalidate?.();
+  }
+  render(width: number): string[] {
+    const accent = getActiveTheme().accent;
+    return this.child.render(width).map((line) => line.replace(/@[\w][\w-]*/g, (m) => accent(m)));
+  }
+}
+
 class LinePrefix implements Component {
   private prefixWidth: number;
   constructor(
@@ -901,13 +939,12 @@ export class FezTUI {
         if (!c.includes("\n") && c.length <= 160) bubble.addChild(new Text(c, 0, 0));
         else bubble.addChild(new Markdown(c, 0, 0, markdownTheme));
       } else if (currentAuthor === "You") {
-        // pi's userMessageBg: your own messages render as a full-width
-        // tinted block (header + content inside the tint). The ​ spacer
-        // keeps the gap OUTSIDE the tint — a leading \n inside would
-        // paint an empty tinted row. Footer sits below the tint.
-        bubble.addChild(new Text("​", 0, 0));
-        bubble.addChild(new Text(headText() + "\n" + c, 1, 0, (s) => getActiveTheme().userMessageBg(s)));
-        bubble.addChild(new Text(" " + actionsFooter(codeBlocks.length > 0), 0, 0));
+        // pi's userMessageBg — on the TEXT block only: header and footer
+        // sit outside the tint, so the highlight marks what you said,
+        // not the chrome around it.
+        bubble.addChild(new Text("\n" + headText(), 0, 0));
+        bubble.addChild(new MentionColor(new Text(c, 1, 0, (s) => getActiveTheme().userMessageBg(s))));
+        bubble.addChild(new Text(actionsFooter(codeBlocks.length > 0), 0, 0));
       } else {
         bubble.addChild(new Text("\n" + headText(), 0, 0));
         // Body indents two columns under the header — author names hang
@@ -915,8 +952,12 @@ export class FezTUI {
         // hierarchy (who → what) the flat layout lacked.
         const body =
           !c.includes("\n") && c.length <= 100 ? new Text(c, 0, 0) : new Markdown(c, 0, 0, markdownTheme);
-        bubble.addChild(new LinePrefix(body, "  "));
-        bubble.addChild(new Text("  " + actionsFooter(codeBlocks.length > 0), 0, 0));
+        // Two-tone timeline: their text on agentMessageBg, yours (above)
+        // on userMessageBg — authorship readable from color alone.
+        bubble.addChild(new BlockBg(new LinePrefix(new MentionColor(body), "  "), () => getActiveTheme().agentMessageBg));
+        // Footer: directly below the text, flush at the margin like the
+        // username — the dim styling alone marks it subordinate.
+        bubble.addChild(new Text(actionsFooter(codeBlocks.length > 0), 0, 0));
       }
       // An empty Text still renders one blank line — only mount the footer
       // when it has content, or every message drags a stray gap under it.

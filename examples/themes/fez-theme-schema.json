@@ -110,6 +110,10 @@
         "userMessageBg": {
           "$ref": "#/definitions/color",
           "description": "Full-width block behind your own messages (pi's userMessageBg)"
+        },
+        "agentMessageBg": {
+          "$ref": "#/definitions/color",
+          "description": "Full-width block behind other participants' messages — the two-tone timeline's second color"
         }
       }
     }

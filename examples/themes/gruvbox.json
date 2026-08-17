@@ -11,7 +11,8 @@
   "purple": "#d3869b",
   "aqua": "#8ec07c",
   "orange": "#fe8019",
-  "bg1": "#3c3836"
+  "bg1": "#3c3836",
+  "blueBg": "#2d3a40"
  },
  "colors": {
   "you": "blue",
@@ -41,6 +42,7 @@
   "mdQuoteBorder": "gray",
   "mdHr": "gray",
   "mdListBullet": "aqua",
-  "userMessageBg": "bg1"
+  "userMessageBg": "blueBg",
+  "agentMessageBg": "bg1"
  }
 }

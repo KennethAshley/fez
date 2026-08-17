@@ -38,6 +38,8 @@ export interface FezTheme {
   sidebarBg: StyleFn;
   /** Full-width block background behind the user's own messages (pi's userMessageBg). */
   userMessageBg: StyleFn;
+  /** Full-width block background behind OTHER participants' messages — the two-tone timeline's second color. */
+  agentMessageBg: StyleFn;
   loader: { spinner: StyleFn; message: StyleFn };
   markdown: MarkdownTheme;
   editor: EditorTheme;
@@ -55,6 +57,7 @@ export const defaultTheme: FezTheme = {
   banner: chalk.magenta,
   sidebarBg: (s) => chalk.bgAnsi256(236)(s),
   userMessageBg: (s) => chalk.bgAnsi256(237)(s),
+  agentMessageBg: (s) => chalk.bgAnsi256(235)(s),
   loader: { spinner: chalk.cyan, message: chalk.dim },
   markdown: {
     heading: (t) => chalk.bold.yellow(t),
@@ -219,6 +222,7 @@ export function compileThemeJson(spec: ThemeJson): Partial<FezTheme> & { name: s
   if (has("banner")) out.banner = paint(val("banner"));
   if (has("sidebarBg")) out.sidebarBg = paintBg(val("sidebarBg"));
   if (has("userMessageBg")) out.userMessageBg = paintBg(val("userMessageBg"));
+  if (has("agentMessageBg")) out.agentMessageBg = paintBg(val("agentMessageBg"));
   if (has("loaderSpinner") || has("loaderMessage")) {
     out.loader = {
       spinner: has("loaderSpinner") ? paint(val("loaderSpinner")) : defaultTheme.loader.spinner,

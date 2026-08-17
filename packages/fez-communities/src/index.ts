@@ -602,7 +602,9 @@ export default function communities(api: FezExtensionAPI): void {
   function threadMeta(channelId: string, rootId: string): string {
     const no = threadNo(rootId);
     const count = threadReplyCount(channelId, rootId);
-    return DIM(`${count} repl${count === 1 ? "y" : "ies"} · `) + OSC8(`fez-thread://open/${no}`, `/thread ${no}`);
+    // The link label is dimmed too — an undimmed OSC-8 label rendered
+    // full-brightness and made the whole footer read louder than the text.
+    return DIM(`${count} repl${count === 1 ? "y" : "ies"} · `) + OSC8(`fez-thread://open/${no}`, DIM(`/thread ${no}`));
   }
 
   function updateOrAppendSummaryLine(channelId: string, rootId: string, _latest?: Msg): void {
@@ -719,7 +721,7 @@ export default function communities(api: FezExtensionAPI): void {
           drafters.size === 1
             ? `✍ ${displayName(event.pubkey)}: ${drafters.get(event.pubkey)} · `
             : `✍ ${[...drafters.keys()].map(displayName).join(", ")} are replying… · `
-        ) + OSC8(`fez-thread://open/${no}`, `/thread ${no}`);
+        ) + OSC8(`fez-thread://open/${no}`, DIM(`/thread ${no}`));
       const root = bubbleHandles.get(rootId);
       if (root) {
         root.setMeta(meta);
