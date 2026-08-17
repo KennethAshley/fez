@@ -295,12 +295,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
       {banner && <div className="conn-bar error">{banner}</div>}
       <aside className="rail">
         <div className="brand">
-          fez <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />
+          <span className="brand-word">fez</span>{" "}
+          <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />
           <button className="rail-tool" title="search (⌘K)" onClick={() => setSearchOpen(true)}>
-            🔍
+            ⌕
           </button>
           <button className="rail-tool" title="agents" onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}>
-            🤖
+            @
           </button>
           <button className="rail-tool" title="agent costs" onClick={() => setPane(pane?.kind === "costs" ? undefined : { kind: "costs" })}>
             $
@@ -355,7 +356,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
               const active = view.kind === "dm" && view.convoKey === key;
               return (
                 <button key={key} className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
-                  {group ? "👥" : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
+                  {group ? <span className="group-mark">&</span> : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
                   {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
                 </button>
               );
@@ -725,7 +726,7 @@ function DmView({ client, wire, convoKey }: { client: FezClient; wire: BrowserWi
   return (
     <main className="main">
       <header className="topbar">
-        ✉ {group && "👥 "}
+        ✉ {group && <span className="group-mark">& </span>}
         {client.dmTitle(convoKey)}
         <span className="dm-note">end-to-end encrypted{group ? " · every participant sees every message" : ""}</span>
       </header>
