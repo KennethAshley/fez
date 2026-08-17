@@ -225,12 +225,63 @@ fn reject_persona_draft(name: String) -> Result<(), String> {
     std::fs::remove_file(drafts_dir()?.join(format!("{name}.md"))).map_err(|e| format!("delete failed: {e}"))
 }
 
+fn settings_path() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    Ok(std::path::Path::new(&home).join(".fez").join("settings.json"))
+}
+
+/// The machine's skill catalog (settings.json mcpServers) — same file
+/// the CLI's `fez skill add/remove` writes; the GUI is another surface.
+#[tauri::command]
+fn read_skills() -> Result<String, String> {
+    let raw = std::fs::read_to_string(settings_path()?).unwrap_or_else(|_| "{}".to_string());
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("settings.json unreadable: {e}"))?;
+    Ok(value.get("mcpServers").cloned().unwrap_or(serde_json::json!({})).to_string())
+}
+
+#[tauri::command]
+fn write_skill(name: String, config_json: String) -> Result<(), String> {
+    if name.is_empty() || name.len() > 64 {
+        return Err("bad skill name".to_string());
+    }
+    let config: serde_json::Value = serde_json::from_str(&config_json).map_err(|e| format!("bad config: {e}"))?;
+    let path = settings_path()?;
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
+    let mut settings: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("settings.json unreadable: {e}"))?;
+    if !settings.is_object() {
+        settings = serde_json::json!({});
+    }
+    let servers = settings
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert(serde_json::json!({}));
+    if !servers.is_object() {
+        *servers = serde_json::json!({});
+    }
+    servers.as_object_mut().unwrap().insert(name, config);
+    std::fs::write(&path, serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())? + "\n")
+        .map_err(|e| format!("write failed: {e}"))
+}
+
+#[tauri::command]
+fn remove_skill(name: String) -> Result<(), String> {
+    let path = settings_path()?;
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
+    let mut settings: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("settings.json unreadable: {e}"))?;
+    if let Some(servers) = settings.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+        servers.remove(&name);
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())? + "\n")
+        .map_err(|e| format!("write failed: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, delete_persona, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, delete_persona, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, read_skills, write_skill, remove_skill])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

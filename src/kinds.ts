@@ -260,6 +260,18 @@ export const KIND_REMINDER = 40007;
  */
 export const KIND_DOC = 40100;
 
+/**
+ * Skill listing — the decentralized skills marketplace. A signed,
+ * addressable advertisement for an MCP server config: ["d", skillName];
+ * content = JSON {name, description, command, args, envKeys, homepage}.
+ * envKeys are NAMES ONLY — secret values never ride the wire; the
+ * installer fills them locally. Installing a listing means writing your
+ * OWN settings.json catalog after reading the command — a listing is a
+ * recommendation from its author's pubkey, never something that runs by
+ * itself (the same review posture as persona drafts).
+ */
+export const KIND_SKILL_LISTING = 40200;
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,

@@ -13,6 +13,7 @@ import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
 import PulseView from "./PulseView";
 import WorkflowsView from "./WorkflowsView";
+import SkillsView from "./SkillsView";
 import ProfilePane from "./ProfilePane";
 import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
@@ -57,7 +58,8 @@ type MainView =
   | { kind: "dm"; convoKey: string }
   | { kind: "home" }
   | { kind: "pulse" }
-  | { kind: "workflows" };
+  | { kind: "workflows" }
+  | { kind: "skills" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
@@ -399,6 +401,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
           » workflows
         </button>
+        <button className={view.kind === "skills" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "skills" })}>
+          ⌁ skills
+        </button>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))
           .map((community, _index, joined) => (
@@ -538,6 +543,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
       {view.kind === "workflows" && <WorkflowsView client={client} />}
+      {view.kind === "skills" && <SkillsView client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>

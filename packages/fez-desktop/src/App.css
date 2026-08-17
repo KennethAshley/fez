@@ -778,3 +778,25 @@ button.author:hover { text-decoration: underline; }
   padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
   white-space: pre-wrap; word-break: break-word; margin-bottom: 10px; max-height: 45vh; overflow-y: auto;
 }
+
+/* ── skills catalog + marketplace ──────────────────────────── */
+.skill-row {
+  display: flex; align-items: flex-start; gap: 10px; background: var(--bg1);
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 10px 14px;
+  margin-bottom: 8px; max-width: 780px;
+}
+.skill-row.market { background: var(--bg0); }
+.skill-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.skill-name { font-family: var(--font-mono); font-weight: 700; display: flex; gap: 8px; align-items: center; }
+.skill-desc { font-size: 13px; }
+.skill-cmd {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim);
+  overflow-x: auto; white-space: nowrap;
+}
+.skill-env { font-family: var(--font-mono); font-size: 11px; color: var(--yellow); }
+.skill-author { display: flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
+.skill-actions { display: flex; gap: 6px; align-items: center; flex: none; }
+.publish-form { display: flex; gap: 6px; align-items: center; }
+.publish-form .manage-input { width: 180px; font-size: 11px; padding: 4px 8px; }
+.install-box { padding: 16px; }
+.install-head { font-family: var(--font-mono); font-weight: 700; margin-bottom: 8px; }

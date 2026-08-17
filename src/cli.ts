@@ -621,6 +621,142 @@ program
     console.log("✅ @fez launchd service removed (any running instance was stopped).");
   });
 
+// ─── skill — the machine's MCP catalog + the decentralized marketplace ──────
+
+const skill = program.command("skill").description("Skills (MCP servers) personas can declare — define locally, publish/install via the relay");
+
+skill
+  .command("add <name>")
+  .description("Define a skill: what the name means on THIS machine (personas reference it via mcpServers:)")
+  .option("--command <cmd>", "executable to launch (stdio MCP server)")
+  .option("--args <list>", "comma-separated arguments")
+  .option("--url <url>", "HTTP MCP server URL instead of a command")
+  .option("--env <pairs...>", "KEY=value pairs (stored locally, never published)")
+  .action(async (name: string, options) => {
+    const { loadSettings, saveSettings } = await import("./settings.js");
+    if (!options.command && !options.url) {
+      console.error("A skill needs --command (stdio) or --url (http).");
+      process.exitCode = 1;
+      return;
+    }
+    const env: Record<string, string> = {};
+    for (const pair of (options.env as string[] | undefined) ?? []) {
+      const eq = pair.indexOf("=");
+      if (eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
+    }
+    const config: Record<string, unknown> = options.url
+      ? { type: "http", url: options.url }
+      : {
+          command: options.command,
+          ...(options.args ? { args: (options.args as string).split(",").map((a: string) => a.trim()) } : {}),
+          ...(Object.keys(env).length ? { env } : {}),
+        };
+    const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
+    saveSettings({ mcpServers: { ...settings.mcpServers, [name]: config } } as never);
+    console.log(`✅ skill "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn.`);
+  });
+
+skill
+  .command("list")
+  .description("List defined skills and which personas declare them")
+  .action(async () => {
+    const { loadSettings } = await import("./settings.js");
+    const { listPersonas } = await import("./personas.js");
+    const settings = loadSettings() as { mcpServers?: Record<string, { command?: string; url?: string; env?: Record<string, string> }> };
+    const skills = settings.mcpServers ?? {};
+    const personas = await listPersonas();
+    if (Object.keys(skills).length === 0) {
+      console.log("No skills defined — fez skill add <name> --command ... (or install one from the marketplace: fez skill market)");
+    }
+    for (const [name, config] of Object.entries(skills)) {
+      const users = personas.filter((persona) => persona.mcpServers.includes(name)).map((persona) => `@${persona.id}`);
+      const what = config.url ?? [config.command].join(" ");
+      console.log(`  ${chalk.green(name.padEnd(18))} ${what}${config.env ? chalk.dim(` (env: ${Object.keys(config.env).join(", ")})`) : ""}${users.length ? chalk.cyan(`  ← ${users.join(", ")}`) : ""}`);
+    }
+    const declared = new Set<string>(personas.flatMap((persona) => persona.mcpServers));
+    const undefinedSkills = [...declared].filter((name) => !skills[name]);
+    if (undefinedSkills.length > 0) {
+      console.log(chalk.yellow(`  ⚠ declared but undefined: ${undefinedSkills.join(", ")} — agents disclose the gap until you define them`));
+    }
+  });
+
+skill
+  .command("remove <name>")
+  .description("Remove a skill definition (personas declaring it fall back to disclosure)")
+  .action(async (name: string) => {
+    const { loadSettings, saveSettings } = await import("./settings.js");
+    const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
+    if (!settings.mcpServers?.[name]) return console.log(`No skill named "${name}".`);
+    const { [name]: _removed, ...rest } = settings.mcpServers;
+    saveSettings({ mcpServers: rest } as never);
+    console.log(`🗑  skill "${name}" removed.`);
+  });
+
+skill
+  .command("publish <name>")
+  .description("Publish a defined skill to the marketplace (relay listing; env VALUES never leave this machine)")
+  .option("-r, --relay <url>", "Relay URL (default: settings/env)")
+  .option("--description <text>", "what this skill does")
+  .option("--homepage <url>", "docs / source link")
+  .action(async (name: string, options) => {
+    const { loadSettings, resolveRelay } = await import("./settings.js");
+    const { loadOrCreateKey } = await import("./keys.js");
+    const { KIND_SKILL_LISTING } = await import("./kinds.js");
+    const settings = loadSettings() as { mcpServers?: Record<string, { command?: string; args?: string[]; url?: string; type?: string; env?: Record<string, string> }> };
+    const config = settings.mcpServers?.[name];
+    if (!config) {
+      console.error(`No skill named "${name}" — define it first: fez skill add ${name} ...`);
+      process.exitCode = 1;
+      return;
+    }
+    const { RelayConnection } = await import("./relay.js");
+    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    await relay.connect();
+    const listing = {
+      name,
+      description: options.description ?? "",
+      ...(config.url ? { type: "http", url: config.url } : { command: config.command, args: config.args ?? [] }),
+      envKeys: Object.keys(config.env ?? {}), // names only — values stay home
+      ...(options.homepage ? { homepage: options.homepage } : {}),
+    };
+    await relay.publish(client.signEvent({ kind: KIND_SKILL_LISTING, tags: [["d", name]], content: JSON.stringify(listing) }));
+    console.log(`📡 published "${name}" to the marketplace (signed by your key; env values NOT included).`);
+    relay.disconnect();
+  });
+
+skill
+  .command("market")
+  .description("Browse marketplace listings on the relay")
+  .option("-r, --relay <url>", "Relay URL (default: settings/env)")
+  .action(async (options) => {
+    const { resolveRelay } = await import("./settings.js");
+    const { loadOrCreateKey } = await import("./keys.js");
+    const { KIND_SKILL_LISTING } = await import("./kinds.js");
+    const { RelayConnection } = await import("./relay.js");
+    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    await relay.connect();
+    const events = (await relay.query([{ kinds: [KIND_SKILL_LISTING], limit: 100 }])) as { pubkey: string; content: string; created_at: number; tags: string[][] }[];
+    const latest = new Map<string, { pubkey: string; content: string; created_at: number }>();
+    for (const event of events) {
+      const d = event.tags.find((t: string[]) => t[0] === "d")?.[1] ?? "";
+      const prior = latest.get(`${event.pubkey}:${d}`);
+      if (!prior || event.created_at > prior.created_at) latest.set(`${event.pubkey}:${d}`, event);
+    }
+    if (latest.size === 0) console.log("No listings on this relay yet — fez skill publish <name> puts yours up.");
+    for (const event of latest.values()) {
+      try {
+        const listing = JSON.parse(event.content) as { name: string; description?: string; command?: string; args?: string[]; url?: string; envKeys?: string[] };
+        const what = listing.url ?? [listing.command, ...(listing.args ?? [])].join(" ");
+        console.log(`  ${chalk.green(listing.name.padEnd(18))} ${listing.description ?? ""}`);
+        console.log(chalk.dim(`    runs: ${what}${listing.envKeys?.length ? `  needs env: ${listing.envKeys.join(", ")}` : ""}  by ${event.pubkey.slice(0, 12)}`));
+      } catch { /* skip malformed */ }
+    }
+    console.log(chalk.dim(`\n  install: fez skill add <name> --command ... (READ the command first — it runs on your machine)`));
+    relay.disconnect();
+  });
+
 // ─── doctor — is this machine ready to fez? ─────────────────────────────────
 
 program
