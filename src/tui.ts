@@ -83,6 +83,8 @@ export class FezTUI {
   // packages/fez-tui/README.md.
   private screen!: TuiAltScreen;
   private log = new Container();
+  private logScroll?: ScrollView;
+  private scrollTopHandlers: (() => Promise<void>)[] = [];
   private editor!: Editor;
   // Full-height sidebar surface (atelier's renderDock pattern — emits
   // terminal-height rows every render). Extensions get sections via
@@ -163,6 +165,8 @@ export class FezTUI {
         };
       },
       appendMessage: (author, content, ts) => this.appendBubble(author, content, ts),
+      prependMessage: (author, content, ts) => this.appendBubble(author, content, ts, "prepend"),
+      onLogScrollTop: (handler) => this.scrollTopHandlers.push(handler),
       notify: (text) => this.systemLine(text),
       clearLog: () => {
         this.log.clear();
@@ -227,7 +231,8 @@ export class FezTUI {
     // (shrink: 0). Without the pins, pi-tui's default shrink:1 squeezes
     // EVERY child once the log overflows the screen — observed live as
     // the input box vanishing the moment channel history backfilled.
-    main.addChild(new ScrollView(this.log, { follow: "end" }), { grow: 1, shrink: 1 });
+    this.logScroll = new ScrollView(this.log, { follow: "end" });
+    main.addChild(this.logScroll, { grow: 1, shrink: 1 });
     main.addChild(this.editor, { shrink: 0 });
     main.addChild(footer.attach(this.screen), { shrink: 0 });
     if (this.sidePanelUsed) {
@@ -240,6 +245,41 @@ export class FezTUI {
     }
     this.screen.start();
     this.screen.setFocus(this.editor);
+
+    // Load-older seam (Buzz's scroll-up channel paging, TUI-shaped):
+    // when the user PARKS the log at the very top with real overflow,
+    // fire the registered handlers once, let them prepend history, then
+    // shift the viewport down by exactly the added height so the line
+    // they were reading stays put. Re-arms when they scroll away from
+    // the top — one page per visit, not a firehose.
+    let atTopArmed = true;
+    let loadingOlder = false;
+    setInterval(() => {
+      // contentHeight is a private field in pi-tui's typings but a plain
+      // JS property — read it structurally for the compensation math.
+      const scroll = this.logScroll as unknown as
+        | { contentHeight: number; scrollTop: number; viewportHeight: number; scrollTo(top: number): void }
+        | undefined;
+      if (!scroll || this.scrollTopHandlers.length === 0 || loadingOlder) return;
+      if (scroll.scrollTop > 0) {
+        atTopArmed = true;
+        return;
+      }
+      if (!atTopArmed || scroll.contentHeight <= scroll.viewportHeight) return;
+      atTopArmed = false;
+      loadingOlder = true;
+      const beforeHeight = scroll.contentHeight;
+      void Promise.allSettled(this.scrollTopHandlers.map((h) => h())).then(() => {
+        this.screen.requestRender();
+        // contentHeight refreshes during the next layout pass — measure
+        // the delta after it and compensate so the view doesn't jump.
+        setTimeout(() => {
+          const delta = scroll.contentHeight - beforeHeight;
+          if (delta > 0 && scroll.scrollTop === 0) scroll.scrollTo(delta);
+          loadingOlder = false;
+        }, 80);
+      });
+    }, 300).unref?.();
 
     // Flush ui.appendMessage calls that arrived before the screen existed.
     for (const bubble of this.pendingBubbles) this.appendBubble(bubble.author, bubble.content);
@@ -769,7 +809,7 @@ export class FezTUI {
    * re-lays-out: a streaming reply can start as a one-liner and grow into
    * a header+block shape.
    */
-  private appendBubble(author: string, content: string, ts?: number): MessageHandle {
+  private appendBubble(author: string, content: string, ts?: number, position: "append" | "prepend" = "append"): MessageHandle {
     if (!this.screen) {
       this.pendingBubbles.push({ author, content });
       // Pre-screen bubbles are startup notices — nothing updates them later.
@@ -841,7 +881,10 @@ export class FezTUI {
       if (footerText) bubble.addChild(new Text(chalk.dim(footerText), 0, 0));
     };
     layout(content);
-    this.log.addChild(bubble);
+    // Older-page loading inserts ABOVE the existing timeline — Container
+    // children are a plain array, so prepend is an unshift.
+    if (position === "prepend") this.log.children.unshift(bubble);
+    else this.log.addChild(bubble);
     this.screen.requestRender();
     const rerender = () => this.screen.requestRender();
 

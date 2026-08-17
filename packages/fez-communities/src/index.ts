@@ -61,7 +61,7 @@ export default function communities(api: FezExtensionAPI): void {
     rootId?: string; // set iff the message is part of a thread
     ts: number;
   }
-  const MSG_CACHE_CAP = 200;
+  const MSG_CACHE_CAP = 1000; // sized for scroll-up paging — pages accumulate until eviction
   const messagesByChannel = new Map<string, Msg[]>();
   const msgById = new Map<string, Msg>();
   // Threads get small user-facing numbers (#1, #2, …) as they're first seen —
@@ -832,6 +832,98 @@ export default function communities(api: FezExtensionAPI): void {
     for (const event of deletions) handleDeletion(event);
     refreshUi();
   }
+
+  // ── Scroll-up paging (Buzz's channel window, dumb-relay-shaped):
+  // parking the view at the top pulls the previous page with an
+  // `until` filter. nostr filters can't express Buzz's composite
+  // (created_at, id) keyset cursor, so `until` (inclusive) overlaps the
+  // boundary second and seenMessages dedupes the ties — same safety,
+  // client-side. Exhaustion uses Buzz's limit+1 probe: a short page
+  // proves nothing on an exact-multiple final page, a missing sentinel
+  // row does.
+  const PAGE_SIZE = 50;
+  const exhaustedChannels = new Set<string>();
+
+  async function loadOlderPage(channelId: string, communityId: string): Promise<void> {
+    const list = messagesByChannel.get(channelId) ?? [];
+    const oldest = list[0]?.ts;
+    if (!oldest) return;
+    const events = await nostr!.query([
+      { kinds: [KIND_CHANNEL_MESSAGE], "#h": [channelId], until: oldest, limit: PAGE_SIZE + 1 },
+    ]);
+    if (events.length <= PAGE_SIZE) exhaustedChannels.add(channelId);
+    const fresh = events
+      .filter((e) => !seenMessages.has(e.id) && state.isMember(communityId, channelId, e.pubkey))
+      .sort((a, b) => a.created_at - b.created_at);
+    if (fresh.length === 0) {
+      // Nothing but boundary overlap — no forward progress possible.
+      exhaustedChannels.add(channelId);
+    }
+
+    // Cache-prepend, oldest-first ahead of the existing window.
+    const freshMsgs: Msg[] = [];
+    for (const event of fresh) {
+      seenMessages.add(event.id);
+      const { parentId, rootId } = parseThreadRef(event.tags);
+      const msg: Msg = {
+        id: event.id,
+        authorPk: event.pubkey,
+        authorName: event.pubkey === nostr!.pubkey ? "You" : displayName(event.pubkey),
+        content: event.content,
+        parentId,
+        rootId,
+        ts: event.created_at,
+      };
+      freshMsgs.push(msg);
+      msgById.set(msg.id, msg);
+      if (rootId) threadNo(rootId);
+    }
+    messagesByChannel.set(channelId, [...freshMsgs, ...list].slice(-MSG_CACHE_CAP));
+
+    if (view.mode !== "channel" || state.scope?.channelId !== channelId) return;
+    // Prepend newest-of-the-old first so the final order reads
+    // chronologically: roots as bubbles; replies bump their thread's
+    // existing summary line in place, or mint one if the thread is new
+    // to the view. Replies whose root is still unloaded stay silent —
+    // the root's page will bring the thread with it.
+    const summarized = new Set<string>();
+    for (const msg of [...freshMsgs].reverse()) {
+      if (!msg.parentId) {
+        const handle = api.ui.prependMessage(msg.authorName, msg.content, msg.ts);
+        handle.setFooter(reactionFooter(msg.id));
+        bubbleHandles.set(msg.id, handle);
+        continue;
+      }
+      const rootId = msg.rootId!;
+      if (summaryLineHandles.has(rootId)) {
+        if (!summarized.has(rootId)) updateOrAppendSummaryLine(channelId, rootId);
+        summarized.add(rootId);
+      } else if (msgById.has(rootId) && !summarized.has(rootId)) {
+        summarized.add(rootId);
+        const no = threadNo(rootId);
+        const count = threadReplyCount(channelId, rootId);
+        const root = msgById.get(rootId);
+        summaryLineHandles.set(
+          rootId,
+          api.ui.prependMessage(
+            `thread #${no}`,
+            `${count} repl${count === 1 ? "y" : "ies"} to "${snippet(root?.content ?? "(not seen)")}" — /thread ${no}`,
+            msg.ts
+          )
+        );
+      }
+    }
+    if (exhaustedChannels.has(channelId)) {
+      api.ui.prependMessage("history", `— beginning of the channel — nothing older on the relay —`);
+    }
+  }
+
+  api.ui.onLogScrollTop(async () => {
+    if (view.mode !== "channel") return;
+    const current = state.currentChannel();
+    if (!current || exhaustedChannels.has(current.channel.id)) return;
+    await loadOlderPage(current.channel.id, current.community.id);
+  });
 
   async function syncJoined(): Promise<void> {
     const ids = [...state.joined];

@@ -21,6 +21,7 @@ export interface NostrFilter {
   kinds?: number[];
   authors?: string[];
   since?: number;
+  until?: number;
   limit?: number;
   [key: `#${string}`]: string[] | undefined;
 }
@@ -68,6 +69,8 @@ export interface FezExtensionAPI {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
     appendMessage(author: string, content: string, ts?: number): MessageHandle;
+    prependMessage(author: string, content: string, ts?: number): MessageHandle;
+    onLogScrollTop(handler: () => Promise<void>): void;
     notify(text: string): void;
     clearLog(): void;
   };

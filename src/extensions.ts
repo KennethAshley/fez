@@ -133,6 +133,10 @@ export interface FezExtensionAPI {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
     appendMessage(author: string, content: string, ts?: number): MessageHandle;
+    /** Insert a bubble ABOVE the existing timeline — older-page history loading. */
+    prependMessage(author: string, content: string, ts?: number): MessageHandle;
+    /** Fires when the user parks the chat log at its very top with content overflowing — the scroll-up "load older" trigger. The viewport is held in place across whatever the handler prepends. */
+    onLogScrollTop(handler: () => Promise<void>): void;
     /** Dim system one-liner — notices, not chat: no author bubble, no timestamp, clearly not a participant. */
     notify(text: string): void;
     /** Wipe the chat log — view switching (e.g. a thread view repainting the timeline). */
@@ -149,6 +153,8 @@ export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
 interface UiBackend {
   createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
   appendMessage(author: string, content: string, ts?: number): MessageHandle;
+  prependMessage(author: string, content: string, ts?: number): MessageHandle;
+  onLogScrollTop(handler: () => Promise<void>): void;
   notify(text: string): void;
   clearLog(): void;
 }
@@ -196,6 +202,9 @@ function buildApi(): FezExtensionAPI {
         uiBackend ? uiBackend.createSidePanel(opts) : { setText: () => {} },
       appendMessage: (author, content, ts) =>
         uiBackend ? uiBackend.appendMessage(author, content, ts) : inertMessageHandle,
+      prependMessage: (author, content, ts) =>
+        uiBackend ? uiBackend.prependMessage(author, content, ts) : inertMessageHandle,
+      onLogScrollTop: (handler) => uiBackend?.onLogScrollTop(handler),
       notify: (text) => uiBackend?.notify(text),
       clearLog: () => uiBackend?.clearLog(),
     },
