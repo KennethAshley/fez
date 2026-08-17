@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient } from "@fez/client";
+import { EMOJI, searchEmoji, type EmojiEntry } from "./emoji";
 
 /**
  * The message composer, Buzz-shaped: multiline textarea (Enter sends,
- * Shift+Enter breaks), @mention autocomplete over everyone the client
- * can name, and drag-drop / paste file upload. Editing affordances stay
- * with the caller (↑-to-edit, esc-to-cancel arrive as callbacks) — the
- * composer only owns text entry.
+ * Shift+Enter breaks), autocomplete for @mentions AND :emoji: tokens,
+ * a full emoji picker, and drag-drop / paste file upload. Editing
+ * affordances stay with the caller (↑-to-edit, esc-to-cancel arrive as
+ * callbacks) — the composer only owns text entry.
  */
 
 export interface MentionCandidate {
@@ -42,6 +43,8 @@ export default function Composer({
   const [pickIndex, setPickIndex] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [suppressed, setSuppressed] = useState(false); // esc closed the popup for this token
+  const [gridOpen, setGridOpen] = useState(false);
+  const [gridQuery, setGridQuery] = useState("");
 
   // Auto-grow: content height up to ~6 lines, then scroll.
   useEffect(() => {
@@ -51,16 +54,18 @@ export default function Composer({
     area.style.height = `${Math.min(area.scrollHeight, 140)}px`;
   }, [value]);
 
-  // The @token under the caret (if any) drives the mention popup.
-  const mention = useMemo(() => {
+  // The token under the caret drives the popup: @name or :emoji:.
+  const token = useMemo(() => {
     const upto = value.slice(0, caret);
-    const match = /(^|\s)@([\w-]*)$/.exec(upto);
-    if (!match) return undefined;
-    return { partial: match[2], start: upto.length - match[2].length - 1 };
+    const mention = /(^|\s)@([\w-]*)$/.exec(upto);
+    if (mention) return { type: "mention" as const, partial: mention[2], start: upto.length - mention[2].length - 1 };
+    const emoji = /(^|\s):([a-z0-9_+-]{2,})$/.exec(upto);
+    if (emoji) return { type: "emoji" as const, partial: emoji[2], start: upto.length - emoji[2].length - 1 };
+    return undefined;
   }, [value, caret]);
 
-  const candidates = useMemo(() => {
-    if (!mention) return [];
+  const mentionCandidates = useMemo(() => {
+    if (token?.type !== "mention") return [];
     const seen = new Set<string>();
     const all: MentionCandidate[] = [];
     for (const [pk, name] of client.knownNames()) {
@@ -70,7 +75,7 @@ export default function Composer({
       seen.add(key);
       all.push({ name, pk });
     }
-    const partial = mention.partial.toLowerCase();
+    const partial = token.partial.toLowerCase();
     return all
       .filter((c) => c.name.toLowerCase().includes(partial))
       .sort((a, b) => {
@@ -79,31 +84,63 @@ export default function Composer({
         return aStarts - bStarts || a.name.localeCompare(b.name);
       })
       .slice(0, 6);
-  }, [client, mention]);
+  }, [client, token]);
+
+  const emojiCandidates = useMemo(
+    () => (token?.type === "emoji" ? searchEmoji(token.partial, 8) : []),
+    [token]
+  );
+
+  const popupSize = token?.type === "mention" ? mentionCandidates.length : emojiCandidates.length;
 
   useEffect(() => {
     setPickIndex(0);
     setSuppressed(false);
-  }, [mention?.partial]);
-  const popupOpen = !!mention && candidates.length > 0 && !suppressed;
+  }, [token?.partial, token?.type]);
+  const popupOpen = !!token && popupSize > 0 && !suppressed;
 
-  const pick = (candidate: MentionCandidate) => {
-    if (!mention) return;
-    const before = value.slice(0, mention.start);
+  const replaceToken = (inserted: string) => {
+    if (!token) return;
+    const before = value.slice(0, token.start);
     const after = value.slice(caret);
-    const inserted = `${before}@${candidate.name} `;
-    onChange(inserted + after);
+    const next = `${before}${inserted}`;
+    onChange(next + after);
     requestAnimationFrame(() => {
       const area = areaRef.current;
       if (area) {
         area.focus();
-        area.selectionStart = area.selectionEnd = inserted.length;
-        setCaret(inserted.length);
+        area.selectionStart = area.selectionEnd = next.length;
+        setCaret(next.length);
+      }
+    });
+  };
+
+  const pick = (index: number) => {
+    if (token?.type === "mention") {
+      const candidate = mentionCandidates[index];
+      if (candidate) replaceToken(`@${candidate.name} `);
+    } else if (token?.type === "emoji") {
+      const candidate = emojiCandidates[index];
+      if (candidate) replaceToken(candidate.char);
+    }
+  };
+
+  const insertAtCaret = (text: string) => {
+    const area = areaRef.current;
+    const at = area?.selectionStart ?? value.length;
+    const next = value.slice(0, at) + text;
+    onChange(next + value.slice(at));
+    requestAnimationFrame(() => {
+      if (area) {
+        area.focus();
+        area.selectionStart = area.selectionEnd = next.length;
+        setCaret(next.length);
       }
     });
   };
 
   const syncCaret = () => setCaret(areaRef.current?.selectionStart ?? 0);
+  const gridResults = gridQuery.trim() ? searchEmoji(gridQuery.trim(), 96) : EMOJI.slice(0, 96);
 
   return (
     <div
@@ -124,77 +161,139 @@ export default function Composer({
     >
       {popupOpen && (
         <div className="mention-pop">
-          {candidates.map((candidate, index) => (
-            <button
-              key={candidate.pk}
-              className={index === pickIndex ? "mention-item active" : "mention-item"}
-              onMouseDown={(e) => {
-                e.preventDefault(); // keep textarea focus
-                pick(candidate);
-              }}
-            >
-              @{candidate.name}
-              {client.isOnline(candidate.pk) && <span className="dot on" />}
-            </button>
-          ))}
+          {token?.type === "mention" &&
+            mentionCandidates.map((candidate, index) => (
+              <button
+                key={candidate.pk}
+                className={index === pickIndex ? "mention-item active" : "mention-item"}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // keep textarea focus
+                  pick(index);
+                }}
+              >
+                @{candidate.name}
+                {client.isOnline(candidate.pk) && <span className="dot on" />}
+              </button>
+            ))}
+          {token?.type === "emoji" &&
+            emojiCandidates.map((candidate, index) => (
+              <button
+                key={candidate.name}
+                className={index === pickIndex ? "mention-item active" : "mention-item"}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(index);
+                }}
+              >
+                <span className="emoji-char">{candidate.char}</span> :{candidate.name}:
+              </button>
+            ))}
+        </div>
+      )}
+      {gridOpen && (
+        <div className="emoji-grid-pop">
+          <input
+            className="emoji-grid-search"
+            value={gridQuery}
+            autoFocus
+            placeholder="search emoji…"
+            onChange={(e) => setGridQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setGridOpen(false);
+              if (e.key === "Enter" && gridResults[0]) {
+                insertAtCaret(gridResults[0].char);
+                setGridOpen(false);
+                setGridQuery("");
+              }
+            }}
+          />
+          <div className="emoji-grid">
+            {gridResults.map((entry: EmojiEntry) => (
+              <button
+                key={entry.name}
+                title={`:${entry.name}:`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  insertAtCaret(entry.char);
+                  setGridOpen(false);
+                  setGridQuery("");
+                }}
+              >
+                {entry.char}
+              </button>
+            ))}
+          </div>
         </div>
       )}
       {dragging && <div className="drop-hint">drop to upload</div>}
-      <textarea
-        ref={areaRef}
-        rows={1}
-        value={value}
-        disabled={disabled}
-        className={editing ? "editing" : undefined}
-        placeholder={placeholder}
-        onChange={(e) => {
-          onChange(e.target.value);
-          setCaret(e.target.selectionStart ?? 0);
-        }}
-        onKeyUp={syncCaret}
-        onClick={syncCaret}
-        onPaste={(e) => {
-          if (!onFiles) return;
-          const files = [...e.clipboardData.files];
-          if (files.length) {
+      <div className="composer-row">
+        <textarea
+          ref={areaRef}
+          rows={1}
+          value={value}
+          disabled={disabled}
+          className={editing ? "editing" : undefined}
+          placeholder={placeholder}
+          onChange={(e) => {
+            onChange(e.target.value);
+            setCaret(e.target.selectionStart ?? 0);
+          }}
+          onKeyUp={syncCaret}
+          onClick={syncCaret}
+          onPaste={(e) => {
+            if (!onFiles) return;
+            const files = [...e.clipboardData.files];
+            if (files.length) {
+              e.preventDefault();
+              onFiles(files);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (popupOpen) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setPickIndex((i) => (i + 1) % popupSize);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setPickIndex((i) => (i - 1 + popupSize) % popupSize);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pick(pickIndex);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setSuppressed(true);
+                return;
+              }
+            }
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              onSend();
+            } else if (e.key === "ArrowUp" && !value && onArrowUpEmpty) {
+              e.preventDefault();
+              onArrowUpEmpty();
+            } else if (e.key === "Escape") {
+              if (gridOpen) setGridOpen(false);
+              else onEscape?.();
+            }
+          }}
+        />
+        <button
+          className="composer-tool"
+          title="emoji (or type :name:)"
+          onMouseDown={(e) => {
             e.preventDefault();
-            onFiles(files);
-          }
-        }}
-        onKeyDown={(e) => {
-          if (popupOpen) {
-            if (e.key === "ArrowDown") {
-              e.preventDefault();
-              setPickIndex((i) => (i + 1) % candidates.length);
-              return;
-            }
-            if (e.key === "ArrowUp") {
-              e.preventDefault();
-              setPickIndex((i) => (i - 1 + candidates.length) % candidates.length);
-              return;
-            }
-            if (e.key === "Enter" || e.key === "Tab") {
-              e.preventDefault();
-              pick(candidates[pickIndex]);
-              return;
-            }
-            if (e.key === "Escape") {
-              e.preventDefault();
-              setSuppressed(true);
-              return;
-            }
-          }
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            onSend();
-          } else if (e.key === "ArrowUp" && !value && onArrowUpEmpty) {
-            e.preventDefault();
-            onArrowUpEmpty();
-          } else if (e.key === "Escape" && onEscape) {
-            onEscape();
-          }
-        }}
-      />
+            setGridOpen(!gridOpen);
+          }}
+        >
+          ☺
+        </button>
+      </div>
     </div>
   );
 }

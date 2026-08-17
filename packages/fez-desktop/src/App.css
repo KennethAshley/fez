@@ -627,3 +627,54 @@ button.author:hover { text-decoration: underline; }
 .version-row:hover, .version-row.active { color: var(--fg); }
 .persona-prompt { min-height: 140px; flex: none; }
 .pane .ob-error { color: var(--red); font-size: 12px; margin-bottom: 8px; }
+
+/* ── batch: avatars, dividers, intro, emoji picker, composer row ── */
+.avatar { display: inline-block; vertical-align: middle; border-radius: 4px; flex: none; }
+.avatar-btn { background: none; border: 0; padding: 0; cursor: pointer; line-height: 0; }
+.bubble { display: grid; grid-template-columns: 38px minmax(0, 1fr); }
+.bubble > .avatar-btn { grid-column: 1; grid-row: 1 / span 8; margin-top: 3px; }
+.bubble > :not(.avatar-btn) { grid-column: 2; }
+.day-divider {
+  display: flex; align-items: center; gap: 10px; margin: 14px 0 10px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.day-divider::before, .day-divider::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+.channel-intro { padding: 28px 0 18px; max-width: 640px; }
+.intro-hash { font-family: var(--font-mono); font-size: 40px; color: var(--bg2); line-height: 1; }
+.channel-intro h2 { font-family: var(--font-mono); margin: 6px 0 4px; }
+.channel-intro p { color: var(--fg-dim); font-size: 13px; }
+.armed-delete { background: var(--red) !important; color: var(--bg0) !important; font-weight: 700; }
+.composer-row { display: flex; align-items: flex-end; gap: 6px; }
+.composer-row textarea { flex: 1; }
+.composer-tool {
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
+  color: var(--fg-dim); font: inherit; font-size: 15px; width: 38px; height: 40px;
+  cursor: pointer; flex: none;
+}
+.composer-tool:hover { color: var(--fg); border-color: var(--accent); }
+.emoji-char { font-size: 15px; margin-right: 4px; }
+.emoji-grid-pop {
+  position: absolute; bottom: 100%; right: 18px; margin-bottom: 4px; width: 320px;
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 5; padding: 8px;
+}
+.emoji-grid-search {
+  width: 100%; background: var(--bg0); border: 1px solid var(--hairline); border-radius: 6px;
+  color: var(--fg); font: inherit; font-size: 12px; padding: 6px 10px; outline: none;
+  font-family: var(--font-mono); margin-bottom: 6px;
+}
+.emoji-grid-search:focus { border-color: var(--accent); }
+.emoji-grid { display: grid; grid-template-columns: repeat(10, 1fr); max-height: 200px; overflow-y: auto; }
+.emoji-grid button {
+  background: none; border: 0; font-size: 17px; padding: 3px; cursor: pointer; border-radius: 5px;
+}
+.emoji-grid button:hover { background: var(--bg2); }
+.md pre {
+  background: var(--bg0); border: 1px solid var(--hairline); border-radius: 6px;
+  padding: 8px 12px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin: 6px 0;
+}
+.md code { font-family: var(--font-mono); font-size: 12.5px; }
+.md :not(pre) > code { background: var(--bg1); border-radius: 4px; padding: 1px 5px; }
+.md-diff { display: block; font-family: var(--font-mono); }
+.md-diff .diff-line { display: block; margin: 0 -12px; padding: 0 12px; }

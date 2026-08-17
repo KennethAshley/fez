@@ -17,6 +17,7 @@ import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
+import Avatar from "./Avatar";
 import { uploadFile, shareLine } from "./upload";
 import Onboarding from "./Onboarding";
 import "./App.css";
@@ -79,6 +80,19 @@ async function notify(title: string, body: string): Promise<void> {
 
 function escapeRe(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function dayLabel(tsSeconds: number): string {
+  const date = new Date(tsSeconds * 1000);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return "today";
+  const yesterday = new Date(today.getTime() - 86_400_000);
+  if (date.toDateString() === yesterday.toDateString()) return "yesterday";
+  return date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+
+function sameDay(a: number, b: number): boolean {
+  return new Date(a * 1000).toDateString() === new Date(b * 1000).toDateString();
 }
 
 /**
@@ -369,6 +383,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
               const active = view.kind === "dm" && view.convoKey === key;
               return (
                 <button key={key} className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
+                  {!group && <Avatar pk={key} size={16} title={client.dmTitle(key)} />}
                   {group ? <span className="group-mark">&</span> : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
                   {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
                 </button>
@@ -534,6 +549,7 @@ function MemberRail({
         const busy = activity && Date.now() - activity.ts < 30_000;
         return (
           <button key={member.pk} className="channel member-row" title={busy ? activity.activity : "profile"} onClick={() => onProfile(member.pk)}>
+            <Avatar pk={member.pk} size={16} title={member.name} />
             <span className={member.online ? "dot on" : "dot off"} /> {member.name}
             {member.self && <span className="profile-you">you</span>}
             {busy && <span className="working">⚙</span>}
@@ -568,7 +584,14 @@ function ChannelView({
   onProfile: (pk: string) => void;
   onDocs: () => void;
 }) {
-  const [draft, setDraft] = useState("");
+  // Drafts persist per channel (Buzz's DraftsPanel decision, minimal
+  // form): switching channels no longer eats half-typed messages.
+  const [draft, setDraftState] = useState(() => localStorage.getItem(`fez-draft-${channelId}`) ?? "");
+  const setDraft = (text: string) => {
+    setDraftState(text);
+    if (text) localStorage.setItem(`fez-draft-${channelId}`, text);
+    else localStorage.removeItem(`fez-draft-${channelId}`);
+  };
   const [uploading, setUploading] = useState<string>();
   // A focused thread reply opens inside its thread (the channel view
   // only shows roots); the component remounts per focus so lazy init is enough.
@@ -586,15 +609,22 @@ function ChannelView({
   const draftsForRoot = (rootId: string) => liveDrafts.filter(([, d]) => d.rootId === rootId);
   const workingNow = [...working.entries()].filter(([, w]) => now - w.ts < 30_000);
 
-  // A focused jump (search/inbox hit) pins the view on that message —
-  // auto-stick-to-bottom would yank the reader away on the next render.
+  // Anchored scroll (Buzz's policy): stick to the bottom only while the
+  // reader is AT the bottom; scrolled-up positions survive new messages.
+  // A focused jump (search/inbox hit) pins the view on that message.
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
   useEffect(() => {
     if (focusId) {
       document.getElementById(`msg-${focusId}`)?.scrollIntoView({ behavior: "auto", block: "center" });
       return;
     }
-    bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    if (nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "auto" });
   });
+  const trackScroll = () => {
+    const el = timelineRef.current;
+    if (el) nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
 
   const send = async () => {
     const text = draft.trim();
@@ -662,14 +692,27 @@ function ChannelView({
           </span>
         )}
       </header>
-      <div className="timeline">
+      <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
         {(client.state.currentChannel()?.channel.members.size ?? 0) <= 1 && (
           <div className="empty-room">
             Nobody else is in this channel — agents can't hear you here. Pick a channel without the ∅ mark, or /invite members from the TUI.
           </div>
         )}
-        {shown.map((msg) => (
+        {messages.length === 0 && (client.state.currentChannel()?.channel.members.size ?? 0) > 1 && (
+          <div className="channel-intro">
+            <div className="intro-hash">#</div>
+            <h2>{channelName}</h2>
+            <p>
+              {client.state.currentChannel()!.channel.members.size} members · created by{" "}
+              {client.displayName(client.state.currentChannel()!.community.creator)}. This is the very beginning.
+            </p>
+          </div>
+        )}
+        {shown.map((msg, index) => (
           <div key={msg.id} id={`msg-${msg.id}`} className={msg.id === focusId ? "focus-flash" : undefined}>
+            {(index === 0 || !sameDay(shown[index - 1].ts, msg.ts)) && (
+              <div className="day-divider"><span>{dayLabel(msg.ts)}</span></div>
+            )}
             <Bubble
               client={client}
               channelId={channelId}
@@ -795,16 +838,23 @@ function DmView({
   convoKey: string;
   onProfile: (pk: string) => void;
 }) {
-  const [draft, setDraft] = useState("");
+  const [draft, setDraftState] = useState(() => localStorage.getItem(`fez-draft-dm-${convoKey}`) ?? "");
+  const setDraft = (text: string) => {
+    setDraftState(text);
+    if (text) localStorage.setItem(`fez-draft-dm-${convoKey}`, text);
+    else localStorage.removeItem(`fez-draft-dm-${convoKey}`);
+  };
   const [uploading, setUploading] = useState<string>();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
   const convo = client.dmConversations().get(convoKey);
   const group = convoKey.includes("+");
   const peers = client.dmPeers(convoKey);
 
   useEffect(() => {
     client.markDmRead(convoKey);
-    bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    if (nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "auto" });
   });
 
   const send = async () => {
@@ -844,16 +894,31 @@ function DmView({
         )}
         <span className="dm-note">end-to-end encrypted{group ? " · every participant sees every message" : ""}</span>
       </header>
-      <div className="timeline">
-        {(convo?.msgs ?? []).map((msg) => {
+      <div
+        className="timeline"
+        ref={timelineRef}
+        onScroll={() => {
+          const el = timelineRef.current;
+          if (el) nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}
+      >
+        {(convo?.msgs ?? []).map((msg, index, all) => {
           const mine = msg.senderPk === client.pubkey;
           return (
-            <div key={msg.id} className={mine ? "bubble mine" : "bubble"}>
+            <div key={msg.id}>
+              {(index === 0 || !sameDay(all[index - 1].ts, msg.ts)) && (
+                <div className="day-divider"><span>{dayLabel(msg.ts)}</span></div>
+              )}
+              <div className={mine ? "bubble mine" : "bubble"}>
+              <button className="avatar-btn" title="profile" onClick={() => onProfile(msg.senderPk)}>
+                <Avatar pk={msg.senderPk} title={client.displayName(msg.senderPk)} size={30} />
+              </button>
               <div className="bubble-head">
                 <button className="author" title="profile" onClick={() => onProfile(msg.senderPk)}>{client.displayName(msg.senderPk)}</button>
                 <span className="time">{new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
               <div className="bubble-body md"><MdBody text={msg.text} /></div>
+              </div>
             </div>
           );
         })}
@@ -999,6 +1064,7 @@ function Bubble({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [remindOpen, setRemindOpen] = useState(false);
   const [remindSet, setRemindSet] = useState(false);
+  const [armedDelete, setArmedDelete] = useState(false);
 
   const react = (emoji: string) => {
     setPickerOpen(false);
@@ -1023,6 +1089,9 @@ function Bubble({
 
   return (
     <div className={mine ? "bubble mine" : "bubble"}>
+      <button className="avatar-btn" title="profile" onClick={onAuthor}>
+        <Avatar pk={msg.authorPk} title={msg.authorName} size={30} />
+      </button>
       <div className="bubble-head">
         <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
         <span className="time">{time}</span>
@@ -1043,8 +1112,20 @@ function Bubble({
               ⚑
             </button>
             {client.canDeleteMessage(communityId, msg) && (
-              <button className="danger" title="delete" onClick={() => void client.deleteMessage(channelId, communityId, msg.id)}>
-                ⌫
+              <button
+                className={armedDelete ? "danger armed-delete" : "danger"}
+                title={armedDelete ? "click again — leaves a visible tombstone" : "delete"}
+                onClick={() => {
+                  if (!armedDelete) {
+                    setArmedDelete(true);
+                    setTimeout(() => setArmedDelete(false), 3000);
+                    return;
+                  }
+                  setArmedDelete(false);
+                  void client.deleteMessage(channelId, communityId, msg.id);
+                }}
+              >
+                {armedDelete ? "⌫?" : "⌫"}
               </button>
             )}
           </div>
@@ -1137,6 +1218,25 @@ function MdBody({ text }: { text: string }) {
             </a>
           ),
           img: ({ src, alt }) => (src ? <img className="md-img" src={src} alt={alt ?? ""} /> : null),
+          code: ({ className, children }) => {
+            // ```diff fences render like the transcript's diff blocks —
+            // agents posting patches into channels get real diffs.
+            if (/language-diff/.test(className ?? "")) {
+              return (
+                <span className="md-diff">
+                  {String(children ?? "").replace(/\n$/, "").split("\n").map((line, index) => (
+                    <span
+                      key={index}
+                      className={line.startsWith("+") ? "diff-line add" : line.startsWith("-") ? "diff-line del" : "diff-line"}
+                    >
+                      {line || " "}
+                    </span>
+                  ))}
+                </span>
+              );
+            }
+            return <code className={className}>{children}</code>;
+          },
           p: ({ children }) => <p>{accentMentions(children)}</p>,
           li: ({ children }) => <li>{accentMentions(children)}</li>,
         }}

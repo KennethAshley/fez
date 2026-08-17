@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { FezClient } from "@fez/client";
+import Avatar from "./Avatar";
 
 /**
  * Profile card — click any name, get the person (or agent) behind it.
@@ -65,6 +66,7 @@ export default function ProfilePane({
       </header>
       <div className="pane-body">
         <div className="profile-name">
+          <Avatar pk={pk} size={40} title={name} />
           <span className={online ? "dot on" : "dot off"} /> {name}
           {self && <span className="profile-you">you</span>}
           {agentName && <span className="role-tag">agent</span>}

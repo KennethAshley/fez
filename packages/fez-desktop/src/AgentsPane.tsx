@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { FezClient, ObserverEntry, WireEvent } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import ActivityFeed from "./ActivityFeed";
+import Avatar from "./Avatar";
 
 /**
  * The agents surface — Buzz's biggest pane, fez-shaped. Roster of every
@@ -81,6 +82,7 @@ export default function AgentsPane({
             const active = busy && Date.now() - busy.ts < 30_000;
             return (
               <button key={agent.pk} className="agent-row" onClick={() => setSelected(agent.pk)}>
+                <Avatar pk={agent.pk} size={18} title={agent.name} />
                 <span className={agent.online ? "dot on" : "dot off"} />
                 <span className="agent-name">@{agent.name}</span>
                 {active && <span className="working">⚙</span>}
@@ -226,6 +228,7 @@ function AgentDetail({
     <>
       <div className="agent-head">
         <div className="agent-title">
+          <Avatar pk={pk} size={24} title={name} />
           <span className={online ? "dot on" : "dot off"} /> @{name}
           {busy && <span className="working">⚙</span>}
         </div>

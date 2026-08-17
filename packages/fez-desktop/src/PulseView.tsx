@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FezClient, ObserverEntry } from "@fez/client";
 import type { BrowserWire } from "./wire";
+import Avatar from "./Avatar";
 
 /**
  * Pulse — Buzz's PulseScreen: one glance answering "what are all my
@@ -87,6 +88,7 @@ export default function PulseView({
             return (
               <button key={agent.pk} className={live ? "pulse-card live" : "pulse-card"} onClick={() => onWatch(agent.name)}>
                 <div className="pulse-head">
+                  <Avatar pk={agent.pk} size={22} title={agent.name} />
                   <span className={agent.online ? "dot on" : "dot off"} />
                   <span className="pulse-name">@{agent.name}</span>
                   {live && <span className="working">⚙</span>}
