@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient, WireEvent } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
@@ -15,6 +16,7 @@ import Avatar from "./Avatar";
  */
 
 const KIND_SKILL_LISTING = 40200;
+const KIND_SKILL_INSTALL = 40201;
 
 interface SkillConfig {
   command?: string;
@@ -26,11 +28,15 @@ interface SkillConfig {
 
 interface Listing {
   name: string;
+  artifact?: string;
   description?: string;
   command?: string;
   args?: string[];
   url?: string;
   envKeys?: string[];
+  installCmd?: string;
+  github?: string;
+  npm?: string;
   homepage?: string;
   authorPk: string;
   ts: number;
@@ -42,6 +48,8 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
   const [installing, setInstalling] = useState<Listing>();
   const [publishing, setPublishing] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [installs, setInstalls] = useState<Map<string, number>>(new Map());
+  const [copied, setCopied] = useState<string>();
 
   const flash = (text: string) => {
     setNotice(text);
@@ -70,27 +78,52 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
         } catch { /* malformed listing */ }
       }
       setListings([...latest.values()].sort((a, b) => b.ts - a.ts));
+      // Install receipts (40201): distinct signer pubkeys per listing —
+      // the decentralized download counter.
+      const receipts = await wire.query([{ kinds: [KIND_SKILL_INSTALL], limit: 500 }]);
+      const counts = new Map<string, Set<string>>();
+      for (const receipt of receipts as WireEvent[]) {
+        const skillName = receipt.tags.find((t) => t[0] === "skill")?.[1];
+        const author = receipt.tags.find((t) => t[0] === "p")?.[1];
+        if (!skillName || !author) continue;
+        const key = `${author}:${skillName}`;
+        if (!counts.has(key)) counts.set(key, new Set());
+        counts.get(key)!.add(receipt.pubkey);
+      }
+      setInstalls(new Map([...counts.entries()].map(([key, pks]) => [key, pks.size])));
     })();
   }, [wire, reload]);
 
   const runsLine = (skill: SkillConfig | Listing) =>
     skill.url ?? [skill.command, ...(skill.args ?? [])].join(" ");
 
-  const publish = async (name: string, description: string) => {
+  const publish = async (name: string, meta: { description: string; github?: string; npm?: string }) => {
     const config = installed[name];
     if (!config) return;
+    const envKeys = Object.keys(config.env ?? {});
     await wire.publish({
       kind: KIND_SKILL_LISTING,
       tags: [["d", name]],
       content: JSON.stringify({
         name,
-        description,
+        artifact: "mcp",
+        description: meta.description,
         ...(config.url ? { type: "http", url: config.url } : { command: config.command, args: config.args ?? [] }),
-        envKeys: Object.keys(config.env ?? {}), // names only — values stay home
+        envKeys, // names only — values stay home
+        installCmd: `fez skill install ${name}${envKeys.length ? " " + envKeys.map((key) => `--env ${key}=<value>`).join(" ") : ""}`,
+        ...(meta.github ? { github: meta.github } : {}),
+        ...(meta.npm ? { npm: meta.npm } : {}),
       }),
     });
     setPublishing(undefined);
     flash(`📡 published "${name}" — signed by you, env values not included`);
+  };
+
+  const copyCmd = (listing: Listing) => {
+    const cmd = listing.installCmd ?? `fez skill install ${listing.name}`;
+    void navigator.clipboard.writeText(cmd);
+    setCopied(`${listing.authorPk}:${listing.name}`);
+    setTimeout(() => setCopied(undefined), 2000);
   };
 
   return (
@@ -117,7 +150,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             </div>
             <div className="skill-actions">
               {publishing === name ? (
-                <PublishForm onPublish={(description) => void publish(name, description)} onCancel={() => setPublishing(undefined)} />
+                <PublishForm onPublish={(meta) => void publish(name, meta)} onCancel={() => setPublishing(undefined)} />
               ) : (
                 <>
                   <button className="mini" title="publish a listing to the marketplace" onClick={() => setPublishing(name)}>📡 publish</button>
@@ -145,24 +178,41 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
         )}
         {listings?.map((listing) => {
           const isInstalled = !!installed[listing.name];
+          const key = `${listing.authorPk}:${listing.name}`;
+          const count = installs.get(key) ?? 0;
+          const isMcp = (listing.artifact ?? "mcp") === "mcp";
           return (
-            <div key={`${listing.authorPk}:${listing.name}`} className="skill-row market">
+            <div key={key} className="skill-row market">
               <div className="skill-main">
                 <span className="skill-name">
                   {listing.name}
-                  {isInstalled && <span className="role-tag">installed</span>}
+                  <span className="role-tag">{listing.artifact ?? "mcp"}</span>
+                  {isInstalled && <span className="role-tag installed-tag">installed</span>}
+                  <span className="skill-installs">⇩ {count} install{count === 1 ? "" : "s"}</span>
                 </span>
                 {listing.description && <span className="skill-desc">{listing.description}</span>}
-                <code className="skill-cmd">{runsLine(listing)}</code>
+                {runsLine(listing) && <code className="skill-cmd">{runsLine(listing)}</code>}
                 {listing.envKeys && listing.envKeys.length > 0 && (
                   <span className="skill-env">needs env: {listing.envKeys.join(", ")}</span>
                 )}
+                <code className="skill-install-cmd" title="click to copy" onClick={() => copyCmd(listing)}>
+                  {copied === key ? "✓ copied" : `$ ${listing.installCmd ?? `fez skill install ${listing.name}`}`}
+                </code>
                 <span className="skill-author">
                   <Avatar pk={listing.authorPk} size={14} /> {client.displayName(listing.authorPk)}
+                  {listing.github && (
+                    <button className="skill-link" onClick={() => void openUrl(listing.github!)}>github</button>
+                  )}
+                  {listing.npm && (
+                    <button className="skill-link" onClick={() => void openUrl(`https://www.npmjs.com/package/${listing.npm}`)}>npm</button>
+                  )}
+                  {listing.homepage && (
+                    <button className="skill-link" onClick={() => void openUrl(listing.homepage!)}>docs</button>
+                  )}
                 </span>
               </div>
               <div className="skill-actions">
-                {!isInstalled && (
+                {!isInstalled && isMcp && (
                   <button className="agent-action" onClick={() => setInstalling(listing)}>install…</button>
                 )}
               </div>
@@ -173,6 +223,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
         {installing && (
           <InstallDialog
             listing={installing}
+            wire={wire}
             onDone={(didInstall) => {
               setInstalling(undefined);
               if (didInstall) {
@@ -187,28 +238,35 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
   );
 }
 
-function PublishForm({ onPublish, onCancel }: { onPublish: (description: string) => void; onCancel: () => void }) {
+function PublishForm({
+  onPublish,
+  onCancel,
+}: {
+  onPublish: (meta: { description: string; github?: string; npm?: string }) => void;
+  onCancel: () => void;
+}) {
   const [description, setDescription] = useState("");
+  const [github, setGithub] = useState("");
+  const [npm, setNpm] = useState("");
+  const submit = () => {
+    if (!description.trim()) return;
+    onPublish({ description: description.trim(), github: github.trim() || undefined, npm: npm.trim() || undefined });
+  };
   return (
-    <span className="publish-form">
-      <input
-        className="manage-input"
-        value={description}
-        autoFocus
-        placeholder="what does it do?"
-        onChange={(e) => setDescription(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && description.trim()) onPublish(description.trim());
-          if (e.key === "Escape") onCancel();
-        }}
-      />
-      <button className="mini" disabled={!description.trim()} onClick={() => onPublish(description.trim())}>go</button>
+    <span className="publish-form stacked">
+      <input className="manage-input" value={description} autoFocus placeholder="what does it do?" onChange={(e) => setDescription(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
+      <input className="manage-input" value={github} spellCheck={false} placeholder="github url (optional)" onChange={(e) => setGithub(e.target.value)} />
+      <input className="manage-input" value={npm} spellCheck={false} placeholder="npm package (optional)" onChange={(e) => setNpm(e.target.value)} />
+      <span className="agent-actions">
+        <button className="mini" disabled={!description.trim()} onClick={submit}>publish</button>
+        <button className="mini" onClick={onCancel}>cancel</button>
+      </span>
     </span>
   );
 }
 
 /** The consent gate: full command verbatim + env values filled locally. */
-function InstallDialog({ listing, onDone }: { listing: Listing; onDone: (didInstall: boolean) => void }) {
+function InstallDialog({ listing, wire, onDone }: { listing: Listing; wire: BrowserWire; onDone: (didInstall: boolean) => void }) {
   const [env, setEnv] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
 
@@ -224,6 +282,10 @@ function InstallDialog({ listing, onDone }: { listing: Listing; onDone: (didInst
         };
     try {
       await invoke("write_skill", { name: listing.name, configJson: JSON.stringify(config) });
+      // The receipt: +1 on the listing's install count, signed by you.
+      await wire
+        .publish({ kind: KIND_SKILL_INSTALL, tags: [["skill", listing.name], ["p", listing.authorPk]], content: "" })
+        .catch(() => {});
       onDone(true);
     } catch (err) {
       setError(String(err));

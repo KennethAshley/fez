@@ -800,3 +800,16 @@ button.author:hover { text-decoration: underline; }
 .publish-form .manage-input { width: 180px; font-size: 11px; padding: 4px 8px; }
 .install-box { padding: 16px; }
 .install-head { font-family: var(--font-mono); font-weight: 700; margin-bottom: 8px; }
+.skill-installs { font-family: var(--font-mono); font-size: 11px; color: var(--accent); font-weight: 400; }
+.installed-tag { color: var(--green); }
+.skill-install-cmd {
+  font-family: var(--font-mono); font-size: 11px; color: var(--yellow);
+  background: var(--bg0); border: 1px dashed var(--hairline); border-radius: 5px;
+  padding: 3px 8px; cursor: pointer; align-self: flex-start;
+}
+.skill-install-cmd:hover { border-color: var(--yellow); }
+.skill-link {
+  background: none; border: 0; color: var(--accent); font-family: var(--font-mono);
+  font-size: 11px; cursor: pointer; padding: 0; text-decoration: underline;
+}
+.publish-form.stacked { display: flex; flex-direction: column; gap: 4px; width: 220px; }

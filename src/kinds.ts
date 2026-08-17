@@ -272,6 +272,15 @@ export const KIND_DOC = 40100;
  */
 export const KIND_SKILL_LISTING = 40200;
 
+/**
+ * Install receipt — the decentralized download counter: a tiny signed
+ * event published when someone installs from a listing (["skill", name],
+ * ["p", listingAuthor]). Counts are distinct signer pubkeys — sybil-able
+ * like every counter ever, but each count is at least a real keypair
+ * vouching in public. Publishing one is the installer's choice.
+ */
+export const KIND_SKILL_INSTALL = 40201;
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,

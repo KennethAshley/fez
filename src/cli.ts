@@ -694,18 +694,27 @@ skill
 
 skill
   .command("publish <name>")
-  .description("Publish a defined skill to the marketplace (relay listing; env VALUES never leave this machine)")
+  .description("Publish a marketplace listing (env VALUES never leave this machine)")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--description <text>", "what this skill does")
-  .option("--homepage <url>", "docs / source link")
+  .option("--homepage <url>", "docs link")
+  .option("--github <url>", "source repository")
+  .option("--npm <name>", "npm package name")
+  .option("--artifact <type>", "mcp (default) | extension (fez install) | pi-package (persona packages:)")
   .action(async (name: string, options) => {
     const { loadSettings, resolveRelay } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING } = await import("./kinds.js");
     const settings = loadSettings() as { mcpServers?: Record<string, { command?: string; args?: string[]; url?: string; type?: string; env?: Record<string, string> }> };
+    const artifact = (options.artifact as string | undefined) ?? "mcp";
     const config = settings.mcpServers?.[name];
-    if (!config) {
+    if (artifact === "mcp" && !config) {
       console.error(`No skill named "${name}" — define it first: fez skill add ${name} ...`);
+      process.exitCode = 1;
+      return;
+    }
+    if (artifact !== "mcp" && !options.npm) {
+      console.error(`--artifact ${artifact} needs --npm <package> (that's what gets installed).`);
       process.exitCode = 1;
       return;
     }
@@ -713,15 +722,85 @@ skill
     const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
     const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
     await relay.connect();
+    const envKeys = Object.keys(config?.env ?? {});
+    const installCmd =
+      artifact === "extension"
+        ? `fez install npm:${options.npm}`
+        : artifact === "pi-package"
+          ? `add to the persona frontmatter: packages: [npm:${options.npm}]`
+          : `fez skill install ${name}${envKeys.length ? " " + envKeys.map((key) => `--env ${key}=<value>`).join(" ") : ""}`;
     const listing = {
       name,
+      artifact,
       description: options.description ?? "",
-      ...(config.url ? { type: "http", url: config.url } : { command: config.command, args: config.args ?? [] }),
-      envKeys: Object.keys(config.env ?? {}), // names only — values stay home
+      ...(artifact === "mcp"
+        ? config!.url
+          ? { type: "http", url: config!.url }
+          : { command: config!.command, args: config!.args ?? [] }
+        : {}),
+      envKeys, // names only — values stay home
+      installCmd,
       ...(options.homepage ? { homepage: options.homepage } : {}),
+      ...(options.github ? { github: options.github } : {}),
+      ...(options.npm ? { npm: options.npm } : {}),
     };
     await relay.publish(client.signEvent({ kind: KIND_SKILL_LISTING, tags: [["d", name]], content: JSON.stringify(listing) }));
     console.log(`📡 published "${name}" to the marketplace (signed by your key; env values NOT included).`);
+    relay.disconnect();
+  });
+
+skill
+  .command("install <name>")
+  .description("Install a skill from a marketplace listing (writes your catalog + publishes an install receipt)")
+  .option("-r, --relay <url>", "Relay URL (default: settings/env)")
+  .option("--from <pubkey>", "listing author (default: most-installed listing of that name)")
+  .option("--env <pairs...>", "KEY=value for each env key the listing requires (stored locally)")
+  .action(async (name: string, options) => {
+    const { loadSettings, saveSettings, resolveRelay } = await import("./settings.js");
+    const { loadOrCreateKey } = await import("./keys.js");
+    const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./kinds.js");
+    const { RelayConnection } = await import("./relay.js");
+    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    await relay.connect();
+    const events = (await relay.query([{ kinds: [KIND_SKILL_LISTING], "#d": [name], limit: 50 }])) as { pubkey: string; content: string; created_at: number }[];
+    const candidates = events
+      .filter((e) => !options.from || e.pubkey === options.from)
+      .sort((a, b) => b.created_at - a.created_at);
+    const event = candidates[0];
+    if (!event) {
+      console.error(`No listing named "${name}" on this relay${options.from ? ` by ${options.from.slice(0, 12)}` : ""}.`);
+      relay.disconnect();
+      process.exitCode = 1;
+      return;
+    }
+    const listing = JSON.parse(event.content) as { artifact?: string; command?: string; args?: string[]; url?: string; type?: string; envKeys?: string[]; installCmd?: string; npm?: string };
+    if ((listing.artifact ?? "mcp") !== "mcp") {
+      console.log(`"${name}" is a ${listing.artifact} — install it with:\n  ${listing.installCmd ?? `fez install npm:${listing.npm}`}`);
+      relay.disconnect();
+      return;
+    }
+    const env: Record<string, string> = {};
+    for (const pair of (options.env as string[] | undefined) ?? []) {
+      const eq = pair.indexOf("=");
+      if (eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
+    }
+    const missing = (listing.envKeys ?? []).filter((key) => !env[key]);
+    if (missing.length > 0) {
+      console.error(`Listing requires env values: ${missing.map((k) => `--env ${k}=<value>`).join(" ")}`);
+      relay.disconnect();
+      process.exitCode = 1;
+      return;
+    }
+    const what = listing.url ?? [listing.command, ...(listing.args ?? [])].join(" ");
+    console.log(`This will run on your machine when declaring agents spawn:\n  ${chalk.yellow(what)}\n  (listed by ${event.pubkey.slice(0, 12)})`);
+    const config = listing.url
+      ? { type: "http", url: listing.url }
+      : { command: listing.command, ...(listing.args?.length ? { args: listing.args } : {}), ...(Object.keys(env).length ? { env } : {}) };
+    const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
+    saveSettings({ mcpServers: { ...settings.mcpServers, [name]: config } } as never);
+    await relay.publish(client.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", name], ["p", event.pubkey]], content: "" }));
+    console.log(`✅ installed "${name}" (+1 on its install count) — declare mcpServers: [${name}] in a persona to use it.`);
     relay.disconnect();
   });
 
@@ -737,7 +816,18 @@ skill
     const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
     const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
     await relay.connect();
+    const { KIND_SKILL_INSTALL } = await import("./kinds.js");
     const events = (await relay.query([{ kinds: [KIND_SKILL_LISTING], limit: 100 }])) as { pubkey: string; content: string; created_at: number; tags: string[][] }[];
+    const receipts = (await relay.query([{ kinds: [KIND_SKILL_INSTALL], limit: 500 }])) as { pubkey: string; tags: string[][] }[];
+    const installCounts = new Map<string, Set<string>>();
+    for (const receipt of receipts) {
+      const skillName = receipt.tags.find((t) => t[0] === "skill")?.[1];
+      const author = receipt.tags.find((t) => t[0] === "p")?.[1];
+      if (!skillName || !author) continue;
+      const key = `${author}:${skillName}`;
+      if (!installCounts.has(key)) installCounts.set(key, new Set());
+      installCounts.get(key)!.add(receipt.pubkey);
+    }
     const latest = new Map<string, { pubkey: string; content: string; created_at: number }>();
     for (const event of events) {
       const d = event.tags.find((t: string[]) => t[0] === "d")?.[1] ?? "";
@@ -747,13 +837,17 @@ skill
     if (latest.size === 0) console.log("No listings on this relay yet — fez skill publish <name> puts yours up.");
     for (const event of latest.values()) {
       try {
-        const listing = JSON.parse(event.content) as { name: string; description?: string; command?: string; args?: string[]; url?: string; envKeys?: string[] };
-        const what = listing.url ?? [listing.command, ...(listing.args ?? [])].join(" ");
-        console.log(`  ${chalk.green(listing.name.padEnd(18))} ${listing.description ?? ""}`);
-        console.log(chalk.dim(`    runs: ${what}${listing.envKeys?.length ? `  needs env: ${listing.envKeys.join(", ")}` : ""}  by ${event.pubkey.slice(0, 12)}`));
+        const listing = JSON.parse(event.content) as { name: string; artifact?: string; description?: string; command?: string; args?: string[]; url?: string; envKeys?: string[]; installCmd?: string; github?: string; npm?: string };
+        const installs = installCounts.get(`${event.pubkey}:${listing.name}`)?.size ?? 0;
+        const what = listing.url ?? [listing.command, ...(listing.args ?? [])].filter(Boolean).join(" ");
+        console.log(`  ${chalk.green(listing.name.padEnd(18))} ${chalk.dim(`[${listing.artifact ?? "mcp"}]`)} ${listing.description ?? ""}  ${chalk.cyan(`${installs} install${installs === 1 ? "" : "s"}`)}`);
+        if (what) console.log(chalk.dim(`    runs: ${what}${listing.envKeys?.length ? `  needs env: ${listing.envKeys.join(", ")}` : ""}`));
+        if (listing.installCmd) console.log(chalk.yellow(`    install: ${listing.installCmd}`));
+        const links = [listing.github, listing.npm ? `npm:${listing.npm}` : undefined].filter(Boolean).join("  ");
+        console.log(chalk.dim(`    ${links ? links + "  " : ""}by ${event.pubkey.slice(0, 12)}`));
       } catch { /* skip malformed */ }
     }
-    console.log(chalk.dim(`\n  install: fez skill add <name> --command ... (READ the command first — it runs on your machine)`));
+    console.log(chalk.dim(`\n  READ the command before installing — it runs on your machine.`));
     relay.disconnect();
   });
 
