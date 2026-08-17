@@ -1,0 +1,1099 @@
+import { CommunityState, type Role } from "./community-state.js";
+
+/**
+ * @fez/client — the headless fez protocol brain: subscriptions, trust
+ * rules, derived state, and actions, with no UI anywhere. The TUI, a
+ * future GUI, and extensions all consume ONE instance per process via
+ * FezExtensionAPI.client; state is a materialized view of the relay
+ * (throw the process away, the next start re-derives it — the relay is
+ * the database).
+ *
+ * The wire seam is deliberately the same shape as the TUI's NostrAccess
+ * backend, so hosting the client inside the TUI costs nothing and a
+ * standalone host only needs to assemble the same eight functions.
+ *
+ * Every trust rule ported here is Buzz-derived and documented at its
+ * enforcement site: creator-signed channel state, member-gated
+ * messages/ops, author-only edits and retractions, owner-decrypted
+ * observer frames, self-encrypted read state.
+ */
+
+// ── Wire ──────────────────────────────────────────────────────────────────
+
+export interface WireEvent {
+  id: string;
+  kind: number;
+  pubkey: string;
+  created_at: number;
+  content: string;
+  tags: string[][];
+  sig: string;
+}
+
+export interface WireFilter {
+  kinds?: number[];
+  authors?: string[];
+  since?: number;
+  until?: number;
+  limit?: number;
+  [key: `#${string}`]: string[] | undefined;
+}
+
+export interface DmRumor {
+  senderPk: string;
+  peerPk: string;
+  text: string;
+  ts: number;
+  depth: number;
+  id: string;
+}
+
+/** Exactly the TUI's NostrAccess backend shape — the client's only dependency. */
+export interface Wire {
+  pubkey: string;
+  publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<WireEvent>;
+  subscribe(filters: WireFilter[], onEvent: (event: WireEvent) => void): () => void;
+  query(filters: WireFilter[]): Promise<WireEvent[]>;
+  encrypt(peerPubkey: string, plaintext: string): string;
+  decrypt(peerPubkey: string, ciphertext: string): string;
+  sendDm(recipientPubkey: string, text: string): Promise<string>;
+  unwrapDm(event: WireEvent): DmRumor | undefined;
+}
+
+// ── Kinds (fez registry — see src/kinds.ts for the full docs) ────────────
+
+const K = {
+  AGENT_METADATA: 47000,
+  COMMUNITY: 47100,
+  CHANNEL: 47101,
+  MEMBERSHIP: 47102,
+  MESSAGE: 47103,
+  TYPING: 20002,
+  PRESENCE: 20001,
+  DRAFT: 20003,
+  OBSERVER: 20004,
+  THREAD_SUMMARY: 39005,
+  WORKFLOW_RUN: 47200,
+  REACTION: 7,
+  DELETION: 5,
+  GIFT_WRAP: 1059,
+  DOC: 40100,
+  MSG_EDIT: 40003,
+  MSG_PIN: 40004,
+  MSG_BOOKMARK: 40005,
+  SCHEDULED: 40006,
+  REMINDER: 40007,
+  READ_STATE: 30078,
+} as const;
+
+const DM_FUZZ_WINDOW_S = 2 * 86_400;
+const PRESENCE_TTL_MS = 90_000;
+const PRESENCE_BEAT_MS = 30_000;
+const TYPING_TTL_MS = 8000;
+const MSG_CACHE_CAP = 1000;
+const HISTORY_LIMIT = 50;
+const PAGE_SIZE = 50;
+const JOB_CAP = 100;
+
+// ── Public state shapes ──────────────────────────────────────────────────
+
+export interface Msg {
+  id: string;
+  authorPk: string;
+  authorName: string;
+  content: string;
+  parentId?: string;
+  rootId?: string;
+  ts: number;
+  edited?: boolean;
+  editTs?: number;
+}
+
+export interface Job {
+  triggerId: string;
+  agentPk: string;
+  channelId: string;
+  status: "seen" | "working" | "done" | "failed" | "steered";
+  startedAt: number;
+  endedAt?: number;
+  rootId: string;
+  snippet: string;
+  currentTool?: string;
+}
+
+export interface ObserverEntry {
+  type: string;
+  text?: string;
+  title?: string;
+  status?: string;
+  ts: number;
+}
+
+export interface DmMessage {
+  id: string;
+  senderPk: string;
+  text: string;
+  ts: number;
+}
+
+export interface DocInfo {
+  count: number;
+  latestId: string;
+  latestTs: number;
+  latestAuthor: string;
+  latestContent: string;
+}
+
+export interface PinInfo {
+  opId: string;
+  by: string;
+  ts: number;
+}
+
+export interface WorkflowRunInfo {
+  workflow: string;
+  status: string;
+  step?: number;
+  ts: number;
+}
+
+export interface ClientEvents {
+  /** A channel message entered the cache. live=false during history backfill/paging. */
+  message: (channelId: string, msg: Msg, ctx: { live: boolean; prepend: boolean }) => void;
+  /** Content of an existing message changed (40003 edit). */
+  messageEdited: (channelId: string, msg: Msg) => void;
+  /** Something on a message's footer changed: pin, thread count, edit marker. */
+  metaChanged: (channelId: string, msgId: string) => void;
+  /** Reactions on a target changed (add or retract). */
+  reaction: (channelId: string, targetId: string) => void;
+  /** Streaming draft frame from another participant. */
+  draft: (channelId: string, authorPk: string, content: string, rootId?: string) => void;
+  typingChanged: () => void;
+  presenceChanged: () => void;
+  unreadsChanged: () => void;
+  /** Channel/community/membership set changed. */
+  channelsChanged: () => void;
+  dmMessage: (dm: DmMessage & { peerPk: string }, ctx: { live: boolean }) => void;
+  docChanged: (channelId: string) => void;
+  jobsChanged: () => void;
+  observerFrame: (agent: string, frame: ObserverEntry) => void;
+  workflowRunsChanged: () => void;
+  /** Client-level announcements a view should surface (first-run bootstrap etc.). */
+  notice: (text: string) => void;
+}
+
+export class FezClient {
+  readonly state = new CommunityState();
+  readonly pubkey: string;
+
+  private wire: Wire;
+  private listeners = new Map<keyof ClientEvents, Set<(...args: never[]) => void>>();
+  private unsubscribeLive?: () => void;
+  private subscribedChannelIds = "";
+  private sessionStartS = Math.floor(Date.now() / 1000);
+
+  // messages + threads
+  private names = new Map<string, string>();
+  private seenMessages = new Set<string>();
+  private messagesByChannel = new Map<string, Msg[]>();
+  private msgByIdMap = new Map<string, Msg>();
+  private threadNoByRoot = new Map<string, number>();
+  private rootByThreadNoMap = new Map<number, string>();
+  private nextThreadNo = 1;
+  private summaryByRoot = new Map<string, { replyCount: number; lastAuthorTs: number; summaryTs: number }>();
+  private exhaustedChannels = new Set<string>();
+
+  // reactions
+  private reactionsByTarget = new Map<string, Map<string, Set<string>>>();
+  private reactionIndex = new Map<string, { targetId: string; emoji: string; authorPk: string }>();
+
+  // ops
+  private pinsByChannel = new Map<string, Map<string, PinInfo>>();
+  private myBookmarksMap = new Map<string, { opId: string; ts: number; channelId: string }>();
+  private opIndex = new Map<string, { type: "pin" | "bookmark"; channelId: string; targetId: string; by: string }>();
+
+  // presence + read state
+  private lastSeenByPk = new Map<string, number>();
+  private lastReadByChannel = new Map<string, number>();
+  private readPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  // typing
+  private typing = new Map<string, { pubkey: string; threadRoot?: string; expiry: number }>();
+
+  // jobs + observer + workflows
+  private jobsMap = new Map<string, Job>();
+  private observerFeedsMap = new Map<string, ObserverEntry[]>();
+  private workingAgentsMap = new Map<string, { activity: string; ts: number }>();
+  private workflowRunsMap = new Map<string, WorkflowRunInfo>();
+
+  // DMs
+  private dmConvos = new Map<string, { msgs: DmMessage[]; unread: number }>();
+  private seenDmIds = new Set<string>();
+
+  // docs
+  private docsByChannelMap = new Map<string, DocInfo>();
+  private seenDocIds = new Set<string>();
+
+  constructor(wire: Wire) {
+    this.wire = wire;
+    this.pubkey = wire.pubkey;
+  }
+
+  // ── Events ──────────────────────────────────────────────────────────────
+
+  on<E extends keyof ClientEvents>(event: E, handler: ClientEvents[E]): () => void {
+    let set = this.listeners.get(event);
+    if (!set) this.listeners.set(event, (set = new Set()));
+    set.add(handler as (...args: never[]) => void);
+    return () => set!.delete(handler as (...args: never[]) => void);
+  }
+
+  private emit<E extends keyof ClientEvents>(event: E, ...args: Parameters<ClientEvents[E]>): void {
+    for (const handler of this.listeners.get(event) ?? []) {
+      try {
+        (handler as (...a: Parameters<ClientEvents[E]>) => void)(...args);
+      } catch {
+        /* a broken listener must not break the client */
+      }
+    }
+  }
+
+  // ── Read surface ────────────────────────────────────────────────────────
+
+  displayName(pk: string): string {
+    return pk === this.pubkey ? "You" : this.names.get(pk) ?? `${pk.slice(0, 8)}…`;
+  }
+  nameOf(pk: string): string | undefined {
+    return this.names.get(pk);
+  }
+  pkByName(name: string): string | undefined {
+    const wanted = name.toLowerCase();
+    for (const [pk, n] of this.names) if (n.toLowerCase() === wanted) return pk;
+    return undefined;
+  }
+  messages(channelId: string): readonly Msg[] {
+    return this.messagesByChannel.get(channelId) ?? [];
+  }
+  msgById(id: string): Msg | undefined {
+    return this.msgByIdMap.get(id);
+  }
+  threadNo(rootId: string): number {
+    let no = this.threadNoByRoot.get(rootId);
+    if (no === undefined) {
+      no = this.nextThreadNo++;
+      this.threadNoByRoot.set(rootId, no);
+      this.rootByThreadNoMap.set(no, rootId);
+    }
+    return no;
+  }
+  rootByThreadNo(no: number): string | undefined {
+    return this.rootByThreadNoMap.get(no);
+  }
+  threadNumbers(): ReadonlyMap<number, string> {
+    return this.rootByThreadNoMap;
+  }
+  threadReplies(channelId: string, rootId: string): Msg[] {
+    return (this.messagesByChannel.get(channelId) ?? []).filter((m) => m.rootId === rootId);
+  }
+  threadReplyCount(channelId: string, rootId: string): number {
+    const local = this.threadReplies(channelId, rootId).length;
+    return Math.max(local, this.summaryByRoot.get(rootId)?.replyCount ?? 0);
+  }
+  /** message id -> emoji -> display names — footer rendering data. */
+  reactions(targetId: string): ReadonlyMap<string, ReadonlySet<string>> | undefined {
+    return this.reactionsByTarget.get(targetId);
+  }
+  pins(channelId: string): ReadonlyMap<string, PinInfo> {
+    return this.pinsByChannel.get(channelId) ?? new Map();
+  }
+  isPinned(channelId: string, msgId: string): boolean {
+    return this.pinsByChannel.get(channelId)?.has(msgId) ?? false;
+  }
+  myBookmarks(): ReadonlyMap<string, { opId: string; ts: number; channelId: string }> {
+    return this.myBookmarksMap;
+  }
+  isOnline(pk: string): boolean {
+    return Date.now() - (this.lastSeenByPk.get(pk) ?? 0) < PRESENCE_TTL_MS;
+  }
+  unreadCounts(): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const [channelId, list] of this.messagesByChannel) {
+      if (this.state.scope?.channelId === channelId) continue;
+      const lastRead = this.lastReadByChannel.get(channelId) ?? 0;
+      const n = list.filter((m) => m.ts > lastRead && m.authorPk !== this.pubkey).length;
+      if (n > 0) counts.set(channelId, n);
+    }
+    return counts;
+  }
+  /** Who is typing in the given scope (undefined root = channel level). */
+  typingWho(threadRoot?: string): string[] {
+    const now = Date.now();
+    for (const [key, t] of this.typing) if (t.expiry <= now) this.typing.delete(key);
+    return [...this.typing.values()].filter((t) => t.threadRoot === threadRoot).map((t) => this.displayName(t.pubkey));
+  }
+  jobs(): ReadonlyMap<string, Job> {
+    return this.jobsMap;
+  }
+  activeJobs(): Job[] {
+    return [...this.jobsMap.values()].filter((j) => j.status === "seen" || j.status === "working");
+  }
+  workflowRuns(): ReadonlyMap<string, WorkflowRunInfo> {
+    return this.workflowRunsMap;
+  }
+  observerFeed(agent: string): readonly ObserverEntry[] {
+    return this.observerFeedsMap.get(agent) ?? [];
+  }
+  workingAgents(): ReadonlyMap<string, { activity: string; ts: number }> {
+    const now = Date.now();
+    for (const [name, w] of this.workingAgentsMap) if (now - w.ts > 180_000) this.workingAgentsMap.delete(name);
+    return this.workingAgentsMap;
+  }
+  dmConversations(): ReadonlyMap<string, { msgs: readonly DmMessage[]; unread: number }> {
+    return this.dmConvos;
+  }
+  docsByChannel(): ReadonlyMap<string, DocInfo> {
+    return this.docsByChannelMap;
+  }
+  channelExhausted(channelId: string): boolean {
+    return this.exhaustedChannels.has(channelId);
+  }
+  channelRef(channelId: string): { communityId: string; name: string; communityName: string } | undefined {
+    for (const communityId of this.state.joined) {
+      const community = this.state.community(communityId);
+      const channel = community?.channels.get(channelId);
+      if (community && channel) return { communityId, name: channel.name, communityName: community.name };
+    }
+    return undefined;
+  }
+
+  // ── Actions ─────────────────────────────────────────────────────────────
+
+  /** Publish into the scoped channel. Thread tags follow Buzz's NIP-10 shape when replying. */
+  async sendChannelMessage(text: string, opts?: { threadRootId?: string; mentionPks?: string[] }): Promise<Msg> {
+    const current = this.state.currentChannel();
+    if (!current) throw new Error("no channel scope");
+    const threadTags: string[][] = [];
+    if (opts?.threadRootId) {
+      const replies = this.threadReplies(current.channel.id, opts.threadRootId);
+      const parentId = replies.at(-1)?.id ?? opts.threadRootId;
+      if (parentId !== opts.threadRootId) threadTags.push(["e", opts.threadRootId, "", "root"]);
+      threadTags.push(["e", parentId, "", "reply"]);
+    }
+    const event = await this.wire.publish({
+      kind: K.MESSAGE,
+      tags: [
+        ["h", current.channel.id],
+        ["c", current.community.id],
+        ...threadTags,
+        ...(opts?.mentionPks ?? []).map((pk) => ["p", pk]),
+      ],
+      content: text,
+    });
+    this.seenMessages.add(event.id);
+    return this.cacheMessage(current.channel.id, event);
+  }
+
+  async editLastOwnMessage(channelId: string, communityId: string, text: string): Promise<Msg | undefined> {
+    const target = (this.messagesByChannel.get(channelId) ?? []).filter((m) => m.authorPk === this.pubkey).at(-1);
+    if (!target) return undefined;
+    const event = await this.wire.publish({
+      kind: K.MSG_EDIT,
+      tags: [["e", target.id], ["h", channelId], ["c", communityId]],
+      content: text,
+    });
+    this.handleMsgEdit(event);
+    return this.msgByIdMap.get(target.id);
+  }
+
+  async pinMessage(channelId: string, communityId: string, targetId: string): Promise<void> {
+    const event = await this.wire.publish({
+      kind: K.MSG_PIN,
+      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      content: "",
+    });
+    this.handleMsgPin(event);
+  }
+
+  async unpin(channelId: string, communityId: string, opId: string): Promise<void> {
+    const event = await this.wire.publish({
+      kind: K.DELETION,
+      tags: [["e", opId], ["h", channelId], ["c", communityId]],
+      content: "",
+    });
+    this.handleDeletion(event);
+  }
+
+  async bookmarkMessage(channelId: string, communityId: string, targetId: string): Promise<void> {
+    const event = await this.wire.publish({
+      kind: K.MSG_BOOKMARK,
+      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      content: "",
+    });
+    this.handleMsgBookmark(event);
+  }
+
+  async scheduleMessage(channelId: string, communityId: string, sendAt: number, text: string): Promise<void> {
+    await this.wire.publish({
+      kind: K.SCHEDULED,
+      tags: [["h", channelId], ["c", communityId], ["send_at", String(sendAt)]],
+      content: text,
+    });
+  }
+
+  async setReminder(remindAt: number, note: string, aboutEventId?: string): Promise<void> {
+    await this.wire.publish({
+      kind: K.REMINDER,
+      tags: [["p", this.pubkey], ["remind_at", String(remindAt)], ...(aboutEventId ? [["e", aboutEventId]] : [])],
+      content: note,
+    });
+  }
+
+  async sendDm(peerPk: string, text: string): Promise<void> {
+    const id = await this.wire.sendDm(peerPk, text);
+    if (id) this.seenDmIds.add(id);
+    const convo = this.dmConvo(peerPk);
+    convo.msgs.push({ id, senderPk: this.pubkey, text, ts: Math.floor(Date.now() / 1000) });
+  }
+
+  markDmRead(peerPk: string): void {
+    this.dmConvo(peerPk).unread = 0;
+  }
+
+  /** Viewing a channel reads it; debounced self-encrypted 30078 syncs across sessions. */
+  markRead(channelId: string, ts: number): void {
+    if ((this.lastReadByChannel.get(channelId) ?? 0) >= ts) return;
+    this.lastReadByChannel.set(channelId, ts);
+    this.emit("unreadsChanged");
+    clearTimeout(this.readPublishTimers.get(channelId));
+    this.readPublishTimers.set(
+      channelId,
+      setTimeout(() => {
+        void this.wire
+          .publish({
+            kind: K.READ_STATE,
+            tags: [["d", channelId]],
+            content: this.wire.encrypt(this.pubkey, JSON.stringify({ last_read: this.lastReadByChannel.get(channelId) })),
+          })
+          .catch(() => {});
+      }, 5000)
+    );
+  }
+
+  async docVersions(channelId: string, communityId: string): Promise<WireEvent[]> {
+    const events = await this.wire.query([{ kinds: [K.DOC], "#h": [channelId], limit: 200 }]);
+    return events
+      .filter((e) => this.state.isMember(communityId, channelId, e.pubkey))
+      .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
+  }
+
+  async publishDoc(channelId: string, communityId: string, content: string, baseId?: string): Promise<void> {
+    await this.wire.publish({
+      kind: K.DOC,
+      tags: [["h", channelId], ["c", communityId], ...(baseId ? [["base", baseId]] : [])],
+      content,
+    });
+  }
+
+  async createCommunity(name: string): Promise<{ communityId: string; channelId: string }> {
+    const communityId = crypto.randomUUID();
+    const channelId = crypto.randomUUID();
+    await this.wire.publish({ kind: K.COMMUNITY, tags: [["d", communityId]], content: JSON.stringify({ name }) });
+    await this.wire.publish({
+      kind: K.CHANNEL,
+      tags: [["d", channelId], ["c", communityId]],
+      content: JSON.stringify({ name: "general", visibility: "open" }),
+    });
+    await this.wire.publish({
+      kind: K.MEMBERSHIP,
+      tags: [["d", channelId], ["c", communityId], ["p", this.pubkey, "owner"]],
+      content: "",
+    });
+    this.state.joined.add(communityId);
+    this.state.scope = { communityId, channelId };
+    this.state.save();
+    await this.syncJoined();
+    this.resubscribe();
+    return { communityId, channelId };
+  }
+
+  async listCommunities(): Promise<{ id: string; name: string; joined: boolean }[]> {
+    const events = await this.wire.query([{ kinds: [K.COMMUNITY], limit: 50 }]);
+    for (const e of events) this.state.absorb(e);
+    return [...this.state.communities.values()].map((c) => ({ id: c.id, name: c.name, joined: this.state.joined.has(c.id) }));
+  }
+
+  async joinCommunity(communityId: string): Promise<boolean> {
+    this.state.joined.add(communityId);
+    this.state.save();
+    await this.syncJoined();
+    this.resubscribe();
+    return this.state.community(communityId) !== undefined;
+  }
+
+  /** Scope to a channel by name across joined communities; loads its history window. */
+  async joinChannel(name: string): Promise<{ communityId: string; channelId: string; name: string } | undefined> {
+    for (const communityId of this.state.joined) {
+      const channel = this.state.findChannelByName(communityId, name);
+      if (channel) {
+        this.state.scope = { communityId, channelId: channel.id };
+        this.state.save();
+        this.emit("channelsChanged");
+        await this.loadChannelHistory(channel.id, communityId);
+        return { communityId, channelId: channel.id, name: channel.name };
+      }
+    }
+    return undefined;
+  }
+
+  leaveScope(): void {
+    this.state.scope = null;
+    this.state.save();
+    this.emit("channelsChanged");
+  }
+
+  setScope(communityId: string, channelId: string): void {
+    this.state.scope = { communityId, channelId };
+    this.state.save();
+    this.emit("channelsChanged");
+  }
+
+  async invite(pubkey: string, role: Role): Promise<string> {
+    const current = this.state.currentChannel();
+    if (!current) throw new Error("no channel scope");
+    if (current.community.creator !== this.pubkey) throw new Error("only the community creator can invite (v1)");
+    const tags: string[][] = [
+      ["d", current.channel.id],
+      ["c", current.community.id],
+      ...[...current.channel.members.entries()].map(([pk, r]) => ["p", pk, r]),
+    ];
+    if (!current.channel.members.has(pubkey)) tags.push(["p", pubkey, role]);
+    const event = await this.wire.publish({ kind: K.MEMBERSHIP, tags, content: "" });
+    this.state.absorb(event);
+    this.emit("channelsChanged");
+    return this.displayName(pubkey);
+  }
+
+  async queryEngrams(agentPk: string): Promise<WireEvent[]> {
+    return this.wire.query([{ kinds: [30174], authors: [agentPk], "#p": [this.pubkey] }]);
+  }
+  decryptFrom(peerPk: string, ciphertext: string): string {
+    return this.wire.decrypt(peerPk, ciphertext);
+  }
+
+  // ── History windows (Buzz's channel window, dumb-relay-shaped) ─────────
+
+  async loadChannelHistory(channelId: string, communityId: string): Promise<void> {
+    const [msgs, reactions, deletions, ops] = await Promise.all([
+      this.wire.query([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
+      this.wire.query([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
+      this.wire.query([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
+      this.wire.query([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
+    ]);
+    const ordered = msgs
+      .filter((e) => this.state.isMember(communityId, channelId, e.pubkey))
+      .sort((a, b) => a.created_at - b.created_at)
+      .slice(-HISTORY_LIMIT);
+    for (const event of ordered) {
+      if (this.seenMessages.has(event.id)) continue;
+      this.seenMessages.add(event.id);
+      const msg = this.cacheMessage(channelId, event);
+      this.emit("message", channelId, msg, { live: false, prepend: false });
+    }
+    for (const event of ops.filter((e) => e.kind === K.MSG_EDIT).sort((a, b) => a.created_at - b.created_at)) {
+      this.handleMsgEdit(event);
+    }
+    for (const event of reactions.sort((a, b) => a.created_at - b.created_at)) this.handleReaction(event, false);
+    for (const event of ops) {
+      if (event.kind === K.MSG_PIN) this.handleMsgPin(event);
+      else if (event.kind === K.MSG_BOOKMARK) this.handleMsgBookmark(event);
+    }
+    for (const event of deletions) this.handleDeletion(event);
+    if (this.state.scope?.channelId === channelId) {
+      const newest = (this.messagesByChannel.get(channelId) ?? []).at(-1);
+      if (newest) this.markRead(channelId, newest.ts);
+    }
+    this.emit("unreadsChanged");
+  }
+
+  /** Scroll-up paging: until-filter keyset with limit+1 has_more probe. Returns the fresh page, oldest first. */
+  async loadOlderPage(channelId: string, communityId: string): Promise<Msg[]> {
+    const list = this.messagesByChannel.get(channelId) ?? [];
+    const oldest = list[0]?.ts;
+    if (!oldest || this.exhaustedChannels.has(channelId)) return [];
+    const events = await this.wire.query([
+      { kinds: [K.MESSAGE], "#h": [channelId], until: oldest, limit: PAGE_SIZE + 1 },
+    ]);
+    if (events.length <= PAGE_SIZE) this.exhaustedChannels.add(channelId);
+    const fresh = events
+      .filter((e) => !this.seenMessages.has(e.id) && this.state.isMember(communityId, channelId, e.pubkey))
+      .sort((a, b) => a.created_at - b.created_at);
+    if (fresh.length === 0) this.exhaustedChannels.add(channelId);
+    const freshMsgs: Msg[] = [];
+    for (const event of fresh) {
+      this.seenMessages.add(event.id);
+      const msg = this.buildMsg(event);
+      freshMsgs.push(msg);
+      this.msgByIdMap.set(msg.id, msg);
+      if (msg.rootId) this.threadNo(msg.rootId);
+    }
+    this.messagesByChannel.set(channelId, [...freshMsgs, ...list].slice(-MSG_CACHE_CAP));
+    return freshMsgs;
+  }
+
+  // ── Startup ─────────────────────────────────────────────────────────────
+
+  async start(): Promise<void> {
+    this.state.load();
+
+    // Always-on, channel-orthogonal subscriptions.
+    this.wire.subscribe([{ kinds: [K.OBSERVER], "#p": [this.pubkey] }], (e) => this.handleObserverFrame(e));
+    this.wire.subscribe(
+      [{ kinds: [K.GIFT_WRAP], "#p": [this.pubkey], since: this.sessionStartS - DM_FUZZ_WINDOW_S }],
+      (e) => this.handleGiftWrap(e)
+    );
+    this.wire.subscribe([{ kinds: [K.PRESENCE] }], (e) => {
+      this.lastSeenByPk.set(e.pubkey, Date.now());
+    });
+    const beat = () => void this.wire.publish({ kind: K.PRESENCE, tags: [], content: "{}" }).catch(() => {});
+    beat();
+    setInterval(() => {
+      beat();
+      this.emit("presenceChanged");
+    }, PRESENCE_BEAT_MS).unref?.();
+    setInterval(() => this.emit("typingChanged"), 1000).unref?.();
+
+    // Names roster.
+    try {
+      const metadataEvents = await this.wire.query([{ kinds: [K.AGENT_METADATA], limit: 200 }]);
+      for (const event of metadataEvents) this.absorbName(event, false);
+      this.emit("presenceChanged");
+    } catch { /* roster fills from the live stream */ }
+
+    // Read state (before history so unreads count against synced marks).
+    try {
+      const readEvents = await this.wire.query([{ kinds: [K.READ_STATE], authors: [this.pubkey] }]);
+      const latestByD = new Map<string, WireEvent>();
+      for (const event of readEvents) {
+        const d = event.tags.find((t) => t[0] === "d")?.[1];
+        if (!d) continue;
+        const prev = latestByD.get(d);
+        if (!prev || event.created_at > prev.created_at) latestByD.set(d, event);
+      }
+      for (const [d, event] of latestByD) {
+        try {
+          this.lastReadByChannel.set(d, Number(JSON.parse(this.wire.decrypt(this.pubkey, event.content)).last_read) || 0);
+        } catch { /* not ours / old format */ }
+      }
+    } catch { /* badges start from zero */ }
+
+    // First-run bootstrap: a brand-new user lands in a working room.
+    if (this.state.joined.size === 0 && !this.state.persistedFileExists()) {
+      try {
+        const { communityId, channelId } = await this.createCommunity("Home");
+        this.state.scope = { communityId, channelId };
+        this.state.save();
+        this.emit("notice", "🏠 Created your Home community — you're in #general. Mention an agent (@researcher …) to get going; /help for the rest.");
+      } catch { /* relay unreachable — host surfaces connection errors */ }
+    }
+
+    await this.syncJoined();
+    this.resubscribe();
+
+    // Docs hydrate.
+    try {
+      const docEvents = await this.wire.query([{ kinds: [K.DOC], "#h": this.channelIdsOfJoined(), limit: 500 }]);
+      for (const event of docEvents) this.absorbDocEvent(event);
+    } catch { /* live stream fills in */ }
+
+    const scope = this.state.scope;
+    if (scope) await this.loadChannelHistory(scope.channelId, scope.communityId);
+    this.emit("channelsChanged");
+  }
+
+  // ── Internal machinery (ported 1:1 from the communities extension) ─────
+
+  private buildMsg(event: WireEvent): Msg {
+    const parentId = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+    const rootId = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? parentId;
+    return {
+      id: event.id,
+      authorPk: event.pubkey,
+      authorName: this.displayName(event.pubkey),
+      content: event.content,
+      parentId,
+      rootId,
+      ts: event.created_at,
+    };
+  }
+
+  private cacheMessage(channelId: string, event: WireEvent): Msg {
+    const msg = this.buildMsg(event);
+    const list = this.messagesByChannel.get(channelId) ?? [];
+    list.push(msg);
+    if (list.length > MSG_CACHE_CAP) list.splice(0, list.length - MSG_CACHE_CAP);
+    this.messagesByChannel.set(channelId, list);
+    this.msgByIdMap.set(msg.id, msg);
+    if (msg.rootId) this.threadNo(msg.rootId);
+    return msg;
+  }
+
+  private dmConvo(peerPk: string): { msgs: DmMessage[]; unread: number } {
+    let convo = this.dmConvos.get(peerPk);
+    if (!convo) this.dmConvos.set(peerPk, (convo = { msgs: [], unread: 0 }));
+    return convo;
+  }
+
+  private absorbName(event: WireEvent, emitChange = true): void {
+    try {
+      const name = JSON.parse(event.content).name;
+      if (name && this.names.get(event.pubkey) !== name) {
+        this.names.set(event.pubkey, name);
+        if (emitChange) this.emit("presenceChanged");
+      }
+    } catch { /* ignore */ }
+  }
+
+  private channelIdsOfJoined(): string[] {
+    const ids: string[] = [];
+    for (const communityId of this.state.joined) {
+      const community = this.state.community(communityId);
+      if (community) ids.push(...community.channels.keys());
+    }
+    return ids;
+  }
+
+  private async syncJoined(): Promise<void> {
+    const ids = [...this.state.joined];
+    if (ids.length === 0) return;
+    const events = await this.wire.query([
+      { kinds: [K.COMMUNITY], "#d": ids },
+      { kinds: [K.CHANNEL, K.MEMBERSHIP], "#c": ids },
+    ]);
+    for (const kind of [K.COMMUNITY, K.CHANNEL, K.MEMBERSHIP]) {
+      for (const event of events.filter((e) => e.kind === kind)) this.state.absorb(event);
+    }
+    this.emit("channelsChanged");
+  }
+
+  private resubscribe(): void {
+    this.unsubscribeLive?.();
+    this.subscribedChannelIds = this.channelIdsOfJoined().sort().join(",");
+    const ids = [...this.state.joined];
+    const filters: WireFilter[] = [{ kinds: [K.AGENT_METADATA], since: Math.floor(Date.now() / 1000) - 7 * 86400 }];
+    if (ids.length > 0) {
+      filters.push(
+        { kinds: [K.COMMUNITY, K.CHANNEL, K.MEMBERSHIP], "#c": ids },
+        { kinds: [K.COMMUNITY], "#d": ids },
+        {
+          kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK],
+          "#h": this.channelIdsOfJoined(),
+          since: Math.floor(Date.now() / 1000),
+        },
+        { kinds: [K.THREAD_SUMMARY], "#h": this.channelIdsOfJoined() }
+      );
+    }
+    this.unsubscribeLive = this.wire.subscribe(filters, (event) => this.dispatch(event));
+  }
+
+  private dispatch(event: WireEvent): void {
+    switch (event.kind) {
+      case K.TYPING: return this.handleTyping(event);
+      case K.WORKFLOW_RUN: return this.handleWorkflowRun(event);
+      case K.THREAD_SUMMARY: return this.handleThreadSummary(event);
+      case K.REACTION: return this.handleReaction(event, true);
+      case K.DELETION: return this.handleDeletion(event);
+      case K.DRAFT: return this.handleDraft(event);
+      case K.MSG_EDIT: return this.handleMsgEdit(event);
+      case K.MSG_PIN: return this.handleMsgPin(event);
+      case K.MSG_BOOKMARK: return this.handleMsgBookmark(event);
+      case K.DOC: return this.handleDocEvent(event);
+      case K.AGENT_METADATA: return this.absorbName(event);
+      case K.MESSAGE: return this.handleIncomingMessage(event);
+      default: {
+        this.state.absorb(event);
+        if (event.kind === K.CHANNEL) {
+          const ids = this.channelIdsOfJoined().sort().join(",");
+          // Resubscribe ONLY when the channel set changed — replayed
+          // 47101s once fed a resubscribe feedback loop pinning the TUI
+          // at 98% CPU.
+          if (ids !== this.subscribedChannelIds) this.resubscribe();
+        }
+        this.emit("channelsChanged");
+      }
+    }
+  }
+
+  private handleIncomingMessage(event: WireEvent): void {
+    if (this.seenMessages.has(event.id)) return;
+    this.seenMessages.add(event.id);
+    for (const key of this.typing.keys()) if (key.startsWith(`${event.pubkey}:`)) this.typing.delete(key);
+    this.emit("typingChanged");
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!channelId || !communityId) return;
+    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+
+    const msg = this.cacheMessage(channelId, event);
+
+    // A threaded reply closes its author's job on the message it answers.
+    if (msg.parentId) {
+      for (const anchor of [msg.parentId, msg.rootId]) {
+        const job = anchor ? this.jobsMap.get(`${event.pubkey}:${anchor}`) : undefined;
+        if (job && job.status !== "done") {
+          job.status = "done";
+          job.endedAt = event.created_at * 1000;
+          job.currentTool = undefined;
+          this.emit("jobsChanged");
+          break;
+        }
+      }
+    }
+
+    if (this.state.scope?.channelId === channelId) this.markRead(channelId, msg.ts);
+    else this.emit("unreadsChanged");
+
+    this.emit("message", channelId, msg, { live: true, prepend: false });
+    if (msg.rootId) this.emit("metaChanged", channelId, msg.rootId);
+  }
+
+  private handleReaction(event: WireEvent, live: boolean): void {
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!targetId || !channelId || !communityId) return;
+    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    const emoji = event.content.trim();
+    if (!emoji || emoji.length > 8) return;
+    let byEmoji = this.reactionsByTarget.get(targetId);
+    if (!byEmoji) this.reactionsByTarget.set(targetId, (byEmoji = new Map()));
+    let who = byEmoji.get(emoji);
+    if (!who) byEmoji.set(emoji, (who = new Set()));
+    who.add(this.displayName(event.pubkey));
+    this.reactionIndex.set(event.id, { targetId, emoji, authorPk: event.pubkey });
+    this.emit("reaction", channelId, targetId);
+
+    // Status reactions open jobs (👀 accepted / 💬 working) — live only:
+    // a stored 👀 from last week is history, not an active turn.
+    if (live && (emoji === "👀" || emoji === "💬")) {
+      const key = `${event.pubkey}:${targetId}`;
+      const existing = this.jobsMap.get(key);
+      if (existing) {
+        if (emoji === "💬" && existing.status !== "working" && existing.status !== "done") {
+          existing.status = "working";
+          this.emit("jobsChanged");
+        }
+      } else {
+        const trigger = this.msgByIdMap.get(targetId);
+        this.jobsMap.set(key, {
+          triggerId: targetId,
+          agentPk: event.pubkey,
+          channelId,
+          status: emoji === "💬" ? "working" : "seen",
+          startedAt: event.created_at * 1000,
+          rootId: trigger?.rootId ?? targetId,
+          snippet: (trigger?.content ?? "(message not seen)").replace(/\s+/g, " ").slice(0, 48),
+        });
+        while (this.jobsMap.size > JOB_CAP) this.jobsMap.delete(this.jobsMap.keys().next().value as string);
+        this.emit("jobsChanged");
+      }
+    }
+  }
+
+  private handleDeletion(event: WireEvent): void {
+    for (const tag of event.tags) {
+      if (tag[0] !== "e" || !tag[1]) continue;
+      const op = this.opIndex.get(tag[1]);
+      if (op && op.by === event.pubkey) {
+        this.opIndex.delete(tag[1]);
+        if (op.type === "pin") {
+          this.pinsByChannel.get(op.channelId)?.delete(op.targetId);
+          this.emit("metaChanged", op.channelId, op.targetId);
+        } else {
+          this.myBookmarksMap.delete(op.targetId);
+        }
+        continue;
+      }
+      const entry = this.reactionIndex.get(tag[1]);
+      if (!entry || entry.authorPk !== event.pubkey) continue;
+      this.reactionIndex.delete(tag[1]);
+      const who = this.reactionsByTarget.get(entry.targetId)?.get(entry.emoji);
+      who?.delete(this.displayName(entry.authorPk));
+      if (who && who.size === 0) this.reactionsByTarget.get(entry.targetId)?.delete(entry.emoji);
+      const channelId = event.tags.find((t) => t[0] === "h")?.[1] ?? "";
+      this.emit("reaction", channelId, entry.targetId);
+    }
+  }
+
+  private handleMsgEdit(event: WireEvent): void {
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    if (!targetId || !channelId) return;
+    const target = this.msgByIdMap.get(targetId);
+    if (!target || event.pubkey !== target.authorPk) return; // author-only
+    if (event.created_at < (target.editTs ?? 0)) return; // latest edit wins
+    target.content = event.content;
+    target.edited = true;
+    target.editTs = event.created_at;
+    this.emit("messageEdited", channelId, target);
+    this.emit("metaChanged", channelId, targetId);
+  }
+
+  private handleMsgPin(event: WireEvent): void {
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!targetId || !channelId || !communityId) return;
+    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    let pins = this.pinsByChannel.get(channelId);
+    if (!pins) this.pinsByChannel.set(channelId, (pins = new Map()));
+    pins.set(targetId, { opId: event.id, by: event.pubkey, ts: event.created_at });
+    this.opIndex.set(event.id, { type: "pin", channelId, targetId, by: event.pubkey });
+    this.emit("metaChanged", channelId, targetId);
+  }
+
+  private handleMsgBookmark(event: WireEvent): void {
+    if (event.pubkey !== this.pubkey) return;
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1] ?? "";
+    if (!targetId) return;
+    this.myBookmarksMap.set(targetId, { opId: event.id, ts: event.created_at, channelId });
+    this.opIndex.set(event.id, { type: "bookmark", channelId, targetId, by: event.pubkey });
+  }
+
+  private handleThreadSummary(event: WireEvent): void {
+    const rootId = event.tags.find((t) => t[0] === "d")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!rootId || !channelId || !communityId) return;
+    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    const existing = this.summaryByRoot.get(rootId);
+    if (existing && event.created_at < existing.summaryTs) return;
+    try {
+      const { replyCount, lastReplyAt } = JSON.parse(event.content);
+      if (typeof replyCount !== "number") return;
+      this.summaryByRoot.set(rootId, { replyCount, lastAuthorTs: lastReplyAt ?? 0, summaryTs: event.created_at });
+      this.threadNo(rootId);
+      this.emit("metaChanged", channelId, rootId);
+    } catch { /* malformed summary */ }
+  }
+
+  private handleTyping(event: WireEvent): void {
+    if (event.pubkey === this.pubkey) return;
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    if (!channelId || this.state.scope?.channelId !== channelId) return;
+    const rootId =
+      event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ??
+      event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+    this.typing.set(`${event.pubkey}:${rootId ?? "channel"}`, {
+      pubkey: event.pubkey,
+      threadRoot: rootId,
+      expiry: Date.now() + TYPING_TTL_MS,
+    });
+    this.emit("typingChanged");
+  }
+
+  private handleDraft(event: WireEvent): void {
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!channelId || !communityId || !event.content) return;
+    if (event.pubkey === this.pubkey) return;
+    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    const rootId =
+      event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ??
+      event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+    // Streaming text supersedes the typing indicator for this author.
+    for (const key of this.typing.keys()) if (key.startsWith(`${event.pubkey}:`)) this.typing.delete(key);
+    this.emit("typingChanged");
+    this.emit("draft", channelId, event.pubkey, event.content, rootId);
+  }
+
+  private handleWorkflowRun(event: WireEvent): void {
+    try {
+      const trace = JSON.parse(event.content) as { workflow?: string; run?: string; status?: string; step?: number };
+      if (!trace.workflow || !trace.run || !trace.status) return;
+      this.workflowRunsMap.set(trace.run, { workflow: trace.workflow, status: trace.status, step: trace.step, ts: event.created_at * 1000 });
+      while (this.workflowRunsMap.size > 50) this.workflowRunsMap.delete(this.workflowRunsMap.keys().next().value as string);
+      this.emit("workflowRunsChanged");
+    } catch { /* not a trace we understand */ }
+  }
+
+  private handleObserverFrame(event: WireEvent): void {
+    const agent = event.tags.find((t) => t[0] === "agent")?.[1];
+    if (!agent) return;
+    let frame: ObserverEntry;
+    try {
+      frame = JSON.parse(this.wire.decrypt(event.pubkey, event.content));
+    } catch {
+      return; // not for us — ignorable by design
+    }
+    const feed = this.observerFeedsMap.get(agent) ?? [];
+    feed.push(frame);
+    if (feed.length > 30) feed.splice(0, feed.length - 30);
+    this.observerFeedsMap.set(agent, feed);
+
+    if (frame.type === "turn" && frame.status !== "started") this.workingAgentsMap.delete(agent);
+    else if (frame.type === "tool" && frame.title) this.workingAgentsMap.set(agent, { activity: frame.title, ts: Date.now() });
+    else if (frame.type === "turn") this.workingAgentsMap.set(agent, { activity: "working…", ts: Date.now() });
+
+    // Jobs enrichment — owner-only detail the public wire can't provide.
+    const agentPk = this.pkByName(agent);
+    if (agentPk) {
+      let job: Job | undefined;
+      for (const j of this.jobsMap.values()) {
+        if (j.agentPk === agentPk && (j.status === "seen" || j.status === "working")) job = j;
+      }
+      if (job) {
+        if (frame.type === "tool" && frame.title) {
+          job.currentTool = frame.title;
+          this.emit("jobsChanged");
+        } else if (frame.type === "turn" && frame.status === "failed") {
+          job.status = "failed";
+          job.endedAt = Date.now();
+          job.currentTool = undefined;
+          this.emit("jobsChanged");
+        } else if (frame.type === "turn" && frame.status === "steered") {
+          job.status = "steered";
+          job.currentTool = undefined;
+          this.emit("jobsChanged");
+        }
+      }
+    }
+    this.emit("observerFrame", agent, frame);
+  }
+
+  private handleGiftWrap(event: WireEvent): void {
+    const dm = this.wire.unwrapDm(event);
+    if (!dm || this.seenDmIds.has(dm.id)) return;
+    this.seenDmIds.add(dm.id);
+    const convo = this.dmConvo(dm.peerPk);
+    convo.msgs.push({ id: dm.id, senderPk: dm.senderPk, text: dm.text, ts: dm.ts });
+    convo.msgs.sort((a, b) => a.ts - b.ts);
+    if (convo.msgs.length > 100) convo.msgs.splice(0, convo.msgs.length - 100);
+    const live = dm.ts >= this.sessionStartS;
+    if (live && dm.senderPk !== this.pubkey) convo.unread++;
+    this.emit("dmMessage", { id: dm.id, senderPk: dm.senderPk, text: dm.text, ts: dm.ts, peerPk: dm.peerPk }, { live });
+  }
+
+  private absorbDocEvent(event: WireEvent): string | undefined {
+    if (this.seenDocIds.has(event.id)) return undefined;
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!channelId || !communityId || !this.state.isMember(communityId, channelId, event.pubkey)) return undefined;
+    this.seenDocIds.add(event.id);
+    let info = this.docsByChannelMap.get(channelId);
+    if (!info) this.docsByChannelMap.set(channelId, (info = { count: 0, latestId: "", latestTs: 0, latestAuthor: "", latestContent: "" }));
+    info.count++;
+    if (event.created_at > info.latestTs || (event.created_at === info.latestTs && event.id < info.latestId)) {
+      info.latestTs = event.created_at;
+      info.latestId = event.id;
+      info.latestAuthor = event.pubkey;
+      info.latestContent = event.content;
+    }
+    return channelId;
+  }
+
+  private handleDocEvent(event: WireEvent): void {
+    const channelId = this.absorbDocEvent(event);
+    if (channelId) this.emit("docChanged", channelId);
+  }
+}

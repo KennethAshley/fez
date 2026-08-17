@@ -67,6 +67,8 @@ export interface FezExtensionAPI {
   registerInputHandler(handler: (text: string) => Promise<boolean>): void;
   registerUrlHandler(prefix: string, handler: (url: string) => void): void;
   nostr?: NostrAccess;
+  /** The process's shared @fez/client instance — typed via a type-only import of @fez/client (erased at bundle time). */
+  client?: unknown;
   ui: {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;

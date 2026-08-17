@@ -6,6 +6,7 @@ import type { McpServer } from "@agentclientprotocol/sdk";
 import type { Event, Filter } from "nostr-tools";
 import { registerHarness, type HarnessAdapter } from "./harness.js";
 import type { DmRumor } from "./dm.js";
+import type { FezClient } from "../packages/fez-client/dist/index.js";
 import { registerMcpServer } from "./mcp-servers.js";
 import { registerCommand, type CommandHandler } from "./commands.js";
 import { setStatus } from "./status.js";
@@ -131,6 +132,14 @@ export interface FezExtensionAPI {
    */
   registerTheme(spec: ThemeSpec): void;
   nostr?: NostrAccess;
+  /**
+   * The process's ONE shared @fez/client instance — protocol state,
+   * trust rules, and actions, headless. Extensions render views over it
+   * instead of each re-deriving state from raw subscriptions. Undefined
+   * outside the TUI. Extensions type it structurally (or via a type-only
+   * import of @fez/client, erased at bundle time).
+   */
+  client?: FezClient;
   ui: {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;
@@ -169,6 +178,11 @@ const inertMessageHandle: MessageHandle = {
 };
 
 let nostrBackend: NostrAccess | undefined;
+let clientBackend: FezClient | undefined;
+
+export function setClientBackend(client: FezClient): void {
+  clientBackend = client;
+}
 let uiBackend: UiBackend | undefined;
 const inputHandlers: InputHandler[] = [];
 const urlHandlers: { prefix: string; handler: UrlHandler }[] = [];
@@ -199,6 +213,7 @@ function buildApi(): FezExtensionAPI {
     registerUrlHandler: (prefix, handler) => urlHandlers.push({ prefix, handler }),
     registerTheme,
     nostr: nostrBackend,
+    client: clientBackend,
     ui: {
       setStatus,
       createSidePanel: (opts) =>

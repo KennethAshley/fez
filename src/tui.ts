@@ -88,12 +88,13 @@ class LinePrefix implements Component {
   }
 }
 import { CapabilityClient } from "./client.js";
+import { FezClient } from "../packages/fez-client/dist/index.js";
 import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { spawn } from "node:child_process";
-import { loadExtensions, setNostrBackend, setUiBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, registerTheme as registerThemePack, type MessageHandle } from "./extensions.js";
+import { loadExtensions, setNostrBackend, setUiBackend, setClientBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, registerTheme as registerThemePack, type MessageHandle } from "./extensions.js";
 import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
 import { findMcpServer } from "./mcp-servers.js";
@@ -138,6 +139,7 @@ export class FezTUI {
   private relay: RelayConnection;
   private messages: Message[] = [];
   private myPubkey: string;
+  private fezClient!: FezClient;
   private agentNameMap: Map<string, string> = new Map(); // pubkey -> name
 
   // Owned-terminal rendering (pi-tui engine via fez-tui). The screen owns
@@ -195,26 +197,32 @@ export class FezTUI {
     // Backends behind FezExtensionAPI's nostr/ui surface, installed before
     // extensions load so their init-time calls land. The screen doesn't
     // exist yet: createSidePanel builds a real Text now (laid out later),
-    // appendMessage buffers until after screen.start().
-    setNostrBackend({
+    // appendMessage buffers until after screen.start(). The SAME wire
+    // object feeds both api.nostr and the process's one FezClient — the
+    // headless protocol brain extensions render views over (api.client).
+    const wire = {
       pubkey: this.myPubkey,
-      publish: async (tmpl) => {
+      publish: async (tmpl: { kind: number; tags: string[][]; content: string }) => {
         const event = this.client.signEvent(tmpl);
         await this.relay.publish(event);
         return event;
       },
-      subscribe: (filters, onEvent) => this.relay.subscribe(filters, onEvent),
-      query: (filters) => this.relay.query(filters),
-      encrypt: (peer, plaintext) => this.client.encryptTo(peer, plaintext),
-      decrypt: (peer, ciphertext) => this.client.decryptFrom(peer, ciphertext),
-      sendDm: async (recipient, text) => {
+      subscribe: (filters: Parameters<RelayConnection["subscribe"]>[0], onEvent: (event: Event) => void) =>
+        this.relay.subscribe(filters, onEvent),
+      query: (filters: Parameters<RelayConnection["query"]>[0]) => this.relay.query(filters),
+      encrypt: (peer: string, plaintext: string) => this.client.encryptTo(peer, plaintext),
+      decrypt: (peer: string, ciphertext: string) => this.client.decryptFrom(peer, ciphertext),
+      sendDm: async (recipient: string, text: string) => {
         const { toPeer, toSelf, id } = this.client.wrapDm(recipient, text);
         await this.relay.publish(toPeer);
         await this.relay.publish(toSelf);
         return id;
       },
-      unwrapDm: (event) => this.client.unwrapDm(event),
-    });
+      unwrapDm: (event: Event) => this.client.unwrapDm(event),
+    };
+    setNostrBackend(wire);
+    this.fezClient = new FezClient(wire);
+    setClientBackend(this.fezClient);
     setUiBackend({
       createSidePanel: (opts) => {
         const section = this.sidePanel.addSection({ title: opts?.title, icon: opts?.icon, order: opts?.order });
@@ -308,6 +316,11 @@ export class FezTUI {
     }
     this.screen.start();
     this.screen.setFocus(this.editor);
+
+    // The client starts AFTER extensions registered their event
+    // listeners and the screen exists — its startup emissions (backfill
+    // messages, notices, panel state) land on live views.
+    void this.fezClient.start();
 
     // Load-older seam (Buzz's scroll-up channel paging, TUI-shaped):
     // when the user PARKS the log at the very top with real overflow,
