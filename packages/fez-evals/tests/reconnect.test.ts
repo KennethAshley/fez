@@ -152,7 +152,7 @@ beforeAll(async () => {
     onDisconnect: () => disconnects++,
   });
   await conn.connect();
-  conn.subscribe([{ kinds: [30301, 30302] }], (e) => received.push(e));
+  conn.subscribe([{ kinds: [1301, 1302] }], (e) => received.push(e));
 });
 
 afterAll(async () => {
@@ -164,12 +164,12 @@ describe("RelayConnection survives drops", () => {
   test(
     "live events resume after the socket is severed",
     async () => {
-      const e1 = await sideChannelPublish({ kind: 30301, content: "before drop" });
+      const e1 = await sideChannelPublish({ kind: 1301, content: "before drop" });
       await waitFor(() => received.some((e) => e.id === e1.id), 5000, "pre-drop event");
 
       relay.dropClients();
       // The world keeps moving while we're down.
-      const e2 = await sideChannelPublish({ kind: 30301, content: "during outage" });
+      const e2 = await sideChannelPublish({ kind: 1301, content: "during outage" });
 
       // The watchdog (200ms here) must detect the drop, reconnect, and
       // resubscribe with the skew-rewound watermark — no caller involvement.
@@ -186,7 +186,7 @@ describe("RelayConnection survives drops", () => {
       // is invisible to since=watermark+1 — only the skew backfill finds it.
       relay.dropClients();
       const straggler = await sideChannelPublish({
-        kind: 30302,
+        kind: 1302,
         content: "backdated straggler",
         created_at: Math.floor(Date.now() / 1000) - 60,
       });
@@ -205,7 +205,7 @@ describe("RelayConnection survives drops", () => {
     async () => {
       relay.dropClients();
       const event = finalizeEvent(
-        { kind: 30301, created_at: Math.floor(Date.now() / 1000), tags: [], content: "published through a drop" },
+        { kind: 1301, created_at: Math.floor(Date.now() / 1000), tags: [], content: "published through a drop" },
         sk
       );
       await conn.publish(event); // must not throw; retry ladder covers the reconnect
@@ -217,15 +217,15 @@ describe("RelayConnection survives drops", () => {
   test(
     "policy rejection (OK=false) fails fast — no retry ladder",
     async () => {
-      relay.blockedKinds.add(30303);
+      relay.blockedKinds.add(1303);
       const event = finalizeEvent(
-        { kind: 30303, created_at: Math.floor(Date.now() / 1000), tags: [], content: "rejected" },
+        { kind: 1303, created_at: Math.floor(Date.now() / 1000), tags: [], content: "rejected" },
         sk
       );
       const t0 = Date.now();
       await expect(conn.publish(event)).rejects.toThrow(/blocked/);
       expect(Date.now() - t0).toBeLessThan(2000); // immediate, not 13s of retries
-      relay.blockedKinds.delete(30303);
+      relay.blockedKinds.delete(1303);
     },
     30000
   );

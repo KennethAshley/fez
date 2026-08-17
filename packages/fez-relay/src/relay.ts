@@ -95,9 +95,50 @@ const isEphemeral = (kind: number) => kind >= 20000 && kind < 30000;
  */
 const DELETABLE_KINDS = new Set([7, 47103, 40003, 40004, 40005]);
 
-function applyDeletions(list: StoredEvent[]): StoredEvent[] {
+// NIP-16/33: replaceable kinds keep only the latest per (pubkey, kind[, d]).
+// Fez's chattiest kinds live here — 30078 read state publishes on every
+// channel view, 39005 summaries on every thread change; without this the
+// index (and boot replay) grows without bound. Buzz spent five migrations
+// on this exact class.
+const isReplaceable = (kind: number) =>
+  kind === 0 || kind === 3 || (kind >= 10000 && kind < 20000);
+const isParamReplaceable = (kind: number) => kind >= 30000 && kind < 40000;
+
+function replaceKey(event: StoredEvent): string | undefined {
+  if (isReplaceable(event.kind)) return `${event.kind}:${event.pubkey}`;
+  if (isParamReplaceable(event.kind)) {
+    const d = event.tags.find((t) => t[0] === "d")?.[1] ?? "";
+    return `${event.kind}:${event.pubkey}:${d}`;
+  }
+  return undefined;
+}
+
+/** Latest wins; NIP-01 tie-break: same created_at → lowest id survives. */
+function newerWins(a: StoredEvent, b: StoredEvent): StoredEvent {
+  if (a.created_at !== b.created_at) return a.created_at > b.created_at ? a : b;
+  return a.id < b.id ? a : b;
+}
+
+function applyCompaction(list: StoredEvent[]): StoredEvent[] {
+  const winners = new Map<string, StoredEvent>();
+  let hasReplaceable = false;
+  for (const event of list) {
+    const key = replaceKey(event);
+    if (!key) continue;
+    hasReplaceable = true;
+    const current = winners.get(key);
+    winners.set(key, current ? newerWins(current, event) : event);
+  }
+  if (!hasReplaceable) return list;
+  return list.filter((e) => {
+    const key = replaceKey(e);
+    return !key || winners.get(key) === e;
+  });
+}
+
+function applyDeletions(list: StoredEvent[], maskedOut?: Set<string>): StoredEvent[] {
   const byId = new Map(list.map((e) => [e.id, e]));
-  const masked = new Set<string>();
+  const masked = maskedOut ?? new Set<string>();
   for (const event of list) {
     if (event.kind !== 5) continue;
     for (const tag of event.tags) {
@@ -146,8 +187,25 @@ export function startRelay(options: RelayOptions): RelayHandle {
   // Seeded BEFORE deletion masking: a masked event must stay known, or a
   // replay would resurrect it.
   const known = new Set<string>(loaded.map((e) => e.id));
-  const events: StoredEvent[] = applyDeletions(loaded);
-  if (store) log(`📂 loaded ${events.length} events from ${options.store ?? "operator store"} (${loaded.length - events.length} deletion-masked)`);
+  // Ids masked by a valid deletion stay refused forever — even after a
+  // store rewrite forgets the original (a replayed deleted event must not
+  // resurrect).
+  const tombstoned = new Set<string>();
+  const events: StoredEvent[] = applyCompaction(applyDeletions(loaded, tombstoned));
+  if (store) {
+    const dropped = loaded.length - events.length;
+    log(`📂 loaded ${events.length} events from ${options.store ?? "operator store"}${dropped ? ` (${dropped} compacted/masked)` : ""}`);
+    // Rewrite the store when the append-only history has accumulated
+    // meaningful dead weight — boot replay cost stays bounded.
+    if (store.compact && dropped > 100 && dropped > loaded.length / 5) {
+      try {
+        store.compact(events);
+        log(`🗜 store compacted: ${loaded.length} → ${events.length} events`);
+      } catch (err) {
+        log(`⚠️ store compaction failed (continuing on full history): ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }
   const ephemeralSeen = new Set<string>();
 
   const ctx: PolicyContext = {
@@ -175,13 +233,14 @@ export function startRelay(options: RelayOptions): RelayHandle {
       if (msg[0] === "EVENT") {
         void (async () => {
           const event = msg[1] as StoredEvent;
+          let suppressFanout = false;
 
           if (typeof event?.content === "string" && Buffer.byteLength(event.content) > limits.maxContentBytes) {
             ws.send(JSON.stringify(["OK", event.id ?? "", false, "invalid: content too large"]));
             return;
           }
 
-          if (known.has(event.id) || ephemeralSeen.has(event.id)) {
+          if (known.has(event.id) || ephemeralSeen.has(event.id) || tombstoned.has(event.id)) {
             ws.send(JSON.stringify(["OK", event.id, true, "duplicate: already have this event"]));
             return;
           }
@@ -230,12 +289,30 @@ export function startRelay(options: RelayOptions): RelayHandle {
                 if (tag[0] !== "e" || !tag[1]) continue;
                 const idx = events.findIndex((e) => e.id === tag[1]);
                 if (idx >= 0 && events[idx].pubkey === event.pubkey && DELETABLE_KINDS.has(events[idx].kind)) {
+                  tombstoned.add(tag[1]);
                   events.splice(idx, 1);
+                }
+              }
+            }
+            // Replaceable latest-wins at ingest: evict the loser from the
+            // serving index (the append-only store keeps history; the
+            // boot-time compaction pass re-derives the same answer).
+            const key = replaceKey(event);
+            if (key) {
+              const rivalIdx = events.findIndex((e) => e !== event && replaceKey(e) === key);
+              if (rivalIdx >= 0) {
+                const rival = events[rivalIdx];
+                if (newerWins(rival, event) === rival) {
+                  events.pop(); // the new arrival lost; rival keeps serving
+                  suppressFanout = true; // don't push a stale version to live subs
+                } else {
+                  events.splice(rivalIdx, 1);
                 }
               }
             }
           }
           ws.send(JSON.stringify(["OK", event.id, true, ""]));
+          if (suppressFanout) return;
           for (const [client, clientSubs] of subs) {
             if (client.readyState !== WebSocket.OPEN) continue;
             // Slow-consumer fence: a client that stops draining its socket

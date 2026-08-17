@@ -16,6 +16,14 @@ import type { StoredEvent } from "./relay.js";
 export interface EventStore {
   load(): StoredEvent[];
   append(event: StoredEvent): void;
+  /**
+   * Optional: rewrite storage to exactly this surviving set (the relay
+   * calls it at boot when deletion masking + replaceable compaction have
+   * accumulated meaningful dead weight). Operators bringing their own
+   * store may omit it — the relay then replays full history forever,
+   * which is correct, just slower.
+   */
+  compact?(events: StoredEvent[]): void;
 }
 
 export class JsonlEventStore implements EventStore {
@@ -35,6 +43,12 @@ export class JsonlEventStore implements EventStore {
 
   append(event: StoredEvent): void {
     fs.appendFileSync(this.file, JSON.stringify(event) + "\n");
+  }
+
+  compact(events: StoredEvent[]): void {
+    const tmp = `${this.file}.compact.tmp`;
+    fs.writeFileSync(tmp, events.map((e) => JSON.stringify(e)).join("\n") + (events.length ? "\n" : ""));
+    fs.renameSync(tmp, this.file); // atomic swap — a crash mid-write leaves the original intact
   }
 }
 
@@ -92,6 +106,18 @@ export class SqliteEventStore implements EventStore {
       JSON.stringify(event.tags),
       event.sig
     );
+  }
+
+  compact(events: StoredEvent[]): void {
+    this.db.exec("BEGIN");
+    try {
+      this.db.exec("DELETE FROM events");
+      for (const event of events) this.append(event);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 }
 

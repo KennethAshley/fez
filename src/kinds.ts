@@ -150,6 +150,44 @@ export const KIND_REACTION = 7;
  */
 export const KIND_DELETION = 5;
 
+/**
+ * Read state — client-signed, NIP-44 SELF-encrypted last-read marks
+ * (Buzz's NIP-RS decision: unreads are private, derived client-side).
+ * Parameterized-replaceable; ["d", channelId]; content = nip44(self) of
+ * {last_read}. Latest per d wins.
+ */
+export const KIND_READ_STATE = 30078;
+
+/**
+ * Message ops (400xx, Buzz's stream-message op kinds): each targets a
+ * 47103 via ["e", targetId] + ["h", channelId], ["c", communityId].
+ * Trust rules are client-side: edits author-only latest-wins; pins/
+ * bookmarks retract via kind 5 from their own author.
+ */
+export const KIND_MSG_EDIT = 40003;     // content = replacement text
+export const KIND_MSG_PIN = 40004;      // channel-visible pin
+export const KIND_MSG_BOOKMARK = 40005; // private-ish bookmark (author's own list)
+
+/**
+ * Intents the sentinel executes at the appointed time, then tombstones
+ * (kind 5) so restarts never refire. 40006 scheduled message: h/c +
+ * ["send_at", ts], content = the message. 40007 reminder: ["p", self],
+ * content = NIP-44 self-encrypted {note, remind_at, about?} — reminders
+ * are private data on a public relay (legacy plaintext form had a
+ * remind_at tag; still decoded).
+ */
+export const KIND_SCHEDULED = 40006;
+export const KIND_REMINDER = 40007;
+
+/**
+ * Channel doc — the living document per channel (Buzz's canvas 40100,
+ * fez-shaped as versioned markdown). Regular kind = free history; tags
+ * ["h", channelId], ["c", communityId], ["base", parentVersionId]? for
+ * conflict detection; content = full markdown. Member-gated like
+ * messages.
+ */
+export const KIND_DOC = 40100;
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,

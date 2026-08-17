@@ -39,7 +39,8 @@ interface Persisted {
   lastScope?: Scope;
 }
 
-const STATE_FILE = path.join(os.homedir(), ".fez", "communities.json");
+// Overridable so tests (and parallel harnesses) never touch the real one.
+const STATE_FILE = process.env.FEZ_STATE_FILE ?? path.join(os.homedir(), ".fez", "communities.json");
 
 export class CommunityState {
   communities = new Map<string, Community>();

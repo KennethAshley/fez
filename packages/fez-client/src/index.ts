@@ -61,8 +61,11 @@ export interface Wire {
 }
 
 // ── Kinds (fez registry — see src/kinds.ts for the full docs) ────────────
+// Duplicated by design (this package stays dependency-light), exported so
+// the registry-agreement gate in fez-evals can prove it never drifts from
+// src/kinds.ts.
 
-const K = {
+export const K = {
   AGENT_METADATA: 47000,
   COMMUNITY: 47100,
   CHANNEL: 47101,

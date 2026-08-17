@@ -67,10 +67,10 @@ describe("ingest dedup", () => {
   test("replayed EVENT gets OK=true 'duplicate', stored and fanned out once", async () => {
     const probe = new Probe();
     await probe.open();
-    probe.send(["REQ", "watch", { kinds: [30310] }]);
+    probe.send(["REQ", "watch", { kinds: [1310] }]);
     await probe.waitFor((m) => m[0] === "EOSE");
 
-    const event = sign(30310, "once only");
+    const event = sign(1310, "once only");
     const before = relay.eventCount;
     probe.send(["EVENT", event]);
     const ok1 = await probe.waitFor((m) => m[0] === "OK" && m[1] === event.id);
@@ -90,7 +90,7 @@ describe("size caps", () => {
   test("oversized content is rejected with OK=false", async () => {
     const probe = new Probe();
     await probe.open();
-    const event = sign(30310, "x".repeat(2048)); // cap is 1024 in this run
+    const event = sign(1310, "x".repeat(2048)); // cap is 1024 in this run
     probe.send(["EVENT", event]);
     const ok = await probe.waitFor((m) => m[0] === "OK" && m[1] === event.id);
     expect(ok[2]).toBe(false);
@@ -105,15 +105,15 @@ describe("NIP-01 REQ limit", () => {
     await probe.open();
     // Insert out of chronological order: newest is inserted FIRST.
     const base = now();
-    const newest = sign(30311, "newest", base);
-    const oldest = sign(30311, "oldest", base - 200);
-    const middle = sign(30311, "middle", base - 100);
+    const newest = sign(1311, "newest", base);
+    const oldest = sign(1311, "oldest", base - 200);
+    const middle = sign(1311, "middle", base - 100);
     for (const e of [newest, oldest, middle]) {
       probe.send(["EVENT", e]);
       await probe.waitFor((m) => m[0] === "OK" && m[1] === e.id);
     }
 
-    probe.send(["REQ", "page", { kinds: [30311], limit: 2 }]);
+    probe.send(["REQ", "page", { kinds: [1311], limit: 2 }]);
     await probe.waitFor((m) => m[0] === "EOSE" && m[1] === "page");
     const got = probe.messages
       .filter((m) => m[0] === "EVENT" && m[1] === "page")
@@ -121,7 +121,7 @@ describe("NIP-01 REQ limit", () => {
     expect(got).toEqual(["newest", "middle"]); // newest-first, oldest excluded
 
     // limitClamp is 5 in this run: limit 500 must not blow past it.
-    probe.send(["REQ", "clamped", { kinds: [30311], limit: 500 }]);
+    probe.send(["REQ", "clamped", { kinds: [1311], limit: 500 }]);
     await probe.waitFor((m) => m[0] === "EOSE" && m[1] === "clamped");
     const clamped = probe.messages.filter((m) => m[0] === "EVENT" && m[1] === "clamped");
     expect(clamped.length).toBeLessThanOrEqual(5);
@@ -186,23 +186,65 @@ describe("NIP-09 deletion masking", () => {
   });
 });
 
+describe("replaceable-event compaction (NIP-16/33)", () => {
+  test("only the latest 30078 per (author, d) is served; a late old version is not resurrected", async () => {
+    const probe = new Probe();
+    await probe.open();
+    const base = now();
+    const v1 = sign(30078, "v1", base - 100, [["d", "chan-r"]]);
+    const v2 = sign(30078, "v2", base - 50, [["d", "chan-r"]]);
+    const v3 = sign(30078, "v3", base, [["d", "chan-r"]]);
+    for (const e of [v1, v3]) {
+      probe.send(["EVENT", e]);
+      await probe.waitFor((m) => m[0] === "OK" && m[1] === e.id);
+    }
+    // v2 arrives AFTER v3 but is older — accepted (OK) yet never served.
+    probe.send(["EVENT", v2]);
+    await probe.waitFor((m) => m[0] === "OK" && m[1] === v2.id);
+
+    probe.send(["REQ", "rs", { kinds: [30078], "#d": ["chan-r"] }]);
+    await probe.waitFor((m) => m[0] === "EOSE" && m[1] === "rs");
+    const served = probe.messages
+      .filter((m) => m[0] === "EVENT" && m[1] === "rs")
+      .map((m) => (m[2] as { content: string }).content);
+    expect(served).toEqual(["v3"]);
+    probe.close();
+  });
+
+  test("different d values are independent", async () => {
+    const probe = new Probe();
+    await probe.open();
+    const a = sign(30078, "a", now(), [["d", "chan-a"]]);
+    const b = sign(30078, "b", now(), [["d", "chan-b"]]);
+    for (const e of [a, b]) {
+      probe.send(["EVENT", e]);
+      await probe.waitFor((m) => m[0] === "OK" && m[1] === e.id);
+    }
+    probe.send(["REQ", "ind", { kinds: [30078], authors: [a.pubkey] }]);
+    await probe.waitFor((m) => m[0] === "EOSE" && m[1] === "ind");
+    const served = probe.messages.filter((m) => m[0] === "EVENT" && m[1] === "ind");
+    expect(served.length).toBeGreaterThanOrEqual(2);
+    probe.close();
+  });
+});
+
 describe("created_at drift fence policy", () => {
   const fence = createdAtFencePolicy();
   const ctx = { query: () => [] };
 
   test("future-dated event rejected", () => {
-    const verdict = fence.onEvent(sign(30312, "future", now() + 3600), ctx) as { accept: boolean; reason?: string };
+    const verdict = fence.onEvent(sign(1312, "future", now() + 3600), ctx) as { accept: boolean; reason?: string };
     expect(verdict.accept).toBe(false);
     expect(verdict.reason).toMatch(/future/);
   });
 
   test("backdated event rejected", () => {
-    const verdict = fence.onEvent(sign(30312, "stale", now() - 3600), ctx) as { accept: boolean };
+    const verdict = fence.onEvent(sign(1312, "stale", now() - 3600), ctx) as { accept: boolean };
     expect(verdict.accept).toBe(false);
   });
 
   test("in-window event accepted", () => {
-    const verdict = fence.onEvent(sign(30312, "fresh", now() - 60), ctx) as { accept: boolean };
+    const verdict = fence.onEvent(sign(1312, "fresh", now() - 60), ctx) as { accept: boolean };
     expect(verdict.accept).toBe(true);
   });
 
