@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -14,7 +15,7 @@ import {
 } from "@fez/protocol";
 import { Cron } from "croner";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
-import { loadDefs, isSay, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";
+import { loadDefs, isSay, isWait, isDelay, isDm, isReact, isWebhook, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";
 import { evalCondition, type ExprValue } from "./expr.js";
 
 /**
@@ -161,6 +162,50 @@ async function main() {
       .catch(() => {});
   };
 
+  // ── Durable suspensions (GAPS item 14): a restart used to drop every
+  // pending approval gate. Suspended runs now persist — enough context to
+  // resume the step loop after the gate — and re-arm at boot with their
+  // REMAINING timeout. Delays stay best-effort (a restart re-runs nothing).
+  interface SuspendedRun {
+    workflow: string;
+    runId: string;
+    stepIndex: number; // the wait_reaction step we're parked on
+    anchorId: string;
+    emoji: string;
+    from?: string;
+    deadline: number; // epoch ms
+    vars: Record<string, ExprValue>;
+    rootId?: string;
+    prevId?: string;
+    triggerDepth: number;
+    channelId: string;
+    communityId: string;
+  }
+  const stateFile = process.env.FEZ_WORKFLOWS_STATE || path.join(os.homedir(), ".fez", "workflows-state.json");
+  let suspended: SuspendedRun[] = [];
+  try {
+    suspended = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+  } catch { /* first run */ }
+  const saveSuspended = () => {
+    try {
+      fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+      fs.writeFileSync(stateFile, JSON.stringify(suspended, null, 1));
+    } catch (err) {
+      console.warn(`⚠️  couldn't persist workflow state: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+
+  interface RunCtx {
+    runId: string;
+    vars: Record<string, ExprValue>;
+    rootId?: string;
+    prevId?: string;
+    triggerDepth: number;
+    channelId: string;
+    communityId: string;
+    trigger?: FezEvent;
+  }
+
   /** trigger absent = a schedule fire: says start a fresh thread (the first say becomes the root). */
   async function runWorkflow(def: WorkflowDef, trigger: FezEvent | undefined, channelId: string, communityId: string): Promise<void> {
     const runId = crypto.randomUUID();
@@ -178,13 +223,19 @@ async function main() {
     };
     // All say steps thread under the trigger: shared root, each replying
     // to the previous message — the chain reads as a conversation.
-    let rootId = trigger ? parseThreadRef(trigger.tags).rootId ?? trigger.id : undefined;
-    let prevId = trigger?.id;
+    const rootId = trigger ? parseThreadRef(trigger.tags).rootId ?? trigger.id : undefined;
 
     console.log(`▶️  ${def.name} run ${runId.slice(0, 8)} (${trigger ? `trigger ${trigger.id.slice(0, 8)} by ${vars["trigger.author_name"]}` : "scheduled"})`);
     publishTrace(def, runId, trigger, channelId, communityId, "started");
+    await executeSteps(def, { runId, vars, rootId, prevId: trigger?.id, triggerDepth, channelId, communityId, trigger }, 0);
+  }
+
+  async function executeSteps(def: WorkflowDef, ctx: RunCtx, startIndex: number): Promise<void> {
+    const { runId, vars, triggerDepth, channelId, communityId, trigger } = ctx;
+    let { rootId, prevId } = ctx;
 
     for (const [index, step] of def.steps.entries()) {
+      if (index < startIndex) continue;
       const stepNo = index + 1;
       // `if:` — false skips the step (not the run), Buzz's semantics. An
       // expression that errors also skips, loudly: silently running a
@@ -203,8 +254,9 @@ async function main() {
           continue;
         }
       }
+      let output: string | undefined;
       if (isSay(step)) {
-        const text = resolveTemplate(step.say, vars);
+        const text = resolveTemplate(step.say, vars as never);
         // @names -> p tags: this is how a workflow summons an agent.
         const mentions = [...new Set(
           [...text.matchAll(/@([\w-]+)/g)]
@@ -226,9 +278,68 @@ async function main() {
         await relay.publish(event);
         rootId ??= event.id; // a scheduled run's first say starts the thread
         prevId = event.id;
+        output = event.id;
         console.log(`   💬 step ${stepNo}: ${text.slice(0, 70)}`);
         publishTrace(def, runId, trigger, channelId, communityId, "step_done", { step: stepNo });
-      } else {
+      } else if (isDelay(step)) {
+        const ms = parseDuration(step.delay, 0);
+        console.log(`   ⏳ step ${stepNo}: delay ${step.delay}`);
+        publishTrace(def, runId, trigger, channelId, communityId, "step_waiting", { step: stepNo, detail: step.delay });
+        await new Promise((r) => setTimeout(r, ms));
+        output = "";
+        publishTrace(def, runId, trigger, channelId, communityId, "step_done", { step: stepNo });
+      } else if (isDm(step)) {
+        const to = step.dm.to === "owner" ? owner : resolvePrincipal(step.dm.to);
+        if (!to) {
+          console.error(`   ❌ step ${stepNo}: cannot resolve DM recipient "${step.dm.to}" — run abandoned`);
+          publishTrace(def, runId, trigger, channelId, communityId, "failed", { step: stepNo, detail: "unresolvable dm recipient" });
+          return;
+        }
+        const { toPeer, toSelf } = client.wrapDm(to, resolveTemplate(step.dm.message, vars as never), triggerDepth + 1);
+        await relay.publish(toPeer);
+        await relay.publish(toSelf);
+        output = "sent";
+        console.log(`   ✉️  step ${stepNo}: DM to ${pubkeyToName.get(to) ?? to.slice(0, 8)}`);
+        publishTrace(def, runId, trigger, channelId, communityId, "step_done", { step: stepNo });
+      } else if (isReact(step)) {
+        const anchor = prevId;
+        if (!anchor) {
+          publishTrace(def, runId, trigger, channelId, communityId, "failed", { step: stepNo, detail: "no message to react to" });
+          return;
+        }
+        const emoji = step.react.emoji ?? "👍";
+        await relay.publish(
+          client.signEvent({ kind: KIND_REACTION, tags: [["e", anchor], ["h", channelId], ["c", communityId]], content: emoji })
+        );
+        output = emoji;
+        console.log(`   ${emoji} step ${stepNo}: reacted to ${anchor.slice(0, 8)}`);
+        publishTrace(def, runId, trigger, channelId, communityId, "step_done", { step: stepNo });
+      } else if (isWebhook(step)) {
+        const w = step.webhook;
+        const method = w.method ?? (w.body ? "POST" : "GET");
+        const timeoutMs = parseDuration(w.timeout, 10_000);
+        try {
+          const response = await fetch(w.url, {
+            method,
+            signal: AbortSignal.timeout(timeoutMs),
+            ...(w.body
+              ? { body: resolveTemplate(w.body, vars as never), headers: { "content-type": "application/json" } }
+              : {}),
+          });
+          output = (await response.text()).slice(0, 2_000);
+          console.log(`   🌐 step ${stepNo}: ${method} ${w.url} → ${response.status}`);
+          publishTrace(def, runId, trigger, channelId, communityId, "step_done", { step: stepNo, detail: `http ${response.status}` });
+          if (!response.ok) {
+            publishTrace(def, runId, trigger, channelId, communityId, "failed", { step: stepNo, detail: `http ${response.status}` });
+            return;
+          }
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          console.error(`   ❌ step ${stepNo}: webhook failed — ${reason}`);
+          publishTrace(def, runId, trigger, channelId, communityId, "failed", { step: stepNo, detail: reason.slice(0, 120) });
+          return;
+        }
+      } else if (isWait(step)) {
         const gate = step.wait_reaction;
         if (!prevId) {
           // Unreachable by validation (schedule runs must say before
@@ -236,55 +347,119 @@ async function main() {
           publishTrace(def, runId, trigger, channelId, communityId, "failed", { step: stepNo, detail: "no message to anchor the approval to" });
           return;
         }
-        const anchorId: string = prevId;
-        const emoji = gate.emoji ?? "👍";
-        const allowedPubkey = gate.from === "any" ? undefined : resolvePrincipal(gate.from ?? "owner");
-        if (gate.from !== "any" && !allowedPubkey) {
-          console.error(`   ❌ step ${stepNo}: cannot resolve approver "${gate.from ?? "owner"}" (owner needs FEZ_AGENT_OWNER; names need a 47000 announce) — run abandoned`);
-          publishTrace(def, runId, trigger, channelId, communityId, "failed", { step: stepNo, detail: "unresolvable approver" });
-          return;
-        }
-        const timeoutMs = parseDuration(gate.timeout, DEFAULT_APPROVAL_TIMEOUT_MS);
-        console.log(`   ⏸  step ${stepNo}: waiting for ${emoji} on ${anchorId.slice(0, 8)} (${gate.timeout ?? "24h"} timeout)`);
+        const susp: SuspendedRun = {
+          workflow: def.name,
+          runId,
+          stepIndex: index,
+          anchorId: prevId,
+          emoji: gate.emoji ?? "👍",
+          from: gate.from,
+          deadline: Date.now() + parseDuration(gate.timeout, DEFAULT_APPROVAL_TIMEOUT_MS),
+          vars,
+          rootId,
+          prevId,
+          triggerDepth,
+          channelId,
+          communityId,
+        };
+        console.log(`   ⏸  step ${stepNo}: waiting for ${susp.emoji} on ${susp.anchorId.slice(0, 8)} (${gate.timeout ?? "24h"} timeout)`);
         publishTrace(def, runId, trigger, channelId, communityId, "waiting_approval", { step: stepNo });
-
-        const approver = await new Promise<string | undefined>((resolve) => {
-          const pending: PendingApproval = { targetId: anchorId, emoji, allowedPubkey, channelId, resolve: (pk) => { cleanup(); resolve(pk); } };
-          const timer = setTimeout(() => { cleanup(); resolve(undefined); }, timeoutMs);
-          const cleanup = () => {
-            clearTimeout(timer);
-            const i = pendingApprovals.indexOf(pending);
-            if (i >= 0) pendingApprovals.splice(i, 1);
-          };
-          pendingApprovals.push(pending);
-        });
-
-        if (!approver) {
-          console.log(`   ⏱  step ${stepNo}: approval timed out — run abandoned`);
-          publishTrace(def, runId, trigger, channelId, communityId, "timeout", { step: stepNo });
-          void relay
-            .publish(
-              client.signEvent({
-                kind: KIND_CHANNEL_MESSAGE,
-                tags: [
-                  ["h", channelId],
-                  ["c", communityId],
-                  ...(rootId ? [["e", rootId, "", "root"]] : []),
-                  ["e", anchorId, "", "reply"],
-                  ["depth", String(triggerDepth + 1)],
-                ],
-                content: `⏱ workflow **${def.name}**: approval (${emoji}) timed out — remaining steps skipped.`,
-              })
-            )
-            .catch(() => {});
-          return;
-        }
-        console.log(`   ✅ step ${stepNo}: approved by ${pubkeyToName.get(approver) ?? approver.slice(0, 8)}`);
-        publishTrace(def, runId, trigger, channelId, communityId, "approved", { step: stepNo, by: approver });
+        suspended.push(susp);
+        saveSuspended();
+        const approver = await settleGate(def, susp);
+        if (!approver) return; // timed out — settleGate already traced + noticed
+        vars["approved_by"] = pubkeyToName.get(approver) ?? approver.slice(0, 8);
+      }
+      if (step.id !== undefined && output !== undefined) {
+        vars[`steps.${step.id}.output`] = output;
       }
     }
     console.log(`🏁 ${def.name} run ${runId.slice(0, 8)} done`);
     publishTrace(def, runId, trigger, channelId, communityId, "done");
+  }
+
+  /**
+   * Park on a suspended approval gate until reaction/timeout. Shared by
+   * the live path and the boot-time rehydration of persisted suspensions
+   * — the gate survives restarts with its REMAINING timeout.
+   */
+  async function settleGate(def: WorkflowDef, susp: SuspendedRun): Promise<string | undefined> {
+    const dropSusp = () => {
+      const i = suspended.indexOf(susp);
+      if (i >= 0) suspended.splice(i, 1);
+      saveSuspended();
+    };
+    const allowedPubkey = susp.from === "any" ? undefined : resolvePrincipal(susp.from ?? "owner");
+    if (susp.from !== "any" && !allowedPubkey) {
+      console.error(`   ❌ ${def.name}: cannot resolve approver "${susp.from ?? "owner"}" — run abandoned`);
+      publishTrace(def, susp.runId, undefined, susp.channelId, susp.communityId, "failed", { step: susp.stepIndex + 1, detail: "unresolvable approver" });
+      dropSusp();
+      return undefined;
+    }
+    const remainingMs = Math.max(0, susp.deadline - Date.now());
+    const approver = await new Promise<string | undefined>((resolve) => {
+      const pending: PendingApproval = {
+        targetId: susp.anchorId,
+        emoji: susp.emoji,
+        allowedPubkey,
+        channelId: susp.channelId,
+        resolve: (pk) => { cleanup(); resolve(pk); },
+      };
+      const timer = setTimeout(() => { cleanup(); resolve(undefined); }, remainingMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        const i = pendingApprovals.indexOf(pending);
+        if (i >= 0) pendingApprovals.splice(i, 1);
+      };
+      pendingApprovals.push(pending);
+    });
+    dropSusp();
+    if (!approver) {
+      console.log(`   ⏱  ${def.name}: approval timed out — run abandoned`);
+      publishTrace(def, susp.runId, undefined, susp.channelId, susp.communityId, "timeout", { step: susp.stepIndex + 1 });
+      void relay
+        .publish(
+          client.signEvent({
+            kind: KIND_CHANNEL_MESSAGE,
+            tags: [
+              ["h", susp.channelId],
+              ["c", susp.communityId],
+              ...(susp.rootId ? [["e", susp.rootId, "", "root"]] : []),
+              ["e", susp.anchorId, "", "reply"],
+              ["depth", String(susp.triggerDepth + 1)],
+            ],
+            content: `⏱ workflow **${def.name}**: approval (${susp.emoji}) timed out — remaining steps skipped.`,
+          })
+        )
+        .catch(() => {});
+      return undefined;
+    }
+    console.log(`   ✅ ${def.name}: approved by ${pubkeyToName.get(approver) ?? approver.slice(0, 8)}`);
+    publishTrace(def, susp.runId, undefined, susp.channelId, susp.communityId, "approved", { step: susp.stepIndex + 1, by: approver });
+    return approver;
+  }
+
+  // Rehydrate suspensions that survived a restart: re-arm each gate with
+  // its remaining timeout; on approval the run continues from the step
+  // AFTER the gate, exactly where it parked.
+  for (const susp of [...suspended]) {
+    const def = defs.find((d) => d.name === susp.workflow);
+    if (!def || susp.stepIndex >= def.steps.length) {
+      suspended.splice(suspended.indexOf(susp), 1);
+      saveSuspended();
+      continue;
+    }
+    console.log(`♻️  re-arming suspended ${susp.workflow} run ${susp.runId.slice(0, 8)} (gate at step ${susp.stepIndex + 1})`);
+    void (async () => {
+      const approver = await settleGate(def, susp);
+      if (!approver) return;
+      const vars = { ...susp.vars, approved_by: pubkeyToName.get(approver) ?? approver.slice(0, 8) };
+      await executeSteps(
+        def,
+        { runId: susp.runId, vars, rootId: susp.rootId, prevId: susp.prevId, triggerDepth: susp.triggerDepth, channelId: susp.channelId, communityId: susp.communityId },
+        susp.stepIndex + 1
+      );
+    })().catch((err) => console.error(`❌ resumed ${susp.workflow} failed:`, err instanceof Error ? err.message : err));
   }
 
   const seenTriggers = new Set<string>();

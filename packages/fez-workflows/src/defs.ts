@@ -45,6 +45,12 @@ interface StepBase {
    * loudly, with the reason in the trace.
    */
   if?: string;
+  /**
+   * Optional step id: later steps can reference this step's output as
+   * {{steps.<id>.output}} (say → message id; webhook → response body,
+   * truncated; react → the emoji; delay → "").
+   */
+  id?: string;
 }
 
 export interface SayStep extends StepBase {
@@ -73,7 +79,33 @@ export interface WaitReactionStep extends StepBase {
   };
 }
 
-export type StepDef = SayStep | WaitReactionStep;
+export interface DelayStep extends StepBase {
+  /** Pause the run: "30s", "5m", "2h". */
+  delay: string;
+}
+
+export interface DmStep extends StepBase {
+  /** Send an encrypted DM (templated) — to "owner", an agent name, or a pubkey. */
+  dm: { to: string; message: string };
+}
+
+export interface ReactStep extends StepBase {
+  /** React to the previous step's message (or the trigger). Default 👍. */
+  react: { emoji?: string };
+}
+
+export interface WebhookStep extends StepBase {
+  /**
+   * Call an external URL. Ported with Buzz's SEC-006 exfiltration fence,
+   * fez-shaped: definitions are owner-placed local files (authoring is
+   * trusted), but the URL must be STATIC — no {{templates}} — so channel
+   * text can never steer where data goes. The body may template. https
+   * or localhost only.
+   */
+  webhook: { url: string; method?: "GET" | "POST"; body?: string; timeout?: string };
+}
+
+export type StepDef = SayStep | WaitReactionStep | DelayStep | DmStep | ReactStep | WebhookStep;
 
 export interface WorkflowDef {
   name: string;
@@ -85,6 +117,21 @@ export interface WorkflowDef {
 
 export function isSay(step: StepDef): step is SayStep {
   return typeof (step as SayStep).say === "string";
+}
+export function isWait(step: StepDef): step is WaitReactionStep {
+  return typeof (step as WaitReactionStep).wait_reaction === "object" && (step as WaitReactionStep).wait_reaction !== null;
+}
+export function isDelay(step: StepDef): step is DelayStep {
+  return typeof (step as DelayStep).delay === "string";
+}
+export function isDm(step: StepDef): step is DmStep {
+  return typeof (step as DmStep).dm === "object" && (step as DmStep).dm !== null;
+}
+export function isReact(step: StepDef): step is ReactStep {
+  return typeof (step as ReactStep).react === "object" && (step as ReactStep).react !== null;
+}
+export function isWebhook(step: StepDef): step is WebhookStep {
+  return typeof (step as WebhookStep).webhook === "object" && (step as WebhookStep).webhook !== null;
 }
 
 /** "30s" | "5m" | "24h" | "2d" -> milliseconds. */
@@ -122,15 +169,36 @@ function validate(def: unknown, file: string): WorkflowDef {
     fail(`"cron"/"every" only apply to schedule triggers`);
   }
   if (!Array.isArray(d.steps) || d.steps.length === 0) fail(`at least one step is required`);
+  const stepIds = new Set<string>();
   for (const [i, step] of d.steps!.entries()) {
-    const s = step as Partial<SayStep & WaitReactionStep>;
+    const s = step as Partial<SayStep & WaitReactionStep & DelayStep & DmStep & ReactStep & WebhookStep>;
     if (typeof s.say === "string") {
       if (!s.say.trim()) fail(`step ${i + 1}: "say" must not be empty`);
     } else if (s.wait_reaction && typeof s.wait_reaction === "object") {
       parseDuration(s.wait_reaction.timeout, 0); // throws on bad duration
       if (on === "schedule" && i === 0) fail(`step 1: a schedule run has no trigger message to react to — put a "say" before the first wait_reaction`);
+    } else if (typeof s.delay === "string") {
+      if (parseDuration(s.delay, 0) <= 0) fail(`step ${i + 1}: "delay" must be a positive duration`);
+    } else if (s.dm && typeof s.dm === "object") {
+      if (!s.dm.to || !s.dm.message) fail(`step ${i + 1}: dm needs "to" and "message"`);
+    } else if (s.react && typeof s.react === "object") {
+      if (on === "schedule" && i === 0) fail(`step 1: a schedule run has no message to react to yet`);
+    } else if (s.webhook && typeof s.webhook === "object") {
+      const w = s.webhook;
+      if (!w.url) fail(`step ${i + 1}: webhook needs "url"`);
+      if (/\{\{/.test(w.url)) fail(`step ${i + 1}: webhook url must be static — no {{templates}} (exfiltration fence)`);
+      if (!/^https:\/\//.test(w.url) && !/^http:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(w.url)) {
+        fail(`step ${i + 1}: webhook url must be https:// (or localhost for dev)`);
+      }
+      if (w.method && w.method !== "GET" && w.method !== "POST") fail(`step ${i + 1}: webhook method must be GET or POST`);
+      parseDuration(w.timeout, 0);
     } else {
-      fail(`step ${i + 1}: must be a "say" or "wait_reaction" step`);
+      fail(`step ${i + 1}: must be a "say", "wait_reaction", "delay", "dm", "react", or "webhook" step`);
+    }
+    if (s.id !== undefined) {
+      if (typeof s.id !== "string" || !/^[\w-]+$/.test(s.id)) fail(`step ${i + 1}: "id" must be alphanumeric/_/-`);
+      if (stepIds.has(s.id)) fail(`step ${i + 1}: duplicate step id "${s.id}"`);
+      stepIds.add(s.id);
     }
     if (s.if !== undefined) {
       if (typeof s.if !== "string" || !s.if.trim()) fail(`step ${i + 1}: "if" must be a non-empty expression`);
