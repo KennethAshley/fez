@@ -721,3 +721,18 @@ button.author:hover { text-decoration: underline; }
 .cmd-args { color: var(--yellow); font-size: 11px; }
 .cmd-desc { color: var(--fg-dim); font-size: 11px; margin-left: auto; }
 .cmd-notice { font-family: var(--font-mono); }
+
+/* ── self card (bottom-left, Discord's pattern) ────────────── */
+.rail { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+.rail-scroll { flex: 1; overflow-y: auto; min-height: 0; margin: 0 -8px; padding: 0 8px; }
+.self-card {
+  display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); margin: 0 -8px;
+  padding: 10px 12px; background: var(--bg0); border: 0; border-top: 1px solid var(--hairline);
+  color: var(--fg); font: inherit; font-family: var(--font-mono); cursor: pointer; text-align: left;
+}
+.self-card:hover { background: var(--bg1); }
+.self-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.self-name { font-weight: 700; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.self-status { font-size: 10.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.self-gear { color: var(--fg-dim); padding: 2px 4px; border-radius: 5px; }
+.self-gear:hover { color: var(--fg); background: var(--bg2); }

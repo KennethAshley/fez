@@ -389,6 +389,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
             ⚙
           </button>
         </div>
+        <div className="rail-scroll">
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           ⌂ home
         </button>
@@ -460,6 +461,31 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           working={working}
           onProfile={(pk) => setPane(pane?.kind === "profile" && pane.pk === pk ? undefined : { kind: "profile", pk })}
         />
+        </div>
+        <button
+          className="self-card"
+          title="your profile"
+          onClick={() =>
+            setPane(pane?.kind === "profile" && pane.pk === client.pubkey ? undefined : { kind: "profile", pk: client.pubkey })
+          }
+        >
+          <Avatar pk={client.pubkey} size={28} title="you" />
+          <span className="self-meta">
+            <span className="self-name">{client.knownNames().get(client.pubkey) ?? "you"}</span>
+            <span className="self-status">{client.statusOf(client.pubkey) ?? (connected ? "online" : "reconnecting…")}</span>
+          </span>
+          <span className={connected ? "dot on" : "dot off"} />
+          <span
+            className="self-gear"
+            title="settings"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPane(pane?.kind === "settings" ? undefined : { kind: "settings" });
+            }}
+          >
+            ⚙
+          </span>
+        </button>
       </aside>
 
       {view.kind === "channel" && scope && (
