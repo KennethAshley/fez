@@ -223,9 +223,13 @@ export class FezTUI {
     this.editor = new Editor(this.screen, editorTheme);
     this.editor.onSubmit = (text) => void this.onSubmit(text);
     const main = new VStack();
-    main.addChild(new ScrollView(this.log, { follow: "end" }), { grow: 1 });
-    main.addChild(this.editor);
-    main.addChild(footer.attach(this.screen));
+    // The log both grows AND shrinks; editor + footer are pinned
+    // (shrink: 0). Without the pins, pi-tui's default shrink:1 squeezes
+    // EVERY child once the log overflows the screen — observed live as
+    // the input box vanishing the moment channel history backfilled.
+    main.addChild(new ScrollView(this.log, { follow: "end" }), { grow: 1, shrink: 1 });
+    main.addChild(this.editor, { shrink: 0 });
+    main.addChild(footer.attach(this.screen), { shrink: 0 });
     if (this.sidePanelUsed) {
       const root = new HStack([], { gap: 1 });
       root.addChild(this.sidePanel, { basis: this.sidePanelWidth });
