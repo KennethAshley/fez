@@ -33,7 +33,7 @@ export * from "./kinds.js";
 // `fez run`) needs to dispatch instructions the same way the TUI does.
 export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, registerHarness, invokeWithRetry, classifyTurnError, SESSION_TIMEOUTS, type HarnessAdapter, type HarnessSession, type HarnessUpdate, type TimeoutOptions, type TurnErrorKind } from "./harness.js";
 export { findPersona, listPersonas, validatePersonaFile, mergeDefaults, KNOWN_EXTRA_KEYS, type Persona, type PersonaValidation } from "./personas.js";
-export { findMcpServer, registerMcpServer } from "./mcp-servers.js";
+export { findMcpServer, registerMcpServer, loadMcpServersFromSettings } from "./mcp-servers.js";
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./keys.js";
 export { loadSettings, saveSettings, resolveRelay, DEFAULT_RELAY } from "./settings.js";
 export { isValidSlug, conversationKey, engramDTag, parseBodyStrict, bodyIsValid, validateEngram, selectHead, engramHeads, buildEngramEvent, type EngramBody, type ValidEngram } from "./engram.js";

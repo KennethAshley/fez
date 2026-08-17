@@ -33,6 +33,7 @@ import {
   type TimeoutOptions,
 } from "@fez/protocol";
 import fs from "node:fs";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
@@ -98,6 +99,16 @@ async function main() {
   // — the agent is told about the gap so it can SAY SO when a task needs
   // one, instead of quietly faking its way through (the user's only
   // signal otherwise is a confidently wrong answer).
+  // Headless skill resolution: agents don't run the TUI's extension
+  // host, so declared skills resolve from settings.json's mcpServers.
+  try {
+    const proto = (await import("@fez/protocol")) as unknown as {
+      loadSettings: () => { mcpServers?: Record<string, Record<string, unknown>> };
+      loadMcpServersFromSettings: (entries?: Record<string, Record<string, unknown>>) => void;
+    };
+    proto.loadMcpServersFromSettings(proto.loadSettings().mcpServers);
+  } catch { /* settings unavailable — registry stays as-is */ }
+
   const missingSkills = persona.mcpServers.filter((name) => !findMcpServer(name));
   if (missingSkills.length > 0) {
     console.warn(`⚠️  Skills declared but not loadable here: ${missingSkills.join(", ")} — the agent will disclose the gap when relevant`);
@@ -206,6 +217,34 @@ async function main() {
   // from ~/.fez/default.key (the *user's* identity), and an agent must not
   // impersonate its owner: invites, membership, and respondTo gates are
   // all bound to the agent's own pubkey surviving restarts.
+  // One process per persona, ENFORCED at the agent (not trusted to
+  // whoever spawned us): a live duplicate means every mention gets two
+  // answers — seen live when a summon raced a union-restart. The
+  // pidfile holds the claim; a stale one (dead pid, or a recycled pid
+  // that isn't running this persona) is taken over silently.
+  const pidfilePath = path.join(os.homedir(), ".fez", "agents", `${personaId}.pid`);
+  try {
+    const existingPid = Number(fs.readFileSync(pidfilePath, "utf-8").trim());
+    if (existingPid && existingPid !== process.pid) {
+      let cmd = "";
+      try {
+        cmd = execSync(`ps -o command= -p ${existingPid}`, { stdio: ["ignore", "pipe", "ignore"] }).toString();
+      } catch { /* dead pid — stale claim */ }
+      if (cmd.includes(`agent ${personaId}`)) {
+        console.error(`❌ another @${personaId} is already running (pid ${existingPid}) — one process per persona. Kill it first or let the sentinel manage restarts.`);
+        process.exit(1);
+      }
+    }
+  } catch { /* no pidfile — first claim */ }
+  fs.mkdirSync(path.dirname(pidfilePath), { recursive: true });
+  fs.writeFileSync(pidfilePath, String(process.pid));
+  const releasePidfile = () => {
+    try {
+      if (fs.readFileSync(pidfilePath, "utf-8").trim() === String(process.pid)) fs.unlinkSync(pidfilePath);
+    } catch { /* already gone */ }
+  };
+  process.on("exit", releasePidfile);
+
   const agentKeyHex = loadServiceKey(personaId);
   const client = new CapabilityClient({ relay: relayUrl, privateKey: agentKeyHex });
   const relay = new RelayConnection({ url: relayUrl, authSigner: client.authSigner });
@@ -355,7 +394,10 @@ async function main() {
         name: personaId,
         supported_tasks: ["channel-chat"],
         about: persona.description ?? (persona.systemPrompt?.split("\n")[0]?.trim() || undefined),
-        skills: persona.mcpServers,
+        // Only RESOLVED skills go on the wire — the router picks agents
+        // by these, and advertising a skill this process can't load
+        // routes work to an agent that must then refuse it.
+        skills: persona.mcpServers.filter((name) => findMcpServer(name)),
         aliases: persona.aliases,
       }),
     });

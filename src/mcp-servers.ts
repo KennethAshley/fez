@@ -30,3 +30,27 @@ export function findMcpServer(name: string): McpServer | undefined {
 export function listMcpServers(): string[] {
   return [...registry.keys()];
 }
+
+/**
+ * Settings-backed skills (~/.fez/settings.json "mcpServers") — the
+ * headless registry. Extensions can still register programmatically in
+ * the TUI, but agents spawned by the sentinel/herdr load their skills
+ * from here: a persona's `mcpServers: [web-search]` only means
+ * something if settings define what "web-search" IS. Shapes pass
+ * through to the ACP SDK untouched:
+ *   "web-search": { "command": "npx", "args": ["-y", "some-mcp"], "env": {"KEY": "..."} }
+ *   "hosted":     { "type": "http", "url": "https://...", "headers": [] }
+ */
+let settingsLoaded = false;
+export function loadMcpServersFromSettings(
+  entries: Record<string, Record<string, unknown>> | undefined
+): void {
+  if (settingsLoaded || !entries) return;
+  settingsLoaded = true;
+  for (const [name, config] of Object.entries(entries)) {
+    if (!config || typeof config !== "object") continue;
+    const server = { name, ...(config.command && !config.type ? { type: undefined } : {}), ...config } as unknown as McpServer;
+    if (registry.has(name)) continue;
+    registry.set(name, server);
+  }
+}
