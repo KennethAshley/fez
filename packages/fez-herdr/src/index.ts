@@ -286,6 +286,51 @@ export default function herdr(api: FezExtensionAPI): void {
         }
       })
       .catch(() => {});
+    // ── Live tab status: fleet state mirrored into herdr tab labels —
+    // `fez:researcher 👀` (accepted), `fez:researcher ⚙ WebSearch`
+    // (turn running, current tool), bare label when idle. Derived from
+    // the same wire signals the jobs board reads: status reactions (7),
+    // their deletions (5), and owner-encrypted observer frames (20004).
+    // Renames only fire when the label actually changes.
+    const KIND_REACTION = 7;
+    const KIND_DELETION = 5;
+    const KIND_OBSERVER = 20004;
+    const tabStatus = new Map<string, { suffix: string; sentLabel?: string }>();
+    function setStatusSuffix(persona: string, suffix: string): void {
+      const entry = registered.find((t) => t.persona === persona);
+      if (!entry) return;
+      const st = tabStatus.get(persona) ?? { suffix: "" };
+      st.suffix = suffix;
+      const label = `fez:${persona}${suffix}`;
+      if (st.sentLabel !== label) {
+        st.sentLabel = label;
+        void herdrCall("tab.rename", { tab_id: entry.tabId, label }).catch(() => {});
+      }
+      tabStatus.set(persona, st);
+    }
+    nostr.subscribe(
+      [
+        { kinds: [KIND_REACTION, KIND_DELETION], since: Math.floor(Date.now() / 1000) },
+        { kinds: [KIND_OBSERVER], "#p": [nostr.pubkey] },
+      ],
+      (event) => {
+        const persona = agentPkToName.get(event.pubkey);
+        if (!persona) return;
+        if (event.kind === KIND_REACTION) {
+          if (event.content === "👀") setStatusSuffix(persona, " 👀");
+          else if (event.content === "💬") setStatusSuffix(persona, " ⚙");
+        } else if (event.kind === KIND_DELETION) {
+          setStatusSuffix(persona, "");
+        } else {
+          try {
+            const frame = JSON.parse(nostr.decrypt(event.pubkey, event.content)) as { type?: string; title?: string; status?: string };
+            if (frame.type === "tool" && frame.title) setStatusSuffix(persona, ` ⚙ ${String(frame.title).slice(0, 24)}`);
+            else if (frame.type === "turn" && frame.status === "started") setStatusSuffix(persona, " ⚙");
+            else if (frame.type === "turn") setStatusSuffix(persona, ""); // done | failed | steered
+          } catch { /* frame not for us / garbage — ignorable */ }
+        }
+      }
+    );
     // ── DM summons: a gift wrap addressed to a local persona's pubkey
     // wakes it, same contract as a channel @mention. Sender, content,
     // and depth are invisible here — that's the point of wraps — so the
