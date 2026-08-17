@@ -21,7 +21,7 @@ jobs:
       - name: Install (root + tested packages)
         run: |
           npm install
-          for pkg in fez-tui fez-relay fez-client fez-acp fez-communities fez-evals; do
+          for pkg in fez-tui fez-relay fez-client fez-acp fez-communities fez-workflows fez-media fez-evals; do
             npm install --prefix "packages/$pkg"
           done
 
@@ -31,6 +31,8 @@ jobs:
           npm run build --prefix packages/fez-client
           npm run build --prefix packages/fez-acp
           npm run build --prefix packages/fez-communities
+          npm run build --prefix packages/fez-workflows
+          npm run build --prefix packages/fez-media
 
       - name: Test gate
         run: npx vitest --run
