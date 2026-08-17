@@ -1,6 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 
 /**
  * In-memory model of every community/channel/membership this fez knows
@@ -44,8 +41,33 @@ interface Persisted {
   lastScope?: Scope;
 }
 
-// Overridable so tests (and parallel harnesses) never touch the real one.
-const STATE_FILE = process.env.FEZ_STATE_FILE ?? path.join(os.homedir(), ".fez", "communities.json");
+/**
+ * Persistence seam — the client core is host-agnostic (Wire philosophy):
+ * node hosts install the file-backed impl (state-node.ts), browser hosts
+ * (fez-desktop) bring localStorage, tests bring whatever. Default is
+ * in-memory: state lives for the process, nothing touches disk.
+ */
+export interface StatePersistence {
+  exists(): boolean;
+  read(): string | undefined;
+  write(text: string): void;
+}
+
+function inMemoryPersistence(): StatePersistence {
+  let stored: string | undefined;
+  return {
+    exists: () => stored !== undefined,
+    read: () => stored,
+    write: (text) => {
+      stored = text;
+    },
+  };
+}
+
+let persistence: StatePersistence = inMemoryPersistence();
+export function setStatePersistence(p: StatePersistence): void {
+  persistence = p;
+}
 
 export class CommunityState {
   communities = new Map<string, Community>();
@@ -54,7 +76,7 @@ export class CommunityState {
 
   /** Whether any state was ever persisted — the first-run bootstrap check. */
   persistedFileExists(): boolean {
-    return fs.existsSync(STATE_FILE);
+    return persistence.exists();
   }
 
   /** Which community a channel belongs to (undefined if unknown). */
@@ -67,7 +89,7 @@ export class CommunityState {
 
   load(): void {
     try {
-      const raw: Persisted = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+      const raw: Persisted = JSON.parse(persistence.read() ?? "");
       for (const id of raw.joined ?? []) this.joined.add(id);
       this.scope = raw.lastScope ?? null;
     } catch {
@@ -80,8 +102,9 @@ export class CommunityState {
       joined: [...this.joined],
       lastScope: this.scope ?? undefined,
     };
-    fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(data, null, 2), "utf-8");
+    try {
+      persistence.write(JSON.stringify(data, null, 2));
+    } catch { /* persistence is best-effort; in-memory state is authoritative this session */ }
   }
 
   /**

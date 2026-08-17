@@ -89,6 +89,7 @@ class LinePrefix implements Component {
 }
 import { CapabilityClient } from "./client.js";
 import { FezClient } from "../packages/fez-client/dist/index.js";
+import { installNodeStatePersistence } from "../packages/fez-client/dist/state-node.js";
 import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
@@ -166,6 +167,7 @@ export class FezTUI {
   private warnedMissingSkills = new Set<string>();
 
   constructor(private relayUrl: string, privateKey?: string) {
+    installNodeStatePersistence(); // file-backed joined/scope state (~/.fez/communities.json)
     this.client = new CapabilityClient({ relay: relayUrl, privateKey });
     this.relay = new RelayConnection({ url: relayUrl, authSigner: this.client.authSigner });
     this.myPubkey = this.client.getPubkey();

@@ -18,6 +18,8 @@ const stateFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "fez-trust-"))
 process.env.FEZ_STATE_FILE = stateFile;
 
 const { FezClient } = await import("../../fez-client/dist/index.js");
+const { installNodeStatePersistence } = await import("../../fez-client/dist/state-node.js");
+installNodeStatePersistence(stateFile);
 const { matches } = await import("../../fez-relay/dist/relay.js");
 type WireEvent = import("../../fez-client/dist/index.js").WireEvent;
 type WireFilter = import("../../fez-client/dist/index.js").WireFilter;

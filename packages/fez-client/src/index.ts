@@ -1,4 +1,4 @@
-import { CommunityState, type Role } from "./community-state.js";
+import { CommunityState, setStatePersistence, type Role, type StatePersistence } from "./community-state.js";
 
 /**
  * @fez/client — the headless fez protocol brain: subscriptions, trust
@@ -202,6 +202,8 @@ export interface ClientEvents {
   /** Client-level announcements a view should surface (first-run bootstrap etc.). */
   notice: (text: string) => void;
 }
+
+export { setStatePersistence, type StatePersistence };
 
 export class FezClient {
   readonly state = new CommunityState();
