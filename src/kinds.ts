@@ -71,6 +71,16 @@ export const KIND_REPORT = 1984;
 export const KIND_BAN_LIST = 30047;
 
 /**
+ * Device pairing — NIP-AB's decisions (Buzz pairing-cli), fez-shaped:
+ * ephemeral handshake frames moving the keychain identity to a second
+ * device. Ephemeral range (relayed, never stored); content is NIP-44
+ * ciphertext between two throwaway keys; a human-compared 6-digit SAS
+ * derived from both ephemeral pubkeys is the MITM defense. See
+ * src/pairing.ts.
+ */
+export const KIND_PAIRING = 24134;
+
+/**
  * Communities/channels (471xx). Client-side trust model — every participant
  * runs fez, so all clients apply the same rules; the relay is dumb storage:
  *

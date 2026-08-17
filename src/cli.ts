@@ -794,6 +794,68 @@ import { createPersona, listPersonas, removePersona } from "./personas.js";
 import { registerBuiltinHarnesses, listHarnesses } from "./harness.js";
 import { loadExtensions } from "./extensions.js";
 
+// ─── pair — move the keychain identity to a second device ─────────────────
+
+const pair = program.command("pair").description("Pair a second device: identity travels encrypted, verified by a 6-digit code you compare on both screens");
+
+async function askYesNo(question: string): Promise<boolean> {
+  const readline = await import("node:readline/promises");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = (await rl.question(question)).trim().toLowerCase();
+  rl.close();
+  return answer === "y" || answer === "yes";
+}
+
+pair
+  .command("receive")
+  .description("Run this on the NEW device — prints a pairing code for the old device")
+  .option("--as <account>", "keychain account to store the identity under", "default")
+  .option("--relay <url>", "relay to pair over (default: configured relay)")
+  .action(async (options: { as: string; relay?: string }) => {
+    const { pairReceive } = await import("./pairing.js");
+    const { getKey, setKey } = await import("./keys.js");
+    const { resolveRelay } = await import("./settings.js");
+    if (getKey(options.as)) {
+      console.error(`Account "${options.as}" already holds a key — pairing will not overwrite it. Use --as <other-name> or remove it first.`);
+      process.exit(1);
+    }
+    const relayUrl = options.relay ?? resolveRelay(undefined);
+    console.log(`⏳ Waiting for the other device (relay: ${relayUrl})…\n`);
+    const { key, account } = await pairReceive(relayUrl, {
+      confirmSas: async (sas) => {
+        console.log(`\n   🔐 Pairing code:  ${sas.slice(0, 3)} ${sas.slice(3)}\n`);
+        return askYesNo("   Does the OTHER device show the same 6 digits? [y/N] ");
+      },
+      log: (line) => console.log(`   ${line}`),
+    }, {
+      onUri: (uri) => console.log(`On your existing device, run:\n\n   fez pair send "${uri}"\n`),
+    });
+    setKey(options.as, key);
+    console.log(`✅ Identity stored as "${options.as}"${account !== "default" ? ` (sent from account "${account}")` : ""} — this device is now you. Try: fez`);
+  });
+
+pair
+  .command("send <uri>")
+  .description("Run this on your EXISTING device with the code from `fez pair receive`")
+  .option("--from <account>", "keychain account to send", "default")
+  .action(async (uri: string, options: { from: string }) => {
+    const { pairSend } = await import("./pairing.js");
+    const { getKey } = await import("./keys.js");
+    const key = getKey(options.from);
+    if (!key) {
+      console.error(`No key under account "${options.from}" (fez keygen first).`);
+      process.exit(1);
+    }
+    await pairSend(uri, key, options.from, {
+      confirmSas: async (sas) => {
+        console.log(`\n   🔐 Pairing code:  ${sas.slice(0, 3)} ${sas.slice(3)}\n`);
+        return askYesNo("   Does the OTHER device show the same 6 digits? [y/N] ");
+      },
+      log: (line) => console.log(`   ${line}`),
+    });
+    console.log("✅ Identity delivered — the other device holds your key now too.");
+  });
+
 const persona = program.command("persona").description("Manage named agent identities");
 
 persona
