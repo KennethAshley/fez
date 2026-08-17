@@ -157,6 +157,17 @@ export function matches(event: StoredEvent, filter: Filter): boolean {
   if (Array.isArray(filter.kinds) && !filter.kinds.includes(event.kind)) return false;
   if (Array.isArray(filter.authors) && !filter.authors.includes(event.pubkey)) return false;
   if (Array.isArray(filter.ids) && !filter.ids.includes(event.id)) return false;
+  // NIP-50: `search` — case-insensitive AND over whitespace tokens. The
+  // in-RAM index IS the search index ("the write is the index" — Buzz's
+  // decision, minus their Postgres). Results stay candidates, never
+  // authority: they flow through the same onDeliver read gate and client
+  // trust re-filtering as any other REQ.
+  if (typeof filter.search === "string" && filter.search.trim()) {
+    const haystack = event.content.toLowerCase();
+    for (const token of filter.search.toLowerCase().split(/\s+/)) {
+      if (token && !haystack.includes(token)) return false;
+    }
+  }
   if (typeof filter.since === "number" && event.created_at < filter.since) return false;
   if (typeof filter.until === "number" && event.created_at > filter.until) return false;
   for (const [key, value] of Object.entries(filter)) {

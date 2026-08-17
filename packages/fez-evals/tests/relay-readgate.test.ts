@@ -158,6 +158,16 @@ describe("read gating with membershipPolicy", () => {
     publisher.close();
   });
 
+  test("search cannot side-door the read gate: unauthed gated search gets CLOSED", async () => {
+    const probe = new Probe();
+    await probe.open();
+    probe.send(["REQ", "sneak", { kinds: [47103], "#h": [CH], search: "secret" }]);
+    const closed = await probe.waitFor((m) => m[0] === "CLOSED" && m[1] === "sneak");
+    expect(String(closed[2])).toMatch(/^auth-required/);
+    expect(probe.eventsFor("sneak")).toHaveLength(0);
+    probe.close();
+  });
+
   test("RelayConnection with authSigner gets gated content end-to-end (auto-auth)", async () => {
     const conn = new RelayConnection({
       url: `ws://127.0.0.1:${PORT}`,

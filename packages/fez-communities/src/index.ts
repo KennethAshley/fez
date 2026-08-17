@@ -493,6 +493,45 @@ export default function communities(api: FezExtensionAPI): void {
     views.release();
   });
 
+  api.registerCommand("search", async (args, ctx) => {
+    if (!api.nostr) return ctx.reply("No nostr backend available.");
+    let query = args.trim();
+    const everywhere = /^all\s+/i.test(query);
+    if (everywhere) query = query.replace(/^all\s+/i, "");
+    if (!query) return ctx.reply("Usage: /search <words> — this channel · /search all <words> — every joined channel. Matches messages and docs (DMs are encrypted; the relay can't search them).");
+    const current = client.state.currentChannel();
+    const channelIds = everywhere
+      ? [...client.state.communities.values()].filter((c) => client.state.joined.has(c.id)).flatMap((c) => [...c.channels.keys()])
+      : current
+        ? [current.channel.id]
+        : [];
+    if (channelIds.length === 0) return ctx.reply("Not in a channel — /join one, or /search all <words>.");
+
+    const events = await api.nostr.query([{ kinds: [47103, 40100], "#h": channelIds, search: query, limit: 100 }]);
+    // Candidates, never authority: re-apply the same trust rules as rendering.
+    const rows = events
+      .filter((e) => {
+        const h = e.tags.find((t) => t[0] === "h")?.[1];
+        const c = e.tags.find((t) => t[0] === "c")?.[1] ?? (h ? client.state.communityOfChannel(h) : undefined);
+        if (!h || !c || !client.state.isMember(c, h, e.pubkey)) return false;
+        return client.msgById(e.id)?.deletedBy === undefined; // tombstoned messages don't surface
+      })
+      .sort((a, b) => b.created_at - a.created_at)
+      .slice(0, 12)
+      .map((e) => {
+        const h = e.tags.find((t) => t[0] === "h")!,
+          where = client.channelRef(h[1]);
+        const firstToken = query.toLowerCase().split(/\s+/)[0];
+        const at = e.content.toLowerCase().indexOf(firstToken);
+        const start = Math.max(0, at - 30);
+        const windowText = e.content.slice(start, start + 90).replace(/\s+/g, " ").trim();
+        const when = new Date(e.created_at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        const doc = e.kind === 40100 ? "📄 " : "";
+        return `• ${doc}${client.displayName(e.pubkey)}${everywhere && where ? ` in #${where.name}` : ""} (${when}): ${start > 0 ? "…" : ""}${windowText}${start + 90 < e.content.length ? "…" : ""}`;
+      });
+    ctx.reply(rows.length ? [`**Search: "${query}"** — ${rows.length} result(s)`, ...rows].join("\n") : `Nothing matching "${query}"${everywhere ? "" : " here — try /search all " + query}.`);
+  });
+
   api.registerCommand("cancel", async (args, ctx) => {
     const name = args.trim().replace(/^@/, "");
     if (!name) return ctx.reply("Usage: /cancel <agent> — aborts that agent's in-flight turn (owner-signed, ±60s window).");

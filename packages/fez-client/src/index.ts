@@ -36,6 +36,8 @@ export interface WireFilter {
   since?: number;
   until?: number;
   limit?: number;
+  /** NIP-50 full-text query (fez-relay: case-insensitive AND over tokens). */
+  search?: string;
   [key: `#${string}`]: string[] | undefined;
 }
 

@@ -130,6 +130,32 @@ describe("NIP-01 REQ limit", () => {
 });
 
 
+describe("NIP-50 search", () => {
+  test("case-insensitive AND over tokens; non-matches excluded", async () => {
+    const probe = new Probe();
+    await probe.open();
+    const docs = [
+      sign(1320, "the Quick brown Fox jumps"),
+      sign(1320, "lazy dog sleeps all day"),
+      sign(1320, "quick fox trot lessons"),
+    ];
+    for (const e of docs) {
+      probe.send(["EVENT", e]);
+      await probe.waitFor((m) => m[0] === "OK" && m[1] === e.id);
+    }
+    probe.send(["REQ", "s1", { kinds: [1320], search: "QUICK fox" }]);
+    await probe.waitFor((m) => m[0] === "EOSE" && m[1] === "s1");
+    const got = probe.messages.filter((m) => m[0] === "EVENT" && m[1] === "s1").map((m) => (m[2] as { content: string }).content);
+    expect(got).toHaveLength(2);
+    expect(got.every((c) => /quick/i.test(c) && /fox/i.test(c))).toBe(true);
+
+    probe.send(["REQ", "s2", { kinds: [1320], search: "zebra" }]);
+    await probe.waitFor((m) => m[0] === "EOSE" && m[1] === "s2");
+    expect(probe.messages.filter((m) => m[0] === "EVENT" && m[1] === "s2")).toHaveLength(0);
+    probe.close();
+  });
+});
+
 describe("NIP-09 deletion masking", () => {
   const other = generateSecretKey();
   const signAs = (key: Uint8Array, kind: number, content: string, tags: string[][] = []) =>

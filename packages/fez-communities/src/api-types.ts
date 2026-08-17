@@ -18,6 +18,7 @@ export interface NostrEvent {
 }
 
 export interface NostrFilter {
+  search?: string;
   kinds?: number[];
   authors?: string[];
   since?: number;
