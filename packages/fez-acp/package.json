@@ -8,7 +8,9 @@
     "type": "agent",
     "agent": {
       "entry": "dist/agent.js",
-      "supportedTasks": ["channel-chat"]
+      "supportedTasks": [
+        "channel-chat"
+      ]
     }
   },
   "scripts": {
@@ -16,7 +18,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "^0.1.0"
+    "@fez/protocol": "file:../.."
   },
   "devDependencies": {
     "esbuild": "^0.21.5",

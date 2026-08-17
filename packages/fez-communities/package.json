@@ -2,7 +2,7 @@
   "name": "@fez/communities",
   "version": "0.1.0",
   "private": true,
-  "description": "Communities and channels for fez — Buzz-shaped chat over fez-native nostr kinds, with standing channel agents",
+  "description": "Communities and channels for fez \u2014 Buzz-shaped chat over fez-native nostr kinds, with standing channel agents",
   "type": "module",
   "fez": {
     "type": "extension",
@@ -15,7 +15,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "^0.1.0"
+    "@fez/protocol": "file:../.."
   },
   "devDependencies": {
     "esbuild": "^0.21.5",

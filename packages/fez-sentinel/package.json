@@ -2,7 +2,7 @@
   "name": "@fez/sentinel",
   "version": "0.1.0",
   "private": true,
-  "description": "fez's always-on watcher: wakes sleeping agents on DMs/mentions and delivers desktop notifications — the fleet works with no TUI open",
+  "description": "fez's always-on watcher: wakes sleeping agents on DMs/mentions and delivers desktop notifications \u2014 the fleet works with no TUI open",
   "type": "module",
   "fez": {
     "type": "service",
@@ -15,7 +15,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "^0.1.0"
+    "@fez/protocol": "file:../.."
   },
   "devDependencies": {
     "esbuild": "^0.21.5",
