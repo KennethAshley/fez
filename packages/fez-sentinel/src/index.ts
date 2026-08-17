@@ -148,7 +148,7 @@ async function main() {
   }
   const relayUrl = process.env.FEZ_RELAY || resolveRelay(undefined);
   const client = new CapabilityClient({ relay: relayUrl, privateKey: keyHex });
-  const relay = new RelayConnection({ url: relayUrl });
+  const relay = new RelayConnection({ url: relayUrl, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
 

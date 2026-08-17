@@ -1,6 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { verifyEvent } from "nostr-tools";
-import type { PolicyContext, RelayPolicy } from "./policies.js";
+import type { DeliverContext, PolicyContext, RelayPolicy } from "./policies.js";
 import { storeForPath, type EventStore } from "./stores.js";
 
 /**
@@ -213,6 +214,26 @@ export function startRelay(options: RelayOptions): RelayHandle {
   };
 
   const subs = new Map<WebSocket, Map<string, Filter[]>>();
+  // NIP-42 connection identity: challenge issued at connect, pubkey set
+  // once a valid kind-22242 AUTH lands. Read-side policies key on it.
+  const connAuth = new Map<WebSocket, { challenge: string; authedPubkey?: string }>();
+  const readGated = policies.some((p) => p.onDeliver);
+
+  /** First onDeliver false wins — the event is withheld from this connection. */
+  const deliverable = (event: StoredEvent, ws: WebSocket): boolean => {
+    if (!readGated) return true;
+    const deliverCtx: DeliverContext = { ...ctx, authedPubkey: connAuth.get(ws)?.authedPubkey };
+    for (const policy of policies) {
+      try {
+        if (policy.onDeliver && !policy.onDeliver(event, deliverCtx)) return false;
+      } catch (err) {
+        log(`⚠️ policy ${policy.name} onDeliver threw (withholding): ${err instanceof Error ? err.message : err}`);
+        return false; // fail closed on the read side
+      }
+    }
+    return true;
+  };
+
   const wss = new WebSocketServer({ port: options.port, maxPayload: limits.maxFrameBytes });
 
   wss.on("connection", (ws) => {
@@ -221,6 +242,9 @@ export function startRelay(options: RelayOptions): RelayHandle {
       return;
     }
     subs.set(ws, new Map());
+    const challenge = randomBytes(16).toString("hex");
+    connAuth.set(ws, { challenge });
+    ws.send(JSON.stringify(["AUTH", challenge]));
 
     ws.on("message", (raw) => {
       let msg: unknown[];
@@ -325,7 +349,7 @@ export function startRelay(options: RelayOptions): RelayHandle {
               continue;
             }
             for (const [subId, filters] of clientSubs) {
-              if (filters.some((f) => matches(event, f))) {
+              if (filters.some((f) => matches(event, f)) && deliverable(event, client)) {
                 client.send(JSON.stringify(["EVENT", subId, event]));
               }
             }
@@ -348,6 +372,7 @@ export function startRelay(options: RelayOptions): RelayHandle {
           return;
         }
         clientSubs.set(subId, filters);
+        let withheldUnauthed = false;
         for (const filter of filters) {
           const limit = Math.min(
             typeof filter.limit === "number" ? filter.limit : Infinity,
@@ -359,7 +384,22 @@ export function startRelay(options: RelayOptions): RelayHandle {
             .filter((e) => matches(e, filter))
             .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))
             .slice(0, limit);
-          for (const event of matched) ws.send(JSON.stringify(["EVENT", subId, event]));
+          for (const event of matched) {
+            if (!deliverable(event, ws)) {
+              if (!connAuth.get(ws)?.authedPubkey) withheldUnauthed = true;
+              continue;
+            }
+            ws.send(JSON.stringify(["EVENT", subId, event]));
+          }
+        }
+        // NIP-42: content was withheld from an UNAUTHED connection —
+        // close the sub with auth-required so the client can AUTH and
+        // resubscribe (nostr-tools does this automatically). An authed
+        // connection that's simply not allowed gets a normal EOSE.
+        if (withheldUnauthed) {
+          clientSubs.delete(subId);
+          ws.send(JSON.stringify(["CLOSED", subId, "auth-required: read access is membership-gated"]));
+          return;
         }
         ws.send(JSON.stringify(["EOSE", subId]));
         return;
@@ -367,10 +407,34 @@ export function startRelay(options: RelayOptions): RelayHandle {
 
       if (msg[0] === "CLOSE") {
         subs.get(ws)?.delete(msg[1] as string);
+        return;
+      }
+
+      if (msg[0] === "AUTH") {
+        const event = msg[1] as StoredEvent;
+        const state = connAuth.get(ws);
+        const now = Math.floor(Date.now() / 1000);
+        const challengeTag = event?.tags?.find((t) => t[0] === "challenge")?.[1];
+        if (
+          !state ||
+          event?.kind !== 22242 ||
+          challengeTag !== state.challenge ||
+          Math.abs(event.created_at - now) > 600 ||
+          !verifyEvent(event)
+        ) {
+          ws.send(JSON.stringify(["OK", event?.id ?? "", false, "invalid: auth event rejected"]));
+          return;
+        }
+        state.authedPubkey = event.pubkey;
+        ws.send(JSON.stringify(["OK", event.id, true, ""]));
+        return;
       }
     });
 
-    ws.on("close", () => subs.delete(ws));
+    ws.on("close", () => {
+      subs.delete(ws);
+      connAuth.delete(ws);
+    });
   });
 
   const policyNames = policies.map((p) => p.name).join(", ") || "none (dumb store)";

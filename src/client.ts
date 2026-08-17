@@ -73,7 +73,7 @@ export class CapabilityClient {
   private pubkey: string;
 
   constructor(config: ClientConfig) {
-    this.relay = new RelayConnection({ url: config.relay });
+    this.relay = new RelayConnection({ url: config.relay, authSigner: this.authSigner });
 
     if (config.privateKey) {
       this.privateKey = hexToBytes(config.privateKey);
@@ -93,6 +93,10 @@ export class CapabilityClient {
    * FezExtensionAPI.nostr.publish) to author events as the user — the
    * private key itself stays private.
    */
+  /** NIP-42 auth signer for RelayConnection — same custody rationale as signEvent. */
+  authSigner = async (template: { kind: number; created_at: number; tags: string[][]; content: string }): Promise<Event> =>
+    this.signEvent(template);
+
   signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Event {
     const event: UnsignedEvent = {
       kind: tmpl.kind,

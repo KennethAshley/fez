@@ -75,7 +75,7 @@ async function main() {
   }
 
   const client = new CapabilityClient({ relay: relayUrl, privateKey: loadServiceKey("indexer") });
-  const relay = new RelayConnection({ url: relayUrl });
+  const relay = new RelayConnection({ url: relayUrl, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
 

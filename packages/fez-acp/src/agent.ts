@@ -183,7 +183,7 @@ async function main() {
   // all bound to the agent's own pubkey surviving restarts.
   const agentKeyHex = loadServiceKey(personaId);
   const client = new CapabilityClient({ relay: relayUrl, privateKey: agentKeyHex });
-  const relay = new RelayConnection({ url: relayUrl });
+  const relay = new RelayConnection({ url: relayUrl, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
 

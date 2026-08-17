@@ -167,7 +167,7 @@ export class FezTUI {
 
   constructor(private relayUrl: string, privateKey?: string) {
     this.client = new CapabilityClient({ relay: relayUrl, privateKey });
-    this.relay = new RelayConnection({ url: relayUrl });
+    this.relay = new RelayConnection({ url: relayUrl, authSigner: this.client.authSigner });
     this.myPubkey = this.client.getPubkey();
   }
 

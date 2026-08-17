@@ -21,11 +21,25 @@ export interface PolicyContext {
   query(filter: Record<string, unknown>): StoredEvent[];
 }
 
+/** Read-side context: who is asking. authedPubkey comes from NIP-42. */
+export interface DeliverContext extends PolicyContext {
+  /** NIP-42-proven pubkey of the subscriber's connection, if they authed. */
+  authedPubkey?: string;
+}
+
 export type PolicyVerdict = { accept: true } | { accept: false; reason: string };
 
 export interface RelayPolicy {
   name: string;
   onEvent(event: StoredEvent, ctx: PolicyContext): PolicyVerdict | Promise<PolicyVerdict>;
+  /**
+   * Read-side gate (GAPS 2.3 — Buzz's "a registered subscription is never
+   * sufficient for delivery"): called for every event about to be served
+   * to a connection, on REQ replay AND live fanout. Return false to
+   * withhold. MUST be synchronous — it sits on the delivery hot path.
+   * Absent = deliver everything (the dumb-store floor).
+   */
+  onDeliver?(event: StoredEvent, ctx: DeliverContext): boolean;
 }
 
 const ok: PolicyVerdict = { accept: true };
@@ -53,9 +67,59 @@ const tag = (e: StoredEvent, name: string) => e.tags.find((t) => t[0] === name)?
  * passes through — not this policy's concern.
  */
 export function membershipPolicy(): RelayPolicy {
+  // Winning-roster cache — onDeliver runs per delivered event, and a
+  // linear scan per delivery would hurt. Invalidated whenever a fresh
+  // 47102 for the channel is accepted (onEvent sees every ingest).
+  const rosterCache = new Map<string, StoredEvent | null>();
+
+  const winningRoster = (ctx: PolicyContext, channelId: string): StoredEvent | null => {
+    const cached = rosterCache.get(channelId);
+    if (cached !== undefined) return cached;
+    const creatorOf = (communityId: string): string | undefined =>
+      ctx
+        .query({ kinds: [KIND_COMMUNITY], "#d": [communityId] })
+        .sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
+    const winner =
+      ctx
+        .query({ kinds: [KIND_MEMBERSHIP], "#d": [channelId] })
+        .filter((m) => {
+          const communityId = m.tags.find((t) => t[0] === "c")?.[1];
+          return communityId !== undefined && m.pubkey === creatorOf(communityId);
+        })
+        .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0] ?? null;
+    rosterCache.set(channelId, winner);
+    return winner;
+  };
+
   return {
     name: "membership",
+
+    /**
+     * Read side: h-tagged content (messages, reactions, drafts, docs …)
+     * is delivered only to NIP-42-authed members of the channel (or its
+     * roster signer). This is the one enforcement clients cannot provide
+     * for each other — a non-member's subscription otherwise receives
+     * plaintext they'd merely decline to render. Fail closed: unknown
+     * channel or unauthed connection sees nothing h-tagged.
+     */
+    onDeliver(event, ctx) {
+      const channelId = tag(event, "h");
+      if (!channelId) return true; // not channel-scoped — public
+      if (!ctx.authedPubkey) return false;
+      const roster = winningRoster(ctx, channelId);
+      if (!roster) return false;
+      return (
+        roster.pubkey === ctx.authedPubkey ||
+        roster.tags.some((t) => t[0] === "p" && t[1] === ctx.authedPubkey)
+      );
+    },
+
     onEvent(event, ctx) {
+      if (event.kind === KIND_MEMBERSHIP || event.kind === KIND_COMMUNITY) {
+        const d = tag(event, "d");
+        if (d) rosterCache.delete(d); // roster (or its creator chain) may change
+        if (event.kind === KIND_COMMUNITY) rosterCache.clear(); // creator resolution feeds every roster
+      }
       if (event.kind === KIND_COMMUNITY) {
         const id = tag(event, "d");
         if (!id) return reject("blocked: community event missing d tag");

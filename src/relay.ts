@@ -8,6 +8,19 @@ export interface RelayOptions {
   onError?: (err: Error) => void;
   /** Connectivity-watchdog poll interval (ms). Mainly for tests. */
   watchdogMs?: number;
+  /**
+   * NIP-42: when the relay sends an AUTH challenge, sign the kind-22242
+   * auth event with this and reply automatically. Optional — a relay that
+   * never challenges (fez-relay without read-side policies) costs
+   * nothing; a challenge with no signer is simply ignored (the relay may
+   * then withhold read-gated events).
+   */
+  authSigner?: (template: {
+    kind: number;
+    created_at: number;
+    tags: string[][];
+    content: string;
+  }) => Promise<Event>;
 }
 
 // The watchdog is the reconnect ladder: every tick it checks liveness and,
@@ -80,7 +93,18 @@ export class RelayConnection {
 
   constructor(private options: RelayOptions) {
     this.url = options.url;
-    this.pool = new SimplePool({ enablePing: true });
+    const { authSigner } = options;
+    // nostr-tools auto-answers AUTH challenges when the relay instance
+    // has an onauth signer; automaticallyAuth supplies it per-URL. The
+    // option is real at runtime (AbstractSimplePool) but SimplePool's
+    // constructor Pick<> omits it — hence the cast.
+    const poolOptions = {
+      enablePing: true,
+      automaticallyAuth: authSigner
+        ? () => (evt: unknown) => authSigner(evt as never) as Promise<never>
+        : undefined,
+    };
+    this.pool = new SimplePool(poolOptions as ConstructorParameters<typeof SimplePool>[0]);
   }
 
   private relayConnected(): boolean {
@@ -91,12 +115,36 @@ export class RelayConnection {
     return false;
   }
 
+  /**
+   * Connect and, when an authSigner is configured, complete the NIP-42
+   * handshake BEFORE returning — otherwise the first REQ races the AUTH
+   * reply and a read-gated relay answers it unauthed (CLOSED
+   * auth-required). The challenge arrives asynchronously right after the
+   * socket opens, so poll briefly for it.
+   */
+  private async ensureConnectedAndAuthed(): Promise<void> {
+    const relay = await this.pool.ensureRelay(this.url, { connectionTimeout: CONNECT_TIMEOUT_MS });
+    const signer = this.options.authSigner;
+    if (!signer) return;
+    const authable = relay as unknown as { auth(s: (evt: never) => Promise<never>): Promise<string> };
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        await authable.auth((evt) => signer(evt) as Promise<never>);
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/no challenge/.test(msg)) return; // relay doesn't gate reads, or auth rejected — proceed either way
+        await sleep(100);
+      }
+    }
+  }
+
   async connect(): Promise<void> {
     // Eager connect so startup problems surface at startup — but degrade to
     // the old lazy behavior (first subscribe/publish connects) instead of
     // throwing, so a relay that's briefly down doesn't kill boot.
     try {
-      await this.pool.ensureRelay(this.url, { connectionTimeout: CONNECT_TIMEOUT_MS });
+      await this.ensureConnectedAndAuthed();
       this.wasConnected = true;
       this.options.onConnect?.();
     } catch (err) {
@@ -128,7 +176,7 @@ export class RelayConnection {
     if (this.tracked.size === 0) return; // nothing to restore; publish/query reconnect on demand
     this.reconnecting = true;
     try {
-      await this.pool.ensureRelay(this.url, { connectionTimeout: CONNECT_TIMEOUT_MS });
+      await this.ensureConnectedAndAuthed(); // re-auth before resubscribing on gated relays
       for (const sub of this.tracked.values()) this.issue(sub);
       this.wasConnected = true;
       this.options.onConnect?.();
@@ -146,6 +194,7 @@ export class RelayConnection {
     const filters = sub.filters.map((f) => ({ ...f }));
 
     let eoseCount = 0;
+    const { authSigner } = this.options;
     // See subscribe() docstring: one subscribeMany() per filter, merged.
     const closers = filters.map((filter) =>
       this.pool.subscribeMany([this.url], filter, {
@@ -161,6 +210,9 @@ export class RelayConnection {
             sub.onEose?.();
           }
         },
+        // Belt & braces for the auth race: a CLOSED "auth-required:" makes
+        // nostr-tools auth with this signer and re-fire the subscription.
+        onauth: authSigner ? (evt) => authSigner(evt) as Promise<never> : undefined,
       })
     );
     sub.close = () => closers.forEach((c) => c.close());
