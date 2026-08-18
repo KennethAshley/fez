@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, ObserverEntry } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
@@ -25,7 +25,17 @@ interface TurnRec {
   durationMs?: number;
   replyChars?: number;
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  /** Event id of the message that triggered this turn (newer runtimes). */
+  trigger?: string;
   ts: number;
+}
+
+interface MsgRec {
+  id: string;
+  authorPk: string;
+  ts: number;
+  channelId: string;
+  mentions: string[]; // p-tag pubkeys
 }
 
 interface DayStats {
@@ -54,6 +64,7 @@ export default function PulseView({
 }) {
   const [turns, setTurns] = useState<TurnRec[]>();
   const [channelDays, setChannelDays] = useState<Map<string, Map<string, number>>>();
+  const [messages, setMessages] = useState<MsgRec[]>();
 
   useEffect(() => {
     const since = Math.floor((Date.now() - WEEKS * 7 * DAY_MS) / 1000);
@@ -68,27 +79,42 @@ export default function PulseView({
       }
       records.sort((a, b) => a.ts - b.ts);
       setTurns(records);
-    })();
-    void (async () => {
+
       const channels: { id: string; name: string }[] = [];
       for (const communityId of client.state.joined) {
         const community = client.state.communities.get(communityId);
         for (const channel of community?.channels.values() ?? []) channels.push({ id: channel.id, name: channel.name });
       }
+      // agents may work in channels this client hasn't joined (TUI-made agent
+      // channels) — include their scopes so summons/edges still reconstruct
+      for (const record of records) {
+        if (!record.scope?.startsWith("ch:")) continue;
+        const id = record.scope.slice(3);
+        if (!channels.some((c) => c.id === id)) channels.push({ id, name: id.slice(0, 8) });
+      }
       const byChannel = new Map<string, Map<string, number>>();
       const results = await wire.query(
         channels.map(({ id }) => ({ kinds: [KIND_CHANNEL_MESSAGE], "#h": [id], since, limit: 500 }))
       );
+      const msgs: MsgRec[] = [];
       for (const event of results) {
         const channelId = event.tags.find((t) => t[0] === "h")?.[1];
         const name = channels.find((c) => c.id === channelId)?.name;
-        if (!name) continue;
+        if (!name || !channelId) continue;
         let days = byChannel.get(name);
         if (!days) byChannel.set(name, (days = new Map()));
         const key = dayKey(event.created_at * 1000);
         days.set(key, (days.get(key) ?? 0) + 1);
+        msgs.push({
+          id: event.id,
+          authorPk: event.pubkey,
+          ts: event.created_at * 1000,
+          channelId,
+          mentions: event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
+        });
       }
       setChannelDays(byChannel);
+      setMessages(msgs);
     })();
   }, [wire, client]);
 
@@ -102,6 +128,40 @@ export default function PulseView({
 
   const now = Date.now();
   const dayAgo = now - DAY_MS;
+
+  // shared filters: the graph and the flat timeline read the same window
+  const [range, setRange] = useState<RangeKey>("24h");
+  const [channelFilter, setChannelFilter] = useState("all");
+  const rangeMs = RANGES.find((r) => r.key === range)?.ms ?? DAY_MS;
+  const channels = useMemo(() => {
+    const out: { id: string; name: string }[] = [];
+    for (const communityId of client.state.joined) {
+      const community = client.state.communities.get(communityId);
+      for (const channel of community?.channels.values() ?? []) out.push({ id: channel.id, name: channel.name });
+    }
+    for (const record of turns ?? []) {
+      if (!record.scope?.startsWith("ch:")) continue;
+      const id = record.scope.slice(3);
+      if (!out.some((c) => c.id === id)) out.push({ id, name: id.slice(0, 8) });
+    }
+    return out;
+  }, [client, turns]);
+  const inScope = (channelId: string | undefined) => channelFilter === "all" || channelId === channelFilter;
+  const filterControls = (
+    <>
+      <select className="graph-filter" value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
+        {RANGES.map((r) => (
+          <option key={r.key} value={r.key}>{r.key}</option>
+        ))}
+      </select>
+      <select className="graph-filter" value={channelFilter} onChange={(e) => setChannelFilter(e.target.value)}>
+        <option value="all">all channels</option>
+        {channels.map((c) => (
+          <option key={c.id} value={c.id}>#{c.name}</option>
+        ))}
+      </select>
+    </>
+  );
 
   // ── derived aggregates ────────────────────────────────────────────
   const stats24 = useMemo(() => {
@@ -172,10 +232,11 @@ export default function PulseView({
   }, [turns]);
 
   const timeline = useMemo(() => {
-    const weekAgo = now - 7 * DAY_MS;
+    const windowStart = now - rangeMs;
     const rows: { ts: number; kind: "turn" | "artifact"; agent: string; text: string; failed?: boolean }[] = [];
     for (const t of turns ?? []) {
-      if (t.ts < weekAgo) continue;
+      if (t.ts < windowStart) continue;
+      if (t.scope?.startsWith("ch:") && !inScope(t.scope.slice(3))) continue;
       const bits = [t.status ?? "ok"];
       if (t.durationMs) bits.push(t.durationMs > 90_000 ? `${(t.durationMs / 60_000).toFixed(1)}m` : `${(t.durationMs / 1000).toFixed(0)}s`);
       if (t.usage?.costUsd != null) bits.push(`$${t.usage.costUsd.toFixed(3)}`);
@@ -190,8 +251,9 @@ export default function PulseView({
     for (const communityId of client.state.joined) {
       const community = client.state.communities.get(communityId);
       for (const channel of community?.channels.values() ?? []) {
+        if (!inScope(channel.id)) continue;
         for (const artifact of client.artifacts(channel.id)) {
-          if (artifact.ts < weekAgo) continue;
+          if (artifact.ts < windowStart) continue;
           rows.push({
             ts: artifact.ts,
             kind: "artifact",
@@ -203,7 +265,7 @@ export default function PulseView({
     }
     rows.sort((a, b) => b.ts - a.ts);
     return rows.slice(0, 300);
-  }, [turns, client, now]);
+  }, [turns, client, now, rangeMs, channelFilter]);
 
   const maxDay = Math.max(1, ...days14.map((d) => d.ok + d.failed));
   const [hover, setHover] = useState<number>();
@@ -226,6 +288,9 @@ export default function PulseView({
           <StatTile label="tokens · 24h" value={turns ? (tiles.tokens ? compact(tiles.tokens) : "—") : "…"} />
           <StatTile label="active now" value={String(tiles.activeNow)} />
         </div>
+
+        {/* ── orchestration graph ── */}
+        <GraphSection client={client} turns={turns} messages={messages} roster={roster} now={now} range={range} channelFilter={channelFilter} channels={channels} filterControls={filterControls} />
 
         {/* ── 14-day fleet chart ── */}
         <div className="pulse-section">
@@ -325,10 +390,14 @@ export default function PulseView({
           </div>
         )}
 
-        {/* ── timeline ── */}
+        {/* ── flat timeline (the graph's degenerate cousin, kept for scanning) ── */}
         <div className="pulse-section">
-          <div className="pulse-section-head"><span>what happened · last 7 days</span></div>
-          {timeline.length === 0 && <div className="pane-empty">{turns ? "nothing recorded this week" : "…"}</div>}
+          <div className="pulse-section-head">
+            <span>what happened</span>
+            <span className="pulse-readout" />
+            {filterControls}
+          </div>
+          {timeline.length === 0 && <div className="pane-empty">{turns ? "nothing in this window" : "…"}</div>}
           {groupByDay(timeline).map(([day, rows]) => (
             <div key={day}>
               <div className="pulse-day">{day}</div>
@@ -347,6 +416,249 @@ export default function PulseView({
         </div>
       </div>
     </main>
+  );
+}
+
+/**
+ * The orchestration graph — git-log --graph for the fleet. Lanes are
+ * participants (you + agents), commit-dots are turns / summons /
+ * artifacts, and edges are causality: a mention forks work onto another
+ * lane, a callback merges it home. Edges prefer the metric's exact
+ * `trigger` id (newer runtimes record which message caused the turn)
+ * and fall back to nearest-prior-mention inference for older records.
+ */
+const LANE_H = 30;
+const NODE_STEP = 24;
+const EDGE_WINDOW_MS = 30 * 60_000;
+
+interface GraphNode {
+  lane: number;
+  ts: number;
+  msgId?: string;
+  kind: "turn" | "summon" | "artifact";
+  failed?: boolean;
+  label: string;
+  who: string;
+  pk?: string;
+}
+
+const RANGES = [
+  { key: "24h", ms: DAY_MS },
+  { key: "3d", ms: 3 * DAY_MS },
+  { key: "7d", ms: 7 * DAY_MS },
+] as const;
+type RangeKey = (typeof RANGES)[number]["key"];
+
+function GraphSection({
+  client,
+  turns,
+  messages,
+  roster,
+  now,
+  range,
+  channelFilter,
+  channels,
+  filterControls,
+}: {
+  client: FezClient;
+  turns: TurnRec[] | undefined;
+  messages: MsgRec[] | undefined;
+  roster: { pk: string; name: string }[];
+  now: number;
+  range: RangeKey;
+  channelFilter: string;
+  channels: { id: string; name: string }[];
+  filterControls: React.ReactNode;
+}) {
+  const [hover, setHover] = useState<GraphNode>();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const graph = useMemo(() => {
+    const windowStart = now - (RANGES.find((r) => r.key === range)?.ms ?? DAY_MS);
+    const nameByPk = new Map(roster.map((a) => [a.pk, a.name]));
+    const pkByName = new Map(roster.map((a) => [a.name, a.pk]));
+    const inScope = (channelId: string | undefined) => channelFilter === "all" || channelId === channelFilter;
+
+    const laneOf = new Map<string, number>();
+    const laneNames: string[] = [];
+    const lane = (key: string) => {
+      let i = laneOf.get(key);
+      if (i === undefined) {
+        i = laneNames.length;
+        laneOf.set(key, i);
+        laneNames.push(key);
+      }
+      return i;
+    };
+    lane("you");
+
+    const nodes: GraphNode[] = [];
+    const msgs = (messages ?? []).filter((m) => m.ts >= windowStart && inScope(m.channelId));
+    const msgById = new Map(msgs.map((m) => [m.id, m]));
+
+    for (const m of msgs) {
+      if (nameByPk.has(m.authorPk)) continue; // agent-authored — its turn is the node
+      const mentioned = m.mentions.filter((pk) => nameByPk.has(pk));
+      if (mentioned.length === 0) continue;
+      const who = m.authorPk === client.pubkey ? "you" : (client.knownNames().get(m.authorPk) ?? m.authorPk.slice(0, 8));
+      nodes.push({
+        lane: lane(m.authorPk === client.pubkey ? "you" : who),
+        ts: m.ts,
+        msgId: m.id,
+        kind: "summon",
+        label: `summons ${mentioned.map((pk) => `@${nameByPk.get(pk)}`).join(" ")}`,
+        who,
+        pk: m.authorPk,
+      });
+    }
+    for (const t of turns ?? []) {
+      if (t.ts < windowStart || !t.scope?.startsWith("ch:")) continue;
+      if (!inScope(t.scope.slice(3))) continue;
+      const bits = [t.status ?? "ok"];
+      if (t.durationMs) bits.push(t.durationMs > 90_000 ? `${(t.durationMs / 60_000).toFixed(1)}m` : `${(t.durationMs / 1000).toFixed(0)}s`);
+      if (t.usage?.costUsd != null) bits.push(`$${t.usage.costUsd.toFixed(3)}`);
+      nodes.push({
+        lane: lane(t.agent),
+        ts: t.ts,
+        kind: "turn",
+        failed: t.status === "failed",
+        label: `turn — ${bits.join(" · ")}${channelFilter === "all" ? ` · ${channelLabel(client, t.scope)}` : ""}`,
+        who: `@${t.agent}`,
+        pk: pkByName.get(t.agent),
+      });
+    }
+    for (const { id: channelId, name } of channels) {
+      if (!inScope(channelId)) continue;
+      for (const artifact of client.artifacts(channelId)) {
+        if (artifact.ts < windowStart) continue;
+        nodes.push({
+          lane: lane(artifact.authorName),
+          ts: artifact.ts,
+          kind: "artifact",
+          label: `📦 ${artifact.type}${artifact.title ? ` "${artifact.title}"` : ""}${channelFilter === "all" ? ` · #${name}` : ""}`,
+          who: `@${artifact.authorName}`,
+          pk: artifact.authorPk,
+        });
+      }
+    }
+
+    nodes.sort((a, b) => a.ts - b.ts); // oldest left, newest right
+    const cols = nodes.slice(-300);
+
+    const edges: { from: number; to: number }[] = [];
+    const seen = new Set<string>();
+    const link = (from: number, to: number) => {
+      if (from < 0 || to < 0 || from === to) return;
+      const key = `${from}>${to}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      edges.push({ from, to });
+    };
+    const anchorForMsg = (msgId: string): number => {
+      const m = msgById.get(msgId);
+      if (!m) return -1;
+      const summonCol = cols.findIndex((n) => n.msgId === msgId);
+      if (summonCol >= 0) return summonCol;
+      // agent-authored trigger: anchor on that agent's latest turn at-or-before the message
+      const author = nameByPk.get(m.authorPk);
+      if (!author) return -1;
+      for (let i = cols.length - 1; i >= 0; i--) {
+        const n = cols[i];
+        if (n.kind === "turn" && n.who === `@${author}` && n.ts <= m.ts + 5000) return i;
+      }
+      return -1;
+    };
+
+    cols.forEach((node, i) => {
+      if (node.kind !== "turn") return;
+      const turn = (turns ?? []).find((t) => t.ts === node.ts && `@${t.agent}` === node.who);
+      if (turn?.trigger) {
+        const src = anchorForMsg(turn.trigger);
+        if (src >= 0) return link(src, i);
+      }
+      const prior = msgs
+        .filter((m) => node.pk && m.mentions.includes(node.pk) && m.ts <= node.ts && node.ts - m.ts < EDGE_WINDOW_MS)
+        .sort((a, b) => b.ts - a.ts)[0];
+      if (prior) link(anchorForMsg(prior.id), i);
+    });
+
+    return { cols, edges, laneNames };
+  }, [turns, messages, roster, client, channels, channelFilter, range, now]);
+
+  const { cols, edges, laneNames } = graph;
+  const width = cols.length * NODE_STEP + 30;
+  const height = laneNames.length * LANE_H + 24;
+  const colX = (i: number) => 16 + i * NODE_STEP;
+  const laneY = (i: number) => 16 + i * LANE_H;
+
+  // day boundaries for sparse date labels along the bottom
+  const dayMarks = cols
+    .map((n, i) => ({ i, key: dayKey(n.ts), ts: n.ts }))
+    .filter((m, idx, arr) => idx === 0 || m.key !== arr[idx - 1].key);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth; // land on the newest
+  }, [cols.length, range, channelFilter]);
+
+  return (
+    <div className="pulse-section">
+      <div className="pulse-section-head">
+        <span>orchestration graph</span>
+        <span className="pulse-readout">
+          {hover
+            ? `${new Date(hover.ts).toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} — ${hover.who} ${hover.label}`
+            : ""}
+        </span>
+        {filterControls}
+      </div>
+      {cols.length === 0 ? (
+        <div className="pane-empty">{turns && messages ? "nothing in this window" : "…"}</div>
+      ) : (
+        <div className="graph-wrap">
+          <div className="graph-lane-col" style={{ height }}>
+            {laneNames.map((name, i) => (
+              <span key={name} className="graph-lane-label" style={{ top: laneY(i) - 8 }}>
+                {name === "you" ? "you" : `@${name}`}
+              </span>
+            ))}
+          </div>
+          <div className="graph-scroll" ref={scrollRef}>
+            <svg width={width} height={height} onMouseLeave={() => setHover(undefined)}>
+              {laneNames.map((_, i) => (
+                <line key={i} x1={0} y1={laneY(i)} x2={width} y2={laneY(i)} className="graph-lane-line" />
+              ))}
+              {dayMarks.map((m) => (
+                <g key={m.i}>
+                  <line x1={colX(m.i) - NODE_STEP / 2} y1={4} x2={colX(m.i) - NODE_STEP / 2} y2={height - 20} className="graph-day-line" />
+                  <text x={colX(m.i) - NODE_STEP / 2 + 4} y={height - 6} className="graph-day-label">
+                    {new Date(m.ts).toLocaleDateString([], { month: "numeric", day: "numeric" })}
+                  </text>
+                </g>
+              ))}
+              {edges.map((edge, i) => {
+                const x1 = colX(edge.from), y1 = laneY(cols[edge.from].lane);
+                const x2 = colX(edge.to), y2 = laneY(cols[edge.to].lane);
+                const midX = (x1 + x2) / 2;
+                return <path key={i} d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`} className="graph-edge" />;
+              })}
+              {cols.map((node, i) => (
+                <circle
+                  key={i}
+                  cx={colX(i)}
+                  cy={laneY(node.lane)}
+                  r={hover === node ? 6 : 4.5}
+                  className={`graph-dot ${node.kind}${node.failed ? " failed" : ""}`}
+                  onMouseEnter={() => setHover(node)}
+                >
+                  <title>{`${new Date(node.ts).toLocaleString()} — ${node.who} ${node.label}`}</title>
+                </circle>
+              ))}
+            </svg>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

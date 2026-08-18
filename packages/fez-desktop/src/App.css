@@ -594,6 +594,30 @@ body {
 .heat-cell.l4 { background: var(--viz-ok); }
 .heat-total { font-size: 11px; color: var(--fg-dim); margin-left: 4px; }
 
+/* orchestration graph — GitHub network graph, fleet edition:
+   lanes are rows (you + agents), time flows left→right, edges are
+   causality (summons fork right-down, callbacks merge back). */
+.graph-filter {
+  background: var(--bg2); border: 0; color: var(--fg); font: inherit; font-size: 11px;
+  border-radius: 6px; padding: 3px 6px; text-transform: none; letter-spacing: 0;
+}
+.graph-wrap { display: flex; align-items: flex-start; }
+.graph-lane-col { position: relative; width: 96px; min-width: 96px; }
+.graph-lane-label {
+  position: absolute; right: 8px; font-size: 11px; color: var(--fg-dim);
+  white-space: nowrap; max-width: 88px; overflow: hidden; text-overflow: ellipsis;
+}
+.graph-scroll { flex: 1; overflow-x: auto; min-width: 0; }
+.graph-lane-line { stroke: var(--bg2); stroke-width: 2; }
+.graph-day-line { stroke: var(--bg2); stroke-width: 1; stroke-dasharray: 2 4; }
+.graph-day-label { fill: var(--fg-dim); font-size: 9px; font-family: var(--font-mono); }
+.graph-edge { fill: none; stroke: var(--fg-dim); stroke-width: 1.5; opacity: 0.75; }
+.graph-dot { cursor: default; }
+.graph-dot.turn { fill: var(--viz-ok); }
+.graph-dot.turn.failed { fill: var(--viz-fail); }
+.graph-dot.summon { fill: var(--bg1); stroke: var(--fg-dim); stroke-width: 2; }
+.graph-dot.artifact { fill: var(--yellow); }
+
 .pulse-day {
   font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.08em;
   padding: 10px 0 4px; border-bottom: 1px solid var(--hairline); margin-bottom: 4px;

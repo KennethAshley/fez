@@ -483,7 +483,7 @@ async function main() {
   // cost data to the relay. Usage figures come only from what the harness
   // actually surfaced (fail-closed: absent, never estimated).
   let turnUsage: { inputTokens?: number; outputTokens?: number; costUsd?: number } | undefined;
-  const publishTurnMetric = (scope: string, status: string, startedAtMs: number, replyChars: number) => {
+  const publishTurnMetric = (scope: string, status: string, startedAtMs: number, replyChars: number, trigger?: string) => {
     if (!owner) return;
     void relay
       .publish(
@@ -498,6 +498,7 @@ async function main() {
               status,
               durationMs: Date.now() - startedAtMs,
               replyChars,
+              ...(trigger ? { trigger } : {}),
               ...(turnUsage ? { usage: turnUsage } : {}),
               ts: Date.now(),
             })
@@ -1062,7 +1063,7 @@ async function main() {
             .catch(() => {});
         }
         publishObserver({ type: "turn", status: "done" });
-        publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, reply.length);
+        publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, reply.length, event.id);
         consecutiveFailures = 0;
         console.log(`✅ Replied (${reply.length} chars)`);
       } catch (err) {
@@ -1070,14 +1071,14 @@ async function main() {
           // Owner cancel — the turn just STOPS. No steer re-dispatch, and
           // an honest threaded notice instead of silence.
           publishObserver({ type: "turn", status: "cancelled" });
-          publishTurnMetric(`ch:${channelId}`, "cancelled", turnStartedAt, 0);
+          publishTurnMetric(`ch:${channelId}`, "cancelled", turnStartedAt, 0, event.id);
           console.log("⏹ Turn cancelled by owner");
           void relay
             .publish(client.signEvent({ kind: KIND_CHANNEL_MESSAGE, tags: replyTags, content: "⏹ stopped by my owner mid-turn." }))
             .catch(() => {});
         } else if (err instanceof Error && err.name === "AbortError") {
           publishObserver({ type: "turn", status: "steered" });
-          publishTurnMetric(`ch:${channelId}`, "steered", turnStartedAt, 0);
+          publishTurnMetric(`ch:${channelId}`, "steered", turnStartedAt, 0, event.id);
           console.log(`🔀 Turn cancelled for steering — re-dispatching merged prompt`);
         } else if (classifyTurnError(err) === "transient" && attempts < RETRY_DELAYS_MS.length) {
           // Retry ladder (Buzz's requeue-with-backoff): a relay blip or
@@ -1090,7 +1091,7 @@ async function main() {
           enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: attempts + 1, notBefore: Date.now() + delay });
         } else {
           publishObserver({ type: "turn", status: "failed" });
-          publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, 0);
+          publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, 0, event.id);
           const reason = err instanceof Error ? err.message : String(err);
           console.error(`❌ Turn failed (${classifyTurnError(err)}):`, reason);
           // Failures are LOUD in the channel. Silence is a valid outcome
