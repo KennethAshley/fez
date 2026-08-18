@@ -489,8 +489,8 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
       <div className="settings-field">
         <label>template</label>
         <select className="manage-select" value={template} onChange={(e) => pickTemplate(e.target.value as "blank" | "bridge")}>
-          <option value="blank">blank agent</option>
-          <option value="bridge">bridge — screened summaries between communities</option>
+          <option value="blank">blank</option>
+          <option value="bridge">bridge</option>
         </select>
       </div>
       {template === "bridge" && (
@@ -511,10 +511,15 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
           <div className="settings-field">
             <label>share level</label>
             <select className="manage-select" value={shareLevel} onChange={(e) => setShareLevel(e.target.value)}>
-              <option value="topics">topics — subjects only, no specifics</option>
-              <option value="summaries">summaries — substance, no identifiers</option>
-              <option value="detailed">detailed — faithful, still secret-screened</option>
+              <option value="topics">topics</option>
+              <option value="summaries">summaries</option>
+              <option value="detailed">detailed</option>
             </select>
+            <span className="settings-hint">
+              {shareLevel === "topics" && "subjects only — no specifics, names, or numbers"}
+              {shareLevel === "summaries" && "substance, but no identifiers, figures, or quotes"}
+              {shareLevel === "detailed" && "faithful summaries — still secret-screened, never raw logs"}
+            </span>
           </div>
         </>
       )}
