@@ -668,6 +668,9 @@ async function main() {
         onUpdate,
         signal
       );
+      // The replay came back empty too — the harness/provider is down,
+      // not blinking. Fail the turn (outer ladder decides what's next).
+      if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down");
       pooled.primed = true;
       pooled.turns++;
       pooled.lastUsed = Date.now();
@@ -1009,6 +1012,8 @@ async function main() {
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = makeOnUpdate();
         const reply = await promptSession(`ch:${channelId}`, buildPrompt, publishDraft, onUpdate, turnController.signal);
+        // Never publish an empty message, whatever path produced it.
+        if (!reply.trim()) throw new Error("harness returned an empty reply");
 
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
@@ -1206,6 +1211,7 @@ async function main() {
       publishObserver({ type: "turn", status: "started" });
       const onUpdate = makeOnUpdate();
       const reply = await promptSession(`dm:${convoKey}`, buildPrompt, undefined, onUpdate, turnController.signal);
+      if (!reply.trim()) throw new Error("harness returned an empty reply");
 
       await sendDmReply(replyTargets, reply, dm.depth + 1);
       dmLastSent.set(convoKey, Math.floor(Date.now() / 1000));
