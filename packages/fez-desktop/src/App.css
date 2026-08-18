@@ -1057,3 +1057,16 @@ button.author:hover { text-decoration: underline; }
 .settings-nav-item.active { background: var(--bg2); color: var(--accent); font-weight: 600; }
 .settings-content { flex: 1; min-width: 0; }
 .settings-modal .settings-pane { min-height: 480px; }
+
+/* Vercel-style env editor: key/value grid, .env paste splits into rows */
+.env-editor { margin-bottom: 14px; }
+.env-grid-head {
+  display: grid; grid-template-columns: 1fr 1.6fr 28px; gap: 6px;
+  font-size: 10.5px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 0 2px 4px;
+}
+.env-grid-row { display: grid; grid-template-columns: 1fr 1.6fr 28px; gap: 6px; margin-bottom: 6px; align-items: center; }
+.env-key { font-family: var(--font-mono); font-size: 12px; }
+.env-value { font-size: 12px; }
+.env-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.env-skill { margin-bottom: 6px; }
