@@ -141,6 +141,41 @@ server.registerTool(
   }
 );
 
+
+server.registerTool(
+  "fez_request_approval",
+  {
+    description:
+      "Ask your OWNER to approve a risky or irreversible action BEFORE doing it — deploys, deletions, publishing, spending money, anything hard to undo. Posts an approval request in the channel and BLOCKS until the owner reacts ✅ (approved) or ❌ (denied), or the timeout passes. Proceed ONLY on APPROVED; on DENIED or TIMEOUT, stop and say so.",
+    inputSchema: {
+      channel: z.string().describe("channel name or id to ask in"),
+      action: z.string().describe("exactly what you want to do — specific, one line"),
+      timeoutS: z.number().optional().describe("seconds to wait (default 300, max 3600)"),
+    },
+  },
+  async ({ channel, action, timeoutS }) => {
+    if (!owner) return text("DENIED — no owner configured (FEZ_AGENT_OWNER); treat approval as impossible.");
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const ask = sign({
+      kind: 47103,
+      tags: [["h", ref.channelId], ["c", ref.communityId], ["t", "approval-request"], ["p", owner]],
+      content: `⛔ approval needed: ${action}\n(react ✅ to approve, ❌ to deny)`,
+    });
+    await relay.publish(ask);
+    const deadline = Date.now() + Math.min(timeoutS ?? 300, 3600) * 1000;
+    while (Date.now() < deadline) {
+      const reactions = await relay.query([{ kinds: [7], "#e": [ask.id], authors: [owner] }]).catch(() => []);
+      for (const reaction of reactions) {
+        if (/✅|👍/u.test(reaction.content)) return text("APPROVED by your owner — proceed with exactly the stated action.");
+        if (/❌|👎/u.test(reaction.content)) return text("DENIED by your owner — do NOT proceed; acknowledge and stop.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+    return text("TIMED OUT — no decision arrived. Do NOT proceed; say you are still waiting for approval.");
+  }
+);
+
 server.registerTool(
   "fez_read_channel",
   {

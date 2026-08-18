@@ -1460,6 +1460,53 @@ function ArtifactCard({ artifact, onAuthor }: { artifact: Artifact; onAuthor: ()
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🚀", "👀"];
 
+/**
+ * Approval request card — an agent called fez_request_approval and is
+ * BLOCKED waiting. The buttons publish your ✅/❌ reaction on the ask
+ * message: that signed reaction IS the approval (the agent's tool polls
+ * for it, and it works identically from the TUI by reacting manually).
+ */
+function ApprovalCard({
+  client,
+  msg,
+  channelId,
+  communityId,
+}: {
+  client: FezClient;
+  msg: Msg;
+  channelId: string;
+  communityId: string;
+}) {
+  const reactions = client.reactions(msg.id);
+  const decided = reactions
+    ? [...reactions.entries()].find(([emoji, who]) => (emoji === "✅" || emoji === "❌") && who.size > 0)?.[0]
+    : undefined;
+  const action = msg.content.replace(/^⛔ approval needed:\s*/, "").replace(/\n\(react ✅.*$/s, "");
+  return (
+    <div className={`inline-proposal ${decided === "✅" ? "approved" : decided === "❌" ? "denied" : "pending"}`}>
+      <div className="inline-proposal-body">
+        <span className="inline-proposal-title">⛔ {msg.authorName} requests approval</span>
+        <span className="skill-desc">{action}</span>
+        <span className="inline-proposal-why">the agent is blocked until you decide — your reaction is the signed approval</span>
+      </div>
+      <div className="inline-proposal-actions">
+        {decided ? (
+          <span className={`role-tag ${decided === "✅" ? "installed-tag" : ""}`}>{decided === "✅" ? "approved" : "denied"}</span>
+        ) : (
+          <>
+            <button className="agent-action approve-btn" onClick={() => void client.toggleReaction(channelId, communityId, msg.id, "✅")}>
+              ✓ approve
+            </button>
+            <button className="mini" onClick={() => void client.toggleReaction(channelId, communityId, msg.id, "❌")}>
+              ✗ deny
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Bubble({
   client,
   channelId,
@@ -1625,6 +1672,9 @@ function Bubble({
       {proposalIdsIn(msg.content).map((id) => (
         <InlineProposal key={id} id={id} />
       ))}
+      {msg.content.startsWith("⛔ approval needed:") && (
+        <ApprovalCard client={client} msg={msg} channelId={channelId} communityId={communityId} />
+      )}
       <div className="bubble-foot">
         {reactions &&
           [...reactions.entries()].map(([emoji, who]) => (
