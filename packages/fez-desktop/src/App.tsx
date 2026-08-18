@@ -376,8 +376,43 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
     render();
   };
 
+  // Resizable sidebars: widths persist; a 5px col-resize strip after the
+  // rail and before the pane drags them. Clamped so neither can vanish.
+  const [railW, setRailW] = useState(() => Number(localStorage.getItem("fez-rail-w")) || 240);
+  const [paneW, setPaneW] = useState(() => Number(localStorage.getItem("fez-pane-w")) || 340);
+  const dragRef = useRef<"rail" | "pane" | undefined>(undefined);
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      if (dragRef.current === "rail") {
+        const w = Math.min(420, Math.max(180, e.clientX));
+        setRailW(w);
+        localStorage.setItem("fez-rail-w", String(w));
+      } else if (dragRef.current === "pane") {
+        const w = Math.min(640, Math.max(260, window.innerWidth - e.clientX));
+        setPaneW(w);
+        localStorage.setItem("fez-pane-w", String(w));
+      }
+    };
+    const up = () => {
+      dragRef.current = undefined;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  }, []);
+  const startDrag = (which: "rail" | "pane") => {
+    dragRef.current = which;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
   return (
-    <div className="shell">
+    <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
       {!connected && <div className="conn-bar">relay disconnected — reconnecting…</div>}
       {banner && <div className="conn-bar error">{banner}</div>}
       <aside className="rail">
@@ -523,6 +558,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           </button>
         </div>
       </aside>
+      <div className="rz" onMouseDown={() => startDrag("rail")} />
 
       {view.kind === "channel" && scope && (
         <ChannelView
@@ -597,6 +633,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         </div>
       )}
 
+      {pane && <div className="rz" onMouseDown={() => startDrag("pane")} />}
       {pane?.kind === "watch" && (
         <WatchPane
           agent={pane.agent}
@@ -1511,11 +1548,6 @@ function Bubble({
         {!inThread && replies > 0 && (
           <button className="thread-link" onClick={onOpenThread}>
             {replies} repl{replies === 1 ? "y" : "ies"} →
-          </button>
-        )}
-        {!inThread && replies === 0 && !msg.deletedBy && (
-          <button className="thread-link quiet" onClick={onOpenThread}>
-            reply in thread
           </button>
         )}
       </div>

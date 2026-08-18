@@ -88,13 +88,6 @@ body {
   background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px;
   cursor: pointer; padding: 0;
 }
-/* The hover affordance FLOATS (absolute, top-right of the bubble) so
-   revealing it never changes the message block's height. */
-.thread-link.quiet {
-  display: none; position: absolute; top: 2px; right: 8px;
-  background: var(--bg1); border: 1px solid var(--bg2); border-radius: 6px; padding: 1px 8px;
-}
-.bubble:hover .thread-link.quiet { display: inline; color: var(--fg-dim); }
 
 .typing { padding: 0 18px 4px; color: var(--fg-dim); font-size: 12px; font-style: italic; }
 .composer { padding: 10px 18px 16px; position: relative; }
@@ -289,11 +282,11 @@ body {
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ── message actions + markdown ─────────────────────────────── */
-.actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.actions { margin-left: auto; display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
 .bubble:hover .actions { opacity: 1; }
 .actions button {
   background: var(--bg1); border: 1px solid var(--bg2); color: var(--fg-dim);
-  font: inherit; font-size: 12px; width: 24px; height: 22px; border-radius: 5px; cursor: pointer;
+  font: inherit; font-size: 15px; width: 32px; height: 30px; border-radius: 7px; cursor: pointer;
 }
 .actions button:hover { color: var(--fg); border-color: var(--fg-dim); }
 .actions button.danger:hover { color: var(--red); border-color: var(--red); }
@@ -1075,3 +1068,9 @@ button.author:hover { text-decoration: underline; }
 .env-value { font-size: 12px; }
 .env-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
 .env-skill { margin-bottom: 6px; }
+
+/* resizable sidebars */
+.rail { width: var(--rail-w, 240px); min-width: var(--rail-w, 240px); }
+.pane { width: var(--pane-w, 340px); min-width: var(--pane-w, 340px); }
+.rz { width: 5px; min-width: 5px; cursor: col-resize; flex-shrink: 0; background: transparent; transition: background 0.15s; }
+.rz:hover { background: var(--accent); }
