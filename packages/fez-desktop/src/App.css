@@ -1142,3 +1142,39 @@ button.author:hover { text-decoration: underline; }
 }
 .ext-filter:hover { color: var(--fg); }
 .ext-filter.active { background: var(--bg2); color: var(--accent); border-color: var(--accent); }
+
+/* choice card — pick-one with a recommended tag */
+.choice-options { display: flex; flex-direction: column; gap: 5px; margin: 4px 0; }
+.choice-option {
+  display: flex; align-items: center; gap: 8px; background: var(--bg0);
+  border: 1px solid var(--bg2); border-radius: 6px; color: var(--fg); font: inherit;
+  font-size: 12.5px; padding: 7px 10px; cursor: pointer; text-align: left;
+}
+.choice-option:hover:not(:disabled) { border-color: var(--accent); }
+.choice-option.recommended { border-color: var(--accent); }
+.choice-option.chosen { border-color: var(--green); }
+.choice-option:disabled { cursor: default; opacity: 0.85; }
+.choice-rec {
+  margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 0 6px;
+}
+
+/* right-click message menu (Slack-style) */
+.msg-menu {
+  position: fixed; z-index: 60; min-width: 210px; padding: 4px;
+  background: var(--bg1); border: 1px solid var(--bg2); border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column;
+}
+.msg-menu .self-menu-item { border-radius: 5px; }
+.msg-menu .self-menu-item.danger { color: var(--red); }
+.msg-menu .menu-glyph { width: 18px; display: inline-block; text-align: center; opacity: 0.8; }
+
+/* reaction selector: quick row + searchable grid */
+.react-picker { flex-direction: column; align-items: stretch; width: 264px; padding: 8px; gap: 6px; }
+.react-picker-quick { display: flex; gap: 4px; }
+.react-picker-quick button { font-size: 16px; padding: 3px 7px; background: none; border: none; border-radius: 5px; cursor: pointer; }
+.react-picker-quick button:hover { background: var(--bg2); }
+.react-picker .emoji-grid { max-height: 180px; overflow-y: auto; }
+
+/* format tray divider */
+.tray-sep { width: 1px; align-self: stretch; margin: 2px 3px; background: var(--bg2); }

@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { quorumDecision } from "./vote-logic.js";
+import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import {
   RelayConnection,
@@ -187,6 +187,48 @@ server.registerTool(
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
     return text("TIMED OUT — no decision arrived. Do NOT proceed; say you are still waiting for approval.");
+  }
+);
+
+
+server.registerTool(
+  "fez_ask_owner",
+  {
+    description:
+      "Ask your OWNER to choose between options when a decision is theirs to make and you genuinely cannot pick — approach A vs B, which target, proceed-now vs wait. Posts the question with numbered options and BLOCKS until the owner answers (reacting with the option number) or the timeout passes. Mark at most one option as recommended when you have a lean. Returns the chosen option; on timeout, stop and say you are waiting.",
+    inputSchema: {
+      channel: z.string().describe("channel name or id to ask in"),
+      question: z.string(),
+      options: z.array(z.object({ label: z.string(), recommended: z.boolean().optional() })).min(2).max(OPTION_EMOJI.length),
+      timeoutS: z.number().optional().describe("seconds to wait (default 600, max 3600)"),
+    },
+  },
+  async ({ channel, question, options, timeoutS }) => {
+    if (!owner) return text("NO OWNER configured — you cannot ask; decide conservatively or stop.");
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const lines = [
+      `❓ choose: ${question}`,
+      ...options.map((option, i) => `${OPTION_EMOJI[i]} ${option.label}${option.recommended ? " (recommended)" : ""}`),
+      "(asking my owner — react with the number to answer)",
+    ];
+    const ask = sign({
+      kind: 47103,
+      tags: [["h", ref.channelId], ["c", ref.communityId], ["t", "choice-request"], ["p", owner]],
+      content: lines.join("\n"),
+    });
+    await relay.publish(ask);
+    const emojis = OPTION_EMOJI.slice(0, options.length);
+    const deadline = Date.now() + Math.min(timeoutS ?? 600, 3600) * 1000;
+    while (Date.now() < deadline) {
+      const reactions = await relay.query([{ kinds: [7], "#e": [ask.id], authors: [owner] }]).catch(() => []);
+      for (const reaction of reactions) {
+        const index = emojis.indexOf(reaction.content);
+        if (index !== -1) return text(`OWNER CHOSE: "${options[index].label}" — proceed accordingly.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+    return text("TIMED OUT — no answer. Do not pick for them; say you are still waiting.");
   }
 );
 

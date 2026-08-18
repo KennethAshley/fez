@@ -192,6 +192,51 @@ export default function Composer({
     });
   };
 
+  /** Prefix every line the selection touches (lists, quote) — Slack's toolbar ops in markdown. */
+  const prefixLines = (prefix: string | ((index: number) => string)) => {
+    const area = areaRef.current;
+    if (!area) return;
+    const { selectionStart: start, selectionEnd: end } = area;
+    const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+    const lineEndIdx = value.indexOf("\n", end);
+    const lineEnd = lineEndIdx === -1 ? value.length : lineEndIdx;
+    const lines = value.slice(lineStart, lineEnd).split("\n");
+    const next = lines.map((line, index) => (typeof prefix === "string" ? prefix : prefix(index)) + line).join("\n");
+    onChange(value.slice(0, lineStart) + next + value.slice(lineEnd));
+    requestAnimationFrame(() => {
+      area.focus();
+      area.selectionStart = area.selectionEnd = lineStart + next.length;
+    });
+  };
+
+  /** [selection](url) with "url" left selected for immediate typing. */
+  const makeLink = () => {
+    const area = areaRef.current;
+    if (!area) return;
+    const { selectionStart: start, selectionEnd: end } = area;
+    const inner = value.slice(start, end) || "text";
+    const next = `${value.slice(0, start)}[${inner}](url)${value.slice(end)}`;
+    onChange(next);
+    requestAnimationFrame(() => {
+      area.focus();
+      area.selectionStart = start + inner.length + 3;
+      area.selectionEnd = start + inner.length + 6;
+    });
+  };
+
+  const codeBlock = () => {
+    const area = areaRef.current;
+    if (!area) return;
+    const { selectionStart: start, selectionEnd: end } = area;
+    const inner = value.slice(start, end);
+    const next = `${value.slice(0, start)}\`\`\`\n${inner}\n\`\`\`${value.slice(end)}`;
+    onChange(next);
+    requestAnimationFrame(() => {
+      area.focus();
+      area.selectionStart = area.selectionEnd = start + 4 + inner.length;
+    });
+  };
+
   const insertAtCaret = (text: string) => {
     const area = areaRef.current;
     const at = area?.selectionStart ?? value.length;
@@ -240,6 +285,12 @@ export default function Composer({
           <button title="italic (⌘I)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("*"); }}><i>I</i></button>
           <button title="code (⌘E)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("`"); }}>{"</>"}</button>
           <button title="strikethrough" onMouseDown={(e) => { e.preventDefault(); wrapSelection("~~"); }}><s>S</s></button>
+          <span className="tray-sep" />
+          <button title="link" onMouseDown={(e) => { e.preventDefault(); makeLink(); }}>🔗</button>
+          <button title="bulleted list" onMouseDown={(e) => { e.preventDefault(); prefixLines("- "); }}>≔</button>
+          <button title="numbered list" onMouseDown={(e) => { e.preventDefault(); prefixLines((index) => `${index + 1}. `); }}>⒈</button>
+          <button title="quote" onMouseDown={(e) => { e.preventDefault(); prefixLines("> "); }}>❝</button>
+          <button title="code block" onMouseDown={(e) => { e.preventDefault(); codeBlock(); }}>▤</button>
         </div>
       )}
       {popupOpen && (

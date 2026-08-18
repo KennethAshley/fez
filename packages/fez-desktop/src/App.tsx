@@ -28,6 +28,7 @@ import { runCommand } from "./commands";
 import Onboarding from "./Onboarding";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators } from "./gui-extensions";
+import { EMOJI, searchEmoji } from "./emoji";
 import "./App.css";
 
 /**
@@ -1461,6 +1462,39 @@ function ArtifactCard({ artifact, onAuthor }: { artifact: Artifact; onAuthor: ()
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🚀", "👀"];
 
+/** Slack-style reaction selector: quick row on top, searchable full grid below. */
+function ReactionPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const results = query.trim() ? searchEmoji(query.trim(), 72) : EMOJI.slice(0, 72);
+  return (
+    <div className="emoji-picker react-picker">
+      <div className="react-picker-quick">
+        {QUICK_EMOJI.map((emoji) => (
+          <button key={emoji} onClick={() => onPick(emoji)}>{emoji}</button>
+        ))}
+      </div>
+      <input
+        className="emoji-grid-search"
+        value={query}
+        autoFocus
+        placeholder="search all emoji…"
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+          if (e.key === "Enter" && results[0]) onPick(results[0].char);
+        }}
+      />
+      <div className="emoji-grid">
+        {results.map((entry) => (
+          <button key={entry.name} title={`:${entry.name}:`} onClick={() => onPick(entry.char)}>
+            {entry.char}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Approval request card — an agent called fez_request_approval and is
  * BLOCKED waiting. The buttons publish your ✅/❌ reaction on the ask
@@ -1517,6 +1551,77 @@ function ApprovalCard({
   );
 }
 
+const CHOICE_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"];
+
+/**
+ * Choice request card — an agent called fez_ask_owner and is blocked
+ * waiting for YOUR pick. Buttons publish your option-number reaction
+ * (the signed answer the tool polls for). Recommended options carry
+ * the tag; answered cards show what you chose, permanently.
+ */
+function ChoiceCard({
+  client,
+  msg,
+  channelId,
+  communityId,
+}: {
+  client: FezClient;
+  msg: Msg;
+  channelId: string;
+  communityId: string;
+}) {
+  const lines = msg.content.split("\n");
+  const question = lines[0].replace(/^❓ choose:\s*/, "");
+  const options: { label: string; recommended: boolean }[] = [];
+  for (const line of lines.slice(1)) {
+    const index = CHOICE_EMOJI.findIndex((emoji) => line.startsWith(emoji));
+    if (index === options.length) {
+      const raw = line.slice(CHOICE_EMOJI[index].length).trim();
+      options.push({ label: raw.replace(/ \(recommended\)$/, ""), recommended: / \(recommended\)$/.test(raw) });
+    }
+  }
+  if (options.length < 2) return null;
+
+  const reactions = client.reactions(msg.id);
+  let chosen: number | undefined;
+  if (reactions) {
+    for (const [emoji, who] of reactions.entries()) {
+      const index = CHOICE_EMOJI.indexOf(emoji);
+      if (index !== -1 && index < options.length && who.size > 0) chosen = index;
+    }
+  }
+
+  const pick = (index: number) => {
+    if (chosen !== undefined) return; // an answer, once given, stands
+    void client.toggleReaction(channelId, communityId, msg.id, CHOICE_EMOJI[index]);
+  };
+
+  return (
+    <div className={`inline-proposal ${chosen !== undefined ? "approved" : "pending"}`}>
+      <div className="inline-proposal-body">
+        <span className="inline-proposal-title">❓ {msg.authorName} asks: {question}</span>
+        <div className="choice-options">
+          {options.map((option, index) => (
+            <button
+              key={index}
+              className={`choice-option${option.recommended ? " recommended" : ""}${chosen === index ? " chosen" : ""}`}
+              disabled={chosen !== undefined}
+              onClick={() => pick(index)}
+            >
+              {option.label}
+              {option.recommended && <span className="choice-rec">recommended</span>}
+              {chosen === index && " ✓"}
+            </button>
+          ))}
+        </div>
+        <span className="inline-proposal-why">
+          {chosen !== undefined ? `answered: "${options[chosen].label}"` : "the agent is blocked until you choose — your reaction is the signed answer"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function Bubble({
   client,
   channelId,
@@ -1550,6 +1655,8 @@ function Bubble({
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [reported, setReported] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number }>();
+  const [copied, setCopied] = useState(false);
 
   /** fez-moderation's /report: 1984, reason NIP-44'd to the community creator. */
   const sendReport = async () => {
@@ -1588,8 +1695,66 @@ function Bubble({
     return Math.floor((date.getTime() - Date.now()) / 1000);
   };
 
+  /** Slack's right-click: the full action list as a context menu at the cursor. */
+  const menuItem = (label: string, glyph: string, run: () => void, danger = false) => (
+    <button
+      key={label}
+      className={danger ? "self-menu-item danger" : "self-menu-item"}
+      onClick={() => {
+        setMenu(undefined);
+        run();
+      }}
+    >
+      <span className="menu-glyph">{glyph}</span>
+      {label}
+    </button>
+  );
+
   return (
-    <div className={mine ? "bubble mine" : "bubble"}>
+    <div
+      className={mine ? "bubble mine" : "bubble"}
+      onContextMenu={(e) => {
+        if (msg.deletedBy || window.getSelection()?.toString()) return; // text selection keeps the OS menu
+        e.preventDefault();
+        setMenu({ x: Math.min(e.clientX, window.innerWidth - 230), y: Math.min(e.clientY, window.innerHeight - 320) });
+      }}
+    >
+      {menu && (
+        <>
+          <div className="menu-backdrop" onClick={() => setMenu(undefined)} onContextMenu={(e) => { e.preventDefault(); setMenu(undefined); }} />
+          <div className="msg-menu" style={{ left: menu.x, top: menu.y }}>
+            {menuItem("add reaction…", "☺", () => setPickerOpen(true))}
+            {!inThread && menuItem("reply in thread", "↩", onOpenThread)}
+            {menuItem("remind me about this", "◷", () => setRemindOpen(true))}
+            {menuItem(copied ? "copied ✓" : "copy text", "⧉", () => {
+              void navigator.clipboard.writeText(msg.content);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            })}
+            {!pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, communityId, msg.id))}
+            {mine && onEdit && menuItem("edit message", "✎", onEdit)}
+            {!mine && menuItem("report to community creator…", "⚑!", () => setReportOpen(true))}
+            {client.canDeleteMessage(communityId, msg) && (
+              <button
+                className="self-menu-item danger"
+                onClick={() => {
+                  if (!armedDelete) {
+                    setArmedDelete(true);
+                    setTimeout(() => setArmedDelete(false), 3000);
+                    return; // menu stays open — second click confirms
+                  }
+                  setArmedDelete(false);
+                  setMenu(undefined);
+                  void client.deleteMessage(channelId, communityId, msg.id);
+                }}
+              >
+                <span className="menu-glyph">⌫</span>
+                {armedDelete ? "click again to delete" : "delete message…"}
+              </button>
+            )}
+          </div>
+        </>
+      )}
       <button className="avatar-btn" title="profile" onClick={onAuthor}>
         <Avatar pk={msg.authorPk} title={msg.authorName} size={30} />
       </button>
@@ -1663,15 +1828,7 @@ function Bubble({
           <button onClick={() => remind(tomorrow9())}>tmrw 9a</button>
         </div>
       )}
-      {pickerOpen && (
-        <div className="emoji-picker">
-          {QUICK_EMOJI.map((emoji) => (
-            <button key={emoji} onClick={() => react(emoji)}>
-              {emoji}
-            </button>
-          ))}
-        </div>
-      )}
+      {pickerOpen && <ReactionPicker onPick={react} onClose={() => setPickerOpen(false)} />}
       {msg.deletedBy ? (
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
@@ -1684,6 +1841,9 @@ function Bubble({
       ))}
       {msg.content.startsWith("⛔ approval needed:") && (
         <ApprovalCard client={client} msg={msg} channelId={channelId} communityId={communityId} />
+      )}
+      {msg.content.startsWith("❓ choose:") && (
+        <ChoiceCard client={client} msg={msg} channelId={channelId} communityId={communityId} />
       )}
       {messageDecorators()
         .filter((d) => d.match(msg.content))
