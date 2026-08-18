@@ -292,7 +292,7 @@ body {
 }
 .actions button:hover { color: var(--fg); border-color: var(--fg-dim); }
 .actions button.danger:hover { color: var(--red); border-color: var(--red); }
-.bubble-head { max-width: 780px; }
+
 .pin-mark { color: var(--yellow); font-size: 12px; }
 .emoji-picker {
   display: flex; gap: 4px; background: var(--bg1); border: 1px solid var(--bg2);
