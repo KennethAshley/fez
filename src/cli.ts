@@ -401,7 +401,7 @@ program
   .description("Run a standing channel agent for a persona (fez-acp runtime)")
   .option("-c, --channels <list>", 'channel names/ids, comma-separated; "none" = DM-only', "general")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
-  .option("--respond-to <policy>", "anyone | owner | allowlist:<pk,...>", "owner")
+  .option("--respond-to <policy>", "anyone | owner | allowlist:<pk,...> (default: persona frontmatter, else owner)")
   .option("--owner <pubkey>", "owner pubkey (default: your fez identity)")
   .option("--on-busy <mode>", "steer | queue", "steer")
   .action(async (personaId: string, options) => {
@@ -409,7 +409,7 @@ program
     process.env.FEZ_RELAY = resolveRelay(options.relay);
     process.env.FEZ_AGENT_PERSONA = personaId;
     process.env.FEZ_AGENT_CHANNELS = options.channels === "none" ? "" : options.channels;
-    process.env.FEZ_AGENT_RESPOND_TO = options.respondTo;
+    if (options.respondTo) process.env.FEZ_AGENT_RESPOND_TO = options.respondTo;
     process.env.FEZ_AGENT_ON_BUSY = options.onBusy;
     // Owner defaults to the user's own identity — the observer stream
     // (/watch) and sibling gating work out of the box instead of being
@@ -1314,6 +1314,95 @@ persona
       console.error(`❌ ${err instanceof Error ? err.message : err}`);
       process.exitCode = 1;
     }
+  });
+
+persona
+  .command("publish <name>")
+  .description("Publish this persona to the marketplace (the full md rides the wire — an agent IS its text)")
+  .option("-r, --relay <url>", "Relay URL (default: settings/env)")
+  .option("--github <url>", "source/docs link")
+  .action(async (name: string, options) => {
+    const { resolveRelay } = await import("./settings.js");
+    const { loadOrCreateKey } = await import("./keys.js");
+    const { KIND_SKILL_LISTING } = await import("./kinds.js");
+    const { RelayConnection } = await import("./relay.js");
+    const raw = await fs.readFile(path.join(os.homedir(), ".fez", "personas", `${name}.md`), "utf-8").catch(() => undefined);
+    if (!raw) {
+      console.error(`No persona named "${name}".`);
+      process.exitCode = 1;
+      return;
+    }
+    const description = raw.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    const skills = raw.match(/^mcpServers:\s*\[(.*)\]$/m)?.[1]?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    await relay.connect();
+    await relay.publish(
+      client.signEvent({
+        kind: KIND_SKILL_LISTING,
+        tags: [["d", `persona:${name}`]],
+        content: JSON.stringify({
+          name,
+          artifact: "persona",
+          description,
+          persona: raw, // the complete artifact — no code, just text
+          requiredSkills: skills,
+          installCmd: `fez persona install ${name}`,
+          ...(options.github ? { github: options.github } : {}),
+        }),
+      })
+    );
+    console.log(`📡 published persona "${name}" to the marketplace (installers review it like a PR before it goes live).`);
+    relay.disconnect();
+  });
+
+persona
+  .command("install <name>")
+  .description("Install a persona from the marketplace — lands as a DRAFT for your review, never straight to live")
+  .option("-r, --relay <url>", "Relay URL (default: settings/env)")
+  .option("--from <pubkey>", "listing author")
+  .action(async (name: string, options) => {
+    const { resolveRelay } = await import("./settings.js");
+    const { loadOrCreateKey } = await import("./keys.js");
+    const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./kinds.js");
+    const { RelayConnection } = await import("./relay.js");
+    const { writeDraft } = await import("./persona-drafts.js");
+    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    await relay.connect();
+    const events = (await relay.query([{ kinds: [KIND_SKILL_LISTING], "#d": [`persona:${name}`], limit: 50 }])) as { pubkey: string; content: string; created_at: number }[];
+    const event = events
+      .filter((e) => !options.from || e.pubkey === options.from)
+      .sort((a, b) => b.created_at - a.created_at)[0];
+    if (!event) {
+      console.error(`No persona listing named "${name}" on this relay.`);
+      relay.disconnect();
+      process.exitCode = 1;
+      return;
+    }
+    const listing = JSON.parse(event.content) as { persona?: string; requiredSkills?: string[] };
+    if (!listing.persona) {
+      console.error("Listing carries no persona body — malformed.");
+      relay.disconnect();
+      process.exitCode = 1;
+      return;
+    }
+    const stamped = listing.persona.replace(/^---\r?\n/, `---\nproposedBy: marketplace:${event.pubkey.slice(0, 12)}\nproposedAt: ${new Date().toISOString()}\n`);
+    try {
+      writeDraft(name, stamped);
+    } catch (err) {
+      console.error(`❌ ${err instanceof Error ? err.message : err}`);
+      relay.disconnect();
+      process.exitCode = 1;
+      return;
+    }
+    await relay.publish(client.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", `persona:${name}`], ["p", event.pubkey]], content: "" }));
+    console.log(`📝 "${name}" downloaded as a DRAFT (by ${event.pubkey.slice(0, 12)}).`);
+    console.log(`   Review the prompt like a PR: fez persona drafts → fez persona approve ${name}`);
+    if (listing.requiredSkills?.length) {
+      console.log(`   Declares skills: ${listing.requiredSkills.join(", ")} — define any you're missing: fez skill list`);
+    }
+    relay.disconnect();
   });
 
 persona

@@ -32,6 +32,8 @@ interface SkillConfig {
 interface Listing {
   name: string;
   artifact?: string;
+  persona?: string;
+  requiredSkills?: string[];
   description?: string;
   command?: string;
   args?: string[];
@@ -45,7 +47,10 @@ interface Listing {
   ts: number;
 }
 
+type MarketTab = "agents" | "skills" | "more";
+
 export default function SkillsView({ client, wire }: { client: FezClient; wire: BrowserWire }) {
+  const [tab, setTab] = useState<MarketTab>("agents");
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
   const [listings, setListings] = useState<Listing[]>();
   const [installing, setInstalling] = useState<Listing>();
@@ -130,6 +135,27 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
     flash(`📡 published "${name}" — signed by you, env values not included`);
   };
 
+  /** Marketplace persona → DRAFT for review in the agents pane. */
+  const [personaState, setPersonaState] = useState<Record<string, string>>({});
+  const installPersona = async (listing: Listing) => {
+    if (!listing.persona) return;
+    const stamped = listing.persona.replace(
+      /^---\r?\n/,
+      `---\nproposedBy: marketplace:${listing.authorPk.slice(0, 12)}\nproposedAt: ${new Date().toISOString()}\n`
+    );
+    const key = `${listing.authorPk}:${listing.name}`;
+    try {
+      await invoke("write_persona_draft", { name: listing.name, content: stamped });
+      const receipt = wire.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", `persona:${listing.name}`], ["p", listing.authorPk]], content: "" });
+      await wire.publish({ kind: receipt.kind, tags: receipt.tags, content: receipt.content }).catch(() => {});
+      if (countsUrl()) void fetch(countsUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(receipt), signal: AbortSignal.timeout(5000) }).catch(() => {});
+      setPersonaState({ ...personaState, [key]: "done" });
+      flash(`📝 "${listing.name}" is a draft — review the prompt in the agents pane (@ → proposed) and approve`);
+    } catch (err) {
+      setPersonaState({ ...personaState, [key]: String(err) });
+    }
+  };
+
   const copyCmd = (listing: Listing) => {
     const cmd = listing.installCmd ?? `fez skill install ${listing.name}`;
     void navigator.clipboard.writeText(cmd);
@@ -137,12 +163,114 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
     setTimeout(() => setCopied(undefined), 2000);
   };
 
+  const personas = (listings ?? []).filter((l) => l.artifact === "persona");
+  const skillListings = (listings ?? []).filter((l) => (l.artifact ?? "mcp") === "mcp");
+  const otherListings = (listings ?? []).filter((l) => l.artifact && !["persona", "mcp"].includes(l.artifact));
+
   return (
     <main className="main">
-      <header className="topbar">⌁ skills</header>
+      <header className="topbar">
+        ⌂ market
+        <span className="agent-tabs market-tabs">
+          {(["agents", "skills", "more"] as const).map((name) => (
+            <button key={name} className={tab === name ? "agent-tab active" : "agent-tab"} onClick={() => setTab(name)}>
+              {name === "more" ? "teams · workflows · extensions" : name}
+            </button>
+          ))}
+        </span>
+      </header>
       <div className="timeline">
         {notice && <div className="manage-notice">{notice}</div>}
 
+        {tab === "agents" && (
+          <>
+            <div className="home-section">agents on the marketplace</div>
+            <div className="settings-hint">
+              An agent IS its text — the listing carries the complete persona. Installing downloads it as a DRAFT:
+              you read the system prompt like a PR in the agents pane, then approve. Nothing runs until you do.
+            </div>
+            {!listings && <div className="pane-empty">loading…</div>}
+            {listings && personas.length === 0 && (
+              <div className="pane-empty">no agents listed yet — publish yours: fez persona publish &lt;name&gt;</div>
+            )}
+            {personas.map((listing) => {
+              const key = `${listing.authorPk}:${listing.name}`;
+              const count = installs.get(key) ?? 0;
+              const state = personaState[key];
+              return (
+                <div key={key} className="skill-row market">
+                  <div className="skill-main">
+                    <span className="skill-name">
+                      @{listing.name}
+                      <span className="role-tag">agent</span>
+                      <span className="skill-installs">⇩ {count} install{count === 1 ? "" : "s"}</span>
+                    </span>
+                    {listing.description && <span className="skill-desc">{listing.description}</span>}
+                    {listing.requiredSkills && listing.requiredSkills.length > 0 && (
+                      <span className="skill-env">
+                        declares skills: {listing.requiredSkills.map((skill) => `${skill}${installed[skill] ? " ✓" : " (undefined here)"}`).join(", ")}
+                      </span>
+                    )}
+                    {listing.persona && (
+                      <details className="persona-peek">
+                        <summary>view the persona (read before installing)</summary>
+                        <pre className="draft-content">{listing.persona}</pre>
+                      </details>
+                    )}
+                    <span className="skill-author">
+                      <Avatar pk={listing.authorPk} size={14} /> {client.displayName(listing.authorPk)}
+                      {listing.github && <button className="skill-link" onClick={() => void openUrl(listing.github!)}>github</button>}
+                    </span>
+                    {state && state !== "done" && <span className="ob-error">{state}</span>}
+                  </div>
+                  <div className="skill-actions">
+                    {state === "done" ? (
+                      <span className="role-tag installed-tag">drafted — review in @ agents</span>
+                    ) : (
+                      <button className="agent-action" onClick={() => void installPersona(listing)}>install as draft…</button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {tab === "more" && (
+          <>
+            <div className="home-section">teams · workflows · extensions</div>
+            <div className="settings-hint">
+              Listings of other fez artifacts — install with the command shown (teams and packs go through fez
+              install; workflows land in ~/.fez/workflows).
+            </div>
+            {otherListings.length === 0 && <div className="pane-empty">none listed on this relay yet</div>}
+            {otherListings.map((listing) => {
+              const key = `${listing.authorPk}:${listing.name}`;
+              const count = installs.get(key) ?? 0;
+              return (
+                <div key={key} className="skill-row market">
+                  <div className="skill-main">
+                    <span className="skill-name">
+                      {listing.name}
+                      <span className="role-tag">{listing.artifact}</span>
+                      <span className="skill-installs">⇩ {count}</span>
+                    </span>
+                    {listing.description && <span className="skill-desc">{listing.description}</span>}
+                    <code className="skill-install-cmd" title="click to copy" onClick={() => copyCmd(listing)}>
+                      {copied === key ? "✓ copied" : `$ ${listing.installCmd ?? ""}`}
+                    </code>
+                    <span className="skill-author">
+                      <Avatar pk={listing.authorPk} size={14} /> {client.displayName(listing.authorPk)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {tab === "skills" && (
+          <>
         <div className="home-section">installed on this machine</div>
         {Object.keys(installed).length === 0 && (
           <div className="pane-empty">
@@ -187,7 +315,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
         {listings?.length === 0 && (
           <div className="pane-empty">no listings on this relay yet — publish one of yours above</div>
         )}
-        {listings?.map((listing) => {
+        {skillListings.map((listing) => {
           const isInstalled = !!installed[listing.name];
           const key = `${listing.authorPk}:${listing.name}`;
           const count = installs.get(key) ?? 0;
@@ -230,6 +358,9 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             </div>
           );
         })}
+
+          </>
+        )}
 
         {installing && (
           <InstallDialog

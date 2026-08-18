@@ -167,10 +167,10 @@ async function main() {
   console.log(`   herdr: ${(await herdrAlive()) ? "connected — agents spawn as tabs" : "absent — agents spawn as detached processes"}`);
 
   // ── spawn paths ───────────────────────────────────────────────────────
-  const agentEnvCmd = (persona: string, channels: string[], respondTo: string) =>
-    `FEZ_AGENT_OWNER=${myPubkey} FEZ_RELAY=${relayUrl} fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"} --respond-to ${respondTo}`;
+  const agentEnvCmd = (persona: string, channels: string[]) =>
+    `FEZ_AGENT_OWNER=${myPubkey} FEZ_RELAY=${relayUrl} fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"}`;
 
-  async function spawnAgent(persona: string, channels: string[], respondTo = "owner"): Promise<void> {
+  async function spawnAgent(persona: string, channels: string[]): Promise<void> {
     if (await herdrAlive()) {
       const registered = loadRegistry();
       const prior = registered.find((t) => t.persona === persona);
@@ -178,13 +178,13 @@ async function main() {
       const created = await herdrCall("tab.create", { label: `fez:${persona}`, cwd: os.homedir(), focus: false });
       const tab = created.tab as { tab_id: string };
       const pane = created.root_pane as { pane_id: string };
-      await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: agentEnvCmd(persona, channels, respondTo) + "\n" });
+      await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: agentEnvCmd(persona, channels) + "\n" });
       saveRegistry([...registered.filter((t) => t.persona !== persona), { persona, channels, tabId: tab.tab_id, paneId: pane.pane_id }]);
       console.log(`🧬 spawned @${persona} in herdr tab ${tab.tab_id} (${channels.length > 0 ? channels.join(",") : "dm-only"})`);
     } else {
       fs.mkdirSync(LOG_DIR, { recursive: true });
       const log = fs.openSync(path.join(LOG_DIR, `${persona}.log`), "a");
-      const child = spawn("fez", ["agent", persona, "-c", channels.length > 0 ? channels.join(",") : "none", "--respond-to", respondTo], {
+      const child = spawn("fez", ["agent", persona, "-c", channels.length > 0 ? channels.join(",") : "none"], {
         env: { ...process.env, FEZ_AGENT_OWNER: myPubkey, FEZ_RELAY: relayUrl },
         detached: true,
         stdio: ["ignore", log, log],

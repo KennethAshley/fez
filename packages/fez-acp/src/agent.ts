@@ -73,7 +73,6 @@ async function main() {
   const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
   const personaId = process.env.FEZ_AGENT_PERSONA;
   const channelSpecs = (process.env.FEZ_AGENT_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
-  const respondTo = process.env.FEZ_AGENT_RESPOND_TO || "owner";
   const owner = process.env.FEZ_AGENT_OWNER;
 
   // Empty channels = DM-only mode: the agent serves no channels and
@@ -95,6 +94,12 @@ async function main() {
     console.error(`Persona "${personaId}" needs harness "${persona.harness}" which isn't available`);
     process.exit(1);
   }
+  // Access policy precedence: an EXPLICIT flag/env wins (operator
+  // intent), then the persona's own frontmatter (the owner's declared
+  // policy, editable in the GUI), then the safe default. The sentinel
+  // passes no flag, so persona edits actually take effect on respawn.
+  const respondTo =
+    process.env.FEZ_AGENT_RESPOND_TO || (persona.extra.respondTo as string | undefined) || "owner";
   // Resolve declared skills; the unresolved ones aren't silently dropped
   // — the agent is told about the gap so it can SAY SO when a task needs
   // one, instead of quietly faking its way through (the user's only

@@ -402,7 +402,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           » workflows
         </button>
         <button className={view.kind === "skills" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "skills" })}>
-          ⌁ skills
+          ⌂ market
         </button>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))

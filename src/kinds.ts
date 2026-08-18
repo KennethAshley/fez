@@ -281,6 +281,16 @@ export const KIND_SKILL_LISTING = 40200;
  */
 export const KIND_SKILL_INSTALL = 40201;
 
+/**
+ * Typed artifact — how agents ship non-text output (canvas, html,
+ * pdf, table…) without binding the protocol to any renderer. ["h"],
+ * ["c"] like messages (member-gated), ["type", slug]; content = JSON
+ * {type, title, url? (Blossom blob), content? (small inline payload)}.
+ * Bare clients render title+link; richer clients register viewers per
+ * type — the wire stays universal, the GUI stays optional.
+ */
+export const KIND_ARTIFACT = 40300;
+
 export const AGENT_KINDS = [
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,

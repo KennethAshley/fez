@@ -99,6 +99,7 @@ export default function AgentsPane({
       {editingPersona && (
         <PersonaEditor
           name={editingPersona}
+          client={client}
           onDone={(changed) => {
             setEditingPersona(undefined);
             if (changed) setPersonaNonce((n) => n + 1);

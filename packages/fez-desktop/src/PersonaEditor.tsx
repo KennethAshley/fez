@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import type { FezClient } from "@fez/client";
 
 /**
  * Persona editor — Buzz's AgentConfigPanel against fez's contract: the
@@ -39,7 +40,15 @@ const textToList = (text: string) => {
   return items.length ? `[${items.join(", ")}]` : "";
 };
 
-export default function PersonaEditor({ name, onDone }: { name: string; onDone: (changed: boolean) => void }) {
+export default function PersonaEditor({
+  name,
+  client,
+  onDone,
+}: {
+  name: string;
+  client?: FezClient;
+  onDone: (changed: boolean) => void;
+}) {
   const [front, setFront] = useState<string[]>();
   const [body, setBody] = useState("");
   const [state, setState] = useState<"idle" | "saving" | string>("idle");
@@ -135,6 +144,10 @@ export default function PersonaEditor({ name, onDone }: { name: string; onDone: 
         />
       </div>
       <div className="settings-field">
+        <label>access — who may trigger this agent (applies on next spawn)</label>
+        <AccessPicker client={client} value={field("respondTo")} onChange={(value) => update("respondTo", value)} />
+      </div>
+      <div className="settings-field">
         <label>system prompt</label>
         <textarea className="doc-textarea persona-prompt" value={body} spellCheck={false} onChange={(e) => setBody(e.target.value)} />
       </div>
@@ -149,5 +162,56 @@ export default function PersonaEditor({ name, onDone }: { name: string; onDone: 
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * respondTo, self-serve: the "who may use this agent" policy that was
+ * spawn-config with hand-typed hex. owner = you + your attested
+ * agents; anyone = every channel member; allowlist = exactly the
+ * pubkeys picked here (channel members offered by NAME, hex accepted).
+ */
+function AccessPicker({
+  client,
+  value,
+  onChange,
+}: {
+  client?: FezClient;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const mode = value.startsWith("allowlist:") ? "allowlist" : value === "anyone" ? "anyone" : "owner";
+  const pks = mode === "allowlist" ? value.slice("allowlist:".length).split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const known = client ? [...client.knownNames().entries()] : [];
+
+  const setMode = (next: string) => {
+    if (next === "allowlist") onChange(pks.length ? `allowlist:${pks.join(",")}` : "allowlist:");
+    else if (next === "anyone") onChange("anyone");
+    else onChange(""); // absent = owner (the default)
+  };
+  const toggle = (pk: string) => {
+    const next = pks.includes(pk) ? pks.filter((p) => p !== pk) : [...pks, pk];
+    onChange(`allowlist:${next.join(",")}`);
+  };
+
+  return (
+    <>
+      <select className="manage-select" value={mode} onChange={(e) => setMode(e.target.value)}>
+        <option value="owner">owner — you + your attested agents (default)</option>
+        <option value="anyone">anyone in the channel</option>
+        <option value="allowlist">allowlist — only people I pick</option>
+      </select>
+      {mode === "allowlist" && (
+        <div className="access-picker">
+          {known.length === 0 && <span className="settings-hint">no known names — edit the frontmatter respondTo directly with pubkeys</span>}
+          {known.map(([pk, personName]) => (
+            <label key={pk} className="settings-check access-row">
+              <input type="checkbox" checked={pks.includes(pk)} onChange={() => toggle(pk)} />
+              {personName} <code className="access-pk">{pk.slice(0, 12)}…</code>
+            </label>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
