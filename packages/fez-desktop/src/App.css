@@ -80,7 +80,7 @@ body {
 .bubble.mine .bubble-body { background: var(--bg-mine); }
 .tombstone { color: var(--fg-dim); font-style: italic; padding: 4px 0; }
 .mention { color: var(--accent); font-weight: 600; }
-.bubble-foot { display: flex; gap: 8px; align-items: center; margin-top: 3px; min-height: 18px; }
+.bubble-foot { display: flex; gap: 8px; align-items: center; min-height: 0; }
 .pill {
   background: var(--bg2); border-radius: 10px; padding: 1px 8px; font-size: 12px;
 }
@@ -88,8 +88,8 @@ body {
   background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px;
   cursor: pointer; padding: 0;
 }
-.thread-link.quiet { color: var(--bg2); }
-.bubble:hover .thread-link.quiet { color: var(--fg-dim); }
+.thread-link.quiet { display: none; }
+.bubble:hover .thread-link.quiet { display: inline; color: var(--fg-dim); }
 
 .typing { padding: 0 18px 4px; color: var(--fg-dim); font-size: 12px; font-style: italic; }
 .composer { padding: 10px 18px 16px; position: relative; }
@@ -468,7 +468,7 @@ body {
 
 /* ── flat, readable timeline (bodies breathe, chrome recedes) ── */
 .timeline { padding: 14px 22px; }
-.bubble { margin: 0 -10px 2px; padding: 5px 10px 7px; border-radius: 6px; max-width: none; }
+.bubble { margin: 0 -10px; padding: 4px 10px; border-radius: 6px; max-width: none; }
 .bubble:hover { background: rgba(235, 219, 178, 0.025); }
 .bubble-body { background: none; padding: 0 0 0 1px; border-radius: 0; }
 .bubble.mine .bubble-body { background: none; }
@@ -631,7 +631,7 @@ button.author:hover { text-decoration: underline; }
 /* ── batch: avatars, dividers, intro, emoji picker, composer row ── */
 .avatar { display: inline-block; vertical-align: middle; border-radius: 4px; flex: none; }
 .avatar-btn { background: none; border: 0; padding: 0; cursor: pointer; line-height: 0; }
-.bubble { display: grid; grid-template-columns: 38px minmax(0, 1fr); }
+.bubble { display: grid; grid-template-columns: 30px minmax(0, 1fr); column-gap: 12px; }
 .bubble > .avatar-btn { grid-column: 1; grid-row: 1 / span 8; margin-top: 3px; align-self: start; }
 .bubble > :not(.avatar-btn) { grid-column: 2; }
 .day-divider {

@@ -921,7 +921,7 @@ function ChannelView({
               onEdit={() => beginEdit(msg)}
               onAuthor={() => onProfile(msg.authorPk)}
             />
-            {!threadRoot && <RootLiveArea client={client} channelId={channelId} rootId={msg.id} drafts={draftsForRoot(msg.id)} onOpenThread={() => setThreadRoot(msg.id)} />}
+            {!threadRoot && <RootLiveArea client={client} rootId={msg.id} drafts={draftsForRoot(msg.id)} />}
           </div>
         ))}
         {threadRoot &&
@@ -999,30 +999,20 @@ function ChannelView({
  */
 function RootLiveArea({
   client,
-  channelId,
   rootId,
   drafts,
-  onOpenThread,
 }: {
   client: FezClient;
-  channelId: string;
   rootId: string;
   drafts: [string, { content: string; rootId?: string; ts: number }][];
-  onOpenThread: () => void;
 }) {
-  const replies = client.messages(channelId).filter((m) => m.rootId === rootId && m.id !== rootId);
-  const latest = replies.at(-1);
+  // Slack's decision: the channel shows a COUNT, not a preview — the
+  // bubble foot's "N replies →" carries it. This area only renders the
+  // live parts: streaming drafts and per-root typing.
   const typing = client.typingWho(rootId).filter((name) => name !== "You");
-  if (!latest && drafts.length === 0 && typing.length === 0) return null;
+  if (drafts.length === 0 && typing.length === 0) return null;
   return (
     <div className="root-live">
-      {latest && !drafts.some(([pk]) => pk === latest.authorPk) && (
-        <button className="reply-line" onClick={onOpenThread} title="open thread">
-          <span className="reply-arrow">↳</span> <span className="reply-author">{latest.authorName}</span>{" "}
-          {latest.deletedBy ? <em>removed</em> : latest.content.replace(/\s+/g, " ").slice(0, 110)}
-          {replies.length > 1 && <span className="reply-count"> · {replies.length} replies</span>}
-        </button>
-      )}
       {drafts.map(([pk, d]) => (
         <StreamingBubble key={pk} author={client.displayName(pk)} text={d.content} compact />
       ))}
