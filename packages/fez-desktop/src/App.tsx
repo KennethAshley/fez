@@ -489,6 +489,18 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
                   <span className="community-id"> ·{community.id.slice(0, 4)}</span>
                 )}
                 <button
+                  className="community-add"
+                  title="manage — create channels, invite members, roles"
+                  onClick={() => {
+                    const first = [...community.channels.values()][0];
+                    if (first) {
+                      void openChannel(community.id, first.id).then(() => setPane({ kind: "manage" }));
+                    }
+                  }}
+                >
+                  +
+                </button>
+                <button
                   className={armedLeave === community.id ? "leave armed" : "leave"}
                   title={armedLeave === community.id ? "click again to leave" : `leave ${community.name} (local — rejoin anytime)`}
                   onClick={() => leaveCommunity(community.id)}
