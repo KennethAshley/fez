@@ -632,7 +632,7 @@ button.author:hover { text-decoration: underline; }
 .avatar { display: inline-block; vertical-align: middle; border-radius: 4px; flex: none; }
 .avatar-btn { background: none; border: 0; padding: 0; cursor: pointer; line-height: 0; }
 .bubble { display: grid; grid-template-columns: 38px minmax(0, 1fr); }
-.bubble > .avatar-btn { grid-column: 1; grid-row: 1 / span 8; margin-top: 3px; }
+.bubble > .avatar-btn { grid-column: 1; grid-row: 1 / span 8; margin-top: 3px; align-self: start; }
 .bubble > :not(.avatar-btn) { grid-column: 2; }
 .day-divider {
   display: flex; align-items: center; gap: 10px; margin: 14px 0 10px;
