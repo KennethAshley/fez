@@ -289,9 +289,6 @@ export default function PulseView({
           <StatTile label="active now" value={String(tiles.activeNow)} />
         </div>
 
-        {/* ── orchestration graph ── */}
-        <GraphSection client={client} turns={turns} messages={messages} roster={roster} now={now} range={range} channelFilter={channelFilter} channels={channels} filterControls={filterControls} />
-
         {/* ── 14-day fleet chart ── */}
         <div className="pulse-section">
           <div className="pulse-section-head">
@@ -376,6 +373,9 @@ export default function PulseView({
             );
           })}
         </div>
+
+        {/* ── orchestration graph ── */}
+        <GraphSection client={client} turns={turns} messages={messages} roster={roster} now={now} range={range} channelFilter={channelFilter} channels={channels} filterControls={filterControls} />
 
         {/* ── contribution heatmaps ── */}
         {(agentDays.size > 0 || (channelDays?.size ?? 0) > 0) && (
