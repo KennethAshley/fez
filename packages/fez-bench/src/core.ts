@@ -15,7 +15,7 @@ export interface CaseResult {
   bench: BenchCase;
   got: string;
   pass: boolean;
-  layer: "smalltalk" | "fleet" | "router";
+  layer: "smalltalk" | "fleet" | "actor" | "router";
   ms: number;
 }
 

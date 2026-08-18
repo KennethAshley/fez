@@ -11,7 +11,7 @@ import {
   KIND_MEMBERSHIP,
   KIND_REACTION,
 } from "@fez/protocol";
-import { isSmallTalk, agentTool, fleetQuestion } from "./route-logic.js";
+import { isSmallTalk, agentTool, fleetQuestion, noneTool, explicitActor, scrubNames } from "./route-logic.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 
 /**
@@ -220,6 +220,7 @@ async function main() {
       byName.set(agent.name, agent);
     }
     for (const agent of byName.values()) tools.push(agentTool(agent));
+    if (tools.length > 0) tools.push(noneTool()); // honest exit for no-fit tasks; filtered from picks
     return { tools, byName };
   }
 
@@ -439,7 +440,13 @@ async function main() {
       return;
     }
     try {
-      const picked = await route(cleaned || event.content);
+      // Deterministic pre-layers (bench-measured): an explicitly named
+      // actor skips the router; remaining roster names are CONTENT and
+      // get neutralized so they can't pull routing (name-as-content was
+      // 2/7 before the scrub).
+      const preNames = routableNames();
+      const actor = explicitActor(cleaned, preNames);
+      const picked = actor ? [actor] : await route(scrubNames(cleaned || event.content, preNames));
       if (picked.length > 0) {
         const { byName } = buildTools();
         // The forward names its origin: the routed agent's prompt would

@@ -11,7 +11,7 @@
  * still routed to an agent — so this stays regex, not model.
  */
 export const SMALL_TALK_RE =
-  /^(yo|hey( there)?|hi( there)?|hiya|hello|howdy|sup|what'?s up|gm|good (morning|afternoon|evening|night)|how are you( doing)?( today)?|how's it going|you (there|ok|good)|thanks?|thank you|ty|nice( one)?|cool|great|awesome|lol|ok(ay)?)([\s!?.,…]+fez)?[\s!?.,…🎩👋]*$/i;
+  /^(yo|hey( there)?|hi( there)?|hiya|hello|howdy|sup|what'?s up|gm|good (morning|afternoon|evening|night)|how are you( doing)?( today)?|how's it going|you (there|ok|good)|thanks?|thank you|ty|nice( one)?|cool|great|awesome|lol|ok(ay)?( cool| great| thanks)?|sounds good|nice one)([\s!?.,…]+fez)?[\s!?.,…🎩👋]*$/i;
 
 export function isSmallTalk(text: string): boolean {
   return text.split(/\s+/).length <= 6 && SMALL_TALK_RE.test(text);
@@ -76,4 +76,52 @@ export function agentTool(agent: RoutableAgent): object {
       },
     },
   };
+}
+
+/**
+ * "Nobody fits" pseudo-tool — gives a router that always wants to route
+ * an honest exit. Measured caveat: a chat pseudo-tool did NOT absorb
+ * small talk on needle (that stays regex); this one targets no-fit
+ * TASKS ("write me a haiku"), a semantically different decision. The
+ * orchestrator filters it out of picks, landing in the existing
+ * "not sure who's best" fallback.
+ */
+export function noneTool(): object {
+  return {
+    type: "function",
+    function: {
+      name: "nobody",
+      description: "ONLY for tasks clearly outside every agent's abilities, like creative writing, drawing, or personal errands",
+      parameters: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+    },
+  };
+}
+
+const nameAlt = (names: string[]) => names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+
+/**
+ * Explicit actor: the asker NAMED who should act ("have researcher dig
+ * this up", "researcher: find X"). Deterministic — skips the router
+ * entirely, and exempts that name from scrubbing.
+ */
+export function explicitActor(text: string, names: string[]): string | undefined {
+  if (names.length === 0) return undefined;
+  const alt = nameAlt(names);
+  const verb = text.match(new RegExp(`\\b(?:have|ask|get|tell|send|use|let|make|want)\\s+@?(${alt})\\b`, "i"));
+  if (verb) return names.find((n) => n.toLowerCase() === verb[1].toLowerCase());
+  const leading = text.match(new RegExp(`^\\s*@?(${alt})\\s*[,:]`, "i"));
+  if (leading) return names.find((n) => n.toLowerCase() === leading[1].toLowerCase());
+  return undefined;
+}
+
+/**
+ * Name-as-content scrub: roster names inside a routed task pull a tiny
+ * router toward that agent even when the name is clearly not the actor
+ * (measured: "reviewer signed off, ship it" routed to reviewer 5/7
+ * shapes). Since explicit actors are handled deterministically above,
+ * any name still in the text IS content — neutralize it.
+ */
+export function scrubNames(text: string, names: string[]): string {
+  if (names.length === 0) return text;
+  return text.replace(new RegExp(`@?\\b(${nameAlt(names)})\\b`, "gi"), "a teammate");
 }

@@ -22,7 +22,7 @@ export interface RosterAgent {
 export const ROSTER: RosterAgent[] = [
   { name: "researcher", about: "search the web, find papers and specs, look up github repositories and facts", skills: ["web-search", "github"] },
   { name: "reviewer", about: "review code, critique pull requests, give feedback on changes", skills: [] },
-  { name: "deployer", about: "deploy and ship releases with docker", skills: ["docker"] },
+  { name: "deployer", about: "deploy, ship, release, roll out, and promote builds to production with docker", skills: ["docker"] },
 ];
 
 export interface BenchCase {

@@ -6,7 +6,9 @@ import { isSmallTalk } from "../../fez-orchestrator/src/route-logic";
  * an agent and returns nothing for "how are you?"). The regex must stay
  * tight — a greeting-prefixed TASK must still route.
  */
-const SMALL_TALK = ["yo", "hey", "hey there!", "how are you?", "good morning fez", "thanks!", "thank you", "what's up", "ok", "nice one", "gm"];
+const SMALL_TALK = [
+    "ok cool",
+    "sounds good","yo", "hey", "hey there!", "how are you?", "good morning fez", "thanks!", "thank you", "what's up", "ok", "nice one", "gm"];
 const TASKS = [
   "hey review my relay changes",
   "yo find me papers on nostr",

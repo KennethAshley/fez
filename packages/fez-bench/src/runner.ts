@@ -1,4 +1,4 @@
-import { agentTool, fleetQuestion, isSmallTalk } from "../../fez-orchestrator/src/route-logic.js";
+import { agentTool, explicitActor, fleetQuestion, isSmallTalk, noneTool, scrubNames } from "../../fez-orchestrator/src/route-logic.js";
 import type { BenchCase, RosterAgent } from "./cases.js";
 import type { CaseResult } from "./core.js";
 import { hashInputs } from "./core.js";
@@ -35,7 +35,7 @@ export async function runBench(
 ): Promise<RunOutput> {
   const model = await resolveModel(base);
   if (!model) throw new Error(`no router at ${base} — start it (cactus serve …) or set FEZ_ORCHESTRATOR_URL`);
-  const tools = roster.map(agentTool);
+  const tools = [...roster.map(agentTool), noneTool()];
   const names = roster.map((agent) => agent.name);
   const hash = hashInputs(tools, model);
 
@@ -48,16 +48,19 @@ export async function runBench(
       layer = "smalltalk";
     } else if (fleetQuestion(bench.q, names)) {
       layer = "fleet";
+    } else if ((got = explicitActor(bench.q, names) ?? "none") !== "none") {
+      layer = "actor";
     } else {
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: bench.q }], tools }),
+        body: JSON.stringify({ model, messages: [{ role: "user", content: scrubNames(bench.q, names) }], tools }),
       });
       const body = (await res.json()) as {
         choices?: { message?: { tool_calls?: { function?: { name?: string } }[] } }[];
       };
-      got = body.choices?.[0]?.message?.tool_calls?.[0]?.function?.name ?? "none";
+      const picked = body.choices?.[0]?.message?.tool_calls?.[0]?.function?.name ?? "none";
+      got = picked === "nobody" ? "none" : picked;
     }
     results.push({ bench, got, pass: bench.expect.includes(got), layer, ms: Date.now() - started });
     onProgress?.(results.length, cases.length);
