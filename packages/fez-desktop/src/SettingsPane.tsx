@@ -17,6 +17,16 @@ const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_
  * wire is a boot-time singleton by design.
  */
 
+const SETTINGS_TABS = {
+  profile: "profile",
+  servers: "servers",
+  appearance: "appearance",
+  skills: "skills & secrets",
+  agents: "agent defaults",
+  backup: "backup & identity",
+} as const;
+type SettingsSection = keyof typeof SETTINGS_TABS;
+
 export default function SettingsPane({ client, wire, onClose }: { client: FezClient; wire: BrowserWire; onClose: () => void }) {
   const [name, setName] = useState(client.knownNames().get(client.pubkey) ?? "");
   const [status, setStatus] = useState(client.statusOf(client.pubkey) ?? "");
@@ -24,6 +34,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   const [media, setMedia] = useState(mediaServer());
   const [keyHex, setKeyHex] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [section, setSection] = useState<SettingsSection>("profile");
 
   const flash = (text: string) => {
     setNotice(text);
@@ -55,14 +66,22 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   };
 
   return (
-    <aside className="pane">
+    <aside className="pane settings-pane">
       <header className="pane-head">
         <span>⚙ settings</span>
         <button className="pane-close" onClick={onClose}>✕</button>
       </header>
-      <div className="pane-body">
+      <div className="settings-layout">
+        <nav className="settings-nav">
+          {Object.entries(SETTINGS_TABS).map(([key, label]) => (
+            <button key={key} className={section === key ? "settings-nav-item active" : "settings-nav-item"} onClick={() => setSection(key as SettingsSection)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+      <div className="pane-body settings-content">
         {notice && <div className="manage-notice">{notice}</div>}
-
+        {section === "profile" && (<>
         <div className="manage-section">profile</div>
         <div className="settings-field">
           <label>display name</label>
@@ -74,6 +93,8 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         </div>
         <button className="agent-action" onClick={() => void saveProfile()}>publish</button>
 
+        </>)}
+        {section === "servers" && (<>
         <div className="manage-section">servers</div>
         <div className="settings-field">
           <label>relay (applies on relaunch)</label>
@@ -85,6 +106,8 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         </div>
         <button className="agent-action" onClick={saveServers}>save</button>
 
+        </>)}
+        {section === "appearance" && (<>
         <div className="manage-section">appearance</div>
         <div className="settings-field">
           <label>theme (extension theme packs appear here)</label>
@@ -106,9 +129,13 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           </div>
         )}
 
+        </>)}
+        {section === "skills" && (<>
         <div className="manage-section">skills &amp; secrets</div>
         <SkillSecretsSection onNotice={flash} />
 
+        </>)}
+        {section === "agents" && (<>
         <div className="manage-section">agent defaults</div>
         <div className="settings-field">
           <label>default harness for new agents</label>
@@ -122,6 +149,8 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           </select>
         </div>
 
+        </>)}
+        {section === "backup" && (<>
         <div className="manage-section">archive</div>
         <ArchiveExport client={client} wire={wire} account={ACCOUNT} onNotice={flash} />
 
@@ -140,6 +169,8 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             {keyHex}
           </code>
         )}
+        </>)}
+      </div>
       </div>
     </aside>
   );
