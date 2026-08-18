@@ -1009,7 +1009,15 @@ function ChannelView({
   const typing = client.typingWho();
 
   return (
-    <main className="main">
+    <main
+      className="main"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const files = [...e.dataTransfer.files];
+        if (files.length) void handleFiles(files);
+      }}
+    >
       <header className="topbar">
         <span className="hash">#</span> {channelName}
         {threadRoot && (

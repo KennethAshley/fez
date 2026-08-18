@@ -279,6 +279,7 @@ export default function Composer({
       onDrop={(e) => {
         if (!onFiles) return;
         e.preventDefault();
+        e.stopPropagation(); // the channel view also catches drops — don't upload twice
         setDragging(false);
         const files = [...e.dataTransfer.files];
         if (files.length) onFiles(files);
