@@ -1130,16 +1130,29 @@ program
     const { pathToFileURL } = await import("node:url");
     const fsSync = await import("node:fs");
     const pkgDir = path.resolve(dir);
-    let manifest: { name?: string; scripts?: Record<string, string>; fez?: { extension?: { entry?: string } } };
+    let manifest: {
+      name?: string;
+      scripts?: Record<string, string>;
+      fez?: {
+        extension?: { entry?: string };
+        /** Multi-part packages: one install, three attachment points. */
+        parts?: {
+          skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
+          headless?: string;
+          gui?: string;
+        };
+      };
+    };
     try {
       manifest = JSON.parse(fsSync.readFileSync(path.join(pkgDir, "package.json"), "utf-8"));
     } catch {
       console.error(chalk.red(`No readable package.json in ${pkgDir}`));
       process.exit(1);
     }
-    const entry = manifest.fez?.extension?.entry;
-    if (!entry) {
-      console.error(chalk.red(`${manifest.name ?? pkgDir} declares no fez.extension.entry — nothing to link.`));
+    const parts = manifest.fez?.parts;
+    const entry = parts?.headless ?? manifest.fez?.extension?.entry;
+    if (!entry && !parts?.gui && !parts?.skill) {
+      console.error(chalk.red(`${manifest.name ?? pkgDir} declares no fez.parts (or fez.extension.entry) — nothing to link.`));
       process.exit(1);
     }
     if (options.build !== false && manifest.scripts?.build) {
@@ -1148,6 +1161,37 @@ program
       execSync("npm run build", { cwd: pkgDir, stdio: "inherit" });
     }
     const name = path.basename(pkgDir);
+
+    // ── skill part: merge the MCP definition into the machine catalog.
+    // Existing env VALUES the user filled in are kept; the package only
+    // supplies names/defaults.
+    if (parts?.skill) {
+      const { loadSettings, saveSettings } = await import("./settings.js");
+      const settings = loadSettings() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
+      const existing = settings.mcpServers?.[name];
+      const mergedEnv = { ...(parts.skill.env ?? {}), ...(existing?.env ?? {}) };
+      saveSettings({
+        mcpServers: {
+          ...settings.mcpServers,
+          [name]: { ...parts.skill, ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+        },
+      } as never);
+      console.log(chalk.green(`✓ skill "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn`));
+    }
+
+    // ── gui part: copied to ~/.fez/gui-extensions for fez-desktop's
+    // loader (webview code — no node smoke-import possible here).
+    if (parts?.gui) {
+      const guiDir = path.join(os.homedir(), ".fez", "gui-extensions");
+      fsSync.mkdirSync(guiDir, { recursive: true });
+      fsSync.copyFileSync(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
+      console.log(chalk.green(`✓ gui part → ~/.fez/gui-extensions/${name}.js (loads on next fez-desktop launch)`));
+    }
+
+    if (!entry) {
+      console.log(chalk.green(`✓ linked ${name} (no headless part)`));
+      return;
+    }
     const ext = path.extname(entry) || ".js";
     const extensionsDir = path.join(os.homedir(), ".fez", "extensions");
     fsSync.mkdirSync(extensionsDir, { recursive: true });

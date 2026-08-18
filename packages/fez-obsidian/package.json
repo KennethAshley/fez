@@ -1,0 +1,24 @@
+{
+  "name": "@fez/obsidian",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Obsidian for fez — /obsidian exports channel docs to your vault (headless), agents get vault access via mcp-obsidian (skill), and the GUI gets an obsidian theme (gui). One package, three attachment points.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "skill": {
+        "command": "npx",
+        "args": ["-y", "mcp-obsidian"],
+        "env": { "OBSIDIAN_API_KEY": "" }
+      },
+      "headless": "dist/headless.js",
+      "gui": "dist/gui.js"
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.ts --bundle --format=esm --platform=browser --outfile=dist/gui.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": { "esbuild": "^0.21.5", "typescript": "^5.6.0" }
+}

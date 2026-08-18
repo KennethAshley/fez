@@ -4,6 +4,7 @@ import type { FezClient } from "@fez/client";
 import { mediaServer } from "./upload";
 import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";
+import { applyTheme, currentTheme, themeNames } from "./gui-extensions";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -82,6 +83,20 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           <input className="manage-input" value={media} spellCheck={false} onChange={(e) => setMedia(e.target.value)} />
         </div>
         <button className="agent-action" onClick={saveServers}>save</button>
+
+        <div className="manage-section">appearance</div>
+        <div className="settings-field">
+          <label>theme (extension theme packs appear here)</label>
+          <select
+            className="manage-select"
+            defaultValue={currentTheme()}
+            onChange={(e) => applyTheme(e.target.value)}
+          >
+            {["default", ...themeNames()].map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </div>
 
         <div className="manage-section">agent defaults</div>
         <div className="settings-field">

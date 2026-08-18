@@ -20,6 +20,7 @@ import DocsPane from "./DocsPane";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
+import { loadGuiExtensions } from "./gui-extensions";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
@@ -141,6 +142,7 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     }
     const scope = client.state.scope;
     if (scope) await client.loadChannelHistory(scope.channelId, scope.communityId);
+    void loadGuiExtensions(client); // gui parts of installed packages — non-blocking
     return { client, wire };
   })();
   bootPromise.catch(() => {

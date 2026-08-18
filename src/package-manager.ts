@@ -40,6 +40,14 @@ export interface FezManifest {
       claudeCode?: { commands?: string; evals?: string };
       pi?: { extensions?: string };
     };
+    /** Multi-part packages: skill (MCP def → machine catalog), headless
+     * (→ ~/.fez/extensions, all clients), gui (→ ~/.fez/gui-extensions,
+     * fez-desktop). One install, three attachment points. */
+    parts?: {
+      skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
+      headless?: string;
+      gui?: string;
+    };
     // For agents: entry point
     agent?: {
       entry: string;
@@ -286,6 +294,11 @@ export class PackageManager {
       await this.installFezExtension(name, manifest.fez.extension);
     }
 
+    // Multi-part package: skill + headless + gui from one install
+    if (manifest.fez.parts) {
+      await this.installParts(name, manifest.fez.parts);
+    }
+
     // Persona pack — a team bundle of persona .md files
     if (manifest.fez.personas) {
       await this.installPersonaPack(name, manifest.fez.personas);
@@ -450,6 +463,41 @@ export class PackageManager {
       await fs.copyFile(src, dest);
       console.log(chalk.dim(`   Created ~/.fez/extensions/${name}${ext}`));
     }
+  }
+
+  private async installParts(
+    name: string,
+    parts: { skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string }; headless?: string; gui?: string }
+  ): Promise<void> {
+    const pkgDir = this.getContentDir(this.packages.get(name)!);
+    if (parts.headless) {
+      await this.installFezExtension(name, { entry: parts.headless });
+    }
+    if (parts.gui) {
+      const guiDir = path.join(os.homedir(), ".fez", "gui-extensions");
+      await fs.mkdir(guiDir, { recursive: true });
+      await fs.copyFile(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
+      console.log(chalk.dim(`   Created ~/.fez/gui-extensions/${name}.js`));
+    }
+    if (parts.skill) {
+      const { loadSettings, saveSettings } = await import("./settings.js");
+      const settings = loadSettings() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
+      // keep env VALUES the user already filled in; the package supplies names
+      const mergedEnv = { ...(parts.skill.env ?? {}), ...(settings.mcpServers?.[name]?.env ?? {}) };
+      saveSettings({
+        mcpServers: {
+          ...settings.mcpServers,
+          [name]: { ...parts.skill, ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+        },
+      } as never);
+      console.log(chalk.dim(`   Defined skill "${name}" in ~/.fez/settings.json`));
+    }
+  }
+
+  private async removeParts(name: string): Promise<void> {
+    await fs.rm(path.join(os.homedir(), ".fez", "gui-extensions", `${name}.js`), { force: true });
+    // the skill definition stays: the user may have filled env values and
+    // personas may still declare it — removing it silently would break them
   }
 
   private async removeFezExtension(name: string): Promise<void> {

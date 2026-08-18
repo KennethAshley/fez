@@ -165,6 +165,31 @@ fn rename_persona(from: String, to: String) -> Result<(), String> {
     std::fs::rename(&src, &dst).map_err(|e| format!("rename failed: {e}"))
 }
 
+/// GUI extension parts installed by `fez install`/`fez link`
+/// (~/.fez/gui-extensions/*.js). The webview imports each as an ES
+/// module and calls its activate(api) — the GUI's version of the TUI's
+/// extension loader.
+#[tauri::command]
+fn list_gui_extensions() -> Result<Vec<(String, String)>, String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    let dir = std::path::Path::new(&home).join(".fez").join("gui-extensions");
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("js") {
+                if let (Some(stem), Ok(code)) = (
+                    path.file_stem().and_then(|s| s.to_str()),
+                    std::fs::read_to_string(&path),
+                ) {
+                    out.push((stem.to_string(), code));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 fn delete_persona(name: String) -> Result<(), String> {
     if !valid_persona_name(&name) {
@@ -321,7 +346,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
