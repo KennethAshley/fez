@@ -1,48 +1,49 @@
 ---
 title: Marketplace
-description: An agent store — publish and install personas, skills, and extensions, review-gated.
+description: An agent store made of signed events — browse, publish, and install through one reviewed door.
 ---
 
-The marketplace is fez's **agent store**. Listings are signed nostr events on the
-relay; there is no central store server.
+fez has a marketplace, and true to form it has no store server: listings are
+signed nostr events on the relay. What makes it interesting isn't the shopping —
+it's that installing an *agent* is treated as seriously as it should be.
 
-## What can be listed
+## What's listed
 
-- **Agents (personas)** — full agent definitions, prompt included
-- **Skills** — MCP server definitions ([details](/docs/concepts/skills))
-- **Extensions** — client extension packages, persona packs, pi packages
+- **Agents** — complete personas, prompt included
+- **Skills** — MCP server definitions ([how skills work](/docs/concepts/skills))
+- **Extensions & packs** — client extension packages, persona packs
 
-Every listing carries GitHub/npm links, the copyable `fez install` command, and —
-for skills — the env var names you'll need to supply.
-
-## Publishing
+Every listing carries provenance (the author's signature), GitHub/npm links, the
+copyable `fez install` command, and — for skills — the env var names you'd need
+to supply.
 
 ```bash
 fez persona publish researcher   # list an agent
 fez skill publish web-search     # list a skill
+fez skill market                 # browse
 ```
 
-Listings are signed by the author's key, so provenance is verifiable.
+## Installing an agent is review-gated
 
-## Installing an agent — review-gated
-
-Marketplace installs never go straight into your fleet. Installing a persona lands
-it as a **draft** stamped with where it came from
-(`proposedBy: marketplace:<author>`). You review the full prompt in the drafts
+Think about what a persona is: a system prompt that will run on *your* machines
+with *your* skills. So marketplace installs never go straight into the fleet.
+Installing a persona lands it as a **draft**, stamped with its origin
+(`proposedBy: marketplace:<author>`). You read the full prompt in the drafts
 queue — CLI or the desktop app's market pane — then approve or reject. Approval
-validates the persona and strips the marketplace stamps; only then can it spawn.
+validates the persona and strips the stamps; only then can it spawn.
 
-The same pipeline handles [agent-proposed teammates](/docs/concepts/orchestration#proposing-teammates):
-one review queue for everything that wants to join your fleet.
+This is the same queue that receives
+[agent-proposed teammates](/docs/concepts/orchestration#agents-proposing-agents):
+one reviewed door into your fleet, no matter who's knocking.
 
-## Install counts
+## Honest install counts
 
-Installs publish signed receipts; a count is the number of **distinct signing
-keys**, so one key replaying an install doesn't inflate anything. Counts are
-global across relays — they're aggregated by company infrastructure (parked until
-the public service launches), not by any single relay's storage.
+Installs publish signed receipts, and a count is the number of **distinct
+signing keys** — replaying one key inflates nothing. Counts aggregate globally
+across relays rather than living in any single relay's storage.
 
 ## In the desktop app
 
-The market pane (⌂) has tabs for agents, skills, and more (teams, workflows,
-extensions), with prompt previews before install and one-click install-as-draft.
+The market pane (⌂) tabs across agents, skills, and more (teams, workflows,
+extensions), with full prompt previews before install and one-click
+install-as-draft.

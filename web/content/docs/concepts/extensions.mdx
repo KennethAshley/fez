@@ -1,10 +1,13 @@
 ---
 title: Extensions
-description: The app-store model — features ship as installable packages over public seams.
+description: Core is a protocol and a registry surface. Everything you can see is a package.
 ---
 
-fez core is small on purpose. Features ship as **installable extension packages**
-that plug into public seams — the same seams first-party features use.
+Browse the repo and you'll notice something unusual: most of what a user would
+call "features of fez" don't live in core. Communities, DMs, docs, media upload,
+moderation, notifications — each is a package in `packages/`, installed through
+the same mechanism you'd use for a third-party extension. Core is a protocol
+plus a registry surface, and it's small on purpose.
 
 ## Installing
 
@@ -12,37 +15,40 @@ that plug into public seams — the same seams first-party features use.
 fez install <source>    # npm package, git URL, or local path
 fez list                # what's installed
 fez remove <name>       # uninstall
-fez link <dir>          # dev-install a local package (build + copy + smoke-import)
+fez link <dir>          # dev-install a local package: build, copy, smoke-import
 ```
 
 Extensions land in `~/.fez/extensions` and load at client startup.
 
-## What an extension can do
+## The API surface
 
-Extensions receive the `FezExtensionAPI`: access to the client (events, publish,
-subscriptions), the nostr identity (sign/encrypt — the private key never leaves
-core), UI surfaces (commands, panels, footer status, themes), and URL handlers.
+An extension receives the `FezExtensionAPI`: the headless client (state, events,
+publish, subscriptions), the nostr identity (sign/encrypt — the private key
+itself never leaves core), and UI surfaces (commands, panels, footer status,
+themes, URL handlers).
 
-First-party features built as extensions — proof the seams are real:
+The first-party packages are the proof the seams are real — they have no private
+hooks:
 
-- **fez-notifications** — desktop notifications
-- **fez-dms / fez-docs** — DM panel, channel docs
-- **fez-media** — Blossom media uploads
-- **fez-search / fez-moderation / fez-workflows** — search, mod tools, workflow runs
-- **theme packs** — via `registerTheme`
+- **fez-communities** — the channels/threads UI itself
+- **fez-dms**, **fez-docs** — DM panel, shared channel docs
+- **fez-media** — Blossom uploads (content-addressed, BUD-02 signed auth)
+- **fez-moderation**, **fez-notifications**, **fez-herdr** — mod tools, desktop
+  notifications, agent tab management
+- theme packs, via `registerTheme`
 
-## Viewer extensions
+## Viewers
 
 GUI clients expose `registerArtifactViewer(type, component)` — the seam for
-rendering new [artifact](/docs/concepts/artifacts) types. Built-in viewers use it;
-your `canvas`/`chart`/`map` viewer package uses the same call.
+rendering new [artifact](/docs/concepts/artifacts) types. The built-in viewers
+enter through it; so would your `canvas` or `chart` viewer package.
 
 ## Persona packs
 
-Teams of agents ship as installable bundles: `fez install` a pack, get a set of
-personas (validated, review-gated like any persona source).
+Whole agent teams ship as installable bundles: `fez install` a pack and get a
+set of personas — validated and review-gated like any other persona source.
 
 ## The rule
 
-If a feature can live behind a seam, it must. Core only grows when a new *seam*
+If a feature can live behind a seam, it must. Core grows only when a new *seam*
 is needed — never a new feature.

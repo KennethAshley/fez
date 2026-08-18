@@ -1,0 +1,96 @@
+---
+title: Architecture
+description: The repo tour — what lives where, and the four claims the whole design rests on.
+---
+
+The fastest way to understand fez is to see that the whole system rests on four
+claims. Everything in the repo is one of these claims made concrete.
+
+## 1. The relay is the database
+
+`packages/fez-relay` is a minimal NIP-01 event store with hardening — dedup,
+size caps, timestamp drift fences, replaceable-event compaction, and
+reconnect-friendly subscriptions. It also supports **operator policies** as
+pluggable hooks: membership enforcement at ingest, NIP-42-gated reads, moderation
+lists. Crucially, all of that is *optional* — a bare relay stays a dumb store,
+and clients never depend on a smart one.
+
+There is no other backend. No API server, no database schema, no accounts table.
+One process and a JSONL file of signed events is a complete deployment.
+
+## 2. Trust is client-side
+
+If the relay is dumb, who enforces the rules? Every client, identically.
+
+A community's creator signs the channel, roster, and ban events. From the raw
+event stream, each client derives the same state by applying the same rules:
+creator-signed structure, latest-wins rosters, member-gated messages,
+author-or-moderator deletes. Those rules live in **one place** —
+`packages/fez-client`, the headless brain — and the TUI, the desktop app, agents,
+and any future client all share it.
+
+This is why a malicious relay is a nuisance, not a catastrophe: it can withhold
+events, but it cannot forge them.
+
+## 3. Private means encrypted
+
+Anything that shouldn't be public is ciphertext *before* it reaches the relay:
+
+- DMs — NIP-17 gift wrap, 1:1 and group (the relay can't even see who's talking)
+- Agent observer streams (`/watch`) — encrypted to the owner
+- Per-turn cost metrics, reminders, moderation reports, agent memory — all NIP-44
+
+Keys live in the OS keychain, not dotfiles. `fez pair` moves your identity to a
+second device over an encrypted, SAS-verified handshake.
+
+## 4. Features are packages
+
+Core stays a small protocol + registry surface. The features you actually see —
+communities, docs, DMs, media upload, moderation, notifications — are installable
+extensions (`fez install` / `fez link`) that own their UI. Persona packs install
+whole agent teams the same way. If a feature can live behind a public seam, it
+must; core only grows when a new *seam* is needed.
+
+## Repo map
+
+| Path | What |
+| --- | --- |
+| `src/` | `@fez/protocol` — kinds registry, relay connection (auto-reconnect, NIP-42), DM crypto, agent memory (NIP-AE engrams), harness/ACP driving, device pairing, the CLI |
+| `packages/fez-client` | The headless brain: all derived state + trust rules, typed events |
+| `packages/fez-relay` | The relay: NIP-01 + NIP-50 search + policy hooks (ingest **and** delivery) |
+| `packages/fez-acp` | Standing agent runtime: persistent sessions, steering, queues, retries, circuit breaker, turn metrics |
+| `packages/fez-communities`, `fez-docs`, `fez-dms`, `fez-media`, `fez-moderation`, `fez-notifications`, `fez-herdr` | Installable view extensions |
+| `packages/fez-mcp` | The `fez_*` MCP tools every agent session gets: send/read channels, DMs, search, memory, the shared channel doc |
+| `packages/fez-sentinel` | Always-on watcher: mention/DM summons, notifications, schedules & reminders |
+| `packages/fez-workflows` | Deterministic automations: triggers, approval gates (restart-durable), webhooks |
+| `packages/fez-orchestrator` | `@fez`, the routing agent |
+| `packages/fez-desktop` | Tauri 2 + React GUI over `@fez/client` — optional by design |
+| `packages/fez-evals` | The test gate: trust boundary, relay wire, crypto, reconnect E2E |
+
+## How a message becomes an answer
+
+Worth tracing once, because it demystifies everything:
+
+1. You type `@researcher summarize this thread` in `#general`. Your client signs
+   a channel-message event and publishes it to the relay.
+2. The researcher's process (standing, or woken by the sentinel) holds a
+   subscription. The event arrives; the runtime checks it's genuinely addressed
+   (segment-aware mention parsing) and that the author is allowed to summon it.
+3. The runtime drives its harness — a clean-room Claude Code or pi session whose
+   only context is the persona file, fez conventions, and fez-injected skills —
+   through one turn, streaming encrypted activity frames to the owner as it works.
+4. The reply is signed with the *agent's* key and published to the channel like
+   any member's message. Rich outputs travel as typed
+   [artifacts](/docs/concepts/artifacts); costs are published encrypted to the
+   owner.
+5. Every client in the channel derives the new state and renders it. The relay
+   never understood any of it.
+
+## Verifying the claims
+
+```bash
+cd packages/fez-evals && npx vitest --run
+```
+
+The suite is organized around the same four claims: trust-boundary tests (rule
+enforcement), relay wire tests, crypto round-trips, and reconnect end-to-end.

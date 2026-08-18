@@ -1,15 +1,20 @@
 ---
 title: Skills
-description: MCP servers as agent capabilities — defined locally, declared per persona, injected at spawn.
+description: Capabilities as MCP servers — defined on a machine, declared by a persona, injected at spawn.
 ---
 
-A **skill** is an MCP server an agent can use: web search, a Vercel integration, a
-database client. fez's model has three layers, and the separation is the point.
+Agents need capabilities: web search, a database, a deploy API. In fez these are
+**skills** — MCP servers — and the design question they answer is sharper than it
+first looks: *how do you give agents (and teammates) capabilities without
+scattering credentials?*
 
-## 1. Define — the machine catalog
+The answer is a strict three-layer split.
 
-Your machine keeps a catalog of skill definitions (command, args, env var
-**names** — never values) in fez's settings:
+## Define — on the machine
+
+Each machine keeps a catalog of skill definitions: command, args, and the
+**names** of required env vars — never their values in listings, and never
+shipped anywhere.
 
 ```bash
 fez skill add web-search -- npx -y @some/web-search-mcp
@@ -17,35 +22,40 @@ fez skill list
 fez skill remove web-search
 ```
 
-## 2. Declare — per persona
+## Declare — in the persona
 
-A persona names the skills it wants. Declaration is just a name; it only becomes
-real capability if the skill is defined on the machine where the agent spawns.
+A persona lists the skills it wants, by name. A declaration is an intent, not a
+grant — it only becomes capability if the machine the agent spawns on actually
+defines that skill.
 
-## 3. Inject — at spawn
+## Inject — at spawn
 
-Agents spawn in clean-room harness configs, so capabilities enter **only** through
-fez's injection of declared-and-resolved skills. Your personal harness setup never
-leaks into an agent, and an agent's announcement to the fleet lists only skills
-that actually resolved — the orchestrator routes on real capability.
+Because agent sessions are [clean-room](/docs/concepts/agents#clean-room-spawns),
+there is exactly one way capability enters: fez injecting the
+declared-and-resolved skills at spawn. Your personal harness config never leaks
+into an agent. And when an agent announces itself to the fleet, it lists only the
+skills that *resolved* — so the [orchestrator](/docs/concepts/orchestration)
+routes on real capability.
 
-## Sharing capability, not credentials
+## Share the agent, not the key
 
-Env var values (API keys) stay on the machine, in the catalog. To give teammates
-access to a capability, **share the agent, not the credential**: run an agent with
-the skill and set its `respondTo` to the people who may use it. Channel membership
-plus `respondTo` are the ACLs; keys never travel.
+Here's the payoff. Suppose you have a Vercel API key and your teammates need
+deploys. You don't hand out the key — you run a deploy agent on your machine with
+the skill defined locally, and set its `respondTo` to the people allowed to use
+it. Channel membership plus `respondTo` are the access control; the credential
+never leaves your machine.
 
 ## Publishing & installing
 
-Skills can be shared through the [marketplace](/docs/concepts/marketplace):
+Skills travel through the [marketplace](/docs/concepts/marketplace) as signed
+listings:
 
 ```bash
-fez skill publish web-search    # signed listing on the relay
-fez skill market                # browse listings
-fez skill install web-search    # add to your catalog (env values still yours to fill)
+fez skill publish web-search   # signed listing on the relay
+fez skill market               # browse
+fez skill install web-search   # add the definition; env values remain yours to fill
 ```
 
-Listings carry the install command, GitHub/npm links, and required env var
-*names*. Install receipts are signed events; install counts are tallied by
-distinct signers, so they can't be inflated by replaying one key.
+A listing carries the install command, GitHub/npm links, and the required env var
+names. Install receipts are signed events, and counts tally **distinct signing
+keys** — one key replaying an install inflates nothing.

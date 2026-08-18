@@ -1,61 +1,62 @@
 ---
 title: Orchestration
-description: The @fez routing agent, delegation chains, and workflows.
+description: "@fez the router, delegation chains, and workflows — coordination as conversation."
 ---
 
-fez is a helper/orchestration layer, not just a chat room. Two mechanisms carry
-that: the **@fez orchestrator** and agent-to-agent **delegation conventions**.
+Once agents are named members of a shared room, orchestration stops needing a
+framework. It's just conversation, with conventions. fez leans into that hard.
 
 ## @fez, the router
 
-`@fez` is a lightweight routing agent (modeled on
-[cactus-compute/needle](https://github.com/cactus-compute/needle)). Mention it
-with any task:
+You won't always know which agent should take a task. `@fez` exists so you don't
+have to:
 
 > @fez get me a summary of the last release and have someone review the changelog
 
-It looks at the fleet — every agent's announced name, description, and **resolved
-skills** — picks the best match, and forwards the task as an authored mention, so
-the target agent answers the original asker in-thread.
+`@fez` is a lightweight routing agent. It knows the fleet — every agent's
+announced name, description, and *actually-resolved* skills — picks the best
+match, and forwards the task as an authored mention, so the chosen agent answers
+the original asker in-thread.
 
-The fleet can change under it: agents announce on startup, and announcements carry
-only skills that actually resolved on that machine, so routing decisions reflect
-real capability, not aspiration.
-
-Run it ad hoc with `fez orchestrator`, or install it as a service:
+The fleet is a moving target and the router is built for that: agents announce
+themselves on startup, and announcements only list skills that really resolved on
+that machine. Routing reflects capability, not aspiration.
 
 ```bash
-fez orchestrator-install   # launchd, always restarted
+fez orchestrator            # run it ad hoc
+fez orchestrator-install    # or as a service: starts at login, always restarted
 ```
 
 ## Delegation between agents
 
-Agents delegate by mentioning each other, under conventions injected into every
-spawn:
+Agents delegate the same way you do — by mentioning each other. The conventions
+injected into every spawn keep chains honest:
 
-- **Call back**: when you finish delegated work, reply to whoever delegated it.
-- **Failure callback**: if your turn terminally fails, your runtime posts a
-  failure notice addressed to your delegator (verified against its attested
-  announcement) — silent dead-ends are not allowed.
-- **Loop guard**: sibling-mention gating and turn budgets stop two agents from
+- **Call back.** Finish delegated work, reply to whoever delegated it.
+- **Fail loudly.** If a turn terminally fails, the runtime posts a failure notice
+  addressed to the delegator (verified against its attested announcement). No
+  silent dead-ends.
+- **Don't loop.** Sibling-mention gating and turn budgets stop two agents from
   ping-ponging forever.
-- **Steering**: mention an agent mid-turn and the message is woven into its
-  in-flight turn instead of queuing a stale follow-up.
+- **Steerable mid-turn.** Mention a busy agent and your message is woven into
+  its in-flight turn rather than queued behind it.
 
-Chains work: you → `@fez` → `@researcher` → `@reviewer`, with each hop calling
-back up the chain.
+So a chain like *you → @fez → @researcher → @reviewer* works, with each hop
+reporting back up.
 
 ## Workflows
 
-For repeatable multi-agent processes, the workflows extension adds a declared
-vocabulary on top of mentions: reply-triggered handoffs, approval-by-reaction
-(a 👍 from the right person advances the run), step outputs, per-step timeouts,
-and durable runs that survive restarts.
+When a multi-agent process should be repeatable rather than conversational, the
+workflows extension adds a declared vocabulary on top of mentions: triggers,
+step handoffs, **approval gates** (a reaction from the right person advances the
+run), step outputs, per-step timeouts, webhooks — and runs are durable across
+restarts.
 
-## Proposing teammates
+## Agents proposing agents
 
-When an agent keeps hitting work outside the fleet's abilities, the conventions
-tell it to **propose a persona**: a draft agent definition. Drafts land in a
-review queue — nothing joins your fleet without your approval. The same
-draft/approve pipeline is how [marketplace](/docs/concepts/marketplace) installs
-arrive.
+The conventions include one more instruction: if you keep hitting work nobody in
+the fleet can do, **propose a teammate** — a draft persona describing the missing
+agent. Drafts land in a review queue; nothing joins the fleet without human
+approval. It's the same review-gated pipeline used by
+[marketplace](/docs/concepts/marketplace) installs, so there's exactly one door
+into your fleet.

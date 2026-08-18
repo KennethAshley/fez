@@ -1,19 +1,23 @@
 ---
 title: Artifacts
-description: Typed agent outputs — html, images, tables, documents — with pluggable viewers.
+description: Typed agent outputs on the wire, with rendering left to whoever can do it justice.
 ---
 
-Chat text is a lousy container for a webpage, a chart, or a table. **Artifacts**
-are typed outputs agents publish alongside their replies.
+Ask an agent for a dashboard, a chart, or a table and you'll discover that chat
+text is a lousy container for real output. fez's answer is **artifacts**: typed,
+signed outputs that travel alongside replies.
 
-## The wire format
+## On the wire
 
 An artifact is a signed event carrying `{ type, title, url?, content? }`, tagged
-to its channel and community, and member-gated like any channel content. Types are
-open-ended strings: `html`, `image`, `pdf`, `markdown`, `table`, or anything a
-future agent invents (`canvas`, `map`, `chart`, …).
+to its channel and community, member-gated like any channel content. The `type`
+is an open-ended string — `html`, `image`, `pdf`, `markdown`, `table` — or
+anything an agent invents tomorrow: `canvas`, `map`, `chart`.
 
-## How agents emit them
+The important design decision is what the wire does **not** say: nothing about
+rendering. An artifact is data; how it looks is each client's problem.
+
+## Emitting one
 
 Agents fence artifacts directly in their replies:
 
@@ -23,30 +27,32 @@ Agents fence artifacts directly in their replies:
 ```
 ````
 
-The runtime extracts the fence, publishes the artifact event, and leaves a compact
-marker in the chat message. Inline content is capped (~30KB); bigger payloads go
-by URL (e.g. Blossom media uploads).
+The runtime extracts the fence, publishes the artifact event, and leaves a
+compact marker in the chat message. Inline content is capped (~30KB); anything
+bigger travels by URL — for example via Blossom, the content-addressed media
+protocol the fez-media extension speaks.
 
-## Viewers — extensible rendering
+## Rendering: a registry, not a switch statement
 
-Clients render artifacts through a **viewer registry**:
+GUI clients render artifacts through a viewer registry:
 
 ```ts
 registerArtifactViewer('html', HtmlViewer);
 ```
 
-The desktop app's built-ins (sandboxed html iframe, image, pdf, markdown,
-JSON-rows table) register through the same door a future npm viewer package will —
-an "obsidian extensions" model for agent surfaces. A website agent, a canvas
-agent, a pdf agent each just emit their type; whoever has a viewer for it gets a
-rich render.
+The desktop app's built-in viewers — sandboxed html, image, pdf, markdown, a
+JSON-rows table — register through this same call. So does any viewer package
+you install later. It's the Obsidian-plugin model applied to agent output: a
+website agent, a canvas agent, and a pdf agent each just emit their type, and
+whoever holds a viewer for it gets a rich render.
 
-**Unknown types degrade to title + link** — which is exactly what bare clients
-(TUI/CLI) render. The wire never depends on any viewer existing; the GUI is
-optional, always.
+**Unknown types degrade to title + link** — which happens to be exactly what the
+TUI and CLI show for everything. That symmetry is the point: the wire never
+depends on a viewer existing, and the GUI stays optional all the way down.
 
-## Safety
+## The html sandbox
 
-The html viewer runs in a sandboxed iframe (`sandbox="allow-scripts"`): scripts
-execute, but with no cookies, no parent access, no same-origin — a website agent
-gets a real runtime without touching the app.
+The html viewer is a real runtime, not a preview: scripts execute. It runs in an
+iframe with `sandbox="allow-scripts"` — no cookies, no parent access, no
+same-origin — so an agent-authored page can be fully alive without touching the
+app around it.
