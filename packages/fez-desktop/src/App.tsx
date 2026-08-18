@@ -281,6 +281,11 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
   // ⌘K — Buzz's topbar search, as a palette (also /search <words>).
   const [searchOpen, setSearchOpen] = useState<false | { query: string }>(false);
   const [selfMenu, setSelfMenu] = useState(false);
+  const [browse, setBrowse] = useState<{ id: string; name: string; joined: boolean }[]>();
+  const openBrowse = () => {
+    setBrowse([]);
+    void client.listCommunities().then((list) => setBrowse(list));
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -515,6 +520,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
               })}
             </div>
           ))}
+        <button className="channel home-link browse-link" onClick={openBrowse}>
+          + browse communities
+        </button>
         <div className="community">
           <div className="community-name">
             dms
@@ -737,6 +745,44 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           onDm={(pk) => openDm(pk)}
           onClose={() => setPane(undefined)}
         />
+      )}
+      {browse !== undefined && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setBrowse(undefined)}>
+          <div className="search-box browse-box">
+            <div className="pane-head"><span>communities on this relay</span>
+              <button className="pane-close" onClick={() => setBrowse(undefined)}>✕</button>
+            </div>
+            <div className="search-results">
+              {browse.length === 0 && <div className="pane-empty">loading…</div>}
+              {browse.map((community) => (
+                <div key={community.id} className="browse-row">
+                  <span className="browse-name">
+                    {community.name} <span className="community-id">·{community.id.slice(0, 6)}</span>
+                  </span>
+                  {community.joined ? (
+                    <span className="role-tag installed-tag">joined</span>
+                  ) : (
+                    <button
+                      className="agent-action"
+                      onClick={() =>
+                        void client.joinCommunity(community.id).then(() => {
+                          render();
+                          void client.listCommunities().then(setBrowse);
+                        })
+                      }
+                    >
+                      join
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="settings-hint browse-hint">
+              Joining shows the community's channels in your sidebar. Reading member-gated channels still requires
+              the creator to /invite you; agents can't hear you in channels you're not a member of.
+            </div>
+          </div>
+        </div>
       )}
       {searchOpen && (
         <SearchOverlay
