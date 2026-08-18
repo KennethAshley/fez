@@ -19,7 +19,7 @@ import { EnvKeyStatus } from "./SkillSecrets";
 const KIND_SKILL_LISTING = 40200;
 const KIND_SKILL_INSTALL = 40201;
 /** Company-tier cross-relay install index — empty until fez company infra exists (infra/skill-counts is ready to deploy); relay receipts carry the counts meanwhile. */
-const DEFAULT_COUNTS_URL = "";
+const DEFAULT_COUNTS_URL = "https://fez-web-kohl.vercel.app/api/counts";
 const countsUrl = () => localStorage.getItem("fez-skill-counts-url") ?? DEFAULT_COUNTS_URL;
 
 interface SkillConfig {
@@ -180,6 +180,8 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
 
   const skillListings = (listings ?? []).filter((l) => (l.artifact ?? "mcp") === "mcp");
 
+  const countKey = (listing: Listing) =>
+    `${listing.authorPk}:${listing.artifact === "persona" ? "persona:" : ""}${listing.name}`;
   const ranked = [...(listings ?? [])]
     .filter((listing) => {
       if (filter === "all") return true;
@@ -187,7 +189,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
       if (filter === "skills") return (listing.artifact ?? "mcp") === "mcp";
       return listing.artifact !== "persona" && (listing.artifact ?? "mcp") !== "mcp";
     })
-    .sort((a, b) => (installs.get(`${b.authorPk}:${b.name}`) ?? 0) - (installs.get(`${a.authorPk}:${a.name}`) ?? 0) || b.ts - a.ts);
+    .sort((a, b) => (installs.get(countKey(b)) ?? 0) - (installs.get(countKey(a)) ?? 0) || b.ts - a.ts);
 
   return (
     <main className="main">
@@ -243,7 +245,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
           {listings && ranked.length === 0 && <div className="pane-empty">nothing listed yet — share something of yours from "on this machine" below</div>}
           {ranked.map((listing) => {
             const key = `${listing.authorPk}:${listing.name}`;
-            const count = installs.get(key) ?? 0;
+            const count = installs.get(countKey(listing)) ?? 0;
             const isPersona = listing.artifact === "persona";
             const isMcp = (listing.artifact ?? "mcp") === "mcp";
             const state = personaState[key];

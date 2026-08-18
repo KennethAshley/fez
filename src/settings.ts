@@ -56,7 +56,7 @@ export function resolveRelay(explicit?: string): string {
  * deployed, its URL becomes this default. settings.skillCountsUrl
  * overrides either way.
  */
-export const DEFAULT_SKILL_COUNTS_URL = "";
+export const DEFAULT_SKILL_COUNTS_URL = "https://fez-web-kohl.vercel.app/api/counts"; // company endpoint (re-points when the real domain lands)
 
 export function resolveSkillCountsUrl(): string {
   const settings = loadSettings() as { skillCountsUrl?: string };
