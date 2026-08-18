@@ -26,7 +26,7 @@ import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
 import { runCommand } from "./commands";
 import Onboarding from "./Onboarding";
-import { foldLedger } from "./BenchProposals";
+import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import "./App.css";
 
 /**
@@ -1564,6 +1564,9 @@ function Bubble({
           <MdBody text={msg.content} />
         </div>
       )}
+      {proposalIdsIn(msg.content).map((id) => (
+        <InlineProposal key={id} id={id} />
+      ))}
       <div className="bubble-foot">
         {reactions &&
           [...reactions.entries()].map(([emoji, who]) => (

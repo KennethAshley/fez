@@ -90,3 +90,82 @@ export default function BenchProposals({ onChanged }: { onChanged?: () => void }
     </>
   );
 }
+
+
+/**
+ * Inline proposal card — Claude-Code-style accept/deny attached to a
+ * chat message. Any message mentioning "proposal <id>" gets one: the
+ * timeline detects the id, this card looks it up in the ledger and
+ * renders the decision buttons right where the agent asked. Decided
+ * proposals show their outcome, so old messages stay honest.
+ */
+export function InlineProposal({ id }: { id: string }) {
+  const [proposal, setProposal] = useState<LedgerProposal>();
+  const [status, setStatus] = useState<"pending" | "approved" | "denied" | "unknown">("unknown");
+  const [error, setError] = useState<string>();
+
+  const load = useCallback(() => {
+    void invoke<string>("read_bench_proposals")
+      .then((raw) => {
+        for (const line of raw.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const entry = JSON.parse(line) as { type: string; id: string; status?: string } & LedgerProposal;
+            if (entry.id !== id) continue;
+            if (entry.type === "proposal") {
+              setProposal(entry);
+              setStatus((prev) => (prev === "unknown" ? "pending" : prev));
+            } else if (entry.type === "decision") {
+              setStatus(entry.status === "approved" ? "approved" : "denied");
+            }
+          } catch { /* skip */ }
+        }
+      })
+      .catch(() => {});
+  }, [id]);
+  useEffect(load, [load]);
+
+  if (!proposal) return null;
+  const decide = (approveIt: boolean) => {
+    setError(undefined);
+    void invoke("decide_bench_proposal", { id, approve: approveIt })
+      .then(() => setStatus(approveIt ? "approved" : "denied"))
+      .catch((err) => setError(String(err)));
+  };
+
+  return (
+    <div className={`inline-proposal ${status}`}>
+      <div className="inline-proposal-body">
+        {proposal.kind === "description" ? (
+          <>
+            <span className="inline-proposal-title">@{proposal.agent} description change</span>
+            <span className="proposal-from">− {proposal.from || "(none)"}</span>
+            <span className="proposal-to">+ {proposal.to}</span>
+          </>
+        ) : (
+          <>
+            <span className="inline-proposal-title">bench case</span>
+            <span className="skill-desc">"{proposal.q}" → {proposal.expect?.join(" | ")}</span>
+          </>
+        )}
+        <span className="inline-proposal-why">{proposal.rationale}</span>
+        {error && <span className="ob-error">{error}</span>}
+      </div>
+      <div className="inline-proposal-actions">
+        {status === "pending" ? (
+          <>
+            <button className="agent-action approve-btn" onClick={() => decide(true)}>✓ approve</button>
+            <button className="mini" onClick={() => decide(false)}>✗ deny</button>
+          </>
+        ) : (
+          <span className={`role-tag ${status === "approved" ? "installed-tag" : ""}`}>{status}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const PROPOSAL_RE = /\bproposal[:\s]+([a-z0-9]{6})\b/gi;
+export function proposalIdsIn(text: string): string[] {
+  return [...new Set([...text.matchAll(PROPOSAL_RE)].map((m) => m[1].toLowerCase()))];
+}

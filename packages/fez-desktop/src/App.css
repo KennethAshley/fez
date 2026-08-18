@@ -1080,3 +1080,17 @@ button.author:hover { text-decoration: underline; }
 /* bench proposal diffs */
 .proposal-from { color: var(--red); }
 .proposal-to { color: var(--green); }
+
+/* inline proposal card — agent asks, you decide, right in the chat */
+.inline-proposal {
+  display: flex; align-items: flex-start; gap: 12px; margin: 6px 0 4px;
+  background: var(--bg1); border: 1px solid var(--yellow); border-radius: 8px; padding: 10px 12px;
+  max-width: 640px;
+}
+.inline-proposal.approved { border-color: var(--green); }
+.inline-proposal.denied { border-color: var(--bg2); opacity: 0.75; }
+.inline-proposal-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; font-size: 12.5px; }
+.inline-proposal-title { font-weight: 700; }
+.inline-proposal-why { color: var(--fg-dim); font-size: 11.5px; }
+.inline-proposal-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.approve-btn { background: var(--green); color: var(--bg0); border: 0; }
