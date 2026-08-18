@@ -964,6 +964,7 @@ async function main() {
             persona.systemPrompt ?? "",
             ...(memorySection ? [memorySection] : []),
             `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
+            `- Failure handling: if an agent you delegated to reports it couldn't finish, don't wait or re-ask identically — retry once with clearer instructions, do the piece yourself, or report the blocker up to whoever asked you. A dead hop must never silently end the chain.`,
             `- Callbacks: when you FINISH work that another agent or person handed you, @mention them in the message that reports the result, deliverable, or blocker — a completed handoff that never calls back stalls the whole chain. Completed work only: never @ to acknowledge, accept, or thank.`,
             `- Proposing teammates: if a task keeps needing a specialist that doesn't exist, you may propose one: run the shell command fez persona draft <name> --description "<what it's for>" --prompt "<system prompt>". The owner reviews and approves; NEVER claim the new agent exists until it answers a mention.`,
             `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
@@ -1060,6 +1061,23 @@ async function main() {
           const hint = classifyTurnError(err) === "auth"
             ? " — my harness isn't logged in: run `claude /login`, then mention me again (fez doctor has the details)"
             : "";
+          // Failure CALLBACK (mirror of the completed-work callback): if a
+          // fellow agent delegated this turn, the notice @mentions them so
+          // the chain can adapt instead of hanging on a hop that died.
+          // Humans see the plain notice — they aren't summonable.
+          let failureCallback = "";
+          if (event.pubkey !== owner) {
+            try {
+              if (await isSibling(event.pubkey)) {
+                const metas = await relay.query([{ kinds: [KIND_AGENT_METADATA], authors: [event.pubkey], limit: 5 }]);
+                const name = metas
+                  .sort((a, b) => b.created_at - a.created_at)
+                  .map((m) => { try { return (JSON.parse(m.content) as { name?: string }).name; } catch { return undefined; } })
+                  .find(Boolean);
+                if (name) failureCallback = `@${name} `;
+              }
+            } catch { /* name unknown — plain notice */ }
+          }
           consecutiveFailures++;
           const tripped = consecutiveFailures >= BREAKER_THRESHOLD;
           if (tripped) {
@@ -1075,7 +1093,7 @@ async function main() {
                 tags: replyTags,
                 content: tripped
                   ? `🛑 ${BREAKER_THRESHOLD} failures in a row (last: ${reason.slice(0, 120)}${hint}) — pausing for ${BREAKER_COOLDOWN_MS / 60_000} minutes. Fix the cause and mention me after, or restart me.`
-                  : `⚠️ I couldn't finish that: ${reason.slice(0, 160)}${hint}`,
+                  : `${failureCallback}⚠️ I couldn't finish that: ${reason.slice(0, 160)}${hint}`,
               })
             )
             .catch(() => {});
