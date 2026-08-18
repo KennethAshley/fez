@@ -1,3 +1,4 @@
+import { guiCommand } from "./gui-extensions";
 import type { FezClient } from "@fez/client";
 import type { BrowserWire } from "./wire";
 
@@ -158,8 +159,11 @@ export async function runCommand(text: string, ctx: CommandCtx): Promise<string>
         if (!pk) return `nobody named "${rest[0] ?? ""}"`;
         return `✓ unbanned ${await client.unbanUser(ctx.communityId, pk)}`;
       }
-      default:
+      default: {
+        const extension = guiCommand(cmd);
+        if (extension) return await extension(argText);
         return `unknown command /${cmd} — /help lists them`;
+      }
     }
   } catch (err) {
     return `✗ ${err instanceof Error ? err.message : String(err)}`;

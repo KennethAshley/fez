@@ -164,6 +164,9 @@ async function main() {
         { name: "FEZ_AGENT_PERSONA", value: personaId },
         { name: "FEZ_RELAY", value: relayUrl },
         ...(owner ? [{ name: "FEZ_AGENT_OWNER", value: owner }] : []),
+        ...(Number(persona.extra.approvalQuorum) >= 1
+          ? [{ name: "FEZ_APPROVAL_QUORUM", value: String(Number(persona.extra.approvalQuorum)) }]
+          : []),
       ],
     });
     console.log("🔧 fez tools attached (fez-mcp)");

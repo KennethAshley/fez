@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { quorumDecision } from "./vote-logic.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import {
   RelayConnection,
@@ -55,6 +56,13 @@ const sign = (tmpl: { kind: number; tags: string[][]; content: string; created_a
     { kind: tmpl.kind, created_at: tmpl.created_at ?? Math.floor(Date.now() / 1000), tags: tmpl.tags, content: tmpl.content },
     secret
   );
+
+/** Channel roster — the voter roll for quorum gates and polls. */
+async function channelMembers(channelId: string): Promise<Set<string>> {
+  const events = await relay.query([{ kinds: [47102], "#d": [channelId] }]).catch(() => []);
+  const latest = events.sort((a, b) => b.created_at - a.created_at)[0];
+  return new Set((latest?.tags ?? []).filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
+}
 
 // ── Shared lookups ───────────────────────────────────────────────────────
 
@@ -157,19 +165,25 @@ server.registerTool(
     if (!owner) return text("DENIED — no owner configured (FEZ_AGENT_OWNER); treat approval as impossible.");
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
+    // Quorum is OWNER-AUTHORED config (persona approvalQuorum → this env),
+    // never the agent's choice — an agent must not pick its own electorate.
+    const quorum = Number(process.env.FEZ_APPROVAL_QUORUM) >= 1 ? Number(process.env.FEZ_APPROVAL_QUORUM) : undefined;
     const ask = sign({
       kind: 47103,
       tags: [["h", ref.channelId], ["c", ref.communityId], ["t", "approval-request"], ["p", owner]],
-      content: `⛔ approval needed: ${action}\n(react ✅ to approve, ❌ to deny)`,
+      content: `⛔ approval needed: ${action}\n(react ✅ to approve, ❌ to deny${quorum ? ` — ${quorum} member approval${quorum === 1 ? "" : "s"} suffice` : ""})`,
     });
     await relay.publish(ask);
+    const members = quorum ? await channelMembers(ref.channelId) : new Set<string>();
     const deadline = Date.now() + Math.min(timeoutS ?? 300, 3600) * 1000;
     while (Date.now() < deadline) {
-      const reactions = await relay.query([{ kinds: [7], "#e": [ask.id], authors: [owner] }]).catch(() => []);
-      for (const reaction of reactions) {
-        if (/✅|👍/u.test(reaction.content)) return text("APPROVED by your owner — proceed with exactly the stated action.");
-        if (/❌|👎/u.test(reaction.content)) return text("DENIED by your owner — do NOT proceed; acknowledge and stop.");
-      }
+      const reactions = await relay.query([{ kinds: [7], "#e": [ask.id] }]).catch(() => []);
+      const verdict = quorumDecision(
+        reactions.map((r) => ({ pk: r.pubkey, content: r.content })),
+        { owner, quorum, members, selfPk: myPubkey }
+      );
+      if (verdict === "approved") return text("APPROVED — proceed with exactly the stated action.");
+      if (verdict === "denied") return text("DENIED by your owner — do NOT proceed; acknowledge and stop.");
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
     return text("TIMED OUT — no decision arrived. Do NOT proceed; say you are still waiting for approval.");

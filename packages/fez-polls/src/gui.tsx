@@ -1,0 +1,117 @@
+/**
+ * fez-polls, gui part — enters through the message-decorator seam.
+ * Renders any poll message as a card: option buttons (vote = reaction,
+ * change-of-vote swaps your reaction), live member-only tallies, and a
+ * closed state with the winner. Also registers /poll for the composer.
+ * Uses api.React (h) so the page keeps one React.
+ */
+
+import { formatPoll, parsePoll, parsePollCommand, tallyPoll, OPTION_EMOJI } from "./format.js";
+
+interface ClientLike {
+  pubkey: string;
+  reactions(targetId: string): ReadonlyMap<string, ReadonlySet<string>> | undefined;
+  toggleReaction(channelId: string, communityId: string, targetId: string, emoji: string): Promise<void>;
+  sendChannelMessage(text: string, opts?: object): Promise<unknown>;
+  state: {
+    scope?: { channelId: string; communityId: string };
+    communities: Map<string, { channels: Map<string, { members: Map<string, string> }> }>;
+  };
+}
+
+interface GuiApi {
+  React: { createElement: typeof h; useState: <T>(v: T) => [T, (v: T) => void] };
+  client: ClientLike;
+  registerMessageDecorator(
+    match: (content: string) => boolean,
+    render: (props: { content: string; msgId: string; channelId: string; communityId: string; authorName: string }) => unknown
+  ): void;
+  registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
+}
+
+// h is bound at activate() time to the host page's React
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let h: any;
+
+export default function activate(api: GuiApi): void {
+  h = api.React.createElement;
+  const { client } = api;
+
+  const members = (channelId: string): ReadonlySet<string> => {
+    for (const community of client.state.communities.values()) {
+      const channel = community.channels.get(channelId);
+      if (channel) return new Set(channel.members.keys());
+    }
+    return new Set();
+  };
+
+  api.registerMessageDecorator(
+    (content) => content.startsWith("📊 poll: "),
+    ({ content, msgId, channelId, communityId }) => {
+      const poll = parsePoll(content);
+      if (!poll) return null;
+      const roster = members(channelId);
+      const reactionMap = client.reactions(msgId);
+      const ballots: { pk: string; content: string }[] = [];
+      const mine = new Set<string>();
+      if (reactionMap) {
+        for (const [emoji, who] of reactionMap.entries()) {
+          for (const pk of who) {
+            ballots.push({ pk, content: emoji });
+            if (pk === client.pubkey) mine.add(emoji);
+          }
+        }
+      }
+      const tally = tallyPoll(poll.options.length, ballots, roster);
+      const closed = poll.closesAtMs > 0 && Date.now() > poll.closesAtMs;
+      const total = Math.max(1, tally.voters);
+
+      const vote = async (index: number) => {
+        if (closed) return;
+        const target = OPTION_EMOJI[index];
+        // change-of-vote: clear my other option reactions first
+        for (const emoji of OPTION_EMOJI.slice(0, poll.options.length)) {
+          if (emoji !== target && mine.has(emoji)) await client.toggleReaction(channelId, communityId, msgId, emoji);
+        }
+        if (!mine.has(target)) await client.toggleReaction(channelId, communityId, msgId, target);
+      };
+
+      return h(
+        "div",
+        { className: "poll-card" },
+        h("div", { className: "poll-question" }, `📊 ${poll.question}`),
+        ...poll.options.map((option, index) =>
+          h(
+            "button",
+            {
+              key: index,
+              className: `poll-option${mine.has(OPTION_EMOJI[index]) ? " mine" : ""}${closed && tally.winner === index ? " winner" : ""}`,
+              disabled: closed,
+              onClick: () => void vote(index),
+            },
+            h("span", { className: "poll-option-label" }, `${OPTION_EMOJI[index]} ${option}`),
+            h("span", { className: "poll-bar", style: { width: `${(tally.counts[index] / total) * 100}%` } }),
+            h("span", { className: "poll-count" }, String(tally.counts[index]))
+          )
+        ),
+        h(
+          "div",
+          { className: "poll-meta" },
+          closed
+            ? tally.winner !== undefined
+              ? `closed — "${poll.options[tally.winner]}" wins (${tally.voters} voter${tally.voters === 1 ? "" : "s"})`
+              : `closed — no winner (${tally.voters} voter${tally.voters === 1 ? "" : "s"}${tally.counts.some((c) => c > 0) ? ", tie" : ""})`
+            : `${tally.voters} vote${tally.voters === 1 ? "" : "s"} · members only · closes ${poll.closesAtMs ? new Date(poll.closesAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "never"}${tally.ambiguous ? ` · ${tally.ambiguous} ambiguous (multi-vote) excluded` : ""}`
+        )
+      );
+    }
+  );
+
+  api.registerGuiCommand("poll", async (args) => {
+    const parsed = parsePollCommand(args);
+    if ("error" in parsed) return `📊 ${parsed.error}`;
+    if (!client.state.scope) return "📊 open a channel first.";
+    await client.sendChannelMessage(formatPoll(parsed.question, parsed.options, Date.now() + parsed.durationMs));
+    return "";
+  });
+}

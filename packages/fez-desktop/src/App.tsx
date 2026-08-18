@@ -27,6 +27,7 @@ import { uploadFile, shareLine } from "./upload";
 import { runCommand } from "./commands";
 import Onboarding from "./Onboarding";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
+import { messageDecorators } from "./gui-extensions";
 import "./App.css";
 
 /**
@@ -1684,6 +1685,13 @@ function Bubble({
       {msg.content.startsWith("⛔ approval needed:") && (
         <ApprovalCard client={client} msg={msg} channelId={channelId} communityId={communityId} />
       )}
+      {messageDecorators()
+        .filter((d) => d.match(msg.content))
+        .map((d, i) => (
+          <div key={`deco-${i}`} className="msg-decoration">
+            {d.render({ content: msg.content, msgId: msg.id, channelId, communityId, authorName: msg.authorName })}
+          </div>
+        ))}
       <div className="bubble-foot">
         {reactions &&
           [...reactions.entries()].map(([emoji, who]) => (

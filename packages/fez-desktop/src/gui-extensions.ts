@@ -20,6 +20,35 @@ export interface GuiExtensionApi {
   client: FezClient;
   registerArtifactViewer: typeof registerArtifactViewer;
   registerTheme: (name: string, vars: Record<string, string>) => void;
+  /** Decorate chat messages: when match(content) is true, render() is
+   * mounted under the message body (how the polls card enters). */
+  registerMessageDecorator: (
+    match: (content: string) => boolean,
+    render: (props: { content: string; msgId: string; channelId: string; communityId: string; authorName: string }) => React.ReactNode
+  ) => void;
+  /** Add a slash command to the GUI composer (/name). */
+  registerGuiCommand: (name: string, run: (args: string) => Promise<string> | string) => void;
+}
+
+// ── decorator + command registries (host side of the seams) ────────
+export interface MessageDecorator {
+  match: (content: string) => boolean;
+  render: (props: { content: string; msgId: string; channelId: string; communityId: string; authorName: string }) => React.ReactNode;
+}
+const decorators: MessageDecorator[] = [];
+export function registerMessageDecorator(match: MessageDecorator["match"], render: MessageDecorator["render"]): void {
+  decorators.push({ match, render });
+}
+export function messageDecorators(): readonly MessageDecorator[] {
+  return decorators;
+}
+
+const guiCommands = new Map<string, (args: string) => Promise<string> | string>();
+export function registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void {
+  guiCommands.set(name.toLowerCase(), run);
+}
+export function guiCommand(name: string): ((args: string) => Promise<string> | string) | undefined {
+  return guiCommands.get(name.toLowerCase());
 }
 
 // ── theme registry ─────────────────────────────────────────────────
@@ -100,7 +129,7 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
   } catch {
     return loaded;
   }
-  const api: GuiExtensionApi = { React, client, registerArtifactViewer, registerTheme };
+  const api: GuiExtensionApi = { React, client, registerArtifactViewer, registerTheme, registerMessageDecorator, registerGuiCommand };
   for (const [name, code] of files) {
     try {
       const mod = await importModule(code);

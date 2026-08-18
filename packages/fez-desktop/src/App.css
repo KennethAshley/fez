@@ -1109,3 +1109,27 @@ button.author:hover { text-decoration: underline; }
 }
 .community-add:hover { background: var(--bg2); color: var(--fg); }
 .community-name .leave { margin-left: 2px; }
+
+/* poll card (fez-polls gui part renders into these) */
+.msg-decoration { margin: 6px 0 4px; }
+.poll-card {
+  background: var(--bg1); border: 1px solid var(--accent); border-radius: 8px;
+  padding: 10px 12px; max-width: 560px; display: flex; flex-direction: column; gap: 6px;
+}
+.poll-question { font-weight: 700; }
+.poll-option {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--bg0); border: 1px solid var(--bg2); border-radius: 6px;
+  color: var(--fg); font: inherit; font-size: 12.5px; padding: 6px 10px; cursor: pointer; text-align: left; overflow: hidden;
+}
+.poll-option:hover:not(:disabled) { border-color: var(--accent); }
+.poll-option.mine { border-color: var(--accent); }
+.poll-option.winner { border-color: var(--green); }
+.poll-option:disabled { cursor: default; opacity: 0.85; }
+.poll-option-label { position: relative; z-index: 1; }
+.poll-count { position: relative; z-index: 1; color: var(--fg-dim); font-weight: 700; }
+.poll-bar {
+  position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
+  background: color-mix(in srgb, var(--accent) 22%, transparent); transition: width 0.3s;
+}
+.poll-meta { font-size: 11px; color: var(--fg-dim); }

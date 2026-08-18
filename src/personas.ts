@@ -145,6 +145,7 @@ export const KNOWN_EXTRA_KEYS = new Set([
   "respondTo", // services: trigger policy
   "maxReplyChars", // fez-acp: hard cap on published reply length (bridge agents)
   "shareLevel", // fez-acp: bridge sharing policy — topics | summaries | detailed
+  "approvalQuorum", // fez-mcp: N member ✅s approve a gate without the owner
 ]);
 
 const MAX_BODY_BYTES = 256 * 1024; // Buzz's persona body bound
