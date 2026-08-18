@@ -186,6 +186,24 @@ export interface DocInfo {
   latestContent: string;
 }
 
+/**
+ * A named wiki page — a 40100 doc with a ["d", slug] tag. Same event
+ * kind, same versioning, same member gating as channel docs; the slug
+ * makes it addressable so pages can [[link]] to one another. Scoped to
+ * a community; the h tag is the channel it was written from (gating).
+ */
+export interface WikiDoc extends DocInfo {
+  slug: string;
+  title: string;
+  channelId: string;
+  communityId: string;
+}
+
+/** [[Page Name]] → "page-name" — one slug rule everywhere (GUI, mcp, TUI). */
+export function wikiSlug(name: string): string {
+  return name.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
+}
+
 export interface PinInfo {
   opId: string;
   by: string;
@@ -282,6 +300,7 @@ export class FezClient {
 
   // docs
   private docsByChannelMap = new Map<string, DocInfo>();
+  private wikiMap = new Map<string, WikiDoc>();
   private artifactsByChannel = new Map<string, Artifact[]>();
   private seenArtifactIds = new Set<string>();
   private seenDocIds = new Set<string>();
@@ -652,6 +671,7 @@ export class FezClient {
     const events = await this.wire.query([{ kinds: [K.DOC], "#h": [channelId], limit: 200 }]);
     return events
       .filter((e) => this.state.isMember(communityId, channelId, e.pubkey))
+      .filter((e) => !e.tags.some((t) => t[0] === "d")) // named pages aren't the channel doc
       .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
   }
 
@@ -659,6 +679,38 @@ export class FezClient {
     await this.wire.publish({
       kind: K.DOC,
       tags: [["h", channelId], ["c", communityId], ...(baseId ? [["base", baseId]] : [])],
+      content,
+    });
+  }
+
+  /** Named wiki pages in joined communities, keyed `${communityId}:${slug}`. */
+  wikiDocs(): ReadonlyMap<string, WikiDoc> {
+    return this.wikiMap;
+  }
+
+  async wikiVersions(communityId: string, slug: string): Promise<WireEvent[]> {
+    const events = await this.wire.query([{ kinds: [K.DOC], "#d": [slug], limit: 200 }]);
+    return events
+      .filter((e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId))
+      .filter((e) => {
+        const h = e.tags.find((t) => t[0] === "h")?.[1];
+        return !!h && this.state.isMember(communityId, h, e.pubkey);
+      })
+      .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
+  }
+
+  async publishWikiDoc(channelId: string, communityId: string, name: string, content: string, baseId?: string): Promise<void> {
+    const slug = wikiSlug(name);
+    if (!slug) throw new Error(`"${name}" makes an empty page name`);
+    await this.wire.publish({
+      kind: K.DOC,
+      tags: [
+        ["h", channelId],
+        ["c", communityId],
+        ["d", slug],
+        ["title", name.trim()],
+        ...(baseId ? [["base", baseId]] : []),
+      ],
       content,
     });
   }
@@ -1502,6 +1554,25 @@ export class FezClient {
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
     if (!channelId || !communityId || !this.state.isMember(communityId, channelId, event.pubkey)) return undefined;
     this.seenDocIds.add(event.id);
+    // A d tag makes it a named wiki page, not the channel's doc.
+    const slug = event.tags.find((t) => t[0] === "d")?.[1];
+    if (slug) {
+      const key = `${communityId}:${slug}`;
+      let page = this.wikiMap.get(key);
+      if (!page) {
+        this.wikiMap.set(key, (page = { slug, title: slug, channelId, communityId, count: 0, latestId: "", latestTs: 0, latestAuthor: "", latestContent: "" }));
+      }
+      page.count++;
+      if (event.created_at > page.latestTs || (event.created_at === page.latestTs && event.id < page.latestId)) {
+        page.latestTs = event.created_at;
+        page.latestId = event.id;
+        page.latestAuthor = event.pubkey;
+        page.latestContent = event.content;
+        page.channelId = channelId;
+        page.title = event.tags.find((t) => t[0] === "title")?.[1] ?? slug;
+      }
+      return channelId;
+    }
     let info = this.docsByChannelMap.get(channelId);
     if (!info) this.docsByChannelMap.set(channelId, (info = { count: 0, latestId: "", latestTs: 0, latestAuthor: "", latestContent: "" }));
     info.count++;

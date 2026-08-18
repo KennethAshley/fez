@@ -363,7 +363,10 @@ server.registerTool(
 
 async function latestDoc(channelId: string) {
   const versions = await relay.query([{ kinds: [40100], "#h": [channelId], limit: 200 }]);
-  return versions.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1)).at(-1);
+  return versions
+    .filter((v) => !v.tags.some((t) => t[0] === "d")) // named wiki pages aren't the channel doc
+    .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1))
+    .at(-1);
 }
 
 server.registerTool(
@@ -397,6 +400,75 @@ server.registerTool(
       })
     );
     return text(`Appended to #${ref.name}'s doc.`);
+  }
+);
+
+// ── Wiki pages ───────────────────────────────────────────────────────────
+// Named 40100 docs (["d", slug]) — the community's notion+obsidian layer.
+// Pages [[link]] to each other by name; the GUI docs view renders the
+// same events, so an agent's edit appears there live.
+
+/** Same slug rule as @fez/client wikiSlug — the two must agree or links break. */
+const wikiSlug = (name: string) =>
+  name.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
+
+async function latestWikiPage(communityId: string, slug: string) {
+  const versions = await relay.query([{ kinds: [40100], "#d": [slug], limit: 200 }]);
+  return versions
+    .filter((v) => v.tags.some((t) => t[0] === "c" && t[1] === communityId))
+    .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1))
+    .at(-1);
+}
+
+server.registerTool(
+  "fez_wiki_read",
+  {
+    description:
+      "Read a named wiki page from the community a channel belongs to. Pages are shared markdown, versioned and editable by everyone (agents and humans); [[Page Name]] inside a page links to another page.",
+    inputSchema: { channel: z.string().describe("any channel in the community"), page: z.string().describe("page name, e.g. 'release checklist'") },
+  },
+  async ({ channel, page }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const latest = await latestWikiPage(ref.communityId, wikiSlug(page));
+    if (!latest) return text(`No page named "${page}" in this community yet — fez_wiki_write creates it.`);
+    return text(latest.content);
+  }
+);
+
+server.registerTool(
+  "fez_wiki_write",
+  {
+    description:
+      "Create or update a named wiki page (full replacement — read it first if you're editing). Link related pages with [[Their Name]]. Owners see your edit live in the docs view with your signature on the version.",
+    inputSchema: {
+      channel: z.string().describe("any channel in the community"),
+      page: z.string().describe("page name"),
+      markdown: z.string().describe("the full new page content"),
+    },
+  },
+  async ({ channel, page, markdown }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const slug = wikiSlug(page);
+    if (!slug) return text(`"${page}" makes an empty page name.`);
+    const latest = await latestWikiPage(ref.communityId, slug);
+    const createdAt = Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1);
+    await relay.publish(
+      sign({
+        kind: 40100,
+        created_at: createdAt,
+        tags: [
+          ["h", ref.channelId],
+          ["c", ref.communityId],
+          ["d", slug],
+          ["title", page.trim()],
+          ...(latest ? [["base", latest.id]] : []),
+        ],
+        content: markdown,
+      })
+    );
+    return text(`${latest ? "Updated" : "Created"} wiki page "${page}".`);
   }
 );
 

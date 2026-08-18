@@ -17,6 +17,7 @@ import SkillsView from "./SkillsView";
 import ProfilePane from "./ProfilePane";
 import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
+import WikiView from "./WikiView";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
@@ -64,6 +65,7 @@ type MainView =
   | { kind: "dm"; convoKey: string }
   | { kind: "home" }
   | { kind: "pulse" }
+  | { kind: "wiki" }
   | { kind: "workflows" }
   | { kind: "skills" };
 type SidePane =
@@ -475,11 +477,17 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <button className={view.kind === "pulse" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "pulse" })}>
           ◉ pulse
         </button>
+        <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
+          ▤ docs
+        </button>
         <button className={view.kind === "skills" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "skills" })}>
           ⊞ extensions
         </button>
         <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
           » workflows
+        </button>
+        <button className="channel home-link" onClick={openBrowse}>
+          ⌂ browse communities
         </button>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))
@@ -534,9 +542,6 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
               })}
             </div>
           ))}
-        <button className="channel home-link browse-link" onClick={openBrowse}>
-          + browse communities
-        </button>
         <div className="community">
           <div className="community-name">
             dms
@@ -661,6 +666,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           onWatch={(agent) => setPane({ kind: "watch", agent })}
         />
       )}
+      {view.kind === "wiki" && <WikiView client={client} />}
       {view.kind === "workflows" && <WorkflowsView client={client} />}
       {view.kind === "skills" && <SkillsView client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
