@@ -1482,6 +1482,15 @@ function ApprovalCard({
     ? [...reactions.entries()].find(([emoji, who]) => (emoji === "✅" || emoji === "❌") && who.size > 0)?.[0]
     : undefined;
   const action = msg.content.replace(/^⛔ approval needed:\s*/, "").replace(/\n\(react ✅.*$/s, "");
+  // NEVER toggle: toggleReaction would REMOVE an existing ✅ (found live —
+  // clicking approve on an already-approved ask silently un-approved it).
+  // A decision, once any ✅/❌ exists, stands.
+  const decideOnce = (emoji: "✅" | "❌") => {
+    const current = client.reactions(msg.id);
+    const alreadyDecided = current && [...current.entries()].some(([e, who]) => (e === "✅" || e === "❌") && who.size > 0);
+    if (alreadyDecided) return;
+    void client.toggleReaction(channelId, communityId, msg.id, emoji);
+  };
   return (
     <div className={`inline-proposal ${decided === "✅" ? "approved" : decided === "❌" ? "denied" : "pending"}`}>
       <div className="inline-proposal-body">
@@ -1494,10 +1503,10 @@ function ApprovalCard({
           <span className={`role-tag ${decided === "✅" ? "installed-tag" : ""}`}>{decided === "✅" ? "approved" : "denied"}</span>
         ) : (
           <>
-            <button className="agent-action approve-btn" onClick={() => void client.toggleReaction(channelId, communityId, msg.id, "✅")}>
+            <button className="agent-action approve-btn" onClick={() => decideOnce("✅")}>
               ✓ approve
             </button>
-            <button className="mini" onClick={() => void client.toggleReaction(channelId, communityId, msg.id, "❌")}>
+            <button className="mini" onClick={() => decideOnce("❌")}>
               ✗ deny
             </button>
           </>
