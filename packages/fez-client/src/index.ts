@@ -328,6 +328,11 @@ export class FezClient {
   agents(): Map<string, string> {
     return new Map(this.names);
   }
+  private agentMeta = new Map<string, { about?: string; skills?: string[] }>();
+  /** What an agent announced about itself (47000 about/skills) — undefined for humans. */
+  agentInfo(pk: string): { about?: string; skills?: string[] } | undefined {
+    return this.agentMeta.get(pk);
+  }
 
   /** Every pubkey we can name (agents outrank profiles) — autocomplete fodder. */
   knownNames(): Map<string, string> {
@@ -1083,10 +1088,16 @@ export class FezClient {
 
   private absorbName(event: WireEvent, emitChange = true): void {
     try {
-      const name = JSON.parse(event.content).name;
-      if (name && this.names.get(event.pubkey) !== name) {
-        this.names.set(event.pubkey, name);
+      const meta = JSON.parse(event.content) as { name?: string; about?: string; skills?: unknown };
+      if (meta.name && this.names.get(event.pubkey) !== meta.name) {
+        this.names.set(event.pubkey, meta.name);
         if (emitChange) this.emit("presenceChanged");
+      }
+      if (meta.name) {
+        this.agentMeta.set(event.pubkey, {
+          about: typeof meta.about === "string" ? meta.about : undefined,
+          skills: Array.isArray(meta.skills) ? meta.skills.filter((s): s is string => typeof s === "string") : undefined,
+        });
       }
     } catch { /* ignore */ }
   }

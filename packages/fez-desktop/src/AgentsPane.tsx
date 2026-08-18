@@ -4,6 +4,7 @@ import type { FezClient, ObserverEntry, WireEvent } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import ActivityFeed from "./ActivityFeed";
 import Avatar from "./Avatar";
+import HoverCard from "./HoverCard";
 import PersonaEditor from "./PersonaEditor";
 
 /**
@@ -139,7 +140,9 @@ export default function AgentsPane({
               <button key={agent.pk} className="agent-row" onClick={() => setSelected(agent.pk)}>
                 <Avatar pk={agent.pk} size={18} title={agent.name} />
                 <span className={agent.online ? "dot on" : "dot off"} />
-                <span className="agent-name">@{agent.name}</span>
+                <HoverCard client={client} pk={agent.pk}>
+                  <span className="agent-name">@{agent.name}</span>
+                </HoverCard>
                 {active && <span className="working">⚙</span>}
                 <span className="agent-sub">
                   {active ? busy.activity : client.statusOf(agent.pk) ?? (agent.online ? "online" : "offline")}

@@ -1007,3 +1007,24 @@ button.author:hover { text-decoration: underline; }
 
 .agent-edit { margin-left: 4px; color: var(--fg-dim); padding: 2px 5px; border-radius: 5px; }
 .agent-edit:hover { color: var(--accent); background: var(--bg2); }
+
+/* agent hover card — what can this name do, without clicking */
+.hovercard-wrap { position: relative; display: inline-flex; min-width: 0; }
+.hovercard {
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 60; width: 250px;
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--bg1); border: 1px solid var(--bg2); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55); padding: 10px 12px;
+  font-weight: 400; font-size: 12.5px; text-align: left; white-space: normal; cursor: default;
+}
+.hovercard.right { left: auto; right: 0; }
+.hovercard-head { display: flex; align-items: center; gap: 8px; }
+.hovercard-id { display: flex; flex-direction: column; min-width: 0; }
+.hovercard-name { font-weight: 700; }
+.hovercard-presence { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-dim); }
+.hovercard-about { color: var(--fg); line-height: 1.45; }
+.hovercard-about.dim { color: var(--fg-dim); font-style: italic; }
+.hovercard-skills { display: flex; flex-wrap: wrap; gap: 4px; }
+.hovercard-skill {
+  background: var(--bg2); border-radius: 8px; padding: 1px 7px; font-size: 11px; color: var(--fg-dim);
+}

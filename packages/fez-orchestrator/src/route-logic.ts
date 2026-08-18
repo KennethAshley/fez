@@ -23,6 +23,36 @@ export interface RoutableAgent {
   skills?: string[];
 }
 
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export type FleetQuestion = { kind: "agent"; name: string } | { kind: "roster" };
+
+/**
+ * Questions ABOUT the fleet never reach the router: fez holds the
+ * roster (names, descriptions, resolved skills) and answers them
+ * itself. Found live: "what can researcher do?" routed to reviewer —
+ * a 26M router has no concept of meta-questions, so this layer is
+ * deterministic, like small talk.
+ */
+export function fleetQuestion(text: string, agentNames: string[]): FleetQuestion | undefined {
+  const t = text.trim().toLowerCase().replace(/[\s?!.…]+$/, "");
+  if (
+    /^(what agents? (are (there|available|around|online)|do (you|we) have|can i use)|who('s| is) (available|around|online|on deck|in the fleet)|list (the |your |all )?agents?|what can (you all|everyone|the fleet) do|who do you have)$/.test(
+      t
+    )
+  ) {
+    return { kind: "roster" };
+  }
+  for (const name of agentNames) {
+    const n = escapeRe(name.toLowerCase());
+    const re = new RegExp(
+      `^(what (can|does) @?${n} (do|handle)|what('s| is) @?${n}( for| good at| about)?|who('s| is) @?${n}|what are @?${n}('s)? skills|tell me about @?${n}|describe @?${n})$`
+    );
+    if (re.test(t)) return { kind: "agent", name };
+  }
+  return undefined;
+}
+
 /**
  * One OpenAI function per agent. Tuned for tiny routers, measured on
  * needle: the tool NAME carries most of the routing signal

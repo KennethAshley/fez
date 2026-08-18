@@ -21,6 +21,7 @@ import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
 import Avatar from "./Avatar";
+import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
 import { runCommand } from "./commands";
 import Onboarding from "./Onboarding";
@@ -455,11 +456,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
               const group = key.includes("+");
               const active = view.kind === "dm" && view.convoKey === key;
               return (
-                <button key={key} className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
-                  {!group && <Avatar pk={key} size={16} title={client.dmTitle(key)} />}
-                  {group ? <span className="group-mark">&</span> : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
-                  {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
-                </button>
+                <HoverCard key={key} client={client} pk={key}>
+                  <button className={active ? "channel active" : "channel"} onClick={() => openDm(key)}>
+                    {!group && <Avatar pk={key} size={16} title={client.dmTitle(key)} />}
+                    {group ? <span className="group-mark">&</span> : <span className={client.isOnline(key) ? "dot on" : "dot off"} />} {client.dmTitle(key)}
+                    {convo.unread > 0 && !active && <span className="badge">{convo.unread}</span>}
+                  </button>
+                </HoverCard>
               );
             })}
         </div>
@@ -1175,7 +1178,9 @@ function DmView({
                 <Avatar pk={msg.senderPk} title={client.displayName(msg.senderPk)} size={30} />
               </button>
               <div className="bubble-head">
-                <button className="author" title="profile" onClick={() => onProfile(msg.senderPk)}>{client.displayName(msg.senderPk)}</button>
+                <HoverCard client={client} pk={msg.senderPk}>
+                  <button className="author" title="profile" onClick={() => onProfile(msg.senderPk)}>{client.displayName(msg.senderPk)}</button>
+                </HoverCard>
                 <span className="time">{new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
               <div className="bubble-body md"><MdBody text={msg.text} /></div>
@@ -1404,7 +1409,9 @@ function Bubble({
         <Avatar pk={msg.authorPk} title={msg.authorName} size={30} />
       </button>
       <div className="bubble-head">
-        <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
+        <HoverCard client={client} pk={msg.authorPk}>
+          <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
+        </HoverCard>
         <span className="time">{time}</span>
         {msg.edited && <span className="time">edited</span>}
         {pinned && <span className="pin-mark" title="pinned">⚑</span>}

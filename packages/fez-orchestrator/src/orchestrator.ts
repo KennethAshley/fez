@@ -11,7 +11,7 @@ import {
   KIND_MEMBERSHIP,
   KIND_REACTION,
 } from "@fez/protocol";
-import { isSmallTalk, agentTool } from "./route-logic.js";
+import { isSmallTalk, agentTool, fleetQuestion } from "./route-logic.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 
 /**
@@ -391,6 +391,40 @@ async function main() {
       ];
       console.log(`💬 Small talk from ${event.pubkey.slice(0, 8)} — answering in person`);
       await say(channelId, communityId, replies[Math.floor(Math.random() * replies.length)], threadTags).catch(() => {});
+      if (statusReactionIds.length > 0) {
+        void relay
+          .publish(
+            client.signEvent({
+              kind: KIND_DELETION,
+              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId], ["c", communityId]],
+              content: "",
+            })
+          )
+          .catch(() => {});
+      }
+      return;
+    }
+    // Fleet meta-questions ("what can researcher do?", "who's available?")
+    // are fez's own to answer — it holds the roster; routing them is a
+    // guaranteed misroute. Names in the reply are deliberately NOT
+    // @-prefixed: siblings treat @name anywhere as a summons.
+    const fleet = fleetQuestion(cleaned, routableNames());
+    if (fleet) {
+      const { byName } = buildTools();
+      let reply: string;
+      if (fleet.kind === "agent") {
+        const agent = byName.get(fleet.name);
+        reply = `🎩 ${fleet.name} — ${agent?.about ?? "hasn't announced a description"}${
+          agent?.skills?.length ? `. Skills: ${agent.skills.join(", ")}` : ""
+        }. Summon it with an @-mention.`;
+      } else {
+        const rows = [...byName.values()].map(
+          (agent) => `• ${agent.name} — ${agent.about ?? "no description"}${agent.skills?.length ? ` (skills: ${agent.skills.join(", ")})` : ""}`
+        );
+        reply = rows.length > 0 ? `🎩 the fleet right now:\n${rows.join("\n")}` : "🎩 nobody has announced themselves yet.";
+      }
+      console.log(`📖 Fleet question from ${event.pubkey.slice(0, 8)} — answering from the roster`);
+      await say(channelId, communityId, reply, threadTags).catch(() => {});
       if (statusReactionIds.length > 0) {
         void relay
           .publish(
