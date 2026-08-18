@@ -18,6 +18,7 @@ import {
   KIND_DELETION,
   KIND_DRAFT,
   KIND_MEMBERSHIP,
+  KIND_ARTIFACT,
   KIND_OBSERVER,
   KIND_OBSERVER_CONTROL,
   KIND_TURN_METRIC,
@@ -68,6 +69,26 @@ import { loadServiceKey, resolveChannels } from "./service-common.js";
  */
 /** Max agent-to-agent hops before an agent declines to respond — matches the TUI's local chain cap. */
 const MAX_CHAIN_DEPTH = 5;
+
+/**
+ * Artifact fences — how an agent ships rich output from ANY harness
+ * with zero plumbing: a fenced block in its reply becomes a typed
+ * 40300 event, and the reply keeps a short marker where it stood.
+ * Inline payloads cap at 30KB (relay ingest limits); bigger things
+ * belong on a media server with type+url instead.
+ */
+const ARTIFACT_FENCE = /```artifact:([\w-]+)(?:[ \t]+title="([^"\n]*)")?\r?\n([\s\S]*?)```/g;
+const ARTIFACT_INLINE_CAP = 30_000;
+
+function extractArtifacts(reply: string): { text: string; artifacts: { type: string; title?: string; content: string }[] } {
+  const artifacts: { type: string; title?: string; content: string }[] = [];
+  for (const match of reply.matchAll(ARTIFACT_FENCE)) {
+    artifacts.push({ type: match[1], title: match[2] || undefined, content: match[3].slice(0, ARTIFACT_INLINE_CAP) });
+  }
+  if (artifacts.length === 0) return { text: reply, artifacts };
+  const text = reply.replace(ARTIFACT_FENCE, (_all, type, title) => `📦 ${title || type} (artifact)`).trim();
+  return { text, artifacts };
+}
 
 async function main() {
   const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
@@ -969,6 +990,7 @@ async function main() {
             persona.systemPrompt ?? "",
             ...(memorySection ? [memorySection] : []),
             `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
+            `- Artifacts: to ship rich output (a web page, a data table, a report), put it in a fenced block starting \`\`\`artifact:html title="My page" (types: html, markdown, table = JSON array of objects, image = data: URI) — capable clients render it inline; keep it under ~30KB. Plain prose never needs this.`,
             `- Failure handling: if an agent you delegated to reports it couldn't finish, don't wait or re-ask identically — retry once with clearer instructions, do the piece yourself, or report the blocker up to whoever asked you. A dead hop must never silently end the chain.`,
             `- Callbacks: when you FINISH work that another agent or person handed you, @mention them in the message that reports the result, deliverable, or blocker — a completed handoff that never calls back stalls the whole chain. Completed work only: never @ to acknowledge, accept, or thank.`,
             `- Proposing teammates: if a task keeps needing a specialist that doesn't exist, you may propose one: run the shell command fez persona draft <name> --description "<what it's for>" --prompt "<system prompt>". The owner reviews and approves; NEVER claim the new agent exists until it answers a mention.`,
@@ -1017,16 +1039,28 @@ async function main() {
 
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = makeOnUpdate();
-        const reply = await promptSession(`ch:${channelId}`, buildPrompt, publishDraft, onUpdate, turnController.signal);
+        const rawReply = await promptSession(`ch:${channelId}`, buildPrompt, publishDraft, onUpdate, turnController.signal);
         // Never publish an empty message, whatever path produced it.
-        if (!reply.trim()) throw new Error("harness returned an empty reply");
+        if (!rawReply.trim()) throw new Error("harness returned an empty reply");
+        const { text: reply, artifacts } = extractArtifacts(rawReply);
 
         const replyEvent = client.signEvent({
           kind: KIND_CHANNEL_MESSAGE,
           tags: replyTags,
-          content: reply,
+          content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
         await relay.publish(replyEvent);
+        for (const artifact of artifacts) {
+          await relay
+            .publish(
+              client.signEvent({
+                kind: KIND_ARTIFACT,
+                tags: [["h", channelId], ["c", communityId], ["type", artifact.type]],
+                content: JSON.stringify(artifact),
+              })
+            )
+            .catch(() => {});
+        }
         publishObserver({ type: "turn", status: "done" });
         publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, reply.length);
         consecutiveFailures = 0;

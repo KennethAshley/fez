@@ -256,6 +256,19 @@ export default function communities(api: FezExtensionAPI): void {
     if (view.mode === "jobs") renderJobsView();
   });
 
+  // Typed artifacts (40300): the TUI's render IS the universal fallback
+  // — type, title, and a link when there's one. Rich rendering belongs
+  // to clients that registered a viewer; the wire never assumes any.
+  client.on("artifact", (channelId, artifact) => {
+    if (client.state.scope?.channelId !== channelId) return;
+    if (view.mode !== "chat") return;
+    api.ui.appendMessage(
+      artifact.authorName,
+      `📦 [${artifact.type}] ${artifact.title ?? ""}${artifact.url ? ` — ${artifact.url}` : artifact.content ? " (rendered in richer clients)" : ""}`.trim(),
+      artifact.ts
+    );
+  });
+
   client.on("message", (channelId, msg, ctx) => {
     if (!ctx.live) {
       if (client.state.scope?.channelId === channelId) scheduleTimelineRepaint();

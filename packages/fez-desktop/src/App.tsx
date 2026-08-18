@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { FezClient, setStatePersistence, type Msg, type ObserverEntry } from "@fez/client";
+import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry } from "@fez/client";
 import { BrowserWire } from "./wire";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -19,6 +19,7 @@ import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
+import { viewerFor } from "./artifact-viewers";
 import Avatar from "./Avatar";
 import { uploadFile, shareLine } from "./upload";
 import { runCommand } from "./commands";
@@ -238,7 +239,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
       "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
-      "dmMessage", "jobsChanged", "notice", "workflowRunsChanged",
+      "dmMessage", "jobsChanged", "notice", "workflowRunsChanged", "artifact",
     ] as const;
     for (const name of events) client.on(name, render as never);
     client.on("draft", ((channelId: string, authorPk: string, content: string, rootId?: string) => {
@@ -761,6 +762,12 @@ function ChannelView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const messages = client.messages(channelId);
   const shown = threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages.filter((m) => !m.parentId);
+  // Typed artifacts interleave by time (channel view only — they don't thread).
+  type TimelineRow = { ts: number; msg?: Msg; artifact?: Artifact };
+  const rows: TimelineRow[] = [
+    ...shown.map((m) => ({ ts: m.ts, msg: m })),
+    ...(threadRoot ? [] : client.artifacts(channelId).map((a) => ({ ts: a.ts, artifact: a }))),
+  ].sort((a, b) => a.ts - b.ts);
   const now = Date.now();
   const liveDrafts = [...(drafts?.entries() ?? [])].filter(([, d]) => now - d.ts < 15_000);
   const draftsForRoot = (rootId: string) => liveDrafts.filter(([, d]) => d.rootId === rootId);
@@ -905,9 +912,21 @@ function ChannelView({
             </p>
           </div>
         )}
-        {shown.map((msg, index) => (
+        {rows.map((row, index) => {
+          if (row.artifact) {
+            return (
+              <div key={row.artifact.id}>
+                {(index === 0 || !sameDay(rows[index - 1].ts, row.ts)) && (
+                  <div className="day-divider"><span>{dayLabel(row.ts)}</span></div>
+                )}
+                <ArtifactCard artifact={row.artifact} onAuthor={() => onProfile(row.artifact!.authorPk)} />
+              </div>
+            );
+          }
+          const msg = row.msg!;
+          return (
           <div key={msg.id} id={`msg-${msg.id}`} className={msg.id === focusId ? "focus-flash" : undefined}>
-            {(index === 0 || !sameDay(shown[index - 1].ts, msg.ts)) && (
+            {(index === 0 || !sameDay(rows[index - 1].ts, msg.ts)) && (
               <div className="day-divider"><span>{dayLabel(msg.ts)}</span></div>
             )}
             <Bubble
@@ -923,7 +942,8 @@ function ChannelView({
             />
             {!threadRoot && <RootLiveArea client={client} rootId={msg.id} drafts={draftsForRoot(msg.id)} />}
           </div>
-        ))}
+          );
+        })}
         {threadRoot &&
           draftsForRoot(threadRoot).map(([pk, d]) => <StreamingBubble key={pk} author={client.displayName(pk)} text={d.content} />)}
         <div ref={bottomRef} />
@@ -1243,6 +1263,35 @@ function CostsPane({ client, wire, onClose }: { client: FezClient; wire: Browser
         ))}
       </div>
     </aside>
+  );
+}
+
+/**
+ * A typed artifact in the timeline: header names the type/author, the
+ * registered viewer renders the payload; no viewer for the type (or a
+ * bare payload) degrades to exactly what the TUI shows — title + link.
+ */
+function ArtifactCard({ artifact, onAuthor }: { artifact: Artifact; onAuthor: () => void }) {
+  const Viewer = viewerFor(artifact.type);
+  const body = Viewer ? <Viewer artifact={artifact} /> : null;
+  return (
+    <div className="artifact-card">
+      <div className="artifact-head">
+        <span className="role-tag">📦 {artifact.type}</span>
+        {artifact.title && <span className="artifact-title">{artifact.title}</span>}
+        <button className="author artifact-author" onClick={onAuthor}>{artifact.authorName}</button>
+        <span className="time">{new Date(artifact.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+      </div>
+      {body ?? (
+        <div className="artifact-fallback">
+          {artifact.url ? (
+            <button className="skill-link" onClick={() => void openUrl(artifact.url!)}>open {artifact.title ?? artifact.type}</button>
+          ) : (
+            <span className="settings-hint">no viewer for "{artifact.type}" — a GUI extension can register one</span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

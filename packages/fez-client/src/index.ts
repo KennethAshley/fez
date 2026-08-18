@@ -101,6 +101,7 @@ export const K = {
   PROFILE: 0,
   USER_STATUS: 30315,
   BAN_LIST: 30047,
+  ARTIFACT: 40300,
 } as const;
 
 const DM_FUZZ_WINDOW_S = 2 * 86_400;
@@ -156,6 +157,20 @@ export interface ObserverEntry {
   ts: number;
 }
 
+/** Typed agent output (kind 40300): canvas/html/pdf/table — the wire
+ * carries type+payload; RENDERING is the client's business (viewers
+ * register per type; bare clients show title+link). */
+export interface Artifact {
+  id: string;
+  authorPk: string;
+  authorName: string;
+  type: string;
+  title?: string;
+  url?: string;
+  content?: string;
+  ts: number;
+}
+
 export interface DmMessage {
   id: string;
   senderPk: string;
@@ -207,6 +222,8 @@ export interface ClientEvents {
   jobsChanged: () => void;
   observerFrame: (agent: string, frame: ObserverEntry) => void;
   workflowRunsChanged: () => void;
+  /** A typed artifact landed in a channel. */
+  artifact: (channelId: string, artifact: Artifact) => void;
   /** Client-level announcements a view should surface (first-run bootstrap etc.). */
   notice: (text: string) => void;
 }
@@ -265,6 +282,8 @@ export class FezClient {
 
   // docs
   private docsByChannelMap = new Map<string, DocInfo>();
+  private artifactsByChannel = new Map<string, Artifact[]>();
+  private seenArtifactIds = new Set<string>();
   private seenDocIds = new Set<string>();
 
   constructor(wire: Wire) {
@@ -405,6 +424,9 @@ export class FezClient {
   }
   docsByChannel(): ReadonlyMap<string, DocInfo> {
     return this.docsByChannelMap;
+  }
+  artifacts(channelId: string): readonly Artifact[] {
+    return this.artifactsByChannel.get(channelId) ?? [];
   }
   channelExhausted(channelId: string): boolean {
     return this.exhaustedChannels.has(channelId);
@@ -838,6 +860,13 @@ export class FezClient {
   // ── History windows (Buzz's channel window, dumb-relay-shaped) ─────────
 
   async loadChannelHistory(channelId: string, communityId: string): Promise<void> {
+    // Artifacts backfill rides alongside — failures never block messages.
+    void this.wire
+      .query([{ kinds: [K.ARTIFACT], "#h": [channelId], limit: 50 }])
+      .then((events) => {
+        for (const event of events) this.absorbArtifact(event);
+      })
+      .catch(() => {});
     const [msgs, reactions, deletions, ops] = await Promise.all([
       this.wire.query([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
       this.wire.query([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
@@ -1095,7 +1124,7 @@ export class FezClient {
         { kinds: [K.COMMUNITY, K.CHANNEL, K.MEMBERSHIP], "#c": ids },
         { kinds: [K.COMMUNITY, K.BAN_LIST], "#d": ids },
         {
-          kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK],
+          kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK, K.ARTIFACT],
           "#h": this.channelIdsOfJoined(),
           since: Math.floor(Date.now() / 1000),
         },
@@ -1117,6 +1146,7 @@ export class FezClient {
       case K.MSG_PIN: return this.handleMsgPin(event);
       case K.MSG_BOOKMARK: return this.handleMsgBookmark(event);
       case K.DOC: return this.handleDocEvent(event);
+      case K.ARTIFACT: return this.absorbArtifact(event);
       case K.AGENT_METADATA: return this.absorbName(event);
       case K.MESSAGE: return this.handleIncomingMessage(event);
       default: {
@@ -1355,6 +1385,39 @@ export class FezClient {
       while (this.workflowRunsMap.size > 50) this.workflowRunsMap.delete(this.workflowRunsMap.keys().next().value as string);
       this.emit("workflowRunsChanged");
     } catch { /* not a trace we understand */ }
+  }
+
+  /** Kind 40300 — member-gated like messages; malformed payloads dropped. */
+  private absorbArtifact(event: WireEvent): void {
+    if (this.seenArtifactIds.has(event.id)) return;
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+    if (!channelId || !communityId) return;
+    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    let body: { type?: string; title?: string; url?: string; content?: string };
+    try {
+      body = JSON.parse(event.content);
+    } catch {
+      return;
+    }
+    if (!body.type || typeof body.type !== "string") return;
+    this.seenArtifactIds.add(event.id);
+    const artifact: Artifact = {
+      id: event.id,
+      authorPk: event.pubkey,
+      authorName: this.displayName(event.pubkey),
+      type: body.type.slice(0, 32),
+      title: typeof body.title === "string" ? body.title.slice(0, 200) : undefined,
+      url: typeof body.url === "string" ? body.url : undefined,
+      content: typeof body.content === "string" ? body.content : undefined,
+      ts: event.created_at,
+    };
+    const list = this.artifactsByChannel.get(channelId) ?? [];
+    list.push(artifact);
+    list.sort((a, b) => a.ts - b.ts);
+    if (list.length > 100) list.splice(0, list.length - 100);
+    this.artifactsByChannel.set(channelId, list);
+    this.emit("artifact", channelId, artifact);
   }
 
   private handleObserverFrame(event: WireEvent): void {
