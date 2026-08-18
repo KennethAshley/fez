@@ -1,0 +1,30 @@
+{
+  "name": "@fez/bittensor",
+  "version": "0.1.0",
+  "description": "Fez extension for Bittensor — discovers subnets via taostats.io, inspects repos, and orchestrates Docker miners",
+  "type": "module",
+  "main": "dist/extension.bundle.js",
+  "scripts": {
+    "build": "tsc && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@fez/protocol": "file:../.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "fez": {
+    "type": "extension",
+    "extension": {
+      "entry": "dist/extension.js"
+    },
+    "parts": {
+      "headless": "dist/extension.js",
+      "gui": "dist/gui.js"
+    }
+  },
+  "keywords": ["fez-package", "extension", "bittensor", "taostats", "mining"],
+  "license": "MIT"
+}

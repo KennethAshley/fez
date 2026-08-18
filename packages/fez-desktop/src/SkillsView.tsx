@@ -60,6 +60,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
   const [installs, setInstalls] = useState<Map<string, number>>(new Map());
   const [copied, setCopied] = useState<string>();
   const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[] }[]>([]);
+  const [localParts, setLocalParts] = useState<Record<string, string[]>>({});
 
   const flash = (text: string) => {
     setNotice(text);
@@ -70,6 +71,9 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
     void invoke<string>("read_skills")
       .then((json) => setInstalled(JSON.parse(json) as Record<string, SkillConfig>))
       .catch(() => setInstalled({}));
+    void invoke<[string, string[]][]>("list_local_extensions")
+      .then((rows) => setLocalParts(Object.fromEntries(rows)))
+      .catch(() => setLocalParts({}));
   }, []);
 
   useEffect(() => {
@@ -311,11 +315,39 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             Your local definitions. Secrets are managed in settings (⌘,) → skills &amp; secrets. "Share" signs a
             listing to your relay so others can install it (env values are never included).
           </div>
-          {Object.keys(installed).length === 0 && <div className="pane-empty">nothing installed yet</div>}
+          {Object.keys(installed).length === 0 && Object.keys(localParts).length === 0 && (
+            <div className="pane-empty">nothing installed yet</div>
+          )}
+          {Object.entries(localParts)
+            .filter(([name]) => !installed[name])
+            .map(([name, parts]) => (
+              <div key={name} className="skill-row">
+                <div className="skill-main">
+                  <span className="skill-name">{name}</span>
+                  <span className="skill-deps">
+                    {parts.map((part) => (
+                      <span key={part} className="role-tag">{part}</span>
+                    ))}
+                  </span>
+                  <code className="skill-cmd">
+                    extension parts — {parts.includes("gui") ? "loads in this app" : "loads in the TUI/clients"}
+                    {parts.includes("gui") && parts.includes("headless") ? " and the TUI" : ""}
+                  </code>
+                </div>
+              </div>
+            ))}
           {Object.entries(installed).map(([name, config]) => (
             <div key={name} className="skill-row">
               <div className="skill-main">
                 <span className="skill-name">{name}</span>
+                {localParts[name] && (
+                  <span className="skill-deps">
+                    {localParts[name].map((part) => (
+                      <span key={part} className="role-tag">{part}</span>
+                    ))}
+                    <span className="role-tag">skill</span>
+                  </span>
+                )}
                 <code className="skill-cmd">{runsLine(config)}</code>
                 {config.env && Object.keys(config.env).length > 0 && (
                   <span className="skill-env skill-deps">

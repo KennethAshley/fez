@@ -104,20 +104,24 @@ async function importModule(code: string): Promise<{ default?: Activate; activat
   try {
     const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
     try {
-      return (await import(/* @vite-ignore */ url)) as { default?: Activate; activate?: Activate };
+      const mod = (await import(/* @vite-ignore */ url)) as { default?: Activate; activate?: Activate };
+      // An IIFE bundle imports "successfully" as an EMPTY module — only
+      // accept the module path when it actually exports an activate.
+      if (typeof mod?.default === "function" || typeof mod?.activate === "function") return mod;
     } finally {
       URL.revokeObjectURL(url);
     }
   } catch {
-    // …but WKWebView has historically refused module imports from blob:
-    // URLs. Fallback: evaluate an IIFE bundle (esbuild --format=iife
-    // --global-name=__fezExt) and pick up its exports object.
-    const factory = new Function(`${code}\n;return (typeof __fezExt !== "undefined" ? __fezExt : undefined);`);
-    const exported = factory() as { default?: Activate; activate?: Activate } | Activate | undefined;
-    if (typeof exported === "function") return { default: exported };
-    if (exported) return exported;
-    throw new Error("neither an importable module nor an IIFE with global __fezExt");
+    // WKWebView has historically refused module imports from blob: URLs —
+    // fall through to the IIFE path either way.
   }
+  // Fallback: evaluate an IIFE bundle (esbuild --format=iife
+  // --global-name=__fezExt) and pick up its exports object.
+  const factory = new Function(`${code}\n;return (typeof __fezExt !== "undefined" ? __fezExt : undefined);`);
+  const exported = factory() as { default?: Activate; activate?: Activate } | Activate | undefined;
+  if (typeof exported === "function") return { default: exported };
+  if (exported) return exported;
+  throw new Error("neither an importable module nor an IIFE with global __fezExt");
 }
 
 export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
