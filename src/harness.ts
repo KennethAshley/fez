@@ -95,6 +95,19 @@ export interface HarnessSession {
  */
 const PROGRESS_THROTTLE_MS = 150;
 
+/**
+ * pi-acp interleaves transport retry notices into agent_message chunks
+ * ("Retrying (attempt 1/3, waiting 2s)...", "Retry finished, resuming.").
+ * That's status, not reply — seen live posting as an agent's ENTIRE
+ * channel message, which also broke the callback chain behind it.
+ * Scrubbed at every emission point; accumulation stays raw so partial
+ * chunks still concatenate.
+ */
+const HARNESS_NOISE = /Retrying \(attempt \d+\/\d+, waiting \d+s\)\.\.\.|Retry finished, resuming\.?/g;
+function scrubNoise(text: string): string {
+  return text.replace(HARNESS_NOISE, "").replace(/^[ \t]*\n/, "");
+}
+
 export interface TimeoutOptions {
   /** Abort if no session/update arrives for this long — the agent has gone silent. */
   idleMs: number;
@@ -297,14 +310,14 @@ async function drivePrompt(
       const now = Date.now();
       if (onUpdate && now - lastTextAt >= PROGRESS_THROTTLE_MS) {
         lastTextAt = now;
-        onUpdate({ type: "text", text });
+        onUpdate({ type: "text", text: scrubNoise(text) });
       }
     } else if (update.sessionUpdate === "agent_thought_chunk" && update.content.type === "text") {
       thought += update.content.text;
       const now = Date.now();
       if (onUpdate && now - lastThoughtAt >= PROGRESS_THROTTLE_MS) {
         lastThoughtAt = now;
-        onUpdate({ type: "thought", text: thought });
+        onUpdate({ type: "thought", text: scrubNoise(thought) });
       }
     } else if (update.sessionUpdate === "tool_call") {
       onUpdate?.({
@@ -355,16 +368,17 @@ async function drivePrompt(
     const now = Date.now();
     if (onProgress && now - lastProgressAt >= PROGRESS_THROTTLE_MS) {
       lastProgressAt = now;
-      onProgress(text);
+      onProgress(scrubNoise(text));
     }
   }
 
   // Final flush: text inside the last throttle window was never reported.
-  if (onProgress && text) onProgress(text);
-  if (onUpdate && thought) onUpdate({ type: "thought", text: thought });
-  if (onUpdate && text) onUpdate({ type: "text", text });
+  const cleanText = scrubNoise(text);
+  if (onProgress && cleanText) onProgress(cleanText);
+  if (onUpdate && thought) onUpdate({ type: "thought", text: scrubNoise(thought) });
+  if (onUpdate && cleanText) onUpdate({ type: "text", text: cleanText });
 
-  return text;
+  return cleanText;
 }
 
 /**
@@ -566,7 +580,7 @@ export function classifyTurnError(err: unknown): TurnErrorKind {
   if (err instanceof Error && err.name === "AbortError") return "aborted";
   const message = err instanceof Error ? err.message : String(err);
   if (/Re-authenticate|API Error: 401|oauth|authenticat|logged in/i.test(message)) return "auth";
-  if (/timed? ?out|went silent|hard deadline|ECONNREFUSED|ECONNRESET|ENOTFOUND|EPIPE|socket|network|overloaded|529|rate.?limit|exited (with|before)/i.test(message)) {
+  if (/timed? ?out|went silent|hard deadline|ECONNREFUSED|ECONNRESET|ENOTFOUND|EPIPE|socket|network|overloaded|529|rate.?limit|exited (with|before)|empty reply/i.test(message)) {
     return "transient";
   }
   return "fatal";

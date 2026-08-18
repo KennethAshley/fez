@@ -646,6 +646,12 @@ async function main() {
     try {
       const instruction = withHandoff(scope, await buildPrompt(!pooled.primed), !pooled.primed);
       const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
+      // An empty reply is a FAILED turn, not a publishable one (seen
+      // live: pi provider flaked, harness emitted only retry noise, the
+      // scrubbed remainder was "" — and an empty message still breaks
+      // the callback chain behind it). Throw as transient so the
+      // recycle-and-replay path below gets one shot at it.
+      if (!reply.trim()) throw new Error("transient: harness returned an empty reply");
       pooled.primed = true;
       pooled.turns++;
       pooled.lastUsed = Date.now();
