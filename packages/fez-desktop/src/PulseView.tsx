@@ -267,6 +267,20 @@ export default function PulseView({
     return rows.slice(0, 300);
   }, [turns, client, now, rangeMs, channelFilter]);
 
+  // live feed: merge every agent's observer entries into one ticker.
+  // No useMemo — the activity Map is mutated in place upstream, so its
+  // identity never changes; memoizing on it would freeze the feed.
+  const liveFeed = (() => {
+    const rows: { agent: string; entry: ObserverEntry }[] = [];
+    for (const [agent, entries] of activity) {
+      for (const entry of entries) {
+        if (entry.type === "thought" || entry.type === "tool" || entry.type === "turn") rows.push({ agent, entry });
+      }
+    }
+    rows.sort((a, b) => (b.entry.ts ?? 0) - (a.entry.ts ?? 0));
+    return rows.slice(0, 50);
+  })();
+
   const maxDay = Math.max(1, ...days14.map((d) => d.ok + d.failed));
   const [hover, setHover] = useState<number>();
   const hovered = hover !== undefined ? days14[hover] : undefined;
@@ -287,6 +301,34 @@ export default function PulseView({
           <StatTile label="spend · 24h" value={turns ? (tiles.cost !== undefined ? `$${tiles.cost.toFixed(2)}` : "—") : "…"} />
           <StatTile label="tokens · 24h" value={turns ? (tiles.tokens ? compact(tiles.tokens) : "—") : "…"} />
           <StatTile label="active now" value={String(tiles.activeNow)} />
+        </div>
+
+        {/* ── live feed: the fleet's console, tailing itself ── */}
+        <div className="pulse-section">
+          <div className="pulse-section-head">
+            <span>live</span>
+            {tiles.activeNow > 0 && <span className="live-dot" title="agents working now" />}
+          </div>
+          {liveFeed.length === 0 ? (
+            <div className="pane-empty">quiet — this fills as agents think, run tools, and finish turns</div>
+          ) : (
+            <div className="live-feed">
+              {liveFeed.map(({ agent, entry }, i) => (
+                <div key={i} className={`live-row ${entry.type}${entry.status === "failed" ? " failed" : ""}`}>
+                  <span className="pulse-time">
+                    {new Date(entry.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </span>
+                  {agentPk.get(agent) && <Avatar pk={agentPk.get(agent)!} size={14} title={agent} />}
+                  <span className="pulse-event-agent">@{agent}</span>
+                  <span className="pulse-event-text">
+                    {entry.type === "tool" && `⚙ ${entry.title ?? entry.kind ?? "tool"}${entry.path ? ` — ${entry.path}` : ""}${entry.status ? ` · ${entry.status}` : ""}`}
+                    {entry.type === "thought" && (entry.text ?? "").replace(/\s+/g, " ").slice(-160)}
+                    {entry.type === "turn" && `turn ${entry.status ?? ""}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── 14-day fleet chart ── */}

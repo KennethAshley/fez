@@ -959,3 +959,16 @@ button.author:hover { text-decoration: underline; }
   font-family: var(--font-mono); white-space: nowrap;
 }
 .artifact-table th { color: var(--yellow); }
+
+/* live feed — the fleet's console */
+.live-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--viz-ok);
+  animation: livepulse 1.4s ease-in-out infinite;
+}
+@keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.live-feed { max-height: 260px; overflow-y: auto; }
+.live-row { display: flex; align-items: center; gap: 8px; padding: 2px 4px; font-size: 12px; border-radius: 4px; }
+.live-row .pulse-time { width: 64px; min-width: 64px; }
+.live-row.thought .pulse-event-text { color: var(--fg-dim); font-style: italic; }
+.live-row.turn .pulse-event-text { color: var(--viz-ok); }
+.live-row.turn.failed .pulse-event-text { color: var(--viz-fail); }
