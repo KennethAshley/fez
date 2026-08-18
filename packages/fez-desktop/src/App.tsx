@@ -66,7 +66,6 @@ type SidePane =
   | { kind: "costs" }
   | { kind: "agents" }
   | { kind: "manage" }
-  | { kind: "settings" }
   | { kind: "profile"; pk: string }
   | { kind: "reminders" }
   | { kind: "docs"; channelId: string; communityId: string }
@@ -277,11 +276,17 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
 
   // ⌘K — Buzz's topbar search, as a palette (also /search <words>).
   const [searchOpen, setSearchOpen] = useState<false | { query: string }>(false);
+  const [selfMenu, setSelfMenu] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setSearchOpen((open) => (open ? false : { query: "" }));
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -376,21 +381,6 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <div className="brand">
           <span className="brand-word">fez</span>{" "}
           <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />
-          <button className="rail-tool" title="search (⌘K)" onClick={() => setSearchOpen({ query: "" })}>
-            ⌕
-          </button>
-          <button className="rail-tool" title="agents" onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}>
-            @
-          </button>
-          <button className="rail-tool" title="agent costs" onClick={() => setPane(pane?.kind === "costs" ? undefined : { kind: "costs" })}>
-            $
-          </button>
-          <button className="rail-tool" title="reminders" onClick={() => setPane(pane?.kind === "reminders" ? undefined : { kind: "reminders" })}>
-            ◷
-          </button>
-          <button className="rail-tool" title="settings" onClick={() => setPane(pane?.kind === "settings" ? undefined : { kind: "settings" })}>
-            ⚙
-          </button>
         </div>
         <div className="rail-scroll">
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
@@ -469,30 +459,59 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           onProfile={(pk) => setPane(pane?.kind === "profile" && pane.pk === pk ? undefined : { kind: "profile", pk })}
         />
         </div>
-        <button
-          className="self-card"
-          title="your profile"
-          onClick={() =>
-            setPane(pane?.kind === "profile" && pane.pk === client.pubkey ? undefined : { kind: "profile", pk: client.pubkey })
-          }
-        >
-          <Avatar pk={client.pubkey} size={28} title="you" />
-          <span className="self-meta">
-            <span className="self-name">{client.knownNames().get(client.pubkey) ?? "you"}</span>
-            <span className="self-status">{client.statusOf(client.pubkey) ?? (connected ? "online" : "reconnecting…")}</span>
-          </span>
-          <span className={connected ? "dot on" : "dot off"} />
-          <span
-            className="self-gear"
-            title="settings"
-            onClick={(e) => {
-              e.stopPropagation();
-              setPane(pane?.kind === "settings" ? undefined : { kind: "settings" });
-            }}
-          >
-            ⚙
-          </span>
-        </button>
+        <div className="self-wrap">
+          {selfMenu && (
+            <>
+              <div className="menu-backdrop" onClick={() => setSelfMenu(false)} />
+              <div className="self-menu">
+                <div className="self-menu-head" title={client.pubkey}>
+                  {client.pubkey.slice(0, 16)}…
+                </div>
+                {(
+                  [
+                    ["⊙", "profile", () => setPane({ kind: "profile", pk: client.pubkey })],
+                    ["⌕", "search", () => setSearchOpen({ query: "" }), "⌘K"],
+                    ["@", "agents", () => setPane({ kind: "agents" })],
+                    ["$", "costs", () => setPane({ kind: "costs" })],
+                    ["◷", "reminders", () => setPane({ kind: "reminders" })],
+                  ] as [string, string, () => void, string?][]
+                ).map(([glyph, label, action, key]) => (
+                  <button
+                    key={label}
+                    className="self-menu-item"
+                    onClick={() => {
+                      setSelfMenu(false);
+                      action();
+                    }}
+                  >
+                    <span className="self-menu-glyph">{glyph}</span> {label}
+                    {key && <span className="self-menu-key">{key}</span>}
+                  </button>
+                ))}
+                <div className="self-menu-rule" />
+                <button
+                  className="self-menu-item"
+                  onClick={() => {
+                    setSelfMenu(false);
+                    setSettingsOpen(true);
+                  }}
+                >
+                  <span className="self-menu-glyph">⚙</span> settings
+                  <span className="self-menu-key">⌘,</span>
+                </button>
+              </div>
+            </>
+          )}
+          <button className="self-card" title="menu" onClick={() => setSelfMenu((open) => !open)}>
+            <Avatar pk={client.pubkey} size={28} title="you" />
+            <span className="self-meta">
+              <span className="self-name">{client.knownNames().get(client.pubkey) ?? "you"}</span>
+              <span className="self-status">{client.statusOf(client.pubkey) ?? (connected ? "online" : "reconnecting…")}</span>
+            </span>
+            <span className={connected ? "dot on" : "dot off"} />
+            <span className="self-chevron">{selfMenu ? "⌄" : "⌃"}</span>
+          </button>
+        </div>
       </aside>
 
       {view.kind === "channel" && scope && (
@@ -578,7 +597,13 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         />
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
-      {pane?.kind === "settings" && <SettingsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
+      {settingsOpen && (
+        <div className="overlay settings-overlay" onClick={(e) => e.target === e.currentTarget && setSettingsOpen(false)}>
+          <div className="settings-modal">
+            <SettingsPane client={client} wire={wire} onClose={() => setSettingsOpen(false)} />
+          </div>
+        </div>
+      )}
       {pane?.kind === "reminders" && (
         <RemindersPane
           client={client}
@@ -613,7 +638,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           working={working}
           onDm={openDm}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
-          onSettings={() => setPane({ kind: "settings" })}
+          onSettings={() => setSettingsOpen(true)}
           onClose={() => setPane(undefined)}
         />
       )}

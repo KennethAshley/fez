@@ -734,8 +734,41 @@ button.author:hover { text-decoration: underline; }
 .self-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .self-name { font-weight: 700; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .self-status { font-size: 10.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.self-gear { color: var(--fg-dim); padding: 2px 4px; border-radius: 5px; }
-.self-gear:hover { color: var(--fg); background: var(--bg2); }
+.self-chevron { color: var(--fg-dim); padding: 2px 4px; font-size: 11px; }
+.self-card:hover .self-chevron { color: var(--fg); }
+
+/* Claude-style user menu, anchored above the self card */
+.self-wrap { position: relative; margin: 0 -8px; }
+.self-wrap .self-card { width: 100%; margin: 0; }
+.menu-backdrop { position: fixed; inset: 0; z-index: 39; }
+.self-menu {
+  position: absolute; bottom: calc(100% + 6px); left: 8px; right: 8px; z-index: 40;
+  background: var(--bg1); border: 1px solid var(--bg2); border-radius: 10px; overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5); padding: 4px 0;
+}
+.self-menu-head {
+  padding: 8px 12px 6px; font-size: 10.5px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.self-menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--fg); font: inherit; font-family: var(--font-mono);
+  font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+}
+.self-menu-item:hover { background: var(--bg2); color: var(--accent); }
+.self-menu-glyph { width: 16px; text-align: center; color: var(--fg-dim); }
+.self-menu-item:hover .self-menu-glyph { color: var(--accent); }
+.self-menu-key { margin-left: auto; font-size: 10.5px; color: var(--fg-dim); }
+.self-menu-rule { height: 1px; margin: 4px 0; background: var(--bg2); }
+
+/* settings as a centered modal (Claude's pattern) */
+.settings-overlay { align-items: center; padding-top: 0; }
+.settings-modal { width: min(640px, 92vw); max-height: 82vh; display: flex; }
+.settings-modal .pane {
+  width: 100%; min-width: 0; border-left: 0; border: 1px solid var(--bg2);
+  border-radius: 12px; overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  max-height: 82vh;
+}
 .agent-ghost { color: var(--fg-dim); font-size: 14px; width: 18px; text-align: center; }
 
 /* ── formatting tray, new dm, archive ──────────────────────── */
