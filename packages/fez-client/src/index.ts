@@ -954,7 +954,10 @@ export class FezClient {
     // Names roster: agent announcements + human kind-0 profiles + status.
     try {
       const [metadataEvents, profileEvents, statusEvents] = await Promise.all([
-        this.wire.query([{ kinds: [K.AGENT_METADATA], limit: 200 }]),
+        // Same 7-day window as the live subscription below — without it the
+        // boot query resurrects every agent that EVER announced (found live:
+        // throwaway test agents from days ago haunting the roster forever).
+        this.wire.query([{ kinds: [K.AGENT_METADATA], since: Math.floor(Date.now() / 1000) - 7 * 86400, limit: 200 }]),
         this.wire.query([{ kinds: [K.PROFILE], limit: 200 }]),
         this.wire.query([{ kinds: [K.USER_STATUS], limit: 200 }]),
       ]);
