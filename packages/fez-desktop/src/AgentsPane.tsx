@@ -476,6 +476,17 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
   return (
     <div className="pane-body">
       <div className="settings-field">
+        <label>name (becomes the @mention)</label>
+        <input
+          className="manage-input"
+          value={name}
+          autoFocus
+          spellCheck={false}
+          placeholder="scout"
+          onChange={(e) => setName(e.target.value.toLowerCase())}
+        />
+      </div>
+      <div className="settings-field">
         <label>template</label>
         <select className="manage-select" value={template} onChange={(e) => pickTemplate(e.target.value as "blank" | "bridge")}>
           <option value="blank">blank agent</option>
@@ -507,17 +518,6 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
           </div>
         </>
       )}
-      <div className="settings-field">
-        <label>name (becomes the @mention)</label>
-        <input
-          className="manage-input"
-          value={name}
-          autoFocus
-          spellCheck={false}
-          placeholder="scout"
-          onChange={(e) => setName(e.target.value.toLowerCase())}
-        />
-      </div>
       <div className="settings-field">
         <label>harness</label>
         <select className="manage-select" value={harness} onChange={(e) => setHarness(e.target.value)}>
