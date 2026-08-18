@@ -232,6 +232,71 @@ fn list_gui_extensions() -> Result<Vec<(String, String)>, String> {
     Ok(out)
 }
 
+
+fn bench_ledger_path() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    Ok(std::path::Path::new(&home).join(".fez").join("bench").join("proposals.jsonl"))
+}
+
+/// The fez-bench proposal ledger (append-only JSONL) — raw lines; the
+/// webview folds proposals + decisions.
+#[tauri::command]
+fn read_bench_proposals() -> Result<String, String> {
+    Ok(std::fs::read_to_string(bench_ledger_path()?).unwrap_or_default())
+}
+
+/// Record an approve/deny decision. Approving a description proposal
+/// also APPLIES it to the persona file — same behavior as the CLI.
+#[tauri::command]
+fn decide_bench_proposal(id: String, approve: bool) -> Result<(), String> {
+    let path = bench_ledger_path()?;
+    let raw = std::fs::read_to_string(&path).map_err(|_| "no proposal ledger".to_string())?;
+    let mut target: Option<serde_json::Value> = None;
+    let mut decided = false;
+    for line in raw.lines().filter(|l| !l.trim().is_empty()) {
+        let entry: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        if entry["id"].as_str() == Some(id.as_str()) {
+            match entry["type"].as_str() {
+                Some("proposal") => target = Some(entry),
+                Some("decision") => decided = true,
+                _ => {}
+            }
+        }
+    }
+    let proposal = target.ok_or(format!("no proposal {id}"))?;
+    if decided {
+        return Err(format!("proposal {id} already decided"));
+    }
+    if approve && proposal["kind"].as_str() == Some("description") {
+        let agent = proposal["agent"].as_str().ok_or("proposal missing agent")?;
+        if !valid_persona_name(agent) {
+            return Err("bad agent name in proposal".to_string());
+        }
+        let to = proposal["to"].as_str().ok_or("proposal missing new description")?;
+        let persona_path = persona_dir()?.join(format!("{agent}.md"));
+        let content = std::fs::read_to_string(&persona_path).map_err(|e| format!("persona unreadable: {e}"))?;
+        let updated = if content.lines().any(|l| l.starts_with("description:")) {
+            content
+                .lines()
+                .map(|l| if l.starts_with("description:") { format!("description: {to}") } else { l.to_string() })
+                .collect::<Vec<_>>()
+                .join("\n") + "\n"
+        } else {
+            content.replacen("---\n", &format!("---\ndescription: {to}\n"), 1)
+        };
+        std::fs::write(&persona_path, updated).map_err(|e| format!("apply failed: {e}"))?;
+    }
+    let decision = serde_json::json!({
+        "type": "decision",
+        "id": id,
+        "ts": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+        "status": if approve { "approved" } else { "denied" },
+    });
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
+    writeln!(file, "{}", decision).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn delete_persona(name: String) -> Result<(), String> {
     if !valid_persona_name(&name) {
@@ -388,7 +453,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

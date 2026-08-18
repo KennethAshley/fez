@@ -6,6 +6,7 @@ import ActivityFeed from "./ActivityFeed";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import PersonaEditor from "./PersonaEditor";
+import BenchProposals from "./BenchProposals";
 
 /**
  * The agents surface — Buzz's biggest pane, fez-shaped. Roster of every
@@ -117,6 +118,7 @@ export default function AgentsPane({
       )}
       {!current && !creating && !editingPersona && !reviewing && (
         <div className="pane-body">
+          <BenchProposals />
           {drafts.length > 0 && (
             <>
               <div className="manage-section">proposed — awaiting your review</div>

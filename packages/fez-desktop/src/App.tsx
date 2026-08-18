@@ -26,6 +26,7 @@ import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
 import { runCommand } from "./commands";
 import Onboarding from "./Onboarding";
+import { foldLedger } from "./BenchProposals";
 import "./App.css";
 
 /**
@@ -376,6 +377,35 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
     render();
   };
 
+  // Bench proposal watch: the tuner/harvester file proposals into the
+  // ledger; a NEW pending proposal is a native notification + a badge
+  // on the agents nav. Seen-set persists so relaunches stay quiet.
+  const [benchPending, setBenchPending] = useState(0);
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const raw = await invoke<string>("read_bench_proposals");
+        const { pending } = foldLedger(raw);
+        setBenchPending(pending.length);
+        const seen = new Set<string>(JSON.parse(localStorage.getItem("fez-bench-seen") ?? "[]") as string[]);
+        const fresh = pending.filter((p) => !seen.has(p.id));
+        if (fresh.length > 0) {
+          const first = fresh[0];
+          void notify(
+            "fez — proposal awaiting review",
+            first.kind === "description"
+              ? `@${first.agent} description change: ${first.rationale}`
+              : `new bench case: "${first.q ?? ""}"${fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ""}`
+          );
+          localStorage.setItem("fez-bench-seen", JSON.stringify([...seen, ...fresh.map((p) => p.id)].slice(-200)));
+        }
+      } catch { /* ledger absent — fine */ }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Resizable sidebars: widths persist; a 5px col-resize strip after the
   // rail and before the pane drags them. Clamped so neither can vanish.
   const [railW, setRailW] = useState(() => Number(localStorage.getItem("fez-rail-w")) || 240);
@@ -433,6 +463,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}
         >
           ⚉ agents
+          {benchPending > 0 && <span className="badge">{benchPending}</span>}
         </button>
         <button className={view.kind === "pulse" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "pulse" })}>
           ◉ pulse

@@ -1076,3 +1076,7 @@ button.author:hover { text-decoration: underline; }
 .pane { width: var(--pane-w, 340px); min-width: var(--pane-w, 340px); }
 .rz { width: 5px; min-width: 5px; cursor: col-resize; flex-shrink: 0; background: transparent; transition: background 0.15s; }
 .rz:hover { background: var(--accent); }
+
+/* bench proposal diffs */
+.proposal-from { color: var(--red); }
+.proposal-to { color: var(--green); }
