@@ -261,6 +261,18 @@ export const KIND_REMINDER = 40007;
 export const KIND_DOC = 40100;
 
 /**
+ * Doc comment — a Notion-style margin note anchored to a line of a doc
+ * or wiki page, and the way you hand an agent work inside a document.
+ * Tags: ["h", channelId], ["c", communityId] (member gating, same as
+ * the doc), ["d", slug]? for wiki pages, ["anchor", lineText] — the
+ * TEXT of the commented line, not its number, so a comment survives
+ * edits above it; ["e", parentCommentId] for replies; ["p", pk] per
+ * @mention (an @agent mention summons it, same as in chat);
+ * ["resolved", "1"] on a resolving event. Content = markdown.
+ */
+export const KIND_DOC_COMMENT = 40101;
+
+/**
  * Skill listing — the decentralized skills marketplace. A signed,
  * addressable advertisement for an MCP server config: ["d", skillName];
  * content = JSON {name, description, command, args, envKeys, homepage}.

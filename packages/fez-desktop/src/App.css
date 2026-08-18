@@ -1246,3 +1246,32 @@ button.author:hover { text-decoration: underline; }
 .wiki-link { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); }
 .wiki-link.missing { color: var(--fg-dim); border-bottom-color: var(--fg-dim); }
 .wiki-link.missing::after { content: " +"; opacity: 0.7; }
+
+/* ── doc comments (notion-style margin notes, agent-addressable) ── */
+.doc-line { position: relative; display: flex; align-items: flex-start; gap: 6px; border-radius: 6px; padding: 0 2px; }
+.doc-line:hover { background: color-mix(in srgb, var(--bg1) 60%, transparent); }
+.doc-line.commenting { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.doc-line-body { flex: 1; min-width: 0; }
+.doc-line-body > :first-child { margin-top: 0; }
+.line-comment {
+  flex: none; opacity: 0; background: none; border: 0; color: var(--fg-dim);
+  cursor: pointer; font-size: 13px; padding: 2px 5px; border-radius: 5px; margin-top: 2px;
+}
+.doc-line:hover .line-comment, .line-comment.has { opacity: 1; }
+.line-comment.has { color: var(--accent); }
+.line-comment:hover { background: var(--bg2); color: var(--fg); }
+.line-comment-count { font-size: 10px; margin-left: 2px; }
+.line-threads { position: absolute; right: 0; top: 100%; z-index: 5; width: 320px; }
+.comment-thread {
+  background: var(--bg1); border: 1px solid var(--hairline); border-left: 2px solid var(--accent);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 12.5px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+}
+.comment-thread.resolved { border-left-color: var(--green); opacity: 0.72; }
+.comment-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
+.comment-author { font-weight: 600; color: var(--accent); font-family: var(--font-mono); font-size: 12px; }
+.comment-text { white-space: pre-wrap; word-break: break-word; }
+.comment-reply { margin-top: 6px; padding-left: 8px; border-left: 1px solid var(--bg2); }
+.comment-actions { display: flex; gap: 6px; margin-top: 6px; }
+.comment-compose { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+.comment-input { width: 100%; resize: vertical; font-size: 12.5px; }

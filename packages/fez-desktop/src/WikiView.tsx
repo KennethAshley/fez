@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { wikiSlug, type FezClient, type WireEvent } from "@fez/client";
+import { wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
 
 /**
  * Docs — the notion+obsidian surface over kind 40100. Two families in
@@ -22,6 +22,125 @@ function linkifyWiki(text: string): string {
   return text.replace(/\[\[([^\]|]+)\]\]/g, (_m, name: string) => `[${name.trim()}](wiki:${wikiSlug(name)})`);
 }
 
+/**
+ * Split a doc into commentable blocks — paragraphs, list items,
+ * headings, fenced code. Each block renders as markdown on its own so a
+ * comment can anchor to it by TEXT (surviving edits elsewhere).
+ */
+function blocksOf(markdown: string): string[] {
+  const blocks: string[] = [];
+  let paragraph: string[] = [];
+  let fence: string[] | undefined;
+  const flush = () => {
+    if (paragraph.length) blocks.push(paragraph.join("\n"));
+    paragraph = [];
+  };
+  for (const line of markdown.split("\n")) {
+    if (line.trim().startsWith("```")) {
+      if (fence) {
+        fence.push(line);
+        blocks.push(fence.join("\n"));
+        fence = undefined;
+      } else {
+        flush();
+        fence = [line];
+      }
+      continue;
+    }
+    if (fence) {
+      fence.push(line);
+      continue;
+    }
+    if (!line.trim()) {
+      flush();
+      continue;
+    }
+    // headings and list items stand alone so each is separately commentable
+    if (/^(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)/.test(line.trim())) {
+      flush();
+      blocks.push(line);
+      continue;
+    }
+    paragraph.push(line);
+  }
+  flush();
+  if (fence) blocks.push(fence.join("\n"));
+  return blocks;
+}
+
+/** One anchored thread: the note, its replies, resolve, and a reply box. */
+function CommentThread({
+  client,
+  thread,
+  onReply,
+}: {
+  client: FezClient;
+  thread: DocCommentThread;
+  onReply: (text: string, resolve?: boolean) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [replying, setReplying] = useState(false);
+  const when = (ts: number) =>
+    new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return (
+    <div className={thread.resolved ? "comment-thread resolved" : "comment-thread"}>
+      <div className="comment-head">
+        <span className="comment-author">{client.displayName(thread.authorPk)}</span>
+        <span className="time">{when(thread.ts)}</span>
+        {thread.resolved && <span className="role-tag installed-tag">resolved</span>}
+      </div>
+      <div className="comment-text">{renderMentions(thread.text)}</div>
+      {thread.replies.map((reply) => (
+        <div key={reply.id} className="comment-reply">
+          <span className="comment-author">{client.displayName(reply.authorPk)}</span>
+          <span className="time">{when(reply.ts)}</span>
+          <div className="comment-text">{renderMentions(reply.text)}</div>
+        </div>
+      ))}
+      {replying ? (
+        <div className="comment-compose">
+          <textarea
+            className="manage-input comment-input"
+            value={draft}
+            autoFocus
+            rows={2}
+            placeholder="reply… @agent to hand it over"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (draft.trim()) {
+                  onReply(draft);
+                  setDraft("");
+                  setReplying(false);
+                }
+              }
+              if (e.key === "Escape") setReplying(false);
+            }}
+          />
+        </div>
+      ) : (
+        <div className="comment-actions">
+          <button className="mini" onClick={() => setReplying(true)}>reply</button>
+          {!thread.resolved && (
+            <button className="mini" onClick={() => onReply("", true)}>resolve</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function renderMentions(text: string) {
+  return text.split(/(@[\w-]+)/g).map((part, index) =>
+    part.startsWith("@") ? (
+      <span key={index} className="mention">{part}</span>
+    ) : (
+      <span key={index}>{part}</span>
+    )
+  );
+}
+
 export default function WikiView({ client }: { client: FezClient }) {
   const [sel, setSel] = useState<Sel>();
   const [versions, setVersions] = useState<WireEvent[]>();
@@ -31,6 +150,9 @@ export default function WikiView({ client }: { client: FezClient }) {
   const [newTitle, setNewTitle] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [, bump] = useState(0);
+  const [threads, setThreads] = useState<DocCommentThread[]>([]);
+  const [commenting, setCommenting] = useState<string>(); // the block being commented on
+  const [commentDraft, setCommentDraft] = useState("");
 
   // live: agent/other-client versions repaint the list and the open page
   useEffect(() => {
@@ -43,12 +165,52 @@ export default function WikiView({ client }: { client: FezClient }) {
 
   const load = useCallback(async () => {
     if (!sel) return;
-    setVersions(
+    const [nextVersions, nextThreads] = await Promise.all([
       sel.kind === "wiki"
-        ? await client.wikiVersions(sel.communityId, sel.slug)
-        : await client.docVersions(sel.channelId, sel.communityId)
-    );
+        ? client.wikiVersions(sel.communityId, sel.slug)
+        : client.docVersions(sel.channelId, sel.communityId),
+      client.docComments(sel.communityId, sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
+    ]);
+    setVersions(nextVersions);
+    setThreads(nextThreads);
   }, [client, sel]);
+
+  /**
+   * Post a comment anchored to a block. @mentions become p tags — the
+   * same summon path chat uses, so "@researcher fix this line" reaches
+   * the agent with the line as its anchor.
+   */
+  const comment = async (text: string, anchor: string, parentId?: string, resolve?: boolean) => {
+    if (!sel) return;
+    const body = text.trim();
+    if (!body && !resolve) return;
+    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
+    if (!channelId) return;
+    const mentionPks = [...body.matchAll(/@([\w-]+)/g)]
+      .map((match) => client.pkByName(match[1]))
+      .filter((pk): pk is string => !!pk);
+    await client.publishDocComment(channelId, sel.communityId, body, {
+      anchor,
+      slug: sel.kind === "wiki" ? sel.slug : undefined,
+      parentId,
+      mentionPks,
+      resolve,
+    });
+    // Agents run on channel messages, so a mention in a comment also posts
+    // the summons into the doc's channel — the same path chat mentions use.
+    // The message carries the anchor so the agent knows which line it owns.
+    if (mentionPks.length > 0) {
+      const where = sel.kind === "wiki" ? `page "${selPage?.title ?? sel.slug}"` : `#${client.channelRef(sel.channelId)?.name ?? ""} doc`;
+      const names = [...body.matchAll(/@([\w-]+)/g)].map((m) => `@${m[1]}`).join(" ");
+      await client.sendChannelMessage(
+        `${names} — doc comment on ${where}, on this line:\n> ${anchor.replace(/\n/g, " ").slice(0, 200)}\n\n${body}\n\n(read the page with fez_wiki_read${sel.kind === "wiki" ? ` "${selPage?.title ?? sel.slug}"` : ""}; reply in the thread with fez_comment_reply, comment id ${parentId ?? "the one you'll find via fez_doc_comments"})`,
+        { mentionPks }
+      );
+    }
+    setCommenting(undefined);
+    setCommentDraft("");
+    await load();
+  };
 
   useEffect(() => {
     setVersions(undefined);
@@ -113,6 +275,9 @@ export default function WikiView({ client }: { client: FezClient }) {
   const md = (text: string, communityId: string) => (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      // react-markdown's default sanitizer strips unknown schemes — our
+      // wiki: links died there before any click handler ran.
+      urlTransform={(url) => (url.startsWith("wiki:") ? url : defaultUrlTransform(url))}
       components={{
         a: ({ href, children }) => {
           if (href?.startsWith("wiki:")) {
@@ -270,8 +435,63 @@ export default function WikiView({ client }: { client: FezClient }) {
                     {new Date(shown.created_at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                     {shown.id !== latest?.id && <span className="doc-old"> · old version</span>}
                     {(versions?.length ?? 0) > 1 && ` · ${versions!.length} versions`}
+                    {threads.length > 0 && ` · ${threads.filter((t) => !t.resolved).length} open comment${threads.filter((t) => !t.resolved).length === 1 ? "" : "s"}`}
                   </div>
-                  <div className="md doc-body wiki-body">{md(shown.content, sel.communityId)}</div>
+                  <div className="md doc-body wiki-body">
+                    {blocksOf(shown.content).map((block, index) => {
+                      const anchored = threads.filter((t) => t.anchor && block.includes(t.anchor));
+                      const open = anchored.filter((t) => !t.resolved);
+                      return (
+                        <div key={index} className={commenting === block ? "doc-line commenting" : "doc-line"}>
+                          <div className="doc-line-body">{md(block, sel.communityId)}</div>
+                          <button
+                            className={open.length ? "line-comment has" : "line-comment"}
+                            title={open.length ? `${open.length} comment${open.length === 1 ? "" : "s"}` : "comment on this line — @mention an agent to give it work here"}
+                            onClick={() => {
+                              setCommenting(commenting === block ? undefined : block);
+                              setCommentDraft("");
+                            }}
+                          >
+                            ✎{open.length > 0 && <span className="line-comment-count">{open.length}</span>}
+                          </button>
+                          {(commenting === block || anchored.length > 0) && (
+                            <div className="line-threads">
+                              {anchored.map((thread) => (
+                                <CommentThread
+                                  key={thread.id}
+                                  client={client}
+                                  thread={thread}
+                                  onReply={(text, resolve) => void comment(text, block, thread.id, resolve)}
+                                />
+                              ))}
+                              {commenting === block && (
+                                <div className="comment-compose">
+                                  <textarea
+                                    className="manage-input comment-input"
+                                    value={commentDraft}
+                                    autoFocus
+                                    rows={2}
+                                    placeholder="comment… @agent to give them this line as work"
+                                    onChange={(e) => setCommentDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" && !e.shiftKey) {
+                                        e.preventDefault();
+                                        void comment(commentDraft, block);
+                                      }
+                                      if (e.key === "Escape") setCommenting(undefined);
+                                    }}
+                                  />
+                                  <button className="agent-action" disabled={!commentDraft.trim()} onClick={() => void comment(commentDraft, block)}>
+                                    comment
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </>
               )
             )}

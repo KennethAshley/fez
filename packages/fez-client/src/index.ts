@@ -92,6 +92,7 @@ export const K = {
   DELETION: 5,
   GIFT_WRAP: 1059,
   DOC: 40100,
+  DOC_COMMENT: 40101,
   MSG_EDIT: 40003,
   MSG_PIN: 40004,
   MSG_BOOKMARK: 40005,
@@ -197,6 +198,20 @@ export interface WikiDoc extends DocInfo {
   title: string;
   channelId: string;
   communityId: string;
+}
+
+export interface DocCommentReply {
+  id: string;
+  authorPk: string;
+  text: string;
+  ts: number;
+}
+
+/** A comment thread anchored to a line of a doc (Notion's margin note). */
+export interface DocCommentThread extends DocCommentReply {
+  anchor: string;
+  resolved: boolean;
+  replies: DocCommentReply[];
 }
 
 /** [[Page Name]] → "page-name" — one slug rule everywhere (GUI, mcp, TUI). */
@@ -697,6 +712,76 @@ export class FezClient {
         return !!h && this.state.isMember(communityId, h, e.pubkey);
       })
       .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
+  }
+
+  /**
+   * Comments on a doc/page, anchored by LINE TEXT (not line number) so a
+   * note stays attached when lines shift above it. Returns threads:
+   * a root comment plus its replies, with resolution folded in.
+   */
+  async docComments(communityId: string, opts: { channelId?: string; slug?: string }): Promise<DocCommentThread[]> {
+    const filter = opts.slug
+      ? { kinds: [K.DOC_COMMENT], "#d": [opts.slug], limit: 500 }
+      : { kinds: [K.DOC_COMMENT], "#h": [opts.channelId ?? ""], limit: 500 };
+    const events = (await this.wire.query([filter])).filter((e) => {
+      if (!e.tags.some((t) => t[0] === "c" && t[1] === communityId)) return false;
+      const h = e.tags.find((t) => t[0] === "h")?.[1];
+      // a wiki page's comments can come from any channel in the community
+      return !!h && this.state.isMember(communityId, h, e.pubkey);
+    });
+    const roots = new Map<string, DocCommentThread>();
+    const replies: WireEvent[] = [];
+    const resolvedRoots = new Set<string>();
+    for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
+      const parent = event.tags.find((t) => t[0] === "e")?.[1];
+      if (event.tags.some((t) => t[0] === "resolved" && t[1] === "1")) {
+        if (parent) resolvedRoots.add(parent);
+        if (!event.content.trim()) continue; // pure resolve marker
+      }
+      if (parent) replies.push(event);
+      else {
+        roots.set(event.id, {
+          id: event.id,
+          anchor: event.tags.find((t) => t[0] === "anchor")?.[1] ?? "",
+          authorPk: event.pubkey,
+          text: event.content,
+          ts: event.created_at,
+          resolved: false,
+          replies: [],
+        });
+      }
+    }
+    for (const reply of replies) {
+      const root = roots.get(reply.tags.find((t) => t[0] === "e")![1]);
+      if (root) root.replies.push({ id: reply.id, authorPk: reply.pubkey, text: reply.content, ts: reply.created_at });
+    }
+    for (const id of resolvedRoots) {
+      const root = roots.get(id);
+      if (root) root.resolved = true;
+    }
+    return [...roots.values()].sort((a, b) => a.ts - b.ts);
+  }
+
+  /** Leave a comment (or reply). Mentions are p-tagged so agents get summoned. */
+  async publishDocComment(
+    channelId: string,
+    communityId: string,
+    text: string,
+    opts: { anchor?: string; slug?: string; parentId?: string; mentionPks?: string[]; resolve?: boolean } = {}
+  ): Promise<void> {
+    await this.wire.publish({
+      kind: K.DOC_COMMENT,
+      tags: [
+        ["h", channelId],
+        ["c", communityId],
+        ...(opts.slug ? [["d", opts.slug]] : []),
+        ...(opts.anchor ? [["anchor", opts.anchor.slice(0, 300)]] : []),
+        ...(opts.parentId ? [["e", opts.parentId]] : []),
+        ...(opts.resolve ? [["resolved", "1"]] : []),
+        ...(opts.mentionPks ?? []).map((pk) => ["p", pk]),
+      ],
+      content: text,
+    });
   }
 
   async publishWikiDoc(channelId: string, communityId: string, name: string, content: string, baseId?: string): Promise<void> {

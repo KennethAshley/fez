@@ -472,6 +472,88 @@ server.registerTool(
   }
 );
 
+// ── Doc comments ─────────────────────────────────────────────────────────
+// Notion-style margin notes (40101) anchored to a LINE of a doc/page.
+// This is how work arrives inside a document: an owner comments
+// "@you tighten this" on a line, and you answer in that thread.
+
+server.registerTool(
+  "fez_doc_comments",
+  {
+    description:
+      "List comment threads on a wiki page or channel doc — each has an anchor (the line it's attached to), the note, replies, and whether it's resolved. Read this when someone comments on a doc and asks you to act.",
+    inputSchema: {
+      channel: z.string().describe("the channel (for a channel doc) or any channel in the community (for a page)"),
+      page: z.string().optional().describe("wiki page name; omit for the channel's own doc"),
+      includeResolved: z.boolean().optional(),
+    },
+  },
+  async ({ channel, page, includeResolved }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const filter = page
+      ? { kinds: [40101], "#d": [wikiSlug(page)], limit: 500 }
+      : { kinds: [40101], "#h": [ref.channelId], limit: 500 };
+    const events = (await relay.query([filter]))
+      .filter((e) => e.tags.some((t) => t[0] === "c" && t[1] === ref.communityId))
+      .sort((a, b) => a.created_at - b.created_at);
+    const roots = events.filter((e) => !e.tags.some((t) => t[0] === "e"));
+    const resolved = new Set(
+      events.filter((e) => e.tags.some((t) => t[0] === "resolved" && t[1] === "1")).map((e) => e.tags.find((t) => t[0] === "e")?.[1])
+    );
+    const shown = roots.filter((r) => includeResolved || !resolved.has(r.id));
+    if (!shown.length) return text(page ? `No open comments on "${page}".` : `No open comments on #${ref.name}'s doc.`);
+    const lines = shown.map((root) => {
+      const replies = events.filter((e) => e.tags.find((t) => t[0] === "e")?.[1] === root.id && e.content.trim());
+      const anchor = root.tags.find((t) => t[0] === "anchor")?.[1] ?? "(whole doc)";
+      const body = [
+        `— comment ${root.id.slice(0, 12)} ${resolved.has(root.id) ? "(resolved) " : ""}on line: "${anchor}"`,
+        `  ${root.content}`,
+        ...replies.map((r) => `  ↳ ${r.content}`),
+      ];
+      return body.join("\n");
+    });
+    return text(lines.join("\n\n"));
+  }
+);
+
+server.registerTool(
+  "fez_comment_reply",
+  {
+    description:
+      "Reply in a doc comment thread (and optionally resolve it). Use this to answer the person who commented — say what you changed, right where they asked. Resolve only when the request is actually done.",
+    inputSchema: {
+      channel: z.string(),
+      commentId: z.string().describe("the comment id from fez_doc_comments (12+ chars is fine)"),
+      reply: z.string(),
+      resolve: z.boolean().optional(),
+    },
+  },
+  async ({ channel, commentId, reply, resolve }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const candidates = await relay.query([{ kinds: [40101], limit: 500 }]);
+    const root = candidates.find((e) => e.id.startsWith(commentId) || e.id === commentId);
+    if (!root) return text(`No comment "${commentId}" found — list them with fez_doc_comments first.`);
+    const slug = root.tags.find((t) => t[0] === "d")?.[1];
+    await relay.publish(
+      sign({
+        kind: 40101,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ["h", root.tags.find((t) => t[0] === "h")?.[1] ?? ref.channelId],
+          ["c", ref.communityId],
+          ...(slug ? [["d", slug]] : []),
+          ["e", root.id],
+          ...(resolve ? [["resolved", "1"]] : []),
+        ],
+        content: reply,
+      })
+    );
+    return text(`Replied in comment thread ${root.id.slice(0, 12)}${resolve ? " and resolved it" : ""}.`);
+  }
+);
+
 // ── Boot ─────────────────────────────────────────────────────────────────
 
 await relay.connect();
