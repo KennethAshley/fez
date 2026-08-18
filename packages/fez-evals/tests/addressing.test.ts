@@ -54,3 +54,24 @@ describe("p-tag fallback is owner-only (the perpetual-motion bug)", () => {
     expect(isAddressedTo(event, "researcher", ME, OWNER)).toBe(false);
   });
 });
+
+describe("segment-start fan-out (comms battery: one message, many tasks)", () => {
+  const FAN = "T1: @researcher what year? @reviewer is x == NaN ever true? @pilot compute 17 * 23.";
+  test("every segment-opening mention is an addressee", () => {
+    expect(isAddressedTo(msg(FAN), "researcher", ME, OWNER)).toBe(true);
+    expect(isAddressedTo(msg(FAN), "reviewer", ME, OWNER)).toBe(true);
+    expect(isAddressedTo(msg(FAN), "pilot", ME, OWNER)).toBe(true);
+  });
+  test("mid-sentence mentions stay downstream handoffs, not addressees", () => {
+    const handoff = "@reviewer check it, if good ping @coder";
+    expect(isAddressedTo(msg(handoff), "reviewer", ME, OWNER)).toBe(true);
+    expect(isAddressedTo(msg(handoff), "coder", ME, OWNER)).toBe(false);
+  });
+  test("newline opens a segment", () => {
+    const lines = "@researcher find it\n@pilot verify it";
+    expect(isAddressedTo(msg(lines), "pilot", ME, OWNER)).toBe(true);
+  });
+  test("quoted sentence end still opens a segment", () => {
+    expect(isAddressedTo(msg('@a say "done." @b then archive it'), "b", ME, OWNER)).toBe(true);
+  });
+});

@@ -18,13 +18,38 @@ export interface AddressableEvent {
   tags: string[][];
 }
 
+/**
+ * SEGMENT-START addressing (v2, earned in the comms battery): the first
+ * @name addresses, and so does any @name that OPENS a new segment — a
+ * sentence (after . ? !) or a line. "T1: @a X? @b Y? @c Z." fans out
+ * to all three; "check it, if good ping @coder" still protects coder
+ * (mid-sentence = downstream handoff, not an addressee).
+ */
+export function addressees(content: string): string[] {
+  const names: string[] = [];
+  const re = /@([\w-]+)/g;
+  let match: RegExpExecArray | null;
+  let first = true;
+  while ((match = re.exec(content)) !== null) {
+    if (first) {
+      names.push(match[1].toLowerCase());
+      first = false;
+      continue;
+    }
+    // Look back: only whitespace/quotes/brackets since a sentence end or line start?
+    const before = content.slice(0, match.index);
+    if (/[.?!\n]["')\]]*\s*$/.test(before)) names.push(match[1].toLowerCase());
+  }
+  return [...new Set(names)];
+}
+
 export function isAddressedTo(
   event: AddressableEvent,
   personaId: string,
   myPubkey: string,
   owner: string | undefined
 ): boolean {
-  const first = event.content.match(/@([\w-]+)/)?.[1];
-  if (first) return first.toLowerCase() === personaId.toLowerCase();
+  const named = addressees(event.content);
+  if (named.length > 0) return named.includes(personaId.toLowerCase());
   return event.pubkey === owner && event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
 }
