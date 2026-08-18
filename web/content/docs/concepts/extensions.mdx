@@ -1,54 +1,64 @@
 ---
 title: Extensions
-description: Core is a protocol and a registry surface. Everything you can see is a package.
+description: One package, three attachment points — agent skill, headless client code, GUI surface.
 ---
 
-Browse the repo and you'll notice something unusual: most of what a user would
-call "features of fez" don't live in core. Communities, DMs, docs, media upload,
-moderation, notifications — each is a package in `packages/`, installed through
-the same mechanism you'd use for a third-party extension. Core is a protocol
-plus a registry surface, and it's small on purpose.
+Think about what "the google-drive extension" would mean in fez. Three different
+things, actually: an *agent* uploading results to Drive, a */gdrive command* you
+run yourself, and maybe a Drive file-picker panel in the desktop app. fez's
+extension model embraces that: **one package, up to three optional attachment
+points**, declared in the package's `package.json`:
+
+```json
+"fez": {
+  "parts": {
+    "skill":    { "command": "npx", "args": ["-y", "some-mcp"], "env": { "API_KEY": "" } },
+    "headless": "dist/headless.js",
+    "gui":      "dist/gui.js"
+  }
+}
+```
+
+One `fez install` (or `fez link <dir>` for local dev) registers whatever parts
+exist:
+
+- **`skill`** — an MCP server definition, merged into the machine's skill
+  catalog. Agents get it by declaring the name in their persona
+  ([how skills work](/docs/concepts/skills)). This is the *"@deployer, upload
+  the results"* path — no GUI involved.
+- **`headless`** — code loaded by **any** client (TUI and GUI alike) against
+  the `FezExtensionAPI`: slash commands, services, new event kinds. This is
+  the */obsidian* path — and why the system still works with no GUI at all.
+- **`gui`** — components only the desktop app renders: artifact viewers,
+  theme packs, panels. Loaded from `~/.fez/gui-extensions` at launch;
+  `activate(api)` receives the page's React, `registerArtifactViewer`, and
+  `registerTheme`. Themes appear in settings → appearance.
+
+A package ships only the parts that make sense: a bitwarden package might be
+`skill` + `headless` (no UI needed); a theme pack is `gui` only; an obsidian
+package plausibly ships all three. The substance always lives in the first
+two — `gui` is presentation.
 
 ## Installing
 
 ```bash
 fez install <source>    # npm package, git URL, or local path
 fez list                # what's installed
-fez remove <name>       # uninstall
-fez link <dir>          # dev-install a local package: build, copy, smoke-import
+fez remove <name>       # uninstall (skill definitions are kept — see below)
+fez link <dir>          # dev-install a local package: build, register parts, smoke-import
 ```
 
-Extensions land in `~/.fez/extensions` and load at client startup.
+Removal keeps the skill *definition*: personas may still declare it, and any
+secret values you filled are yours ([custody](/docs/concepts/skills#secrets)).
 
-## The API surface
+## The first-party packages
 
-An extension receives the `FezExtensionAPI`: the headless client (state, events,
-publish, subscriptions), the nostr identity (sign/encrypt — the private key
-itself never leaves core), and UI surfaces (commands, panels, footer status,
-themes, URL handlers).
-
-The first-party packages are the proof the seams are real — they have no private
-hooks:
-
-- **fez-communities** — the channels/threads UI itself
-- **fez-dms**, **fez-docs** — DM panel, shared channel docs
-- **fez-media** — Blossom uploads (content-addressed, BUD-02 signed auth)
-- **fez-moderation**, **fez-notifications**, **fez-herdr** — mod tools, desktop
-  notifications, agent tab management
-- theme packs, via `registerTheme`
-
-## Viewers
-
-GUI clients expose `registerArtifactViewer(type, component)` — the seam for
-rendering new [artifact](/docs/concepts/artifacts) types. The built-in viewers
-enter through it; so would your `canvas` or `chart` viewer package.
-
-## Persona packs
-
-Whole agent teams ship as installable bundles: `fez install` a pack and get a
-set of personas — validated and review-gated like any other persona source.
+The features you'd assume are core are themselves extensions with no private
+hooks — proof the seams are real: fez-communities (the channel UI itself),
+fez-dms, fez-docs, fez-media (Blossom uploads), fez-moderation,
+fez-notifications, fez-search, fez-workflows, theme packs.
 
 ## The rule
 
-If a feature can live behind a seam, it must. Core grows only when a new *seam*
-is needed — never a new feature.
+If a feature can live behind a seam, it must. Core grows only when a new
+*seam* is needed — never a new feature.

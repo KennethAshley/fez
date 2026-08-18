@@ -1,6 +1,6 @@
 ---
 title: Skills
-description: Capabilities as MCP servers — defined on a machine, declared by a persona, injected at spawn.
+description: Capabilities as MCP servers — defined on a machine, declared by a persona, injected at spawn. Secrets live in the keychain.
 ---
 
 Agents need capabilities: web search, a database, a deploy API. In fez these are
@@ -8,25 +8,34 @@ Agents need capabilities: web search, a database, a deploy API. In fez these are
 first looks: *how do you give agents (and teammates) capabilities without
 scattering credentials?*
 
-The answer is a strict three-layer split.
+One thing skills deliberately are **not**: merchandise. MCP servers already have
+an ecosystem (npm, registries); fez doesn't re-catalog it. Inside fez, skills are
+**dependency metadata for agents** — the thing an agent listing declares so your
+machine knows what to resolve.
 
 ## Define — on the machine
 
 Each machine keeps a catalog of skill definitions: command, args, and the
-**names** of required env vars — never their values in listings, and never
-shipped anywhere.
+**names** of required env vars.
 
 ```bash
-fez skill add web-search -- npx -y @some/web-search-mcp
+fez skill add web-search --command npx --args "-y,duckduckgo-mcp-server"
 fez skill list
 fez skill remove web-search
 ```
 
+Definitions also arrive as the `skill` part of an
+[extension package](/docs/concepts/extensions), or via `fez skill install`
+from a relay listing.
+
 ## Declare — in the persona
 
-A persona lists the skills it wants, by name. A declaration is an intent, not a
-grant — it only becomes capability if the machine the agent spawns on actually
-defines that skill.
+A persona lists the skills it wants, by name (`mcpServers: [web-search]`). A
+declaration is an intent, not a grant — it only becomes capability if the
+machine the agent spawns on actually defines that skill. The desktop app's
+market shows this honestly: every local agent's declared skills as status
+chips — ready ✓, needs a secret, or no definition (with one-click install
+when a listing exists).
 
 ## Inject — at spawn
 
@@ -37,25 +46,36 @@ into an agent. And when an agent announces itself to the fleet, it lists only th
 skills that *resolved* — so the [orchestrator](/docs/concepts/orchestration)
 routes on real capability.
 
+## Secrets
+
+Secret env values (API keys, tokens) live in the **OS keychain** — the same
+custody as your identity key — never in config files. The catalog stores only
+the *names*. Two properties matter:
+
+- The desktop app's secret fields are **write-only**: the GUI can store a value
+  and check that one exists, but nothing in the webview can ever read one back.
+- Agents resolve values from the keychain at spawn time, in core.
+
+Fill them in the desktop app (settings → skills & secrets) or with `security`
+directly.
+
 ## Share the agent, not the key
 
-Here's the payoff. Suppose you have a Vercel API key and your teammates need
-deploys. You don't hand out the key — you run a deploy agent on your machine with
-the skill defined locally, and set its `respondTo` to the people allowed to use
-it. Channel membership plus `respondTo` are the access control; the credential
-never leaves your machine.
+Suppose you have a Vercel API key and your teammates need deploys. You don't
+hand out the key — you run a deploy agent on your machine with the skill defined
+locally, and set its `respondTo` to the people allowed to use it. Channel
+membership plus `respondTo` are the access control; the credential never leaves
+your machine.
 
 ## Publishing & installing
 
-Skills travel through the [marketplace](/docs/concepts/marketplace) as signed
-listings:
+Skill definitions travel as signed relay listings:
 
 ```bash
-fez skill publish web-search   # signed listing on the relay
+fez skill publish web-search   # signed listing (env NAMES only, never values)
 fez skill market               # browse
-fez skill install web-search   # add the definition; env values remain yours to fill
+fez skill install web-search   # add the definition; secrets remain yours to fill
 ```
 
-A listing carries the install command, GitHub/npm links, and the required env var
-names. Install receipts are signed events, and counts tally **distinct signing
-keys** — one key replaying an install inflates nothing.
+Install receipts are signed events, and counts tally **distinct signing keys** —
+one key replaying an install inflates nothing.
