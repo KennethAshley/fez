@@ -546,6 +546,65 @@ body {
 
 /* ── pulse ─────────────────────────────────────────────────── */
 .pulse-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+
+/* ── pulse observability: tiles, chart, heatmaps, timeline ─────
+   Mark colors are chart tokens, not theme accents: the ok/fail pair
+   is CVD-validated against the dark surface (ΔE ≥ 8, contrast ≥ 3:1). */
+.pulse-scroll { display: flex; flex-direction: column; gap: 18px; }
+:root { --viz-ok: #43a56c; --viz-fail: #fb4934; }
+.pulse-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+.stat-tile { background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px; padding: 10px 12px; }
+.stat-value { font-size: 20px; font-weight: 700; }
+.stat-value.alert { color: var(--red); }
+.stat-label { font-size: 10.5px; color: var(--fg-dim); margin-top: 2px; }
+
+.pulse-section { background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px; padding: 12px 14px; }
+.pulse-section-head {
+  display: flex; align-items: baseline; gap: 12px; font-size: 11px; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;
+}
+.pulse-readout { flex: 1; text-transform: none; letter-spacing: 0; color: var(--fg); font-size: 11.5px; }
+.pulse-legend { display: flex; align-items: center; gap: 5px; text-transform: none; letter-spacing: 0; }
+.viz-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.viz-swatch.ok { background: var(--viz-ok); }
+.viz-swatch.fail { background: var(--viz-fail); }
+
+.pulse-chart { display: flex; align-items: flex-end; gap: 6px; height: 96px; }
+.pulse-col { flex: 1; display: flex; flex-direction: column; height: 100%; cursor: default; border-radius: 4px; }
+.pulse-col.hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); }
+.pulse-col-bars { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; padding: 2px 3px 0; }
+.pulse-bar { width: 100%; min-height: 3px; }
+.pulse-bar.ok { background: var(--viz-ok); border-radius: 3px 3px 0 0; }
+.pulse-bar.fail { background: var(--viz-fail); border-radius: 3px; }
+.pulse-col-label { text-align: center; font-size: 9px; color: var(--fg-dim); padding-top: 3px; height: 14px; }
+
+.pulse-spark { display: flex; align-items: flex-end; gap: 2px; height: 22px; margin-top: 8px; }
+.pulse-spark-bar { flex: 1; background: var(--viz-ok); border-radius: 1.5px 1.5px 0 0; min-height: 1px; }
+
+.heat-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
+.heat-label {
+  width: 110px; min-width: 110px; font-size: 11.5px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--fg-dim);
+}
+.heat-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 10px); gap: 2px; }
+.heat-cell { width: 10px; height: 10px; border-radius: 2px; background: var(--bg2); }
+.heat-cell.l1 { background: color-mix(in oklab, var(--viz-ok) 30%, var(--bg2)); }
+.heat-cell.l2 { background: color-mix(in oklab, var(--viz-ok) 55%, var(--bg2)); }
+.heat-cell.l3 { background: color-mix(in oklab, var(--viz-ok) 80%, var(--bg2)); }
+.heat-cell.l4 { background: var(--viz-ok); }
+.heat-total { font-size: 11px; color: var(--fg-dim); margin-left: 4px; }
+
+.pulse-day {
+  font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 10px 0 4px; border-bottom: 1px solid var(--hairline); margin-bottom: 4px;
+}
+.pulse-event { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 12.5px; border-radius: 4px; }
+.pulse-event:hover { background: var(--bg2); }
+.pulse-event.failed { border-left: 2px solid var(--viz-fail); padding-left: 6px; }
+.pulse-time { color: var(--fg-dim); font-size: 11px; width: 52px; min-width: 52px; }
+.pulse-mark { width: 16px; text-align: center; }
+.pulse-event-agent { font-weight: 700; }
+.pulse-event-text { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pulse-card {
   display: flex; flex-direction: column; gap: 6px; text-align: left;
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
