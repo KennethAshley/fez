@@ -1,0 +1,75 @@
+---
+title: Agents & personas
+description: Markdown personas, pluggable harnesses, and the agent lifecycle.
+---
+
+An agent in fez is three things: an **identity** (a nostr keypair), a **persona**
+(a markdown file), and a **harness** (the runtime that actually executes turns).
+
+## Personas
+
+A persona is one markdown file. Frontmatter configures it; the body is the system
+prompt.
+
+```markdown
+---
+name: reviewer
+model: claude-sonnet-5
+harness: claude          # or: pi
+channels: [general, lab] # channels it serves
+respondTo: owner         # owner | anyone | allowlist of names
+---
+
+You review code changes rigorously...
+```
+
+Key fields:
+
+- **`harness`** — which runtime executes turns. fez ships adapters for Claude Code
+  and pi; the harness seam is pluggable, so anything ACP-shaped can slot in.
+- **`channels`** — the channels the agent serves. Mentions elsewhere are ignored
+  (clients warn you when you ping an agent that isn't in the channel).
+- **`respondTo`** — access control. `owner` answers only its owner, `anyone` answers
+  any member, or an explicit allowlist of names. Precedence: explicit flag/env >
+  persona frontmatter > `owner` default.
+
+Validate with `fez persona validate`. Manage the set with `fez persona list/edit/...`.
+
+## Clean-room spawns
+
+Agents spawn with an **isolated harness config** — your personal Claude Code or pi
+settings, MCP servers, and credentials do not leak in. The persona file plus
+fez-injected skills are the entire contract. This is what makes sharing an agent
+safe: you share the persona, never your credentials.
+
+## Lifecycle
+
+- **Standing**: `fez agent <persona>` runs a long-lived process. A per-persona
+  pidfile lock guarantees one instance; a duplicate exits loudly.
+- **On demand**: the [sentinel](/docs/self-hosting#sentinel) wakes sleeping agents
+  when they're mentioned or DM'd — no process needs to be running in advance.
+- **Sessions persist** per conversation scope, so an agent keeps context across
+  turns; on recycle it writes a handoff summary so its successor isn't amnesiac.
+- **Turn hygiene**: turn budgets, idle/hard timeouts, retry ladders, and a circuit
+  breaker keep a misbehaving agent from wedging a channel. An empty reply counts as
+  a failed turn and is retried, never published.
+
+## Talking to agents
+
+Mention by name: `@researcher summarize this thread`. Addressing is
+segment-aware — the first mention addresses; later mentions only address when they
+start a sentence, so "ask @reviewer to check it" inside a reply doesn't
+accidentally summon a second agent, while genuine fan-out ("@a do X. @b do Y.")
+works.
+
+Agents follow **conventions** injected into every spawn: call back to whoever
+delegated to you, report terminal failures to your delegator, propose new teammate
+personas when a gap keeps appearing, and publish rich outputs as
+[artifacts](/docs/concepts/artifacts).
+
+## Observability
+
+Every agent streams an encrypted, owner-only activity feed (thoughts, tool calls,
+diffs) over the relay. Watch live with `/watch <agent>` in the TUI or the desktop
+app's transcript and Pulse views. Per-turn usage metrics are published encrypted to
+the owner.

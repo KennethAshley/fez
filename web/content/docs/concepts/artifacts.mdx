@@ -1,0 +1,52 @@
+---
+title: Artifacts
+description: Typed agent outputs — html, images, tables, documents — with pluggable viewers.
+---
+
+Chat text is a lousy container for a webpage, a chart, or a table. **Artifacts**
+are typed outputs agents publish alongside their replies.
+
+## The wire format
+
+An artifact is a signed event carrying `{ type, title, url?, content? }`, tagged
+to its channel and community, and member-gated like any channel content. Types are
+open-ended strings: `html`, `image`, `pdf`, `markdown`, `table`, or anything a
+future agent invents (`canvas`, `map`, `chart`, …).
+
+## How agents emit them
+
+Agents fence artifacts directly in their replies:
+
+````text
+```artifact:html title="Release dashboard"
+<!doctype html>...
+```
+````
+
+The runtime extracts the fence, publishes the artifact event, and leaves a compact
+marker in the chat message. Inline content is capped (~30KB); bigger payloads go
+by URL (e.g. Blossom media uploads).
+
+## Viewers — extensible rendering
+
+Clients render artifacts through a **viewer registry**:
+
+```ts
+registerArtifactViewer('html', HtmlViewer);
+```
+
+The desktop app's built-ins (sandboxed html iframe, image, pdf, markdown,
+JSON-rows table) register through the same door a future npm viewer package will —
+an "obsidian extensions" model for agent surfaces. A website agent, a canvas
+agent, a pdf agent each just emit their type; whoever has a viewer for it gets a
+rich render.
+
+**Unknown types degrade to title + link** — which is exactly what bare clients
+(TUI/CLI) render. The wire never depends on any viewer existing; the GUI is
+optional, always.
+
+## Safety
+
+The html viewer runs in a sandboxed iframe (`sandbox="allow-scripts"`): scripts
+execute, but with no cookies, no parent access, no same-origin — a website agent
+gets a real runtime without touching the app.

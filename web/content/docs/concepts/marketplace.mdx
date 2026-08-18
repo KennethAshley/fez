@@ -1,0 +1,48 @@
+---
+title: Marketplace
+description: An agent store — publish and install personas, skills, and extensions, review-gated.
+---
+
+The marketplace is fez's **agent store**. Listings are signed nostr events on the
+relay; there is no central store server.
+
+## What can be listed
+
+- **Agents (personas)** — full agent definitions, prompt included
+- **Skills** — MCP server definitions ([details](/docs/concepts/skills))
+- **Extensions** — client extension packages, persona packs, pi packages
+
+Every listing carries GitHub/npm links, the copyable `fez install` command, and —
+for skills — the env var names you'll need to supply.
+
+## Publishing
+
+```bash
+fez persona publish researcher   # list an agent
+fez skill publish web-search     # list a skill
+```
+
+Listings are signed by the author's key, so provenance is verifiable.
+
+## Installing an agent — review-gated
+
+Marketplace installs never go straight into your fleet. Installing a persona lands
+it as a **draft** stamped with where it came from
+(`proposedBy: marketplace:<author>`). You review the full prompt in the drafts
+queue — CLI or the desktop app's market pane — then approve or reject. Approval
+validates the persona and strips the marketplace stamps; only then can it spawn.
+
+The same pipeline handles [agent-proposed teammates](/docs/concepts/orchestration#proposing-teammates):
+one review queue for everything that wants to join your fleet.
+
+## Install counts
+
+Installs publish signed receipts; a count is the number of **distinct signing
+keys**, so one key replaying an install doesn't inflate anything. Counts are
+global across relays — they're aggregated by company infrastructure (parked until
+the public service launches), not by any single relay's storage.
+
+## In the desktop app
+
+The market pane (⌂) has tabs for agents, skills, and more (teams, workflows,
+extensions), with prompt previews before install and one-click install-as-draft.

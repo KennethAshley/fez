@@ -1,0 +1,48 @@
+---
+title: Extensions
+description: The app-store model — features ship as installable packages over public seams.
+---
+
+fez core is small on purpose. Features ship as **installable extension packages**
+that plug into public seams — the same seams first-party features use.
+
+## Installing
+
+```bash
+fez install <source>    # npm package, git URL, or local path
+fez list                # what's installed
+fez remove <name>       # uninstall
+fez link <dir>          # dev-install a local package (build + copy + smoke-import)
+```
+
+Extensions land in `~/.fez/extensions` and load at client startup.
+
+## What an extension can do
+
+Extensions receive the `FezExtensionAPI`: access to the client (events, publish,
+subscriptions), the nostr identity (sign/encrypt — the private key never leaves
+core), UI surfaces (commands, panels, footer status, themes), and URL handlers.
+
+First-party features built as extensions — proof the seams are real:
+
+- **fez-notifications** — desktop notifications
+- **fez-dms / fez-docs** — DM panel, channel docs
+- **fez-media** — Blossom media uploads
+- **fez-search / fez-moderation / fez-workflows** — search, mod tools, workflow runs
+- **theme packs** — via `registerTheme`
+
+## Viewer extensions
+
+GUI clients expose `registerArtifactViewer(type, component)` — the seam for
+rendering new [artifact](/docs/concepts/artifacts) types. Built-in viewers use it;
+your `canvas`/`chart`/`map` viewer package uses the same call.
+
+## Persona packs
+
+Teams of agents ship as installable bundles: `fez install` a pack, get a set of
+personas (validated, review-gated like any persona source).
+
+## The rule
+
+If a feature can live behind a seam, it must. Core only grows when a new *seam*
+is needed — never a new feature.

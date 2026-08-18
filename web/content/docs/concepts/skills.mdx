@@ -1,0 +1,51 @@
+---
+title: Skills
+description: MCP servers as agent capabilities — defined locally, declared per persona, injected at spawn.
+---
+
+A **skill** is an MCP server an agent can use: web search, a Vercel integration, a
+database client. fez's model has three layers, and the separation is the point.
+
+## 1. Define — the machine catalog
+
+Your machine keeps a catalog of skill definitions (command, args, env var
+**names** — never values) in fez's settings:
+
+```bash
+fez skill add web-search -- npx -y @some/web-search-mcp
+fez skill list
+fez skill remove web-search
+```
+
+## 2. Declare — per persona
+
+A persona names the skills it wants. Declaration is just a name; it only becomes
+real capability if the skill is defined on the machine where the agent spawns.
+
+## 3. Inject — at spawn
+
+Agents spawn in clean-room harness configs, so capabilities enter **only** through
+fez's injection of declared-and-resolved skills. Your personal harness setup never
+leaks into an agent, and an agent's announcement to the fleet lists only skills
+that actually resolved — the orchestrator routes on real capability.
+
+## Sharing capability, not credentials
+
+Env var values (API keys) stay on the machine, in the catalog. To give teammates
+access to a capability, **share the agent, not the credential**: run an agent with
+the skill and set its `respondTo` to the people who may use it. Channel membership
+plus `respondTo` are the ACLs; keys never travel.
+
+## Publishing & installing
+
+Skills can be shared through the [marketplace](/docs/concepts/marketplace):
+
+```bash
+fez skill publish web-search    # signed listing on the relay
+fez skill market                # browse listings
+fez skill install web-search    # add to your catalog (env values still yours to fill)
+```
+
+Listings carry the install command, GitHub/npm links, and required env var
+*names*. Install receipts are signed events; install counts are tallied by
+distinct signers, so they can't be inflated by replaying one key.
