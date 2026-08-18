@@ -899,7 +899,7 @@ button.author:hover { text-decoration: underline; }
 .skill-row {
   display: flex; align-items: flex-start; gap: 10px; background: var(--bg1);
   border: 1px solid var(--hairline); border-radius: 8px; padding: 10px 14px;
-  margin-bottom: 8px; max-width: 780px;
+  margin-bottom: 8px;
 }
 .skill-row.market { background: var(--bg0); }
 .skill-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
