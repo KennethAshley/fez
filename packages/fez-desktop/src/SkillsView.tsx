@@ -47,7 +47,7 @@ interface Listing {
   ts: number;
 }
 
-type MarketTab = "agents" | "skills" | "more";
+type MarketTab = "agents" | "more";
 
 export default function SkillsView({ client, wire }: { client: FezClient; wire: BrowserWire }) {
   const [tab, setTab] = useState<MarketTab>("agents");
@@ -172,7 +172,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
       <header className="topbar">
         ⌂ market
         <span className="agent-tabs market-tabs">
-          {(["agents", "skills", "more"] as const).map((name) => (
+          {(["agents", "more"] as const).map((name) => (
             <button key={name} className={tab === name ? "agent-tab active" : "agent-tab"} onClick={() => setTab(name)}>
               {name === "more" ? "teams · workflows · extensions" : name}
             </button>
@@ -207,8 +207,25 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                     </span>
                     {listing.description && <span className="skill-desc">{listing.description}</span>}
                     {listing.requiredSkills && listing.requiredSkills.length > 0 && (
-                      <span className="skill-env">
-                        declares skills: {listing.requiredSkills.map((skill) => `${skill}${installed[skill] ? " ✓" : " (undefined here)"}`).join(", ")}
+                      <span className="skill-env skill-deps">
+                        needs:{" "}
+                        {listing.requiredSkills.map((skill) => {
+                          const definition = skillListings.find((l) => l.name === skill);
+                          return (
+                            <span key={skill} className="skill-dep">
+                              {skill}
+                              {installed[skill] ? (
+                                " ✓"
+                              ) : definition ? (
+                                <button className="skill-link" title="install this skill definition (env values stay yours to fill)" onClick={() => setInstalling(definition)}>
+                                  install
+                                </button>
+                              ) : (
+                                " (no definition listed)"
+                              )}
+                            </span>
+                          );
+                        })}
                       </span>
                     )}
                     {listing.persona && (
@@ -266,12 +283,12 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                 </div>
               );
             })}
-          </>
-        )}
 
-        {tab === "skills" && (
-          <>
-        <div className="home-section">installed on this machine</div>
+        <div className="home-section">skill definitions — installed on this machine</div>
+        <div className="settings-hint">
+          Skills are MCP servers agents declare — dependencies, not merchandise. Agents above pull these in;
+          manage or publish the definitions here.
+        </div>
         {Object.keys(installed).length === 0 && (
           <div className="pane-empty">
             no skills defined — install one from the marketplace below, or `fez skill add` from a terminal.
@@ -306,7 +323,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
           </div>
         ))}
 
-        <div className="home-section">marketplace — listings on your relay</div>
+        <div className="home-section">skill definitions — listed on your relay</div>
         <div className="settings-hint">
           A listing is a recommendation signed by its author's key. The command runs on YOUR machine — read it
           before installing, exactly like reading a PR.
@@ -358,9 +375,9 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             </div>
           );
         })}
-
           </>
         )}
+
 
         {installing && (
           <InstallDialog

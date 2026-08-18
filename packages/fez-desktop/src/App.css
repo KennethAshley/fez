@@ -1028,3 +1028,7 @@ button.author:hover { text-decoration: underline; }
 .hovercard-skill {
   background: var(--bg2); border-radius: 8px; padding: 1px 7px; font-size: 11px; color: var(--fg-dim);
 }
+
+/* agent skill dependencies in market listings */
+.skill-deps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.skill-dep { display: inline-flex; align-items: center; gap: 3px; background: var(--bg2); border-radius: 8px; padding: 1px 7px; }
