@@ -475,7 +475,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           ◉ pulse
         </button>
         <button className={view.kind === "skills" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "skills" })}>
-          ⌂ market
+          ⊞ extensions
         </button>
         <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
           » workflows

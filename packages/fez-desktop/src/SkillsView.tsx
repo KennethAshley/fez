@@ -48,10 +48,10 @@ interface Listing {
   ts: number;
 }
 
-type MarketTab = "agents" | "more";
+
 
 export default function SkillsView({ client, wire }: { client: FezClient; wire: BrowserWire }) {
-  const [tab, setTab] = useState<MarketTab>("agents");
+  const [filter, setFilter] = useState<"all" | "agents" | "skills" | "packs">("all");
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
   const [listings, setListings] = useState<Listing[]>();
   const [installing, setInstalling] = useState<Listing>();
@@ -178,247 +178,165 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
     setTimeout(() => setCopied(undefined), 2000);
   };
 
-  const personas = (listings ?? []).filter((l) => l.artifact === "persona");
   const skillListings = (listings ?? []).filter((l) => (l.artifact ?? "mcp") === "mcp");
-  const otherListings = (listings ?? []).filter((l) => l.artifact && !["persona", "mcp"].includes(l.artifact));
+
+  const ranked = [...(listings ?? [])]
+    .filter((listing) => {
+      if (filter === "all") return true;
+      if (filter === "agents") return listing.artifact === "persona";
+      if (filter === "skills") return (listing.artifact ?? "mcp") === "mcp";
+      return listing.artifact !== "persona" && (listing.artifact ?? "mcp") !== "mcp";
+    })
+    .sort((a, b) => (installs.get(`${b.authorPk}:${b.name}`) ?? 0) - (installs.get(`${a.authorPk}:${a.name}`) ?? 0) || b.ts - a.ts);
 
   return (
     <main className="main">
-      <header className="topbar">
-        ⌂ market
-        <span className="agent-tabs market-tabs">
-          {(["agents", "more"] as const).map((name) => (
-            <button key={name} className={tab === name ? "agent-tab active" : "agent-tab"} onClick={() => setTab(name)}>
-              {name === "more" ? "teams · workflows · extensions" : name}
-            </button>
-          ))}
-        </span>
-      </header>
-      <div className="timeline">
+      <header className="topbar">⊞ extensions</header>
+      <div className="timeline pulse-scroll">
         {notice && <div className="manage-notice">{notice}</div>}
 
-        {tab === "agents" && (
-          <>
-            {agentDeps.length > 0 && (
-              <>
-                <div className="home-section">your agents — what they need on this machine</div>
-                {agentDeps.map(({ agent, skills }) => (
-                  <div key={agent} className="dep-row">
-                    <span className="dep-agent">@{agent}</span>
-                    <span className="dep-skills">
-                      {skills.map((skill) => (
-                        <SkillDep
-                          key={skill}
-                          skill={skill}
-                          config={installed[skill]}
-                          listing={skillListings.find((l) => l.name === skill)}
-                          onInstall={(l) => setInstalling(l)}
-                        />
-                      ))}
-                    </span>
-                  </div>
-                ))}
-              </>
-            )}
-            <div className="home-section">agents on the marketplace</div>
+        {/* ── 1 · what your agents need ─────────────────────────── */}
+        {agentDeps.length > 0 && (
+          <div className="pulse-section">
+            <div className="pulse-section-head"><span>what your agents need</span></div>
             <div className="settings-hint">
-              An agent IS its text — the listing carries the complete persona. Installing downloads it as a DRAFT:
-              you read the system prompt like a PR in the agents pane, then approve. Nothing runs until you do.
+              Every skill your agents declare, and its status here: ✓ ready · ○ needs a secret (settings ⌘,) ·
+              red means no definition — install one below.
             </div>
-            {!listings && <div className="pane-empty">loading…</div>}
-            {listings && personas.length === 0 && (
-              <div className="pane-empty">no agents listed yet — publish yours: fez persona publish &lt;name&gt;</div>
-            )}
-            {personas.map((listing) => {
-              const key = `${listing.authorPk}:${listing.name}`;
-              const count = installs.get(key) ?? 0;
-              const state = personaState[key];
-              return (
-                <div key={key} className="skill-row market">
-                  <div className="skill-main">
-                    <span className="skill-name">
-                      @{listing.name}
-                      <span className="role-tag">agent</span>
-                      <span className="skill-installs">⇩ {count} install{count === 1 ? "" : "s"}</span>
-                    </span>
-                    {listing.description && <span className="skill-desc">{listing.description}</span>}
-                    {listing.requiredSkills && listing.requiredSkills.length > 0 && (
-                      <span className="skill-env skill-deps">
-                        needs:{" "}
-                        {listing.requiredSkills.map((skill) => {
-                          const definition = skillListings.find((l) => l.name === skill);
-                          return (
-                            <span key={skill} className="skill-dep">
-                              {skill}
-                              {installed[skill] ? (
-                                " ✓"
-                              ) : definition ? (
-                                <button className="skill-link" title="install this skill definition (env values stay yours to fill)" onClick={() => setInstalling(definition)}>
-                                  install
-                                </button>
-                              ) : (
-                                " (no definition listed)"
-                              )}
-                            </span>
-                          );
-                        })}
-                      </span>
-                    )}
-                    {listing.persona && (
-                      <details className="persona-peek">
-                        <summary>view the persona (read before installing)</summary>
-                        <pre className="draft-content">{listing.persona}</pre>
-                      </details>
-                    )}
-                    <span className="skill-author">
-                      <Avatar pk={listing.authorPk} size={14} /> {client.displayName(listing.authorPk)}
-                      {listing.github && <button className="skill-link" onClick={() => void openUrl(listing.github!)}>github</button>}
-                    </span>
-                    {state && state !== "done" && <span className="ob-error">{state}</span>}
-                  </div>
-                  <div className="skill-actions">
-                    {state === "done" ? (
-                      <span className="role-tag installed-tag">drafted — review in @ agents</span>
-                    ) : (
-                      <button className="agent-action" onClick={() => void installPersona(listing)}>install as draft…</button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </>
+            {agentDeps.map(({ agent, skills }) => (
+              <div key={agent} className="dep-row">
+                <span className="dep-agent">@{agent}</span>
+                <span className="dep-skills">
+                  {skills.map((skill) => (
+                    <SkillDep
+                      key={skill}
+                      skill={skill}
+                      config={installed[skill]}
+                      listing={skillListings.find((l) => l.name === skill)}
+                      onInstall={(l) => setInstalling(l)}
+                    />
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
 
-        {tab === "more" && (
-          <>
-            <div className="home-section">teams · workflows · extensions</div>
-            <div className="settings-hint">
-              Listings of other fez artifacts — install with the command shown (teams and packs go through fez
-              install; workflows land in ~/.fez/workflows).
-            </div>
-            {otherListings.length === 0 && <div className="pane-empty">none listed on this relay yet</div>}
-            {otherListings.map((listing) => {
-              const key = `${listing.authorPk}:${listing.name}`;
-              const count = installs.get(key) ?? 0;
-              return (
-                <div key={key} className="skill-row market">
-                  <div className="skill-main">
-                    <span className="skill-name">
-                      {listing.name}
-                      <span className="role-tag">{listing.artifact}</span>
-                      <span className="skill-installs">⇩ {count}</span>
+        {/* ── 2 · top extensions (ranked by installs) ───────────── */}
+        <div className="pulse-section">
+          <div className="pulse-section-head">
+            <span>top extensions</span>
+            <span className="pulse-readout" />
+            <span className="ext-filters">
+              {(["all", "agents", "skills", "packs"] as const).map((name) => (
+                <button key={name} className={filter === name ? "ext-filter active" : "ext-filter"} onClick={() => setFilter(name)}>
+                  {name}
+                </button>
+              ))}
+            </span>
+          </div>
+          <div className="settings-hint">
+            Signed listings on your relay, ranked by installs. Installing an agent lands as a DRAFT you review;
+            installing a skill adds its definition (secrets stay yours, in the keychain). Read before installing.
+          </div>
+          {!listings && <div className="pane-empty">loading…</div>}
+          {listings && ranked.length === 0 && <div className="pane-empty">nothing listed yet — share something of yours from "on this machine" below</div>}
+          {ranked.map((listing) => {
+            const key = `${listing.authorPk}:${listing.name}`;
+            const count = installs.get(key) ?? 0;
+            const isPersona = listing.artifact === "persona";
+            const isMcp = (listing.artifact ?? "mcp") === "mcp";
+            const state = personaState[key];
+            const isInstalled = isMcp && !!installed[listing.name];
+            return (
+              <div key={key} className="skill-row market">
+                <div className="skill-main">
+                  <span className="skill-name">
+                    {isPersona ? `@${listing.name}` : listing.name}
+                    <span className="role-tag">{isPersona ? "agent" : isMcp ? "skill" : listing.artifact}</span>
+                    {isInstalled && <span className="role-tag installed-tag">installed</span>}
+                    <span className="skill-installs">⇩ {count}</span>
+                  </span>
+                  {listing.description && <span className="skill-desc">{listing.description}</span>}
+                  {isPersona && listing.requiredSkills && listing.requiredSkills.length > 0 && (
+                    <span className="skill-env skill-deps">
+                      needs:{" "}
+                      {listing.requiredSkills.map((skill) => (
+                        <span key={skill} className="skill-dep">{skill}{installed[skill] ? " ✓" : ""}</span>
+                      ))}
                     </span>
-                    {listing.description && <span className="skill-desc">{listing.description}</span>}
+                  )}
+                  {isMcp && runsLine(listing) && <code className="skill-cmd">{runsLine(listing)}</code>}
+                  {isMcp && listing.envKeys && listing.envKeys.length > 0 && (
+                    <span className="skill-env">needs env: {listing.envKeys.join(", ")}</span>
+                  )}
+                  {isPersona && listing.persona && (
+                    <details className="persona-peek">
+                      <summary>view the persona (read before installing)</summary>
+                      <pre className="draft-content">{listing.persona}</pre>
+                    </details>
+                  )}
+                  {!isPersona && !isMcp && (
                     <code className="skill-install-cmd" title="click to copy" onClick={() => copyCmd(listing)}>
                       {copied === key ? "✓ copied" : `$ ${listing.installCmd ?? ""}`}
                     </code>
-                    <span className="skill-author">
-                      <Avatar pk={listing.authorPk} size={14} /> {client.displayName(listing.authorPk)}
-                    </span>
-                  </div>
+                  )}
+                  <span className="skill-author">
+                    <Avatar pk={listing.authorPk} size={14} /> {client.displayName(listing.authorPk)}
+                    {listing.github && <button className="skill-link" onClick={() => void openUrl(listing.github!)}>github</button>}
+                    {listing.npm && <button className="skill-link" onClick={() => void openUrl(`https://www.npmjs.com/package/${listing.npm}`)}>npm</button>}
+                  </span>
+                  {state && state !== "done" && <span className="ob-error">{state}</span>}
                 </div>
-              );
-            })}
-
-        <div className="home-section">skill definitions — installed on this machine</div>
-        <div className="settings-hint">
-          Skills are MCP servers agents declare — dependencies, not merchandise. Agents above pull these in;
-          manage or publish the definitions here.
+                <div className="skill-actions">
+                  {isPersona &&
+                    (state === "done" ? (
+                      <span className="role-tag installed-tag">drafted — review in agents</span>
+                    ) : (
+                      <button className="agent-action" onClick={() => void installPersona(listing)}>install as draft…</button>
+                    ))}
+                  {isMcp && !isInstalled && <button className="agent-action" onClick={() => setInstalling(listing)}>install…</button>}
+                </div>
+              </div>
+            );
+          })}
         </div>
-        {Object.keys(installed).length === 0 && (
-          <div className="pane-empty">
-            no skills defined — install one from the marketplace below, or `fez skill add` from a terminal.
-            Personas opt in via their mcpServers list; agents get them on next spawn.
-          </div>
-        )}
-        {Object.entries(installed).map(([name, config]) => (
-          <div key={name} className="skill-row">
-            <div className="skill-main">
-              <span className="skill-name">{name}</span>
-              <code className="skill-cmd">{runsLine(config)}</code>
-              {config.env && Object.keys(config.env).length > 0 && (
-                <span className="skill-env skill-deps">
-                  env:{" "}
-                  {Object.keys(config.env).map((key) => (
-                    <EnvKeyStatus key={key} skill={name} envKey={key} plaintext={!!config.env?.[key]?.trim()} editable={false} />
-                  ))}
-                </span>
-              )}
-            </div>
-            <div className="skill-actions">
-              {publishing === name ? (
-                <PublishForm onPublish={(meta) => void publish(name, meta)} onCancel={() => setPublishing(undefined)} />
-              ) : (
-                <>
-                  <button className="mini" title="publish a listing to the marketplace" onClick={() => setPublishing(name)}>📡 publish</button>
-                  <button
-                    className="mini"
-                    title="remove from this machine"
-                    onClick={() => void invoke("remove_skill", { name }).then(reload)}
-                  >
-                    ✕
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        ))}
 
-        <div className="home-section">skill definitions — listed on your relay</div>
-        <div className="settings-hint">
-          A listing is a recommendation signed by its author's key. The command runs on YOUR machine — read it
-          before installing, exactly like reading a PR.
-        </div>
-        {!listings && <div className="pane-empty">loading…</div>}
-        {listings?.length === 0 && (
-          <div className="pane-empty">no listings on this relay yet — publish one of yours above</div>
-        )}
-        {skillListings.map((listing) => {
-          const isInstalled = !!installed[listing.name];
-          const key = `${listing.authorPk}:${listing.name}`;
-          const count = installs.get(key) ?? 0;
-          const isMcp = (listing.artifact ?? "mcp") === "mcp";
-          return (
-            <div key={key} className="skill-row market">
+        {/* ── 3 · on this machine ───────────────────────────────── */}
+        <div className="pulse-section">
+          <div className="pulse-section-head"><span>on this machine</span></div>
+          <div className="settings-hint">
+            Your local definitions. Secrets are managed in settings (⌘,) → skills &amp; secrets. "Share" signs a
+            listing to your relay so others can install it (env values are never included).
+          </div>
+          {Object.keys(installed).length === 0 && <div className="pane-empty">nothing installed yet</div>}
+          {Object.entries(installed).map(([name, config]) => (
+            <div key={name} className="skill-row">
               <div className="skill-main">
-                <span className="skill-name">
-                  {listing.name}
-                  <span className="role-tag">{listing.artifact ?? "mcp"}</span>
-                  {isInstalled && <span className="role-tag installed-tag">installed</span>}
-                  <span className="skill-installs">⇩ {count} install{count === 1 ? "" : "s"}</span>
-                </span>
-                {listing.description && <span className="skill-desc">{listing.description}</span>}
-                {runsLine(listing) && <code className="skill-cmd">{runsLine(listing)}</code>}
-                {listing.envKeys && listing.envKeys.length > 0 && (
-                  <span className="skill-env">needs env: {listing.envKeys.join(", ")}</span>
+                <span className="skill-name">{name}</span>
+                <code className="skill-cmd">{runsLine(config)}</code>
+                {config.env && Object.keys(config.env).length > 0 && (
+                  <span className="skill-env skill-deps">
+                    env:{" "}
+                    {Object.keys(config.env).map((key) => (
+                      <EnvKeyStatus key={key} skill={name} envKey={key} plaintext={!!config.env?.[key]?.trim()} editable={false} />
+                    ))}
+                  </span>
                 )}
-                <code className="skill-install-cmd" title="click to copy" onClick={() => copyCmd(listing)}>
-                  {copied === key ? "✓ copied" : `$ ${listing.installCmd ?? `fez skill install ${listing.name}`}`}
-                </code>
-                <span className="skill-author">
-                  <Avatar pk={listing.authorPk} size={14} /> {client.displayName(listing.authorPk)}
-                  {listing.github && (
-                    <button className="skill-link" onClick={() => void openUrl(listing.github!)}>github</button>
-                  )}
-                  {listing.npm && (
-                    <button className="skill-link" onClick={() => void openUrl(`https://www.npmjs.com/package/${listing.npm}`)}>npm</button>
-                  )}
-                  {listing.homepage && (
-                    <button className="skill-link" onClick={() => void openUrl(listing.homepage!)}>docs</button>
-                  )}
-                </span>
               </div>
               <div className="skill-actions">
-                {!isInstalled && isMcp && (
-                  <button className="agent-action" onClick={() => setInstalling(listing)}>install…</button>
+                {publishing === name ? (
+                  <PublishForm onPublish={(meta) => void publish(name, meta)} onCancel={() => setPublishing(undefined)} />
+                ) : (
+                  <>
+                    <button className="mini" title="sign a listing to your relay so others can install this" onClick={() => setPublishing(name)}>↗ share</button>
+                    <button className="mini" title="remove from this machine" onClick={() => void invoke("remove_skill", { name }).then(reload)}>✕</button>
+                  </>
                 )}
               </div>
             </div>
-          );
-        })}
-          </>
-        )}
-
+          ))}
+        </div>
 
         {installing && (
           <InstallDialog
