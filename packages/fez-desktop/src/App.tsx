@@ -382,18 +382,28 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           <span className="brand-word">fez</span>{" "}
           <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />
         </div>
+        <button className="rail-search" onClick={() => setSearchOpen({ query: "" })}>
+          <span className="rail-search-glyph">⌕</span> search everything
+          <span className="rail-search-key">⌘K</span>
+        </button>
         <div className="rail-scroll">
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
-          ⌂ home
+          ▤ inbox
+        </button>
+        <button
+          className={pane?.kind === "agents" ? "channel active home-link" : "channel home-link"}
+          onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}
+        >
+          ⚉ agents
         </button>
         <button className={view.kind === "pulse" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "pulse" })}>
           ◉ pulse
         </button>
-        <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
-          » workflows
-        </button>
         <button className={view.kind === "skills" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "skills" })}>
           ⌂ market
+        </button>
+        <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
+          » workflows
         </button>
         {[...client.state.communities.values()]
           .filter((community) => client.state.joined.has(community.id))
@@ -453,11 +463,6 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
               );
             })}
         </div>
-        <MemberRail
-          client={client}
-          working={working}
-          onProfile={(pk) => setPane(pane?.kind === "profile" && pane.pk === pk ? undefined : { kind: "profile", pk })}
-        />
         </div>
         <div className="self-wrap">
           {selfMenu && (
@@ -707,40 +712,6 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
   );
 }
 
-function MemberRail({
-  client,
-  working,
-  onProfile,
-}: {
-  client: FezClient;
-  working: ReadonlyMap<string, { activity: string; ts: number }>;
-  onProfile: (pk: string) => void;
-}) {
-  const current = client.state.currentChannel();
-  if (!current) return null;
-  const members = [...current.channel.members.keys()]
-    .map((pk) => ({ pk, name: client.displayName(pk), self: pk === client.pubkey, online: pk === client.pubkey || client.isOnline(pk) }))
-    .sort((a, b) => Number(b.self) - Number(a.self) || Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
-  if (members.length === 0) return null;
-  return (
-    <div className="community">
-      <div className="community-name">members</div>
-      {members.map((member) => {
-        const activity = working.get(member.name);
-        const busy = activity && Date.now() - activity.ts < 30_000;
-        return (
-          <button key={member.pk} className="channel member-row" title={busy ? activity.activity : "profile"} onClick={() => onProfile(member.pk)}>
-            <Avatar pk={member.pk} size={16} title={member.name} />
-            <span className={member.online ? "dot on" : "dot off"} /> {member.name}
-            {member.self && <span className="profile-you">you</span>}
-            {busy && <span className="working">⚙</span>}
-            {client.statusOf(member.pk) && <span className="status">{client.statusOf(member.pk)}</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function ChannelView({
   client,
@@ -778,6 +749,7 @@ function ChannelView({
   const [uploading, setUploading] = useState<string>();
   // A focused thread reply opens inside its thread (the channel view
   // only shows roots); the component remounts per focus so lazy init is enough.
+  const [membersOpen, setMembersOpen] = useState(false);
   const [threadRoot, setThreadRoot] = useState<string | undefined>(() => {
     if (!focusId) return undefined;
     return client.messages(channelId).find((m) => m.id === focusId)?.rootId;
@@ -912,6 +884,13 @@ function ChannelView({
         )}
         {!threadRoot && (
           <span className="topbar-tools">
+            <button
+              className="topbar-tool topbar-members"
+              title="members"
+              onClick={() => setMembersOpen((open) => !open)}
+            >
+              ⚉ {client.state.currentChannel()?.channel.members.size ?? 0}
+            </button>
             <button className="topbar-tool" title="channel doc" onClick={onDocs}>
               ≡{client.docsByChannel().has(channelId) && <span className="doc-dot" />}
             </button>
@@ -919,6 +898,32 @@ function ChannelView({
               ⚙
             </button>
           </span>
+        )}
+        {membersOpen && !threadRoot && (
+          <>
+            <div className="menu-backdrop" onClick={() => setMembersOpen(false)} />
+            <div className="members-pop">
+              <div className="self-menu-head">{client.state.currentChannel()?.channel.members.size ?? 0} members</div>
+              {[...(client.state.currentChannel()?.channel.members.keys() ?? [])]
+                .map((pk) => ({ pk, name: client.knownNames().get(pk) ?? pk.slice(0, 8) }))
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map(({ pk, name }) => (
+                  <button
+                    key={pk}
+                    className="self-menu-item"
+                    onClick={() => {
+                      setMembersOpen(false);
+                      onProfile(pk);
+                    }}
+                  >
+                    <Avatar pk={pk} size={16} title={name} />
+                    <span className={client.isOnline(pk) ? "dot on" : "dot off"} />
+                    {name}
+                    {pk === client.pubkey && <span className="self-menu-key">you</span>}
+                  </button>
+                ))}
+            </div>
+          </>
         )}
       </header>
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
@@ -1018,7 +1023,7 @@ function ChannelView({
         onChange={setDraft}
         onSend={() => void send()}
         commandsEnabled
-        placeholder={threadRoot ? "reply in thread…" : `message #${channelName} — @name summons an agent · / for commands`}
+        placeholder={threadRoot ? "reply in thread…" : `message #${channelName}`}
         editing={!!editing}
         onArrowUpEmpty={editing ? undefined : startEditLast}
         onEscape={

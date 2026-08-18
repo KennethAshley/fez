@@ -145,6 +145,26 @@ fn update_persona(name: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("write failed: {e}"))
 }
 
+/// Rename a persona file. The agent's identity key derives from the
+/// persona name, so a rename means a NEW identity on next spawn — the
+/// GUI warns; this command just refuses collisions.
+#[tauri::command]
+fn rename_persona(from: String, to: String) -> Result<(), String> {
+    if !valid_persona_name(&from) || !valid_persona_name(&to) {
+        return Err("bad persona name".to_string());
+    }
+    let dir = persona_dir()?;
+    let src = dir.join(format!("{from}.md"));
+    let dst = dir.join(format!("{to}.md"));
+    if !src.exists() {
+        return Err(format!("persona \"{from}\" doesn't exist"));
+    }
+    if dst.exists() {
+        return Err(format!("persona \"{to}\" already exists"));
+    }
+    std::fs::rename(&src, &dst).map_err(|e| format!("rename failed: {e}"))
+}
+
 #[tauri::command]
 fn delete_persona(name: String) -> Result<(), String> {
     if !valid_persona_name(&name) {
@@ -301,7 +321,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, delete_persona, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

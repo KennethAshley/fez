@@ -49,6 +49,8 @@ export default function Composer({
   const [gridOpen, setGridOpen] = useState(false);
   const [gridQuery, setGridQuery] = useState("");
   const [selection, setSelection] = useState<{ start: number; end: number }>();
+  const [trayOpen, setTrayOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   // Auto-grow: content height up to ~6 lines, then scroll.
   useEffect(() => {
@@ -232,7 +234,7 @@ export default function Composer({
         if (files.length) onFiles(files);
       }}
     >
-      {selection && !popupOpen && (
+      {(selection || trayOpen) && !popupOpen && (
         <div className="format-tray">
           <button title="bold (⌘B)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("**"); }}><b>B</b></button>
           <button title="italic (⌘I)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("*"); }}><i>I</i></button>
@@ -397,15 +399,41 @@ export default function Composer({
             }
           }}
         />
-        <button
-          className="composer-tool"
-          title="emoji (or type :name:)"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            setGridOpen(!gridOpen);
-          }}
-        >
+      </div>
+      <div className="composer-actions">
+        <button className="composer-tool" title="mention someone" onMouseDown={(e) => { e.preventDefault(); insertAtCaret("@"); }}>
+          @
+        </button>
+        {onFiles && (
+          <>
+            <button className="composer-tool" title="attach a file (Blossom upload)" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>
+              🖇︎
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const files = [...(e.target.files ?? [])];
+                if (files.length) onFiles(files);
+                e.target.value = "";
+              }}
+            />
+          </>
+        )}
+        <button className="composer-tool" title="emoji (or type :name:)" onMouseDown={(e) => { e.preventDefault(); setGridOpen(!gridOpen); }}>
           ☺
+        </button>
+        <button
+          className={trayOpen ? "composer-tool on" : "composer-tool"}
+          title="formatting (⌘B / ⌘I / ⌘E)"
+          onMouseDown={(e) => { e.preventDefault(); setTrayOpen(!trayOpen); }}
+        >
+          Aa
+        </button>
+        <button className="composer-send" title="send (Enter)" disabled={disabled || !value.trim()} onClick={onSend}>
+          ↑
         </button>
       </div>
     </div>

@@ -134,6 +134,7 @@ export default function AgentsPane({
           {roster.map((agent) => {
             const busy = working.get(agent.name);
             const active = busy && Date.now() - busy.ts < 30_000;
+            const localName = localPersonas.find((name) => name.toLowerCase() === agent.name.toLowerCase());
             return (
               <button key={agent.pk} className="agent-row" onClick={() => setSelected(agent.pk)}>
                 <Avatar pk={agent.pk} size={18} title={agent.name} />
@@ -143,6 +144,18 @@ export default function AgentsPane({
                 <span className="agent-sub">
                   {active ? busy.activity : client.statusOf(agent.pk) ?? (agent.online ? "online" : "offline")}
                 </span>
+                {localName && (
+                  <span
+                    className="agent-edit"
+                    title="edit persona — name, model, prompt, channels, access"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingPersona(localName);
+                    }}
+                  >
+                    ✎
+                  </span>
+                )}
               </button>
             );
           })}

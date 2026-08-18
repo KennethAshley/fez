@@ -53,6 +53,7 @@ export default function PersonaEditor({
   const [body, setBody] = useState("");
   const [state, setState] = useState<"idle" | "saving" | string>("idle");
   const [armedDelete, setArmedDelete] = useState(false);
+  const [newName, setNewName] = useState(name);
 
   useEffect(() => {
     void invoke<string>("read_persona", { name })
@@ -74,10 +75,14 @@ export default function PersonaEditor({
 
   const save = async () => {
     setState("saving");
-    const frontText = front.filter((line) => line.trim()).join("\n");
+    const renaming = newName.trim() && newName.trim() !== name;
+    const finalName = renaming ? newName.trim() : name;
+    const frontLines = renaming ? setField(front, "name", finalName) : front;
+    const frontText = frontLines.filter((line) => line.trim()).join("\n");
     const content = frontText ? `---\n${frontText}\n---\n\n${body.trim()}\n` : `${body.trim()}\n`;
     try {
-      await invoke("update_persona", { name, content });
+      if (renaming) await invoke("rename_persona", { from: name, to: finalName });
+      await invoke("update_persona", { name: finalName, content });
       onDone(true);
     } catch (err) {
       setState(String(err));
@@ -105,7 +110,20 @@ export default function PersonaEditor({
     <div className="pane-body">
       <div className="settings-hint">
         Editing <b>@{name}</b> — changes apply on its next spawn (a running agent finishes its turn on the old
-        persona). The name itself can't change: it's the @mention and the agent's key identity.
+        persona).
+      </div>
+      <div className="settings-field">
+        <label>name (the @mention — renaming gives the agent a NEW key identity on next spawn)</label>
+        <input className="manage-input" value={newName} spellCheck={false} onChange={(e) => setNewName(e.target.value)} />
+      </div>
+      <div className="settings-field">
+        <label>channels it serves (comma-separated)</label>
+        <input
+          className="manage-input"
+          value={listToText(field("channels"))}
+          placeholder="general, lab"
+          onChange={(e) => update("channels", textToList(e.target.value))}
+        />
       </div>
       <div className="settings-field">
         <label>harness</label>
