@@ -284,8 +284,9 @@ export default function Composer({
         if (files.length) onFiles(files);
       }}
     >
+      <div className="composer-box">
       {(trayOpen || (selection && !popupOpen)) && (
-        <div className={trayOpen ? "format-tray inline-bar" : "format-tray"}>
+        <div className={trayOpen ? "format-bar" : "format-tray"}>
           <button title="bold (⌘B)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("**"); }}><b>B</b></button>
           <button title="italic (⌘I)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("*"); }}><i>I</i></button>
           <button title="code (⌘E)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("`"); }}>{"</>"}</button>
@@ -491,6 +492,7 @@ export default function Composer({
         <button className="composer-send" title="send (Enter)" disabled={disabled || !value.trim()} onClick={onSend}>
           ↑
         </button>
+      </div>
       </div>
     </div>
   );

@@ -1182,10 +1182,28 @@ button.author:hover { text-decoration: underline; }
 /* format tray divider */
 .tray-sep { width: 1px; align-self: stretch; margin: 2px 3px; background: var(--bg2); }
 
-/* persistent formatting bar (Slack-style, inside the composer box) */
-.format-tray.inline-bar {
-  position: static; margin: 0 0 4px; padding: 0 0 4px; background: none; border: 0;
-  border-bottom: 1px solid var(--hairline); border-radius: 0; box-shadow: none;
+/* the composer is ONE box (Slack): format bar / textarea / action row inside a single border */
+.composer-box { background: var(--bg0); border: 1px solid var(--hairline); border-radius: 10px; padding: 6px 10px; }
+.composer:focus-within .composer-box {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
 }
-.format-tray.inline-bar button { color: var(--fg-dim); }
-.format-tray.inline-bar button:hover { color: var(--accent); }
+.composer.dragging .composer-box { border-color: var(--accent); border-style: dashed; }
+.composer .composer-box textarea,
+.composer .composer-box textarea:focus,
+.composer .composer-box textarea.editing {
+  background: none; border: 0; box-shadow: none; padding: 6px 4px;
+}
+.composer .composer-box textarea.editing { color: var(--yellow); }
+
+.format-bar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 2px 0 6px; margin-bottom: 2px; border-bottom: 1px solid var(--hairline);
+}
+.format-bar button {
+  background: none; border: 0; color: var(--fg-dim); cursor: pointer;
+  font-family: inherit; font-size: 14.5px; font-weight: 600;
+  width: 32px; height: 28px; border-radius: 6px;
+}
+.format-bar button:hover { background: var(--bg2); color: var(--fg); }
+.format-bar .tray-sep { margin: 3px 5px; }
