@@ -1042,9 +1042,3 @@ button.author:hover { text-decoration: underline; }
 .skill-dep.needs-env { color: var(--yellow); }
 .secret-field { display: inline-flex; align-items: center; gap: 4px; }
 .secret-input { width: 170px; padding: 3px 8px; font-size: 12px; }
-
-/* market layout toggle: grid vs list, user's call */
-.layout-toggle { margin-left: auto; width: 26px; }
-.skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; margin-bottom: 14px; }
-.skill-grid .skill-row { margin-bottom: 0; }
-.skill-list { margin-bottom: 6px; }
