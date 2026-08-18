@@ -52,6 +52,15 @@ type MarketTab = "agents" | "more";
 
 export default function SkillsView({ client, wire }: { client: FezClient; wire: BrowserWire }) {
   const [tab, setTab] = useState<MarketTab>("agents");
+  const [layout, setLayout] = useState<"list" | "grid">(
+    (localStorage.getItem("fez-market-layout") as "list" | "grid") ?? "grid"
+  );
+  const listClass = layout === "grid" ? "skill-grid" : "skill-list";
+  const toggleLayout = () => {
+    const next = layout === "grid" ? "list" : "grid";
+    setLayout(next);
+    localStorage.setItem("fez-market-layout", next);
+  };
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
   const [listings, setListings] = useState<Listing[]>();
   const [installing, setInstalling] = useState<Listing>();
@@ -193,6 +202,13 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             </button>
           ))}
         </span>
+        <button
+          className="topbar-tool layout-toggle"
+          title={layout === "grid" ? "switch to list layout" : "switch to grid layout"}
+          onClick={toggleLayout}
+        >
+          {layout === "grid" ? "☰" : "▦"}
+        </button>
       </header>
       <div className="timeline">
         {notice && <div className="manage-notice">{notice}</div>}
@@ -229,6 +245,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             {listings && personas.length === 0 && (
               <div className="pane-empty">no agents listed yet — publish yours: fez persona publish &lt;name&gt;</div>
             )}
+            <div className={listClass}>
             {personas.map((listing) => {
               const key = `${listing.authorPk}:${listing.name}`;
               const count = installs.get(key) ?? 0;
@@ -286,6 +303,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                 </div>
               );
             })}
+            </div>
           </>
         )}
 
@@ -297,6 +315,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
               install; workflows land in ~/.fez/workflows).
             </div>
             {otherListings.length === 0 && <div className="pane-empty">none listed on this relay yet</div>}
+            <div className={listClass}>
             {otherListings.map((listing) => {
               const key = `${listing.authorPk}:${listing.name}`;
               const count = installs.get(key) ?? 0;
@@ -319,6 +338,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                 </div>
               );
             })}
+            </div>
 
         <div className="home-section">skill definitions — installed on this machine</div>
         <div className="settings-hint">
@@ -331,6 +351,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             Personas opt in via their mcpServers list; agents get them on next spawn.
           </div>
         )}
+        <div className={listClass}>
         {Object.entries(installed).map(([name, config]) => (
           <div key={name} className="skill-row">
             <div className="skill-main">
@@ -363,6 +384,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             </div>
           </div>
         ))}
+        </div>
 
         <div className="home-section">skill definitions — listed on your relay</div>
         <div className="settings-hint">
@@ -373,6 +395,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
         {listings?.length === 0 && (
           <div className="pane-empty">no listings on this relay yet — publish one of yours above</div>
         )}
+        <div className={listClass}>
         {skillListings.map((listing) => {
           const isInstalled = !!installed[listing.name];
           const key = `${listing.authorPk}:${listing.name}`;
@@ -416,6 +439,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             </div>
           );
         })}
+        </div>
           </>
         )}
 
