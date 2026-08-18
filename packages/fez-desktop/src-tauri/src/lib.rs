@@ -165,6 +165,48 @@ fn rename_persona(from: String, to: String) -> Result<(), String> {
     std::fs::rename(&src, &dst).map_err(|e| format!("rename failed: {e}"))
 }
 
+fn valid_secret_name(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Store a skill's secret env value in the macOS keychain (service
+/// "fez-skill-env", account "<skill>.<KEY>") — same custody as the
+/// identity. WRITE-ONLY from the GUI: there is deliberately no command
+/// that returns a secret to the webview; agents resolve values at spawn
+/// via the same `security` read in core.
+#[tauri::command]
+fn set_skill_secret(skill: String, key: String, value: String) -> Result<(), String> {
+    if !valid_secret_name(&skill) || !valid_secret_name(&key) {
+        return Err("bad skill/key name".to_string());
+    }
+    if value.is_empty() {
+        return Err("empty value — use the keychain app to delete entries".to_string());
+    }
+    let account = format!("{skill}.{key}");
+    let status = Command::new("security")
+        .args(["add-generic-password", "-U", "-s", "fez-skill-env", "-a", &account, "-w", &value])
+        .status()
+        .map_err(|e| format!("couldn't run security: {e}"))?;
+    if !status.success() {
+        return Err("keychain write failed".to_string());
+    }
+    Ok(())
+}
+
+/// Whether a secret exists (never its value).
+#[tauri::command]
+fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
+    if !valid_secret_name(&skill) || !valid_secret_name(&key) {
+        return Err("bad skill/key name".to_string());
+    }
+    let account = format!("{skill}.{key}");
+    let output = Command::new("security")
+        .args(["find-generic-password", "-s", "fez-skill-env", "-a", &account])
+        .output()
+        .map_err(|e| format!("couldn't run security: {e}"))?;
+    Ok(output.status.success())
+}
+
 /// GUI extension parts installed by `fez install`/`fez link`
 /// (~/.fez/gui-extensions/*.js). The webview imports each as an ES
 /// module and calls its activate(api) — the GUI's version of the TUI's
@@ -346,7 +388,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1032,3 +1032,13 @@ button.author:hover { text-decoration: underline; }
 /* agent skill dependencies in market listings */
 .skill-deps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .skill-dep { display: inline-flex; align-items: center; gap: 3px; background: var(--bg2); border-radius: 8px; padding: 1px 7px; }
+
+/* agent dependency board + keychain secret fields */
+.dep-row { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; }
+.dep-agent { font-weight: 700; min-width: 110px; }
+.dep-skills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.skill-dep.ready { color: var(--green); }
+.skill-dep.missing { color: var(--red); }
+.skill-dep.needs-env { color: var(--yellow); }
+.secret-field { display: inline-flex; align-items: center; gap: 4px; }
+.secret-input { width: 170px; padding: 3px 8px; font-size: 12px; }

@@ -58,6 +58,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
   const [notice, setNotice] = useState<string>();
   const [installs, setInstalls] = useState<Map<string, number>>(new Map());
   const [copied, setCopied] = useState<string>();
+  const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[] }[]>([]);
 
   const flash = (text: string) => {
     setNotice(text);
@@ -72,6 +73,19 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
 
   useEffect(() => {
     reload();
+    void (async () => {
+      try {
+        const names = await invoke<string[]>("list_personas");
+        const deps: { agent: string; skills: string[] }[] = [];
+        for (const agent of names) {
+          const content = await invoke<string>("read_persona", { name: agent }).catch(() => "");
+          const match = content.match(/^mcpServers:\s*\[([^\]]*)\]/m);
+          const skills = match ? match[1].split(",").map((skill) => skill.trim()).filter(Boolean) : [];
+          if (skills.length > 0) deps.push({ agent, skills });
+        }
+        setAgentDeps(deps);
+      } catch { /* no personas dir */ }
+    })();
     void (async () => {
       const events = await wire.query([{ kinds: [KIND_SKILL_LISTING], limit: 100 }]);
       const latest = new Map<string, Listing>();
@@ -184,6 +198,28 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
 
         {tab === "agents" && (
           <>
+            {agentDeps.length > 0 && (
+              <>
+                <div className="home-section">your agents — what they need on this machine</div>
+                {agentDeps.map(({ agent, skills }) => (
+                  <div key={agent} className="dep-row">
+                    <span className="dep-agent">@{agent}</span>
+                    <span className="dep-skills">
+                      {skills.map((skill) => (
+                        <SkillDep
+                          key={skill}
+                          skill={skill}
+                          config={installed[skill]}
+                          listing={skillListings.find((l) => l.name === skill)}
+                          onInstall={(l) => setInstalling(l)}
+                          onSaved={flash}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                ))}
+              </>
+            )}
             <div className="home-section">agents on the marketplace</div>
             <div className="settings-hint">
               An agent IS its text — the listing carries the complete persona. Installing downloads it as a DRAFT:
@@ -301,7 +337,12 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
               <span className="skill-name">{name}</span>
               <code className="skill-cmd">{runsLine(config)}</code>
               {config.env && Object.keys(config.env).length > 0 && (
-                <span className="skill-env">env: {Object.keys(config.env).join(", ")}</span>
+                <span className="skill-env skill-deps">
+                  env:{" "}
+                  {Object.keys(config.env).map((key) => (
+                    <EnvKeyStatus key={key} skill={name} envKey={key} plaintext={!!config.env?.[key]?.trim()} onSaved={flash} />
+                  ))}
+                </span>
               )}
             </div>
             <div className="skill-actions">
@@ -483,5 +524,133 @@ function InstallDialog({ listing, wire, onDone }: { listing: Listing; wire: Brow
         </div>
       </div>
     </div>
+  );
+}
+
+
+/**
+ * One declared skill on the dependency board: ready / needs env (with
+ * inline keychain fill) / undefined (with install if a listing exists).
+ */
+function SkillDep({
+  skill,
+  config,
+  listing,
+  onInstall,
+  onSaved,
+}: {
+  skill: string;
+  config?: SkillConfig;
+  listing?: Listing;
+  onInstall: (listing: Listing) => void;
+  onSaved: (text: string) => void;
+}) {
+  const envKeys = Object.keys(config?.env ?? {});
+  const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    void (async () => {
+      const status: Record<string, boolean> = {};
+      for (const key of envKeys) {
+        status[key] = await invoke<boolean>("has_skill_secret", { skill, key }).catch(() => false);
+      }
+      setSecretStatus(status);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skill, envKeys.join(",")]);
+
+  if (!config) {
+    return (
+      <span className="skill-dep missing">
+        {skill}
+        {listing ? (
+          <button className="skill-link" onClick={() => onInstall(listing)}>install</button>
+        ) : (
+          " — no definition"
+        )}
+      </span>
+    );
+  }
+  const unfilled = envKeys.filter((key) => !secretStatus[key] && !config.env?.[key]?.trim());
+  if (unfilled.length === 0) {
+    return <span className="skill-dep ready" title={envKeys.length ? "env resolved (keychain/settings)" : "no env needed"}>{skill} ✓</span>;
+  }
+  return (
+    <span className="skill-dep needs-env">
+      {skill}
+      {unfilled.map((key) => (
+        <SecretField
+          key={key}
+          skill={skill}
+          envKey={key}
+          onSaved={() => {
+            setSecretStatus((prev) => ({ ...prev, [key]: true }));
+            onSaved(`✓ ${skill}.${key} stored in the keychain — agents resolve it on next spawn`);
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** Write-only keychain input: the value goes straight to the OS
+ * keychain via set_skill_secret and is never readable back here. */
+function SecretField({ skill, envKey, onSaved }: { skill: string; envKey: string; onSaved: () => void }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  return (
+    <span className="secret-field">
+      <input
+        type="password"
+        className="manage-input secret-input"
+        placeholder={envKey}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => e.stopPropagation()}
+      />
+      <button
+        className="mini"
+        disabled={busy || !value.trim()}
+        title="store in the macOS keychain (write-only — the GUI can never read it back)"
+        onClick={() => {
+          setBusy(true);
+          setError(undefined);
+          void invoke("set_skill_secret", { skill, key: envKey, value: value.trim() })
+            .then(() => {
+              setValue("");
+              onSaved();
+            })
+            .catch((err) => setError(String(err)))
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? "…" : "🔒 save"}
+      </button>
+      {error && <span className="ob-error">{error}</span>}
+    </span>
+  );
+}
+
+
+/** Env key with keychain status: 🔒 set / plaintext-in-settings / fill inline. */
+function EnvKeyStatus({ skill, envKey, plaintext, onSaved }: { skill: string; envKey: string; plaintext: boolean; onSaved: (t: string) => void }) {
+  const [inKeychain, setInKeychain] = useState<boolean>();
+  useEffect(() => {
+    void invoke<boolean>("has_skill_secret", { skill, key: envKey }).then(setInKeychain).catch(() => setInKeychain(false));
+  }, [skill, envKey]);
+  if (inKeychain === undefined) return <span className="skill-dep">{envKey} …</span>;
+  if (inKeychain) return <span className="skill-dep ready" title="stored in the macOS keychain">{envKey} 🔒</span>;
+  if (plaintext) return <span className="skill-dep needs-env" title="plaintext value in settings.json — consider moving it to the keychain by saving it here">{envKey} ⚠ plaintext</span>;
+  return (
+    <span className="skill-dep needs-env">
+      <SecretField
+        skill={skill}
+        envKey={envKey}
+        onSaved={() => {
+          setInKeychain(true);
+          onSaved(`✓ ${skill}.${envKey} stored in the keychain`);
+        }}
+      />
+    </span>
   );
 }
