@@ -4,7 +4,8 @@ import type { FezClient } from "@fez/client";
 import { mediaServer } from "./upload";
 import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";
-import { applyTheme, currentTheme, themeNames } from "./gui-extensions";
+import { applyTheme, currentTheme, themeNames, guiExtensionStatus } from "./gui-extensions";
+import { SkillSecretsSection } from "./SkillSecrets";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -97,6 +98,16 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             ))}
           </select>
         </div>
+
+        {guiExtensionStatus().length > 0 && (
+          <div className="settings-hint">
+            gui extensions:{" "}
+            {guiExtensionStatus().map((ext) => `${ext.name} ${ext.ok ? "✓" : `✗ (${ext.error})`}`).join(" · ")}
+          </div>
+        )}
+
+        <div className="manage-section">skills &amp; secrets</div>
+        <SkillSecretsSection onNotice={flash} />
 
         <div className="manage-section">agent defaults</div>
         <div className="settings-field">

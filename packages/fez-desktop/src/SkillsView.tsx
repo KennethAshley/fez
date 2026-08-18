@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient, WireEvent } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
+import { EnvKeyStatus } from "./SkillSecrets";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -212,7 +213,6 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                           config={installed[skill]}
                           listing={skillListings.find((l) => l.name === skill)}
                           onInstall={(l) => setInstalling(l)}
-                          onSaved={flash}
                         />
                       ))}
                     </span>
@@ -340,7 +340,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                 <span className="skill-env skill-deps">
                   env:{" "}
                   {Object.keys(config.env).map((key) => (
-                    <EnvKeyStatus key={key} skill={name} envKey={key} plaintext={!!config.env?.[key]?.trim()} onSaved={flash} />
+                    <EnvKeyStatus key={key} skill={name} envKey={key} plaintext={!!config.env?.[key]?.trim()} editable={false} />
                   ))}
                 </span>
               )}
@@ -537,13 +537,11 @@ function SkillDep({
   config,
   listing,
   onInstall,
-  onSaved,
 }: {
   skill: string;
   config?: SkillConfig;
   listing?: Listing;
   onInstall: (listing: Listing) => void;
-  onSaved: (text: string) => void;
 }) {
   const envKeys = Object.keys(config?.env ?? {});
   const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({});
@@ -575,82 +573,8 @@ function SkillDep({
     return <span className="skill-dep ready" title={envKeys.length ? "env resolved (keychain/settings)" : "no env needed"}>{skill} ✓</span>;
   }
   return (
-    <span className="skill-dep needs-env">
-      {skill}
-      {unfilled.map((key) => (
-        <SecretField
-          key={key}
-          skill={skill}
-          envKey={key}
-          onSaved={() => {
-            setSecretStatus((prev) => ({ ...prev, [key]: true }));
-            onSaved(`✓ ${skill}.${key} stored in the keychain — agents resolve it on next spawn`);
-          }}
-        />
-      ))}
-    </span>
-  );
-}
-
-/** Write-only keychain input: the value goes straight to the OS
- * keychain via set_skill_secret and is never readable back here. */
-function SecretField({ skill, envKey, onSaved }: { skill: string; envKey: string; onSaved: () => void }) {
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  return (
-    <span className="secret-field">
-      <input
-        type="password"
-        className="manage-input secret-input"
-        placeholder={envKey}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => e.stopPropagation()}
-      />
-      <button
-        className="mini"
-        disabled={busy || !value.trim()}
-        title="store in the macOS keychain (write-only — the GUI can never read it back)"
-        onClick={() => {
-          setBusy(true);
-          setError(undefined);
-          void invoke("set_skill_secret", { skill, key: envKey, value: value.trim() })
-            .then(() => {
-              setValue("");
-              onSaved();
-            })
-            .catch((err) => setError(String(err)))
-            .finally(() => setBusy(false));
-        }}
-      >
-        {busy ? "…" : "🔒 save"}
-      </button>
-      {error && <span className="ob-error">{error}</span>}
-    </span>
-  );
-}
-
-
-/** Env key with keychain status: 🔒 set / plaintext-in-settings / fill inline. */
-function EnvKeyStatus({ skill, envKey, plaintext, onSaved }: { skill: string; envKey: string; plaintext: boolean; onSaved: (t: string) => void }) {
-  const [inKeychain, setInKeychain] = useState<boolean>();
-  useEffect(() => {
-    void invoke<boolean>("has_skill_secret", { skill, key: envKey }).then(setInKeychain).catch(() => setInKeychain(false));
-  }, [skill, envKey]);
-  if (inKeychain === undefined) return <span className="skill-dep">{envKey} …</span>;
-  if (inKeychain) return <span className="skill-dep ready" title="stored in the macOS keychain">{envKey} 🔒</span>;
-  if (plaintext) return <span className="skill-dep needs-env" title="plaintext value in settings.json — consider moving it to the keychain by saving it here">{envKey} ⚠ plaintext</span>;
-  return (
-    <span className="skill-dep needs-env">
-      <SecretField
-        skill={skill}
-        envKey={envKey}
-        onSaved={() => {
-          setInKeychain(true);
-          onSaved(`✓ ${skill}.${envKey} stored in the keychain`);
-        }}
-      />
+    <span className="skill-dep needs-env" title={`needs ${unfilled.join(", ")} — fill in settings (⌘,) → skills & secrets`}>
+      {skill} ○ needs {unfilled.join(", ")} — settings ⌘,
     </span>
   );
 }

@@ -56,8 +56,44 @@ function applyThemeVars(vars: Record<string, string>): void {
 }
 
 // ── loader ─────────────────────────────────────────────────────────
+export interface GuiExtStatus {
+  name: string;
+  ok: boolean;
+  error?: string;
+}
+const status: GuiExtStatus[] = [];
+/** What loaded (and what didn't, and why) — shown in settings so a
+ * broken gui part is visible instead of a silently missing theme. */
+export function guiExtensionStatus(): readonly GuiExtStatus[] {
+  return status;
+}
+
+type Activate = (api: GuiExtensionApi) => void;
+
+async function importModule(code: string): Promise<{ default?: Activate; activate?: Activate }> {
+  // Preferred: real ES module via blob URL…
+  try {
+    const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+    try {
+      return (await import(/* @vite-ignore */ url)) as { default?: Activate; activate?: Activate };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch {
+    // …but WKWebView has historically refused module imports from blob:
+    // URLs. Fallback: evaluate an IIFE bundle (esbuild --format=iife
+    // --global-name=__fezExt) and pick up its exports object.
+    const factory = new Function(`${code}\n;return (typeof __fezExt !== "undefined" ? __fezExt : undefined);`);
+    const exported = factory() as { default?: Activate; activate?: Activate } | Activate | undefined;
+    if (typeof exported === "function") return { default: exported };
+    if (exported) return exported;
+    throw new Error("neither an importable module nor an IIFE with global __fezExt");
+  }
+}
+
 export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
   const loaded: string[] = [];
+  status.length = 0;
   let files: [string, string][];
   try {
     files = await invoke<[string, string][]>("list_gui_extensions");
@@ -67,18 +103,15 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
   const api: GuiExtensionApi = { React, client, registerArtifactViewer, registerTheme };
   for (const [name, code] of files) {
     try {
-      const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
-      const mod = (await import(/* @vite-ignore */ url)) as {
-        default?: (api: GuiExtensionApi) => void;
-        activate?: (api: GuiExtensionApi) => void;
-      };
-      URL.revokeObjectURL(url);
+      const mod = await importModule(code);
       const activate = mod.default ?? mod.activate;
       if (typeof activate !== "function") throw new Error("no default export / activate()");
       activate(api);
       loaded.push(name);
+      status.push({ name, ok: true });
       console.log(`🧩 gui extension loaded: ${name}`);
     } catch (err) {
+      status.push({ name, ok: false, error: err instanceof Error ? err.message : String(err) });
       console.error(`🧩 gui extension "${name}" failed to load:`, err);
     }
   }

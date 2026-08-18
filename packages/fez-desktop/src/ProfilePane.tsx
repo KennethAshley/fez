@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import PersonaEditor from "./PersonaEditor";
 import type { FezClient } from "@fez/client";
 import Avatar from "./Avatar";
 
@@ -29,6 +31,16 @@ export default function ProfilePane({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [localPersona, setLocalPersona] = useState<string>();
+  const agentNameForFiles = client.agents().get(pk);
+  useEffect(() => {
+    setEditing(false);
+    if (!agentNameForFiles) return setLocalPersona(undefined);
+    void invoke<string[]>("list_personas")
+      .then((names) => setLocalPersona(names.find((n) => n.toLowerCase() === agentNameForFiles.toLowerCase())))
+      .catch(() => setLocalPersona(undefined));
+  }, [pk, agentNameForFiles]);
   const self = pk === client.pubkey;
   const name = client.displayName(pk);
   const agentName = client.agents().get(pk);
@@ -58,6 +70,17 @@ export default function ProfilePane({
     }
   };
 
+  if (editing && localPersona) {
+    return (
+      <aside className="pane">
+        <header className="pane-head">
+          <button className="pane-back" onClick={() => setEditing(false)}>← profile</button>
+          <button className="pane-close" onClick={onClose}>✕</button>
+        </header>
+        <PersonaEditor name={localPersona} client={client} onDone={() => setEditing(false)} />
+      </aside>
+    );
+  }
   return (
     <aside className="pane">
       <header className="pane-head">
@@ -95,6 +118,11 @@ export default function ProfilePane({
             </button>
           )}
           {self && <button className="agent-action" onClick={onSettings}>✎ edit profile</button>}
+          {localPersona && !self && (
+            <button className="agent-action" title="name, model, prompt, channels, access" onClick={() => setEditing(true)}>
+              ✎ edit persona
+            </button>
+          )}
         </div>
       </div>
     </aside>

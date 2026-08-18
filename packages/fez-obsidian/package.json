@@ -17,7 +17,7 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.ts --bundle --format=esm --platform=browser --outfile=dist/gui.js",
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
     "check": "tsc --noEmit"
   },
   "devDependencies": { "esbuild": "^0.21.5", "typescript": "^5.6.0" }
