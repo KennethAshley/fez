@@ -1,0 +1,14 @@
+{
+  "name": "@fez/bench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Routing bench for the fez orchestrator — boundary-case battery, selection scoring with over-route penalties, latency, input hashing, scorecard history. DittoBench-inspired, fez-shaped.",
+  "type": "module",
+  "fez": { "type": "extension", "parts": { "headless": "dist/headless.js" } },
+  "scripts": {
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/cli.ts --bundle --format=esm --platform=node --outfile=dist/cli.js",
+    "bench": "node dist/cli.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": { "esbuild": "^0.21.5", "typescript": "^5.6.0" }
+}
