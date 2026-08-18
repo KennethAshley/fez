@@ -1169,8 +1169,11 @@ button.author:hover { text-decoration: underline; }
 .msg-menu .self-menu-item.danger { color: var(--red); }
 .msg-menu .menu-glyph { width: 18px; display: inline-block; text-align: center; opacity: 0.8; }
 
-/* reaction selector: quick row + searchable grid */
-.react-picker { flex-direction: column; align-items: stretch; width: 264px; padding: 8px; gap: 6px; }
+/* reaction selector: fixed popover at the cursor/button, quick row + searchable grid */
+.react-picker {
+  position: fixed; z-index: 60; margin: 0; flex-direction: column; align-items: stretch;
+  width: 264px; padding: 8px; gap: 6px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
 .react-picker-quick { display: flex; gap: 4px; }
 .react-picker-quick button { font-size: 16px; padding: 3px 7px; background: none; border: none; border-radius: 5px; cursor: pointer; }
 .react-picker-quick button:hover { background: var(--bg2); }
@@ -1178,3 +1181,11 @@ button.author:hover { text-decoration: underline; }
 
 /* format tray divider */
 .tray-sep { width: 1px; align-self: stretch; margin: 2px 3px; background: var(--bg2); }
+
+/* persistent formatting bar (Slack-style, inside the composer box) */
+.format-tray.inline-bar {
+  position: static; margin: 0 0 4px; padding: 0 0 4px; background: none; border: 0;
+  border-bottom: 1px solid var(--hairline); border-radius: 0; box-shadow: none;
+}
+.format-tray.inline-bar button { color: var(--fg-dim); }
+.format-tray.inline-bar button:hover { color: var(--accent); }

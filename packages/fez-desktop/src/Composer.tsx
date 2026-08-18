@@ -49,7 +49,12 @@ export default function Composer({
   const [gridOpen, setGridOpen] = useState(false);
   const [gridQuery, setGridQuery] = useState("");
   const [selection, setSelection] = useState<{ start: number; end: number }>();
-  const [trayOpen, setTrayOpen] = useState(false);
+  // Slack keeps the formatting bar in the box; Aa toggles it and the choice sticks.
+  const [trayOpen, setTrayOpenState] = useState(() => localStorage.getItem("fez-format-bar") !== "0");
+  const setTrayOpen = (open: boolean) => {
+    setTrayOpenState(open);
+    localStorage.setItem("fez-format-bar", open ? "1" : "0");
+  };
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Auto-grow: content height up to ~6 lines, then scroll.
@@ -279,8 +284,8 @@ export default function Composer({
         if (files.length) onFiles(files);
       }}
     >
-      {(selection || trayOpen) && !popupOpen && (
-        <div className="format-tray">
+      {(trayOpen || (selection && !popupOpen)) && (
+        <div className={trayOpen ? "format-tray inline-bar" : "format-tray"}>
           <button title="bold (⌘B)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("**"); }}><b>B</b></button>
           <button title="italic (⌘I)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("*"); }}><i>I</i></button>
           <button title="code (⌘E)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("`"); }}>{"</>"}</button>

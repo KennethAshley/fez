@@ -1462,12 +1462,17 @@ function ArtifactCard({ artifact, onAuthor }: { artifact: Artifact; onAuthor: ()
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🚀", "👀"];
 
-/** Slack-style reaction selector: quick row on top, searchable full grid below. */
-function ReactionPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void }) {
+/** Slack-style reaction selector: a fixed popover at the cursor/button, never in the message flow. */
+function ReactionPicker({ at, onPick, onClose }: { at: { x: number; y: number }; onPick: (emoji: string) => void; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const results = query.trim() ? searchEmoji(query.trim(), 72) : EMOJI.slice(0, 72);
   return (
-    <div className="emoji-picker react-picker">
+    <>
+      <div className="menu-backdrop" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
+      <div
+        className="emoji-picker react-picker"
+        style={{ left: Math.max(8, Math.min(at.x, window.innerWidth - 280)), top: Math.max(8, Math.min(at.y, window.innerHeight - 300)) }}
+      >
       <div className="react-picker-quick">
         {QUICK_EMOJI.map((emoji) => (
           <button key={emoji} onClick={() => onPick(emoji)}>{emoji}</button>
@@ -1491,7 +1496,8 @@ function ReactionPicker({ onPick, onClose }: { onPick: (emoji: string) => void; 
           </button>
         ))}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -1648,7 +1654,7 @@ function Bubble({
   const reactions = client.reactions(msg.id);
   const pinned = client.isPinned(channelId, msg.id);
   const time = new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerAt, setPickerAt] = useState<{ x: number; y: number }>();
   const [remindOpen, setRemindOpen] = useState(false);
   const [remindSet, setRemindSet] = useState(false);
   const [armedDelete, setArmedDelete] = useState(false);
@@ -1675,7 +1681,7 @@ function Bubble({
   };
 
   const react = (emoji: string) => {
-    setPickerOpen(false);
+    setPickerAt(undefined);
     void client.toggleReaction(channelId, communityId, msg.id, emoji);
   };
 
@@ -1723,7 +1729,7 @@ function Bubble({
         <>
           <div className="menu-backdrop" onClick={() => setMenu(undefined)} onContextMenu={(e) => { e.preventDefault(); setMenu(undefined); }} />
           <div className="msg-menu" style={{ left: menu.x, top: menu.y }}>
-            {menuItem("add reaction…", "☺", () => setPickerOpen(true))}
+            {menuItem("add reaction…", "☺", () => setPickerAt(menu))}
             {!inThread && menuItem("reply in thread", "↩", onOpenThread)}
             {menuItem("remind me about this", "◷", () => setRemindOpen(true))}
             {menuItem(copied ? "copied ✓" : "copy text", "⧉", () => {
@@ -1767,7 +1773,16 @@ function Bubble({
         {pinned && <span className="pin-mark" title="pinned">⚑</span>}
         {!msg.deletedBy && (
           <div className="actions">
-            <button title="react" onClick={() => setPickerOpen(!pickerOpen)}>☺</button>
+            <button
+              title="react"
+              onClick={(e) => {
+                if (pickerAt) return setPickerAt(undefined);
+                const rect = e.currentTarget.getBoundingClientRect();
+                setPickerAt({ x: rect.right - 264, y: rect.bottom + 6 });
+              }}
+            >
+              ☺
+            </button>
             <button title="remind me about this" onClick={() => setRemindOpen(!remindOpen)}>{remindSet ? "✓" : "◷"}</button>
             {!mine && (
               <button title="report to the community creator (encrypted)" onClick={() => setReportOpen(!reportOpen)}>
@@ -1828,7 +1843,7 @@ function Bubble({
           <button onClick={() => remind(tomorrow9())}>tmrw 9a</button>
         </div>
       )}
-      {pickerOpen && <ReactionPicker onPick={react} onClose={() => setPickerOpen(false)} />}
+      {pickerAt && <ReactionPicker at={pickerAt} onPick={react} onClose={() => setPickerAt(undefined)} />}
       {msg.deletedBy ? (
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
