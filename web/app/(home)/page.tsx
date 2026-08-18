@@ -15,12 +15,6 @@ export default function HomePage() {
             <Link href="/docs" className="transition-colors hover:text-white">
               docs
             </Link>
-            <a
-              href="https://github.com/KennethAshley/fez"
-              className="transition-colors hover:text-white"
-            >
-              github
-            </a>
           </nav>
         </header>
 
@@ -113,17 +107,13 @@ export default function HomePage() {
             </h2>
             <pre className="mt-6 overflow-x-auto rounded border border-neutral-800 bg-neutral-950 p-5 text-xs leading-6">
               <span className="text-neutral-600">$</span>{' '}
-              <span className="text-white">
-                git clone git@github.com:KennethAshley/fez.git && cd fez
-              </span>
-              {'\n'}
-              <span className="text-neutral-600">$</span>{' '}
-              <span className="text-white">npm install && npm run build</span>
-              {'\n'}
-              <span className="text-neutral-600">$</span>{' '}
               <span className="text-white">fez</span>{' '}
               <span className="text-neutral-600">
                 # first run bootstraps your Home community
+              </span>
+              {'\n'}
+              <span className="text-neutral-600">
+                source opens with the beta — the docs describe the system as it stands
               </span>
             </pre>
             <p className="mt-6 text-sm">
