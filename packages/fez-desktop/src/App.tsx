@@ -28,6 +28,7 @@ import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
 import { runCommand } from "./commands";
 import Onboarding from "./Onboarding";
+import FirstRun from "./FirstRun";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators } from "./gui-extensions";
 import { EMOJI, searchEmoji } from "./emoji";
@@ -744,6 +745,7 @@ function Shell({
           working={working}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
           onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
+          onAgents={() => setPane({ kind: "agents" })}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
           onDocs={() =>
             setPane(
@@ -976,6 +978,7 @@ function ChannelView({
   working,
   onWatch,
   onManage,
+  onAgents,
   onProfile,
   onDocs,
   onCommand,
@@ -989,6 +992,7 @@ function ChannelView({
   working: ReadonlyMap<string, { activity: string; ts: number }>;
   onWatch: (agent: string) => void;
   onManage: () => void;
+  onAgents: () => void;
   onProfile: (pk: string) => void;
   onDocs: () => void;
   onCommand: (text: string) => Promise<string>;
@@ -1205,14 +1209,11 @@ function ChannelView({
           </div>
         )}
         {messages.length === 0 && (client.state.currentChannel()?.channel.members.size ?? 0) > 1 && (
-          <div className="channel-intro">
-            <div className="intro-hash">#</div>
-            <h2>{channelName}</h2>
-            <p>
-              {client.state.currentChannel()!.channel.members.size} members · created by{" "}
-              {client.displayName(client.state.currentChannel()!.community.creator)}. This is the very beginning.
-            </p>
-          </div>
+          <FirstRun
+            client={client}
+            channelName={channelName}
+            onOpenAgents={onAgents}
+          />
         )}
         {rows.map((row, index) => {
           if (row.artifact) {
