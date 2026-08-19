@@ -1153,6 +1153,7 @@ function ChannelView({
       }}
     >
       <header className="topbar">
+        <div className="topbar-row">
         <span className="hash">#</span> {channelName}
         {threadRoot && (
           <button className="thread-exit" onClick={() => setThreadRoot(undefined)}>← back to channel</button>
@@ -1205,15 +1206,19 @@ function ChannelView({
             </div>
           </>
         )}
+        </div>
+        {/* The channel's doc belongs TO the channel, so it lives under
+            the title inside the same block rather than as a strip
+            floating between the header and the first message. */}
+        {!threadRoot && (
+          <ChannelInfo
+            client={client}
+            channelId={channelId}
+            channelName={channelName}
+            onJump={(msgId) => document.getElementById(`msg-${msgId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+          />
+        )}
       </header>
-      {!threadRoot && (
-        <ChannelInfo
-          client={client}
-          channelId={channelId}
-          channelName={channelName}
-          onJump={(msgId) => document.getElementById(`msg-${msgId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
-        />
-      )}
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
         {(client.state.workspace.members.size ?? 0) <= 1 && (
           <div className="empty-room">

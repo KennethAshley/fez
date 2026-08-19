@@ -64,8 +64,14 @@ body {
 
 /* ── main column ───────────────────────────────────────────── */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* Two rows in one block: the channel's name, and the channel's doc
+   under it. The border belongs to the block, not to either row. */
 .topbar {
-  padding: 12px 18px; border-bottom: 1px solid var(--bg2);
+  border-bottom: 1px solid var(--bg2);
+  display: flex; flex-direction: column;
+}
+.topbar-row {
+  padding: 12px 18px 0;
   font-weight: 600; display: flex; align-items: center; gap: 8px;
 }
 .thread-exit {
@@ -1003,6 +1009,12 @@ button.author:hover { text-decoration: underline; }
   width: 34px; height: 32px; border-radius: 7px; cursor: pointer;
 }
 .composer-tool:hover { background: var(--bg2); color: var(--fg); }
+/* The link and paperclip are the only colour emoji in a toolbar of
+   typographic glyphs (B I </> S ≔ ⒈ ❝ ▤ @ ☺ Aa), which is what made
+   them read as foreign. Desaturating is the fix that survives: there is
+   no monochrome paperclip in the system fonts to swap to. */
+.emoji-glyph { filter: grayscale(1); opacity: 0.7; }
+.emoji-glyph:hover { opacity: 1; }
 .composer-tool.on { background: var(--bg2); color: var(--accent); }
 .composer-send {
   margin-left: auto; background: var(--accent); border: 0; color: var(--bg0);
@@ -1016,13 +1028,13 @@ button.author:hover { text-decoration: underline; }
 /* agent hover card — what can this name do, without clicking */
 .hovercard-wrap { position: relative; display: inline-flex; min-width: 0; }
 .hovercard {
-  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 60; width: 250px;
+  position: fixed; z-index: 60; width: 250px;
   display: flex; flex-direction: column; gap: 8px;
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0,0,0,0.55); padding: 10px 12px;
   font-weight: 400; font-size: 12.5px; text-align: left; white-space: normal; cursor: default;
 }
-.hovercard.right { left: auto; right: 0; }
+
 .hovercard-head { display: flex; align-items: center; gap: 8px; }
 .hovercard-id { display: flex; flex-direction: column; min-width: 0; }
 .hovercard-name { font-weight: 700; }
@@ -1315,11 +1327,17 @@ button.author:hover { text-decoration: underline; }
 .comment-input { width: 100%; resize: vertical; font-size: 12.5px; }
 
 /* ── channel info: the channel's doc + pins, always at hand ── */
-.channel-info { border-bottom: 1px solid var(--hairline); flex: none; }
+.channel-info { flex: none; }
+.channel-info.open { border-top: 1px solid var(--hairline); }
 /* An unwritten channel doc is a quiet invitation, not a section: no
    rule under it, and it should not push the first message down. */
 .channel-info.empty { border-bottom: 0; }
-.channel-info.empty .channel-info-bar { padding-top: 2px; padding-bottom: 2px; }
+/* A subtitle of the channel name, not a second row: tucked under the
+   title, small and quiet, and still the click target for the whole
+   doc. */
+.channel-info .channel-info-bar { padding: 1px 18px 11px; }
+.channel-info .channel-info-toggle { font-size: 11.5px; padding: 0; }
+.channel-info.open .channel-info-bar { padding-bottom: 8px; }
 .channel-info.empty .channel-info-toggle { opacity: 0.75; }
 .channel-info.empty .channel-info-toggle:hover { opacity: 1; }
 .channel-info-bar { display: flex; align-items: center; gap: 8px; padding: 4px 18px; }

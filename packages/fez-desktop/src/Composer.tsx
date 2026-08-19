@@ -287,7 +287,7 @@ export default function Composer({
           <button title="code (⌘E)" onMouseDown={(e) => { e.preventDefault(); wrapSelection("`"); }}>{"</>"}</button>
           <button title="strikethrough" onMouseDown={(e) => { e.preventDefault(); wrapSelection("~~"); }}><s>S</s></button>
           <span className="tray-sep" />
-          <button title="link" onMouseDown={(e) => { e.preventDefault(); makeLink(); }}>🔗</button>
+          <button title="link" className="emoji-glyph" onMouseDown={(e) => { e.preventDefault(); makeLink(); }}>🔗</button>
           <button title="bulleted list" onMouseDown={(e) => { e.preventDefault(); prefixLines("- "); }}>≔</button>
           <button title="numbered list" onMouseDown={(e) => { e.preventDefault(); prefixLines((index) => `${index + 1}. `); }}>⒈</button>
           <button title="quote" onMouseDown={(e) => { e.preventDefault(); prefixLines("> "); }}>❝</button>
@@ -447,7 +447,7 @@ export default function Composer({
         </button>
         {onFiles && (
           <>
-            <button className="composer-tool" title="attach a file (Blossom upload)" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>
+            <button className="composer-tool emoji-glyph" title="attach a file (Blossom upload)" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>
               🖇︎
             </button>
             <input
