@@ -128,6 +128,9 @@ export interface Msg {
   ts: number;
   edited?: boolean;
   editTs?: number;
+  /** Who this message actually tagged. Rendering an @name that reached
+   *  nobody as though it had is the same silence, one layer later. */
+  mentionPks: string[];
   /** Honest tombstone (Buzz's decision: a visible removal, not a silent hole). */
   deletedBy?: "author" | "moderator";
 }
@@ -1324,6 +1327,7 @@ export class FezClient {
       parentId,
       rootId,
       ts: event.created_at,
+      mentionPks: event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
     };
   }
 

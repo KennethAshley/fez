@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1835,6 +1835,12 @@ function Bubble({
   const reactions = client.reactions(msg.id);
   const pinned = client.isPinned(channelId, msg.id);
   const time = new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // What this message actually tagged, by name — so an @name that
+  // reached nobody doesn't render as though it had.
+  const taggedNames = useMemo(
+    () => new Set(msg.mentionPks.map((pk) => client.displayName(pk).toLowerCase())),
+    [client, msg.mentionPks]
+  );
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number }>();
   const [remindOpen, setRemindOpen] = useState(false);
   const [remindSet, setRemindSet] = useState(false);
@@ -2029,7 +2035,7 @@ function Bubble({
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
         <div className="bubble-body md">
-          <MdBody text={msg.content} />
+          <MdBody text={msg.content} tagged={taggedNames} />
         </div>
       )}
       {proposalIdsIn(msg.content).map((id) => (
@@ -2070,9 +2076,20 @@ function Bubble({
   );
 }
 
-function renderMentions(text: string) {
+/**
+ * Accent an @name only when the message really tagged someone by that
+ * name. Highlighting every @word made a mention that reached nobody
+ * look exactly like one that worked — the silence the send path stopped
+ * producing, coming back on the way out.
+ *
+ * `tagged` undefined means the surface has no tags to check against: a
+ * doc body's @name notifies nobody by design, and a DM reaches its
+ * participants whatever you type. There the accent is typography, not
+ * a claim, so every name keeps it.
+ */
+function renderMentions(text: string, tagged?: ReadonlySet<string>) {
   return text.split(/(@[\w-]+)/g).map((part, index) =>
-    part.startsWith("@") ? (
+    part.startsWith("@") && (!tagged || tagged.has(part.slice(1).toLowerCase())) ? (
       <span key={index} className="mention">
         {part}
       </span>
@@ -2087,7 +2104,7 @@ const IMAGE_URL = /https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg)(?:\?\S*)?/gi;
 const MEDIA_LINE = /📎\s+(\S+\.(?:png|jpe?g|gif|webp|svg))\s+\([^)]*\)\s+(https?:\/\/\S+)/i;
 
 /** Markdown body: gfm, @mention accents, external links via the OS browser, inline images. */
-function MdBody({ text }: { text: string }) {
+function MdBody({ text, tagged }: { text: string; tagged?: ReadonlySet<string> }) {
   const images = [...new Set([...(text.match(IMAGE_URL) ?? []), ...(text.match(MEDIA_LINE) ? [text.match(MEDIA_LINE)![2]] : [])])];
   return (
     <>
@@ -2125,8 +2142,8 @@ function MdBody({ text }: { text: string }) {
             }
             return <code className={className}>{children}</code>;
           },
-          p: ({ children }) => <p>{accentMentions(children)}</p>,
-          li: ({ children }) => <li>{accentMentions(children)}</li>,
+          p: ({ children }) => <p>{accentMentions(children, tagged)}</p>,
+          li: ({ children }) => <li>{accentMentions(children, tagged)}</li>,
         }}
       >
         {text}
@@ -2139,9 +2156,9 @@ function MdBody({ text }: { text: string }) {
 }
 
 /** Wrap @names in accent spans inside rendered markdown children. */
-function accentMentions(children: React.ReactNode): React.ReactNode {
+function accentMentions(children: React.ReactNode, tagged?: ReadonlySet<string>): React.ReactNode {
   const walk = (node: React.ReactNode): React.ReactNode => {
-    if (typeof node === "string") return renderMentions(node);
+    if (typeof node === "string") return renderMentions(node, tagged);
     if (Array.isArray(node)) return node.map((child, i) => <span key={i}>{walk(child)}</span>);
     return node;
   };
