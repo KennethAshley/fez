@@ -29,9 +29,21 @@ export { RelayConnection, type RelayOptions } from "./relay.js";
 export { FezTUI } from "./tui.js";
 export { PackageManager, type FezPackage, type FezManifest } from "./package-manager.js";
 export * from "./kinds.js";
+/** Trust primitives: what a tool call risks, and what an extension may do. */
+export { classifyCommand, classifyToolCall, type RiskLevel, type RiskVerdict } from "./command-risk.js";
+export {
+  parsePermissions,
+  describePermission,
+  consentLines,
+  networkAllowed,
+  has as hasPermission,
+  LEGACY_GRANT,
+  type PermissionId,
+  type PermissionInfo,
+} from "./extension-permissions.js";
 // Harness/persona/skill resolution — what a standing agent script (run via
 // `fez run`) needs to dispatch instructions the same way the TUI does.
-export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, registerHarness, invokeWithRetry, classifyTurnError, SESSION_TIMEOUTS, type HarnessAdapter, type HarnessSession, type HarnessUpdate, type TimeoutOptions, type TurnErrorKind } from "./harness.js";
+export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, registerHarness, invokeWithRetry, classifyTurnError, SESSION_TIMEOUTS, setRiskPolicy, type RiskPolicy, type HarnessAdapter, type HarnessSession, type HarnessUpdate, type TimeoutOptions, type TurnErrorKind } from "./harness.js";
 export { findPersona, listPersonas, validatePersonaFile, mergeDefaults, KNOWN_EXTRA_KEYS, type Persona, type PersonaValidation } from "./personas.js";
 export { findMcpServer, registerMcpServer, loadMcpServersFromSettings } from "./mcp-servers.js";
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./keys.js";

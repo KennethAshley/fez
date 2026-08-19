@@ -10,7 +10,14 @@
       "headless": "dist/headless.js",
       "gui": "dist/gui.js",
       "background": true
-    }
+    },
+    "permissions": [
+      "read:channels",
+      "publish",
+      "commands",
+      "ui",
+      "background"
+    ]
   },
   "scripts": {
     "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js",

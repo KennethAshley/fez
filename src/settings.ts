@@ -27,6 +27,12 @@ export interface FezSettings {
    * into the always-on process would do its foreground job twice.
    */
   backgroundExtensions?: string[];
+  /**
+   * What each extension was granted at install time, by name. The host
+   * narrows the API to this list — an undeclared capability is absent,
+   * not merely discouraged. Missing entry = the legacy read-only grant.
+   */
+  extensionPermissions?: Record<string, string[]>;
 }
 
 const SETTINGS_FILE = path.join(os.homedir(), ".fez", "settings.json");

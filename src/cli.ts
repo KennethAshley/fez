@@ -1135,6 +1135,8 @@ program
       scripts?: Record<string, string>;
       fez?: {
         extension?: { entry?: string };
+        /** What this package says it needs — see extension-permissions.ts. */
+        permissions?: string[];
         /** Multi-part packages: one install, three attachment points. */
         parts?: {
           skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
@@ -1151,6 +1153,22 @@ program
       console.error(chalk.red(`No readable package.json in ${pkgDir}`));
       process.exit(1);
     }
+    // ── permissions: shown BEFORE anything is copied, recorded on grant.
+    const { consentLines, parsePermissions } = await import("./extension-permissions.js");
+    const declared = manifest.fez?.permissions;
+    const lines = consentLines(declared);
+    if (lines.length > 0) {
+      console.log(chalk.bold(`\n${manifest.name ?? path.basename(pkgDir)} asks for:`));
+      for (const line of lines) {
+        console.log(`  ${line.sensitive ? chalk.yellow("\u26a0") : chalk.dim("\u00b7")} ${line.description} ${chalk.dim(`(${line.id})`)}`);
+      }
+      const { unknown } = parsePermissions(declared);
+      if (unknown.length > 0) console.log(chalk.yellow(`  \u26a0 unrecognized: ${unknown.join(", ")} — these grant nothing`));
+      console.log(chalk.dim("  (linking a local package grants these)\n"));
+    } else {
+      console.log(chalk.dim(`${manifest.name ?? "package"} declares no permissions — legacy read-only grant.\n`));
+    }
+
     const parts = manifest.fez?.parts;
     const entry = parts?.headless ?? manifest.fez?.extension?.entry;
     if (!entry && !parts?.gui && !parts?.skill) {
@@ -1193,6 +1211,13 @@ program
     // ── background part: the sentinel only loads extensions that ASKED
     // for background life, so a TUI extension never starts doing its
     // foreground job a second time inside the always-on process.
+    {
+      const { loadSettings, saveSettings } = await import("./settings.js");
+      const { granted } = parsePermissions(declared);
+      const settings = loadSettings() as { extensionPermissions?: Record<string, string[]> };
+      saveSettings({ extensionPermissions: { ...settings.extensionPermissions, [name]: granted } } as never);
+    }
+
     if (parts?.background) {
       const { loadSettings, saveSettings } = await import("./settings.js");
       const settings = loadSettings() as { backgroundExtensions?: string[] };

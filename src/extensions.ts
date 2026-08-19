@@ -10,6 +10,7 @@ import type { FezClient } from "../packages/fez-client/dist/index.js";
 import { registerMcpServer } from "./mcp-servers.js";
 import { registerCommand, type CommandHandler } from "./commands.js";
 import { setStatus } from "./status.js";
+import { LEGACY_GRANT } from "./extension-permissions.js";
 
 /**
  * API surface handed to extension files. Deliberately small — grows as
@@ -285,17 +286,54 @@ export function findUrlHandler(url: string): UrlHandler | undefined {
   return urlHandlers.find((h) => url.startsWith(h.prefix))?.handler;
 }
 
-function buildApi(): FezExtensionAPI {
+/**
+ * Build the API an extension actually receives. Capabilities it wasn't
+ * granted are REPLACED with no-ops that say so once — an extension that
+ * quietly does nothing is worse to debug than one that logs why.
+ */
+function buildApi(granted: readonly string[]): FezExtensionAPI {
+  const refuse = (permission: string, what: string) => {
+    let warned = false;
+    return () => {
+      if (!warned) {
+        warned = true;
+        console.warn(`⚠️  extension tried to ${what} without the "${permission}" permission — ignored`);
+      }
+    };
+  };
+  const may = (permission: string) => granted.includes(permission);
+
+  // The nostr surface is the sharp one: read is the channel firehose,
+  // publish signs AS THE USER. Gate them separately.
+  const gatedNostr: NostrAccess | undefined = nostrBackend && {
+    ...nostrBackend,
+    publish: may("publish")
+      ? nostrBackend.publish
+      : (async (tmpl) => {
+          refuse("publish", "publish an event")();
+          return { ...tmpl, id: "", pubkey: "", created_at: 0, sig: "" } as never;
+        }),
+    sendDm: may("publish") ? nostrBackend.sendDm : (async () => { refuse("publish", "send a DM")(); return ""; }),
+    query: may("read:channels") ? nostrBackend.query : (async () => { refuse("read:channels", "query the relay")(); return []; }),
+    subscribe: may("read:channels")
+      ? nostrBackend.subscribe
+      : (() => { refuse("read:channels", "subscribe to the relay")(); return () => {}; }),
+    unwrapDm: may("read:dms") ? nostrBackend.unwrapDm : (() => { refuse("read:dms", "read a DM")(); return undefined; }),
+  };
+
   return {
     registerHarness,
     registerMcpServer,
-    registerCommand,
-    registerInputHandler: (handler) => inputHandlers.push(handler),
-    registerUrlHandler: (prefix, handler) => urlHandlers.push({ prefix, handler }),
-    registerTheme,
-    registerScheduledTask: (name, everyMs, run) => scheduledTasks.push({ name, everyMs, run }),
-    nostr: nostrBackend,
-    client: clientBackend,
+    registerCommand: may("commands") ? registerCommand : (refuse("commands", "register a slash command") as never),
+    registerInputHandler: (handler) => { if (may("commands")) inputHandlers.push(handler); else refuse("commands", "claim chat input")(); },
+    registerUrlHandler: (prefix, handler) => { if (may("ui")) urlHandlers.push({ prefix, handler }); else refuse("ui", "claim url clicks")(); },
+    registerTheme: may("ui") ? registerTheme : (refuse("ui", "register a theme") as never),
+    registerScheduledTask: (name, everyMs, run) => {
+      if (!may("background")) return refuse("background", "register a scheduled task")();
+      scheduledTasks.push({ name, everyMs, run });
+    },
+    nostr: gatedNostr,
+    client: may("read:channels") ? clientBackend : undefined,
     ui: {
       setStatus,
       createSidePanel: (opts) =>
@@ -354,11 +392,16 @@ export async function loadExtensions(
     await fs.writeFile(marker, JSON.stringify({ type: "module" }, null, 1), "utf-8").catch(() => {});
   }
 
-  const api = buildApi();
+  const { loadSettings } = await import("./settings.js");
+  const grants = (loadSettings() as { extensionPermissions?: Record<string, string[]> }).extensionPermissions ?? {};
 
   for (const entry of entries) {
     if (!/\.(ts|js|mjs)$/.test(entry)) continue;
-    if (only && !only.includes(entry.replace(/\.(ts|js|mjs)$/, ""))) continue;
+    const name = entry.replace(/\.(ts|js|mjs)$/, "");
+    if (only && !only.includes(name)) continue;
+    // Each extension gets its OWN api object, narrowed to what it was
+    // granted — a shared api would hand every extension everything.
+    const api = buildApi(grants[name] ?? LEGACY_GRANT);
     const filePath = path.join(dir, entry);
 
     try {

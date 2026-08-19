@@ -12,6 +12,7 @@ import {
   KIND_AGENT_ENGRAM,
   registerBuiltinHarnesses,
   SESSION_TIMEOUTS,
+  setRiskPolicy,
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
@@ -316,6 +317,50 @@ async function main() {
 
   const channels = channelSpecs.length > 0 ? await resolveChannels(relay, channelSpecs, relayUrl) : [];
 
+  /**
+   * Mechanical approval gate. Until now, "ask before doing something
+   * destructive" was a CONVENTION in the spawn prompt — an agent that
+   * forgot, or decided otherwise, just ran the command, because the ACP
+   * layer auto-approved every tool call. Now every tool call is
+   * classified (command-risk.ts) and a DANGEROUS one blocks here until
+   * the owner reacts, whatever the agent intended.
+   *
+   * Fails CLOSED: no owner, no channel to ask in, or no answer before
+   * the deadline all mean deny. An unattended agent waiting on a human
+   * who never comes must not proceed by default.
+   */
+  const APPROVAL_WAIT_MS = 300_000;
+  setRiskPolicy(async (verdict, toolCall) => {
+    // channels is a plain id list; the community comes from the
+    // membership we absorbed for that channel.
+    const channelId = channels[0];
+    const communityId = channelId ? memberships.get(channelId)?.communityId : undefined;
+    if (!owner || !channelId || !communityId) {
+      console.warn(`⛔ blocked ${verdict.reason} — nobody to ask (owner/channel missing)`);
+      return "deny";
+    }
+    const what = (toolCall.title ?? verdict.reason).replace(/\s+/g, " ").slice(0, 200);
+    const ask = client.signEvent({
+      kind: KIND_CHANNEL_MESSAGE,
+      tags: [["h", channelId], ["c", communityId], ["t", "approval-request"], ["p", owner]],
+      content: `⛔ approval needed: ${what}\n(flagged automatically: ${verdict.reason} — react ✅ to approve, ❌ to deny)`,
+    });
+    await relay.publish(ask).catch(() => {});
+    console.log(`⛔ DANGEROUS tool call held for approval: ${verdict.reason} — ${what}`);
+    const deadline = Date.now() + APPROVAL_WAIT_MS;
+    while (Date.now() < deadline) {
+      const reactions = await relay.query([{ kinds: [KIND_REACTION], "#e": [ask.id] }]).catch(() => []);
+      for (const reaction of reactions) {
+        if (reaction.pubkey !== owner) continue; // only the owner decides a risk gate
+        if (/❌|👎/u.test(reaction.content)) return "deny";
+        if (/✅|👍/u.test(reaction.content)) return "allow";
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+    console.warn(`⛔ approval timed out — denying (${verdict.reason})`);
+    return "deny";
+  });
+
   const allowlist = respondTo.startsWith("allowlist:")
     ? new Set(respondTo.slice("allowlist:".length).split(",").map((s) => s.trim()))
     : undefined;
@@ -398,14 +443,16 @@ async function main() {
   // Channel membership (latest creator-signed 47102 per channel). The
   // creator pubkey isn't known here, so v1 takes the latest 47102 per
   // d-tag — same-relay assumption as the rest of the client-side model.
-  const memberships = new Map<string, { createdAt: number; members: Set<string> }>();
+  const memberships = new Map<string, { createdAt: number; members: Set<string>; communityId?: string }>();
   function absorbMembership(event: { created_at: number; tags: string[][] }): void {
     const channelId = event.tags.find((t) => t[0] === "d")?.[1];
     if (!channelId || !channels.includes(channelId)) return;
     const existing = memberships.get(channelId);
     if (existing && event.created_at < existing.createdAt) return;
     const members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
-    memberships.set(channelId, { createdAt: event.created_at, members });
+    // keep the community too — the risk gate needs somewhere to ask
+    const communityId = event.tags.find((t) => t[0] === "c")?.[1] ?? existing?.communityId;
+    memberships.set(channelId, { createdAt: event.created_at, members, communityId });
   }
 
   const membershipEvents = channels.length > 0 ? await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": channels }]) : [];

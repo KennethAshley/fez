@@ -5,6 +5,7 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
 import { notice } from "./notices.js";
+import { classifyToolCall, type RiskVerdict } from "./command-risk.js";
 
 /**
  * One activity event from a running harness turn — the raw material of the
@@ -382,6 +383,59 @@ async function drivePrompt(
 }
 
 /**
+ * Tool-call gate. The ACP layer used to auto-approve EVERY permission
+ * request on the theory that the user invoked the harness from their own
+ * terminal — false once an agent runs unattended in a channel. Every
+ * request is now classified (command-risk.ts); a host can install a
+ * policy that decides what to do with the dangerous ones.
+ *
+ * No policy installed = the old behavior (allow), because the TUI case
+ * really is "the user is right here" — but a dangerous call is logged
+ * loudly instead of passing silently.
+ */
+export type RiskPolicy = (
+  verdict: RiskVerdict,
+  toolCall: { title?: string; kind?: string; rawInput?: unknown }
+) => Promise<"allow" | "deny">;
+
+let riskPolicy: RiskPolicy | undefined;
+export function setRiskPolicy(policy: RiskPolicy | undefined): void {
+  riskPolicy = policy;
+}
+
+/** Shared by both permission handlers — one gate, one policy, one audit line. */
+async function decidePermission(params: {
+  options: readonly unknown[];
+  toolCall?: { title?: string; kind?: string; rawInput?: unknown };
+}): Promise<{ outcome: { outcome: "selected"; optionId: string } }> {
+  const options = params.options as { optionId: string; kind?: string }[];
+  // Select by KIND, not position — options[0] is not reliably an allow
+  // (observed live: an agent's `fez mem set` got auto-DENIED because the
+  // first option was a reject variant).
+  const pick = (want: "allow" | "reject") =>
+    options.find((o) => o.kind === `${want}_once`) ??
+    options.find((o) => String(o.kind ?? "").startsWith(want)) ??
+    (want === "allow" ? options[0] : undefined);
+
+  const verdict = classifyToolCall(params.toolCall ?? {});
+  if (verdict.level === "dangerous") {
+    if (riskPolicy) {
+      const decision = await riskPolicy(verdict, params.toolCall ?? {}).catch(() => "deny" as const);
+      if (decision === "deny") {
+        const reject = pick("reject");
+        // No reject option offered? Fail closed by selecting nothing usable
+        // is not possible here, so log and allow — but say so out loud.
+        if (reject) return { outcome: { outcome: "selected", optionId: reject.optionId } };
+        console.warn(`⚠️  risk policy denied "${verdict.reason}" but the harness offered no reject option`);
+      }
+    } else {
+      console.warn(`⚠️  allowing DANGEROUS tool call (${verdict.reason}) — no risk policy installed`);
+    }
+  }
+  return { outcome: { outcome: "selected", optionId: pick("allow")!.optionId } };
+}
+
+/**
  * Open a persistent ACP session: spawn the adapter once, build the
  * session, then PIN the connectWith scope open until close() — prompts
  * flow into the same conversation, so turn N remembers turns 1..N-1
@@ -414,13 +468,7 @@ function openAcpSession(
       Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
     );
     const app = client({ name: "fez" });
-    app.onRequest("session/request_permission", async ({ params }) => {
-      const allow =
-        params.options.find((o) => (o as { kind?: string }).kind === "allow_once") ??
-        params.options.find((o) => String((o as { kind?: string }).kind ?? "").startsWith("allow")) ??
-        params.options[0];
-      return { outcome: { outcome: "selected" as const, optionId: allow.optionId } };
-    });
+    app.onRequest("session/request_permission", async ({ params }) => decidePermission(params as never));
 
     child.on("exit", () => {
       alive = false;
@@ -519,21 +567,10 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
 
         const app = client({ name: "fez" });
 
-        // Auto-approve tool-call permission requests. The user explicitly
-        // invoked this from their own terminal (same trust level as running
-        // `claude` interactively themselves) — but this is a real policy
-        // choice, not a neutral default. Revisit before this is anything
-        // other than a local single-user MVP.
-        app.onRequest("session/request_permission", async ({ params }) => {
-          // Select by KIND, not position — options[0] is not reliably an
-          // allow (observed live: an agent's `fez mem set` shell call got
-          // auto-DENIED because the first option was a reject variant).
-          const allow =
-            params.options.find((o) => (o as { kind?: string }).kind === "allow_once") ??
-            params.options.find((o) => String((o as { kind?: string }).kind ?? "").startsWith("allow")) ??
-            params.options[0];
-          return { outcome: { outcome: "selected" as const, optionId: allow.optionId } };
-        });
+        // Classified, then gated by the host's risk policy (see
+        // decidePermission) — an unattended agent no longer auto-approves
+        // a destructive command just because the harness asked nicely.
+        app.onRequest("session/request_permission", async ({ params }) => decidePermission(params as never));
 
         return await app.connectWith(stream, async (ctx) => {
           let builder = ctx.buildSession(cwd);

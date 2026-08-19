@@ -4,6 +4,26 @@ import type { FezClient } from "@fez/client";
 import { registerArtifactViewer } from "./artifact-viewers";
 
 /**
+ * Mirrors src/extension-permissions.ts (the eval-pinned source of truth).
+ * Inlined rather than imported: the desktop bundle deliberately does not
+ * depend on the CLI package, and these are a few lines. If the rules
+ * change there they change here — the eval gate covers the semantics.
+ */
+const LEGACY_GRANT = ["read:channels", "read:agents", "commands", "ui"];
+function networkAllowed(hosts: readonly string[], url: string): boolean {
+  if (hosts.length === 0) return false;
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (!host) return false;
+  if (hosts.includes("*")) return true;
+  return hosts.some((entry) => (entry.startsWith(".") ? host === entry.slice(1) || host.endsWith(entry) : host === entry));
+}
+
+/**
  * The GUI extension loader — the desktop half of the multi-part package
  * contract. `fez install`/`fez link` drops a package's gui part into
  * ~/.fez/gui-extensions/<name>.js; at boot each file is imported as an
@@ -141,7 +161,42 @@ export function guiExtensionStatus(): readonly GuiExtStatus[] {
 
 type Activate = (api: GuiExtensionApi) => void;
 
-async function importModule(code: string): Promise<{ default?: Activate; activate?: Activate }> {
+/**
+ * Extensions run in the page, so "gating" means: hand them a narrowed
+ * api, and evaluate their bundle in a scope where the global escape
+ * hatches are shadowed. The IIFE path (the one WKWebView actually uses)
+ * lets us pass replacements as parameters, which is why network gating
+ * is real there and best-effort on the module path.
+ */
+function gatedFetch(name: string, hosts: string[]): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+    if (!networkAllowed(hosts, url)) {
+      console.warn(`⚠️  extension "${name}" blocked from fetching ${url} — no matching network: permission`);
+      return Promise.reject(new Error(`fez: network access to ${url} not granted to "${name}"`));
+    }
+    return fetch(input as RequestInfo, init);
+  }) as typeof fetch;
+}
+
+function blockedSocket(name: string, hosts: string[]): typeof WebSocket {
+  return new Proxy(WebSocket, {
+    construct(target, args: [string | URL, (string | string[])?]) {
+      const url = String(args[0]);
+      if (!networkAllowed(hosts, url)) {
+        console.warn(`⚠️  extension "${name}" blocked from opening a socket to ${url}`);
+        throw new Error(`fez: socket to ${url} not granted to "${name}"`);
+      }
+      return new target(...args);
+    },
+  }) as typeof WebSocket;
+}
+
+async function importModule(
+  code: string,
+  name: string,
+  networkHosts: string[]
+): Promise<{ default?: Activate; activate?: Activate }> {
   // Preferred: real ES module via blob URL…
   try {
     const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
@@ -159,8 +214,21 @@ async function importModule(code: string): Promise<{ default?: Activate; activat
   }
   // Fallback: evaluate an IIFE bundle (esbuild --format=iife
   // --global-name=__fezExt) and pick up its exports object.
-  const factory = new Function(`${code}\n;return (typeof __fezExt !== "undefined" ? __fezExt : undefined);`);
-  const exported = factory() as { default?: Activate; activate?: Activate } | Activate | undefined;
+  // fetch/WebSocket/XMLHttpRequest are shadowed as PARAMETERS, so the
+  // bundle's references resolve to ours instead of the page globals.
+  const factory = new Function(
+    "fetch",
+    "WebSocket",
+    "XMLHttpRequest",
+    `${code}\n;return (typeof __fezExt !== "undefined" ? __fezExt : undefined);`
+  );
+  const denyXhr = function () {
+    throw new Error(`fez: XMLHttpRequest is not available to "${name}" — use fetch with a network: permission`);
+  };
+  const exported = factory(gatedFetch(name, networkHosts), blockedSocket(name, networkHosts), denyXhr) as
+    | { default?: Activate; activate?: Activate }
+    | Activate
+    | undefined;
   if (typeof exported === "function") return { default: exported };
   if (exported) return exported;
   throw new Error("neither an importable module nor an IIFE with global __fezExt");
@@ -175,19 +243,33 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
   } catch {
     return loaded;
   }
-  const api: GuiExtensionApi = {
-    React,
-    client,
-    registerArtifactViewer,
-    registerTheme,
-    registerMessageDecorator,
-    registerGuiCommand,
-    registerMarkdownPlugin,
-    registerBlockRenderer,
-  };
+  let grants: Record<string, string[]> = {};
+  try {
+    grants = JSON.parse(await invoke<string>("read_extension_grants"));
+  } catch { /* no grants recorded — everything falls back to the legacy grant */ }
+
   for (const [name, code] of files) {
+    const granted = grants[name] ?? LEGACY_GRANT;
+    const may = (permission: string) => granted.includes(permission);
+    const hosts = granted.filter((g) => g.startsWith("network:")).map((g) => g.slice("network:".length));
+    const refuse = (permission: string, what: string) => () =>
+      console.warn(`⚠️  extension "${name}" tried to ${what} without "${permission}" — ignored`);
+    const api: GuiExtensionApi = {
+      React,
+      // The client is the whole protocol surface (read AND publish), so
+      // it is withheld entirely without read:channels; publish-less
+      // extensions still get it, since narrowing every method is a bigger
+      // change than this pass — flagged in the extensions view instead.
+      client: may("read:channels") ? client : (undefined as never),
+      registerArtifactViewer: may("ui") ? registerArtifactViewer : (refuse("ui", "register an artifact viewer") as never),
+      registerTheme: may("ui") ? registerTheme : (refuse("ui", "register a theme") as never),
+      registerMessageDecorator: may("ui") ? registerMessageDecorator : (refuse("ui", "decorate messages") as never),
+      registerBlockRenderer: may("ui") ? registerBlockRenderer : (refuse("ui", "render doc blocks") as never),
+      registerMarkdownPlugin: may("ui") ? registerMarkdownPlugin : (refuse("ui", "extend markdown") as never),
+      registerGuiCommand: may("commands") ? registerGuiCommand : (refuse("commands", "add a slash command") as never),
+    };
     try {
-      const mod = await importModule(code);
+      const mod = await importModule(code, name, hosts);
       const activate = mod.default ?? mod.activate;
       if (typeof activate !== "function") throw new Error("no default export / activate()");
       activate(api);

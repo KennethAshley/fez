@@ -232,6 +232,22 @@ fn list_gui_extensions() -> Result<Vec<(String, String)>, String> {
     Ok(out)
 }
 
+/// What each installed extension was granted (settings.extensionPermissions).
+/// The GUI narrows its api per extension from this — same grants the CLI
+/// recorded at install time, so both hosts enforce one decision.
+#[tauri::command]
+fn read_extension_grants() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    let path = std::path::Path::new(&home).join(".fez").join("settings.json");
+    let raw = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string());
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
+    Ok(parsed
+        .get("extensionPermissions")
+        .cloned()
+        .unwrap_or(serde_json::json!({}))
+        .to_string())
+}
+
 /// Extension parts on disk, by package name: headless (~/.fez/extensions)
 /// and gui (~/.fez/gui-extensions). Skill parts live in settings.json and
 /// are listed separately — a package can have any mix of the three.
@@ -476,7 +492,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
