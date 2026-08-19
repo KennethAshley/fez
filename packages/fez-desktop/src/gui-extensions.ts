@@ -39,7 +39,8 @@ export interface GuiExtensionApi {
   React: typeof React;
   client: FezClient;
   registerArtifactViewer: typeof registerArtifactViewer;
-  registerTheme: (name: string, vars: Record<string, string>) => void;
+  /** A palette, or a { light, dark } pair that follows the OS. */
+  registerTheme: (name: string, vars: ThemePack) => void;
   /** Decorate chat messages: when match(content) is true, render() is
    * mounted under the message body (how the polls card enters). */
   registerMessageDecorator: (
@@ -200,12 +201,81 @@ export function pageViewsFor(content: string): { views: PageView[]; preferred?: 
 }
 
 // ── theme registry ─────────────────────────────────────────────────
-const themes = new Map<string, Record<string, string>>();
-const THEME_KEY = "fez-gui-theme";
+/**
+ * The built-in palette, both ways up: gruvbox dark (what App.css has
+ * always shipped, kept byte-identical so "default" looks unchanged) and
+ * gruvbox light, its canonical counterpart.
+ *
+ * It lives here rather than in CSS because "default" now has to be
+ * resolvable like any other theme — the same paint() picks the variant,
+ * so following the OS is one code path instead of a special case.
+ */
+const BUILT_IN_DEFAULT = {
+  dark: {
+    "--bg0": "#1d2021",
+    "--bg1": "#282828",
+    "--bg2": "#3c3836",
+    "--bg-mine": "#2d3a40",
+    "--fg": "#ebdbb2",
+    "--fg-dim": "#928374",
+    "--accent": "#83a598",
+    "--green": "#b8bb26",
+    "--red": "#fb4934",
+    "--yellow": "#fabd2f",
+    "--brand": "#FF6A00",
+  },
+  light: {
+    "--bg0": "#fbf1c7",
+    "--bg1": "#f2e5bc",
+    "--bg2": "#e0d5b0",
+    // Your own messages: a cool tint, same role the dark side gives it.
+    "--bg-mine": "#dbe4e6",
+    "--fg": "#3c3836",
+    "--fg-dim": "#7c6f64",
+    // Gruvbox light's accents are darkened on purpose — the dark set's
+    // pastels have nowhere near enough contrast on paper.
+    "--accent": "#076678",
+    "--green": "#79740e",
+    "--red": "#9d0006",
+    "--yellow": "#b57614",
+    "--brand": "#d45500",
+  },
+};
 
-export function registerTheme(name: string, vars: Record<string, string>): void {
+export type ThemeVars = Record<string, string>;
+/**
+ * A theme is either one palette, or a light/dark pair.
+ *
+ * A flat record stays legal and means "the same either way" — every
+ * theme registered before this existed keeps working unchanged. A pair
+ * lets a theme follow the OS, which is what "auto" resolves against.
+ */
+export type ThemePack = ThemeVars | { light: ThemeVars; dark: ThemeVars };
+
+const themes = new Map<string, ThemePack>();
+const THEME_KEY = "fez-gui-theme";
+const MODE_KEY = "fez-gui-mode";
+
+/** system = follow the OS. The other two override it. */
+export type AppearanceMode = "system" | "light" | "dark";
+
+const darkQuery = () =>
+  typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : undefined;
+
+/** What the app should actually paint right now. */
+export function resolvedScheme(): "light" | "dark" {
+  const mode = currentMode();
+  if (mode !== "system") return mode;
+  return darkQuery()?.matches === false ? "light" : "dark";
+}
+
+function variant(pack: ThemePack, scheme: "light" | "dark"): ThemeVars {
+  return "light" in pack && "dark" in pack ? (pack as { light: ThemeVars; dark: ThemeVars })[scheme] : (pack as ThemeVars);
+}
+
+export function registerTheme(name: string, vars: ThemePack): void {
   themes.set(name, vars);
-  if (localStorage.getItem(THEME_KEY) === name) applyThemeVars(vars);
+  if (currentTheme() === name) paint();
 }
 
 export function themeNames(): string[] {
@@ -216,20 +286,69 @@ export function currentTheme(): string {
   return localStorage.getItem(THEME_KEY) ?? "default";
 }
 
-export function applyTheme(name: string): void {
-  localStorage.setItem(THEME_KEY, name);
-  if (name === "default") {
-    document.documentElement.removeAttribute("style");
-    return;
-  }
-  const vars = themes.get(name);
-  if (vars) applyThemeVars(vars);
+export function currentMode(): AppearanceMode {
+  const stored = localStorage.getItem(MODE_KEY);
+  return stored === "light" || stored === "dark" ? stored : "system";
 }
 
-function applyThemeVars(vars: Record<string, string>): void {
+/** Does the chosen theme actually have both? Settings says so honestly. */
+export function themeFollowsScheme(name = currentTheme()): boolean {
+  const pack = name === "default" ? BUILT_IN_DEFAULT : themes.get(name);
+  return !!pack && "light" in pack && "dark" in pack;
+}
+
+export function applyTheme(name: string): void {
+  localStorage.setItem(THEME_KEY, name);
+  paint();
+}
+
+export function applyMode(mode: AppearanceMode): void {
+  localStorage.setItem(MODE_KEY, mode);
+  paint();
+}
+
+/**
+ * Resolve theme + mode to one palette and put it on the root.
+ *
+ * Everything is cleared first: switching from a theme that sets
+ * --font-mono to one that doesn't must not leave the old font behind,
+ * and that is exactly the kind of residue an incremental setProperty
+ * loop leaves.
+ */
+function paint(): void {
+  const name = currentTheme();
+  const pack = name === "default" ? BUILT_IN_DEFAULT : themes.get(name);
+  document.documentElement.removeAttribute("style");
+  // The class is for CSS that must branch on scheme rather than on a
+  // variable — form controls, scrollbars, and the native color-scheme
+  // hint that makes text inputs and menus match.
+  const scheme = resolvedScheme();
+  document.documentElement.dataset.scheme = scheme;
+  // Tells the platform to paint scrollbars, text inputs, selects and
+  // menus the right way. Without it a light theme keeps dark native
+  // widgets and looks broken in exactly the places CSS can't reach.
+  document.documentElement.style.colorScheme = scheme;
+  if (!pack) return;
+  applyThemeVars(variant(pack, scheme));
+}
+
+function applyThemeVars(vars: ThemeVars): void {
   for (const [key, value] of Object.entries(vars)) {
     if (key.startsWith("--")) document.documentElement.style.setProperty(key, value);
   }
+}
+
+/**
+ * Start following the OS. Called once at boot; the listener stays for
+ * the process, because "system" has to keep tracking after the user
+ * flips their Mac to dark at sunset — a one-shot read at startup is the
+ * bug this avoids.
+ */
+export function startAppearanceWatch(): void {
+  paint();
+  darkQuery()?.addEventListener("change", () => {
+    if (currentMode() === "system") paint();
+  });
 }
 
 // ── loader ─────────────────────────────────────────────────────────

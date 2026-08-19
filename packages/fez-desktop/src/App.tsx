@@ -23,7 +23,7 @@ import ChannelInfo from "./ChannelInfo";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
-import { loadGuiExtensions } from "./gui-extensions";
+import { loadGuiExtensions, startAppearanceWatch } from "./gui-extensions";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
@@ -154,6 +154,10 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     }
     const scope = client.state.scope;
     if (scope) await client.loadChannelHistory(scope.channelId);
+    // Paint before anything renders, and keep following the OS: a
+    // one-shot read at boot would leave the app dark after the Mac
+    // flips at sunset.
+    startAppearanceWatch();
     void loadGuiExtensions(client); // gui parts of installed packages — non-blocking
     return { client, wire };
   })();

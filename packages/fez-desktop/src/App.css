@@ -487,7 +487,9 @@ body {
 /* ── flat, readable timeline (bodies breathe, chrome recedes) ── */
 .timeline { padding: 14px 22px; }
 .bubble { margin: 0 -10px; padding: 4px 10px; border-radius: 6px; max-width: none; }
-.bubble:hover { background: rgba(235, 219, 178, 0.025); }
+/* Derived from --fg so it flips with the theme: a fixed cream wash is
+   invisible on a light ground. */
+.bubble:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
 .bubble-body { background: none; padding: 0 0 0 1px; border-radius: 0; }
 .bubble.mine .bubble-body { background: none; }
 .author { font-size: 13px; }

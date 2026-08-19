@@ -4,7 +4,7 @@ import type { FezClient } from "@fez/client";
 import { mediaServer } from "./upload";
 import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";
-import { applyTheme, currentTheme, themeNames, guiExtensionStatus } from "./gui-extensions";
+import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, resolvedScheme, guiExtensionStatus } from "./gui-extensions";
 import { SkillSecretsSection } from "./SkillSecrets";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
@@ -133,12 +133,32 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           <select
             className="manage-select"
             defaultValue={currentTheme()}
-            onChange={(e) => applyTheme(e.target.value)}
+            onChange={(e) => { applyTheme(e.target.value); flash("✓ theme applied"); }}
           >
             {["default", ...themeNames()].map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
+        </div>
+        <div className="settings-field">
+          <label>appearance</label>
+          <select
+            className="manage-select"
+            defaultValue={currentMode()}
+            onChange={(e) => { applyMode(e.target.value as "system" | "light" | "dark"); flash("✓ appearance applied"); }}
+          >
+            <option value="system">match system</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+          {/* Say plainly when the chosen theme has only one palette —
+              otherwise "match system" looks broken rather than
+              inapplicable. */}
+          <div className="settings-hint">
+            {themeFollowsScheme()
+              ? `Following your Mac — currently ${resolvedScheme()}. Changes when it does.`
+              : `"${currentTheme()}" ships a single palette, so it looks the same either way.`}
+          </div>
         </div>
 
         {guiExtensionStatus().length > 0 && (
