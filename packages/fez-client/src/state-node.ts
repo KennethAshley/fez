@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { setStatePersistence, type StatePersistence } from "./community-state.js";
+import { setStatePersistence, type StatePersistence } from "./workspace-state.js";
 
 /**
  * File-backed state persistence for NODE hosts (TUI, CLI, tests) — kept

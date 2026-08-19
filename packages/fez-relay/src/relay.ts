@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { verifyEvent } from "nostr-tools";
 import type { DeliverContext, PolicyContext, RelayPolicy } from "./policies.js";
@@ -71,8 +72,28 @@ const LIMIT_DEFAULTS: Required<RelayLimits> = {
   maxBufferedBytes: 8 * 1024 * 1024,
 };
 
+/**
+ * What this relay says it is, served as its NIP-11 information document.
+ *
+ * A relay IS a workspace, so this is the workspace's identity card: its
+ * name, and — critically — the `owner` pubkey whose signature makes a
+ * channel or roster event count. Clients read it before trusting
+ * anything. An owner-less relay is an unclaimed workspace: it will
+ * serve, but no 47101/47102/30047 can be valid on it.
+ */
+export interface WorkspaceInfo {
+  name?: string;
+  description?: string;
+  /** Hex pubkey of the workspace owner (NIP-11 `pubkey`). */
+  owner?: string;
+  icon?: string;
+  contact?: string;
+}
+
 export interface RelayOptions {
   port: number;
+  /** Workspace identity, served at NIP-11. Without `owner`, unclaimed. */
+  workspace?: WorkspaceInfo;
   /** Persistence path (.jsonl default; .db/.sqlite → SQLite). Omit for in-memory. */
   store?: string;
   /** Bring-your-own durability (overrides `store`) — see stores.ts EventStore. */
@@ -245,7 +266,43 @@ export function startRelay(options: RelayOptions): RelayHandle {
     return true;
   };
 
-  const wss = new WebSocketServer({ port: options.port, maxPayload: limits.maxFrameBytes });
+  // NIP-11: the workspace's identity card, served over HTTP on the same
+  // port. A client asks who owns this workspace BEFORE it trusts a
+  // channel or roster event, so this has to be reachable without a
+  // websocket handshake.
+  const nip11 = () => ({
+    name: options.workspace?.name,
+    description: options.workspace?.description,
+    pubkey: options.workspace?.owner,
+    contact: options.workspace?.contact,
+    icon: options.workspace?.icon,
+    supported_nips: [1, 9, 11, 16, 20, 33, 42, 50],
+    software: "https://github.com/KennethAshley/fez",
+    limitation: {
+      max_message_length: limits.maxFrameBytes,
+      max_subscriptions: limits.maxSubsPerConn,
+      auth_required: false,
+    },
+  });
+
+  const http = createServer((req, res) => {
+    // Served regardless of Accept — every relay in the wild does, and a
+    // browser fetch cannot always set the header.
+    if (req.method === "GET" || req.method === "HEAD") {
+      const body = JSON.stringify(nip11());
+      res.writeHead(200, {
+        "content-type": "application/nostr+json",
+        "access-control-allow-origin": "*",
+        "content-length": Buffer.byteLength(body),
+      });
+      res.end(req.method === "HEAD" ? undefined : body);
+      return;
+    }
+    res.writeHead(405).end();
+  });
+
+  const wss = new WebSocketServer({ server: http, maxPayload: limits.maxFrameBytes });
+  http.listen(options.port);
 
   wss.on("connection", (ws) => {
     if (subs.size >= limits.maxConns) {
@@ -449,10 +506,22 @@ export function startRelay(options: RelayOptions): RelayHandle {
   });
 
   const policyNames = policies.map((p) => p.name).join(", ") || "none (dumb store)";
+  const workspace = options.workspace?.name ?? "unnamed";
+  const owner = options.workspace?.owner;
   log(`🔌 fez-relay on ws://localhost:${options.port} · verify: ${verify ? "on" : "off"} · policies: ${policyNames}`);
+  log(
+    owner
+      ? `🏢 workspace "${workspace}" · owner ${owner.slice(0, 12)}…`
+      : `🏢 workspace "${workspace}" · UNCLAIMED — no owner set, so no channel or roster event can be valid here`
+  );
 
   return {
-    close: () => wss.close(),
+    // Both listeners, or the process keeps a handle open — the http
+    // server owns the port now, so closing only the wss leaves it bound.
+    close: () => {
+      wss.close();
+      http.close();
+    },
     get eventCount() {
       return events.length;
     },

@@ -20,6 +20,7 @@ import {
   KIND_DOC_COMMENT,
   KIND_DRAFT,
   KIND_MEMBERSHIP,
+  ROSTER_D,
   KIND_ARTIFACT,
   KIND_OBSERVER,
   KIND_OBSERVER_CONTROL,
@@ -389,15 +390,14 @@ async function main() {
     // channels is a plain id list; the community comes from the
     // membership we absorbed for that channel.
     const channelId = channels[0];
-    const communityId = channelId ? memberships.get(channelId)?.communityId : undefined;
-    if (!owner || !channelId || !communityId) {
+    if (!owner || !channelId) {
       console.warn(`⛔ blocked ${verdict.reason} — nobody to ask (owner/channel missing)`);
       return "deny";
     }
     const what = (toolCall.title ?? verdict.reason).replace(/\s+/g, " ").slice(0, 200);
     const ask = client.signEvent({
       kind: KIND_CHANNEL_MESSAGE,
-      tags: [["h", channelId], ["c", communityId], ["t", "approval-request"], ["p", owner]],
+      tags: [["h", channelId], ["t", "approval-request"], ["p", owner]],
       content: `⛔ approval needed: ${what}\n(flagged automatically: ${verdict.reason} — react ✅ to approve, ❌ to deny)`,
     });
     await relay.publish(ask).catch(() => {});
@@ -505,27 +505,22 @@ async function main() {
     }, 60_000).unref?.();
   }
 
-  // Channel membership (latest creator-signed 47102 per channel). The
-  // creator pubkey isn't known here, so v1 takes the latest 47102 per
-  // d-tag — same-relay assumption as the rest of the client-side model.
-  const memberships = new Map<string, { createdAt: number; members: Set<string>; communityId?: string }>();
+  // Workspace roster (the owner's latest 47102, d = "roster"). A relay
+  // is a workspace, so there is one roster for every channel the agent
+  // sits in — being invited means being in all of them, which is why
+  // this is a single set rather than a map per channel.
+  const roster = { createdAt: 0, members: new Set<string>() };
   function absorbMembership(event: { created_at: number; tags: string[][] }): void {
-    const channelId = event.tags.find((t) => t[0] === "d")?.[1];
-    if (!channelId || !channels.includes(channelId)) return;
-    const existing = memberships.get(channelId);
-    if (existing && event.created_at < existing.createdAt) return;
-    const members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
-    // keep the community too — the risk gate needs somewhere to ask
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1] ?? existing?.communityId;
-    memberships.set(channelId, { createdAt: event.created_at, members, communityId });
+    if (event.tags.find((t) => t[0] === "d")?.[1] !== ROSTER_D) return;
+    if (event.created_at < roster.createdAt) return;
+    roster.createdAt = event.created_at;
+    roster.members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
   }
 
-  const membershipEvents = channels.length > 0 ? await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": channels }]) : [];
+  const membershipEvents = await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
   for (const event of membershipEvents) absorbMembership(event);
-  for (const channelId of channels) {
-    if (!memberships.get(channelId)?.members.has(myPubkey)) {
-      console.warn(`⚠️  Not a member of channel ${channelId} — replies will be dropped by other clients until the creator runs /invite ${myPubkey} bot`);
-    }
+  if (!roster.members.has(myPubkey)) {
+    console.warn(`⚠️  Not on this workspace's roster — replies will be dropped by other clients until the owner runs /invite ${myPubkey} bot`);
   }
 
   // Announce identity so TUIs show a name instead of a truncated pubkey.
@@ -988,7 +983,7 @@ async function main() {
       recent.set(channelId, context.slice(-10));
 
       const mentioned = isMention(event);
-      const authorIsMember = memberships.get(channelId)?.members.has(event.pubkey) ?? false;
+      const authorIsMember = roster.members.has(event.pubkey);
 
       if (!mentioned) return;
       if (!(await authorAllowed(event.pubkey))) return;
@@ -1562,7 +1557,7 @@ async function main() {
       ...(channels.length > 0
         ? [
             { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
-            { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+            { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], since: Math.floor(Date.now() / 1000) },
           ]
         : []),
       // Doc comments addressed to us: work handed over INSIDE a document.

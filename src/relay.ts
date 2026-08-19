@@ -125,7 +125,9 @@ const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 export class RelayConnection {
   private pool: SimplePool;
   /** Normalized the way the pool keys its own map — see connectedUrls(). */
-  private urls: string[];
+  /** The relay set. Under the flat model these are one workspace: the
+   *  first is primary (it names the owner), the rest are mirrors. */
+  urls: string[];
   private tracked: Map<string, TrackedSub> = new Map();
   private watchdog?: ReturnType<typeof setInterval>;
   private wasConnected = false;

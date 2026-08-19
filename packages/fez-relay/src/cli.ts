@@ -31,8 +31,14 @@ async function main() {
   let port: number | undefined;
   let store: string | undefined;
   let verifySignatures: boolean | undefined;
-  const policies: RelayPolicy[] = [];
+  // Policies are built AFTER parsing: membership/moderation take the
+  // workspace owner, and --owner may appear after --policy on the line.
+  const policySpecs: { name: string; value?: string }[] = [];
   let configPath: string | undefined;
+  let owner: string | undefined;
+  let name: string | undefined;
+  let description: string | undefined;
+  let icon: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -40,17 +46,27 @@ async function main() {
     else if (arg === "--store") store = args[++i];
     else if (arg === "--no-verify") verifySignatures = false;
     else if (arg === "--config") configPath = args[++i];
+    else if (arg === "--owner") owner = args[++i];
+    else if (arg === "--name") name = args[++i];
+    else if (arg === "--description") description = args[++i];
+    else if (arg === "--icon") icon = args[++i];
     else if (arg === "--policy") {
       const spec = args[++i] ?? "";
-      const [name, value] = spec.split("=", 2);
-      const factory = builtinPolicies[name];
-      if (!factory) {
-        console.error(`Unknown policy "${name}". Built-ins: ${Object.keys(builtinPolicies).join(", ")}`);
+      const [policyName, value] = spec.split("=", 2);
+      if (!builtinPolicies[policyName]) {
+        console.error(`Unknown policy "${policyName}". Built-ins: ${Object.keys(builtinPolicies).join(", ")}`);
         process.exit(1);
       }
-      policies.push(factory(value));
+      policySpecs.push({ name: policyName, value });
     } else if (arg === "--help" || arg === "-h") {
-      console.log("Usage: fez-relay [--port N] [--store FILE] [--no-verify] [--policy NAME[=ARG]]... [--config FILE]");
+      console.log(
+        "Usage: fez-relay [--port N] [--store FILE] [--no-verify] [--policy NAME[=ARG]]... [--config FILE]\n" +
+          "                 [--owner HEX] [--name TEXT] [--description TEXT] [--icon URL]\n\n" +
+          "A relay is a workspace. --owner is the pubkey whose signature makes a channel\n" +
+          "or roster event count; it is served in the NIP-11 document and is what the\n" +
+          "membership and moderation policies enforce. Without it the workspace is\n" +
+          "unclaimed: it will serve, but no channel or roster can be valid on it."
+      );
       process.exit(0);
     } else {
       console.error(`Unknown argument: ${arg}`);
@@ -64,11 +80,39 @@ async function main() {
     config = mod.default ?? {};
   }
 
+  const workspace = {
+    name: name ?? config.workspace?.name,
+    description: description ?? config.workspace?.description,
+    owner: owner ?? config.workspace?.owner,
+    icon: icon ?? config.workspace?.icon,
+  };
+
+  if (owner && !/^[0-9a-f]{64}$/i.test(owner)) {
+    console.error(`--owner must be a 64-char hex pubkey (got ${owner.length} chars)`);
+    process.exit(1);
+  }
+
+  // An explicit =ARG still wins, so a config can point a policy at a
+  // different key than the advertised owner if it ever needs to.
+  const policies: RelayPolicy[] = policySpecs.map(({ name: policyName, value }) =>
+    builtinPolicies[policyName](value ?? (policyName === "membership" || policyName === "moderation" ? workspace.owner : undefined))
+  );
+
+  const governed = policySpecs.some((p) => p.name === "membership" || p.name === "moderation");
+  if (governed && !workspace.owner) {
+    console.error(
+      "refusing to start: --policy membership/moderation with no --owner would reject every channel and roster event.\n" +
+        "Pass --owner <hex>, or drop the policy to run an ungoverned store."
+    );
+    process.exit(1);
+  }
+
   startRelay({
     port: port ?? config.port ?? 7777,
     store: store ?? config.store,
     eventStore: config.eventStore,
     verifySignatures: verifySignatures ?? config.verifySignatures,
+    workspace,
     policies: [...(config.policies ?? []), ...policies],
   });
 }

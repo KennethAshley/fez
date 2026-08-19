@@ -45,50 +45,54 @@ export interface RelayPolicy {
 const ok: PolicyVerdict = { accept: true };
 const reject = (reason: string): PolicyVerdict => ({ accept: false, reason });
 
-// Fez community kinds (mirrors src/kinds.ts — duplicated by design: the
+// Fez workspace kinds (mirrors src/kinds.ts — duplicated by design: the
 // relay package must stay dependency-free of the client).
-const KIND_COMMUNITY = 47100;
+const KIND_COMMUNITY_RETIRED = 47100;
 const KIND_CHANNEL = 47101;
 const KIND_MEMBERSHIP = 47102;
+const KIND_BAN_LIST = 30047;
+const ROSTER_D = "roster";
 const tag = (e: StoredEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1];
 
 /**
- * Server-side mirror of fez's client trust rules, enforced at ingest:
+ * Server-side mirror of fez's client trust rules, enforced at ingest.
  *
- * - 47100: first event for a community id fixes the creator — a later
- *   47100 with the same id from a different pubkey is rejected (identity
- *   squatting protection clients can't provide).
- * - 47101/47102: only the community creator may publish them.
- * - Any h-tagged event (channel messages, reactions, typing, drafts,
- *   thread summaries): the author must be in the channel's winning
- *   (latest creator-signed) 47102 membership.
+ * A relay IS a workspace, so the whole trust chain reduces to one
+ * question: **is this signed by the owner?** The owner is whoever the
+ * relay advertises in its NIP-11 document, passed in here at startup —
+ * no lookup, no per-community creator resolution, no chain to walk.
+ *
+ * - 47101 (channel), 47102 (roster), 30047 (bans): owner-signed only.
+ * - Any h-tagged event (messages, reactions, typing, drafts, docs): the
+ *   author must be on the workspace roster. Membership is workspace-wide
+ *   — join the workspace, see every channel — so one roster answers for
+ *   all of them.
+ * - 47100 is retired and refused outright, so a stale client cannot
+ *   recreate the layer that was removed.
+ *
+ * Without an owner the workspace is unclaimed and every governed kind is
+ * refused. Failing closed here is deliberate: an unclaimed relay that
+ * accepted rosters would let the first passer-by seize the workspace.
  *
  * Everything else (agent metadata, attestations, observer frames, tasks)
  * passes through — not this policy's concern.
  */
-export function membershipPolicy(): RelayPolicy {
-  // Winning-roster cache — onDeliver runs per delivered event, and a
-  // linear scan per delivery would hurt. Invalidated whenever a fresh
-  // 47102 for the channel is accepted (onEvent sees every ingest).
-  const rosterCache = new Map<string, StoredEvent | null>();
+export function membershipPolicy(owner?: string): RelayPolicy {
+  // Winning-roster cache — onDeliver runs per delivered event and a
+  // linear scan per delivery would hurt. One roster per workspace now,
+  // so this is a single slot rather than a map. Invalidated whenever a
+  // fresh owner-signed 47102 is accepted (onEvent sees every ingest).
+  let cachedRoster: StoredEvent | null | undefined;
 
-  const winningRoster = (ctx: PolicyContext, channelId: string): StoredEvent | null => {
-    const cached = rosterCache.get(channelId);
-    if (cached !== undefined) return cached;
-    const creatorOf = (communityId: string): string | undefined =>
-      ctx
-        .query({ kinds: [KIND_COMMUNITY], "#d": [communityId] })
-        .sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
-    const winner =
-      ctx
-        .query({ kinds: [KIND_MEMBERSHIP], "#d": [channelId] })
-        .filter((m) => {
-          const communityId = m.tags.find((t) => t[0] === "c")?.[1];
-          return communityId !== undefined && m.pubkey === creatorOf(communityId);
-        })
-        .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0] ?? null;
-    rosterCache.set(channelId, winner);
-    return winner;
+  const winningRoster = (ctx: PolicyContext): StoredEvent | null => {
+    if (cachedRoster !== undefined) return cachedRoster;
+    cachedRoster = owner
+      ? ctx
+          .query({ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] })
+          .filter((m) => m.pubkey === owner)
+          .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0] ?? null
+      : null;
+    return cachedRoster;
   };
 
   return {
@@ -106,8 +110,10 @@ export function membershipPolicy(): RelayPolicy {
       const channelId = tag(event, "h");
       if (!channelId) return true; // not channel-scoped — public
       if (!ctx.authedPubkey) return false;
-      const roster = winningRoster(ctx, channelId);
+      const roster = winningRoster(ctx);
       if (!roster) return false;
+      // Workspace-wide: on the roster means every channel, which is the
+      // point — an invited member lands and sees the whole place.
       return (
         roster.pubkey === ctx.authedPubkey ||
         roster.tags.some((t) => t[0] === "p" && t[1] === ctx.authedPubkey)
@@ -115,51 +121,34 @@ export function membershipPolicy(): RelayPolicy {
     },
 
     onEvent(event, ctx) {
-      if (event.kind === KIND_MEMBERSHIP || event.kind === KIND_COMMUNITY) {
-        const d = tag(event, "d");
-        if (d) rosterCache.delete(d); // roster (or its creator chain) may change
-        if (event.kind === KIND_COMMUNITY) rosterCache.clear(); // creator resolution feeds every roster
+      if (event.kind === KIND_MEMBERSHIP) cachedRoster = undefined; // roster may have moved
+
+      // The layer that was removed cannot be recreated by a stale client.
+      if (event.kind === KIND_COMMUNITY_RETIRED) {
+        return reject("blocked: kind 47100 is retired — a relay is a workspace");
       }
-      if (event.kind === KIND_COMMUNITY) {
-        const id = tag(event, "d");
-        if (!id) return reject("blocked: community event missing d tag");
-        const existing = ctx
-          .query({ kinds: [KIND_COMMUNITY], "#d": [id] })
-          .sort((a, b) => a.created_at - b.created_at)[0];
-        if (existing && existing.pubkey !== event.pubkey) {
-          return reject("blocked: community id is owned by another pubkey");
+
+      const governed =
+        event.kind === KIND_CHANNEL || event.kind === KIND_MEMBERSHIP || event.kind === KIND_BAN_LIST;
+      if (governed) {
+        if (!owner) return reject("blocked: this workspace is unclaimed (no owner in NIP-11)");
+        if (event.pubkey !== owner) return reject("blocked: only the workspace owner may publish this");
+        if (event.kind === KIND_MEMBERSHIP && tag(event, "d") !== ROSTER_D) {
+          // One roster per workspace. A per-channel d-tag is the old
+          // model leaking through and would create a second authority.
+          return reject(`blocked: the roster's d tag must be "${ROSTER_D}"`);
         }
-        return ok;
-      }
-
-      const creatorOf = (communityId: string): string | undefined =>
-        ctx
-          .query({ kinds: [KIND_COMMUNITY], "#d": [communityId] })
-          .sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
-
-      if (event.kind === KIND_CHANNEL || event.kind === KIND_MEMBERSHIP) {
-        const communityId = tag(event, "c");
-        if (!communityId) return reject("blocked: missing community tag");
-        const creator = creatorOf(communityId);
-        if (!creator) return reject("blocked: unknown community");
-        if (creator !== event.pubkey) return reject("blocked: only the community creator may publish this");
         return ok;
       }
 
       const channelId = tag(event, "h");
       if (!channelId) return ok; // not channel-scoped — pass through
 
-      const membership = ctx
-        .query({ kinds: [KIND_MEMBERSHIP], "#d": [channelId] })
-        .filter((m) => {
-          const communityId = tag(m, "c");
-          return communityId !== undefined && m.pubkey === creatorOf(communityId);
-        })
-        .sort((a, b) => b.created_at - a.created_at)[0];
-      if (!membership) return reject("blocked: unknown channel");
-      const isMember = membership.tags.some((t) => t[0] === "p" && t[1] === event.pubkey);
-      if (!isMember && membership.pubkey !== event.pubkey) {
-        return reject("blocked: not a member of this channel");
+      const roster = winningRoster(ctx);
+      if (!roster) return reject("blocked: this workspace has no roster yet");
+      const isMember = roster.tags.some((t) => t[0] === "p" && t[1] === event.pubkey);
+      if (!isMember && roster.pubkey !== event.pubkey) {
+        return reject("blocked: not a member of this workspace");
       }
       return ok;
     },
@@ -233,29 +222,30 @@ export function createdAtFencePolicy(opts?: { maxDriftS?: number; pastExemptKind
 
 /**
  * Moderation enforcement (Buzz's 9040-44 "bans bite at the seam",
- * decentralized): the community creator's latest kind-30047 ban list is
- * enforced at ingest (banned pubkeys can't write community-tagged events)
- * and at delivery (an authed banned pubkey receives no community
- * content). Clients enforce the same list in their own trust rules —
- * this policy is the operator-grade backstop, like membershipPolicy.
+ * decentralized): the workspace owner's latest kind-30047 ban list is
+ * enforced at ingest (banned pubkeys can't write channel content) and at
+ * delivery (an authed banned pubkey receives none). Clients enforce the
+ * same list in their own trust rules — this policy is the operator-grade
+ * backstop, like membershipPolicy.
+ *
+ * One list per workspace, keyed on BANS_D. Banned is banned everywhere in
+ * the workspace, which is what "banned from the server" has always meant
+ * to the person it happened to.
  */
-export function moderationPolicy(): RelayPolicy {
-  const KIND_BAN_LIST = 30047;
-  const banCache = new Map<string, Set<string>>();
+export function moderationPolicy(owner?: string): RelayPolicy {
+  const BANS_D = "bans";
+  let cachedBans: Set<string> | undefined;
 
-  const bansFor = (ctx: PolicyContext, communityId: string): Set<string> => {
-    const cached = banCache.get(communityId);
-    if (cached) return cached;
-    const creator = ctx
-      .query({ kinds: [KIND_COMMUNITY], "#d": [communityId] })
-      .sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
-    const latest = ctx
-      .query({ kinds: [KIND_BAN_LIST], "#d": [communityId] })
-      .filter((e) => e.pubkey === creator)
-      .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
-    const banned = new Set(latest?.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]) ?? []);
-    banCache.set(communityId, banned);
-    return banned;
+  const bans = (ctx: PolicyContext): Set<string> => {
+    if (cachedBans) return cachedBans;
+    const latest = owner
+      ? ctx
+          .query({ kinds: [KIND_BAN_LIST], "#d": [BANS_D] })
+          .filter((e) => e.pubkey === owner)
+          .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0]
+      : undefined;
+    cachedBans = new Set(latest?.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]) ?? []);
+    return cachedBans;
   };
 
   return {
@@ -263,39 +253,34 @@ export function moderationPolicy(): RelayPolicy {
 
     onEvent(event, ctx) {
       if (event.kind === KIND_BAN_LIST) {
-        const communityId = tag(event, "d");
-        if (!communityId) return reject("blocked: ban list missing community d tag");
-        const creator = ctx
-          .query({ kinds: [KIND_COMMUNITY], "#d": [communityId] })
-          .sort((a, b) => a.created_at - b.created_at)[0]?.pubkey;
-        if (!creator) return reject("blocked: unknown community");
-        if (creator !== event.pubkey) return reject("blocked: only the community creator may publish the ban list");
-        banCache.delete(communityId);
+        // Ownership itself is membershipPolicy's call; this policy only
+        // has to notice the list moved.
+        if (owner && event.pubkey === owner) cachedBans = undefined;
         return ok;
       }
-      const communityId = tag(event, "c");
-      if (!communityId) return ok;
-      if (bansFor(ctx, communityId).has(event.pubkey)) {
-        return reject("blocked: banned from this community");
-      }
+      // Channel-scoped writes are what a ban withholds — the workspace
+      // is the scope, so the h tag is the hook.
+      if (!tag(event, "h")) return ok;
+      if (bans(ctx).has(event.pubkey)) return reject("blocked: banned from this workspace");
       return ok;
     },
 
     onDeliver(event, ctx) {
-      const communityId = tag(event, "c");
-      if (!communityId || !ctx.authedPubkey) return true; // unauthed read privacy is membershipPolicy's job
-      return !bansFor(ctx, communityId).has(ctx.authedPubkey);
+      if (!tag(event, "h") || !ctx.authedPubkey) return true; // unauthed read privacy is membershipPolicy's job
+      return !bans(ctx).has(ctx.authedPubkey);
     },
   };
 }
 
 /** Registry for --policy flags on the CLI. */
 export const builtinPolicies: Record<string, (arg?: string) => RelayPolicy> = {
-  membership: () => membershipPolicy(),
+  // `--policy membership:<ownerHex>` — the owner is the whole trust root
+  // now, so it is an argument rather than something looked up on the wire.
+  membership: (arg) => membershipPolicy(arg),
   "rate-limit": (arg) => rateLimitPolicy(arg ? { perMinute: Number(arg) } : undefined),
   "kind-whitelist": (arg) =>
     kindWhitelistPolicy((arg ?? "").split(",").map(Number).filter(Number.isFinite)),
   "created-at-fence": (arg) =>
     createdAtFencePolicy(arg ? { maxDriftS: Number(arg) } : undefined),
-  moderation: () => moderationPolicy(),
+  moderation: (arg) => moderationPolicy(arg),
 };

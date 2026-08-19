@@ -107,6 +107,7 @@ import type { McpServer } from "@agentclientprotocol/sdk";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { fetchRelayInfo } from "./nip11.js";
 
 const FEZ_DIR = path.join(os.homedir(), ".fez");
 
@@ -258,6 +259,9 @@ export class FezTUI {
         return id;
       },
       unwrapDm: (event: Event) => this.client.unwrapDm(event),
+      // The workspace's identity card — who owns this relay. Asked of
+      // the primary; extra URLs are mirrors of the same workspace.
+      relayInfo: (relay?: string) => fetchRelayInfo(relay ?? this.relay.urls[0]),
     };
     setNostrBackend(wire);
     this.fezClient = new FezClient(wire);

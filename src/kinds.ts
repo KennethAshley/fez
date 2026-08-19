@@ -59,10 +59,10 @@ export const KIND_OBSERVER_CONTROL = 20005;
 export const KIND_REPORT = 1984;
 
 /**
- * Ban list — creator-signed moderation state per community
+ * Ban list — owner-signed moderation state for the workspace
  * (Buzz's 9040-44 relay commands, decentralized): parameterized-
- * replaceable, d = communityId, p tags = banned pubkeys. Only the
- * community creator's latest counts (same trust chain as 47102).
+ * replaceable, d = BANS_D, p tags = banned pubkeys. Only the workspace
+ * owner's latest counts (same trust chain as 47102).
  * Enforcement: clients treat banned pubkeys as non-members EVERYWHERE
  * membership is checked (messages, reactions, pins, docs) without
  * touching the roster — /unban restores standing instantly. Relay-side,
@@ -81,22 +81,50 @@ export const KIND_BAN_LIST = 30047;
 export const KIND_PAIRING = 24134;
 
 /**
- * Communities/channels (471xx). Client-side trust model — every participant
- * runs fez, so all clients apply the same rules; the relay is dumb storage:
+ * Workspaces/channels (471xx). **A relay IS a workspace** — Slack's model,
+ * Buzz's model: "Raleigh, NC" is a relay holding #food, #sports, #weather,
+ * and adding the relay is joining it. There is no community event; the
+ * workspace's identity is the relay URL and its metadata comes from the
+ * relay's own NIP-11 document (name, description, icon).
  *
- * - The author of a community's 47100 (d = community id) is that
- *   community's root of trust.
- * - 47101/47102 events count only when signed by the community creator.
- * - These are regular (non-replaceable) kinds — relays keep every version;
- *   among a creator's 47102s with the same d-tag, highest created_at wins,
- *   resolved client-side.
- * - A 47103 renders only if its author is in the channel's winning 47102
- *   membership. Signature validity comes free from nostr-tools.
+ * Trust — flattening the STRUCTURE does not hand authority to the RELAY:
+ *
+ * - The workspace's **owner** is a pubkey the relay advertises in NIP-11
+ *   (`pubkey`, the standard administrative-contact field). Buzz makes the
+ *   relay sign its own roster; fez keeps a person signing, so moving hosts
+ *   and keeping the key keeps the workspace.
+ * - 47101/47102/30047 count only when signed by that owner. A relay that
+ *   lies about its owner can only make its own events be ignored.
+ * - Regular (non-replaceable) kinds: relays keep every version; among the
+ *   owner's events with the same d-tag the highest created_at wins, ties
+ *   broken by lowest id, resolved client-side.
+ * - A 47103 renders only if its author is on the workspace roster.
+ *
+ * Membership is **workspace-wide, not per channel**: you are invited to
+ * the workspace and you see every channel in it. One roster, one d-tag.
  */
-export const KIND_COMMUNITY = 47100;       // creator-signed; ["d", communityId]; content {name, description}
-export const KIND_CHANNEL = 47101;         // creator-signed; ["d", channelId], ["c", communityId]; content {name, description, visibility}
-export const KIND_MEMBERSHIP = 47102;      // creator-signed; ["d", channelId], ["c", communityId], ["p", pubkey, role]*; owner|admin|member|bot
-export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["c", communityId], ["p", mentionPubkey]*; content = text
+export const KIND_CHANNEL = 47101;         // owner-signed; ["d", channelId]; content {name, description, visibility}
+export const KIND_MEMBERSHIP = 47102;      // owner-signed; ["d", ROSTER_D], ["p", pubkey, role]*; owner|admin|member|bot
+export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["p", mentionPubkey]*; content = text
+
+/**
+ * The workspace roster's d-tag. A fixed string because there is exactly
+ * one roster per workspace — the relay is the scope, so nothing else is
+ * needed to name it.
+ */
+export const ROSTER_D = "roster";
+
+/** The ban list's d-tag — workspace-wide, same reasoning as ROSTER_D. */
+export const BANS_D = "bans";
+
+/**
+ * RETIRED — kind 47100 was the community event, back when a relay could
+ * hold many communities. The workspace is the relay now. The constant
+ * stays exported (and the number stays burned) so a stale event can be
+ * recognised and ignored rather than silently reinterpreted, and so no
+ * future kind reuses the number.
+ */
+export const KIND_COMMUNITY_RETIRED = 47100;
 
 /**
  * Typing indicator — nostr ephemeral range (relays broadcast, never store;

@@ -1,5 +1,6 @@
 export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
-import { CommunityState, setStatePersistence, type Role, type StatePersistence } from "./community-state.js";
+import { WorkspaceState, setStatePersistence, type Role, type StatePersistence } from "./workspace-state.js";
+export * from "./workspace-state.js";
 
 /**
  * @fez/client — the headless fez protocol brain: subscriptions, trust
@@ -70,6 +71,13 @@ export interface Wire {
   /** Group DM (one rumor, one wrap per recipient + self-copy). Optional — older backends are 1:1 only. */
   sendGroupDm?(recipientPubkeys: string[], text: string): Promise<string>;
   unwrapDm(event: WireEvent): DmRumor | undefined;
+  /**
+   * The relay's NIP-11 information document — the workspace's identity
+   * card, and the only place its owner is declared. Optional so a
+   * minimal backend can omit it; without it the workspace stays
+   * unclaimed and nothing governed is trusted.
+   */
+  relayInfo?(relay: string): Promise<{ name?: string; description?: string; pubkey?: string; icon?: string } | undefined>;
 }
 
 // ── Kinds (fez registry — see src/kinds.ts for the full docs) ────────────
@@ -79,10 +87,14 @@ export interface Wire {
 
 export const K = {
   AGENT_METADATA: 47000,
-  COMMUNITY: 47100,
+  /** Retired with the flat model — the number stays burned. */
+  COMMUNITY_RETIRED: 47100,
   CHANNEL: 47101,
   MEMBERSHIP: 47102,
   MESSAGE: 47103,
+  /** The one roster's d tag — a relay is a workspace, so nothing else names it. */
+  ROSTER_D: "roster",
+  BANS_D: "bans",
   TYPING: 20002,
   PRESENCE: 20001,
   DRAFT: 20003,
@@ -328,7 +340,7 @@ export interface ClientEvents {
 export { setStatePersistence, type StatePersistence };
 
 export class FezClient {
-  readonly state = new CommunityState();
+  readonly state = new WorkspaceState();
   readonly pubkey: string;
 
   private wire: Wire;
@@ -440,19 +452,23 @@ export class FezClient {
   }
 
   /**
-   * Everyone on a channel's roster, with the name they publish for
-   * themselves — the candidate set for resolving @mentions there.
+   * Everyone in this workspace, with the name they publish for
+   * themselves — the candidate set for resolving @mentions.
    *
-   * Membership is creator-signed, so this is the one authority over
-   * "who is in this room". Names remain self-asserted and non-unique;
+   * Membership is owner-signed and workspace-wide, so this is the one
+   * authority over "who is in this room", and the room is the whole
+   * workspace. Names remain self-asserted and non-unique;
    * resolveMentions() handles the collisions rather than hiding them.
+   *
+   * The channelId is still taken so callers read naturally and so a
+   * future per-channel visibility rule has a seam to land on.
    */
-  mentionCandidates(channelId: string): MentionCandidate[] {
-    const communityId = this.state.communityOfChannel(channelId);
-    const channel = communityId ? this.state.community(communityId)?.channels.get(channelId) : undefined;
+  mentionCandidates(_channelId?: string): MentionCandidate[] {
     const out: MentionCandidate[] = [];
     const seen = new Set<string>();
-    for (const pubkey of channel?.members.keys() ?? []) {
+    const roster = new Set(this.state.workspace.members.keys());
+    if (this.state.workspace.owner) roster.add(this.state.workspace.owner);
+    for (const pubkey of roster) {
       const name = this.names.get(pubkey) ?? this.profiles.get(pubkey);
       if (!name || seen.has(pubkey)) continue;
       seen.add(pubkey);
@@ -575,13 +591,10 @@ export class FezClient {
   channelExhausted(channelId: string): boolean {
     return this.exhaustedChannels.has(channelId);
   }
-  channelRef(channelId: string): { communityId: string; name: string; communityName: string } | undefined {
-    for (const communityId of this.state.joined) {
-      const community = this.state.community(communityId);
-      const channel = community?.channels.get(channelId);
-      if (community && channel) return { communityId, name: channel.name, communityName: community.name };
-    }
-    return undefined;
+  /** Name a channel and the workspace it sits in — breadcrumbs, jump-to, notifications. */
+  channelRef(channelId: string): { name: string; workspaceName: string } | undefined {
+    const channel = this.state.workspace.channels.get(channelId);
+    return channel ? { name: channel.name, workspaceName: this.state.workspace.name } : undefined;
   }
 
   // ── Actions ─────────────────────────────────────────────────────────────
@@ -592,7 +605,7 @@ export class FezClient {
     if (!current) throw new Error("no channel scope");
     const threadTags: string[][] = [];
     if (opts?.threadRootId) {
-      const replies = this.threadReplies(current.channel.id, opts.threadRootId);
+      const replies = this.threadReplies(current.id, opts.threadRootId);
       const parentId = replies.at(-1)?.id ?? opts.threadRootId;
       if (parentId !== opts.threadRootId) threadTags.push(["e", opts.threadRootId, "", "root"]);
       threadTags.push(["e", parentId, "", "reply"]);
@@ -600,23 +613,22 @@ export class FezClient {
     const event = await this.wire.publish({
       kind: K.MESSAGE,
       tags: [
-        ["h", current.channel.id],
-        ["c", current.community.id],
+        ["h", current.id],
         ...threadTags,
         ...(opts?.mentionPks ?? []).map((pk) => ["p", pk]),
       ],
       content: text,
     });
     this.seenMessages.add(event.id);
-    return this.cacheMessage(current.channel.id, event);
+    return this.cacheMessage(current.id, event);
   }
 
-  async editLastOwnMessage(channelId: string, communityId: string, text: string): Promise<Msg | undefined> {
+  async editLastOwnMessage(channelId: string, text: string): Promise<Msg | undefined> {
     const target = (this.messagesByChannel.get(channelId) ?? []).filter((m) => m.authorPk === this.pubkey).at(-1);
     if (!target) return undefined;
     const event = await this.wire.publish({
       kind: K.MSG_EDIT,
-      tags: [["e", target.id], ["h", channelId], ["c", communityId]],
+      tags: [["e", target.id], ["h", channelId]],
       content: text,
     });
     this.handleMsgEdit(event);
@@ -624,12 +636,12 @@ export class FezClient {
   }
 
   /** Edit a specific own message (author-only, enforced by every consumer's handleMsgEdit). */
-  async editMessage(channelId: string, communityId: string, targetId: string, text: string): Promise<Msg | undefined> {
+  async editMessage(channelId: string, targetId: string, text: string): Promise<Msg | undefined> {
     const target = this.msgByIdMap.get(targetId);
     if (!target || target.authorPk !== this.pubkey) return undefined;
     const event = await this.wire.publish({
       kind: K.MSG_EDIT,
-      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      tags: [["e", targetId], ["h", channelId]],
       content: text,
     });
     this.handleMsgEdit(event);
@@ -645,12 +657,12 @@ export class FezClient {
   }
 
   /** Toggle a reaction: publish kind 7, or retract my existing one via kind 5. */
-  async toggleReaction(channelId: string, communityId: string, targetId: string, emoji: string): Promise<void> {
+  async toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void> {
     const mine = this.myReactionTo(targetId, emoji);
     if (mine) {
       const event = await this.wire.publish({
         kind: K.DELETION,
-        tags: [["e", mine], ["h", channelId], ["c", communityId]],
+        tags: [["e", mine], ["h", channelId]],
         content: "",
       });
       this.handleDeletion(event);
@@ -658,25 +670,25 @@ export class FezClient {
     }
     const event = await this.wire.publish({
       kind: K.REACTION,
-      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      tags: [["e", targetId], ["h", channelId]],
       content: emoji,
     });
     this.handleReaction(event, true);
   }
 
-  async pinMessage(channelId: string, communityId: string, targetId: string): Promise<void> {
+  async pinMessage(channelId: string, targetId: string): Promise<void> {
     const event = await this.wire.publish({
       kind: K.MSG_PIN,
-      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      tags: [["e", targetId], ["h", channelId]],
       content: "",
     });
     this.handleMsgPin(event);
   }
 
-  async unpin(channelId: string, communityId: string, opId: string): Promise<void> {
+  async unpin(channelId: string, opId: string): Promise<void> {
     const event = await this.wire.publish({
       kind: K.DELETION,
-      tags: [["e", opId], ["h", channelId], ["c", communityId]],
+      tags: [["e", opId], ["h", channelId]],
       content: "",
     });
     this.handleDeletion(event);
@@ -688,32 +700,33 @@ export class FezClient {
    * client — publishing without standing just produces an event everyone
    * ignores. Callers should still gate the UI on canDeleteMessage().
    */
-  async deleteMessage(channelId: string, communityId: string, targetId: string): Promise<void> {
+  async deleteMessage(channelId: string, targetId: string): Promise<void> {
     const event = await this.wire.publish({
       kind: K.DELETION,
-      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      tags: [["e", targetId], ["h", channelId]],
       content: "",
     });
     this.handleDeletion(event);
   }
 
-  canDeleteMessage(communityId: string, msg: Msg): boolean {
-    return msg.authorPk === this.pubkey || this.state.communities.get(communityId)?.creator === this.pubkey;
+  /** Your own message, or anyone's if you own the workspace. */
+  canDeleteMessage(msg: Msg): boolean {
+    return msg.authorPk === this.pubkey || this.state.isOwner(this.pubkey);
   }
 
-  async bookmarkMessage(channelId: string, communityId: string, targetId: string): Promise<void> {
+  async bookmarkMessage(channelId: string, targetId: string): Promise<void> {
     const event = await this.wire.publish({
       kind: K.MSG_BOOKMARK,
-      tags: [["e", targetId], ["h", channelId], ["c", communityId]],
+      tags: [["e", targetId], ["h", channelId]],
       content: "",
     });
     this.handleMsgBookmark(event);
   }
 
-  async scheduleMessage(channelId: string, communityId: string, sendAt: number, text: string): Promise<void> {
+  async scheduleMessage(channelId: string, sendAt: number, text: string): Promise<void> {
     await this.wire.publish({
       kind: K.SCHEDULED,
-      tags: [["h", channelId], ["c", communityId], ["send_at", String(sendAt)]],
+      tags: [["h", channelId], ["send_at", String(sendAt)]],
       content: text,
     });
   }
@@ -787,30 +800,30 @@ export class FezClient {
     );
   }
 
-  async docVersions(channelId: string, communityId: string): Promise<WireEvent[]> {
+  async docVersions(channelId: string): Promise<WireEvent[]> {
     const events = await this.wire.query([{ kinds: [K.DOC], "#h": [channelId], limit: 200 }]);
     return orderVersions(
       events
-        .filter((e) => this.state.isMember(communityId, channelId, e.pubkey))
+        .filter((e) => this.state.isMember(e.pubkey))
         .filter((e) => !e.tags.some((t) => t[0] === "d")) // named pages aren't the channel doc
     );
   }
 
-  async publishDoc(channelId: string, communityId: string, content: string, baseId?: string): Promise<void> {
+  async publishDoc(channelId: string, content: string, baseId?: string): Promise<void> {
     await this.wire.publish({
       kind: K.DOC,
-      tags: [["h", channelId], ["c", communityId], ...(baseId ? [["base", baseId]] : [])],
+      tags: [["h", channelId], ...(baseId ? [["base", baseId]] : [])],
       content,
     });
   }
 
   /** Checkbox state for a doc — latest event per item wins. */
-  async docTasks(communityId: string, opts: { channelId?: string; slug?: string }): Promise<Map<string, TaskState>> {
+  async docTasks(opts: { channelId?: string; slug?: string }): Promise<Map<string, TaskState>> {
     const filter = opts.slug
       ? { kinds: [K.DOC_TASK], "#d": [opts.slug], limit: 500 }
       : { kinds: [K.DOC_TASK], "#h": [opts.channelId ?? ""], limit: 500 };
     const events = (await this.wire.query([filter])).filter(
-      (e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId) && this.state.isCommunityMember(communityId, e.pubkey)
+      (e) => this.state.isMember(e.pubkey)
     );
     const states = new Map<string, TaskState>();
     for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
@@ -836,8 +849,7 @@ export class FezClient {
       kind: K.DOC_TASK,
       tags: [
         ["h", channelId],
-        ["c", communityId],
-        ...(slug ? [["d", slug]] : []),
+                ...(slug ? [["d", slug]] : []),
         ["t", taskKey(itemText)],
         ["done", done ? "1" : "0"],
       ],
@@ -850,14 +862,13 @@ export class FezClient {
     return this.wikiMap;
   }
 
-  async wikiVersions(communityId: string, slug: string): Promise<WireEvent[]> {
+  async wikiVersions(slug: string): Promise<WireEvent[]> {
     const events = await this.wire.query([{ kinds: [K.DOC], "#d": [slug], limit: 200 }]);
     return orderVersions(
-      events
-        .filter((e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId))
-        // community-scoped: a page belongs to the community, not to the
-        // channel it happened to be written from
-        .filter((e) => this.state.isCommunityMember(communityId, e.pubkey))
+      // Workspace-scoped: a page belongs to the workspace, not to the
+      // channel it happened to be written from. The relay IS that scope,
+      // so there is no tag left to check.
+      events.filter((e) => this.state.isMember(e.pubkey))
     );
   }
 
@@ -866,12 +877,12 @@ export class FezClient {
    * note stays attached when lines shift above it. Returns threads:
    * a root comment plus its replies, with resolution folded in.
    */
-  async docComments(communityId: string, opts: { channelId?: string; slug?: string }): Promise<DocCommentThread[]> {
+  async docComments(opts: { channelId?: string; slug?: string }): Promise<DocCommentThread[]> {
     const filter = opts.slug
       ? { kinds: [K.DOC_COMMENT], "#d": [opts.slug], limit: 500 }
       : { kinds: [K.DOC_COMMENT], "#h": [opts.channelId ?? ""], limit: 500 };
     const events = (await this.wire.query([filter])).filter(
-      (e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId) && this.state.isCommunityMember(communityId, e.pubkey)
+      (e) => this.state.isMember(e.pubkey)
     );
     const roots = new Map<string, DocCommentThread>();
     const replies: WireEvent[] = [];
@@ -925,8 +936,7 @@ export class FezClient {
       kind: K.DOC_COMMENT,
       tags: [
         ["h", channelId],
-        ["c", communityId],
-        ...(opts.slug ? [["d", opts.slug]] : []),
+                ...(opts.slug ? [["d", opts.slug]] : []),
         ...(opts.anchor ? [["anchor", opts.anchor.slice(0, 300)]] : []),
         ...(opts.parentId ? [["e", opts.parentId]] : []),
         ...(opts.resolve ? [["resolved", "1"]] : []),
@@ -936,15 +946,14 @@ export class FezClient {
     });
   }
 
-  async publishWikiDoc(channelId: string, communityId: string, name: string, content: string, baseId?: string): Promise<void> {
+  async publishWikiDoc(channelId: string, name: string, content: string, baseId?: string): Promise<void> {
     const slug = wikiSlug(name);
     if (!slug) throw new Error(`"${name}" makes an empty page name`);
     await this.wire.publish({
       kind: K.DOC,
       tags: [
         ["h", channelId],
-        ["c", communityId],
-        ["d", slug],
+                ["d", slug],
         ["title", name.trim()],
         ...(baseId ? [["base", baseId]] : []),
       ],
@@ -952,80 +961,100 @@ export class FezClient {
     });
   }
 
-  async createCommunity(name: string): Promise<{ communityId: string; channelId: string }> {
-    const communityId = crypto.randomUUID();
-    const channelId = crypto.randomUUID();
-    await this.wire.publish({ kind: K.COMMUNITY, tags: [["d", communityId]], content: JSON.stringify({ name }) });
-    await this.wire.publish({
-      kind: K.CHANNEL,
-      tags: [["d", channelId], ["c", communityId]],
-      content: JSON.stringify({ name: "general", visibility: "open" }),
-    });
-    await this.wire.publish({
-      kind: K.MEMBERSHIP,
-      tags: [["d", channelId], ["c", communityId], ["p", this.pubkey, "owner"]],
-      content: "",
-    });
-    this.state.joined.add(communityId);
-    this.state.scope = { communityId, channelId };
-    this.state.save();
-    await this.syncJoined();
-    this.resubscribe();
-    return { communityId, channelId };
-  }
-
-  /** Creator adds a channel to their community; scope moves there. */
-  async createChannel(communityId: string, name: string): Promise<string> {
-    const community = this.state.communities.get(communityId);
-    if (!community) throw new Error("unknown community");
-    if (community.creator !== this.pubkey) throw new Error("only the community creator can add channels (v1)");
+  /**
+   * Claim this relay as a workspace: publish the first channel and a
+   * roster naming yourself owner.
+   *
+   * There is no workspace event to create — the relay IS the workspace,
+   * and it already exists. This only writes the things a workspace needs
+   * to be usable. It is why onboarding can no longer mint a duplicate
+   * "Home" on every run: there is nothing to mint.
+   */
+  async claimWorkspace(firstChannel = "general"): Promise<{ channelId: string }> {
+    if (this.state.workspace.owner && this.state.workspace.owner !== this.pubkey) {
+      throw new Error("this workspace already has an owner");
+    }
     const channelId = crypto.randomUUID();
     const channelEvent = await this.wire.publish({
       kind: K.CHANNEL,
-      tags: [["d", channelId], ["c", communityId]],
-      content: JSON.stringify({ name, visibility: "open" }),
+      tags: [["d", channelId]],
+      content: JSON.stringify({ name: firstChannel, visibility: "open" }),
     });
     const rosterEvent = await this.wire.publish({
       kind: K.MEMBERSHIP,
-      tags: [["d", channelId], ["c", communityId], ["p", this.pubkey, "owner"]],
+      tags: [["d", K.ROSTER_D], ["p", this.pubkey, "owner"]],
       content: "",
     });
     this.state.absorb(channelEvent);
     this.state.absorb(rosterEvent);
-    this.state.scope = { communityId, channelId };
+    this.state.scope = { channelId };
+    this.state.save();
+    this.resubscribe();
+    this.emit("channelsChanged");
+    return { channelId };
+  }
+
+  /** Owner adds a channel to the workspace; scope moves there. */
+  async createChannel(name: string): Promise<string> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can add channels");
+    const channelId = crypto.randomUUID();
+    const channelEvent = await this.wire.publish({
+      kind: K.CHANNEL,
+      tags: [["d", channelId]],
+      content: JSON.stringify({ name, visibility: "open" }),
+    });
+    this.state.absorb(channelEvent);
+    // No roster event: membership is workspace-wide, so a new channel is
+    // visible to everyone already in — which is the whole point of flat.
+    this.state.scope = { channelId };
     this.state.save();
     this.resubscribe();
     this.emit("channelsChanged");
     return channelId;
   }
 
-  async listCommunities(): Promise<{ id: string; name: string; joined: boolean }[]> {
-    const events = await this.wire.query([{ kinds: [K.COMMUNITY], limit: 50 }]);
-    for (const e of events) this.state.absorb(e);
-    return [...this.state.communities.values()].map((c) => ({ id: c.id, name: c.name, joined: this.state.joined.has(c.id) }));
-  }
-
-  async joinCommunity(communityId: string): Promise<boolean> {
-    this.state.joined.add(communityId);
-    this.state.save();
-    await this.syncJoined();
+  /**
+   * Point this client at a workspace and pull its state.
+   *
+   * The owner comes from the relay's NIP-11 document, and it has to
+   * arrive BEFORE any 47101/47102 is absorbed — the state model rejects
+   * everything while the workspace is unclaimed, so ordering here is
+   * load-bearing, not incidental.
+   */
+  async openWorkspace(relay: string): Promise<boolean> {
+    this.state.open(relay);
+    const info = await this.wire.relayInfo?.(relay);
+    this.state.describe({ name: info?.name, owner: info?.pubkey });
+    await this.syncWorkspace();
     this.resubscribe();
-    return this.state.community(communityId) !== undefined;
+    this.emit("channelsChanged");
+    return !!this.state.workspace.owner;
   }
 
-  /** Scope to a channel by name across joined communities; loads its history window. */
-  async joinChannel(name: string): Promise<{ communityId: string; channelId: string; name: string } | undefined> {
-    for (const communityId of this.state.joined) {
-      const channel = this.state.findChannelByName(communityId, name);
-      if (channel) {
-        this.state.scope = { communityId, channelId: channel.id };
-        this.state.save();
-        this.emit("channelsChanged");
-        await this.loadChannelHistory(channel.id, communityId);
-        return { communityId, channelId: channel.id, name: channel.name };
-      }
-    }
-    return undefined;
+  /** Every workspace in the rail. Switching between them never drops one. */
+  workspaces(): { relay: string; name: string; active: boolean }[] {
+    return this.state.known.map((w) => ({
+      relay: w.relay,
+      name: w.name ?? w.relay,
+      active: w.relay === this.state.workspace.relay,
+    }));
+  }
+
+  /** Drop a workspace from the rail. Local only — the workspace is untouched. */
+  forgetWorkspace(relay: string): void {
+    this.state.forget(relay);
+    this.emit("channelsChanged");
+  }
+
+  /** Scope to a channel by name in this workspace; loads its history window. */
+  async joinChannel(name: string): Promise<{ channelId: string; name: string } | undefined> {
+    const channel = this.state.findChannelByName(name);
+    if (!channel) return undefined;
+    this.state.scope = { channelId: channel.id };
+    this.state.save();
+    this.emit("channelsChanged");
+    await this.loadChannelHistory(channel.id);
+    return { channelId: channel.id, name: channel.name };
   }
 
   leaveScope(): void {
@@ -1034,22 +1063,8 @@ export class FezClient {
     this.emit("channelsChanged");
   }
 
-  /**
-   * Leave a community: stop subscribing to its channels and drop it from
-   * the sidebar. Purely local — nothing is published; the roster still
-   * lists you (only the creator edits rosters), and re-joining restores
-   * everything from the relay. The community itself is untouched.
-   */
-  leaveCommunity(communityId: string): void {
-    if (!this.state.joined.delete(communityId)) return;
-    if (this.state.scope?.communityId === communityId) this.state.scope = null;
-    this.state.save();
-    this.resubscribe(); // shed the left channels from the live filters
-    this.emit("channelsChanged");
-  }
-
-  setScope(communityId: string, channelId: string): void {
-    this.state.scope = { communityId, channelId };
+  setScope(channelId: string): void {
+    this.state.scope = { channelId };
     this.state.save();
     this.emit("channelsChanged");
   }
@@ -1057,90 +1072,80 @@ export class FezClient {
   /**
    * Roster updates must strictly advance the winning 47102's created_at —
    * two updates in the same second would otherwise tie and resolve by id,
-   * surprising the creator who published second (Buzz bumps for the same
+   * surprising the owner who published second (Buzz bumps for the same
    * reason).
    */
-  private nextRosterCreatedAt(channel: { membershipCreatedAt: number }): number {
-    return Math.max(Math.floor(Date.now() / 1000), channel.membershipCreatedAt + 1);
+  private nextRosterCreatedAt(): number {
+    return Math.max(Math.floor(Date.now() / 1000), this.state.workspace.rosterCreatedAt + 1);
   }
 
-  async invite(pubkey: string, role: Role): Promise<string> {
-    const current = this.state.currentChannel();
-    if (!current) throw new Error("no channel scope");
-    if (current.community.creator !== this.pubkey) throw new Error("only the community creator can invite (v1)");
-    const tags: string[][] = [
-      ["d", current.channel.id],
-      ["c", current.community.id],
-      ...[...current.channel.members.entries()].map(([pk, r]) => ["p", pk, r]),
-    ];
-    if (!current.channel.members.has(pubkey)) tags.push(["p", pubkey, role]);
+  /** Republish the workspace roster — the one place membership changes. */
+  private async publishRoster(members: Map<string, Role>): Promise<void> {
     const event = await this.wire.publish({
       kind: K.MEMBERSHIP,
-      tags,
+      tags: [["d", K.ROSTER_D], ...[...members.entries()].map(([pk, r]) => ["p", pk, r])],
       content: "",
-      created_at: this.nextRosterCreatedAt(current.channel),
+      created_at: this.nextRosterCreatedAt(),
     });
     this.state.absorb(event);
     this.emit("channelsChanged");
+  }
+
+  /**
+   * Invite someone to the WORKSPACE — they land and see every channel.
+   * That is the flat model's promise, and the reason there is no
+   * per-channel invite to get wrong.
+   */
+  async invite(pubkey: string, role: Role): Promise<string> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can invite");
+    const members = new Map(this.state.workspace.members);
+    if (!members.has(pubkey)) members.set(pubkey, role);
+    await this.publishRoster(members);
+    return this.displayName(pubkey);
+  }
+
+  /** Owner republishes the roster without the pubkey. Their history stays. */
+  async kick(pubkey: string): Promise<string> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can remove members");
+    if (pubkey === this.state.workspace.owner) {
+      throw new Error("the owner can't be removed — the workspace is rooted in their signature");
+    }
+    const members = new Map(this.state.workspace.members);
+    if (!members.delete(pubkey)) throw new Error("not a member of this workspace");
+    await this.publishRoster(members);
     return this.displayName(pubkey);
   }
 
   /**
-   * Ban/unban (creator-only): republish the community's 30047 with the
+   * Ban/unban (owner-only): republish the workspace's 30047 with the
    * pubkey added/removed, created_at strictly advancing (same monotonic
    * rule as rosters). A ban leaves the roster untouched — the banned
    * pubkey is simply treated as a non-member everywhere until unbanned.
    */
-  private async publishBanList(communityId: string, banned: Set<string>): Promise<void> {
-    const community = this.state.communities.get(communityId);
-    if (!community) throw new Error("unknown community");
-    if (community.creator !== this.pubkey) throw new Error("only the community creator can moderate");
+  private async publishBanList(banned: Set<string>): Promise<void> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can moderate");
     const event = await this.wire.publish({
       kind: K.BAN_LIST,
-      tags: [["d", communityId], ...[...banned].map((pk) => ["p", pk])],
+      tags: [["d", K.BANS_D], ...[...banned].map((pk) => ["p", pk])],
       content: "",
-      created_at: Math.max(Math.floor(Date.now() / 1000), community.banListCreatedAt + 1),
+      created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.banListCreatedAt + 1),
     });
     this.state.absorb(event);
     this.emit("channelsChanged");
   }
 
-  async banUser(communityId: string, pubkey: string): Promise<string> {
-    const community = this.state.communities.get(communityId);
-    if (community && pubkey === community.creator) throw new Error("the creator can't be banned");
-    const banned = new Set(community?.banned ?? []);
+  async banUser(pubkey: string): Promise<string> {
+    if (pubkey === this.state.workspace.owner) throw new Error("the owner can't be banned");
+    const banned = new Set(this.state.workspace.banned);
     banned.add(pubkey);
-    await this.publishBanList(communityId, banned);
+    await this.publishBanList(banned);
     return this.displayName(pubkey);
   }
 
-  async unbanUser(communityId: string, pubkey: string): Promise<string> {
-    const banned = new Set(this.state.communities.get(communityId)?.banned ?? []);
+  async unbanUser(pubkey: string): Promise<string> {
+    const banned = new Set(this.state.workspace.banned);
     if (!banned.delete(pubkey)) throw new Error("not banned");
-    await this.publishBanList(communityId, banned);
-    return this.displayName(pubkey);
-  }
-
-  /** Creator republishes the roster without the pubkey. The removed party's history stays. */
-  async kick(pubkey: string): Promise<string> {
-    const current = this.state.currentChannel();
-    if (!current) throw new Error("no channel scope");
-    if (current.community.creator !== this.pubkey) throw new Error("only the community creator can remove members");
-    if (pubkey === current.community.creator) throw new Error("the creator can't be removed — the roster is rooted in their signature");
-    if (!current.channel.members.has(pubkey)) throw new Error("not a member of this channel");
-    const tags: string[][] = [
-      ["d", current.channel.id],
-      ["c", current.community.id],
-      ...[...current.channel.members.entries()].filter(([pk]) => pk !== pubkey).map(([pk, r]) => ["p", pk, r]),
-    ];
-    const event = await this.wire.publish({
-      kind: K.MEMBERSHIP,
-      tags,
-      content: "",
-      created_at: this.nextRosterCreatedAt(current.channel),
-    });
-    this.state.absorb(event);
-    this.emit("channelsChanged");
+    await this.publishBanList(banned);
     return this.displayName(pubkey);
   }
 
@@ -1153,7 +1158,7 @@ export class FezClient {
 
   // ── History windows (Buzz's channel window, dumb-relay-shaped) ─────────
 
-  async loadChannelHistory(channelId: string, communityId: string): Promise<void> {
+  async loadChannelHistory(channelId: string): Promise<void> {
     // Artifacts backfill rides alongside — failures never block messages.
     void this.wire
       .query([{ kinds: [K.ARTIFACT], "#h": [channelId], limit: 50 }])
@@ -1168,7 +1173,7 @@ export class FezClient {
       this.wire.query([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
     ]);
     const ordered = msgs
-      .filter((e) => this.state.isMember(communityId, channelId, e.pubkey))
+      .filter((e) => this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at)
       .slice(-HISTORY_LIMIT);
     for (const event of ordered) {
@@ -1194,7 +1199,7 @@ export class FezClient {
   }
 
   /** Scroll-up paging: until-filter keyset with limit+1 has_more probe. Returns the fresh page, oldest first. */
-  async loadOlderPage(channelId: string, communityId: string): Promise<Msg[]> {
+  async loadOlderPage(channelId: string): Promise<Msg[]> {
     const list = this.messagesByChannel.get(channelId) ?? [];
     const oldest = list[0]?.ts;
     if (!oldest || this.exhaustedChannels.has(channelId)) return [];
@@ -1203,7 +1208,7 @@ export class FezClient {
     ]);
     if (events.length <= PAGE_SIZE) this.exhaustedChannels.add(channelId);
     const fresh = events
-      .filter((e) => !this.seenMessages.has(e.id) && this.state.isMember(communityId, channelId, e.pubkey))
+      .filter((e) => !this.seenMessages.has(e.id) && this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at);
     if (fresh.length === 0) this.exhaustedChannels.add(channelId);
     const freshMsgs: Msg[] = [];
@@ -1277,40 +1282,41 @@ export class FezClient {
       }
     } catch { /* badges start from zero */ }
 
-    // Before concluding anyone is new, ask the relay. A cache miss is
-    // not evidence of a first run — it's the most common way an
-    // existing user arrives.
-    if (this.state.joined.size === 0) {
-      const recovered = await this.recoverJoined();
-      if (recovered > 0) {
-        this.emit(
-          "notice",
-          `🔑 Recovered ${recovered} ${recovered === 1 ? "community" : "communities"} from your membership on the relay.`
-        );
-      }
+    // Who owns this workspace has to be known before any governed event
+    // is absorbed — the state model rejects everything while unclaimed.
+    const info = await this.wire.relayInfo?.(this.state.workspace.relay).catch(() => undefined);
+    this.state.describe({ name: info?.name, owner: info?.pubkey });
+
+    await this.syncWorkspace();
+
+    // Nothing is created on first run. There is no workspace event to
+    // mint, so the duplicate-"Home" bug has no way to happen: an
+    // unclaimed relay is offered to you to claim, and a claimed one you
+    // are not on says so plainly rather than looking empty.
+    if (!this.state.workspace.owner) {
+      this.emit("notice", "🏗  This relay has no owner yet — it's an unclaimed workspace. Claim it to create the first channel.");
+    } else if (!this.state.isMember(this.pubkey)) {
+      this.emit(
+        "notice",
+        `🚪 You're connected to ${this.state.workspace.name} but not on its roster yet — ask the owner for an invite. Your key: ${this.pubkey.slice(0, 12)}…`
+      );
     }
 
-    // First-run bootstrap: a brand-new user lands in a working room.
-    if (this.state.joined.size === 0 && !this.state.persistedFileExists()) {
-      try {
-        const { communityId, channelId } = await this.createCommunity("Home");
-        this.state.scope = { communityId, channelId };
-        this.state.save();
-        this.emit("notice", "🏠 Created your Home community — you're in #general. Mention an agent (@researcher …) to get going; /help for the rest.");
-      } catch { /* relay unreachable — host surfaces connection errors */ }
-    }
-
-    await this.syncJoined();
     this.resubscribe();
 
     // Docs hydrate.
     try {
-      const docEvents = await this.wire.query([{ kinds: [K.DOC], "#h": this.channelIdsOfJoined(), limit: 500 }]);
+      const docEvents = await this.wire.query([{ kinds: [K.DOC], "#h": this.channelIds(), limit: 500 }]);
       for (const event of docEvents) this.absorbDocEvent(event);
     } catch { /* live stream fills in */ }
 
+    // Land somewhere: the channel you were last in, else the first one.
+    if (!this.state.scope) {
+      const first = [...this.state.workspace.channels.keys()][0];
+      if (first) this.state.scope = { channelId: first };
+    }
     const scope = this.state.scope;
-    if (scope) await this.loadChannelHistory(scope.channelId, scope.communityId);
+    if (scope) await this.loadChannelHistory(scope.channelId);
     this.emit("channelsChanged");
   }
 
@@ -1408,75 +1414,35 @@ export class FezClient {
     } catch { /* ignore */ }
   }
 
-  private channelIdsOfJoined(): string[] {
-    const ids: string[] = [];
-    for (const communityId of this.state.joined) {
-      const community = this.state.community(communityId);
-      if (community) ids.push(...community.channels.keys());
-    }
-    return ids;
+  private channelIds(): string[] {
+    return [...this.state.workspace.channels.keys()];
   }
 
   /**
-   * Rebuild "which communities am I in" from the relay.
+   * Pull the workspace's state from the relay.
    *
-   * Membership is a signed event naming your pubkey. Local state is a
-   * CACHE of that, and treating the cache as the record is how a client
-   * loses your communities for good: clear a browser's storage, move to
-   * a second device, reinstall the app, and the client concludes you
-   * belong nowhere — then the first-run bootstrap helpfully makes you a
-   * brand-new empty "Home" while every document you have ever written
-   * sits on the relay, addressed to a community you are still a member
-   * of. Four "Home" communities on one relay is what that looks like
-   * after it happens a few times.
+   * The roster is a signed event on the relay, and local state is a
+   * CACHE of it — treating the cache as the record is how the previous
+   * model lost people: clear storage, move machine, reinstall, and the
+   * client concluded you belonged nowhere, then helpfully made you a
+   * brand-new empty "Home". Three of those on one relay is what that
+   * looks like after it happens a few times.
    *
-   * Removal has to be honoured, which is the whole subtlety: a
-   * membership event is replaceable per channel, so being p-tagged by
-   * SOME version is not the same as being a member now. Candidates come
-   * from events that ever named us; each is then confirmed against the
-   * LATEST membership for that channel. Silently rejoining a community
-   * you were removed from would be a worse bug than the one this fixes.
+   * Flat removes the whole failure: there is nothing to recover, because
+   * the workspace is the relay you are pointed at and its roster is
+   * fetched fresh right here. Being on it is decided by the owner's
+   * latest 47102, so a removal is honoured the moment it lands.
    */
-  private async recoverJoined(): Promise<number> {
-    let candidates: WireEvent[];
-    try {
-      candidates = await this.wire.query([{ kinds: [K.MEMBERSHIP], "#p": [this.pubkey], limit: 500 }]);
-    } catch {
-      return 0; // relay unreachable — the caller keeps whatever cache it has
-    }
-    const channelIds = [...new Set(candidates.map((e) => e.tags.find((t) => t[0] === "d")?.[1]).filter(Boolean))] as string[];
-    if (channelIds.length === 0) return 0;
-
-    // Latest membership per channel, unfiltered by p — the current roll.
-    const rolls = await this.wire.query([{ kinds: [K.MEMBERSHIP], "#d": channelIds, limit: 1000 }]);
-    const latest = new Map<string, WireEvent>();
-    for (const event of rolls) {
-      const channelId = event.tags.find((t) => t[0] === "d")?.[1];
-      if (!channelId) continue;
-      const current = latest.get(channelId);
-      if (!current || event.created_at > current.created_at) latest.set(channelId, event);
-    }
-
-    const recovered = new Set<string>();
-    for (const event of latest.values()) {
-      if (!event.tags.some((t) => t[0] === "p" && t[1] === this.pubkey)) continue; // removed since
-      const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-      if (communityId) recovered.add(communityId);
-    }
-    for (const communityId of recovered) this.state.joined.add(communityId);
-    if (recovered.size > 0) this.state.save();
-    return recovered.size;
-  }
-
-  private async syncJoined(): Promise<void> {
-    const ids = [...this.state.joined];
-    if (ids.length === 0) return;
+  private async syncWorkspace(): Promise<void> {
+    if (!this.state.workspace.relay) return;
     const events = await this.wire.query([
-      { kinds: [K.COMMUNITY], "#d": ids },
-      { kinds: [K.CHANNEL, K.MEMBERSHIP], "#c": ids },
-      { kinds: [K.BAN_LIST], "#d": ids },
+      { kinds: [K.CHANNEL], limit: 500 },
+      { kinds: [K.MEMBERSHIP], "#d": [K.ROSTER_D], limit: 100 },
+      { kinds: [K.BAN_LIST], "#d": [K.BANS_D], limit: 100 },
     ]);
-    for (const kind of [K.COMMUNITY, K.CHANNEL, K.MEMBERSHIP, K.BAN_LIST]) {
+    // Channels first: absorb() resolves roster ordering independently,
+    // but a channel has to exist before the sidebar can show it.
+    for (const kind of [K.CHANNEL, K.MEMBERSHIP, K.BAN_LIST]) {
       for (const event of events.filter((e) => e.kind === kind)) this.state.absorb(event);
     }
     this.emit("channelsChanged");
@@ -1484,19 +1450,24 @@ export class FezClient {
 
   private resubscribe(): void {
     this.unsubscribeLive?.();
-    this.subscribedChannelIds = this.channelIdsOfJoined().sort().join(",");
-    const ids = [...this.state.joined];
-    const filters: WireFilter[] = [{ kinds: [K.AGENT_METADATA], since: Math.floor(Date.now() / 1000) - 7 * 86400 }];
-    if (ids.length > 0) {
+    const channelIds = this.channelIds();
+    this.subscribedChannelIds = channelIds.sort().join(",");
+    // Workspace state is unscoped now — one relay, one workspace, so
+    // every channel and the single roster are simply "what is here".
+    const filters: WireFilter[] = [
+      { kinds: [K.AGENT_METADATA], since: Math.floor(Date.now() / 1000) - 7 * 86400 },
+      { kinds: [K.CHANNEL] },
+      { kinds: [K.MEMBERSHIP], "#d": [K.ROSTER_D] },
+      { kinds: [K.BAN_LIST], "#d": [K.BANS_D] },
+    ];
+    if (channelIds.length > 0) {
       filters.push(
-        { kinds: [K.COMMUNITY, K.CHANNEL, K.MEMBERSHIP], "#c": ids },
-        { kinds: [K.COMMUNITY, K.BAN_LIST], "#d": ids },
         {
           kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK, K.ARTIFACT],
-          "#h": this.channelIdsOfJoined(),
+          "#h": channelIds,
           since: Math.floor(Date.now() / 1000),
         },
-        { kinds: [K.THREAD_SUMMARY], "#h": this.channelIdsOfJoined() }
+        { kinds: [K.THREAD_SUMMARY], "#h": channelIds }
       );
     }
     this.unsubscribeLive = this.wire.subscribe(filters, (event) => this.dispatch(event));
@@ -1520,7 +1491,7 @@ export class FezClient {
       default: {
         this.state.absorb(event);
         if (event.kind === K.CHANNEL) {
-          const ids = this.channelIdsOfJoined().sort().join(",");
+          const ids = this.channelIds().sort().join(",");
           // Resubscribe ONLY when the channel set changed — replayed
           // 47101s once fed a resubscribe feedback loop pinning the TUI
           // at 98% CPU.
@@ -1539,7 +1510,7 @@ export class FezClient {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
     if (!channelId || !communityId) return;
-    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    if (!this.state.isMember(event.pubkey)) return;
 
     const msg = this.cacheMessage(channelId, event);
 
@@ -1569,7 +1540,7 @@ export class FezClient {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
     if (!targetId || !channelId || !communityId) return;
-    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    if (!this.state.isMember(event.pubkey)) return;
     const emoji = event.content.trim();
     if (!emoji || emoji.length > 8) return;
     let byEmoji = this.reactionsByTarget.get(targetId);
@@ -1643,11 +1614,11 @@ export class FezClient {
         event.tags.find((t) => t[0] === "h")?.[1] ?? this.channelOfMessage(tag[1]);
       if (!channelId) continue;
       const isAuthor = event.pubkey === msg.authorPk;
-      const communityId =
-        event.tags.find((t) => t[0] === "c")?.[1] ?? this.state.communityOfChannel(channelId);
-      const isCreator =
-        communityId !== undefined && this.state.communities.get(communityId)?.creator === event.pubkey;
-      if (!isAuthor && !isCreator) continue;
+      // The workspace owner is the moderation authority — the same key
+      // that signs the roster, which is what makes the tombstone
+      // trustworthy rather than a stranger's kind 5.
+      const isModerator = this.state.isOwner(event.pubkey);
+      if (!isAuthor && !isModerator) continue;
       msg.deletedBy = isAuthor ? "author" : "moderator";
       msg.content = "";
       this.emit("messageDeleted", channelId, msg);
@@ -1681,7 +1652,7 @@ export class FezClient {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
     if (!targetId || !channelId || !communityId) return;
-    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    if (!this.state.isMember(event.pubkey)) return;
     let pins = this.pinsByChannel.get(channelId);
     if (!pins) this.pinsByChannel.set(channelId, (pins = new Map()));
     pins.set(targetId, { opId: event.id, by: event.pubkey, ts: event.created_at });
@@ -1703,7 +1674,7 @@ export class FezClient {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
     if (!rootId || !channelId || !communityId) return;
-    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    if (!this.state.isMember(event.pubkey)) return;
     const existing = this.summaryByRoot.get(rootId);
     if (existing && event.created_at < existing.summaryTs) return;
     try {
@@ -1735,7 +1706,7 @@ export class FezClient {
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
     if (!channelId || !communityId || !event.content) return;
     if (event.pubkey === this.pubkey) return;
-    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    if (!this.state.isMember(event.pubkey)) return;
     const rootId =
       event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ??
       event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
@@ -1761,7 +1732,7 @@ export class FezClient {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
     if (!channelId || !communityId) return;
-    if (!this.state.isMember(communityId, channelId, event.pubkey)) return;
+    if (!this.state.isMember(event.pubkey)) return;
     let body: { type?: string; title?: string; url?: string; content?: string };
     try {
       body = JSON.parse(event.content);
@@ -1859,8 +1830,8 @@ export class FezClient {
     // are gated community-wide, channel docs by their channel.
     const slug = event.tags.find((t) => t[0] === "d")?.[1];
     const allowed = slug
-      ? this.state.isCommunityMember(communityId, event.pubkey)
-      : this.state.isMember(communityId, channelId, event.pubkey);
+      ? this.state.isMember(event.pubkey)
+      : this.state.isMember(event.pubkey);
     if (!allowed) return undefined;
     this.seenDocIds.add(event.id);
     if (slug) {
