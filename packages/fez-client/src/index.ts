@@ -1214,6 +1214,19 @@ export class FezClient {
       }
     } catch { /* badges start from zero */ }
 
+    // Before concluding anyone is new, ask the relay. A cache miss is
+    // not evidence of a first run — it's the most common way an
+    // existing user arrives.
+    if (this.state.joined.size === 0) {
+      const recovered = await this.recoverJoined();
+      if (recovered > 0) {
+        this.emit(
+          "notice",
+          `🔑 Recovered ${recovered} ${recovered === 1 ? "community" : "communities"} from your membership on the relay.`
+        );
+      }
+    }
+
     // First-run bootstrap: a brand-new user lands in a working room.
     if (this.state.joined.size === 0 && !this.state.persistedFileExists()) {
       try {
@@ -1338,6 +1351,57 @@ export class FezClient {
       if (community) ids.push(...community.channels.keys());
     }
     return ids;
+  }
+
+  /**
+   * Rebuild "which communities am I in" from the relay.
+   *
+   * Membership is a signed event naming your pubkey. Local state is a
+   * CACHE of that, and treating the cache as the record is how a client
+   * loses your communities for good: clear a browser's storage, move to
+   * a second device, reinstall the app, and the client concludes you
+   * belong nowhere — then the first-run bootstrap helpfully makes you a
+   * brand-new empty "Home" while every document you have ever written
+   * sits on the relay, addressed to a community you are still a member
+   * of. Four "Home" communities on one relay is what that looks like
+   * after it happens a few times.
+   *
+   * Removal has to be honoured, which is the whole subtlety: a
+   * membership event is replaceable per channel, so being p-tagged by
+   * SOME version is not the same as being a member now. Candidates come
+   * from events that ever named us; each is then confirmed against the
+   * LATEST membership for that channel. Silently rejoining a community
+   * you were removed from would be a worse bug than the one this fixes.
+   */
+  private async recoverJoined(): Promise<number> {
+    let candidates: WireEvent[];
+    try {
+      candidates = await this.wire.query([{ kinds: [K.MEMBERSHIP], "#p": [this.pubkey], limit: 500 }]);
+    } catch {
+      return 0; // relay unreachable — the caller keeps whatever cache it has
+    }
+    const channelIds = [...new Set(candidates.map((e) => e.tags.find((t) => t[0] === "d")?.[1]).filter(Boolean))] as string[];
+    if (channelIds.length === 0) return 0;
+
+    // Latest membership per channel, unfiltered by p — the current roll.
+    const rolls = await this.wire.query([{ kinds: [K.MEMBERSHIP], "#d": channelIds, limit: 1000 }]);
+    const latest = new Map<string, WireEvent>();
+    for (const event of rolls) {
+      const channelId = event.tags.find((t) => t[0] === "d")?.[1];
+      if (!channelId) continue;
+      const current = latest.get(channelId);
+      if (!current || event.created_at > current.created_at) latest.set(channelId, event);
+    }
+
+    const recovered = new Set<string>();
+    for (const event of latest.values()) {
+      if (!event.tags.some((t) => t[0] === "p" && t[1] === this.pubkey)) continue; // removed since
+      const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+      if (communityId) recovered.add(communityId);
+    }
+    for (const communityId of recovered) this.state.joined.add(communityId);
+    if (recovered.size > 0) this.state.save();
+    return recovered.size;
   }
 
   private async syncJoined(): Promise<void> {

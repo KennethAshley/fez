@@ -205,6 +205,34 @@ export class BrowserWire implements Wire {
     else pending.reject(new Error(pending.reasons.join("; ")));
   }
 
+  /**
+   * Wait for at least one relay, briefly.
+   *
+   * A client's first queries run the instant it is constructed — the
+   * socket is still CONNECTING, which is a millisecond away from ready
+   * and indistinguishable from "offline" if you only look at
+   * readyState. Answering those with an empty result is answering a
+   * question about the relay without asking it, and the caller has no
+   * way to tell the difference between "nothing there" and "asked too
+   * early". That mistake is what emptied a real user's client of every
+   * community it belonged to.
+   */
+  private whenConnected(timeoutMs = 5000): Promise<boolean> {
+    if (this.openCount() > 0) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const timer = setInterval(() => {
+        if (this.closed || this.openCount() > 0) {
+          clearInterval(timer);
+          resolve(this.openCount() > 0);
+        } else if (Date.now() - started > timeoutMs) {
+          clearInterval(timer);
+          resolve(false);
+        }
+      }, 40);
+    });
+  }
+
   private send(frame: unknown[]): void {
     for (const url of this.urls) this.sendTo(url, frame);
   }
@@ -231,6 +259,8 @@ export class BrowserWire implements Wire {
     const sub: Sub = { id, filters: filters.map((f) => ({ ...f })), onEvent, seen: new Set() };
     // Register under each per-filter REQ id so EVENT routing finds it.
     for (const [index] of filters.entries()) this.subs.set(`${id}:${index}`, sub);
+    // Fires now if connected; ws.onopen re-fires it for every relay
+    // that arrives later, so an early subscribe is never lost.
     if (this.openCount() > 0) this.fire(sub);
     return () => {
       for (const [index] of filters.entries()) {
@@ -241,14 +271,16 @@ export class BrowserWire implements Wire {
   }
 
   async query(filters: WireFilter[]): Promise<WireEvent[]> {
+    // Give a connecting socket a moment — see whenConnected().
+    await this.whenConnected();
     const results = await Promise.all(
       filters.map(
         (filter) =>
           new Promise<WireEvent[]>((resolve) => {
             const id = `q${this.serial++}`;
             const live = this.urls.filter((url) => this.sockets.get(url)?.readyState === WebSocket.OPEN);
-            // Nothing is up: answer empty rather than stalling the UI for
-            // eight seconds on every panel.
+            // Still nothing after waiting: answer empty rather than
+            // stalling the UI for eight seconds on every panel.
             if (live.length === 0) return resolve([]);
             const bucket: QueryBucket = { events: [], resolve, awaiting: new Set(live), done: false };
             this.queryBuckets.set(id, bucket);
@@ -290,7 +322,10 @@ export class BrowserWire implements Wire {
    * publish — the event exists, and telling the user otherwise would be
    * false. Only a rejection by all of them is a failure.
    */
-  private publishSigned(event: Event): Promise<void> {
+  private async publishSigned(event: Event): Promise<void> {
+    // Same reason as query: a publish fired during boot is milliseconds
+    // ahead of the socket, not offline.
+    await this.whenConnected();
     return new Promise((resolve, reject) => {
       const fail = (message: string) => {
         this.onError?.(message);
