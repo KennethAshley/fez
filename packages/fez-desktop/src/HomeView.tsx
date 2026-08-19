@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FezClient, WireEvent } from "@fez/client";
 import type { BrowserWire } from "./wire";
+import { OpenLoops } from "./LoopsView";
 
 /**
  * Home — Buzz's HomeScreen/FeedSection, fez-shaped: a personal inbox of
@@ -25,11 +26,14 @@ interface MentionRow {
 export default function HomeView({
   client,
   wire,
+  scan,
   onOpenChannel,
   onOpenDm,
 }: {
   client: FezClient;
   wire: BrowserWire;
+  /** Relay-scanned approval/choice events — see the note in App.tsx. */
+  scan?: { msgs: WireEvent[]; answered: Set<string> };
   onOpenChannel: (communityId: string, channelId: string, msgId?: string) => void;
   onOpenDm: (convoKey: string) => void;
 }) {
@@ -87,8 +91,12 @@ export default function HomeView({
 
   return (
     <main className="main">
-      <header className="topbar">⌂ home</header>
+      <header className="topbar">▤ inbox</header>
       <div className="timeline home">
+        {/* Decisions first: everything else here can wait, these are
+            blocking an agent right now. */}
+        <OpenLoops client={client} scan={scan} onOpenMessage={onOpenChannel} />
+
         <div className="home-section">mentions</div>
         {!mentions && <div className="pane-empty">loading your inbox…</div>}
         {mentions?.length === 0 && (

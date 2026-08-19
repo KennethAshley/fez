@@ -53,7 +53,7 @@ const ago = (ts: number) => {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 };
 
-export default function LoopsView({
+export function OpenLoops({
   client,
   scan,
   onOpenMessage,
@@ -185,22 +185,11 @@ export default function LoopsView({
 
   const blocked = loops.filter((l) => l.blocked).sort((a, b) => a.ts - b.ts);
   const inFlight = loops.filter((l) => !l.blocked).sort((a, b) => b.ts - a.ts);
-  // The ledger records that a decision happened, not when — so this is
-  // "decided at some point", deliberately not claimed as today's count.
-  const decidedEver = proposals?.decidedIds.size ?? 0;
+
+  if (blocked.length === 0 && inFlight.length === 0) return null;
 
   return (
-    <main className="main loops-main">
-      <header className="topbar">
-        ◷ open loops
-        <span className="topbar-tools">
-          <button className="topbar-tool" title="refresh" onClick={loadProposals}>⟳</button>
-        </span>
-      </header>
-      <div className="timeline loops-body">
-        {blocked.length === 0 && inFlight.length === 0 && (
-          <div className="pane-empty">nothing open. everything you asked for came back.</div>
-        )}
+    <>
 
         {blocked.length > 0 && (
           <div className="loops-band">
@@ -256,10 +245,6 @@ export default function LoopsView({
           </div>
         )}
 
-        {decidedEver > 0 && (
-          <div className="loops-quiet">✓ {decidedEver} proposal{decidedEver === 1 ? "" : "s"} already decided</div>
-        )}
-      </div>
-    </main>
+    </>
   );
 }

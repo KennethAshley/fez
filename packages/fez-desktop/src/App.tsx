@@ -19,7 +19,6 @@ import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
 import WikiView from "./WikiView";
 import ChannelInfo from "./ChannelInfo";
-import LoopsView from "./LoopsView";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
@@ -67,7 +66,6 @@ type MainView =
   | { kind: "dm"; convoKey: string }
   | { kind: "home" }
   | { kind: "pulse" }
-  | { kind: "loops" }
   | { kind: "wiki" }
   | { kind: "workflows" }
   | { kind: "skills" };
@@ -528,12 +526,9 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           <span className="rail-search-key">⌘K</span>
         </button>
         <div className="rail-scroll">
-        <button className={view.kind === "loops" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "loops" })}>
-          ◷ open loops
-          {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
-        </button>
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           ▤ inbox
+          {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
         </button>
         <button
           className={pane?.kind === "agents" ? "channel active home-link" : "channel home-link"}
@@ -721,6 +716,7 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
         <HomeView
           client={client}
           wire={wire}
+          scan={loopScan}
           onOpenChannel={(communityId, channelId, msgId) => void openChannel(communityId, channelId, msgId)}
           onOpenDm={openDm}
         />
@@ -732,15 +728,6 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           activity={activityRef.current}
           working={working}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
-        />
-      )}
-      {view.kind === "loops" && (
-        <LoopsView
-          client={client}
-          scan={loopScan}
-          onOpenMessage={(communityId, channelId, msgId) => {
-            void openChannel(communityId, channelId).then(() => setView({ kind: "channel", focus: msgId }));
-          }}
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
