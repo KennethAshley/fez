@@ -477,6 +477,11 @@ async function main() {
       content: JSON.stringify({
         name: personaId,
         supported_tasks: ["channel-chat"],
+        // routable:false = infrastructure (the router itself, a tuner):
+        // still @mentionable by name, never DELEGATED to by @fez. An
+        // agent whose description is broad ("verify things") otherwise
+        // competes with real teammates for every request.
+        ...(String(persona.extra?.routable ?? "").toLowerCase() === "false" ? { routable: false } : {}),
         about: persona.description ?? (persona.systemPrompt?.split("\n")[0]?.trim() || undefined),
         // Only RESOLVED skills go on the wire — the router picks agents
         // by these, and advertising a skill this process can't load

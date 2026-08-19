@@ -136,6 +136,7 @@ export const KNOWN_EXTRA_KEYS = new Set([
   "provider", // pi: defaultProvider
   "model", // pi: defaultModel
   "packages", // pi: registry packages
+  "routable", // orchestrator: false = never delegated to by @fez (infrastructure, not a teammate)
   "idleExit", // fez-acp: self-exit after quiet period
   "idleTimeoutS", // fez-acp: turn idle deadline override
   "turnTimeoutS", // fez-acp: turn hard deadline override

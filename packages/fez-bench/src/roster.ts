@@ -43,6 +43,10 @@ export function loadLiveRoster(dir = PERSONA_DIR): RosterAgent[] {
     } catch {
       continue;
     }
+    // routable:false agents are never delegated to by the router, so
+    // including them in the bench roster would measure a choice the
+    // runtime never actually offers.
+    if (/^routable:\s*false\s*$/mi.test(content)) continue;
     const description = /^description:\s*(.+)$/m.exec(content)?.[1]?.trim();
     // A persona with no description can't be routed to on merit — the
     // router would only ever see a bare name. Skipping it is honest;

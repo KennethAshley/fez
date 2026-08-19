@@ -57,6 +57,8 @@ interface KnownAgent {
   about?: string;
   skills?: string[];
   tasks?: string[];
+  /** false = infrastructure: still @mentionable, never delegated to. */
+  routable?: boolean;
   updatedAt: number;
 }
 
@@ -176,7 +178,13 @@ async function main() {
     const existing = roster.get(event.pubkey);
     if (existing && event.created_at <= existing.updatedAt) return undefined;
     try {
-      const meta = JSON.parse(event.content) as { name?: string; about?: string; skills?: string[]; supported_tasks?: string[] };
+      const meta = JSON.parse(event.content) as {
+        name?: string;
+        about?: string;
+        skills?: string[];
+        supported_tasks?: string[];
+        routable?: boolean;
+      };
       if (!meta.name || !NAME_RE.test(meta.name) || meta.name === name) return undefined;
       const agent: KnownAgent = {
         pubkey: event.pubkey,
@@ -184,6 +192,7 @@ async function main() {
         about: typeof meta.about === "string" ? meta.about : undefined,
         skills: Array.isArray(meta.skills) ? meta.skills.filter((s): s is string => typeof s === "string") : undefined,
         tasks: Array.isArray(meta.supported_tasks) ? meta.supported_tasks.filter((s): s is string => typeof s === "string") : undefined,
+        routable: meta.routable !== false,
         updatedAt: event.created_at,
       };
       roster.set(event.pubkey, agent);
@@ -216,6 +225,7 @@ async function main() {
     const tools: object[] = [];
     for (const agent of roster.values()) {
       if (agent.tasks && !agent.tasks.includes("channel-chat")) continue;
+      if (agent.routable === false) continue; // infrastructure: mentionable, not delegable
       if (byName.has(agent.name) && byName.get(agent.name)!.updatedAt >= agent.updatedAt) continue;
       byName.set(agent.name, agent);
     }
