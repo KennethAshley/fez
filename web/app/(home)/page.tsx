@@ -7,31 +7,31 @@ const ACCENT = 'text-[#FF6A00]';
  * while you're asleep, a hand that must sign before anything
  * irreversible, and a document that answers back.
  */
-const SCENES: { lines: [string, string][]; caption: string }[] = [
+const SCENES: { lines: [string, string, string][]; caption: string }[] = [
   {
     lines: [
-      ['bench', 'routing fell — 77% → 71%'],
-      ['tuner', 'found it. one proposal, waiting.'],
-      ['you', '✅'],
-      ['bench', 'measured again by morning.'],
+      ['02:40', '@reviewer', 'the build got slower. found the commit.'],
+      ['', '', 'a fix is ready — it needs your ok'],
+      ['09:12', 'you', '✅'],
+      ['', '@reviewer', 'merged. back to four minutes.'],
     ],
-    caption: 'it improves while you sleep. you still decide.',
+    caption: 'it works while you sleep. you still decide.',
   },
   {
     lines: [
-      ['deployer', 'rm -rf ./dist'],
-      ['', '⛔ held — recursive delete'],
-      ['you', '✅'],
-      ['deployer', 'done. 1.2s.'],
+      ['', '@deployer', 'about to delete the build folder'],
+      ['', '', '⛔ held — waiting for you'],
+      ['', 'you', '✅'],
+      ['', '@deployer', 'done.'],
     ],
-    caption: 'nothing irreversible without a hand that signed for it.',
+    caption: 'anything it cannot undo waits for a signature.',
   },
   {
     lines: [
-      ['you', '"this bullet is vague" — a note on line 12'],
-      ['researcher', 'rewrote it, replied in the margin'],
+      ['', 'you', 'a note on line 12 — "this part is vague"'],
+      ['', '@writer', 'rewrote it, answered in the margin'],
     ],
-    caption: 'comment on a document. an agent answers there.',
+    caption: 'leave a comment on a document. an agent answers there.',
   },
 ];
 
@@ -88,23 +88,29 @@ export default function HomePage() {
           </section>
 
           {/* witnessed */}
-          <section className="space-y-16 pb-32">
-            {SCENES.map((scene) => (
-              <div key={scene.caption}>
-                <pre className="overflow-x-auto text-xs leading-7 text-neutral-500">
-                  {scene.lines.map(([who, said], i) => (
-                    <span key={i}>
-                      <span className={who === 'you' ? 'text-white' : ACCENT}>
-                        {who.padEnd(11)}
+          <section className="pb-32">
+            <p className="mb-10 text-xs text-neutral-700">
+              the <span className={ACCENT}>@names</span> are agents. they are yours.
+            </p>
+            <div className="space-y-14">
+              {SCENES.map((scene) => (
+                <div key={scene.caption}>
+                  <pre className="overflow-x-auto text-xs leading-7 text-neutral-500">
+                    {scene.lines.map(([when, who, said], i) => (
+                      <span key={i}>
+                        <span className="text-neutral-800">{when.padEnd(7)}</span>
+                        <span className={who === 'you' ? 'text-white' : ACCENT}>
+                          {who.padEnd(11)}
+                        </span>
+                        {said}
+                        {'\n'}
                       </span>
-                      {said}
-                      {'\n'}
-                    </span>
-                  ))}
-                </pre>
-                <p className="mt-3 text-xs text-neutral-700">{scene.caption}</p>
-              </div>
-            ))}
+                    ))}
+                  </pre>
+                  <p className="mt-3 text-xs text-neutral-700">{scene.caption}</p>
+                </div>
+              ))}
+            </div>
           </section>
 
           {/* the wager */}
