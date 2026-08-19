@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
+import { taskKey, wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
 import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
 
 /**
@@ -132,6 +132,33 @@ function CommentThread({
   );
 }
 
+/** Flatten a list item's children to plain text — the task's identity. */
+function liText(children: unknown): string {
+  const walk = (node: unknown): string => {
+    if (node == null || typeof node === "boolean") return "";
+    if (typeof node === "string" || typeof node === "number") return String(node);
+    if (Array.isArray(node)) return node.map(walk).join("");
+    const props = (node as { props?: { children?: unknown } }).props;
+    return props ? walk(props.children) : "";
+  };
+  return walk(children).trim();
+}
+
+/** GFM puts a disabled <input type=checkbox> first in a task item. */
+function hasCheckbox(children: unknown[]): boolean {
+  return children.some(
+    (child) => (child as { props?: { type?: string } })?.props?.type === "checkbox"
+  );
+}
+
+/** Drop that input — we render our own control. */
+function stripCheckbox(children: React.ReactNode): React.ReactNode {
+  if (!Array.isArray(children)) return children;
+  return children.filter(
+    (child) => (child as { props?: { type?: string } })?.props?.type !== "checkbox"
+  ) as React.ReactNode;
+}
+
 function renderMentions(text: string) {
   return text.split(/(@[\w-]+)/g).map((part, index) =>
     part.startsWith("@") ? (
@@ -152,6 +179,7 @@ export default function WikiView({ client }: { client: FezClient }) {
   const [busy, setBusy] = useState(false);
   const [, bump] = useState(0);
   const [threads, setThreads] = useState<DocCommentThread[]>([]);
+  const [tasks, setTasks] = useState<Map<string, { done: boolean; byPk: string; ts: number }>>(new Map());
   const [commenting, setCommenting] = useState<string>(); // the block being commented on
   const [commentDraft, setCommentDraft] = useState("");
 
@@ -166,14 +194,16 @@ export default function WikiView({ client }: { client: FezClient }) {
 
   const load = useCallback(async () => {
     if (!sel) return;
-    const [nextVersions, nextThreads] = await Promise.all([
+    const [nextVersions, nextThreads, nextTasks] = await Promise.all([
       sel.kind === "wiki"
         ? client.wikiVersions(sel.communityId, sel.slug)
         : client.docVersions(sel.channelId, sel.communityId),
       client.docComments(sel.communityId, sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
+      client.docTasks(sel.communityId, sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
     ]);
     setVersions(nextVersions);
     setThreads(nextThreads);
+    setTasks(nextTasks);
   }, [client, sel]);
 
   /**
@@ -217,6 +247,20 @@ export default function WikiView({ client }: { client: FezClient }) {
     .filter((d) => d.ref && d.info.latestContent);
   const communities = [...client.state.communities.values()].filter((c) => client.state.joined.has(c.id));
 
+  /**
+   * Pages whose text links here. What makes a pile of notes a wiki: you
+   * can see what refers to this without maintaining an index by hand.
+   */
+  const backlinks =
+    sel?.kind === "wiki"
+      ? [...client.wikiDocs().values()].filter(
+          (page) =>
+            page.communityId === sel.communityId &&
+            page.slug !== sel.slug &&
+            [...page.latestContent.matchAll(/\[\[([^\]|]+)\]\]/g)].some((m) => wikiSlug(m[1]) === sel.slug)
+        )
+      : [];
+
   const latest = versions?.at(-1);
   const shown = viewing ? versions?.find((v) => v.id === viewing) : latest;
   const selPage = sel?.kind === "wiki" ? client.wikiDocs().get(`${sel.communityId}:${sel.slug}`) : undefined;
@@ -257,6 +301,17 @@ export default function WikiView({ client }: { client: FezClient }) {
     }
   };
 
+  /** Tick/untick: one small signed event, then re-read. */
+  const toggleTask = async (itemText: string, done: boolean) => {
+    if (!sel) return;
+    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
+    if (!channelId) return;
+    await client.setTaskDone(channelId, sel.communityId, itemText, done, sel.kind === "wiki" ? sel.slug : undefined);
+    setTasks(
+      await client.docTasks(sel.communityId, sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId })
+    );
+  };
+
   const create = (communityId: string) => {
     const title = newTitle?.trim();
     setNewTitle(undefined);
@@ -272,6 +327,37 @@ export default function WikiView({ client }: { client: FezClient }) {
       // wiki: links died there before any click handler ran.
       urlTransform={(url) => (url.startsWith("wiki:") ? url : defaultUrlTransform(url))}
       components={{
+        /**
+         * GFM already renders `- [ ] thing` as a checkbox; react-markdown
+         * ships it disabled. We make it real: the tick is a signed event
+         * keyed to the item's TEXT (client.setTaskDone), never a rewrite
+         * of the page — so two people ticking different boxes don't
+         * collide, and the markdown still reads correctly in any client.
+         */
+        input: ({ type, checked, ...rest }) => {
+          if (type !== "checkbox") return <input type={type} {...rest} />;
+          return <input type="checkbox" checked={!!checked} readOnly {...rest} />;
+        },
+        li: ({ children, className, ...rest }) => {
+          const text = liText(children);
+          const key = text ? taskKey(text) : undefined;
+          const state = key ? tasks.get(key) : undefined;
+          const isTask = /task-list-item/.test(className ?? "") || (Array.isArray(children) && hasCheckbox(children));
+          if (!isTask || !key || !sel) return <li className={className} {...rest}>{children}</li>;
+          const done = state?.done ?? false;
+          return (
+            <li className={`task-item${done ? " done" : ""}`}>
+              <button
+                className="task-box"
+                title={state ? `${done ? "done" : "open"} · ${client.displayName(state.byPk)}` : "not started"}
+                onClick={() => void toggleTask(text, !done)}
+              >
+                {done ? "✓" : ""}
+              </button>
+              <span className="task-text">{stripCheckbox(children)}</span>
+            </li>
+          );
+        },
         // A fenced block whose language an extension owns renders as that
         // extension's component (```fez:live …```), everything else stays code.
         code: ({ className, children, ...rest }) => {
@@ -510,6 +596,16 @@ export default function WikiView({ client }: { client: FezClient }) {
                   </div>
                 </>
               )
+            )}
+            {!editing && sel.kind === "wiki" && backlinks.length > 0 && (
+              <div className="wiki-backlinks">
+                <div className="manage-section">linked from</div>
+                {backlinks.map((page) => (
+                  <button key={page.slug} className="version-row" onClick={() => openWiki(page.communityId, page.slug)}>
+                    ▤ {page.title}
+                  </button>
+                ))}
+              </div>
             )}
             {!editing && (versions?.length ?? 0) > 1 && (
               <div className="wiki-versions">

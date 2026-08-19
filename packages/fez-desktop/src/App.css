@@ -1368,3 +1368,14 @@ button.author:hover { text-decoration: underline; }
   color: var(--fg-dim); font-size: 12px; font-family: var(--font-mono);
   border-top: 1px solid var(--hairline); padding-top: 12px;
 }
+
+/* live task checkboxes in docs (GFM syntax, signed state) */
+.task-item { list-style: none; display: flex; align-items: baseline; gap: 8px; margin-left: -18px; }
+.task-box {
+  flex: none; width: 15px; height: 15px; border: 1px solid var(--fg-dim); border-radius: 4px;
+  background: none; color: var(--bg0); font-size: 11px; line-height: 1; cursor: pointer; padding: 0;
+}
+.task-box:hover { border-color: var(--accent); }
+.task-item.done .task-box { background: var(--green); border-color: var(--green); color: var(--bg0); }
+.task-item.done .task-text { color: var(--fg-dim); text-decoration: line-through; }
+.wiki-backlinks { margin-top: 18px; max-width: 760px; }

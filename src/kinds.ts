@@ -273,6 +273,23 @@ export const KIND_DOC = 40100;
 export const KIND_DOC_COMMENT = 40101;
 
 /**
+ * Doc task state — one checkbox in a document, ticked or unticked.
+ *
+ * Deliberately NOT a rewrite of the doc: checking a box would otherwise
+ * publish a whole new 40100 version, which collides with anyone editing
+ * the same page and buries the history under bookkeeping. Instead the
+ * markdown keeps the item (`- [ ] ship the thing`) and this event
+ * carries whether it is done — so a bare client still reads the list,
+ * and every tick is attributable.
+ *
+ * Tags: ["h", channelId], ["c", communityId] (member gating),
+ * ["d", slug]? for wiki pages, ["t", itemKey] (normalized item TEXT, so
+ * a task survives edits elsewhere in the doc), ["done", "1" | "0"].
+ * Latest event per (doc, itemKey) wins.
+ */
+export const KIND_DOC_TASK = 40102;
+
+/**
  * Skill listing — the decentralized skills marketplace. A signed,
  * addressable advertisement for an MCP server config: ["d", skillName];
  * content = JSON {name, description, command, args, envKeys, homepage}.

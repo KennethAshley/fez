@@ -93,6 +93,7 @@ export const K = {
   GIFT_WRAP: 1059,
   DOC: 40100,
   DOC_COMMENT: 40101,
+  DOC_TASK: 40102,
   MSG_EDIT: 40003,
   MSG_PIN: 40004,
   MSG_BOOKMARK: 40005,
@@ -212,6 +213,22 @@ export interface DocCommentThread extends DocCommentReply {
   anchor: string;
   resolved: boolean;
   replies: DocCommentReply[];
+}
+
+/**
+ * A checkbox's identity is its TEXT, normalized — the same anchoring
+ * rule comments use. Reordering a list or editing the line above must
+ * not untick something; editing the item itself intentionally does
+ * (it is a different task now).
+ */
+export function taskKey(itemText: string): string {
+  return itemText.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200);
+}
+
+export interface TaskState {
+  done: boolean;
+  byPk: string;
+  ts: number;
 }
 
 /** [[Page Name]] → "page-name" — one slug rule everywhere (GUI, mcp, TUI). */
@@ -695,6 +712,47 @@ export class FezClient {
       kind: K.DOC,
       tags: [["h", channelId], ["c", communityId], ...(baseId ? [["base", baseId]] : [])],
       content,
+    });
+  }
+
+  /** Checkbox state for a doc — latest event per item wins. */
+  async docTasks(communityId: string, opts: { channelId?: string; slug?: string }): Promise<Map<string, TaskState>> {
+    const filter = opts.slug
+      ? { kinds: [K.DOC_TASK], "#d": [opts.slug], limit: 500 }
+      : { kinds: [K.DOC_TASK], "#h": [opts.channelId ?? ""], limit: 500 };
+    const events = (await this.wire.query([filter])).filter(
+      (e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId) && this.state.isCommunityMember(communityId, e.pubkey)
+    );
+    const states = new Map<string, TaskState>();
+    for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
+      const key = event.tags.find((t) => t[0] === "t")?.[1];
+      if (!key) continue;
+      states.set(key, {
+        done: event.tags.find((t) => t[0] === "done")?.[1] === "1",
+        byPk: event.pubkey,
+        ts: event.created_at,
+      });
+    }
+    return states;
+  }
+
+  async setTaskDone(
+    channelId: string,
+    communityId: string,
+    itemText: string,
+    done: boolean,
+    slug?: string
+  ): Promise<void> {
+    await this.wire.publish({
+      kind: K.DOC_TASK,
+      tags: [
+        ["h", channelId],
+        ["c", communityId],
+        ...(slug ? [["d", slug]] : []),
+        ["t", taskKey(itemText)],
+        ["done", done ? "1" : "0"],
+      ],
+      content: "",
     });
   }
 
