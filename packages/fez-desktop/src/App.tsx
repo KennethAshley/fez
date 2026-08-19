@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry } from "@fez/client";
+import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fez/client";
 import { BrowserWire } from "./wire";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -19,6 +19,7 @@ import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
 import WikiView from "./WikiView";
 import ChannelInfo from "./ChannelInfo";
+import LoopsView from "./LoopsView";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
@@ -66,6 +67,7 @@ type MainView =
   | { kind: "dm"; convoKey: string }
   | { kind: "home" }
   | { kind: "pulse" }
+  | { kind: "loops" }
   | { kind: "wiki" }
   | { kind: "workflows" }
   | { kind: "skills" };
@@ -309,6 +311,68 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
 
   const scope = client.state.scope;
   const unreads = client.unreadCounts();
+
+  /**
+   * Badge for "open loops": how many things are BLOCKED on a decision
+   * from you. Counted here (cheaply, from state already in memory) so
+   * the number is visible without opening the view — an unanswered
+   * approval you never noticed is the failure this whole screen exists
+   * to prevent. Bench proposals count too (already polled for the agents
+   * badge) — a badge that disagrees with the list it opens is worse than
+   * no badge.
+   */
+  const [benchPending, setBenchPending] = useState(0);
+
+  /**
+   * Open loops are scanned from the RELAY, not from the in-memory store.
+   * loadChannelHistory() only runs for channels you have opened, and the
+   * live subscription starts at `now` — so an approval raised in a
+   * channel you never clicked is invisible to the client until you go
+   * looking. For every other view that is a harmless lazy-load; for the
+   * screen whose entire promise is "nothing gets missed" it is the bug
+   * that makes the feature a lie. Two bounded queries, every 30s.
+   */
+  const [loopScan, setLoopScan] = useState<{ msgs: WireEvent[]; answered: Set<string> }>();
+  useEffect(() => {
+    let live = true;
+    const scan = async () => {
+      const channelIds: string[] = [];
+      for (const communityId of client.state.joined) {
+        for (const channel of client.state.communities.get(communityId)?.channels.values() ?? []) {
+          channelIds.push(channel.id);
+        }
+      }
+      if (channelIds.length === 0) return;
+      try {
+        const msgs = (await wire.query([
+          { kinds: [47103], "#h": channelIds, since: Math.floor(Date.now() / 1000) - 30 * 86400, limit: 500 },
+        ])) as WireEvent[];
+        const open = msgs.filter(
+          (m) => m.content.startsWith("⛔ approval needed:") || m.content.startsWith("❓ choose:")
+        );
+        const answered = new Set<string>();
+        if (open.length > 0) {
+          const reactions = (await wire.query([{ kinds: [7], "#e": open.map((m) => m.id) }])) as WireEvent[];
+          for (const reaction of reactions) {
+            const target = reaction.tags.find((t) => t[0] === "e")?.[1];
+            if (target) answered.add(target);
+          }
+        }
+        if (live) setLoopScan({ msgs: open, answered });
+      } catch { /* relay hiccup — keep the last scan */ }
+    };
+    void scan();
+    const timer = setInterval(() => void scan(), 30_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [client, wire]);
+
+  const openLoopCount =
+    (loopScan?.msgs.filter((m) => !loopScan.answered.has(m.id)).length ?? 0) +
+    [...client.workflowRuns().values()].filter((r) => r.status === "waiting_approval").length +
+    benchPending;
   const working = client.workingAgents();
 
   const openChannel = async (communityId: string, channelId: string, focus?: string) => {
@@ -390,7 +454,6 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
   // Bench proposal watch: the tuner/harvester file proposals into the
   // ledger; a NEW pending proposal is a native notification + a badge
   // on the agents nav. Seen-set persists so relaunches stay quiet.
-  const [benchPending, setBenchPending] = useState(0);
   useEffect(() => {
     const check = async () => {
       try {
@@ -465,6 +528,10 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           <span className="rail-search-key">⌘K</span>
         </button>
         <div className="rail-scroll">
+        <button className={view.kind === "loops" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "loops" })}>
+          ◷ open loops
+          {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
+        </button>
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           ▤ inbox
         </button>
@@ -665,6 +732,15 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
           activity={activityRef.current}
           working={working}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
+        />
+      )}
+      {view.kind === "loops" && (
+        <LoopsView
+          client={client}
+          scan={loopScan}
+          onOpenMessage={(communityId, channelId, msgId) => {
+            void openChannel(communityId, channelId).then(() => setView({ kind: "channel", focus: msgId }));
+          }}
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
