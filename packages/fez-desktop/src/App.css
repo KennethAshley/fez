@@ -1115,6 +1115,15 @@ button.author:hover { text-decoration: underline; }
 
 /* community browser */
 .browse-link { color: var(--fg-dim); font-size: 12px; }
+/* ── workspace title — the top of the hierarchy ──────────────── */
+/* You are IN a place; everything below is that place's furniture. It
+   sits under the brand so the first thing read is where you are. */
+.workspace-title {
+  padding: 2px 14px 8px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+  color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.workspace-unclaimed { font-size: 11px; font-weight: 500; opacity: 0.55; }
+
 /* ── workspace rail — the relays you've added ────────────────── */
 /* Selecting one never drops the others; that separation is the fix for
    the bug where changing the relay looked like losing an account. */

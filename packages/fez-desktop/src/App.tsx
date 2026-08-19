@@ -304,12 +304,6 @@ function Shell({
   // ⌘K — Buzz's topbar search, as a palette (also /search <words>).
   const [searchOpen, setSearchOpen] = useState<false | { query: string }>(false);
   const [selfMenu, setSelfMenu] = useState(false);
-  // The rail: every workspace you have added. Switching SELECTS one —
-  // it never replaces the list, which is the bug that made a real user
-  // think changing the relay had deleted his account.
-  const [addingWorkspace, setAddingWorkspace] = useState(false);
-  // Slack's "Browse channels", flat-model shaped: one workspace, so the
-  // list is every channel in it rather than a catalogue of communities.
   const [browse, setBrowse] = useState<false | { filter: string }>(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
@@ -437,20 +431,6 @@ function Shell({
 
   // Leave uses a two-click confirm (webview dialogs are ugly): first ×
   // arms it, the second click within 4s commits.
-  const [armedLeave, setArmedLeave] = useState<string>();
-  const leaveWorkspace = (communityId: string) => {
-    if (armedLeave !== communityId) {
-      setArmedLeave(communityId);
-      setTimeout(() => setArmedLeave((current) => (current === communityId ? undefined : current)), 4000);
-      return;
-    }
-    setArmedLeave(undefined);
-    // Leaving a workspace drops it from the rail only — nothing is
-    // published, the roster still lists you, and re-adding the relay
-    // restores everything.
-    client.forgetWorkspace(client.state.workspace.relay);
-    render();
-  };
 
   // Bench proposal watch: the tuner/harvester file proposals into the
   // ledger; a NEW pending proposal is a native notification + a badge
@@ -543,6 +523,12 @@ function Shell({
             }
           />
         </div>
+        {/* The workspace is the top of the hierarchy — you are IN a
+            place, and everything below is that place's furniture. */}
+        <div className="workspace-title" title={client.state.workspace.relay}>
+          {client.state.workspace.name}
+          {!client.state.workspace.owner && <span className="workspace-unclaimed"> unclaimed</span>}
+        </div>
         <button className="rail-search" onClick={() => setSearchOpen({ query: "" })}>
           <span className="rail-search-glyph">⌕</span> search everything
           <span className="rail-search-key">⌘K</span>
@@ -571,48 +557,12 @@ function Shell({
         <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
           » workflows
         </button>
-        {/* The rail: every workspace you've added. Selecting one never
-            drops the others — the whole point of the flat model. */}
-        <div className="workspace-rail">
-          {client.workspaces().map((ws) => (
-            <button
-              key={ws.relay}
-              className={ws.active ? "channel home-link active" : "channel home-link"}
-              title={ws.relay}
-              onClick={() => {
-                if (ws.active) return;
-                void client.openWorkspace(ws.relay).then(render);
-              }}
-            >
-              ▦ {ws.name}
-            </button>
-          ))}
-          <button className="channel home-link" onClick={() => setAddingWorkspace(true)}>
-            + add workspace
-          </button>
-        </div>
-        {addingWorkspace && (
-          <form
-            className="workspace-add"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const relay = new FormData(e.currentTarget).get("relay");
-              if (typeof relay === "string" && relay.trim()) {
-                void client.openWorkspace(relay.trim()).then(render);
-              }
-              setAddingWorkspace(false);
-            }}
-          >
-            <input name="relay" className="manage-input" autoFocus placeholder="wss://relay.example — the workspace IS the relay" />
-          </form>
-        )}
         <button className="channel home-link" onClick={() => setBrowse({ filter: "" })}>
           ⌂ browse channels
         </button>
         <div className="community">
           <div className="community-name">
-            {client.state.workspace.name}
-            {!client.state.workspace.owner && <span className="community-id" title="no owner in this relay's NIP-11 document"> · unclaimed</span>}
+            channels
             {client.state.isOwner(client.pubkey) && (
               <button
                 className="community-add"
@@ -622,13 +572,6 @@ function Shell({
                 +
               </button>
             )}
-            <button
-              className={armedLeave === client.state.workspace.relay ? "leave armed" : "leave"}
-              title={armedLeave === client.state.workspace.relay ? "click again to leave" : "remove from your rail (local — re-add anytime)"}
-              onClick={() => leaveWorkspace(client.state.workspace.relay)}
-            >
-              {armedLeave === client.state.workspace.relay ? "leave?" : "×"}
-            </button>
           </div>
           {[...client.state.workspace.channels.values()].map((channel) => {
             const active = view.kind === "channel" && scope?.channelId === channel.id;

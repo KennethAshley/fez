@@ -95,10 +95,29 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
 
         </>)}
         {section === "servers" && (<>
-        <div className="manage-section">servers</div>
+        <div className="manage-section">workspace</div>
+        {/* A relay IS a workspace, so changing this is not a setting in
+            the ordinary sense — it moves you somewhere else. Saying so
+            is the whole lesson from the time it looked like data loss. */}
+        <div className="settings-field">
+          <label>current</label>
+          <div className="settings-hint" style={{ padding: "2px 0" }}>
+            <strong>{client.state.workspace.name}</strong>
+            {client.state.workspace.owner
+              ? client.state.isOwner(client.pubkey)
+                ? " · you own this workspace"
+                : ` · owned by ${client.displayName(client.state.workspace.owner)}`
+              : " · unclaimed (no owner set)"}
+          </div>
+        </div>
         <div className="settings-field">
           <label>relay (applies on relaunch)</label>
           <input className="manage-input" value={relay} spellCheck={false} onChange={(e) => setRelay(e.target.value)} />
+          <div className="settings-hint">
+            The relay is the workspace. Pointing fez at a different one takes you to a
+            different place with its own channels, members and name — nothing here is
+            deleted, and coming back restores it.
+          </div>
         </div>
         <div className="settings-field">
           <label>media server (Blossom)</label>
