@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeSlug from "rehype-slug";
+import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { taskKey, wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
 import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
@@ -18,9 +20,18 @@ type Sel =
   | { kind: "wiki"; communityId: string; slug: string }
   | { kind: "channel"; channelId: string; communityId: string };
 
-/** [[Page Name]] → markdown links on a wiki: scheme our renderer intercepts. */
+/**
+ * [[Page Name]] → a wiki: link our renderer intercepts.
+ * [[Page Name#Section]] → the same, plus a heading anchor — which only
+ * works because rehype-slug gives every heading a stable id.
+ */
 function linkifyWiki(text: string): string {
-  return text.replace(/\[\[([^\]|]+)\]\]/g, (_m, name: string) => `[${name.trim()}](wiki:${wikiSlug(name)})`);
+  return text.replace(/\[\[([^\]|]+)\]\]/g, (_m, raw: string) => {
+    const [page, section] = raw.split("#");
+    const label = raw.trim();
+    const target = `wiki:${wikiSlug(page)}${section ? `#${wikiSlug(section)}` : ""}`;
+    return `[${label}](${target})`;
+  });
 }
 
 /**
@@ -323,6 +334,18 @@ export default function WikiView({ client }: { client: FezClient }) {
     <ReactMarkdown
       // extensions extend parsing (callouts, math…) through the seam
       remarkPlugins={[remarkGfm, ...(docMarkdownPlugins() as [])]}
+      // Stable heading ids (rehype-slug) + a quiet ¶ permalink on hover
+      // (rehype-autolink-headings). Ids are what make [[Page#Section]]
+      // resolvable and what a table of contents would link to.
+      rehypePlugins={[
+        rehypeSlug,
+        [
+          rehypeAutolinkHeadings,
+          { behavior: "append", // hast wants className as an ARRAY — a bare string silently produced
+          // an anchor with no class, so every ¶ showed instead of hiding.
+          properties: { className: ["heading-anchor"], ariaHidden: true, tabIndex: -1 }, content: { type: "text", value: "¶" } },
+        ],
+      ]}
       // react-markdown's default sanitizer strips unknown schemes — our
       // wiki: links died there before any click handler ran.
       urlTransform={(url) => (url.startsWith("wiki:") ? url : defaultUrlTransform(url))}
@@ -381,9 +404,9 @@ export default function WikiView({ client }: { client: FezClient }) {
           }
           return <code className={className} {...rest}>{children}</code>;
         },
-        a: ({ href, children }) => {
+        a: ({ href, children, className }) => {
           if (href?.startsWith("wiki:")) {
-            const slug = href.slice(5);
+            const [slug, section] = href.slice(5).split("#");
             const exists = client.wikiDocs().has(`${communityId}:${slug}`);
             return (
               <a
@@ -392,15 +415,23 @@ export default function WikiView({ client }: { client: FezClient }) {
                 onClick={(e) => {
                   e.preventDefault();
                   openWiki(communityId, slug, String(children));
+                  // the page renders after this tick — scroll once it exists
+                  if (section) {
+                    setTimeout(() => document.getElementById(section)?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+                  }
                 }}
               >
                 {children}
               </a>
             );
           }
+          // Keep className: rehype-autolink-headings marks its ¶ links
+          // with one, and dropping it left every anchor permanently
+          // visible instead of hover-only.
           return (
             <a
               href={href}
+              className={className}
               onClick={(e) => {
                 e.preventDefault();
                 if (href) void openUrl(href);

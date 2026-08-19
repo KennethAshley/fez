@@ -1379,3 +1379,12 @@ button.author:hover { text-decoration: underline; }
 .task-item.done .task-box { background: var(--green); border-color: var(--green); color: var(--bg0); }
 .task-item.done .task-text { color: var(--fg-dim); text-decoration: line-through; }
 .wiki-backlinks { margin-top: 18px; max-width: 760px; }
+
+/* heading permalinks (rehype-autolink-headings) */
+.heading-anchor {
+  margin-left: 8px; color: var(--fg-dim); text-decoration: none;
+  opacity: 0; font-weight: 400; font-size: 0.8em;
+}
+h1:hover .heading-anchor, h2:hover .heading-anchor, h3:hover .heading-anchor,
+h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { opacity: 1; }
+.heading-anchor:hover { color: var(--accent); }
