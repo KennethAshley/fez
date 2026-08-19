@@ -14,11 +14,24 @@ const registryKinds = Object.fromEntries(
   Object.entries(protocol).filter(([name, value]) => name.startsWith("KIND_") && typeof value === "number")
 ) as Record<string, number>;
 
+/**
+ * Not kinds, but part of the same contract: the d-tags naming the
+ * workspace's single roster and ban list. A drift here is as bad as a
+ * kind drift — the client would publish a roster the relay refuses.
+ */
+const registryTags = Object.fromEntries(
+  Object.entries(protocol).filter(([name, value]) => (name === "ROSTER_D" || name === "BANS_D") && typeof value === "string")
+) as Record<string, string>;
+
 // K-name → registry-name. Every K entry MUST map; a new K entry without a
 // registry counterpart fails the coverage test below.
 const K_TO_REGISTRY: Record<string, string> = {
   AGENT_METADATA: "KIND_AGENT_METADATA",
-  COMMUNITY: "KIND_COMMUNITY",
+  COMMUNITY_RETIRED: "KIND_COMMUNITY_RETIRED",
+  // Not kinds — the d-tags that name the workspace's single roster and
+  // ban list. They live in K so the client and relay can't disagree.
+  ROSTER_D: "ROSTER_D",
+  BANS_D: "BANS_D",
   CHANNEL: "KIND_CHANNEL",
   MEMBERSHIP: "KIND_MEMBERSHIP",
   MESSAGE: "KIND_CHANNEL_MESSAGE",
@@ -76,7 +89,8 @@ describe("kind registry", () => {
     for (const [kName, kValue] of Object.entries(K)) {
       const registryName = K_TO_REGISTRY[kName];
       expect(registryName, `K.${kName} has no mapping — add the kind to src/kinds.ts and this table`).toBeDefined();
-      expect(registryKinds[registryName], `K.${kName} vs ${registryName}`).toBe(kValue);
+      const expected = registryKinds[registryName] ?? registryTags[registryName];
+      expect(expected, `K.${kName} vs ${registryName}`).toBe(kValue);
     }
   });
 });

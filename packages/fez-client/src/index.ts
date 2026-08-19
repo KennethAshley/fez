@@ -72,6 +72,12 @@ export interface Wire {
   sendGroupDm?(recipientPubkeys: string[], text: string): Promise<string>;
   unwrapDm(event: WireEvent): DmRumor | undefined;
   /**
+   * Which relays this wire talks to. The FIRST is the workspace — a
+   * relay IS the workspace, so a client with nothing stored learns
+   * where it is from here rather than coming up placeless.
+   */
+  relays?: string[];
+  /**
    * The relay's NIP-11 information document — the workspace's identity
    * card, and the only place its owner is declared. Optional so a
    * minimal backend can omit it; without it the workspace stays
@@ -213,8 +219,8 @@ export interface DocInfo {
 export interface WikiDoc extends DocInfo {
   slug: string;
   title: string;
+  /** Where it was written from; the page belongs to the workspace. */
   channelId: string;
-  communityId: string;
 }
 
 export interface DocCommentReply {
@@ -1280,6 +1286,13 @@ export class FezClient {
       }
     } catch { /* badges start from zero */ }
 
+    // A client with nothing stored still has a workspace: the relay its
+    // wire is pointed at. Without this it comes up placeless and every
+    // governed event is refused as "unclaimed".
+    if (!this.state.workspace.relay && this.wire.relays?.[0]) {
+      this.state.open(this.wire.relays[0]);
+    }
+
     // Who owns this workspace has to be known before any governed event
     // is absorbed — the state model rejects everything while unclaimed.
     const info = await this.wire.relayInfo?.(this.state.workspace.relay).catch(() => undefined);
@@ -1506,8 +1519,7 @@ export class FezClient {
     for (const key of this.typing.keys()) if (key.startsWith(`${event.pubkey}:`)) this.typing.delete(key);
     this.emit("typingChanged");
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId) return;
+    if (!channelId) return;
     if (!this.state.isMember(event.pubkey)) return;
 
     const msg = this.cacheMessage(channelId, event);
@@ -1536,8 +1548,7 @@ export class FezClient {
   private handleReaction(event: WireEvent, live: boolean): void {
     const targetId = event.tags.find((t) => t[0] === "e")?.[1];
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!targetId || !channelId || !communityId) return;
+    if (!targetId || !channelId) return;
     if (!this.state.isMember(event.pubkey)) return;
     const emoji = event.content.trim();
     if (!emoji || emoji.length > 8) return;
@@ -1648,8 +1659,7 @@ export class FezClient {
   private handleMsgPin(event: WireEvent): void {
     const targetId = event.tags.find((t) => t[0] === "e")?.[1];
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!targetId || !channelId || !communityId) return;
+    if (!targetId || !channelId) return;
     if (!this.state.isMember(event.pubkey)) return;
     let pins = this.pinsByChannel.get(channelId);
     if (!pins) this.pinsByChannel.set(channelId, (pins = new Map()));
@@ -1670,8 +1680,7 @@ export class FezClient {
   private handleThreadSummary(event: WireEvent): void {
     const rootId = event.tags.find((t) => t[0] === "d")?.[1];
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!rootId || !channelId || !communityId) return;
+    if (!rootId || !channelId) return;
     if (!this.state.isMember(event.pubkey)) return;
     const existing = this.summaryByRoot.get(rootId);
     if (existing && event.created_at < existing.summaryTs) return;
@@ -1701,8 +1710,7 @@ export class FezClient {
 
   private handleDraft(event: WireEvent): void {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId || !event.content) return;
+    if (!channelId || !event.content) return;
     if (event.pubkey === this.pubkey) return;
     if (!this.state.isMember(event.pubkey)) return;
     const rootId =
@@ -1728,8 +1736,7 @@ export class FezClient {
   private absorbArtifact(event: WireEvent): void {
     if (this.seenArtifactIds.has(event.id)) return;
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId) return;
+    if (!channelId) return;
     if (!this.state.isMember(event.pubkey)) return;
     let body: { type?: string; title?: string; url?: string; content?: string };
     try {
@@ -1822,21 +1829,22 @@ export class FezClient {
   private absorbDocEvent(event: WireEvent): string | undefined {
     if (this.seenDocIds.has(event.id)) return undefined;
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId) return undefined;
+    if (!channelId) return undefined;
     // A d tag makes it a named wiki page, not the channel's doc — pages
     // are gated community-wide, channel docs by their channel.
     const slug = event.tags.find((t) => t[0] === "d")?.[1];
     const allowed = slug
       ? this.state.isMember(event.pubkey)
-      : this.state.isMember(event.pubkey);
+      : this.state.isMember(event.pubkey); // workspace-wide either way
     if (!allowed) return undefined;
     this.seenDocIds.add(event.id);
     if (slug) {
-      const key = `${communityId}:${slug}`;
-      let page = this.wikiMap.get(key);
+      // Wiki pages are workspace-scoped, and the workspace is the relay
+      // — the slug alone addresses a page now.
+      const key = slug;
+      let page = this.wikiMap.get(key)!;
       if (!page) {
-        this.wikiMap.set(key, (page = { slug, title: slug, channelId, communityId, count: 0, latestId: "", latestTs: 0, latestAuthor: "", latestContent: "" }));
+        this.wikiMap.set(key, (page = { slug, title: slug, channelId, count: 0, latestId: "", latestTs: 0, latestAuthor: "", latestContent: "" }));
       }
       page.count++;
       if (event.created_at > page.latestTs || (event.created_at === page.latestTs && event.id < page.latestId)) {

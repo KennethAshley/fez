@@ -54,6 +54,7 @@ export class BrowserWire implements Wire {
   readonly pubkey: string;
   private secret: Uint8Array;
   private urls: string[];
+
   private sockets = new Map<string, WebSocket>();
   private subs = new Map<string, Sub>();
   private pendingOks = new Map<string, PendingOk>();
@@ -406,8 +407,12 @@ export class BrowserWire implements Wire {
    * flat model a workspace is one relay, and any extra URLs are mirrors
    * of it, so the primary is the one that names the owner.
    */
+  get relays(): string[] {
+    return this.urls;
+  }
+
   async relayInfo(relay?: string): Promise<{ name?: string; description?: string; pubkey?: string; icon?: string } | undefined> {
-    return fetchRelayInfo(relay ?? this.urls[0]);
+    return fetchRelayInfo(relay || this.urls[0]);
   }
 
   unwrapDm(event: WireEvent): DmRumor | undefined {

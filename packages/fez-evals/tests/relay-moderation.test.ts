@@ -73,13 +73,12 @@ let relay: RelayHandle;
 let probe: Probe;
 
 beforeAll(async () => {
-  relay = startRelay({ port: PORT, policies: [membershipPolicy(), moderationPolicy()], log: () => {} });
+  relay = startRelay({ port: PORT, policies: [membershipPolicy(getPublicKey(creator)), moderationPolicy(getPublicKey(creator))], log: () => {} });
   probe = new Probe();
   await probe.open();
-  await probe.publishExpect(signAs(creator, 47100, JSON.stringify({ name: "Mod" }), [["d", COMM]]), true);
-  await probe.publishExpect(signAs(creator, 47101, JSON.stringify({ name: "main" }), [["d", CH], ["c", COMM]]), true);
+  await probe.publishExpect(signAs(creator, 47101, JSON.stringify({ name: "main" }), [["d", "roster"]]), true);
   await probe.publishExpect(
-    signAs(creator, 47102, "", [["d", CH], ["c", COMM], ["p", getPublicKey(creator)], ["p", trollPk]]),
+    signAs(creator, 47102, "", [["d", "roster"], ["p", getPublicKey(creator)], ["p", trollPk]]),
     true
   );
 });
@@ -91,17 +90,17 @@ afterAll(() => {
 
 describe("moderationPolicy", () => {
   test("rostered member writes fine before any ban", async () => {
-    await probe.publishExpect(signAs(troll, 47103, "gm", [["h", CH], ["c", COMM]]), true);
+    await probe.publishExpect(signAs(troll, 47103, "gm", [["h", CH]]), true);
   });
 
-  test("a forged ban list (non-creator) is rejected at ingest", async () => {
-    const reason = await probe.publishExpect(signAs(mallory, 30047, "", [["d", COMM], ["p", trollPk]]), false);
-    expect(reason).toMatch(/creator/);
+  test("a forged ban list (non-owner) is rejected at ingest", async () => {
+    const reason = await probe.publishExpect(signAs(mallory, 30047, "", [["d", "bans"], ["p", trollPk]]), false);
+    expect(reason).toMatch(/owner/);
   });
 
   test("after the creator bans, the banned pubkey cannot write community content", async () => {
-    await probe.publishExpect(signAs(creator, 30047, "", [["d", COMM], ["p", trollPk]]), true);
-    const reason = await probe.publishExpect(signAs(troll, 47103, "still here?", [["h", CH], ["c", COMM]]), false);
+    await probe.publishExpect(signAs(creator, 30047, "", [["d", "bans"], ["p", trollPk]]), true);
+    const reason = await probe.publishExpect(signAs(troll, 47103, "still here?", [["h", CH]]), false);
     expect(reason).toMatch(/banned/);
   });
 
@@ -116,7 +115,7 @@ describe("moderationPolicy", () => {
   });
 
   test("unban (empty creator list) restores writing", async () => {
-    await probe.publishExpect(signAs(creator, 30047, "", [["d", COMM]], now() + 1), true);
-    await probe.publishExpect(signAs(troll, 47103, "reformed", [["h", CH], ["c", COMM]], now() + 2), true);
+    await probe.publishExpect(signAs(creator, 30047, "", [["d", "bans"]], now() + 1), true);
+    await probe.publishExpect(signAs(troll, 47103, "reformed", [["h", CH]], now() + 2), true);
   });
 });

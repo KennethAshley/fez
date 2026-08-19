@@ -314,7 +314,7 @@ export default function WikiView({ client }: { client: FezClient }) {
     sel?.kind === "wiki"
       ? [...client.wikiDocs().values()].filter(
           (page) =>
-            page.communityId === client.state.workspace.relay &&
+            client.state.workspace.relay === client.state.workspace.relay &&
             page.slug !== sel.slug &&
             [...page.latestContent.matchAll(/\[\[([^\]|]+)\]\]/g)].some((m) => wikiSlug(m[1]) === sel.slug)
         )
@@ -401,9 +401,6 @@ export default function WikiView({ client }: { client: FezClient }) {
   };
 
   /** The open page's community, or every joined one when nothing is open. */
-  const askCommunityIds = sel
-    ? [client.state.workspace.relay]
-    : [...client.state.workspace.channels.values()].map((c) => c.id);
 
   /** Promote a scratch query into the open page as a real block. */
   const keepAsk = async () => {
@@ -604,7 +601,7 @@ export default function WikiView({ client }: { client: FezClient }) {
     openWiki(wikiSlug(title), title);
   };
 
-  const md = (text: string, communityId: string) => (
+  const md = (text: string) => (
     <ReactMarkdown
       // extensions extend parsing (callouts, math…) through the seam
       remarkPlugins={[remarkGfm, ...(docMarkdownPlugins() as [])]}
@@ -662,7 +659,7 @@ export default function WikiView({ client }: { client: FezClient }) {
           // fez:query ships with the app rather than as an extension —
           // it is the doc surface's own vocabulary, like [[links]].
           if (lang === "fez:query" && sel) {
-            return <QueryBlock client={client} source={String(children ?? "")} communityIds={[communityId]} />;
+            return <QueryBlock client={client} source={String(children ?? "")} />;
           }
           const render = lang ? blockRenderer(lang) : undefined;
           if (render && sel) {
@@ -762,7 +759,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                 <button
                   key={page.slug}
                   className={
-                    sel?.kind === "wiki" && client.state.workspace.relay === page.communityId && sel.slug === page.slug
+                    sel?.kind === "wiki" && client.state.workspace.relay === client.state.workspace.relay && sel.slug === page.slug
                       ? "channel active"
                       : "channel"
                   }
@@ -917,7 +914,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                       const open = anchored.filter((t) => !t.resolved);
                       return (
                         <div key={index} className={commenting === block ? "doc-line commenting" : "doc-line"}>
-                          <div className="doc-line-body">{md(block, client.state.workspace.relay)}</div>
+                          <div className="doc-line-body">{md(block)}</div>
                           <button
                             className={open.length ? "line-comment has" : "line-comment"}
                             title={open.length ? `${open.length} comment${open.length === 1 ? "" : "s"}` : "comment on this line — @mention an agent to give it work here"}
@@ -1020,7 +1017,7 @@ export default function WikiView({ client }: { client: FezClient }) {
         <div className="doc-composer">
           {ask && (
             <div className="doc-composer-result">
-              <QueryBlock client={client} source={ask} communityIds={askCommunityIds} />
+              <QueryBlock client={client} source={ask} />
               <div className="doc-composer-actions">
                 {sel && latest && (
                   <button className="mini" title="append this query to the open page" onClick={() => void keepAsk()}>

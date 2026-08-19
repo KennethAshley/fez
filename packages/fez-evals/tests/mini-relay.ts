@@ -1,3 +1,4 @@
+import { createServer, type Server } from "node:http";
 import { WebSocketServer, WebSocket as WsSocket } from "ws";
 import { verifyEvent } from "nostr-tools/pure";
 import { matchFilter, type Event, type Filter } from "nostr-tools";
@@ -16,6 +17,13 @@ export class MiniRelay {
   private connCounter = 0;
   /** kinds the relay rejects with OK=false, to test the no-retry path */
   blockedKinds = new Set<number>();
+  /**
+   * The workspace's identity card. A relay IS a workspace, so a client
+   * reads who owns it from here before trusting any channel or roster —
+   * served over HTTP on the same port, exactly like the real relay.
+   */
+  workspace: { name?: string; owner?: string } = {};
+  private http?: Server;
 
   constructor(readonly port: number) {}
 
@@ -25,7 +33,13 @@ export class MiniRelay {
 
   start(): Promise<void> {
     return new Promise((resolve) => {
-      this.wss = new WebSocketServer({ port: this.port }, resolve);
+      this.http = createServer((req, res) => {
+        const body = JSON.stringify({ name: this.workspace.name, pubkey: this.workspace.owner });
+        res.writeHead(200, { "content-type": "application/nostr+json", "access-control-allow-origin": "*" });
+        res.end(req.method === "HEAD" ? undefined : body);
+      });
+      this.wss = new WebSocketServer({ server: this.http });
+      this.http.listen(this.port, () => resolve());
       this.wss.on("connection", (ws) => {
         const connId = String(this.connCounter++);
         ws.on("message", (raw) => {
@@ -83,8 +97,10 @@ export class MiniRelay {
       this.dropClients();
       if (!this.wss) return resolve();
       const server = this.wss;
+      const http = this.http;
       this.wss = undefined;
-      server.close(() => resolve());
+      this.http = undefined;
+      server.close(() => (http ? http.close(() => resolve()) : resolve()));
     });
   }
 

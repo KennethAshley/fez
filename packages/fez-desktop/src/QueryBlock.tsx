@@ -25,7 +25,6 @@ interface Row {
 export default function QueryBlock({
   client,
   source,
-  communityIds,
 }: {
   client: FezClient;
   source: string;
@@ -36,7 +35,6 @@ export default function QueryBlock({
    * answer was one community over, which reads as "the feature is
    * broken" rather than "wrong scope".
    */
-  communityIds: string[];
 }) {
   const query = parseQuery(source);
   const [rows, setRows] = useState<Row[]>();
@@ -46,8 +44,8 @@ export default function QueryBlock({
     let live = true;
     const run = async () => {
       try {
-        const perCommunity = await Promise.all(communityIds.map((id) => gather(client, query, id)));
-        const result = perCommunity.flat().sort((a, b) => b.ts - a.ts).slice(0, query.limit);
+        // One workspace, one query — the relay is the scope.
+        const result = (await gather(client, query)).sort((a, b) => b.ts - a.ts).slice(0, query.limit);
         if (live) setRows(result);
       } catch (err) {
         if (live) setError(err instanceof Error ? err.message : String(err));
@@ -60,7 +58,7 @@ export default function QueryBlock({
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, communityIds.join(",")]);
+  }, [source]);
 
   const grouped = new Map<string, Row[]>();
   for (const row of rows ?? []) {
@@ -77,7 +75,6 @@ export default function QueryBlock({
         </span>
         <span className="query-desc">
           {describeQuery(query)}
-          {communityIds.length > 1 && ` · ${communityIds.length} communities`}
         </span>
         {query.unknown.length > 0 && (
           <span className="query-unknown" title="these words were ignored">
@@ -123,7 +120,7 @@ export default function QueryBlock({
 }
 
 /** Run the query against the relay. Each source is a couple of filters. */
-async function gather(client: FezClient, query: Query, communityId: string): Promise<Row[]> {
+async function gather(client: FezClient, query: Query): Promise<Row[]> {
   const since = query.sinceDays ? Math.floor(Date.now() / 1000) - query.sinceDays * 86400 : undefined;
   const wire = (client as unknown as { wire: { query(filters: object[]): Promise<WireEvent[]> } }).wire;
 
@@ -131,7 +128,8 @@ async function gather(client: FezClient, query: Query, communityId: string): Pro
     // Tasks live in two places: the checkbox LINE in a page (the text)
     // and the tick EVENT (the state). Read the pages for the items, the
     // events for what's done — an unticked task has no event at all.
-    const pages = [...client.wikiDocs().values()].filter((page) => page.communityId === communityId);
+    // Every page in this workspace — the relay IS the scope.
+    const pages = [...client.wikiDocs().values()];
     const channelDocs = [...client.docsByChannel().entries()]
       .map(([channelId, info]) => ({ channelId, info, ref: client.channelRef(channelId) }));
 
@@ -201,7 +199,6 @@ async function gather(client: FezClient, query: Query, communityId: string): Pro
 
   if (query.source === "pages") {
     const rows = [...client.wikiDocs().values()]
-      .filter((page) => page.communityId === communityId)
       .filter((page) => !since || page.latestTs >= since)
       .map((page) => ({
         id: page.slug,

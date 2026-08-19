@@ -261,7 +261,8 @@ export class FezTUI {
       unwrapDm: (event: Event) => this.client.unwrapDm(event),
       // The workspace's identity card — who owns this relay. Asked of
       // the primary; extra URLs are mirrors of the same workspace.
-      relayInfo: (relay?: string) => fetchRelayInfo(relay ?? this.relay.urls[0]),
+      relays: this.relay.urls,
+      relayInfo: (relay?: string) => fetchRelayInfo(relay || this.relay.urls[0]),
     };
     setNostrBackend(wire);
     this.fezClient = new FezClient(wire);

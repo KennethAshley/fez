@@ -78,15 +78,14 @@ let relay: RelayHandle;
 let secretMsg: ReturnType<typeof signAs>;
 
 beforeAll(async () => {
-  relay = startRelay({ port: PORT, policies: [membershipPolicy()], log: () => {} });
+  relay = startRelay({ port: PORT, policies: [membershipPolicy(getPublicKey(creator))], log: () => {} });
   const seeder = new Probe();
   await seeder.open();
-  await seeder.publish(signAs(creator, 47100, JSON.stringify({ name: "RG" }), [["d", COMM]]));
-  await seeder.publish(signAs(creator, 47101, JSON.stringify({ name: "private" }), [["d", CH], ["c", COMM]]));
+  await seeder.publish(signAs(creator, 47101, JSON.stringify({ name: "private" }), [["d", "roster"]]));
   await seeder.publish(
-    signAs(creator, 47102, "", [["d", CH], ["c", COMM], ["p", getPublicKey(creator)], ["p", memberPk]])
+    signAs(creator, 47102, "", [["d", "roster"], ["p", getPublicKey(creator)], ["p", memberPk]])
   );
-  secretMsg = signAs(creator, 47103, "the secret plan", [["h", CH], ["c", COMM]]);
+  secretMsg = signAs(creator, 47103, "the secret plan", [["h", CH]]);
   await seeder.publish(secretMsg);
   seeder.close();
 });
@@ -107,7 +106,7 @@ describe("read gating with membershipPolicy", () => {
   test("channel-free kinds (roster) stay publicly readable", async () => {
     const probe = new Probe();
     await probe.open();
-    probe.send(["REQ", "roster", { kinds: [47102], "#d": [CH] }]);
+    probe.send(["REQ", "roster", { kinds: [47102], "#d": ["roster"] }]);
     await probe.waitFor((m) => m[0] === "EOSE" && m[1] === "roster");
     expect(probe.eventsFor("roster").length).toBeGreaterThanOrEqual(1);
     probe.close();
@@ -147,7 +146,7 @@ describe("read gating with membershipPolicy", () => {
 
     const publisher = new Probe();
     await publisher.open();
-    const live = signAs(creator, 47103, "live secret", [["h", CH], ["c", COMM]]);
+    const live = signAs(creator, 47103, "live secret", [["h", CH]]);
     await publisher.publish(live);
 
     await memberProbe.waitFor((m) => m[0] === "EVENT" && (m[2] as { id: string }).id === live.id);

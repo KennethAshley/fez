@@ -5,20 +5,23 @@ import { FezClient, setStatePersistence } from "../../fez-client/dist/index.js";
 import { MiniRelay } from "./mini-relay.js";
 
 /**
- * Losing local state must not lose your communities.
+ * Losing local state must not lose your workspace.
  *
  * Found the hard way: a real client came up with empty local state,
- * concluded the user belonged to no communities, created them a fresh
- * empty "Home", and showed no documents and no DMs — while every
- * document they had ever written sat on the relay, in communities they
- * were still a member of. Four "Home" communities on one relay is what
- * that looks like after it has happened a few times.
+ * concluded the user belonged nowhere, created them a fresh empty
+ * "Home", and showed no documents and no DMs — while every document
+ * they had ever written sat on the relay. Three "Home" communities from
+ * one creator on one relay is what that looks like after it has
+ * happened a few times.
  *
- * The cause was treating a CACHE as the record. Membership is a signed
- * event naming your pubkey; the client's local copy is a convenience.
- * So: a client with nothing stored must rebuild from the relay — and
- * must still honour removal, because silently rejoining a community you
- * were removed from is a worse bug than the one being fixed.
+ * The flat model deletes the bug rather than patching it: a relay IS
+ * the workspace, so a client with nothing stored is not placeless — it
+ * is on whatever relay its wire points at, and the roster is fetched
+ * fresh from there. Nothing is minted on first run because there is
+ * nothing to mint.
+ *
+ * Removal still has to be honoured, because silently re-seating someone
+ * who was removed would be a worse bug than the one being fixed.
  */
 
 const relay = new MiniRelay(7821);
@@ -27,8 +30,8 @@ const me = generateSecretKey();
 const myPubkey = getPublicKey(me);
 const myKeyHex = Buffer.from(me).toString("hex");
 
-const COMMUNITY = "11111111-1111-1111-1111-111111111111";
 const CHANNEL = "22222222-2222-2222-2222-222222222222";
+const ROSTER = "roster";
 
 /** Nothing stored, every time — a fresh install / cleared browser. */
 function blankState() {
@@ -68,11 +71,11 @@ async function boot() {
 }
 
 beforeAll(async () => {
+  relay.workspace = { name: "Recovered", owner: getPublicKey(creator) };
   await relay.start();
-  await publish({ kind: 47100, tags: [["d", COMMUNITY]], content: JSON.stringify({ name: "Recovered" }) });
   await publish({
     kind: 47101,
-    tags: [["d", CHANNEL], ["c", COMMUNITY]],
+    tags: [["d", CHANNEL]],
     content: JSON.stringify({ name: "general", visibility: "open" }),
   });
 });
@@ -80,40 +83,43 @@ afterAll(async () => {
   await relay.stop();
 });
 
-describe("membership recovery", () => {
-  test("a client with nothing stored rebuilds its communities from the relay", async () => {
+describe("a client with nothing stored", () => {
+  test("lands on the relay its wire points at — it is never placeless", async () => {
     await publish({
       kind: 47102,
-      tags: [["d", CHANNEL], ["c", COMMUNITY], ["p", myPubkey, "member"]],
+      tags: [["d", ROSTER], ["p", getPublicKey(creator), "owner"], ["p", myPubkey, "member"]],
       at: 1000,
     });
 
     const { client, wire } = await boot();
-    expect([...client.state.joined]).toContain(COMMUNITY);
-    expect(client.state.communities.get(COMMUNITY)?.name).toBe("Recovered");
+    expect(client.state.workspace.relay).toBe(relay.url);
+    expect(client.state.workspace.owner).toBe(getPublicKey(creator));
+    expect(client.state.workspace.channels.get(CHANNEL)?.name).toBe("general");
+    expect(client.state.isMember(myPubkey)).toBe(true);
     wire.close();
   }, 20_000);
 
-  test("it does NOT invent a fresh Home when the relay knows who you are", async () => {
+  test("mints nothing — the duplicate-Home bug has no way to happen", async () => {
     const { client, wire } = await boot();
-    const names = [...client.state.communities.values()].map((c) => c.name);
-    // The first-run bootstrap creates a community called "Home"; a
-    // returning user must never trigger it.
-    expect(names).not.toContain("Home");
-    expect(client.state.joined.size).toBe(1);
+    // There is no workspace event to create, so a returning user cannot
+    // trigger a bootstrap that invents one. The old first-run path made
+    // a community called "Home" every time local state was empty.
+    expect(relay.events.filter((e) => e.kind === 47100)).toHaveLength(0);
+    expect(relay.events.filter((e) => e.kind === 47101)).toHaveLength(1);
+    expect(client.state.workspace.channels.size).toBe(1);
     wire.close();
   }, 20_000);
 
-  test("removal is honoured — a later roll without you does not rejoin you", async () => {
-    // The creator rewrites the roll without this pubkey.
+  test("removal is honoured — a later roster without you does not re-seat you", async () => {
+    // The owner rewrites the roster without this pubkey.
     await publish({
       kind: 47102,
-      tags: [["d", CHANNEL], ["c", COMMUNITY], ["p", getPublicKey(creator), "owner"]],
+      tags: [["d", ROSTER], ["p", getPublicKey(creator), "owner"]],
       at: 2000,
     });
 
     const { client, wire } = await boot();
-    expect([...client.state.joined]).not.toContain(COMMUNITY);
+    expect(client.state.isMember(myPubkey)).toBe(false);
     wire.close();
   }, 20_000);
 });
