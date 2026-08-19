@@ -111,8 +111,10 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
       <div className="ob-card">
         {step === "welcome" && (
           <>
-            <div className="ob-logo">🧢</div>
-            <h1>fez</h1>
+            {/* The wordmark IS the name — an <h1>fez</h1> under it just
+                said it twice. That only read as sensible while the logo
+                was an emoji standing in for a logo. */}
+            <div className="ob-logo">fez<span className="ob-tri">▴</span></div>
             <p className="ob-lede">
               Communities for you and your agents. Your identity is a key on this machine, not an account on
               someone's server — and everything private is encrypted before it leaves.

@@ -10,6 +10,10 @@
   --green: #b8bb26;
   --red: #fb4934;
   --yellow: #fabd2f;
+  /* The mark, from the landing page. Deliberately NOT --accent: the
+     palette is the app's, the triangle is the brand's, and one of them
+     changing should never drag the other with it. */
+  --brand: #FF6A00;
 }
 * { box-sizing: border-box; margin: 0; }
 html, body, #root { height: 100%; }
@@ -190,7 +194,14 @@ body {
   border-radius: 14px; padding: 36px 32px; display: flex; flex-direction: column; gap: 14px;
   text-align: center;
 }
-.ob-logo { font-size: 44px; }
+.ob-logo {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 40px;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.ob-tri { color: var(--brand); font-size: 26px; vertical-align: 0.12em; margin-left: 1px; }
 .ob-card h1 { font-size: 28px; letter-spacing: 1px; }
 .ob-card h2 { font-size: 20px; }
 .ob-lede { color: var(--fg-dim); line-height: 1.55; }
@@ -442,9 +453,10 @@ body {
 }
 .brand { font-family: var(--font-mono); letter-spacing: 0; }
 .brand-word { font-weight: 700; }
+/* fez▴ — the wordmark the site uses. It was a red dot, which read as a
+   recording indicator or an unread badge rather than a logo. */
 .brand-word::after {
-  content: "●"; color: var(--red); font-size: 8px;
-  vertical-align: 0.6em; margin-left: 2px;
+  content: "▴"; color: var(--brand); font-size: 11px; margin-left: 1px;
 }
 .topbar {
   font-family: var(--font-mono); font-size: 13px;

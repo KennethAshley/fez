@@ -1186,12 +1186,15 @@ export class FezTUI {
 
   /** Startup chrome, flow-title style: block logo + session info + hints — replaces both the old rule-banner and the welcome bubble. */
   private renderHeader(harnessLine: string): void {
+    // The landing page's sigil, so the terminal and the site are
+    // recognisably the same product. (Backslashes are doubled — this is
+    // a TS string literal, not a heredoc.)
     const logo = [
-      "███████ ███████ ███████",
-      "██      ██          ██ ",
-      "█████   █████     ██   ",
-      "██      ██      ██     ",
-      "██      ███████ ███████",
+      "   ______",
+      "  / ____/___  ____",
+      " / /_  / _ \\/_  /",
+      "/ __/ /  __/ / /_",
+      "/_/    \\___/ /___/",
     ].map((l) => getActiveTheme().banner(l));
     this.log.addChild(
       new Text(
