@@ -514,10 +514,14 @@ function Shell({
       )}
       {banner && <div className="conn-bar error">{banner}</div>}
       <aside className="rail">
-        <div className="brand">
-          <span className="brand-word">fez</span>{" "}
-          {/* A green dot that means "at least one relay" hides the
-              difference between four relays and the one you have left. */}
+        {/* The workspace IS the header. The wordmark told you which
+            app you were in — which you know — while the thing you
+            actually need, WHERE you are, sat below it. The relay-health
+            dot comes along: it was never about the brand.
+
+            Search left the sidebar for the top right, where a global
+            action belongs, next to the other per-view tools. */}
+        <div className="workspace-title" title={client.state.workspace.relay}>
           <span
             className={connected ? (relayHealth.every((r) => r.connected) ? "dot on" : "dot partial") : "dot off"}
             title={
@@ -526,17 +530,9 @@ function Shell({
                 : relayHealth.map((r) => `${r.connected ? "●" : "○"} ${r.url}`).join("\n")
             }
           />
+          <span className="workspace-name">{client.state.workspace.name}</span>
+          {!client.state.workspace.owner && <span className="workspace-unclaimed">unclaimed</span>}
         </div>
-        {/* The workspace is the top of the hierarchy — you are IN a
-            place, and everything below is that place's furniture. */}
-        <div className="workspace-title" title={client.state.workspace.relay}>
-          {client.state.workspace.name}
-          {!client.state.workspace.owner && <span className="workspace-unclaimed"> unclaimed</span>}
-        </div>
-        <button className="rail-search" onClick={() => setSearchOpen({ query: "" })}>
-          <span className="rail-search-glyph">⌕</span> search everything
-          <span className="rail-search-key">⌘K</span>
-        </button>
         <div className="rail-scroll">
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           ▤ inbox
@@ -699,6 +695,7 @@ function Shell({
           onWatch={(agent) => setPane({ kind: "watch", agent })}
           onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
           onAgents={() => setPane({ kind: "agents" })}
+          onSearch={() => setSearchOpen({ query: "" })}
           onNotice={(text) => { setBanner(text); setTimeout(() => setBanner(undefined), 6000); }}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
           onDocs={() =>
@@ -958,6 +955,7 @@ function ChannelView({
   onAgents,
   onProfile,
   onDocs,
+  onSearch,
   onCommand,
   onNotice,
   focusId,
@@ -973,6 +971,7 @@ function ChannelView({
   onAgents: () => void;
   onProfile: (pk: string) => void;
   onDocs: () => void;
+  onSearch: () => void;
   onCommand: (text: string) => Promise<string>;
   /** Surfaced to the sender — a mention that reached nobody must not be silent. */
   onNotice: (text: string) => void;
@@ -1160,6 +1159,11 @@ function ChannelView({
         )}
         {!threadRoot && (
           <span className="topbar-tools">
+            {/* Global, so it leads the cluster — the rest act on this
+                channel. ⌘K still works from anywhere. */}
+            <button className="topbar-tool" title="search everything (⌘K)" onClick={onSearch}>
+              ⌕
+            </button>
             <button
               className="topbar-tool topbar-members"
               title="members"

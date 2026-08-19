@@ -44,9 +44,14 @@ export default function ChannelInfo({
   if (!hasDoc && pins.length === 0 && !editing) {
     return (
       <div className="channel-info empty">
-        <button className="channel-info-toggle" onClick={() => { setDraft(`# ${channelName}\n\n`); setEditing(true); }}>
-          ▤ add channel info — what everyone here should know
-        </button>
+        {/* Same bar as the filled state: without it this row got no
+            horizontal padding and sat left of the topbar and every
+            message, which read as a misalignment rather than a hint. */}
+        <div className="channel-info-bar">
+          <button className="channel-info-toggle" onClick={() => { setDraft(`# ${channelName}\n\n`); setEditing(true); }}>
+            ▤ add channel info — what everyone here should know
+          </button>
+        </div>
       </div>
     );
   }
