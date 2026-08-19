@@ -237,6 +237,38 @@ export function wikiSlug(name: string): string {
   return name.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
 }
 
+/**
+ * Put a document's versions in order, oldest first — with the guarantee
+ * that the LAST one is genuinely current.
+ *
+ * Sorting by timestamp is not enough. Every version carries a `base`
+ * tag naming the version it was written on top of, and edits made in
+ * quick succession — an agent moving two cards, a fast pair of drags on
+ * a board — land in the same second. Two versions then tie, and which
+ * one a reader calls "latest" comes down to the order a relay happened
+ * to return them. The next edit bases itself on that answer, so the
+ * loser's change silently disappears.
+ *
+ * The base chain says what came after what without consulting a clock:
+ * the current version is the one nothing else was written on top of.
+ * Timestamps only break ties between genuinely concurrent branches —
+ * two people who edited the same base, where somebody's edit has to
+ * lose and the version list is there to show them it happened.
+ */
+export function orderVersions<T extends { id: string; created_at: number; tags: string[][] }>(events: T[]): T[] {
+  const sorted = [...events].sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
+  if (sorted.length < 2) return sorted;
+  const superseded = new Set(
+    events.map((event) => event.tags.find((t) => t[0] === "base")?.[1]).filter((id): id is string => !!id)
+  );
+  const tips = sorted.filter((event) => !superseded.has(event.id));
+  const tip = tips[tips.length - 1];
+  // No tip means the base tags form a cycle — corrupt, but not worth
+  // throwing over; the timestamp order is still something to show.
+  if (!tip || sorted[sorted.length - 1].id === tip.id) return sorted;
+  return [...sorted.filter((event) => event.id !== tip.id), tip];
+}
+
 export interface PinInfo {
   opId: string;
   by: string;
@@ -702,10 +734,11 @@ export class FezClient {
 
   async docVersions(channelId: string, communityId: string): Promise<WireEvent[]> {
     const events = await this.wire.query([{ kinds: [K.DOC], "#h": [channelId], limit: 200 }]);
-    return events
-      .filter((e) => this.state.isMember(communityId, channelId, e.pubkey))
-      .filter((e) => !e.tags.some((t) => t[0] === "d")) // named pages aren't the channel doc
-      .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
+    return orderVersions(
+      events
+        .filter((e) => this.state.isMember(communityId, channelId, e.pubkey))
+        .filter((e) => !e.tags.some((t) => t[0] === "d")) // named pages aren't the channel doc
+    );
   }
 
   async publishDoc(channelId: string, communityId: string, content: string, baseId?: string): Promise<void> {
@@ -764,12 +797,13 @@ export class FezClient {
 
   async wikiVersions(communityId: string, slug: string): Promise<WireEvent[]> {
     const events = await this.wire.query([{ kinds: [K.DOC], "#d": [slug], limit: 200 }]);
-    return events
-      .filter((e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId))
-      // community-scoped: a page belongs to the community, not to the
-      // channel it happened to be written from
-      .filter((e) => this.state.isCommunityMember(communityId, e.pubkey))
-      .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
+    return orderVersions(
+      events
+        .filter((e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId))
+        // community-scoped: a page belongs to the community, not to the
+        // channel it happened to be written from
+        .filter((e) => this.state.isCommunityMember(communityId, e.pubkey))
+    );
   }
 
   /**

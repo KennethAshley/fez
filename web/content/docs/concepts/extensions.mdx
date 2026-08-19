@@ -31,10 +31,26 @@ exist:
 - **`headless`** — code loaded by **any** client (TUI and GUI alike) against
   the `FezExtensionAPI`: slash commands, services, new event kinds. This is
   the */obsidian* path — and why the system still works with no GUI at all.
-- **`gui`** — components only the desktop app renders: artifact viewers,
-  theme packs, panels. Loaded from `~/.fez/gui-extensions` at launch;
-  `activate(api)` receives the page's React, `registerArtifactViewer`, and
-  `registerTheme`. Themes appear in settings → appearance.
+- **`gui`** — components only the desktop app renders. Loaded from
+  `~/.fez/gui-extensions` at launch; `activate(api)` receives the page's React
+  (there is exactly one React on the page) plus the seams it has permission
+  for:
+
+  | seam | what it claims |
+  | --- | --- |
+  | `registerArtifactViewer` | a typed artifact — how `artifact:html` renders |
+  | `registerTheme` | a CSS-variable pack, listed in settings → appearance |
+  | `registerMessageDecorator` | a card under matching chat messages (how polls appear) |
+  | `registerGuiCommand` | a slash command in the composer |
+  | `registerMarkdownPlugin` | markdown *parsing*, everywhere docs render |
+  | `registerBlockRenderer` | one fenced block language (` ```fez:live ` ) |
+  | `registerPageView` | a whole document, rendered another way |
+
+  The last one is how [boards](/docs/concepts/docs) exist: an extension says
+  "this document is a board" and gets to render it, with a `save` that
+  publishes a new version and a `comment` that anchors a thread to a line.
+  Markdown stays one click away, so a view is a lens on the document rather
+  than a replacement for it.
 
 - **`background`** — opt in to running scheduled work inside the always-on
   [sentinel](/docs/self-hosting). The extension registers tasks with

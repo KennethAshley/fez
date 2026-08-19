@@ -1,0 +1,32 @@
+{
+  "name": "@fez/kanban",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kanban boards for fez docs — columns are headings, cards are checkboxes, moving a card moves a line. Agents move cards with fez_board_move; the board is just the markdown.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "gui": "dist/gui.js",
+      "skill": {
+        "command": "node",
+        "args": ["/Users/ken/Projects/fez/packages/fez-kanban/dist/mcp.js"]
+      }
+    },
+    "permissions": ["read:channels", "publish", "ui"]
+  },
+  "scripts": {
+    "build": "esbuild src/board.ts --bundle --format=esm --platform=neutral --outfile=dist/board.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/mcp.ts --bundle --format=esm --platform=node --packages=external --outfile=dist/mcp.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@fez/protocol": "file:../..",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "nostr-tools": "^2.14.0",
+    "zod": "^3.23.0"
+  }
+}

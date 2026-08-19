@@ -5,7 +5,7 @@ import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { taskKey, wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
-import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
+import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";
 import QueryBlock from "./QueryBlock";
 
 /**
@@ -196,6 +196,12 @@ export default function WikiView({ client }: { client: FezClient }) {
   const [askDraft, setAskDraft] = useState("");
   const [ask, setAsk] = useState<string>();
   const [commentDraft, setCommentDraft] = useState("");
+  /**
+   * Which lens the open page is under. `undefined` means "nobody has
+   * chosen" — so a board-shaped document may open as a board, while a
+   * click on ▤ markdown sticks for as long as the page is open.
+   */
+  const [pageView, setPageView] = useState<string>();
 
   // live: agent/other-client versions repaint the list and the open page
   useEffect(() => {
@@ -252,6 +258,7 @@ export default function WikiView({ client }: { client: FezClient }) {
     setVersions(undefined);
     setViewing(undefined);
     setEditing(false);
+    setPageView(undefined);
     void load();
   }, [load]);
 
@@ -279,6 +286,13 @@ export default function WikiView({ client }: { client: FezClient }) {
   const shown = viewing ? versions?.find((v) => v.id === viewing) : latest;
   const selPage = sel?.kind === "wiki" ? client.wikiDocs().get(`${sel.communityId}:${sel.slug}`) : undefined;
 
+  // Which lenses recognize what's on screen. `pageView === ""` is an
+  // explicit "show me the markdown"; undefined means nobody has chosen,
+  // so a document that declares itself a board opens as one.
+  const shownViews = shown ? pageViewsFor(shown.content) : { views: [], preferred: undefined };
+  const activeView = pageView === undefined ? shownViews.preferred : pageView || undefined;
+  const activeViewImpl = shownViews.views.find((view) => view.name === activeView);
+
   /** Any member-visible channel works as the page's home; prefer where you are. */
   const homeChannel = (communityId: string): string | undefined => {
     const scope = client.state.scope;
@@ -296,20 +310,31 @@ export default function WikiView({ client }: { client: FezClient }) {
     }
   };
 
+  /**
+   * The one write path for this document. Everything that produces new
+   * markdown — the editor, "keep in page", a board dragging a card —
+   * goes through here, so none of them has to know whether this is a
+   * wiki page or a channel doc, or what the base version was.
+   */
+  const publish = async (next: string) => {
+    if (!sel) return;
+    if (sel.kind === "wiki") {
+      const channelId = selPage?.channelId ?? homeChannel(sel.communityId);
+      if (!channelId) return;
+      await client.publishWikiDoc(channelId, sel.communityId, selPage?.title ?? sel.slug, next, latest?.id);
+    } else {
+      await client.publishDoc(sel.channelId, sel.communityId, next, latest?.id);
+    }
+    setViewing(undefined);
+    await load();
+  };
+
   const save = async () => {
     if (!sel || !draft.trim()) return;
     setBusy(true);
     try {
-      if (sel.kind === "wiki") {
-        const channelId = selPage?.channelId ?? homeChannel(sel.communityId);
-        if (!channelId) return;
-        await client.publishWikiDoc(channelId, sel.communityId, selPage?.title ?? sel.slug, draft, latest?.id);
-      } else {
-        await client.publishDoc(sel.channelId, sel.communityId, draft, latest?.id);
-      }
+      await publish(draft);
       setEditing(false);
-      setViewing(undefined);
-      await load();
     } finally {
       setBusy(false);
     }
@@ -335,17 +360,9 @@ export default function WikiView({ client }: { client: FezClient }) {
   const keepAsk = async () => {
     if (!sel || !ask || !latest) return;
     const block = ["```fez:query", ask, "```"].join("\n");
-    const next = `${latest.content.trimEnd()}\n\n${block}\n`;
-    if (sel.kind === "wiki") {
-      const channelId = selPage?.channelId ?? homeChannel(sel.communityId);
-      if (!channelId) return;
-      await client.publishWikiDoc(channelId, sel.communityId, selPage?.title ?? sel.slug, next, latest.id);
-    } else {
-      await client.publishDoc(sel.channelId, sel.communityId, next, latest.id);
-    }
+    await publish(`${latest.content.trimEnd()}\n\n${block}\n`);
     setAsk(undefined);
     setAskDraft("");
-    await load();
   };
 
   const create = (communityId: string) => {
@@ -600,6 +617,33 @@ export default function WikiView({ client }: { client: FezClient }) {
                   ? `▤ ${selPage?.title ?? sel.slug}`
                   : `# ${client.channelRef(sel.channelId)?.name ?? ""} doc`}
               </span>
+              {/**
+               * Lenses an extension offers for THIS document (a board, a
+               * calendar…). Markdown is always here and always one click
+               * away: the document is the truth, a view is a way of
+               * looking at it — and of editing it, since a view writes
+               * back through the same publish path the editor uses.
+               */}
+              {!editing && shownViews.views.length > 0 && (
+                <div className="page-views">
+                  <button
+                    className={activeView ? "page-view" : "page-view active"}
+                    onClick={() => setPageView("")}
+                    title="the document as written"
+                  >
+                    ▤ markdown
+                  </button>
+                  {shownViews.views.map((view) => (
+                    <button
+                      key={view.name}
+                      className={activeView === view.name ? "page-view active" : "page-view"}
+                      onClick={() => setPageView(view.name)}
+                    >
+                      {view.name}
+                    </button>
+                  ))}
+                </div>
+              )}
               {!editing && (
                 <button
                   className="agent-action"
@@ -639,6 +683,33 @@ export default function WikiView({ client }: { client: FezClient }) {
                     {(versions?.length ?? 0) > 1 && ` · ${versions!.length} versions`}
                     {threads.length > 0 && ` · ${threads.filter((t) => !t.resolved).length} open comment${threads.filter((t) => !t.resolved).length === 1 ? "" : "s"}`}
                   </div>
+                  {activeViewImpl ? (
+                    <div className="page-view-body">
+                      {activeViewImpl.render({
+                        content: shown.content,
+                        save: publish,
+                        comment: async (text, anchor, mentions) => {
+                          if (!sel) return;
+                          const channelId =
+                            sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
+                          if (!channelId) return;
+                          await client.publishDocComment(channelId, sel.communityId, text, {
+                            anchor,
+                            slug: sel.kind === "wiki" ? sel.slug : undefined,
+                            mentionPks: mentions
+                              .map((name) => client.pkByName(name))
+                              .filter((pk): pk is string => !!pk),
+                          });
+                          await load();
+                        },
+                        title: sel.kind === "wiki" ? selPage?.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
+                        channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) ?? "" : sel.channelId,
+                        communityId: sel.communityId,
+                        slug: sel.kind === "wiki" ? sel.slug : undefined,
+                        editable: shown.id === latest?.id,
+                      })}
+                    </div>
+                  ) : (
                   <div className="md doc-body wiki-body">
                     {blocksOf(shown.content).map((block, index) => {
                       const anchored = threads.filter((t) => t.anchor && block.includes(t.anchor));
@@ -694,6 +765,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                       );
                     })}
                   </div>
+                  )}
                 </>
               )
             )}

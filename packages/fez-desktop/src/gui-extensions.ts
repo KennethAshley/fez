@@ -59,6 +59,37 @@ export interface GuiExtensionApi {
    * it, so a block can publish (comments, docs) as the viewer.
    */
   registerBlockRenderer: (lang: string, render: (props: BlockProps) => React.ReactNode) => void;
+  /**
+   * Offer another way to look at a WHOLE document — a board, a calendar,
+   * a deck. `match` decides whether this document is yours; returning
+   * "default" opens in your view instead of markdown, `true` only adds
+   * the toggle. The markdown is always one click away, because the
+   * document is the truth and a view is a lens on it.
+   */
+  registerPageView: (
+    name: string,
+    match: (content: string) => boolean | "default",
+    render: (props: PageViewProps) => React.ReactNode
+  ) => void;
+}
+
+/**
+ * What a page view receives. `save` is the whole write path: hand it the
+ * next markdown and it publishes a version — the view never learns the
+ * difference between a wiki page and a channel doc, or what a base id
+ * is. `comment` anchors a thread to a line, which is how a card becomes
+ * an agent's work.
+ */
+export interface PageViewProps {
+  content: string;
+  save: (next: string) => Promise<void>;
+  comment: (text: string, anchor: string, mentions: string[]) => Promise<void>;
+  title: string;
+  channelId: string;
+  communityId: string;
+  slug?: string;
+  /** false when an old version is on screen — views must not rewrite history */
+  editable: boolean;
 }
 
 /** What a block renderer receives: its own source plus where it lives. */
@@ -111,6 +142,33 @@ export function registerBlockRenderer(lang: string, render: (props: BlockProps) 
 }
 export function blockRenderer(lang: string): ((props: BlockProps) => React.ReactNode) | undefined {
   return blockRenderers.get(lang.toLowerCase());
+}
+
+export interface PageView {
+  name: string;
+  match: (content: string) => boolean | "default";
+  render: (props: PageViewProps) => React.ReactNode;
+}
+const pageViews: PageView[] = [];
+export function registerPageView(name: string, match: PageView["match"], render: PageView["render"]): void {
+  pageViews.push({ name, match, render });
+}
+/** The views that recognize this document, and which (if any) wants to open. */
+export function pageViewsFor(content: string): { views: PageView[]; preferred?: string } {
+  const views: PageView[] = [];
+  let preferred: string | undefined;
+  for (const view of pageViews) {
+    let verdict: boolean | "default" = false;
+    try {
+      verdict = view.match(content);
+    } catch {
+      continue; // a view that throws on match doesn't get to break the page
+    }
+    if (!verdict) continue;
+    views.push(view);
+    if (verdict === "default" && !preferred) preferred = view.name;
+  }
+  return { views, preferred };
 }
 
 // ── theme registry ─────────────────────────────────────────────────
@@ -265,6 +323,7 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       registerTheme: may("ui") ? registerTheme : (refuse("ui", "register a theme") as never),
       registerMessageDecorator: may("ui") ? registerMessageDecorator : (refuse("ui", "decorate messages") as never),
       registerBlockRenderer: may("ui") ? registerBlockRenderer : (refuse("ui", "render doc blocks") as never),
+      registerPageView: may("ui") ? registerPageView : (refuse("ui", "add a page view") as never),
       registerMarkdownPlugin: may("ui") ? registerMarkdownPlugin : (refuse("ui", "extend markdown") as never),
       registerGuiCommand: may("commands") ? registerGuiCommand : (refuse("commands", "add a slash command") as never),
     };

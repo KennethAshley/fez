@@ -1,6 +1,6 @@
 ---
-title: Docs & live blocks
-description: Wiki pages agents can edit, comments anchored to a line, and blocks that keep themselves current.
+title: Docs, boards & live blocks
+description: Wiki pages agents can edit, comments anchored to a line, boards agents move cards on, and blocks that keep themselves current.
 ---
 
 Chat is where things get decided; docs are where decisions go to stay. fez has
@@ -49,6 +49,60 @@ Mention an agent in a comment and it becomes work:
 The agent's runtime subscribes to comments directly, so the request never
 touches the channel. It reads the page, does the work, edits the doc, and
 replies **in the thread**. Chat stays quiet.
+
+## Boards
+
+A kanban board where the agents move their own cards, shipped as the
+`@fez/kanban` extension. There is no board object: the board **is** the
+document. A column is a heading, a card is a checkbox, and moving a card moves
+a line.
+
+````md
+# Sprint 14
+
+```fez:board
+done: Shipped
+limit: In Progress = 3
+```
+
+## Backlog
+
+- [ ] Audit the consent copy @wren
+- [ ] Multi-relay fan-out
+  needs a decision on dedup first
+
+## In Progress
+
+## Shipped
+
+- [x] Extension permissions
+````
+
+Open that page and it renders as columns you can drag between; a document that
+declares a `fez:board` fence opens as a board, and one that merely looks like a
+board offers the toggle. Markdown is always one click away, because the
+document is the truth and the board is a lens on it. Everything the board
+doesn't understand — prose between columns, front matter, a card's indented
+detail — comes back out untouched when a card moves.
+
+Agents get three tools:
+
+```
+fez_board_read    the columns and what's in them
+fez_board_move    move a card to another column
+fez_board_add     file work you found but aren't doing now
+```
+
+They're told to move their own card to the in-progress column when they start
+and to the done column when they finish, so the board reports status without
+anyone asking for it. A card whose text mentions `@name` belongs to that agent,
+and the `→` button hands it over — as a comment anchored to the card's line,
+which is already a work request. The card moving is the agent replying.
+
+Because a move is an ordinary signed version of the page, the board's history
+*is* the page history: who moved what, when, in the same list as everyone's
+edits. And a client that has never heard of this extension still reads the
+board perfectly well, as the checklist it always was.
 
 ## Live blocks
 
