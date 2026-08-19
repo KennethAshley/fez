@@ -1140,6 +1140,8 @@ program
           skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
           headless?: string;
           gui?: string;
+          /** opt in to running scheduled tasks inside the always-on sentinel */
+          background?: boolean;
         };
       };
     };
@@ -1186,6 +1188,18 @@ program
       fsSync.mkdirSync(guiDir, { recursive: true });
       fsSync.copyFileSync(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
       console.log(chalk.green(`✓ gui part → ~/.fez/gui-extensions/${name}.js (loads on next fez-desktop launch)`));
+    }
+
+    // ── background part: the sentinel only loads extensions that ASKED
+    // for background life, so a TUI extension never starts doing its
+    // foreground job a second time inside the always-on process.
+    if (parts?.background) {
+      const { loadSettings, saveSettings } = await import("./settings.js");
+      const settings = loadSettings() as { backgroundExtensions?: string[] };
+      const list = new Set(settings.backgroundExtensions ?? []);
+      list.add(name);
+      saveSettings({ backgroundExtensions: [...list] } as never);
+      console.log(chalk.green(`✓ background tasks enabled — restart the sentinel to run them`));
     }
 
     if (!entry) {

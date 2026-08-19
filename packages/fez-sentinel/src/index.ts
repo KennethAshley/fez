@@ -201,6 +201,21 @@ async function main() {
   const attested = new Set<string>();
   const nameOf = (pk: string) => agentPkToName.get(pk) ?? `${pk.slice(0, 8)}…`;
 
+  function buildTaskNostr() {
+    return {
+      pubkey: myPubkey,
+      publish: async (template: unknown) => {
+        const event = client.signEvent(template as never);
+        await relay.publish(event);
+        return event;
+      },
+      subscribe: (filters: unknown, handler: unknown) => relay.subscribe(filters as never, handler as never),
+      query: (filters: unknown) => relay.query(filters as never),
+      encrypt: (peer: string, plaintext: string) => client.encryptTo(peer, plaintext),
+      decrypt: (peer: string, ciphertext: string) => client.decryptFrom(peer, ciphertext),
+    };
+  }
+
   function attestAgent(agentPubkey: string): void {
     if (attested.has(agentPubkey) || agentPubkey === myPubkey) return;
     attested.add(agentPubkey);
@@ -438,6 +453,48 @@ async function main() {
   ]);
   const dead = new Set(tombstones.flatMap((t) => t.tags.filter((x) => x[0] === "e").map((x) => x[1])));
   for (const intent of intents) if (!dead.has(intent.id)) armIntent(intent);
+
+  // ── extension background tasks ────────────────────────────────────────
+  // The sentinel is the only always-on, key-holding host, so it's where
+  // an extension's scheduled work belongs (a live block that refreshes
+  // itself, a nightly bench run). Extensions get the relay and the
+  // owner's identity — no UI, no shell. A task that throws is logged and
+  // retried next tick; it can never take the sentinel down.
+  await (async () => {
+   try {
+    const { loadExtensions, registeredScheduledTasks, setNostrBackend, loadSettings } = await import("@fez/protocol");
+    setNostrBackend(buildTaskNostr() as never);
+    // Only extensions that ASKED for background life (fez.parts.background
+    // in their manifest, recorded at install time) run here.
+    const background = (loadSettings() as { backgroundExtensions?: string[] }).backgroundExtensions ?? [];
+    if (background.length === 0) {
+      console.log("   ⏱  no background extensions installed");
+      return;
+    }
+    await loadExtensions(undefined, background);
+    const tasks = registeredScheduledTasks();
+    for (const task of tasks) {
+      const everyMs = Math.max(60_000, task.everyMs);
+      let lastTickAt = Date.now();
+      const tick = async () => {
+        // A gap far longer than the interval means the machine slept.
+        const missedWindow = Date.now() - lastTickAt > everyMs * 2;
+        lastTickAt = Date.now();
+        try {
+          await task.run({ nostr: buildTaskNostr(), ownerPubkey: myPubkey, missedWindow });
+        } catch (err) {
+          console.warn(`⚠️  scheduled task "${task.name}" failed: ${err instanceof Error ? err.message : err}`);
+        }
+      };
+      const timer = setInterval(() => void tick(), everyMs);
+      timer.unref?.();
+      void tick(); // once at boot: a due block shouldn't wait a full interval
+      console.log(`   ⏱  scheduled task "${task.name}" every ${Math.round(everyMs / 60_000)}m`);
+    }
+   } catch (err) {
+    console.warn(`⚠️  extension tasks unavailable: ${err instanceof Error ? err.message : err}`);
+   }
+  })();
 
   console.log(`   watching: DM summons · mention summons · doc-comment summons · notifications · schedules/reminders. Ctrl+C to stop.`);
 }

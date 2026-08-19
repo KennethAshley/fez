@@ -39,4 +39,6 @@ export { loadSettings, saveSettings, resolveRelay, DEFAULT_RELAY } from "./setti
 export { isValidSlug, conversationKey, engramDTag, parseBodyStrict, bodyIsValid, validateEngram, selectHead, engramHeads, buildEngramEvent, type EngramBody, type ValidEngram } from "./engram.js";
 export { buildDmWraps, buildGroupDmWraps, unwrapDm, dmConvoKey, DM_FUZZ_WINDOW_S, type DmRumor } from "./dm.js";
 export { pairSend, pairReceive, deriveSas, buildPairingUri, parsePairingUri, PAIRING_URI_PREFIX, type PairingCallbacks } from "./pairing.js";
-export type { FezExtensionAPI, FezExtension, NostrAccess, PanelHandle, InputHandler } from "./extensions.js";
+export type { FezExtensionAPI, FezExtension, NostrAccess, PanelHandle, InputHandler, ScheduledTask, ScheduledTaskContext } from "./extensions.js";
+/** Background-task plumbing: the sentinel loads extensions and drains their scheduled tasks. */
+export { loadExtensions, registeredScheduledTasks, setNostrBackend } from "./extensions.js";

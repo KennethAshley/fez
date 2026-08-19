@@ -20,6 +20,13 @@ export interface FezSettings {
   relay?: string;
   /** Set once the first-run wizard has completed. */
   onboarded?: boolean;
+  /**
+   * Extensions allowed to run scheduled tasks inside the sentinel —
+   * written by install/link when a package declares fez.parts.background.
+   * An allowlist rather than "load everything": a TUI extension loaded
+   * into the always-on process would do its foreground job twice.
+   */
+  backgroundExtensions?: string[];
 }
 
 const SETTINGS_FILE = path.join(os.homedir(), ".fez", "settings.json");

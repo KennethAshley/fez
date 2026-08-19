@@ -174,6 +174,18 @@ export interface FezExtensionAPI {
    * the user picks with /theme <name>, persisted across sessions.
    */
   registerTheme(spec: ThemeSpec): void;
+  /**
+   * Background work: a task the ALWAYS-ON host (fez sentinel) runs on an
+   * interval, independent of any UI. This is how an extension does
+   * something on a schedule without shipping its own daemon — the
+   * sentinel is already running, supervised, and holds the user's key.
+   *
+   * Hosts that aren't always-on (the TUI, one-shot CLI) ignore these:
+   * a task must never be required for the extension's foreground
+   * behavior. `everyMs` is floored at 60s by the host, and a throwing
+   * task is logged and retried on the next tick, never fatal.
+   */
+  registerScheduledTask(name: string, everyMs: number, run: (ctx: ScheduledTaskContext) => Promise<void> | void): void;
   nostr?: NostrAccess;
   /**
    * The process's ONE shared @fez/client instance — protocol state,
@@ -198,6 +210,30 @@ export interface FezExtensionAPI {
     /** Cross-extension view ownership — see ViewBus. */
     viewBus: ViewBus;
   };
+}
+
+/** What a scheduled task gets: the relay, the owner's identity, and honesty about the clock. */
+export interface ScheduledTaskContext {
+  nostr: NostrAccess;
+  /** The machine owner's pubkey — the authority a task acts on behalf of. */
+  ownerPubkey: string;
+  /**
+   * True when this tick follows a gap much longer than the interval (the
+   * machine slept). Tasks should catch up ONCE, never replay the backlog.
+   */
+  missedWindow: boolean;
+}
+
+export interface ScheduledTask {
+  name: string;
+  everyMs: number;
+  run: (ctx: ScheduledTaskContext) => Promise<void> | void;
+}
+
+const scheduledTasks: ScheduledTask[] = [];
+/** Drained by the sentinel after loadExtensions(); empty everywhere else. */
+export function registeredScheduledTasks(): readonly ScheduledTask[] {
+  return scheduledTasks;
 }
 
 export type FezExtension = (api: FezExtensionAPI) => void | Promise<void>;
@@ -257,6 +293,7 @@ function buildApi(): FezExtensionAPI {
     registerInputHandler: (handler) => inputHandlers.push(handler),
     registerUrlHandler: (prefix, handler) => urlHandlers.push({ prefix, handler }),
     registerTheme,
+    registerScheduledTask: (name, everyMs, run) => scheduledTasks.push({ name, everyMs, run }),
     nostr: nostrBackend,
     client: clientBackend,
     ui: {
@@ -288,7 +325,16 @@ const EXTENSIONS_DIR = path.join(os.homedir(), ".fez", "extensions");
  * not hidden: a failed import is reported per-file, not swallowed, and
  * loading continues with the remaining files either way.
  */
-export async function loadExtensions(dir: string = EXTENSIONS_DIR): Promise<void> {
+export async function loadExtensions(
+  dir: string = EXTENSIONS_DIR,
+  /**
+   * Load ONLY these extension basenames. The sentinel passes its
+   * background allowlist: an extension written for the TUI would
+   * otherwise start doing its foreground job a second time inside the
+   * always-on process (duplicate notifications, duplicate summons).
+   */
+  only?: readonly string[]
+): Promise<void> {
   let entries: string[];
   try {
     entries = await fs.readdir(dir);
@@ -312,6 +358,7 @@ export async function loadExtensions(dir: string = EXTENSIONS_DIR): Promise<void
 
   for (const entry of entries) {
     if (!/\.(ts|js|mjs)$/.test(entry)) continue;
+    if (only && !only.includes(entry.replace(/\.(ts|js|mjs)$/, ""))) continue;
     const filePath = path.join(dir, entry);
 
     try {

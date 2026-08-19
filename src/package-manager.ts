@@ -47,6 +47,8 @@ export interface FezManifest {
       skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
       headless?: string;
       gui?: string;
+      /** opt in to running scheduled tasks inside the always-on sentinel */
+      background?: boolean;
     };
     // For agents: entry point
     agent?: {
@@ -467,7 +469,7 @@ export class PackageManager {
 
   private async installParts(
     name: string,
-    parts: { skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string }; headless?: string; gui?: string }
+    parts: { skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string }; headless?: string; gui?: string; background?: boolean }
   ): Promise<void> {
     const pkgDir = this.getContentDir(this.packages.get(name)!);
     if (parts.headless) {
@@ -478,6 +480,14 @@ export class PackageManager {
       await fs.mkdir(guiDir, { recursive: true });
       await fs.copyFile(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/gui-extensions/${name}.js`));
+    }
+    if (parts.background) {
+      const { loadSettings, saveSettings } = await import("./settings.js");
+      const settings = loadSettings() as { backgroundExtensions?: string[] };
+      const list = new Set(settings.backgroundExtensions ?? []);
+      list.add(name);
+      saveSettings({ backgroundExtensions: [...list] } as never);
+      console.log(chalk.dim(`   Background tasks enabled (restart the sentinel to run them)`));
     }
     if (parts.skill) {
       const { loadSettings, saveSettings } = await import("./settings.js");
@@ -496,6 +506,11 @@ export class PackageManager {
 
   private async removeParts(name: string): Promise<void> {
     await fs.rm(path.join(os.homedir(), ".fez", "gui-extensions", `${name}.js`), { force: true });
+    const { loadSettings, saveSettings } = await import("./settings.js");
+    const settings = loadSettings() as { backgroundExtensions?: string[] };
+    if (settings.backgroundExtensions?.includes(name)) {
+      saveSettings({ backgroundExtensions: settings.backgroundExtensions.filter((n) => n !== name) } as never);
+    }
     // the skill definition stays: the user may have filled env values and
     // personas may still declare it — removing it silently would break them
   }
