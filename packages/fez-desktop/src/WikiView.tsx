@@ -193,6 +193,8 @@ export default function WikiView({ client }: { client: FezClient }) {
   const [threads, setThreads] = useState<DocCommentThread[]>([]);
   const [tasks, setTasks] = useState<Map<string, { done: boolean; byPk: string; ts: number }>>(new Map());
   const [commenting, setCommenting] = useState<string>(); // the block being commented on
+  const [askDraft, setAskDraft] = useState("");
+  const [ask, setAsk] = useState<string>();
   const [commentDraft, setCommentDraft] = useState("");
 
   // live: agent/other-client versions repaint the list and the open page
@@ -324,6 +326,28 @@ export default function WikiView({ client }: { client: FezClient }) {
     );
   };
 
+  /** The open page's community, or every joined one when nothing is open. */
+  const askCommunityIds = sel
+    ? [sel.communityId]
+    : [...client.state.communities.values()].filter((c) => client.state.joined.has(c.id)).map((c) => c.id);
+
+  /** Promote a scratch query into the open page as a real block. */
+  const keepAsk = async () => {
+    if (!sel || !ask || !latest) return;
+    const block = ["```fez:query", ask, "```"].join("\n");
+    const next = `${latest.content.trimEnd()}\n\n${block}\n`;
+    if (sel.kind === "wiki") {
+      const channelId = selPage?.channelId ?? homeChannel(sel.communityId);
+      if (!channelId) return;
+      await client.publishWikiDoc(channelId, sel.communityId, selPage?.title ?? sel.slug, next, latest.id);
+    } else {
+      await client.publishDoc(sel.channelId, sel.communityId, next, latest.id);
+    }
+    setAsk(undefined);
+    setAskDraft("");
+    await load();
+  };
+
   const create = (communityId: string) => {
     const title = newTitle?.trim();
     setNewTitle(undefined);
@@ -389,7 +413,7 @@ export default function WikiView({ client }: { client: FezClient }) {
           // fez:query ships with the app rather than as an extension —
           // it is the doc surface's own vocabulary, like [[links]].
           if (lang === "fez:query" && sel) {
-            return <QueryBlock client={client} source={String(children ?? "")} communityId={communityId} />;
+            return <QueryBlock client={client} source={String(children ?? "")} communityIds={[communityId]} />;
           }
           const render = lang ? blockRenderer(lang) : undefined;
           if (render && sel) {
@@ -518,6 +542,45 @@ export default function WikiView({ client }: { client: FezClient }) {
       </aside>
 
       <section className="wiki-page">
+        {/**
+         * Ask bar. A query you have to publish a document to try is a
+         * query nobody experiments with — you write it blind, save a
+         * version, read it back, and edit again. Here it answers on
+         * Enter, against nothing but the relay. Keep it and it becomes a
+         * block in the page; don't and it never existed.
+         */}
+        <div className="ask-bar">
+          <span className="ask-prompt">?</span>
+          <input
+            className="ask-input"
+            value={askDraft}
+            placeholder="ask — unfinished tasks by page · approvals waiting on me · pages this week"
+            onChange={(e) => setAskDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && askDraft.trim()) setAsk(askDraft.trim());
+              if (e.key === "Escape") {
+                setAsk(undefined);
+                setAskDraft("");
+              }
+            }}
+          />
+          {ask && (
+            <>
+              {sel && (
+                <button className="mini" title="append this query to the open page" onClick={() => void keepAsk()}>
+                  keep in page
+                </button>
+              )}
+              <button className="mini" onClick={() => { setAsk(undefined); setAskDraft(""); }}>clear</button>
+            </>
+          )}
+        </div>
+        {ask && (
+          <div className="ask-result">
+            <QueryBlock client={client} source={ask} communityIds={askCommunityIds} />
+          </div>
+        )}
+
         {!sel && (
           <div className="channel-intro">
             <div className="intro-hash">▤</div>

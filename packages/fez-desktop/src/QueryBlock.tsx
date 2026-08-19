@@ -25,11 +25,18 @@ interface Row {
 export default function QueryBlock({
   client,
   source,
-  communityId,
+  communityIds,
 }: {
   client: FezClient;
   source: string;
-  communityId: string;
+  /**
+   * Which communities to search. A block inside a page asks about ITS
+   * community; the ask bar with no page open asks about all of them —
+   * defaulting to "the first joined" silently returned nothing when the
+   * answer was one community over, which reads as "the feature is
+   * broken" rather than "wrong scope".
+   */
+  communityIds: string[];
 }) {
   const query = parseQuery(source);
   const [rows, setRows] = useState<Row[]>();
@@ -39,7 +46,8 @@ export default function QueryBlock({
     let live = true;
     const run = async () => {
       try {
-        const result = await gather(client, query, communityId);
+        const perCommunity = await Promise.all(communityIds.map((id) => gather(client, query, id)));
+        const result = perCommunity.flat().sort((a, b) => b.ts - a.ts).slice(0, query.limit);
         if (live) setRows(result);
       } catch (err) {
         if (live) setError(err instanceof Error ? err.message : String(err));
@@ -52,7 +60,7 @@ export default function QueryBlock({
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, communityId]);
+  }, [source, communityIds.join(",")]);
 
   const grouped = new Map<string, Row[]>();
   for (const row of rows ?? []) {
@@ -67,7 +75,10 @@ export default function QueryBlock({
         <span className="query-count">
           {rows ? `${rows.length}` : "…"} {query.source}
         </span>
-        <span className="query-desc">{describeQuery(query)}</span>
+        <span className="query-desc">
+          {describeQuery(query)}
+          {communityIds.length > 1 && ` · ${communityIds.length} communities`}
+        </span>
         {query.unknown.length > 0 && (
           <span className="query-unknown" title="these words were ignored">
             ⚠ ignored: {query.unknown.join(", ")}

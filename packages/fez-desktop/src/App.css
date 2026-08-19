@@ -1406,3 +1406,13 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .query-column { flex: 0 0 200px; }
 .query-column-head { color: var(--fg-dim); font-size: 11px; font-family: var(--font-mono); margin-bottom: 5px; text-transform: uppercase; }
 .query-card { background: var(--bg1); border: 1px solid var(--hairline); border-radius: 6px; padding: 6px 8px; margin-bottom: 5px; font-size: 12px; }
+
+/* ── ask bar: try a query without publishing anything ── */
+.ask-bar { display: flex; align-items: center; gap: 8px; padding: 0 0 12px; border-bottom: 1px solid var(--hairline); margin-bottom: 14px; }
+.ask-prompt { color: var(--accent); font-family: var(--font-mono); flex: none; }
+.ask-input {
+  flex: 1; background: none; border: 0; outline: none; color: var(--fg);
+  font: inherit; font-size: 13px; padding: 4px 0;
+}
+.ask-input::placeholder { color: var(--fg-dim); opacity: 0.7; }
+.ask-result { margin-bottom: 18px; }
