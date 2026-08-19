@@ -33,6 +33,84 @@ interface CostSummary {
   ms: number;
 }
 
+/**
+ * The fleet at a glance — what the pane shows when no single agent is
+ * selected.
+ *
+ * "Who is in the fleet" and "how is the fleet doing" are the same
+ * drawer, so this lives here rather than behind a nav item. The
+ * distinction that matters: WORKING NOW is ambient (you glance, it is
+ * never "done"), while turns and failures are retrospective. Failures
+ * lead, because a stuck agent is the thing nothing else surfaces —
+ * today it is one message in a channel you may not be looking at.
+ */
+function FleetSummary({
+  client,
+  wire,
+  working,
+  onHistory,
+}: {
+  client: FezClient;
+  wire: BrowserWire;
+  working: ReadonlyMap<string, { activity: string; ts: number }>;
+  onHistory: () => void;
+}) {
+  const [tally, setTally] = useState<{ turns: number; failed: number; ms: number; since: number }>();
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const events = await wire.query([{ kinds: [KIND_TURN_METRIC], "#p": [client.pubkey], limit: 500 }]);
+        const cutoff = Math.floor(Date.now() / 1000) - 7 * 86400;
+        const sum = { turns: 0, failed: 0, ms: 0, since: cutoff };
+        for (const event of events) {
+          if (event.created_at < cutoff) continue;
+          try {
+            const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as {
+              status?: string;
+              durationMs?: number;
+            };
+            sum.turns++;
+            if (metric.status === "failed") sum.failed++;
+            sum.ms += metric.durationMs ?? 0;
+          } catch { /* not ours to read */ }
+        }
+        setTally(sum);
+      } catch { /* relay unreachable — the live half still works */ }
+    })();
+  }, [client, wire]);
+
+  const live = [...working.entries()].filter(([, w]) => Date.now() - w.ts < 30_000);
+
+  return (
+    <div className="fleet">
+      <div className="fleet-now">
+        {live.length === 0 ? (
+          <span className="fleet-idle">nothing running</span>
+        ) : (
+          live.map(([name, w]) => (
+            <div key={name} className="fleet-live">
+              <span className="fleet-spin">⚙</span>
+              <span className="fleet-agent">@{name}</span>
+              <span className="fleet-doing">{w.activity}</span>
+            </div>
+          ))
+        )}
+      </div>
+      {tally && tally.turns > 0 && (
+        <div className="fleet-stats">
+          <span><strong>{tally.turns}</strong> turns this week</span>
+          {tally.failed > 0 && (
+            <span className="fleet-failed"><strong>{tally.failed}</strong> failed</span>
+          )}
+          <span>{Math.round(tally.ms / 60000)}m of work</span>
+        </div>
+      )}
+      <button className="fleet-history" onClick={onHistory}>full history, trends and the graph →</button>
+    </div>
+  );
+}
+
 export default function AgentsPane({
   client,
   wire,
@@ -40,6 +118,7 @@ export default function AgentsPane({
   working,
   onCancel,
   onDm,
+  onHistory,
   onClose,
 }: {
   client: FezClient;
@@ -48,6 +127,7 @@ export default function AgentsPane({
   working: ReadonlyMap<string, { activity: string; ts: number }>;
   onCancel: (agentName: string) => void;
   onDm: (agentPk: string) => void;
+  onHistory: () => void;
   onClose: () => void;
 }) {
   const [selected, setSelected] = useState<string>(); // agent pk
@@ -118,6 +198,7 @@ export default function AgentsPane({
       )}
       {!current && !creating && !editingPersona && !reviewing && (
         <div className="pane-body">
+          <FleetSummary client={client} wire={wire} working={working} onHistory={onHistory} />
           <BenchProposals />
           {drafts.length > 0 && (
             <>

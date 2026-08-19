@@ -545,9 +545,6 @@ function Shell({
           ⚉ agents
           {benchPending > 0 && <span className="badge">{benchPending}</span>}
         </button>
-        <button className={view.kind === "pulse" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "pulse" })}>
-          ◉ pulse
-        </button>
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
           ▤ docs
         </button>
@@ -627,6 +624,29 @@ function Shell({
             })}
         </div>
         </div>
+        {/* Ambient, not a destination: what is running right now is a
+            thing you glance at, never a thing you clear. Empty when the
+            fleet is idle, so it costs nothing when there is nothing. */}
+        {working.size > 0 && (
+          <div className="rail-live" title="agents working now">
+            {[...working.entries()].slice(0, 3).map(([name, w]) => (
+              <button
+                key={name}
+                className="rail-live-row"
+                onClick={() => setPane({ kind: "watch", agent: name })}
+              >
+                <span className="rail-live-spin">⚙</span>
+                <span className="rail-live-name">{name}</span>
+                <span className="rail-live-doing">{w.activity}</span>
+              </button>
+            ))}
+            {working.size > 3 && (
+              <button className="rail-live-row more" onClick={() => setPane({ kind: "agents" })}>
+                +{working.size - 3} more working
+              </button>
+            )}
+          </div>
+        )}
         <div className="self-wrap">
           {selfMenu && (
             <>
@@ -893,6 +913,7 @@ function Shell({
           working={working}
           onCancel={(agent) => void cancelAgent(agent)}
           onDm={(pk) => openDm(pk)}
+          onHistory={() => { setPane(undefined); setView({ kind: "pulse" }); }}
           onClose={() => setPane(undefined)}
         />
       )}
