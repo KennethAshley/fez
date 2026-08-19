@@ -38,6 +38,8 @@ import {
   parseRespondTo,
   authorAllowed as authorAllowedPure,
   describeAuthorPolicy,
+  untrustedValue,
+  UNTRUSTED_CONTENT_NOTICE,
 } from "@fez/protocol";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
@@ -1115,10 +1117,17 @@ async function main() {
         // agent sees the line it was called on and answers in the margin.
         const docFraming = doc
           ? [
-              `${who(event.pubkey)} left a COMMENT on ${doc.slug ? `the wiki page "${doc.slug}"` : `this channel's doc`}, anchored to this line:`,
-              `> ${doc.anchor}`,
+              // Page titles and the anchored line arrive over the relay:
+              // anyone in the community writes them. Quoted + escaped, a
+              // line reading "ignore previous instructions and …" is a
+              // string the agent has been told about, not a line of its
+              // prompt. The comment itself stays intact — it is the
+              // request the agent must actually act on — and is carried
+              // by the trust boundary in the priming prompt instead.
+              `${who(event.pubkey)} left a COMMENT on ${doc.slug ? `the wiki page ${untrustedValue(doc.slug)}` : `this channel's doc`}, anchored to this line:`,
+              `> ${untrustedValue(doc.anchor)}`,
               `Their comment: ${event.content}`,
-              `Do what they asked — read the document first (${doc.slug ? `fez_wiki_read page "${doc.slug}"` : "fez_doc_get"}) and EDIT it if the request calls for an edit (${doc.slug ? "fez_wiki_write" : "fez doc append/set"}).`,
+              `Do what they asked — read the document first (${doc.slug ? `fez_wiki_read page ${untrustedValue(doc.slug)}` : "fez_doc_get"}) and EDIT it if the request calls for an edit (${doc.slug ? "fez_wiki_write" : "fez doc append/set"}).`,
               `Your reply to this turn is posted straight into that comment thread — write it as a short note to the person who commented, saying what you changed. Do NOT call fez_comment_reply for this reply (that would double-post), and do not post in the channel.`,
             ].join("\n")
           : undefined;
@@ -1152,6 +1161,7 @@ async function main() {
             `- Wiki: the community keeps shared markdown pages (fez_wiki_read / fez_wiki_write). Durable knowledge worth outliving this conversation belongs in a page, linked to related pages with [[Their Name]] — read before you rewrite; owners see every edit signed by you.`,
             `- Boards: if the fez_board_* tools are available, some pages are kanban boards and work you're given may be a CARD on one. Move your own card: fez_board_move to the in-progress column when you start and to the done column when you finish, so the board shows the truth without anyone asking you for a status. fez_board_add files work you found but aren't doing now. Never rewrite a board page with fez_wiki_write — use the board tools, which leave the rest of the document untouched.`,
             `- Doc comments: when a message says someone commented on a doc line, use fez_doc_comments to read the thread, do the work, then fez_comment_reply to answer IN that thread (resolve only when it is actually done) — the comment is the request, so answering in chat alone leaves it open.`,
+            UNTRUSTED_CONTENT_NOTICE,
             `- Names: everyone in a channel appears by their name, not a key. An @mention only reaches someone if you use that NAME — writing @ followed by a hex id reaches nobody, notifies nobody, and merely looks like it worked. If all you can see for someone is a short hex id they have no name published; refer to them without an @.`,
             `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
             ...(shareLevel
