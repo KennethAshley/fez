@@ -1713,7 +1713,18 @@ export class FezClient {
         page.latestAuthor = event.pubkey;
         page.latestContent = event.content;
         page.channelId = channelId;
-        page.title = event.tags.find((t) => t[0] === "title")?.[1] ?? slug;
+        // Title precedence: the explicit tag, else the page's own first
+        // heading, else the slug. Agents writing via fez_wiki_write don't
+        // always set the tag, and "open-questions" is a worse label than
+        // the "# Open Questions" sitting in the content.
+        // Title precedence: an INFORMATIVE tag, else the page's own first
+        // heading, else the slug. A tag that merely repeats the slug
+        // ("open-questions") carries nothing — agents pass the slug as
+        // the page name when that's how they were asked for it — so the
+        // heading in the content wins over it.
+        const tagged = event.tags.find((t) => t[0] === "title")?.[1]?.trim();
+        const heading = /^#{1,6}\s+(.+)$/m.exec(event.content)?.[1]?.trim();
+        page.title = (tagged && tagged !== slug ? tagged : undefined) ?? heading ?? tagged ?? slug;
       }
       return channelId;
     }
