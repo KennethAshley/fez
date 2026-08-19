@@ -1145,6 +1145,9 @@ button.author:hover { text-decoration: underline; }
   font: inherit; font-size: 14px; width: 20px; cursor: pointer; border-radius: 5px;
 }
 .community-add:hover { background: var(--bg2); color: var(--fg); }
+/* Group actions read as one cluster: only the first is pushed right,
+   or each would claim its own auto margin and drift apart. */
+.community-add + .community-add { margin-left: 2px; }
 .community-name .leave { margin-left: 2px; }
 
 /* poll card (fez-polls gui part renders into these) */

@@ -557,12 +557,18 @@ function Shell({
         <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
           » workflows
         </button>
-        <button className="channel home-link" onClick={() => setBrowse({ filter: "" })}>
-          ⌂ browse channels
-        </button>
         <div className="community">
           <div className="community-name">
             channels
+            {/* Group actions sit with the group, not in the nav list —
+                browsing channels is a thing you do TO this list. */}
+            <button
+              className="community-add"
+              title="browse channels"
+              onClick={() => setBrowse({ filter: "" })}
+            >
+              ☰
+            </button>
             {client.state.isOwner(client.pubkey) && (
               <button
                 className="community-add"
