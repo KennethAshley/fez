@@ -313,33 +313,40 @@ function CardTile(props: TileProps) {
       renderText(card.text)
     ),
     card.detail.length > 0 && h("div", { className: "board-card-detail" }, card.detail.map((line) => line.trim()).join("\n")),
-    h(
-      "div",
-      { className: "board-card-foot" },
-      assignee
-        ? h(
-            "span",
-            {
-              className: knownAgent(assignee) ? "board-card-who" : "board-card-who unknown",
-              title: knownAgent(assignee) ? undefined : `nobody named @${assignee} is here`,
-            },
-            `@${assignee}`
-          )
-        : h("span", { className: "board-card-who none" }, "unassigned"),
-      props.editable &&
-        assignee &&
-        knownAgent(assignee) &&
-        h(
-          "button",
-          {
-            className: "board-card-hand",
-            title: `ask @${assignee} to pick this up — posts a comment on this card`,
-            onClick: () => props.onAssign(assignee),
-          },
-          "→"
-        )
-    )
+    // The footer deliberately does NOT repeat the assignee: the @name is
+    // already in the card text, because that's where the markdown puts
+    // it. It carries only what the text can't say — that nobody has this
+    // card, or that its @name matches nobody here.
+    foot(card) &&
+      h(
+        "div",
+        { className: "board-card-foot" },
+        !assignee
+          ? h("span", { className: "board-card-who none" }, "unassigned")
+          : h("span", { className: "board-card-who unknown" }, `@${assignee} isn't here`)
+      ),
+    // Hand-off lives in the corner on hover, like every other action in
+    // this app — a button per card, always shown, is a row of noise on a
+    // surface whose whole job is to be scannable.
+    props.editable &&
+      assignee &&
+      knownAgent(assignee) &&
+      h(
+        "button",
+        {
+          className: "board-card-hand",
+          title: `ask @${assignee} to pick this up — posts a comment on this card`,
+          onClick: () => props.onAssign(assignee),
+        },
+        "→"
+      )
   );
+}
+
+/** Is there anything for the footer to say? Usually not — silence is the default. */
+function foot(card: Card): boolean {
+  const assignee = card.assignees[0];
+  return assignee ? !knownAgent(assignee) : !card.done;
 }
 
 /** @mentions get a highlight; everything else is plain text. */

@@ -1490,6 +1490,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   border-radius: 6px;
 }
 .board-card {
+  position: relative;
   background: var(--bg1);
   border: 1px solid var(--hairline);
   border-left: 2px solid var(--accent);
@@ -1520,15 +1521,21 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .board-card-who.none { color: var(--fg-dim); font-style: italic; }
 .board-card-who.unknown { color: var(--yellow); }
 .board-card-hand {
-  margin-left: auto;
-  background: none;
-  border: none;
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  display: none;
+  background: var(--bg2);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
   color: var(--fg-dim);
   cursor: pointer;
-  font-size: 12px;
-  padding: 0 3px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
 }
-.board-card-hand:hover { color: var(--accent); }
+.board-card:hover .board-card-hand { display: block; }
+.board-card-hand:hover { color: var(--accent); border-color: var(--accent); }
 .board-mention { color: var(--accent); }
 .board-new {
   width: 100%;
