@@ -69,7 +69,12 @@ async function main() {
   }
 
   const client = new CapabilityClient({ relay: relayUrls, privateKey: loadServiceKey("workflows") });
-  const relay = new RelayConnection({ urls: relayUrls });
+  // Workflows watch h-tagged channel messages, and a membership-gated
+  // relay delivers those only over a NIP-42-authed connection. Without
+  // the signer this process connects fine, subscribes fine, and simply
+  // never receives anything — a service that looks healthy and does
+  // nothing, which is the hardest kind of broken to notice.
+  const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
 

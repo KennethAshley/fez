@@ -48,6 +48,7 @@ Set in `fez-relay.service`, deliberately explicit:
 | policy | what it does |
 | --- | --- |
 | `rate-limit=600` | caps events per connection per minute |
+| `membership` | h-tagged content reaches authed members only |
 | `kind-whitelist=…` | only fez's 45 kinds are accepted |
 
 **`kind-whitelist` must carry its list.** The built-in parses an empty
@@ -55,10 +56,21 @@ argument as `[0]`, which rejects every fez event and looks exactly like
 a relay that doesn't work. When you add a kind to `src/kinds.ts`, add it
 here too.
 
-Reads are currently **open**: private channels are unlisted, not
-private. Add `--policy membership` to the unit when that matters — it is
-the gate that does not exist on a generic nostr relay, and the reason
-pointing fez at a public relay quietly voids its security model.
+**`membership` fails closed on reads.** Messages, docs and reactions are
+delivered only over a NIP-42-authenticated connection, to members of
+that channel. This is the gate that does not exist on a generic nostr
+relay, and the reason pointing fez at a public relay quietly voids its
+security model.
+
+The cost is a sharp edge worth remembering: an unauthenticated client
+connects fine, subscribes fine, and receives **nothing**. It looks
+exactly like an empty relay. Any fez process that reads channel content
+must pass an `authSigner` — fez-workflows didn't, and would have run
+healthy and idle forever. If something on a gated relay "can't see
+anything", check for a signer before you check for data.
+
+Community and channel metadata stay public, so a stranger can still
+discover a community and ask for an invite.
 
 ## Adding a relay does not copy history
 
