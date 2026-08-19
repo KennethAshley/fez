@@ -1,3 +1,4 @@
+export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
 import { CommunityState, setStatePersistence, type Role, type StatePersistence } from "./community-state.js";
 
 /**

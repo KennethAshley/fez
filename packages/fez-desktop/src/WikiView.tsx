@@ -6,6 +6,7 @@ import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { taskKey, wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
 import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
+import QueryBlock from "./QueryBlock";
 
 /**
  * Docs — the notion+obsidian surface over kind 40100. Two families in
@@ -385,6 +386,11 @@ export default function WikiView({ client }: { client: FezClient }) {
         // extension's component (```fez:live …```), everything else stays code.
         code: ({ className, children, ...rest }) => {
           const lang = /language-([\w:.-]+)/.exec(className ?? "")?.[1];
+          // fez:query ships with the app rather than as an extension —
+          // it is the doc surface's own vocabulary, like [[links]].
+          if (lang === "fez:query" && sel) {
+            return <QueryBlock client={client} source={String(children ?? "")} communityId={communityId} />;
+          }
           const render = lang ? blockRenderer(lang) : undefined;
           if (render && sel) {
             const body = String(children ?? "").replace(/\n$/, "");
