@@ -4,7 +4,18 @@ import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { parseQuery, taskKey, wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
+import {
+  bindMention,
+  parseQuery,
+  taskKey,
+  wikiSlug,
+  type DocCommentThread,
+  type FezClient,
+  type MentionBindings,
+  type MentionCandidate,
+  type WireEvent,
+} from "@fez/client";
+import MentionBox from "./MentionBox";
 import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";
 import QueryBlock from "./QueryBlock";
 import SlashMenu, { caretPosition, slashAt, type SlashState } from "./SlashMenu";
@@ -86,15 +97,20 @@ function blocksOf(markdown: string): string[] {
 /** One anchored thread: the note, its replies, resolve, and a reply box. */
 function CommentThread({
   client,
+  roster,
   thread,
   onReply,
 }: {
   client: FezClient;
+  /** Who this doc's channel actually contains — the mention namespace. */
+  roster: MentionCandidate[];
   thread: DocCommentThread;
-  onReply: (text: string, resolve?: boolean) => void;
+  onReply: (text: string, resolve?: boolean, bindings?: MentionBindings) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [replying, setReplying] = useState(false);
+  // Who each picked @name means, settled at the moment of picking.
+  const [bindings, setBindings] = useState<MentionBindings>(new Map());
   const when = (ts: number) =>
     new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   return (
@@ -104,34 +120,32 @@ function CommentThread({
         <span className="time">{when(thread.ts)}</span>
         {thread.resolved && <span className="role-tag installed-tag">resolved</span>}
       </div>
-      <div className="comment-text">{renderMentions(thread.text)}</div>
+      <div className="comment-text">{renderMentions(client, thread.text, thread.mentionPks)}</div>
       {thread.replies.map((reply) => (
         <div key={reply.id} className="comment-reply">
           <span className="comment-author">{client.displayName(reply.authorPk)}</span>
           <span className="time">{when(reply.ts)}</span>
-          <div className="comment-text">{renderMentions(reply.text)}</div>
+          <div className="comment-text">{renderMentions(client, reply.text, reply.mentionPks)}</div>
         </div>
       ))}
       {replying ? (
         <div className="comment-compose">
-          <textarea
-            className="manage-input comment-input"
+          <MentionBox
+            client={client}
+            roster={roster}
             value={draft}
             autoFocus
-            rows={2}
             placeholder="reply… @agent to hand it over"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (draft.trim()) {
-                  onReply(draft);
-                  setDraft("");
-                  setReplying(false);
-                }
-              }
-              if (e.key === "Escape") setReplying(false);
+            onChange={setDraft}
+            onMentionPick={(name, pubkey) => setBindings((prev) => bindMention(prev, name, pubkey))}
+            onSubmit={() => {
+              if (!draft.trim()) return;
+              onReply(draft, undefined, bindings);
+              setDraft("");
+              setBindings(new Map());
+              setReplying(false);
             }}
+            onEscape={() => setReplying(false)}
           />
         </div>
       ) : (
@@ -173,9 +187,16 @@ function stripCheckbox(children: React.ReactNode): React.ReactNode {
   ) as React.ReactNode;
 }
 
-function renderMentions(text: string) {
+/**
+ * Style an @name only if the comment actually tagged someone by that
+ * name. Highlighting every @word made a mention that reached nobody
+ * look identical to one that worked — the same silence the send path
+ * stopped producing, reappearing on the way back out.
+ */
+function renderMentions(client: FezClient, text: string, mentionPks: readonly string[]) {
+  const tagged = new Set(mentionPks.map((pk) => client.displayName(pk).toLowerCase()));
   return text.split(/(@[\w-]+)/g).map((part, index) =>
-    part.startsWith("@") ? (
+    part.startsWith("@") && tagged.has(part.slice(1).toLowerCase()) ? (
       <span key={index} className="mention">{part}</span>
     ) : (
       <span key={index}>{part}</span>
@@ -198,6 +219,7 @@ export default function WikiView({ client }: { client: FezClient }) {
   const [askDraft, setAskDraft] = useState("");
   const [ask, setAsk] = useState<string>();
   const [commentDraft, setCommentDraft] = useState("");
+  const [commentBindings, setCommentBindings] = useState<MentionBindings>(new Map());
   /**
    * Which lens the open page is under. `undefined` means "nobody has
    * chosen" — so a board-shaped document may open as a board, while a
@@ -239,7 +261,13 @@ export default function WikiView({ client }: { client: FezClient }) {
    * same summon path chat uses, so "@researcher fix this line" reaches
    * the agent with the line as its anchor.
    */
-  const comment = async (text: string, anchor: string, parentId?: string, resolve?: boolean) => {
+  const comment = async (
+    text: string,
+    anchor: string,
+    parentId?: string,
+    resolve?: boolean,
+    bindings?: MentionBindings
+  ) => {
     if (!sel) return;
     const body = text.trim();
     if (!body && !resolve) return;
@@ -247,7 +275,8 @@ export default function WikiView({ client }: { client: FezClient }) {
     if (!channelId) return;
     // Roster-scoped, like the channel composer: a doc comment that
     // @mentions a name nobody here has must not look like it worked.
-    const mentionPks = client.resolveMentionsIn(body, channelId).pubkeys;
+    // Names picked from the autocomplete come with their pubkey already.
+    const mentionPks = client.resolveMentionsIn(body, channelId, bindings).pubkeys;
     await client.publishDocComment(channelId, sel.communityId, body, {
       anchor,
       slug: sel.kind === "wiki" ? sel.slug : undefined,
@@ -259,6 +288,7 @@ export default function WikiView({ client }: { client: FezClient }) {
     // comment stays in the document — the agent answers in this thread.
     setCommenting(undefined);
     setCommentDraft("");
+    setCommentBindings(new Map());
     await load();
   };
 
@@ -307,6 +337,18 @@ export default function WikiView({ client }: { client: FezClient }) {
     if (scope && scope.communityId === communityId) return scope.channelId;
     return [...(client.state.community(communityId)?.channels.keys() ?? [])][0];
   };
+
+  /**
+   * The mention namespace for comments on this page: whoever is on the
+   * roster of the channel the comment will be published to. A wiki page
+   * belongs to a community, so it borrows the channel it lands in.
+   */
+  const commentChannelId = sel
+    ? sel.kind === "wiki"
+      ? selPage?.channelId ?? homeChannel(sel.communityId)
+      : sel.channelId
+    : undefined;
+  const commentRoster: MentionCandidate[] = commentChannelId ? client.mentionCandidates(commentChannelId) : [];
 
   const openWiki = (communityId: string, slug: string, title?: string) => {
     setSel({ kind: "wiki", communityId, slug });
@@ -900,27 +942,32 @@ export default function WikiView({ client }: { client: FezClient }) {
                                   key={thread.id}
                                   client={client}
                                   thread={thread}
-                                  onReply={(text, resolve) => void comment(text, block, thread.id, resolve)}
+                                  roster={commentRoster}
+                                  onReply={(text, resolve, bindings) =>
+                                    void comment(text, block, thread.id, resolve, bindings)
+                                  }
                                 />
                               ))}
                               {commenting === block && (
                                 <div className="comment-compose">
-                                  <textarea
-                                    className="manage-input comment-input"
+                                  <MentionBox
+                                    client={client}
+                                    roster={commentRoster}
                                     value={commentDraft}
                                     autoFocus
-                                    rows={2}
                                     placeholder="comment… @agent to give them this line as work"
-                                    onChange={(e) => setCommentDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter" && !e.shiftKey) {
-                                        e.preventDefault();
-                                        void comment(commentDraft, block);
-                                      }
-                                      if (e.key === "Escape") setCommenting(undefined);
-                                    }}
+                                    onChange={setCommentDraft}
+                                    onMentionPick={(name, pubkey) =>
+                                      setCommentBindings((prev) => bindMention(prev, name, pubkey))
+                                    }
+                                    onSubmit={() => void comment(commentDraft, block, undefined, undefined, commentBindings)}
+                                    onEscape={() => setCommenting(undefined)}
                                   />
-                                  <button className="agent-action" disabled={!commentDraft.trim()} onClick={() => void comment(commentDraft, block)}>
+                                  <button
+                                    className="agent-action"
+                                    disabled={!commentDraft.trim()}
+                                    onClick={() => void comment(commentDraft, block, undefined, undefined, commentBindings)}
+                                  >
                                     comment
                                   </button>
                                 </div>

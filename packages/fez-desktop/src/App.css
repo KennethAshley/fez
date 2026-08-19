@@ -1295,6 +1295,9 @@ button.author:hover { text-decoration: underline; }
 .comment-reply { margin-top: 6px; padding-left: 8px; border-left: 1px solid var(--bg2); }
 .comment-actions { display: flex; gap: 6px; margin-top: 6px; }
 .comment-compose { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+/* The mention popup anchors to the box it belongs to, wherever that box is. */
+.mention-box { position: relative; display: flex; flex-direction: column; }
+.mention-box .mention-pop { left: 0; }
 .comment-input { width: 100%; resize: vertical; font-size: 12.5px; }
 
 /* ── channel info: the channel's doc + pins, always at hand ── */

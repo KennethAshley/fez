@@ -207,6 +207,9 @@ export interface DocCommentReply {
   authorPk: string;
   text: string;
   ts: number;
+  /** Who this comment actually tagged. A name it did NOT reach must not
+   *  render as though it had. */
+  mentionPks: string[];
 }
 
 /** A comment thread anchored to a line of a doc (Notion's margin note). */
@@ -884,6 +887,7 @@ export class FezClient {
           authorPk: event.pubkey,
           text: event.content,
           ts: event.created_at,
+          mentionPks: event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
           resolved: false,
           replies: [],
         });
@@ -891,7 +895,14 @@ export class FezClient {
     }
     for (const reply of replies) {
       const root = roots.get(reply.tags.find((t) => t[0] === "e")![1]);
-      if (root) root.replies.push({ id: reply.id, authorPk: reply.pubkey, text: reply.content, ts: reply.created_at });
+      if (root)
+        root.replies.push({
+          id: reply.id,
+          authorPk: reply.pubkey,
+          text: reply.content,
+          ts: reply.created_at,
+          mentionPks: reply.tags.filter((t) => t[0] === "p").map((t) => t[1]),
+        });
     }
     for (const id of resolvedRoots) {
       const root = roots.get(id);

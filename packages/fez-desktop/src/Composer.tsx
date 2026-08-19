@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, MentionCandidate } from "@fez/client";
 import { EMOJI, searchEmoji, type EmojiEntry } from "./emoji";
 import { COMMANDS, type CommandMeta } from "./commands";
+import { MentionList, rosterMatches } from "./mentions";
 
 /**
  * The message composer, Buzz-shaped: multiline textarea (Enter sends,
@@ -87,31 +88,10 @@ export default function Composer({
     return undefined;
   }, [value, caret, commandsEnabled]);
 
-  // Everyone in this room, including namesakes: two members really
-  // called "deployer" both appear, because picking is how the sender
-  // says which one — collapsing them here would take that away.
-  const mentionCandidates = useMemo(() => {
-    if (token?.type !== "mention") return [];
-    const partial = token.partial.toLowerCase();
-    return roster
-      .filter((c) => c.isMember && c.pubkey !== client.pubkey && c.name.toLowerCase().includes(partial))
-      .sort((a, b) => {
-        const aStarts = a.name.toLowerCase().startsWith(partial) ? 0 : 1;
-        const bStarts = b.name.toLowerCase().startsWith(partial) ? 0 : 1;
-        return aStarts - bStarts || a.name.localeCompare(b.name);
-      })
-      .slice(0, 6);
-  }, [roster, client, token]);
-
-  /** Namesakes in view need the key shown, or the two rows are identical. */
-  const duplicated = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const c of mentionCandidates) {
-      const key = c.name.toLowerCase();
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    return counts;
-  }, [mentionCandidates]);
+  const mentionCandidates = useMemo(
+    () => (token?.type === "mention" ? rosterMatches(roster, token.partial, client.pubkey) : []),
+    [roster, client, token]
+  );
 
   const emojiCandidates = useMemo(
     () => (token?.type === "emoji" ? searchEmoji(token.partial, 8) : []),
@@ -317,23 +297,9 @@ export default function Composer({
       )}
       {popupOpen && (
         <div className="mention-pop">
-          {token?.type === "mention" &&
-            mentionCandidates.map((candidate, index) => (
-              <button
-                key={candidate.pubkey}
-                className={index === pickIndex ? "mention-item active" : "mention-item"}
-                onMouseDown={(e) => {
-                  e.preventDefault(); // keep textarea focus
-                  pick(index);
-                }}
-              >
-                @{candidate.name}
-                {(duplicated.get(candidate.name.toLowerCase()) ?? 0) > 1 && (
-                  <span className="mention-key">{candidate.pubkey.slice(0, 8)}</span>
-                )}
-                {client.isOnline(candidate.pubkey) && <span className="dot on" />}
-              </button>
-            ))}
+          {token?.type === "mention" && (
+            <MentionList client={client} candidates={mentionCandidates} pickIndex={pickIndex} onPick={pick} />
+          )}
           {token?.type === "channel" &&
             channelCandidates.map((candidate, index) => (
               <button
