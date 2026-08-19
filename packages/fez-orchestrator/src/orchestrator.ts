@@ -9,7 +9,9 @@ import {
   KIND_CHANNEL_MESSAGE,
   KIND_DELETION,
   KIND_MEMBERSHIP,
-  KIND_REACTION,, resolveRelays } from "@fez/protocol";
+  KIND_REACTION,
+  resolveRelays,
+} from "@fez/protocol";
 import { isSmallTalk, agentTool, fleetQuestion, noneTool, explicitActor, scrubNames } from "./route-logic.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 

@@ -8,7 +8,9 @@ import {
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
-  KIND_THREAD_SUMMARY,, resolveRelays } from "@fez/protocol";
+  KIND_THREAD_SUMMARY,
+  resolveRelays,
+} from "@fez/protocol";
 import { loadServiceKey, parseThreadRef, resolveChannels } from "./service-common.js";
 
 /**

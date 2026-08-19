@@ -11,7 +11,9 @@ import {
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
   KIND_REACTION,
-  KIND_WORKFLOW_RUN,, resolveRelays } from "@fez/protocol";
+  KIND_WORKFLOW_RUN,
+  resolveRelays,
+} from "@fez/protocol";
 import { Cron } from "croner";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { loadDefs, isSay, isWait, isDelay, isDm, isReact, isWebhook, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";

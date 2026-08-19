@@ -33,7 +33,12 @@ import {
   type DmRumor,
   type HarnessSession,
   type HarnessUpdate,
-  type TimeoutOptions,, resolveRelays } from "@fez/protocol";
+  type TimeoutOptions,
+  resolveRelays,
+  parseRespondTo,
+  authorAllowed as authorAllowedPure,
+  describeAuthorPolicy,
+} from "@fez/protocol";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -360,9 +365,9 @@ async function main() {
     return "deny";
   });
 
-  const allowlist = respondTo.startsWith("allowlist:")
-    ? new Set(respondTo.slice("allowlist:".length).split(",").map((s) => s.trim()))
-    : undefined;
+  // The decision itself is pure and eval-pinned (src/author-gate.ts).
+  // Only the sibling LOOKUP lives here, because it needs the relay.
+  const authorPolicy = parseRespondTo(respondTo);
 
   // Sibling verification (Buzz's NIP-OA gate, fez-shaped): an author is a
   // sibling if OUR owner has published a 47006 attestation p-tagging them.
@@ -386,11 +391,15 @@ async function main() {
   // trust each other, strangers don't get in); allowlist adds explicit
   // pubkeys on top of that.
   async function authorAllowed(pubkey: string): Promise<boolean> {
-    if (respondTo === "anyone") return true;
-    if (pubkey === owner) return true;
-    if (allowlist?.has(pubkey)) return true;
-    return isSibling(pubkey);
+    // Resolve sibling-hood only when the pure rule would actually
+    // consult it — no relay round-trip to admit the owner, and none at
+    // all for an open agent.
+    if (authorPolicyAdmits(pubkey, false)) return true;
+    return authorPolicyAdmits(pubkey, await isSibling(pubkey));
   }
+
+  const authorPolicyAdmits = (pubkey: string, sibling: boolean): boolean =>
+    authorAllowedPure({ policy: authorPolicy, author: pubkey, owner, isSibling: sibling });
 
   // Turn budget (Buzz's max_turns_per_session, rolling-window flavored) —
   // the blunt backstop behind the depth-tag loop guard: a runaway chain
@@ -505,7 +514,7 @@ async function main() {
   setInterval(presenceBeat, 30_000).unref?.();
 
   console.log(`🟢 @${personaId} standing by ${channels.length > 0 ? `in ${channels.length} channel(s)` : "DM-only"} on ${relayUrls.join(", ")}`);
-  console.log(`   Pubkey: ${myPubkey} | respondTo: ${respondTo}`);
+  console.log(`   Pubkey: ${myPubkey} | responds to: ${describeAuthorPolicy(authorPolicy, owner)}`);
 
   // Observer stream: the owner-only activity firehose (thoughts, tool
   // calls, turn lifecycle) as ephemeral NIP-44-encrypted frames — Buzz's
