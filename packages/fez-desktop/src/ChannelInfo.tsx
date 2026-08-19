@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fez/client";
+import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
 
 /**
  * The channel's standing information, always reachable from inside the
@@ -14,14 +17,12 @@ export default function ChannelInfo({
   channelId,
   communityId,
   channelName,
-  renderMd,
   onJump,
 }: {
   client: FezClient;
   channelId: string;
   communityId: string;
   channelName: string;
-  renderMd: (text: string) => React.ReactNode;
   onJump: (msgId: string) => void;
 }) {
   const key = `fez-chinfo-${channelId}`;
@@ -106,7 +107,39 @@ export default function ChannelInfo({
 
       {open && !editing && (
         <div className="channel-info-body">
-          {hasDoc && <div className="md channel-info-doc">{renderMd(doc!.latestContent)}</div>}
+          {hasDoc && (
+            <div className="md channel-info-doc">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, ...(docMarkdownPlugins() as [])]}
+                components={{
+                  // extension-owned fenced blocks (live blocks, diagrams…)
+                  code: ({ className, children, ...rest }) => {
+                    const lang = /language-([\w:.-]+)/.exec(className ?? "")?.[1];
+                    const render = lang ? blockRenderer(lang) : undefined;
+                    if (render) {
+                      const body = String(children ?? "").replace(/\n$/, "");
+                      const infoLine =
+                        doc!.latestContent.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang;
+                      return (
+                        <>
+                          {render({
+                            info: infoLine.trim().slice(3 + lang!.length).trim(),
+                            body,
+                            raw: `${infoLine}\n${body}\n\`\`\``,
+                            channelId,
+                            communityId,
+                          })}
+                        </>
+                      );
+                    }
+                    return <code className={className} {...rest}>{children}</code>;
+                  },
+                }}
+              >
+                {doc!.latestContent}
+              </ReactMarkdown>
+            </div>
+          )}
           {hasDoc && (
             <div className="channel-info-meta">
               last edited by {client.displayName(doc!.latestAuthor)} ·{" "}

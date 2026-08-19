@@ -1,0 +1,22 @@
+{
+  "name": "@fez/live-blocks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Live blocks for fez docs — a markdown block an agent keeps up to date. Refresh is a doc comment, so every update is a signed edit with an audit trail.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "headless": "dist/headless.js",
+      "gui": "dist/gui.js"
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  }
+}

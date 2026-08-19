@@ -1080,7 +1080,6 @@ function ChannelView({
           channelId={channelId}
           communityId={communityId}
           channelName={channelName}
-          renderMd={(text) => <MdBody text={text} />}
           onJump={(msgId) => document.getElementById(`msg-${msgId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
         />
       )}

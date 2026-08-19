@@ -28,6 +28,31 @@ export interface GuiExtensionApi {
   ) => void;
   /** Add a slash command to the GUI composer (/name). */
   registerGuiCommand: (name: string, run: (args: string) => Promise<string> | string) => void;
+  /**
+   * Extend markdown PARSING everywhere docs render — a remark plugin
+   * (callouts, math, footnotes…). Runs after remark-gfm.
+   */
+  registerMarkdownPlugin: (plugin: unknown) => void;
+  /**
+   * Own a fenced block by its language tag: ```<lang> … ``` renders with
+   * your component instead of a code block. The doc context comes with
+   * it, so a block can publish (comments, docs) as the viewer.
+   */
+  registerBlockRenderer: (lang: string, render: (props: BlockProps) => React.ReactNode) => void;
+}
+
+/** What a block renderer receives: its own source plus where it lives. */
+export interface BlockProps {
+  /** everything after the language tag on the fence line, e.g. `agent=researcher refresh=daily` */
+  info: string;
+  /** the block's body text */
+  body: string;
+  /** the whole fenced block verbatim — the anchor for a comment on it */
+  raw: string;
+  channelId: string;
+  communityId: string;
+  /** wiki page slug, absent for a channel doc */
+  slug?: string;
 }
 
 // ── decorator + command registries (host side of the seams) ────────
@@ -49,6 +74,23 @@ export function registerGuiCommand(name: string, run: (args: string) => Promise<
 }
 export function guiCommand(name: string): ((args: string) => Promise<string> | string) | undefined {
   return guiCommands.get(name.toLowerCase());
+}
+
+// ── markdown extension registries (the doc-side seam) ──────────────
+const markdownPlugins: unknown[] = [];
+export function registerMarkdownPlugin(plugin: unknown): void {
+  markdownPlugins.push(plugin);
+}
+export function docMarkdownPlugins(): readonly unknown[] {
+  return markdownPlugins;
+}
+
+const blockRenderers = new Map<string, (props: BlockProps) => React.ReactNode>();
+export function registerBlockRenderer(lang: string, render: (props: BlockProps) => React.ReactNode): void {
+  blockRenderers.set(lang.toLowerCase(), render);
+}
+export function blockRenderer(lang: string): ((props: BlockProps) => React.ReactNode) | undefined {
+  return blockRenderers.get(lang.toLowerCase());
 }
 
 // ── theme registry ─────────────────────────────────────────────────
@@ -133,7 +175,16 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
   } catch {
     return loaded;
   }
-  const api: GuiExtensionApi = { React, client, registerArtifactViewer, registerTheme, registerMessageDecorator, registerGuiCommand };
+  const api: GuiExtensionApi = {
+    React,
+    client,
+    registerArtifactViewer,
+    registerTheme,
+    registerMessageDecorator,
+    registerGuiCommand,
+    registerMarkdownPlugin,
+    registerBlockRenderer,
+  };
   for (const [name, code] of files) {
     try {
       const mod = await importModule(code);

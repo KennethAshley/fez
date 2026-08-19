@@ -3,6 +3,7 @@ import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
+import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
 
 /**
  * Docs — the notion+obsidian surface over kind 40100. Two families in
@@ -265,11 +266,35 @@ export default function WikiView({ client }: { client: FezClient }) {
 
   const md = (text: string, communityId: string) => (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      // extensions extend parsing (callouts, math…) through the seam
+      remarkPlugins={[remarkGfm, ...(docMarkdownPlugins() as [])]}
       // react-markdown's default sanitizer strips unknown schemes — our
       // wiki: links died there before any click handler ran.
       urlTransform={(url) => (url.startsWith("wiki:") ? url : defaultUrlTransform(url))}
       components={{
+        // A fenced block whose language an extension owns renders as that
+        // extension's component (```fez:live …```), everything else stays code.
+        code: ({ className, children, ...rest }) => {
+          const lang = /language-([\w:.-]+)/.exec(className ?? "")?.[1];
+          const render = lang ? blockRenderer(lang) : undefined;
+          if (render && sel) {
+            const body = String(children ?? "").replace(/\n$/, "");
+            const infoLine = text.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang;
+            return (
+              <>
+                {render({
+                  info: infoLine.trim().slice(3 + lang!.length).trim(),
+                  body,
+                  raw: `${infoLine}\n${body}\n\`\`\``,
+                  channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(communityId) ?? "" : sel.channelId,
+                  communityId,
+                  slug: sel.kind === "wiki" ? sel.slug : undefined,
+                })}
+              </>
+            );
+          }
+          return <code className={className} {...rest}>{children}</code>;
+        },
         a: ({ href, children }) => {
           if (href?.startsWith("wiki:")) {
             const slug = href.slice(5);
