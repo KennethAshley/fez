@@ -16,6 +16,7 @@ import {
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
   KIND_DELETION,
+  KIND_DOC_COMMENT,
   KIND_DRAFT,
   KIND_MEMBERSHIP,
   KIND_ARTIFACT,
@@ -844,7 +845,14 @@ async function main() {
     },
     /** true for our own deliberate re-entries (steer re-dispatch, queue drain) — they reuse a seen event. */
     redispatch = false,
-    attempts = 0
+    attempts = 0,
+    /**
+     * Set when the trigger is a DOC COMMENT (40101) rather than a chat
+     * message: the whole turn then lives in the document — the reply is
+     * published back into the comment thread, and nothing (no draft, no
+     * typing, no message) touches the channel timeline.
+     */
+    doc?: { rootId: string; anchor: string; slug?: string }
   ): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       const communityId = event.tags.find((t) => t[0] === "c")?.[1];
@@ -944,6 +952,7 @@ async function main() {
         event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ??
         event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
       const typing = setInterval(() => {
+        if (doc) return; // a doc-comment turn never touches the channel timeline
         void relay
           .publish(
             client.signEvent({
@@ -971,29 +980,55 @@ async function main() {
       // carry the same thread tags.
       const triggerParent = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
       const triggerRoot = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? triggerParent;
-      const replyTags = [
-        ["h", channelId],
-        ["c", communityId],
-        ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
-        ["e", event.id, "", "reply"],
-        ["p", event.pubkey],
-        ["depth", String(triggerDepth + 1)],
-      ];
+      // A doc-comment turn answers INSIDE the document: a 40101 reply
+      // e-tagged to the comment root. Chat threading tags don't apply.
+      const replyTags = doc
+        ? [
+            ["h", channelId],
+            ["c", communityId],
+            ...(doc.slug ? [["d", doc.slug]] : []),
+            ["e", doc.rootId],
+            ["p", event.pubkey],
+            ["depth", String(triggerDepth + 1)],
+          ]
+        : [
+            ["h", channelId],
+            ["c", communityId],
+            ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
+            ["e", event.id, "", "reply"],
+            ["p", event.pubkey],
+            ["depth", String(triggerDepth + 1)],
+          ];
+      const replyKind = doc ? KIND_DOC_COMMENT : KIND_CHANNEL_MESSAGE;
       try {
         // fresh = first prompt into a session (or a replay into a recycled
         // one): persona + memory + conventions + recent context. Later
         // turns send just the new message — the session remembers.
+        // A doc-comment turn is framed as document work, not chat: the
+        // agent sees the line it was called on and answers in the margin.
+        const docFraming = doc
+          ? [
+              `${event.pubkey.slice(0, 8)} left a COMMENT on ${doc.slug ? `the wiki page "${doc.slug}"` : `this channel's doc`}, anchored to this line:`,
+              `> ${doc.anchor}`,
+              `Their comment: ${event.content}`,
+              `Do what they asked — read the document first (${doc.slug ? `fez_wiki_read page "${doc.slug}"` : "fez_doc_get"}) and EDIT it if the request calls for an edit (${doc.slug ? "fez_wiki_write" : "fez doc append/set"}).`,
+              `Your reply to this turn is posted straight into that comment thread — write it as a short note to the person who commented, saying what you changed. Do NOT call fez_comment_reply for this reply (that would double-post), and do not post in the channel.`,
+            ].join("\n")
+          : undefined;
+
         const buildPrompt = async (fresh: boolean): Promise<string> => {
           if (!fresh) {
             return [
-              `New message in the channel from ${event.pubkey.slice(0, 8)}: ${event.content}`,
+              docFraming ?? `New message in the channel from ${event.pubkey.slice(0, 8)}: ${event.content}`,
               ...(steering.length > 0
                 ? [
                     `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response:`,
                     ...steering,
                   ]
                 : []),
-              `Reply to it. The conventions from the start of this session still apply. Be concise — this is chat.`,
+              docFraming
+                ? `The conventions from the start of this session still apply. Be concise.`
+                : `Reply to it. The conventions from the start of this session still apply. Be concise — this is chat.`,
             ].join("\n\n");
           }
           const memorySection = await coreMemorySection();
@@ -1048,7 +1083,7 @@ async function main() {
                   ...steering,
                 ]
               : []),
-            `Reply to the last message that addressed you. Be concise — this is chat.`,
+            docFraming ?? `Reply to the last message that addressed you. Be concise — this is chat.`,
           ].filter(Boolean).join("\n\n");
         };
 
@@ -1061,6 +1096,7 @@ async function main() {
         let lastDraftAt = 0;
         const publishDraft = (textSoFar: string) => {
           const now = Date.now();
+          if (doc) return; // drafts are a channel-timeline affordance
           if (!textSoFar || now - lastDraftAt < 350) return;
           lastDraftAt = now;
           void relay
@@ -1077,7 +1113,7 @@ async function main() {
         const reply = capReply(rawText);
 
         const replyEvent = client.signEvent({
-          kind: KIND_CHANNEL_MESSAGE,
+          kind: replyKind,
           tags: replyTags,
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
@@ -1105,7 +1141,7 @@ async function main() {
           publishTurnMetric(`ch:${channelId}`, "cancelled", turnStartedAt, 0, event.id);
           console.log("⏹ Turn cancelled by owner");
           void relay
-            .publish(client.signEvent({ kind: KIND_CHANNEL_MESSAGE, tags: replyTags, content: "⏹ stopped by my owner mid-turn." }))
+            .publish(client.signEvent({ kind: replyKind, tags: replyTags, content: "⏹ stopped by my owner mid-turn." }))
             .catch(() => {});
         } else if (err instanceof Error && err.name === "AbortError") {
           publishObserver({ type: "turn", status: "steered" });
@@ -1160,7 +1196,7 @@ async function main() {
           void relay
             .publish(
               client.signEvent({
-                kind: KIND_CHANNEL_MESSAGE,
+                kind: replyKind,
                 tags: replyTags,
                 content: tripped
                   ? `🛑 ${BREAKER_THRESHOLD} failures in a row (last: ${reason.slice(0, 120)}${hint}) — pausing for ${BREAKER_COOLDOWN_MS / 60_000} minutes. Fix the cause and mention me after, or restart me.`
@@ -1352,6 +1388,31 @@ async function main() {
   // replies register as "answered" before any decision to reply is made
   // — otherwise every restart re-answers the last DM.
   let dmLive = false;
+  /**
+   * A comment on a doc/page that addresses us. Replies (e-tagged to a
+   * root) are other people's thread traffic — only ROOT comments are
+   * requests, and only if they mention us. The turn runs through the
+   * same machinery as a chat mention, but tagged as a doc turn so the
+   * answer goes back into the margin instead of the channel.
+   */
+  const handleDocComment = async (event: {
+    id: string;
+    pubkey: string;
+    created_at: number;
+    content: string;
+    tags: string[][];
+  }): Promise<void> => {
+    if (event.pubkey === myPubkey) return;
+    const anchor = event.tags.find((t) => t[0] === "anchor")?.[1] ?? "";
+    const slug = event.tags.find((t) => t[0] === "d")?.[1];
+    const parent = event.tags.find((t) => t[0] === "e")?.[1];
+    // A reply that mentions us is still a request — answer in that same
+    // thread (its root), not a new one.
+    const rootId = parent ?? event.id;
+    console.log(`📝 Doc comment from ${event.pubkey.slice(0, 8)}… on ${slug ? `page "${slug}"` : "the channel doc"}`);
+    await handleChannelMessage(event, false, 0, { rootId, anchor, slug });
+  };
+
   const dmBacklog: DmRumor[] = [];
   setTimeout(() => {
     dmLive = true;
@@ -1367,11 +1428,19 @@ async function main() {
             { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
           ]
         : []),
+      // Doc comments addressed to us: work handed over INSIDE a document.
+      // p-tag filtered (not #h) because a wiki page's comments can come
+      // from any channel in the community.
+      { kinds: [KIND_DOC_COMMENT], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) },
       { kinds: [KIND_GIFT_WRAP], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) - DM_FUZZ_WINDOW_S },
     ],
     (event) => {
       if (event.kind === KIND_MEMBERSHIP) {
         absorbMembership(event);
+        return;
+      }
+      if (event.kind === KIND_DOC_COMMENT) {
+        void handleDocComment(event);
         return;
       }
       if (event.kind === KIND_GIFT_WRAP) {
@@ -1400,6 +1469,24 @@ async function main() {
     .filter((e) => e.pubkey !== myPubkey && isMention(e) && !answered.has(e.id))
     .sort((a, b) => a.created_at - b.created_at)
     .at(-1);
+  // Same race for doc comments: the comment that summoned us predates the
+  // live subscription. Only unanswered roots addressed to us.
+  const recentComments = await relay
+    .query([{ kinds: [KIND_DOC_COMMENT], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }])
+    .catch(() => []);
+  const myCommentReplies = await relay
+    .query([{ kinds: [KIND_DOC_COMMENT], authors: [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }])
+    .catch(() => []);
+  const answeredComments = new Set(myCommentReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])));
+  const pendingComment = recentComments
+    .filter((e) => e.pubkey !== myPubkey && !answeredComments.has(e.id))
+    .sort((a, b) => a.created_at - b.created_at)
+    .at(-1);
+  if (pendingComment) {
+    console.log(`⏪ Backfilling doc comment from ${pendingComment.pubkey.slice(0, 8)}…`);
+    setTimeout(() => void handleDocComment(pendingComment), 3000);
+  }
+
   if (pending) {
     console.log(`⏪ Backfilling mention from ${pending.pubkey.slice(0, 8)}… (${Math.floor(Date.now() / 1000) - pending.created_at}s ago)`);
     // Small grace so an auto-spawn /invite (published once our 47000 is

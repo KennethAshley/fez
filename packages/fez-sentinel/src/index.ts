@@ -13,6 +13,7 @@ import {
   KIND_AGENT_METADATA,
   KIND_AGENT_ATTESTATION,
   KIND_CHANNEL_MESSAGE,
+  KIND_DOC_COMMENT,
   KIND_MEMBERSHIP,
   KIND_GIFT_WRAP,
   KIND_OBSERVER,
@@ -259,6 +260,7 @@ async function main() {
   relay.subscribe(
     [
       { kinds: [KIND_CHANNEL_MESSAGE], since: sessionStartS },
+      { kinds: [KIND_DOC_COMMENT], since: sessionStartS },
       { kinds: [KIND_AGENT_METADATA], since: sessionStartS },
       { kinds: [KIND_GIFT_WRAP], since: sessionStartS - DM_FUZZ_WINDOW_S },
       { kinds: [KIND_OBSERVER], "#p": [myPubkey] },
@@ -279,6 +281,26 @@ async function main() {
           void inviteToChannel(event.pubkey, target.channelId, target.communityId)
             .then(() => console.log(`🤝 @${name} announced — invited to its channel`))
             .catch(() => console.warn(`⚠️  invite for @${name} failed`));
+        }
+        return;
+      }
+
+      // Doc comments (40101): a comment that @mentions an agent is work
+      // handed over inside a document — same summons authority as chat,
+      // but the agent answers in the doc, never in the channel.
+      if (event.kind === KIND_DOC_COMMENT) {
+        if (event.pubkey !== myPubkey && event.tags.some((t) => t[0] === "p" && t[1] === myPubkey)) {
+          deliver(`@${nameOf(event.pubkey)} commented on a doc`, event.content.slice(0, 90));
+        }
+        if (event.pubkey !== myPubkey && !attestedSiblings.has(event.pubkey)) return;
+        const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+        const communityId = event.tags.find((t) => t[0] === "c")?.[1];
+        if (!channelId || !communityId) return;
+        for (const match of event.content.matchAll(/@([\w-]+)/g)) {
+          const persona = match[1].toLowerCase();
+          if (spawning.has(persona) || !personaExists(persona) || agentProcessAlive(persona)) continue;
+          pendingInvites.set(persona, { channelId, communityId });
+          summon(persona, [channelId], `doc comment by ${nameOf(event.pubkey)}`);
         }
         return;
       }
@@ -417,7 +439,7 @@ async function main() {
   const dead = new Set(tombstones.flatMap((t) => t.tags.filter((x) => x[0] === "e").map((x) => x[1])));
   for (const intent of intents) if (!dead.has(intent.id)) armIntent(intent);
 
-  console.log(`   watching: DM summons · mention summons · notifications · schedules/reminders. Ctrl+C to stop.`);
+  console.log(`   watching: DM summons · mention summons · doc-comment summons · notifications · schedules/reminders. Ctrl+C to stop.`);
 }
 
 main().catch((err) => {

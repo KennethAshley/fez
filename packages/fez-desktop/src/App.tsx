@@ -18,6 +18,7 @@ import ProfilePane from "./ProfilePane";
 import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
 import WikiView from "./WikiView";
+import ChannelInfo from "./ChannelInfo";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
@@ -1073,6 +1074,16 @@ function ChannelView({
           </>
         )}
       </header>
+      {!threadRoot && (
+        <ChannelInfo
+          client={client}
+          channelId={channelId}
+          communityId={communityId}
+          channelName={channelName}
+          renderMd={(text) => <MdBody text={text} />}
+          onJump={(msgId) => document.getElementById(`msg-${msgId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+        />
+      )}
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
         {(client.state.currentChannel()?.channel.members.size ?? 0) <= 1 && (
           <div className="empty-room">

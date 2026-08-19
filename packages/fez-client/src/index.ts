@@ -707,10 +707,9 @@ export class FezClient {
     const events = await this.wire.query([{ kinds: [K.DOC], "#d": [slug], limit: 200 }]);
     return events
       .filter((e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId))
-      .filter((e) => {
-        const h = e.tags.find((t) => t[0] === "h")?.[1];
-        return !!h && this.state.isMember(communityId, h, e.pubkey);
-      })
+      // community-scoped: a page belongs to the community, not to the
+      // channel it happened to be written from
+      .filter((e) => this.state.isCommunityMember(communityId, e.pubkey))
       .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
   }
 
@@ -723,12 +722,9 @@ export class FezClient {
     const filter = opts.slug
       ? { kinds: [K.DOC_COMMENT], "#d": [opts.slug], limit: 500 }
       : { kinds: [K.DOC_COMMENT], "#h": [opts.channelId ?? ""], limit: 500 };
-    const events = (await this.wire.query([filter])).filter((e) => {
-      if (!e.tags.some((t) => t[0] === "c" && t[1] === communityId)) return false;
-      const h = e.tags.find((t) => t[0] === "h")?.[1];
-      // a wiki page's comments can come from any channel in the community
-      return !!h && this.state.isMember(communityId, h, e.pubkey);
-    });
+    const events = (await this.wire.query([filter])).filter(
+      (e) => e.tags.some((t) => t[0] === "c" && t[1] === communityId) && this.state.isCommunityMember(communityId, e.pubkey)
+    );
     const roots = new Map<string, DocCommentThread>();
     const replies: WireEvent[] = [];
     const resolvedRoots = new Set<string>();
@@ -1637,10 +1633,15 @@ export class FezClient {
     if (this.seenDocIds.has(event.id)) return undefined;
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId || !this.state.isMember(communityId, channelId, event.pubkey)) return undefined;
-    this.seenDocIds.add(event.id);
-    // A d tag makes it a named wiki page, not the channel's doc.
+    if (!channelId || !communityId) return undefined;
+    // A d tag makes it a named wiki page, not the channel's doc — pages
+    // are gated community-wide, channel docs by their channel.
     const slug = event.tags.find((t) => t[0] === "d")?.[1];
+    const allowed = slug
+      ? this.state.isCommunityMember(communityId, event.pubkey)
+      : this.state.isMember(communityId, channelId, event.pubkey);
+    if (!allowed) return undefined;
+    this.seenDocIds.add(event.id);
     if (slug) {
       const key = `${communityId}:${slug}`;
       let page = this.wikiMap.get(key);

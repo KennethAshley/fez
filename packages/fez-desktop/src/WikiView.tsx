@@ -196,17 +196,8 @@ export default function WikiView({ client }: { client: FezClient }) {
       mentionPks,
       resolve,
     });
-    // Agents run on channel messages, so a mention in a comment also posts
-    // the summons into the doc's channel — the same path chat mentions use.
-    // The message carries the anchor so the agent knows which line it owns.
-    if (mentionPks.length > 0) {
-      const where = sel.kind === "wiki" ? `page "${selPage?.title ?? sel.slug}"` : `#${client.channelRef(sel.channelId)?.name ?? ""} doc`;
-      const names = [...body.matchAll(/@([\w-]+)/g)].map((m) => `@${m[1]}`).join(" ");
-      await client.sendChannelMessage(
-        `${names} — doc comment on ${where}, on this line:\n> ${anchor.replace(/\n/g, " ").slice(0, 200)}\n\n${body}\n\n(read the page with fez_wiki_read${sel.kind === "wiki" ? ` "${selPage?.title ?? sel.slug}"` : ""}; reply in the thread with fez_comment_reply, comment id ${parentId ?? "the one you'll find via fez_doc_comments"})`,
-        { mentionPks }
-      );
-    }
+    // No channel message: agents subscribe to 40101 directly, so a doc
+    // comment stays in the document — the agent answers in this thread.
     setCommenting(undefined);
     setCommentDraft("");
     await load();

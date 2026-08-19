@@ -235,6 +235,21 @@ export class CommunityState {
     return community.channels.get(channelId)?.members.has(pubkey) ?? false;
   }
 
+  /**
+   * Community-wide membership: a member of ANY channel in the community.
+   * Wiki pages are community-scoped, so they can't be gated on the one
+   * channel they happened to be written from — the sidebar files a page
+   * under the community, and access has to mean the same thing.
+   */
+  isCommunityMember(communityId: string, pubkey: string): boolean {
+    const community = this.communities.get(communityId);
+    if (!community || community.banned.has(pubkey)) return false;
+    for (const channel of community.channels.values()) {
+      if (channel.members.has(pubkey)) return true;
+    }
+    return false;
+  }
+
   isBanned(communityId: string, pubkey: string): boolean {
     return this.communities.get(communityId)?.banned.has(pubkey) ?? false;
   }

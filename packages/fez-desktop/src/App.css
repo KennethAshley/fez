@@ -1275,3 +1275,35 @@ button.author:hover { text-decoration: underline; }
 .comment-actions { display: flex; gap: 6px; margin-top: 6px; }
 .comment-compose { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
 .comment-input { width: 100%; resize: vertical; font-size: 12.5px; }
+
+/* ── channel info: the channel's doc + pins, always at hand ── */
+.channel-info { border-bottom: 1px solid var(--hairline); flex: none; }
+.channel-info.empty { border-bottom: 0; }
+.channel-info-bar { display: flex; align-items: center; gap: 8px; padding: 4px 18px; }
+.channel-info-toggle {
+  flex: 1; display: flex; align-items: center; gap: 7px; min-width: 0;
+  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 12px;
+  font-family: var(--font-mono); cursor: pointer; text-align: left; padding: 3px 0;
+}
+.channel-info-toggle:hover { color: var(--fg); }
+.channel-info-caret { width: 10px; flex: none; }
+.channel-info-peek {
+  color: var(--fg-dim); opacity: 0.75; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-family: var(--font-sans);
+}
+.channel-info-count { margin-left: auto; flex: none; color: var(--yellow); }
+.channel-info-body { padding: 2px 18px 12px; max-height: 42vh; overflow-y: auto; }
+.channel-info-doc { font-size: 13px; max-width: 780px; }
+.channel-info-doc > :first-child { margin-top: 0; }
+.channel-info-meta { color: var(--fg-dim); font-size: 11px; margin-top: 6px; font-family: var(--font-mono); }
+.channel-info-section {
+  margin: 10px 0 4px; color: var(--fg-dim); font-size: 11px; font-family: var(--font-mono);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.channel-info-pin {
+  display: flex; gap: 8px; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--fg); font: inherit; font-size: 12.5px; padding: 4px 6px; border-radius: 6px; cursor: pointer;
+}
+.channel-info-pin:hover { background: var(--bg1); }
+.channel-info-pin-text { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-info-editor { width: 100%; min-height: 160px; margin-bottom: 6px; }
