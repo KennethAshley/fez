@@ -16,8 +16,18 @@ import path from "node:path";
  */
 
 export interface FezSettings {
-  /** Relay URL used when neither -r nor FEZ_RELAY is set. */
+  /**
+   * Legacy single relay. Still honoured — it's what every existing
+   * install has — but `relays` is the real setting now.
+   */
   relay?: string;
+  /**
+   * The relay set. Publishes fan out to all of them, reads are the
+   * union: no single operator, including whoever runs the default, can
+   * take your channels away or lose them for you. One entry behaves
+   * exactly like the old single relay.
+   */
+  relays?: string[];
   /** Set once the first-run wizard has completed. */
   onboarded?: boolean;
   /**
@@ -55,9 +65,42 @@ export function saveSettings(patch: Partial<FezSettings>): FezSettings {
 
 export const DEFAULT_RELAY = "wss://relay.damus.io";
 
-/** The relay for this invocation: explicit value > FEZ_RELAY > settings > default. */
+/**
+ * The relay SET for this invocation, in precedence order:
+ *   explicit flag > FEZ_RELAY > settings.relays > settings.relay > default
+ *
+ * Every source accepts a comma-separated list, so `-r a,b` and
+ * `FEZ_RELAY=a,b` work without a second flag. Precedence replaces rather
+ * than merges: someone passing -r is naming the relays they want, and
+ * quietly adding their configured ones back is how you publish to a
+ * relay you were deliberately avoiding.
+ */
+export function resolveRelays(explicit?: string | string[]): string[] {
+  const split = (value: string) =>
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+  const fromExplicit = Array.isArray(explicit) ? explicit.filter(Boolean) : explicit ? split(explicit) : [];
+  if (fromExplicit.length) return fromExplicit;
+  if (process.env.FEZ_RELAY) {
+    const fromEnv = split(process.env.FEZ_RELAY);
+    if (fromEnv.length) return fromEnv;
+  }
+  const settings = loadSettings();
+  const configured = (settings.relays ?? []).filter(Boolean);
+  if (configured.length) return configured;
+  return [settings.relay || DEFAULT_RELAY];
+}
+
+/**
+ * The FIRST relay of the set — for the places that genuinely mean one:
+ * a pairing QR that names where to meet, a line of status output, an
+ * env var handed to a child process that hasn't been taught the list.
+ */
 export function resolveRelay(explicit?: string): string {
-  return explicit || process.env.FEZ_RELAY || loadSettings().relay || DEFAULT_RELAY;
+  return resolveRelays(explicit)[0];
 }
 
 /**

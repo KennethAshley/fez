@@ -166,10 +166,40 @@ export class FezTUI {
   private pendingBubbles: { author: string; content: string }[] = [];
   private warnedMissingSkills = new Set<string>();
 
-  constructor(private relayUrl: string, privateKey?: string) {
+  private relayHealth: { url: string; connected: boolean }[] = [];
+
+  private relayList(): string[] {
+    return Array.isArray(this.relayUrls) ? this.relayUrls : [this.relayUrls];
+  }
+
+  /**
+   * What the footer says about the relay set. One relay keeps the old
+   * behaviour (its URL). Several report as a fraction, because the
+   * number that matters is how many are actually carrying your events —
+   * "connected" is true right up until you are down to your last relay.
+   */
+  private relayStatusText(): string {
+    const urls = this.relayList();
+    if (urls.length === 1) return urls[0];
+    const up = this.relayHealth.filter((h) => h.connected).length;
+    const total = this.relayHealth.length || urls.length;
+    return `${up}/${total} relays`;
+  }
+
+  constructor(private relayUrls: string | string[], privateKey?: string) {
     installNodeStatePersistence(); // file-backed joined/scope state (~/.fez/communities.json)
-    this.client = new CapabilityClient({ relay: relayUrl, privateKey });
-    this.relay = new RelayConnection({ url: relayUrl, authSigner: this.client.authSigner });
+    const urls = Array.isArray(relayUrls) ? relayUrls : [relayUrls];
+    this.client = new CapabilityClient({ relay: urls, privateKey });
+    this.relay = new RelayConnection({
+      urls,
+      authSigner: this.client.authSigner,
+      // A relay set that has quietly become one relay looks exactly like
+      // a healthy one unless something says so out loud.
+      onRelayHealth: (health) => {
+        this.relayHealth = health;
+        footer.setStatus("relay", this.relayStatusText());
+      },
+    });
     this.myPubkey = this.client.getPubkey();
   }
 
@@ -374,7 +404,7 @@ export class FezTUI {
     // into the chat log instead of smearing raw stderr over the owned screen.
     setNoticeSink((text) => this.systemLine(text));
 
-    footer.setStatus("relay", this.relayUrl);
+    footer.setStatus("relay", this.relayStatusText());
     footer.setStatus("pubkey", `${this.myPubkey.slice(0, 12)}...`);
 
     const harnessLine =
@@ -1170,7 +1200,7 @@ export class FezTUI {
           ...logo,
           "",
           getActiveTheme().brand("fez") + chalk.dim(" · decentralized MCP for agents"),
-          chalk.dim("relay:  ") + chalk.cyan(this.relayUrl),
+          chalk.dim("relay:  ") + chalk.cyan(this.relayList().join(", ")),
           chalk.dim("you:    ") + chalk.cyan(this.myPubkey.slice(0, 16) + "…"),
           chalk.dim("agents: ") + harnessLine,
           "",

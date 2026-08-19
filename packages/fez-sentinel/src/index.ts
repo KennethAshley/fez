@@ -9,6 +9,7 @@ import {
   RelayConnection,
   getKey,
   resolveRelay,
+  resolveRelays,
   DM_FUZZ_WINDOW_S,
   KIND_AGENT_METADATA,
   KIND_AGENT_ATTESTATION,
@@ -147,9 +148,9 @@ async function main() {
     console.error("No fez identity (fez keygen first) — the sentinel signs invites/attestations as you.");
     process.exit(1);
   }
-  const relayUrl = process.env.FEZ_RELAY || resolveRelay(undefined);
-  const client = new CapabilityClient({ relay: relayUrl, privateKey: keyHex });
-  const relay = new RelayConnection({ url: relayUrl, authSigner: client.authSigner });
+  const relayUrls = resolveRelays();
+  const client = new CapabilityClient({ relay: relayUrls, privateKey: keyHex });
+  const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
 
@@ -164,12 +165,12 @@ async function main() {
   process.on("SIGTERM", () => { cleanup(); process.exit(0); });
   process.on("exit", cleanup);
 
-  console.log(`🛡  fez sentinel on ${relayUrl} (owner ${myPubkey.slice(0, 12)}…)`);
+  console.log(`🛡  fez sentinel on ${relayUrls.join(", ")} (owner ${myPubkey.slice(0, 12)}…)`);
   console.log(`   herdr: ${(await herdrAlive()) ? "connected — agents spawn as tabs" : "absent — agents spawn as detached processes"}`);
 
   // ── spawn paths ───────────────────────────────────────────────────────
   const agentEnvCmd = (persona: string, channels: string[]) =>
-    `FEZ_AGENT_OWNER=${myPubkey} FEZ_RELAY=${relayUrl} fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"}`;
+    `FEZ_AGENT_OWNER=${myPubkey} FEZ_RELAY=${relayUrls.join(",")} fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"}`;
 
   async function spawnAgent(persona: string, channels: string[]): Promise<void> {
     if (await herdrAlive()) {
@@ -186,7 +187,7 @@ async function main() {
       fs.mkdirSync(LOG_DIR, { recursive: true });
       const log = fs.openSync(path.join(LOG_DIR, `${persona}.log`), "a");
       const child = spawn("fez", ["agent", persona, "-c", channels.length > 0 ? channels.join(",") : "none"], {
-        env: { ...process.env, FEZ_AGENT_OWNER: myPubkey, FEZ_RELAY: relayUrl },
+        env: { ...process.env, FEZ_AGENT_OWNER: myPubkey, FEZ_RELAY: relayUrls.join(",") },
         detached: true,
         stdio: ["ignore", log, log],
       });

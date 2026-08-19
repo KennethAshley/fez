@@ -8,8 +8,7 @@ import {
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
-  KIND_THREAD_SUMMARY,
-} from "@fez/protocol";
+  KIND_THREAD_SUMMARY,, resolveRelays } from "@fez/protocol";
 import { loadServiceKey, parseThreadRef, resolveChannels } from "./service-common.js";
 
 /**
@@ -67,19 +66,19 @@ class JsonFileStore implements IndexStore {
 const PUBLISH_DEBOUNCE_MS = 2000;
 
 async function main() {
-  const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
+  const relayUrls = resolveRelays();
   const channelSpecs = (process.env.FEZ_INDEXER_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
   if (channelSpecs.length === 0) {
     console.error("Usage: FEZ_INDEXER_CHANNELS=<name-or-id,...> fez run indexer.js");
     process.exit(1);
   }
 
-  const client = new CapabilityClient({ relay: relayUrl, privateKey: loadServiceKey("indexer") });
-  const relay = new RelayConnection({ url: relayUrl, authSigner: client.authSigner });
+  const client = new CapabilityClient({ relay: relayUrls, privateKey: loadServiceKey("indexer") });
+  const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
 
-  const channels = await resolveChannels(relay, channelSpecs, relayUrl);
+  const channels = await resolveChannels(relay, channelSpecs, relayUrls.join(", "));
 
   // Membership check (advisory): summaries from a non-member are ignored
   // by consumers, so say so loudly rather than indexing into the void.
@@ -176,7 +175,7 @@ async function main() {
     if (rootId) touched.add(rootId);
   }
   for (const rootId of touched) schedulePublish(rootId);
-  console.log(`🟢 indexer standing by: ${channels.length} channel(s), ${touched.size} thread(s) backfilled, on ${relayUrl}`);
+  console.log(`🟢 indexer standing by: ${channels.length} channel(s), ${touched.size} thread(s) backfilled, on ${relayUrls.join(", ")}`);
   console.log(`   Pubkey: ${myPubkey}`);
 
   relay.subscribe(

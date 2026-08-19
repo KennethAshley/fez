@@ -33,8 +33,7 @@ import {
   type DmRumor,
   type HarnessSession,
   type HarnessUpdate,
-  type TimeoutOptions,
-} from "@fez/protocol";
+  type TimeoutOptions,, resolveRelays } from "@fez/protocol";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -94,7 +93,7 @@ function extractArtifacts(reply: string): { text: string; artifacts: { type: str
 }
 
 async function main() {
-  const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
+  const relayUrls = resolveRelays();
   const personaId = process.env.FEZ_AGENT_PERSONA;
   const channelSpecs = (process.env.FEZ_AGENT_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
   const owner = process.env.FEZ_AGENT_OWNER;
@@ -164,7 +163,7 @@ async function main() {
       args: [fezMcpPath],
       env: [
         { name: "FEZ_AGENT_PERSONA", value: personaId },
-        { name: "FEZ_RELAY", value: relayUrl },
+        { name: "FEZ_RELAY", value: relayUrls.join(",") },
         ...(owner ? [{ name: "FEZ_AGENT_OWNER", value: owner }] : []),
         ...(Number(persona.extra.approvalQuorum) >= 1
           ? [{ name: "FEZ_APPROVAL_QUORUM", value: String(Number(persona.extra.approvalQuorum)) }]
@@ -284,8 +283,8 @@ async function main() {
   process.on("exit", releasePidfile);
 
   const agentKeyHex = loadServiceKey(personaId);
-  const client = new CapabilityClient({ relay: relayUrl, privateKey: agentKeyHex });
-  const relay = new RelayConnection({ url: relayUrl, authSigner: client.authSigner });
+  const client = new CapabilityClient({ relay: relayUrls, privateKey: agentKeyHex });
+  const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
 
@@ -315,7 +314,7 @@ async function main() {
     return memCache.section;
   }
 
-  const channels = channelSpecs.length > 0 ? await resolveChannels(relay, channelSpecs, relayUrl) : [];
+  const channels = channelSpecs.length > 0 ? await resolveChannels(relay, channelSpecs, relayUrls.join(", ")) : [];
 
   /**
    * Mechanical approval gate. Until now, "ask before doing something
@@ -505,7 +504,7 @@ async function main() {
   presenceBeat();
   setInterval(presenceBeat, 30_000).unref?.();
 
-  console.log(`🟢 @${personaId} standing by ${channels.length > 0 ? `in ${channels.length} channel(s)` : "DM-only"} on ${relayUrl}`);
+  console.log(`🟢 @${personaId} standing by ${channels.length > 0 ? `in ${channels.length} channel(s)` : "DM-only"} on ${relayUrls.join(", ")}`);
   console.log(`   Pubkey: ${myPubkey} | respondTo: ${respondTo}`);
 
   // Observer stream: the owner-only activity firehose (thoughts, tool

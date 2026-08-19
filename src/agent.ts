@@ -19,7 +19,7 @@ export interface AgentConfig {
   /** Nostr private key (hex). Auto-generated if not provided. */
   privateKey?: string;
   /** Relay URL to connect to */
-  relay: string;
+  relay: string | string[];
   /** Agent name (for metadata) */
   name: string;
   /** Task types this agent supports */
@@ -90,7 +90,7 @@ export class Agent {
 
   constructor(config: AgentConfig) {
     this.config = config;
-    this.relay = new RelayConnection({ url: config.relay });
+    this.relay = new RelayConnection({ urls: Array.isArray(config.relay) ? config.relay : [config.relay] });
 
     if (config.privateKey) {
       this.privateKey = hexToBytes(config.privateKey);

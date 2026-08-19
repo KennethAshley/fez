@@ -8,6 +8,7 @@ import {
   RelayConnection,
   getKey,
   resolveRelay,
+  resolveRelays,
   buildDmWraps,
   conversationKey,
   engramHeads,
@@ -44,10 +45,10 @@ if (!keyHex) {
 const secret = Uint8Array.from(Buffer.from(keyHex, "hex"));
 const myPubkey = getPublicKey(secret);
 const owner = process.env.FEZ_AGENT_OWNER;
-const relayUrl = process.env.FEZ_RELAY || resolveRelay(undefined);
+const relayUrls = resolveRelays();
 
 const relay = new RelayConnection({
-  url: relayUrl,
+  urls: relayUrls,
   authSigner: async (tmpl) => finalizeEvent(tmpl as never, secret),
 });
 

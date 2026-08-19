@@ -4,8 +4,8 @@ import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_RESULT, KIND_AGE
 import { buildDmWraps, buildGroupDmWraps, unwrapDm, type DmRumor } from "./dm.js";
 
 export interface ClientConfig {
-  /** Relay URL */
-  relay: string;
+  /** One relay URL, or the whole relay set. */
+  relay: string | string[];
   /** Optional private key (auto-generated if not provided) */
   privateKey?: string;
 }
@@ -73,7 +73,10 @@ export class CapabilityClient {
   private pubkey: string;
 
   constructor(config: ClientConfig) {
-    this.relay = new RelayConnection({ url: config.relay, authSigner: this.authSigner });
+    this.relay = new RelayConnection({
+      urls: Array.isArray(config.relay) ? config.relay : [config.relay],
+      authSigner: this.authSigner,
+    });
 
     if (config.privateKey) {
       this.privateKey = hexToBytes(config.privateKey);

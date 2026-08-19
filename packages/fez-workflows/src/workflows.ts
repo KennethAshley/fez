@@ -11,8 +11,7 @@ import {
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
   KIND_REACTION,
-  KIND_WORKFLOW_RUN,
-} from "@fez/protocol";
+  KIND_WORKFLOW_RUN,, resolveRelays } from "@fez/protocol";
 import { Cron } from "croner";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { loadDefs, isSay, isWait, isDelay, isDm, isReact, isWebhook, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";
@@ -59,7 +58,7 @@ interface FezEvent {
 }
 
 async function main() {
-  const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
+  const relayUrls = resolveRelays();
   const dir = process.env.FEZ_WORKFLOWS_DIR || path.join(os.homedir(), ".fez", "workflows");
   const owner = process.env.FEZ_AGENT_OWNER;
 
@@ -69,8 +68,8 @@ async function main() {
     process.exit(1);
   }
 
-  const client = new CapabilityClient({ relay: relayUrl, privateKey: loadServiceKey("workflows") });
-  const relay = new RelayConnection({ url: relayUrl });
+  const client = new CapabilityClient({ relay: relayUrls, privateKey: loadServiceKey("workflows") });
+  const relay = new RelayConnection({ urls: relayUrls });
   await relay.connect();
   const myPubkey = client.getPubkey();
 
@@ -78,7 +77,7 @@ async function main() {
   // several channels; the def applies to all of them).
   const channelsByDef = new Map<WorkflowDef, string[]>();
   for (const def of defs) {
-    channelsByDef.set(def, await resolveChannels(relay, [def.channel], relayUrl));
+    channelsByDef.set(def, await resolveChannels(relay, [def.channel], relayUrls.join(", ")));
   }
   const channels = [...new Set([...channelsByDef.values()].flat())];
 
@@ -553,7 +552,7 @@ async function main() {
     }
   }
 
-  console.log(`🟢 fez-workflows: ${defs.length} workflow(s) across ${channels.length} channel(s) on ${relayUrl}`);
+  console.log(`🟢 fez-workflows: ${defs.length} workflow(s) across ${channels.length} channel(s) on ${relayUrls.join(", ")}`);
   for (const def of defs) {
     const trig = def.trigger;
     const detail =

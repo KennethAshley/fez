@@ -41,14 +41,14 @@ if (process.argv.length <= 2) {
   // gets actionable guidance, a starter persona covers the empty case,
   // and the communities extension bootstraps a Home community on its
   // side. Everything lands in ~/.fez/settings.json.
-  const { loadSettings, resolveRelay } = await import("./settings.js");
+  const { loadSettings, resolveRelay, resolveRelays } = await import("./settings.js");
   if (!loadSettings().onboarded && process.stdin.isTTY && process.stdout.isTTY) {
     const { firstRunWizard } = await import("./onboarding.js");
     await firstRunWizard();
   }
 
   const { FezTUI } = await import("./tui.js");
-  const tui = new FezTUI(resolveRelay(), privateKey);
+  const tui = new FezTUI(resolveRelays(), privateKey);
   await tui.start();
   // TUI blocks until /quit, then exits cleanly
   process.exit(0);
@@ -166,7 +166,7 @@ interface MemContext {
 
 async function memContext(personaFlag?: string): Promise<MemContext> {
   const { getKey } = await import("./keys.js");
-  const { resolveRelay } = await import("./settings.js");
+  const { resolveRelay, resolveRelays } = await import("./settings.js");
   const { getPublicKey: pk } = await import("nostr-tools/pure");
   const persona = personaFlag ?? process.env.FEZ_AGENT_PERSONA;
   if (!persona) {
@@ -301,7 +301,7 @@ interface DocCliContext {
 
 async function docContext(channelFlag: string | undefined, personaFlag: string | undefined): Promise<DocCliContext> {
   const { getKey } = await import("./keys.js");
-  const { resolveRelay } = await import("./settings.js");
+  const { resolveRelay, resolveRelays } = await import("./settings.js");
   const { getPublicKey: pk } = await import("nostr-tools/pure");
   const { RelayConnection } = await import("./relay.js");
   const persona = personaFlag ?? process.env.FEZ_AGENT_PERSONA;
@@ -315,7 +315,7 @@ async function docContext(channelFlag: string | undefined, personaFlag: string |
     console.error("No channel — pass --channel <name-or-id>.");
     process.exit(1);
   }
-  const relay = new RelayConnection({ url: resolveRelay() });
+  const relay = new RelayConnection({ urls: resolveRelays() });
   await relay.connect();
   // Resolve name-or-id against stored 47101s; the community rides the c tag.
   const channels = await relay.query([{ kinds: [47101] }]);
@@ -405,8 +405,8 @@ program
   .option("--owner <pubkey>", "owner pubkey (default: your fez identity)")
   .option("--on-busy <mode>", "steer | queue", "steer")
   .action(async (personaId: string, options) => {
-    const { resolveRelay } = await import("./settings.js");
-    process.env.FEZ_RELAY = resolveRelay(options.relay);
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     process.env.FEZ_AGENT_PERSONA = personaId;
     process.env.FEZ_AGENT_CHANNELS = options.channels === "none" ? "" : options.channels;
     if (options.respondTo) process.env.FEZ_AGENT_RESPOND_TO = options.respondTo;
@@ -445,8 +445,8 @@ program
   .description("Run the always-on watcher: wakes sleeping agents on DMs/mentions, delivers desktop notifications — no TUI needed")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelay } = await import("./settings.js");
-    process.env.FEZ_RELAY = resolveRelay(options.relay);
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     const { fileURLToPath, pathToFileURL } = await import("node:url");
     const { existsSync } = await import("node:fs");
     const candidates = [
@@ -470,7 +470,7 @@ program
       console.error("launchd is macOS-only — on Linux, use a systemd user unit running `fez sentinel`.");
       process.exit(1);
     }
-    const { resolveRelay } = await import("./settings.js");
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
     const { execSync } = await import("node:child_process");
     const fsSync = await import("node:fs");
     const relayUrl = resolveRelay(options.relay);
@@ -540,8 +540,8 @@ program
   .description("Run @fez, the routing agent: mentions of @fez get routed to the best agent for the task")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelay } = await import("./settings.js");
-    process.env.FEZ_RELAY = resolveRelay(options.relay);
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     const { fileURLToPath, pathToFileURL } = await import("node:url");
     const { existsSync } = await import("node:fs");
     const candidates = [
@@ -565,7 +565,7 @@ program
       console.error("launchd is macOS-only — on Linux, use a systemd user unit running `fez orchestrator`.");
       process.exit(1);
     }
-    const { resolveRelay } = await import("./settings.js");
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
     const { execSync } = await import("node:child_process");
     const fsSync = await import("node:fs");
     const relayUrl = resolveRelay(options.relay);
@@ -702,7 +702,7 @@ skill
   .option("--npm <name>", "npm package name")
   .option("--artifact <type>", "mcp (default) | extension (fez install) | pi-package (persona packages:)")
   .action(async (name: string, options) => {
-    const { loadSettings, resolveRelay } = await import("./settings.js");
+    const { loadSettings, resolveRelay, resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING } = await import("./kinds.js");
     const settings = loadSettings() as { mcpServers?: Record<string, { command?: string; args?: string[]; url?: string; type?: string; env?: Record<string, string> }> };
@@ -719,8 +719,8 @@ skill
       return;
     }
     const { RelayConnection } = await import("./relay.js");
-    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
-    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
     const envKeys = Object.keys(config?.env ?? {});
     const installCmd =
@@ -756,12 +756,12 @@ skill
   .option("--from <pubkey>", "listing author (default: most-installed listing of that name)")
   .option("--env <pairs...>", "KEY=value for each env key the listing requires (stored locally)")
   .action(async (name: string, options) => {
-    const { loadSettings, saveSettings, resolveRelay } = await import("./settings.js");
+    const { loadSettings, saveSettings, resolveRelay, resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./kinds.js");
     const { RelayConnection } = await import("./relay.js");
-    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
-    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
     const events = (await relay.query([{ kinds: [KIND_SKILL_LISTING], "#d": [name], limit: 50 }])) as { pubkey: string; content: string; created_at: number }[];
     const candidates = events
@@ -822,12 +822,12 @@ skill
   .description("Browse marketplace listings on the relay")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelay } = await import("./settings.js");
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING } = await import("./kinds.js");
     const { RelayConnection } = await import("./relay.js");
-    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
-    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
     const { KIND_SKILL_INSTALL } = await import("./kinds.js");
     const events = (await relay.query([{ kinds: [KIND_SKILL_LISTING], limit: 100 }])) as { pubkey: string; content: string; created_at: number; tags: string[][] }[];
@@ -878,6 +878,81 @@ skill
 
 // ─── doctor — is this machine ready to fez? ─────────────────────────────────
 
+const relayCmd = program
+  .command("relay")
+  .description("The relay set — where your events are published and read from");
+
+relayCmd
+  .command("list", { isDefault: true })
+  .description("Show the relay set and where it came from")
+  .action(async () => {
+    const { loadSettings, resolveRelays, DEFAULT_RELAY } = await import("./settings.js");
+    const settings = loadSettings();
+    const urls = resolveRelays();
+    const source = process.env.FEZ_RELAY
+      ? "env FEZ_RELAY"
+      : settings.relays?.length
+        ? "settings.relays"
+        : settings.relay
+          ? "settings.relay (legacy single)"
+          : `built-in default (${DEFAULT_RELAY})`;
+    console.log(chalk.bold(`\nrelays (${source})`));
+    for (const url of urls) console.log(`  ${chalk.cyan(url)}`);
+    if (urls.length === 1) {
+      console.log(
+        chalk.dim("\n  One relay is one operator who can lose your history, go away, or decline to carry it.")
+      );
+      console.log(chalk.dim("  fez relay add wss://another.example\n"));
+    } else {
+      console.log(chalk.dim(`\n  Publishes fan out to all ${urls.length}; reads are the union. Any one can fail.\n`));
+    }
+  });
+
+relayCmd
+  .command("add <url>")
+  .description("Add a relay to the set")
+  .action(async (url: string) => {
+    const { loadSettings, saveSettings, resolveRelays } = await import("./settings.js");
+    if (!/^wss?:\/\//.test(url)) {
+      console.error(chalk.red(`"${url}" is not a relay URL — expected ws:// or wss://`));
+      process.exit(1);
+    }
+    const settings = loadSettings();
+    // Fold a legacy single `relay` into the list on first add rather
+    // than leaving two settings that disagree about where events go.
+    const current = settings.relays?.length ? settings.relays : resolveRelays();
+    if (current.includes(url)) {
+      console.log(chalk.dim(`${url} is already in the set`));
+      return;
+    }
+    const next = [...current, url];
+    saveSettings({ relays: next });
+    console.log(chalk.green(`✓ added ${url}`));
+    console.log(chalk.dim(`  set is now: ${next.join(", ")}`));
+    console.log(chalk.dim("  running agents pick it up on restart"));
+  });
+
+relayCmd
+  .command("remove <url>")
+  .description("Remove a relay from the set")
+  .action(async (url: string) => {
+    const { loadSettings, saveSettings, resolveRelays } = await import("./settings.js");
+    const settings = loadSettings();
+    const current = settings.relays?.length ? settings.relays : resolveRelays();
+    const next = current.filter((entry) => entry !== url);
+    if (next.length === current.length) {
+      console.error(chalk.yellow(`${url} is not in the set (${current.join(", ")})`));
+      process.exit(1);
+    }
+    if (next.length === 0) {
+      console.error(chalk.red("refusing to remove the last relay — add another first"));
+      process.exit(1);
+    }
+    saveSettings({ relays: next });
+    console.log(chalk.green(`✓ removed ${url}`));
+    console.log(chalk.dim(`  set is now: ${next.join(", ")}`));
+  });
+
 program
   .command("doctor")
   .description("Check identity, relay, harness, personas — with fixes for whatever's missing")
@@ -886,7 +961,7 @@ program
     const { detectHarnesses, listHarnesses, registerBuiltinHarnesses } = await import("./harness.js");
     registerBuiltinHarnesses();
     const { listPersonas } = await import("./personas.js");
-    const { loadSettings, resolveRelay, DEFAULT_RELAY } = await import("./settings.js");
+    const { loadSettings, resolveRelay, resolveRelays, DEFAULT_RELAY } = await import("./settings.js");
     const ok = (s: string) => console.log(`  ${chalk.green("✓")} ${s}`);
     const warn = (s: string, fix?: string) => {
       console.log(`  ${chalk.yellow("!")} ${s}`);
@@ -908,23 +983,45 @@ program
       warn("no identity yet — one is generated on first `fez` launch");
     }
 
-    // relay: value + provenance + reachability
-    const relay = resolveRelay();
+    // relays: value + provenance + reachability, EVERY one of them.
+    // Checking only the first would pass on a set whose other relays
+    // have been unreachable for a month — the failure the set exists to
+    // prevent, hidden by the check meant to catch it.
+    const relays = resolveRelays();
+    const settingsNow = loadSettings();
     const source = process.env.FEZ_RELAY
       ? "env FEZ_RELAY"
-      : loadSettings().relay
+      : settingsNow.relays?.length || settingsNow.relay
         ? "~/.fez/settings.json"
         : `built-in default (${DEFAULT_RELAY})`;
-    const reachable = await new Promise<boolean>((resolve) => {
-      void import("ws").then(({ default: WebSocket }) => {
-        const socket = new WebSocket(relay);
-        const timer = setTimeout(() => { socket.terminate(); resolve(false); }, 4000);
-        socket.on("open", () => { clearTimeout(timer); socket.close(); resolve(true); });
-        socket.on("error", () => { clearTimeout(timer); resolve(false); });
+    const reach = (url: string) =>
+      new Promise<boolean>((resolve) => {
+        void import("ws").then(({ default: WebSocket }) => {
+          const socket = new WebSocket(url);
+          const timer = setTimeout(() => { socket.terminate(); resolve(false); }, 4000);
+          socket.on("open", () => { clearTimeout(timer); socket.close(); resolve(true); });
+          socket.on("error", () => { clearTimeout(timer); resolve(false); });
+        });
       });
-    });
-    if (reachable) ok(`relay ${relay} reachable (${source})`);
-    else bad(`relay ${relay} unreachable (${source})`, `start one (npm run dev:relay in the fez repo) or set another in ~/.fez/settings.json`);
+    const reachable = await Promise.all(relays.map(reach));
+    const upCount = reachable.filter(Boolean).length;
+    if (relays.length === 1) {
+      if (upCount === 1) {
+        ok(`relay ${relays[0]} reachable (${source})`);
+        warn("only one relay — its operator can lose or withhold your history", "fez relay add wss://another.example");
+      } else {
+        bad(`relay ${relays[0]} unreachable (${source})`, "start one (npm run dev:relay in the fez repo) or `fez relay add <url>`");
+      }
+    } else if (upCount === relays.length) {
+      ok(`relays: ${upCount}/${relays.length} reachable (${source})`);
+    } else if (upCount > 0) {
+      warn(
+        `relays: ${upCount}/${relays.length} reachable (${source}) — down: ${relays.filter((_, i) => !reachable[i]).join(", ")}`,
+        "publishes still land, but you are closer to a single point of failure than you think"
+      );
+    } else {
+      bad(`no relay reachable of ${relays.length} (${source})`, "check the network, or `fez relay add <url>`");
+    }
 
     // harness
     const harnesses = await detectHarnesses();
@@ -1001,8 +1098,8 @@ program
     // supervisor like herdr sets it on the launched process — a baked-in
     // commander default silently clobbered it), then the user's saved
     // settings, then the public default.
-    const { resolveRelay } = await import("./settings.js");
-    process.env.FEZ_RELAY = resolveRelay(options.relay);
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
 
     if (options.key) {
       process.env.FEZ_PRIVATE_KEY = (await fs.readFile(options.key, "utf-8")).trim();
@@ -1312,7 +1409,7 @@ pair
   .action(async (options: { as: string; relay?: string }) => {
     const { pairReceive } = await import("./pairing.js");
     const { getKey, setKey } = await import("./keys.js");
-    const { resolveRelay } = await import("./settings.js");
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
     if (getKey(options.as)) {
       console.error(`Account "${options.as}" already holds a key — pairing will not overwrite it. Use --as <other-name> or remove it first.`);
       process.exit(1);
@@ -1405,7 +1502,7 @@ persona
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--github <url>", "source/docs link")
   .action(async (name: string, options) => {
-    const { resolveRelay } = await import("./settings.js");
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING } = await import("./kinds.js");
     const { RelayConnection } = await import("./relay.js");
@@ -1417,8 +1514,8 @@ persona
     }
     const description = raw.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
     const skills = raw.match(/^mcpServers:\s*\[(.*)\]$/m)?.[1]?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
-    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
     await relay.publish(
       client.signEvent({
@@ -1445,13 +1542,13 @@ persona
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--from <pubkey>", "listing author")
   .action(async (name: string, options) => {
-    const { resolveRelay } = await import("./settings.js");
+    const { resolveRelay, resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./kinds.js");
     const { RelayConnection } = await import("./relay.js");
     const { writeDraft } = await import("./persona-drafts.js");
-    const client = new CapabilityClient({ relay: resolveRelay(options.relay), privateKey: loadOrCreateKey("default") });
-    const relay = new RelayConnection({ url: resolveRelay(options.relay), authSigner: client.authSigner });
+    const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
+    const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
     const events = (await relay.query([{ kinds: [KIND_SKILL_LISTING], "#d": [`persona:${name}`], limit: 50 }])) as { pubkey: string; content: string; created_at: number }[];
     const event = events

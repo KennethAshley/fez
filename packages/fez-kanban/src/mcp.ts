@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
-import { RelayConnection, getKey, resolveRelay } from "@fez/protocol";
+import { RelayConnection, getKey, resolveRelays } from "@fez/protocol";
 import { addCard, currentVersion, describeBoard, isBoard, moveCard, parseBoard, serializeBoard } from "./board.js";
 
 /**
@@ -35,7 +35,7 @@ if (!keyHex) {
 const secret = Uint8Array.from(Buffer.from(keyHex, "hex"));
 const myPubkey = getPublicKey(secret);
 const relay = new RelayConnection({
-  url: process.env.FEZ_RELAY || resolveRelay(undefined),
+  urls: resolveRelays(),
   authSigner: async (tmpl) => finalizeEvent(tmpl as never, secret),
 });
 

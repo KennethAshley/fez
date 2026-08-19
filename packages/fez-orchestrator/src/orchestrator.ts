@@ -9,8 +9,7 @@ import {
   KIND_CHANNEL_MESSAGE,
   KIND_DELETION,
   KIND_MEMBERSHIP,
-  KIND_REACTION,
-} from "@fez/protocol";
+  KIND_REACTION,, resolveRelays } from "@fez/protocol";
 import { isSmallTalk, agentTool, fleetQuestion, noneTool, explicitActor, scrubNames } from "./route-logic.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 
@@ -63,7 +62,7 @@ interface KnownAgent {
 }
 
 async function main() {
-  const relayUrl = process.env.FEZ_RELAY || "wss://relay.damus.io";
+  const relayUrls = resolveRelays();
   const name = process.env.FEZ_ORCHESTRATOR_NAME || "fez";
 
   // Primary config is a persona file, same as every other agent —
@@ -110,11 +109,11 @@ async function main() {
     process.exit(1);
   }
 
-  const client = new CapabilityClient({ relay: relayUrl, privateKey: loadServiceKey(name) });
-  const relay = new RelayConnection({ url: relayUrl, authSigner: client.authSigner });
+  const client = new CapabilityClient({ relay: relayUrls, privateKey: loadServiceKey(name) });
+  const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
-  const channels = await resolveChannels(relay, channelSpecs, relayUrl);
+  const channels = await resolveChannels(relay, channelSpecs, relayUrls.join(", "));
 
   const allowlist = respondTo.startsWith("allowlist:")
     ? new Set(respondTo.slice("allowlist:".length).split(",").map((s) => s.trim()))
@@ -335,7 +334,7 @@ async function main() {
     await say(channelId, communityId, GREETINGS[Math.floor(Math.random() * GREETINGS.length)] + rosterLine()).catch(() => {});
   }
 
-  console.log(`🟢 @${name} orchestrating ${channels.length} channel(s) on ${relayUrl}`);
+  console.log(`🟢 @${name} orchestrating ${channels.length} channel(s) on ${relayUrls.join(", ")}`);
   console.log(`   Router: ${baseUrl} (${model}) | roster: ${roster.size} agent(s) | respondTo: ${respondTo}`);
 
   const handleMention = async (event: {
