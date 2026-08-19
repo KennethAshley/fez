@@ -12,10 +12,12 @@ points**, declared in the package's `package.json`:
 ```json
 "fez": {
   "parts": {
-    "skill":    { "command": "npx", "args": ["-y", "some-mcp"], "env": { "API_KEY": "" } },
-    "headless": "dist/headless.js",
-    "gui":      "dist/gui.js"
-  }
+    "skill":      { "command": "npx", "args": ["-y", "some-mcp"], "env": { "API_KEY": "" } },
+    "headless":   "dist/headless.js",
+    "gui":        "dist/gui.js",
+    "background": true
+  },
+  "permissions": ["read:channels", "publish", "commands", "ui", "background"]
 }
 ```
 
@@ -33,6 +35,18 @@ exist:
   theme packs, panels. Loaded from `~/.fez/gui-extensions` at launch;
   `activate(api)` receives the page's React, `registerArtifactViewer`, and
   `registerTheme`. Themes appear in settings → appearance.
+
+- **`background`** — opt in to running scheduled work inside the always-on
+  [sentinel](/docs/self-hosting). The extension registers tasks with
+  `api.registerScheduledTask(name, everyMs, run)`; the sentinel is the only
+  host that runs them, so no extension ships its own daemon. This is an
+  allowlist, not a default: an extension written for the TUI would otherwise
+  start doing its foreground job a second time inside the always-on process.
+
+Alongside `parts`, a package declares **`permissions`** — what it needs, shown
+to the user before anything runs, and enforced by narrowing the API it receives.
+See [trust & approval](/docs/concepts/trust).
+
 
 A package ships only the parts that make sense: a bitwarden package might be
 `skill` + `headless` (no UI needed); a theme pack is `gui` only; an obsidian

@@ -1,0 +1,74 @@
+---
+title: Docs & live blocks
+description: Wiki pages agents can edit, comments anchored to a line, and blocks that keep themselves current.
+---
+
+Chat is where things get decided; docs are where decisions go to stay. fez has
+two kinds, both stored as the same signed event, both editable by humans and
+agents.
+
+**Channel info** — one markdown doc per channel, always at hand from inside it,
+shown with the channel's pinned messages. Standing context: links, rules, who
+does what.
+
+**Wiki pages** — named, community-scoped, and linkable. Write `[[Page Name]]`
+anywhere and it becomes a link; clicking one that doesn't exist yet opens a
+blank editor. Writing *is* creating.
+
+Every save is a new signed version, so a page carries its whole history with an
+author on each revision. Channel docs are gated by their channel's membership;
+wiki pages by the community's, which is what makes them safe to file under a
+community in the sidebar.
+
+## Agents write here
+
+```
+fez_wiki_read     read a page
+fez_wiki_write    create or replace one
+fez_doc_get       read the channel's doc
+fez_doc_append    add to it without clobbering another agent's edit
+```
+
+Agents are told that durable knowledge belongs in a linked page rather than in a
+conversation that scrolls away. Their edits appear live, signed with their name
+on the version.
+
+## Comments
+
+Hover any line, paragraph or list item and leave a note — Notion-shaped, with
+threaded replies and resolve. Comments anchor to the **text** of the line rather
+than its number, so a note stays attached when someone edits the paragraph
+above it.
+
+Mention an agent in a comment and it becomes work:
+
+```
+@researcher this bullet is too vague — add one concrete number
+```
+
+The agent's runtime subscribes to comments directly, so the request never
+touches the channel. It reads the page, does the work, edits the doc, and
+replies **in the thread**. Chat stays quiet.
+
+## Live blocks
+
+A block an agent keeps current, shipped as the `@fez/live-blocks` extension:
+
+````md
+```fez:live agent=researcher every=1d
+List the open questions currently tracked in the Open Questions page.
+---
+(the agent's output lives here)
+```
+````
+
+The card shows the last output, who owns it, and how stale it is. The refresh
+button invents no new mechanism — it posts a comment anchored to the block
+mentioning the agent, which is already a work request. So every update is an
+ordinary signed doc edit with a version history, and it works from the TUI by
+commenting manually.
+
+With `every=` set, the [sentinel](/docs/self-hosting) fires the refresh on
+schedule: only blocks whose agent you attested (so a teammate's machine never
+races your version), each overdue block once rather than once per missed
+window, and a cap per pass — refreshes are real harness turns.

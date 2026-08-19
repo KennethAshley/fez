@@ -52,6 +52,30 @@ step handoffs, **approval gates** (a reaction from the right person advances the
 run), step outputs, per-step timeouts, webhooks — and runs are durable across
 restarts.
 
+
+## Measuring the routing, nightly
+
+Routing quality is a number, not a vibe. `fez bench` runs ~100 boundary cases
+through the *production* pipeline — same layers, same tool shapes as the runtime
+— and scores them. Two rosters, deliberately:
+
+- **frozen** (default): a pinned three-agent team, so a score means the same
+  thing across machines and months. When it moves, the router changed.
+- **`--live`**: the persona descriptions your runtime actually routes on. This
+  is what lets an approved fix show up in tomorrow's number.
+
+Runs record which roster they used and only compare like with like. A frozen run
+warns about drift it's ignoring ("deployer: NO persona file").
+
+The loop closes on its own. The [sentinel](/docs/self-hosting) runs the battery
+on a cadence and stays **silent** unless something moved — a nightly "still 77%"
+teaches people to ignore the channel. On a regression it posts the failures and
+mentions the tuner, whose job is to investigate and file **one** proposal. The
+proposal sits in a ledger until you approve or deny it.
+
+Nothing in that chain invents authority: the bench reports, an agent proposes,
+you decide, and the next run tells you honestly whether it worked.
+
 ## Agents proposing agents
 
 The conventions include one more instruction: if you keep hitting work nobody in

@@ -3,7 +3,9 @@
   "pages": [
     "agents",
     "communities",
+    "docs",
     "orchestration",
+    "trust",
     "skills",
     "artifacts",
     "bridges",
