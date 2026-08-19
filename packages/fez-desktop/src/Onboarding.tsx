@@ -7,6 +7,14 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { BrowserWire } from "./wire";
 import { openBackup } from "./backup";
 
+/**
+ * Where a fresh install lands. Mirrors src/settings.ts — the desktop
+ * bundle deliberately doesn't depend on the CLI package. A generic
+ * public relay carries the events but enforces none of fez's membership
+ * gating, so channel content there is unlisted rather than private.
+ */
+const DEFAULT_RELAY = "wss://67-205-188-204.sslip.io";
+
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
 /**
@@ -29,73 +37,73 @@ export function deriveSas(a: string, b: string): string {
   return String(n % 1_000_000).padStart(6, "0");
 }
 
-type Step = "welcome" | "relay" | "identity" | "pairing" | "restore" | "name" | "done";
+type Step = "welcome" | "invite" | "pairing" | "restore" | "done";
 
 export default function Onboarding({ onComplete }: { onComplete: (relayUrl: string) => void }) {
   const [step, setStep] = useState<Step>("welcome");
-  const [relayUrl, setRelayUrl] = useState(localStorage.getItem("fez-relay") ?? "ws://localhost:7777");
+  // No relay question. A first-time user does not have an opinion about
+  // WebSocket URLs, and asking produced the worst possible default:
+  // whatever we prefilled. It lives in settings now, and an invite code
+  // can add its own.
+  const [relayUrl, setRelayUrl] = useState(localStorage.getItem("fez-relay") ?? DEFAULT_RELAY);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [keyHex, setKeyHex] = useState<string>();
   const [name, setName] = useState("");
   const [showBackup, setShowBackup] = useState(false);
 
-  const checkRelay = async () => {
+  /**
+   * The whole happy path: a name, a key, a profile, in.
+   *
+   * These used to be three screens (identity → name → done) because they
+   * are three things technically. They are one thing to the person doing
+   * it, and every screen between "I want to try this" and "I am in it"
+   * is a place to stop.
+   */
+  const start = async () => {
     setError(undefined);
-    const ok = await new Promise<boolean>((resolve) => {
-      try {
-        const ws = new WebSocket(relayUrl);
-        const timer = setTimeout(() => {
-          ws.close();
-          resolve(false);
-        }, 4000);
-        ws.onopen = () => {
-          clearTimeout(timer);
-          ws.close();
-          resolve(true);
-        };
-        ws.onerror = () => {
-          clearTimeout(timer);
-          resolve(false);
-        };
-      } catch {
-        resolve(false);
-      }
-    });
-    if (ok) {
-      localStorage.setItem("fez-relay", relayUrl);
-      setStep("identity");
-    } else {
-      setError("couldn't reach that relay — check the URL (ws:// or wss://)");
-    }
-  };
-
-  const createIdentity = async () => {
-    setError(undefined);
+    setBusy(true);
     try {
       const secret = generateSecretKey();
       const hex = bytesToHex(secret);
       await invoke("set_identity", { hex, account: ACCOUNT });
       setKeyHex(hex);
-      setStep("name");
+      localStorage.setItem("fez-relay", relayUrl);
+      if (name.trim()) {
+        // Best-effort: a profile that didn't publish is a display name to
+        // fix later, not a reason to hold someone at the door.
+        try {
+          const wire = new BrowserWire(relayUrl.split(","), hex);
+          await new Promise((r) => setTimeout(r, 600));
+          await wire.publish({ kind: 0, tags: [], content: JSON.stringify({ name: name.trim() }) });
+          wire.close();
+        } catch { /* identity is what matters */ }
+      }
+      setStep("done");
     } catch (err) {
       setError(String(err));
+    } finally {
+      setBusy(false);
     }
   };
 
-  const finishName = async () => {
-    setError(undefined);
-    try {
-      if (name.trim() && keyHex) {
-        // Publish the kind-0 profile so others see a name, not hex.
-        const wire = new BrowserWire(relayUrl, keyHex);
-        await new Promise((r) => setTimeout(r, 800)); // socket open
-        await wire.publish({ kind: 0, tags: [], content: JSON.stringify({ name: name.trim() }) });
-        wire.close();
-      }
-      setStep("done");
-    } catch {
-      setStep("done"); // profile publish is best-effort; identity is what matters
+  /** An invite names the relay its community lives on — add it to the set. */
+  const acceptInvite = (code: string): boolean => {
+    const match = /^fez-join:(.+)#([0-9a-f-]+)$/i.exec(code.trim());
+    if (!match) {
+      setError("that doesn't look like an invite — expected fez-join:<relay>#<community>");
+      return false;
     }
+    const [, relay, communityId] = match;
+    const set = relayUrl.split(",").map((r) => r.trim()).filter(Boolean);
+    if (!set.includes(relay)) set.unshift(relay);
+    setRelayUrl(set.join(","));
+    localStorage.setItem("fez-relay", set.join(","));
+    // Joined after the identity exists — you cannot be a member before
+    // you are anybody.
+    localStorage.setItem("fez-pending-invite", communityId);
+    setError(undefined);
+    return true;
   };
 
   return (
@@ -106,47 +114,53 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
             <div className="ob-logo">🧢</div>
             <h1>fez</h1>
             <p className="ob-lede">
-              Communities for you and your agents — no server owns your data or your identity.
-              Everything is signed events on a relay you choose; everything private is encrypted.
+              Communities for you and your agents. Your identity is a key on this machine, not an account on
+              someone's server — and everything private is encrypted before it leaves.
             </p>
-            <button className="ob-primary" onClick={() => setStep("relay")}>get started</button>
+            <input
+              className="ob-input"
+              value={name}
+              autoFocus
+              spellCheck={false}
+              placeholder="your name"
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !busy) void start();
+              }}
+            />
+            {error && <p className="ob-error">{error}</p>}
+            <button className="ob-primary" disabled={busy} onClick={() => void start()}>
+              {busy ? "setting up…" : name.trim() ? `continue as ${name.trim()}` : "get started"}
+            </button>
+            <div className="ob-alts">
+              <button className="ob-link" onClick={() => setStep("invite")}>I have an invite</button>
+              <button className="ob-link" onClick={() => setStep("pairing")}>I use fez on another device</button>
+              <button className="ob-link" onClick={() => setStep("restore")}>restore from backup</button>
+            </div>
           </>
         )}
 
-        {step === "relay" && (
-          <>
-            <h2>Your relay</h2>
-            <p className="ob-lede">
-              The relay stores your community's events — run your own (<code>fez-relay</code>) or use one you trust.
-              You can change this later.
-            </p>
-            <input className="ob-input" value={relayUrl} onChange={(e) => setRelayUrl(e.target.value)} placeholder="wss://relay.example.com" spellCheck={false} />
-            {error && <p className="ob-error">{error}</p>}
-            <button className="ob-primary" onClick={() => void checkRelay()}>connect</button>
-          </>
-        )}
-
-        {step === "identity" && (
-          <>
-            <h2>Your identity</h2>
-            <p className="ob-lede">
-              Fez identity is a cryptographic key, stored in your macOS keychain — not an account on someone's server.
-            </p>
-            {error && <p className="ob-error">{error}</p>}
-            <button className="ob-primary" onClick={() => void createIdentity()}>I'm new — create my key</button>
-            <button className="ob-secondary" onClick={() => setStep("pairing")}>I use fez on another device</button>
-            <button className="ob-secondary" onClick={() => setStep("restore")}>restore from a backup file</button>
-          </>
+        {step === "invite" && (
+          <InviteStep
+            error={error}
+            onAccept={(code) => {
+              if (acceptInvite(code)) setStep("welcome");
+            }}
+            onBack={() => {
+              setError(undefined);
+              setStep("welcome");
+            }}
+          />
         )}
 
         {step === "pairing" && (
           <PairingStep
-            relayUrl={relayUrl}
+            relayUrl={relayUrl.split(",")[0]}
             onPaired={(hex) => {
               setKeyHex(hex);
               setStep("done");
             }}
-            onBack={() => setStep("identity")}
+            onBack={() => setStep("welcome")}
           />
         )}
 
@@ -156,26 +170,8 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               setKeyHex(hex);
               setStep("done");
             }}
-            onBack={() => setStep("identity")}
+            onBack={() => setStep("welcome")}
           />
-        )}
-
-        {step === "name" && (
-          <>
-            <h2>What should people see?</h2>
-            <p className="ob-lede">A display name for humans and agents — published as your profile, changeable anytime.</p>
-            <input
-              className="ob-input"
-              value={name}
-              autoFocus
-              onChange={(e) => setName(e.target.value)}
-              placeholder="your name"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void finishName();
-              }}
-            />
-            <button className="ob-primary" onClick={() => void finishName()}>{name.trim() ? "continue" : "skip for now"}</button>
-          </>
         )}
 
         {step === "done" && (
@@ -369,6 +365,45 @@ function PairingStep({ relayUrl, onPaired, onBack }: { relayUrl: string; onPaire
         </>
       )}
       {phase !== "error" && <button className="ob-secondary" onClick={onBack}>back</button>}
+    </>
+  );
+}
+
+/**
+ * Paste an invite. It names the relay its community lives on, so
+ * accepting one WIDENS your relay set rather than moving you — a guest
+ * should never have to reconfigure anything to walk through a door.
+ */
+function InviteStep({
+  error,
+  onAccept,
+  onBack,
+}: {
+  error?: string;
+  onAccept: (code: string) => void;
+  onBack: () => void;
+}) {
+  const [code, setCode] = useState("");
+  return (
+    <>
+      <h2>Your invite</h2>
+      <p className="ob-lede">Paste the code someone sent you. You'll join their community once your identity exists.</p>
+      <input
+        className="ob-input"
+        value={code}
+        autoFocus
+        spellCheck={false}
+        placeholder="fez-join:wss://…#…"
+        onChange={(e) => setCode(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && code.trim()) onAccept(code);
+        }}
+      />
+      {error && <p className="ob-error">{error}</p>}
+      <button className="ob-primary" disabled={!code.trim()} onClick={() => onAccept(code)}>
+        accept invite
+      </button>
+      <button className="ob-secondary" onClick={onBack}>back</button>
     </>
   );
 }

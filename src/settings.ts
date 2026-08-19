@@ -63,7 +63,21 @@ export function saveSettings(patch: Partial<FezSettings>): FezSettings {
   return merged;
 }
 
-export const DEFAULT_RELAY = "wss://relay.damus.io";
+/**
+ * Where a fresh install lands.
+ *
+ * This used to be a public nostr relay run by strangers, which meant a
+ * default install published its channel messages — plaintext, since only
+ * DMs are encrypted — to somebody else's box, with none of fez's
+ * membership gating, because that gate is a fez-relay policy a generic
+ * relay has never heard of. Unlisted is not private.
+ *
+ * A fez relay is not a requirement — any nostr relay carries the events —
+ * but it is what makes the security model true, so it is what we default
+ * to. `fez relay add/remove` changes it; running your own is a `docker
+ * run` (deploy/Dockerfile).
+ */
+export const DEFAULT_RELAY = "wss://67-205-188-204.sslip.io";
 
 /**
  * The relay SET for this invocation, in precedence order:

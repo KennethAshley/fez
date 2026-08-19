@@ -136,6 +136,19 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     const wire = new BrowserWire(relaySet(), keyHex);
     const client = new FezClient(wire);
     await client.start();
+
+    // An invite accepted during onboarding is claimed HERE, with the
+    // final identity — you cannot be a member before you are anybody,
+    // and claiming it earlier would bind the membership to a key that
+    // is about to be replaced.
+    const pendingInvite = localStorage.getItem("fez-pending-invite");
+    if (pendingInvite) {
+      localStorage.removeItem("fez-pending-invite");
+      try {
+        await client.joinCommunity(pendingInvite);
+      } catch { /* the community's events haven't reached this relay yet */ }
+    }
+
     if (client.state.joined.size === 0) {
       for (const community of await client.listCommunities()) {
         await client.joinCommunity(community.id);

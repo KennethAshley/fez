@@ -154,7 +154,9 @@ export default function ManagePane({
 /** A fez invite is a URI, not a hosted link — there's no server to host one. */
 function InviteCode({ communityId, communityName }: { communityId: string; communityName: string }) {
   const [copied, setCopied] = useState(false);
-  const code = `fez-join:${localStorage.getItem("fez-relay") ?? "ws://localhost:7777"}#${communityId}`;
+  // The FIRST relay in the set: an invite has to name one place to look,
+  // and the rest of the set is the inviter's business, not the guest's.
+  const code = `fez-join:${(localStorage.getItem("fez-relay") ?? "ws://localhost:7777").split(",")[0].trim()}#${communityId}`;
   return (
     <>
       <code
@@ -187,9 +189,14 @@ function JoinByCode({
     const match = /^fez-join:(.+)#([0-9a-f-]+)$/i.exec(code.trim());
     if (!match) return onResult("✗ not an invite code — expected fez-join:<relay>#<community>");
     const [, relay, communityId] = match;
-    const myRelay = localStorage.getItem("fez-relay") ?? "ws://localhost:7777";
-    if (relay !== myRelay) {
-      return onResult(`✗ that community lives on ${relay} — switch relay in settings first (you're on ${myRelay})`);
+    // A community on another relay is a reason to ADD that relay, not to
+    // turn someone away. Refusing here was a leftover from when a client
+    // could only talk to one relay — now the invite just widens the set,
+    // which is the entire point of having one.
+    const current = (localStorage.getItem("fez-relay") ?? "ws://localhost:7777").split(",").map((r) => r.trim());
+    if (!current.includes(relay)) {
+      localStorage.setItem("fez-relay", [...current, relay].join(","));
+      onResult(`+ added ${relay} to your relays — reopen fez to finish joining`);
     }
     setCode("");
     const known = await client.joinCommunity(communityId);
