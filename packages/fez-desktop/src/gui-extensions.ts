@@ -210,7 +210,7 @@ export function pageViewsFor(content: string): { views: PageView[]; preferred?: 
  * resolvable like any other theme — the same paint() picks the variant,
  * so following the OS is one code path instead of a special case.
  */
-const BUILT_IN_DEFAULT = {
+export const BUILT_IN_DEFAULT = {
   dark: {
     "--bg0": "#1d2021",
     "--bg1": "#282828",
@@ -223,6 +223,18 @@ const BUILT_IN_DEFAULT = {
     "--red": "#fb4934",
     "--yellow": "#fabd2f",
     "--brand": "#FF6A00",
+    // The terminal-chrome layer. These were hard-coded in App.css and
+    // are the reason a light theme used to leave a black sidebar with
+    // near-black text on it — invisible, and the first thing anyone
+    // noticed.
+    "--bg-rail": "#17191a",
+    "--hairline": "#32302f",
+    "--phosphor": "#b8bb26",
+    // Chart marks, CVD-validated against their ground — a pair, not
+    // theme accents, so they are tuned per scheme rather than reused.
+    "--viz-ok": "#43a56c",
+    "--viz-fail": "#fb4934",
+    "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
   },
   light: {
     "--bg0": "#fbf1c7",
@@ -239,6 +251,12 @@ const BUILT_IN_DEFAULT = {
     "--red": "#9d0006",
     "--yellow": "#b57614",
     "--brand": "#d45500",
+    "--bg-rail": "#eee0b7",
+    "--hairline": "#d5c4a1",
+    "--phosphor": "#79740e",
+    "--viz-ok": "#427b58",
+    "--viz-fail": "#9d0006",
+    "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
   },
 };
 

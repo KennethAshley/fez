@@ -81,6 +81,16 @@ export default function activate(api: ThemeApi): void {
       "--red": "#d64545",
       "--yellow": "#c9903a",
       "--brand": "#FF6A00",
+      // The rail is the deepest room in the house; the hairline does the
+      // separating, not a lighter ground.
+      "--bg-rail": "#050403",
+      "--hairline": "#17140f",
+      // The live wire — everything streaming from an agent. It stays
+      // amber: a second hue would be a second light source, and the
+      // pulse animation already distinguishes it from static text.
+      "--phosphor": "#FF6A00",
+      "--viz-ok": "#5f8f6a",
+      "--viz-fail": "#d64545",
       "--font-mono": FACE,
     },
 
@@ -105,6 +115,11 @@ export default function activate(api: ThemeApi): void {
       "--red": "#a52f2f",
       "--yellow": "#8a6420",
       "--brand": "#d45500",
+      "--bg-rail": "#e7dfd0",
+      "--hairline": "#ddd3c2",
+      "--phosphor": "#c24a00",
+      "--viz-ok": "#4e7a58",
+      "--viz-fail": "#a52f2f",
       "--font-mono": FACE,
     },
   });
