@@ -4,11 +4,17 @@ import type { Wire, WireEvent, WireFilter, DmRumor } from "@fez/client";
 
 /**
  * Browser Wire for @fez/client — the same eight-function seam the TUI
- * assembles in node, built on a plain WebSocket (webviews can't use
+ * assembles in node, built on plain WebSockets (webviews can't use
  * nostr-tools' node-flavored pool helpers, and a direct implementation
  * is ~150 lines anyway). Auto-reconnects with full-filter resubscribe +
  * seen-set dedup — the same recovery decision as src/relay.ts, for the
  * same reason (fuzzed-created_at kinds forbid watermark rewinds).
+ *
+ * One socket PER RELAY, and the same three rules src/relay.ts spells
+ * out: publishes fan out and succeed on the first acceptance, reads are
+ * the union deduped by id, and every relay is reconnected rather than
+ * only the last one standing. The GUI having its own wire is exactly how
+ * a desktop app ends up quietly single-relay while the CLI isn't.
  *
  * Custody: the key hex arrives from the Tauri shell (macOS keychain) and
  * lives in webview memory for the session — identical trust model to the
@@ -21,51 +27,99 @@ interface Sub {
   id: string;
   filters: WireFilter[];
   onEvent: (event: WireEvent) => void;
+  /** Shared across relays: the same event from four relays arrives once. */
   seen: Set<string>;
+}
+
+interface QueryBucket {
+  events: WireEvent[];
+  resolve: (events: WireEvent[]) => void;
+  /** Relays we're still waiting on — resolving on the FIRST EOSE would
+   * discard whatever the slower relays were about to send. */
+  awaiting: Set<string>;
+  done: boolean;
+}
+
+interface PendingOk {
+  resolve: () => void;
+  reject: (err: Error) => void;
+  awaiting: Set<string>;
+  accepted: boolean;
+  settled: boolean;
+  reasons: string[];
 }
 
 export class BrowserWire implements Wire {
   readonly pubkey: string;
   private secret: Uint8Array;
-  private url: string;
-  private ws?: WebSocket;
+  private urls: string[];
+  private sockets = new Map<string, WebSocket>();
   private subs = new Map<string, Sub>();
-  private pendingOks = new Map<string, { resolve: () => void; reject: (e: Error) => void }>();
-  private queryBuckets = new Map<string, { events: WireEvent[]; resolve: (e: WireEvent[]) => void }>();
+  private pendingOks = new Map<string, PendingOk>();
+  private queryBuckets = new Map<string, QueryBucket>();
   private serial = 0;
   private closed = false;
   onStatus?: (connected: boolean) => void;
   onError?: (message: string) => void;
+  /** Per-relay picture, so the UI can say "2 of 3" instead of a green dot. */
+  onRelayHealth?: (health: { url: string; connected: boolean }[]) => void;
 
   private watchdog?: ReturnType<typeof setInterval>;
 
-  constructor(url: string, keyHex: string) {
-    this.url = url;
+  constructor(urls: string | string[], keyHex: string) {
+    this.urls = [...new Set((Array.isArray(urls) ? urls : [urls]).map((u) => u.trim()).filter(Boolean))];
+    if (this.urls.length === 0) throw new Error("BrowserWire: no relay URLs given");
     this.secret = Uint8Array.from(keyHex.match(/.{2}/g)!.map((b) => parseInt(b, 16)));
     this.pubkey = getPublicKey(this.secret);
-    this.connect();
+    for (const url of this.urls) this.connect(url);
     // Belt-and-braces recovery: whatever state an old socket wedges in
     // (HMR remounts, sleep/wake, orphaned handlers), a socket that isn't
     // OPEN or CONNECTING gets replaced. The onclose reconnect is the
-    // fast path; this is the guarantee.
+    // fast path; this is the guarantee. EVERY relay is checked — the
+    // shortcut of stopping once one is healthy is how a set decays into
+    // a single relay without anything appearing to be wrong.
     this.watchdog = setInterval(() => {
       if (this.closed) return;
-      const state = this.ws?.readyState;
-      if (state !== WebSocket.OPEN && state !== WebSocket.CONNECTING) this.connect();
+      for (const url of this.urls) {
+        const state = this.sockets.get(url)?.readyState;
+        if (state !== WebSocket.OPEN && state !== WebSocket.CONNECTING) this.connect(url);
+      }
     }, 5000);
   }
 
-  private connect(): void {
+  private openCount(): number {
+    return this.urls.filter((url) => this.sockets.get(url)?.readyState === WebSocket.OPEN).length;
+  }
+
+  health(): { url: string; connected: boolean }[] {
+    return this.urls.map((url) => ({ url, connected: this.sockets.get(url)?.readyState === WebSocket.OPEN }));
+  }
+
+  relayUrls(): readonly string[] {
+    return this.urls;
+  }
+
+  private reportStatus(): void {
+    this.onStatus?.(this.openCount() > 0);
+    this.onRelayHealth?.(this.health());
+  }
+
+  private connect(url: string): void {
     if (this.closed) return;
-    const ws = new WebSocket(this.url);
-    this.ws = ws;
+    const ws = new WebSocket(url);
+    this.sockets.set(url, ws);
     ws.onopen = () => {
-      this.onStatus?.(true);
-      for (const sub of this.subs.values()) this.fire(sub);
+      this.reportStatus();
+      // A relay that just arrived has no subscriptions of its own.
+      for (const sub of this.subs.values()) this.fireTo(url, sub);
     };
     ws.onclose = () => {
-      this.onStatus?.(false);
-      if (!this.closed) setTimeout(() => this.connect(), 2000);
+      this.reportStatus();
+      // Anything waiting on this relay must stop waiting, or a query
+      // hangs for its full timeout every time one relay is down.
+      for (const bucket of this.queryBuckets.values()) this.dropFromBucket(bucket, url);
+      for (const [id, pending] of this.pendingOks) this.dropFromOk(id, pending, url, "relay disconnected");
+      if (!this.closed) setTimeout(() => this.connect(url), 2000);
     };
     ws.onmessage = (raw) => {
       let msg: unknown[];
@@ -83,46 +137,92 @@ export class BrowserWire implements Wire {
           sub.onEvent(event);
         }
         const bucket = this.queryBuckets.get(a);
-        if (bucket) bucket.events.push(event);
+        // Dedupe inside the bucket too: the same event from three relays
+        // is one row, not three.
+        if (bucket && !bucket.events.some((e) => e.id === event.id)) bucket.events.push(event);
       } else if (type === "EOSE") {
         const bucket = this.queryBuckets.get(a);
         if (bucket) {
-          this.queryBuckets.delete(a);
-          this.send(["CLOSE", a]);
-          bucket.resolve(bucket.events);
+          this.sendTo(url, ["CLOSE", a]);
+          this.dropFromBucket(bucket, url, a);
         }
       } else if (type === "OK") {
         const pending = this.pendingOks.get(a);
         if (pending) {
-          this.pendingOks.delete(a);
-          if ((msg as [string, string, boolean, string])[2]) pending.resolve();
-          else pending.reject(new Error((msg as [string, string, boolean, string])[3] ?? "rejected"));
+          const [, , accepted, reason] = msg as [string, string, boolean, string];
+          if (accepted) {
+            pending.accepted = true;
+            pending.awaiting.delete(url);
+            if (!pending.settled) {
+              // First acceptance wins: the event is published. Slower
+              // relays keep receiving it, they just aren't waited on.
+              pending.settled = true;
+              this.pendingOks.delete(a);
+              pending.resolve();
+            }
+          } else {
+            this.dropFromOk(a, pending, url, reason || "rejected");
+          }
         }
       } else if (type === "AUTH") {
-        // NIP-42 challenge: sign and answer with the user's key.
+        // NIP-42 challenge: sign and answer with the user's key. The
+        // relay tag names THIS relay — a challenge answered with another
+        // relay's url is a valid signature over the wrong statement.
         const auth = finalizeEvent(
           {
             kind: 22242,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [["relay", this.url], ["challenge", a]],
+            tags: [["relay", url], ["challenge", a]],
             content: "",
           },
           this.secret
         );
-        this.send(["AUTH", auth]);
+        this.sendTo(url, ["AUTH", auth]);
       }
     };
   }
 
+  private dropFromBucket(bucket: QueryBucket, url: string, id?: string): void {
+    bucket.awaiting.delete(url);
+    if (bucket.done || bucket.awaiting.size > 0) return;
+    bucket.done = true;
+    if (id) this.queryBuckets.delete(id);
+    else {
+      for (const [key, value] of this.queryBuckets) if (value === bucket) this.queryBuckets.delete(key);
+    }
+    bucket.resolve(bucket.events);
+  }
+
+  private dropFromOk(id: string, pending: PendingOk, url: string, reason: string): void {
+    if (pending.settled) return;
+    pending.awaiting.delete(url);
+    pending.reasons.push(`${url}: ${reason}`);
+    if (pending.awaiting.size > 0) return;
+    pending.settled = true;
+    this.pendingOks.delete(id);
+    // Only a rejection by EVERY relay is a failed publish.
+    if (pending.accepted) pending.resolve();
+    else pending.reject(new Error(pending.reasons.join("; ")));
+  }
+
   private send(frame: unknown[]): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(frame));
+    for (const url of this.urls) this.sendTo(url, frame);
+  }
+
+  private sendTo(url: string, frame: unknown[]): void {
+    const ws = this.sockets.get(url);
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
   }
 
   private fire(sub: Sub): void {
+    for (const url of this.urls) this.fireTo(url, sub);
+  }
+
+  private fireTo(url: string, sub: Sub): void {
     // One REQ per filter (matches fez-relay's per-filter matching); a
     // shared sub id merges their streams client-side via the seen-set.
     for (const [index, filter] of sub.filters.entries()) {
-      this.send(["REQ", `${sub.id}:${index}`, filter]);
+      this.sendTo(url, ["REQ", `${sub.id}:${index}`, filter]);
     }
   }
 
@@ -131,7 +231,7 @@ export class BrowserWire implements Wire {
     const sub: Sub = { id, filters: filters.map((f) => ({ ...f })), onEvent, seen: new Set() };
     // Register under each per-filter REQ id so EVENT routing finds it.
     for (const [index] of filters.entries()) this.subs.set(`${id}:${index}`, sub);
-    if (this.ws?.readyState === WebSocket.OPEN) this.fire(sub);
+    if (this.openCount() > 0) this.fire(sub);
     return () => {
       for (const [index] of filters.entries()) {
         this.subs.delete(`${id}:${index}`);
@@ -146,11 +246,18 @@ export class BrowserWire implements Wire {
         (filter) =>
           new Promise<WireEvent[]>((resolve) => {
             const id = `q${this.serial++}`;
-            this.queryBuckets.set(id, { events: [], resolve });
-            this.send(["REQ", id, filter]);
+            const live = this.urls.filter((url) => this.sockets.get(url)?.readyState === WebSocket.OPEN);
+            // Nothing is up: answer empty rather than stalling the UI for
+            // eight seconds on every panel.
+            if (live.length === 0) return resolve([]);
+            const bucket: QueryBucket = { events: [], resolve, awaiting: new Set(live), done: false };
+            this.queryBuckets.set(id, bucket);
+            for (const url of live) this.sendTo(url, ["REQ", id, filter]);
             setTimeout(() => {
-              const bucket = this.queryBuckets.get(id);
-              if (bucket) {
+              // Backstop for a relay that accepts the REQ and never
+              // EOSEs. Whatever the others returned is still an answer.
+              if (!bucket.done) {
+                bucket.done = true;
                 this.queryBuckets.delete(id);
                 resolve(bucket.events);
               }
@@ -177,20 +284,43 @@ export class BrowserWire implements Wire {
     return event;
   }
 
+  /**
+   * Fan out to every connected relay; resolve on the first acceptance.
+   * A relay that rejects while another accepts does not fail the
+   * publish — the event exists, and telling the user otherwise would be
+   * false. Only a rejection by all of them is a failure.
+   */
   private publishSigned(event: Event): Promise<void> {
     return new Promise((resolve, reject) => {
       const fail = (message: string) => {
         this.onError?.(message);
         reject(new Error(message));
       };
-      if (this.ws?.readyState !== WebSocket.OPEN) {
-        fail("not connected to the relay — reconnecting, try again in a moment");
+      const live = this.urls.filter((url) => this.sockets.get(url)?.readyState === WebSocket.OPEN);
+      if (live.length === 0) {
+        fail(
+          this.urls.length === 1
+            ? "not connected to the relay — reconnecting, try again in a moment"
+            : `not connected to any of your ${this.urls.length} relays — reconnecting, try again in a moment`
+        );
         return;
       }
-      this.pendingOks.set(event.id, { resolve, reject: (e) => fail(e.message) });
-      this.send(["EVENT", event]);
+      const pending: PendingOk = {
+        resolve,
+        reject: (err) => fail(err.message),
+        awaiting: new Set(live),
+        accepted: false,
+        settled: false,
+        reasons: [],
+      };
+      this.pendingOks.set(event.id, pending);
+      for (const url of live) this.sendTo(url, ["EVENT", event]);
       setTimeout(() => {
-        if (this.pendingOks.delete(event.id)) fail("publish timed out — relay didn't acknowledge");
+        if (pending.settled) return;
+        pending.settled = true;
+        this.pendingOks.delete(event.id);
+        if (pending.accepted) resolve();
+        else fail("publish timed out — no relay acknowledged");
       }, 10_000);
     });
   }
@@ -267,6 +397,7 @@ export class BrowserWire implements Wire {
   close(): void {
     this.closed = true;
     clearInterval(this.watchdog);
-    this.ws?.close();
+    for (const ws of this.sockets.values()) ws.close();
+    this.sockets.clear();
   }
 }

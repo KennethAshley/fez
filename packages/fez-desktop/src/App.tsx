@@ -40,10 +40,19 @@ import "./App.css";
  * observer frame below comes from @fez/client — this file only renders.
  */
 
-const RELAY_URL =
-  (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_RELAY ??
-  localStorage.getItem("fez-relay") ??
-  "ws://localhost:7777";
+/**
+ * The relay SET. Stored comma-separated under the same key the single
+ * relay used, so an existing install keeps working and adding a second
+ * relay is editing one string rather than a migration.
+ */
+function relaySet(): string[] {
+  const raw =
+    (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_RELAY ??
+    localStorage.getItem("fez-relay") ??
+    "ws://localhost:7777";
+  const urls = raw.split(",").map((u) => u.trim()).filter(Boolean);
+  return urls.length ? urls : ["ws://localhost:7777"];
+}
 /** Keychain account — override with VITE_FEZ_ACCOUNT=demo to walk onboarding as a fresh user without touching your real identity. */
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 const KIND_TURN_METRIC = 47030;
@@ -124,8 +133,7 @@ let bootPromise: Promise<{ client: FezClient; wire: BrowserWire }> | undefined;
 function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
   bootPromise ??= (async () => {
     const keyHex = await invoke<string>("get_identity", { account: ACCOUNT });
-    const relayUrl = localStorage.getItem("fez-relay") ?? RELAY_URL;
-    const wire = new BrowserWire(relayUrl, keyHex);
+    const wire = new BrowserWire(relaySet(), keyHex);
     const client = new FezClient(wire);
     await client.start();
     if (client.state.joined.size === 0) {
@@ -160,6 +168,7 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [connected, setConnected] = useState(true);
+  const [relayHealth, setRelayHealth] = useState<{ url: string; connected: boolean }[]>([]);
   const [bootNonce, setBootNonce] = useState(0);
 
   useEffect(() => {
@@ -168,6 +177,7 @@ export default function App() {
       .then(({ client, wire }) => {
         if (cancelled) return;
         wire.onStatus = setConnected;
+        wire.onRelayHealth = setRelayHealth;
         setBoot({ phase: "ready", client, wire });
       })
       .catch((err) => {
@@ -195,10 +205,20 @@ export default function App() {
     );
   }
   if (boot.phase === "error") return <div className="boot error">{boot.message}</div>;
-  return <Shell client={boot.client} wire={boot.wire} connected={connected} />;
+  return <Shell client={boot.client} wire={boot.wire} connected={connected} relayHealth={relayHealth} />;
 }
 
-function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWire; connected: boolean }) {
+function Shell({
+  client,
+  wire,
+  connected,
+  relayHealth,
+}: {
+  client: FezClient;
+  wire: BrowserWire;
+  connected: boolean;
+  relayHealth: { url: string; connected: boolean }[];
+}) {
   const render = useForceRender();
   const [view, setView] = useState<MainView>({ kind: "channel" });
   const [pane, setPane] = useState<SidePane>();
@@ -514,12 +534,31 @@ function Shell({ client, wire, connected }: { client: FezClient; wire: BrowserWi
 
   return (
     <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
-      {!connected && <div className="conn-bar">relay disconnected — reconnecting…</div>}
+      {!connected && (
+        <div className="conn-bar">
+          {relayHealth.length > 1 ? `all ${relayHealth.length} relays unreachable` : "relay disconnected"} — reconnecting…
+        </div>
+      )}
+      {connected && relayHealth.length > 1 && relayHealth.some((r) => !r.connected) && (
+        <div className="conn-bar warn">
+          {relayHealth.filter((r) => r.connected).length}/{relayHealth.length} relays — down:{" "}
+          {relayHealth.filter((r) => !r.connected).map((r) => r.url).join(", ")}
+        </div>
+      )}
       {banner && <div className="conn-bar error">{banner}</div>}
       <aside className="rail">
         <div className="brand">
           <span className="brand-word">fez</span>{" "}
-          <span className={connected ? "dot on" : "dot off"} title={connected ? "relay connected" : "reconnecting…"} />
+          {/* A green dot that means "at least one relay" hides the
+              difference between four relays and the one you have left. */}
+          <span
+            className={connected ? (relayHealth.every((r) => r.connected) ? "dot on" : "dot partial") : "dot off"}
+            title={
+              relayHealth.length === 0
+                ? connected ? "relay connected" : "reconnecting…"
+                : relayHealth.map((r) => `${r.connected ? "●" : "○"} ${r.url}`).join("\n")
+            }
+          />
         </div>
         <button className="rail-search" onClick={() => setSearchOpen({ query: "" })}>
           <span className="rail-search-glyph">⌕</span> search everything

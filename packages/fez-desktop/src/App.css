@@ -55,6 +55,9 @@ body {
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot.on { background: var(--green); }
 .dot.off { background: var(--bg2); border: 1px solid var(--fg-dim); }
+/* Some relays up, some down: a green dot here would say "fine" while
+   you are one outage from having no relays at all. */
+.dot.partial { background: var(--yellow); }
 
 /* ── main column ───────────────────────────────────────────── */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -224,6 +227,7 @@ body {
   text-align: center; padding: 4px;
 }
 .conn-bar.error { background: var(--red); }
+.conn-bar.warn { background: var(--yellow); color: var(--bg0); }
 
 /* ── ghost-town affordances ─────────────────────────────────── */
 .community-id { color: var(--bg2); font-size: 10px; }
