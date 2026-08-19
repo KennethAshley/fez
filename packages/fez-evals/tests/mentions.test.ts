@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { resolveMentions, describeMentionProblems, type MentionCandidate } from "../../fez-client/dist/mentions.js";
+import {
+  bindMention,
+  resolveMentions,
+  describeMentionProblems,
+  type MentionCandidate,
+} from "../../fez-client/dist/mentions.js";
 
 /**
  * A name is not an identity — it is an unverified, non-unique claim
@@ -93,6 +98,49 @@ describe("ambiguity is surfaced, not guessed", () => {
     expect(describeMentionProblems(resolveMentions("@deployer ship", twins))).toMatch(/matches 2 members/);
     expect(describeMentionProblems(resolveMentions("@nobody ship", roster))).toMatch(/nobody here is called @nobody/);
     expect(describeMentionProblems(resolveMentions("@deployer ship", roster))).toBeUndefined();
+  });
+});
+
+describe("picking someone is the answer, not a hint", () => {
+  const twins: MentionCandidate[] = [
+    { pubkey: DEPLOYER, name: "deployer", isMember: true },
+    { pubkey: IMPOSTOR, name: "Deployer", isMember: true },
+  ];
+  const bind = (name: string, pubkey: string) => bindMention(new Map(), name, pubkey);
+
+  it("tags exactly who was chosen, where a name alone is ambiguous", () => {
+    const out = resolveMentions("@deployer ship", twins, bind("deployer", IMPOSTOR));
+    expect(out.pubkeys).toEqual([IMPOSTOR]);
+    expect(out.ambiguous).toEqual([]);
+    expect(describeMentionProblems(out)).toBeUndefined();
+  });
+
+  it("matches the binding however the sender later cases it", () => {
+    expect(resolveMentions("@DEPLOYER go", twins, bind("Deployer", DEPLOYER)).pubkeys).toEqual([DEPLOYER]);
+  });
+
+  it("does not apply to a name the sender edited away from", () => {
+    // Picked @deployer, then typed over it — the binding must not leak
+    // onto a different name.
+    const out = resolveMentions("@dep go", roster, bind("deployer", DEPLOYER));
+    expect(out.pubkeys).toEqual([SHORT]);
+  });
+
+  it("is not a way around the roster — someone kicked since you picked them", () => {
+    const kicked = roster.filter((c) => c.pubkey !== DEPLOYER);
+    const out = resolveMentions("@deployer ship", kicked, bind("deployer", DEPLOYER));
+    expect(out.pubkeys).toEqual([]);
+    expect(out.unresolved).toEqual(["deployer"]);
+  });
+
+  it("leaves names that were merely typed to ordinary resolution", () => {
+    const out = resolveMentions("@deployer and @Raleigh_CA", roster, bind("deployer", DEPLOYER));
+    expect(out.pubkeys.sort()).toEqual([OWNER, DEPLOYER].sort());
+  });
+
+  it("re-picking the same name replaces the choice rather than adding one", () => {
+    const bound = bindMention(bindMention(new Map(), "deployer", DEPLOYER), "deployer", IMPOSTOR);
+    expect(resolveMentions("@deployer ship", twins, bound).pubkeys).toEqual([IMPOSTOR]);
   });
 });
 

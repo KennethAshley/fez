@@ -122,6 +122,8 @@ body {
   background: none; border: 0; color: var(--fg); font: inherit; padding: 8px 12px; cursor: pointer;
 }
 .mention-item.active, .mention-item:hover { background: var(--bg2); color: var(--accent); }
+/* Two members with the same name: the key is the only thing telling them apart. */
+.mention-key { font-family: var(--font-mono); font-size: 11px; opacity: 0.55; }
 
 /* ── ⌘K search overlay ─────────────────────────────────────── */
 .overlay {

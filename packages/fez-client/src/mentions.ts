@@ -22,6 +22,13 @@
  *  - **Ties tag EVERYONE.** Two members genuinely called "deployer"
  *    both get the p tag. Ambiguity is preserved and surfaced rather
  *    than resolved by a coin flip the sender never sees.
+ *
+ * Both of those are the *fallback*. When a human picks a name out of the
+ * composer's autocomplete they have already answered "which deployer",
+ * so that answer is carried as a **binding** — name → the pubkey chosen
+ * at that moment — and no lookup happens at send. Agents have no
+ * autocomplete, so roster resolution is what protects them; bindings are
+ * the layer on top for people.
  */
 
 export interface MentionCandidate {
@@ -44,7 +51,19 @@ export interface MentionResolution {
 /** `@` followed by a name, at a word boundary so emails and paths don't match. */
 const MENTION = /(^|[\s([{<,;:!?"'`])@([\p{L}\p{N}_.-]{1,64})/gu;
 
-const normalize = (name: string) => name.trim().toLowerCase();
+export const normalizeMentionName = (name: string) => name.trim().toLowerCase();
+const normalize = normalizeMentionName;
+
+/**
+ * Names the sender bound to a specific pubkey while composing, keyed by
+ * normalizeMentionName(). Build one with bindMention().
+ */
+export type MentionBindings = ReadonlyMap<string, string>;
+
+/** Record that the sender chose `pubkey` for `name` — returns a new map. */
+export function bindMention(bindings: MentionBindings, name: string, pubkey: string): MentionBindings {
+  return new Map(bindings).set(normalize(name), pubkey);
+}
 
 /**
  * Resolve every @mention in a piece of text against a channel's roster.
@@ -52,8 +71,19 @@ const normalize = (name: string) => name.trim().toLowerCase();
  * Non-members are ignored deliberately: tagging someone who cannot read
  * the channel produces a notification for a message they will never be
  * shown, which reads to them as a system fault.
+ *
+ * A binding short-circuits the name lookup for that name — but only if
+ * the pubkey it names is *still* on the roster. Someone can be removed
+ * from a channel between the moment you pick them and the moment you
+ * hit send, and the binding must not be a way to route around the
+ * membership rule; a stale one is dropped and the name falls back to
+ * ordinary resolution, which reports it.
  */
-export function resolveMentions(text: string, candidates: readonly MentionCandidate[]): MentionResolution {
+export function resolveMentions(
+  text: string,
+  candidates: readonly MentionCandidate[],
+  bindings?: MentionBindings
+): MentionResolution {
   const members = candidates.filter((candidate) => candidate.isMember && candidate.pubkey && candidate.name);
 
   // Longest first, so the longest match at a position wins naturally.
@@ -72,6 +102,15 @@ export function resolveMentions(text: string, candidates: readonly MentionCandid
     const wanted = normalize(cleaned);
     if (seenNames.has(wanted)) continue;
     seenNames.add(wanted);
+
+    // The sender already said who they meant. Honour it — unless they
+    // are no longer in the room, in which case this is an ordinary
+    // unresolved name and gets reported as one.
+    const bound = bindings?.get(wanted);
+    if (bound && members.some((member) => member.pubkey === bound)) {
+      pubkeys.add(bound);
+      continue;
+    }
 
     // The longest candidate name that the written token starts with —
     // so "@deployer" prefers "deployer" over a member called "dep".

@@ -223,7 +223,12 @@ export interface DocCommentThread extends DocCommentReply {
  * (it is a different task now).
  */
 export * from "./mentions.js";
-import { resolveMentions, type MentionCandidate, type MentionResolution } from "./mentions.js";
+import {
+  resolveMentions,
+  type MentionBindings,
+  type MentionCandidate,
+  type MentionResolution,
+} from "./mentions.js";
 
 export function taskKey(itemText: string): string {
   return itemText.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200);
@@ -454,9 +459,12 @@ export class FezClient {
    * Resolve the @mentions in a message against a channel's roster.
    * Returns the pubkeys to tag plus what went wrong, so a caller can
    * tell the sender rather than dropping a mention in silence.
+   *
+   * `bindings` carries the choices a human made in an autocomplete, so
+   * those names never need a lookup at send time.
    */
-  resolveMentionsIn(text: string, channelId: string): MentionResolution {
-    return resolveMentions(text, this.mentionCandidates(channelId));
+  resolveMentionsIn(text: string, channelId: string, bindings?: MentionBindings): MentionResolution {
+    return resolveMentions(text, this.mentionCandidates(channelId), bindings);
   }
 
   /**

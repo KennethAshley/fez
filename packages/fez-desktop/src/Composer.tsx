@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FezClient } from "@fez/client";
+import type { FezClient, MentionCandidate } from "@fez/client";
 import { EMOJI, searchEmoji, type EmojiEntry } from "./emoji";
 import { COMMANDS, type CommandMeta } from "./commands";
 
@@ -9,15 +9,18 @@ import { COMMANDS, type CommandMeta } from "./commands";
  * a full emoji picker, and drag-drop / paste file upload. Editing
  * affordances stay with the caller (↑-to-edit, esc-to-cancel arrive as
  * callbacks) — the composer only owns text entry.
+ *
+ * Mentions come from `roster` — whoever is actually in this room —
+ * rather than every name the client has ever seen, and picking one
+ * reports the pubkey back through `onMentionPick` so the caller can
+ * pin it. Choosing a person out of a list IS the disambiguation; doing
+ * a name lookup again at send time throws that answer away.
  */
-
-export interface MentionCandidate {
-  name: string;
-  pk: string;
-}
 
 export default function Composer({
   client,
+  roster,
+  onMentionPick,
   value,
   onChange,
   onSend,
@@ -30,6 +33,10 @@ export default function Composer({
   commandsEnabled,
 }: {
   client: FezClient;
+  /** Who can be @mentioned here — the channel roster, or a DM's participants. */
+  roster: MentionCandidate[];
+  /** Fired when the sender picks someone, so the choice can be bound to a pubkey. */
+  onMentionPick?: (name: string, pubkey: string) => void;
   value: string;
   onChange: (next: string) => void;
   onSend: () => void;
@@ -80,27 +87,31 @@ export default function Composer({
     return undefined;
   }, [value, caret, commandsEnabled]);
 
+  // Everyone in this room, including namesakes: two members really
+  // called "deployer" both appear, because picking is how the sender
+  // says which one — collapsing them here would take that away.
   const mentionCandidates = useMemo(() => {
     if (token?.type !== "mention") return [];
-    const seen = new Set<string>();
-    const all: MentionCandidate[] = [];
-    for (const [pk, name] of client.knownNames()) {
-      if (pk === client.pubkey) continue;
-      const key = name.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      all.push({ name, pk });
-    }
     const partial = token.partial.toLowerCase();
-    return all
-      .filter((c) => c.name.toLowerCase().includes(partial))
+    return roster
+      .filter((c) => c.isMember && c.pubkey !== client.pubkey && c.name.toLowerCase().includes(partial))
       .sort((a, b) => {
         const aStarts = a.name.toLowerCase().startsWith(partial) ? 0 : 1;
         const bStarts = b.name.toLowerCase().startsWith(partial) ? 0 : 1;
         return aStarts - bStarts || a.name.localeCompare(b.name);
       })
       .slice(0, 6);
-  }, [client, token]);
+  }, [roster, client, token]);
+
+  /** Namesakes in view need the key shown, or the two rows are identical. */
+  const duplicated = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of mentionCandidates) {
+      const key = c.name.toLowerCase();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [mentionCandidates]);
 
   const emojiCandidates = useMemo(
     () => (token?.type === "emoji" ? searchEmoji(token.partial, 8) : []),
@@ -163,7 +174,11 @@ export default function Composer({
   const pick = (index: number) => {
     if (token?.type === "mention") {
       const candidate = mentionCandidates[index];
-      if (candidate) replaceToken(`@${candidate.name} `);
+      if (candidate) {
+        // The pubkey is settled here, not at send.
+        onMentionPick?.(candidate.name, candidate.pubkey);
+        replaceToken(`@${candidate.name} `);
+      }
     } else if (token?.type === "emoji") {
       const candidate = emojiCandidates[index];
       if (candidate) replaceToken(candidate.char);
@@ -305,7 +320,7 @@ export default function Composer({
           {token?.type === "mention" &&
             mentionCandidates.map((candidate, index) => (
               <button
-                key={candidate.pk}
+                key={candidate.pubkey}
                 className={index === pickIndex ? "mention-item active" : "mention-item"}
                 onMouseDown={(e) => {
                   e.preventDefault(); // keep textarea focus
@@ -313,7 +328,10 @@ export default function Composer({
                 }}
               >
                 @{candidate.name}
-                {client.isOnline(candidate.pk) && <span className="dot on" />}
+                {(duplicated.get(candidate.name.toLowerCase()) ?? 0) > 1 && (
+                  <span className="mention-key">{candidate.pubkey.slice(0, 8)}</span>
+                )}
+                {client.isOnline(candidate.pubkey) && <span className="dot on" />}
               </button>
             ))}
           {token?.type === "channel" &&

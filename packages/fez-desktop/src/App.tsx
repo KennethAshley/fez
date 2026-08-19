@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fez/client";
 import { BrowserWire } from "./wire";
-import { describeMentionProblems } from "@fez/client";
+import { bindMention, describeMentionProblems, type MentionBindings } from "@fez/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
@@ -1010,6 +1010,26 @@ function ChannelView({
     if (text) localStorage.setItem(`fez-draft-${channelId}`, text);
     else localStorage.removeItem(`fez-draft-${channelId}`);
   };
+
+  /**
+   * Who each @name in the draft actually means, decided when the sender
+   * picked them out of the autocomplete. It rides with the draft — a
+   * half-typed message that survives a channel switch must not come
+   * back pointing at a different person.
+   */
+  const bindingsKey = `fez-draft-mentions-${channelId}`;
+  const [bindings, setBindingsState] = useState<MentionBindings>(() => {
+    try {
+      return new Map<string, string>(JSON.parse(localStorage.getItem(bindingsKey) ?? "[]"));
+    } catch {
+      return new Map();
+    }
+  });
+  const setBindings = (next: MentionBindings) => {
+    setBindingsState(next);
+    if (next.size) localStorage.setItem(bindingsKey, JSON.stringify([...next]));
+    else localStorage.removeItem(bindingsKey);
+  };
   const [uploading, setUploading] = useState<string>();
   // A focused thread reply opens inside its thread (the channel view
   // only shows roots); the component remounts per focus so lazy init is enough.
@@ -1075,6 +1095,9 @@ function ChannelView({
       const key = name.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
+      // Picked from the autocomplete and still in the room — settled.
+      const bound = bindings.get(key);
+      if (bound && members.has(bound)) continue;
       const pk = client.pkByName(name);
       if (pk && members.has(pk)) continue;
       if (pk) mentionWarnings.push({ name, pk, kind: "absent" });
@@ -1087,6 +1110,7 @@ function ChannelView({
     const text = draft.trim();
     if (!text) return;
     setDraft("");
+    setBindings(new Map());
     if (!editing && text.startsWith("/")) {
       const feedback = await onCommand(text);
       if (feedback) {
@@ -1104,7 +1128,7 @@ function ChannelView({
     // Against THIS channel's roster, not every name the client has ever
     // seen — and a mention that reached nobody is said out loud, because
     // it otherwise looks exactly like one that worked.
-    const resolution = client.resolveMentionsIn(text, channelId);
+    const resolution = client.resolveMentionsIn(text, channelId, bindings);
     const problem = describeMentionProblems(resolution);
     await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks: resolution.pubkeys });
     if (problem) onNotice(problem);
@@ -1118,11 +1142,14 @@ function ChannelView({
     if (!mine) return;
     setEditing({ id: mine.id, original: mine.content });
     setDraft(mine.content);
+    // The old text's @names were bound by whoever sent it, not by this draft.
+    setBindings(new Map());
   };
 
   const beginEdit = (msg: Msg) => {
     setEditing({ id: msg.id, original: msg.content });
     setDraft(msg.content);
+    setBindings(new Map());
   };
 
   /** Drop/paste → Blossom → fez-media's share line into the channel (or thread). */
@@ -1300,6 +1327,8 @@ function ChannelView({
       ))}
       <Composer
         client={client}
+        roster={client.mentionCandidates(channelId)}
+        onMentionPick={(name, pubkey) => setBindings(bindMention(bindings, name, pubkey))}
         value={draft}
         onChange={setDraft}
         onSend={() => void send()}
@@ -1471,6 +1500,10 @@ function DmView({
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
       <Composer
         client={client}
+        // A DM's "room" is its participants; delivery is by recipient,
+        // so there is nothing to bind — the list just stops offering
+        // people who aren't in the conversation.
+        roster={peers.map((pk) => ({ pubkey: pk, name: client.displayName(pk), isMember: true }))}
         value={draft}
         onChange={setDraft}
         onSend={() => void send()}
