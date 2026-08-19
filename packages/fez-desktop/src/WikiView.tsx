@@ -4,9 +4,11 @@ import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { taskKey, wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
+import { parseQuery, taskKey, wikiSlug, type DocCommentThread, type FezClient, type WireEvent } from "@fez/client";
 import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";
 import QueryBlock from "./QueryBlock";
+import SlashMenu, { caretPosition, slashAt, type SlashState } from "./SlashMenu";
+import type { BlockMenuItem } from "./gui-extensions";
 
 /**
  * Docs — the notion+obsidian surface over kind 40100. Two families in
@@ -202,6 +204,12 @@ export default function WikiView({ client }: { client: FezClient }) {
    * click on ▤ markdown sticks for as long as the page is open.
    */
   const [pageView, setPageView] = useState<string>();
+  /** An outstanding request to an agent: which comment we're waiting on. */
+  const [asking, setAsking] = useState<{ agent: string; commentId: string; since: number }>();
+  const [proposal, setProposal] = useState<{ agent: string; markdown: string }>();
+  const [composerError, setComposerError] = useState<string>();
+  const [slash, setSlash] = useState<SlashState>();
+  const editorRef = React.useRef<HTMLTextAreaElement>(null);
 
   // live: agent/other-client versions repaint the list and the open page
   useEffect(() => {
@@ -363,6 +371,192 @@ export default function WikiView({ client }: { client: FezClient }) {
     await publish(`${latest.content.trimEnd()}\n\n${block}\n`);
     setAsk(undefined);
     setAskDraft("");
+  };
+
+  /**
+   * Which agent to hand a request to: whoever you @mentioned, else the
+   * first agent in this community. Named explicitly in the UI either
+   * way — "an agent did something" is not a thing anyone should have to
+   * accept on faith.
+   */
+  const pickAgent = (text: string): string | undefined => {
+    const mentioned = /@([\w-]+)/.exec(text)?.[1];
+    if (mentioned && client.pkByName(mentioned)) return mentioned;
+    const communityId = sel?.communityId ?? askCommunityIds[0];
+    if (!communityId) return undefined;
+    // agents(): pubkey → persona name
+    for (const [, name] of client.agents()) {
+      if (name && client.pkByName(name)) return name;
+    }
+    return undefined;
+  };
+
+  /**
+   * Send. A sentence the query vocabulary fully understands is answered
+   * on the spot; anything it does not is a request for an agent.
+   *
+   * The split is on `unknown`, not on a mode switch, because the person
+   * typing does not know which kind of thing they are typing — and
+   * should not have to. The cost of guessing wrong is a query that
+   * quietly ignores half your words, which is exactly what the parser
+   * reports instead of hiding.
+   */
+  const submitComposer = async () => {
+    const text = askDraft.trim();
+    if (!text || asking) return;
+    setComposerError(undefined);
+    setProposal(undefined);
+
+    const parsed = parseQuery(text);
+    if (parsed.unknown.length === 0) {
+      setAsk(text);
+      return;
+    }
+
+    // …otherwise it is a request. Agents already treat a doc comment as
+    // work, so this is that, with the reply rendered here instead of
+    // buried in a thread.
+    setAsk(undefined);
+    if (!sel) {
+      setComposerError(`open a page first — "${parsed.unknown.join(", ")}" isn't query vocabulary, so this needs an agent, and an agent needs a page to work on.`);
+      return;
+    }
+    const agent = pickAgent(text);
+    if (!agent) {
+      setComposerError("no agents here yet — invite one, or phrase it in query vocabulary (open tasks, by page).");
+      return;
+    }
+    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
+    if (!channelId) return;
+
+    const request = [
+      `@${agent} ${text}`,
+      "",
+      "Reply with the markdown to insert into this page, wrapped in a four-backtick fence so any three-backtick blocks inside it survive:",
+      "",
+      "````markdown",
+      "...your markdown...",
+      "````",
+      "",
+      `Live blocks are available: \`\`\`fez:query\`\`\` (an English sentence from the query vocabulary), \`\`\`fez:board\`\`\`, \`\`\`fez:live\`\`\`. Plain GFM (tables, task lists) is fine too. Do NOT edit the page yourself — the person asking will decide whether to add this.`,
+    ].join("\n");
+
+    const pk = client.pkByName(agent);
+    const since = Math.floor(Date.now() / 1000) - 5;
+    try {
+      await client.publishDocComment(channelId, sel.communityId, request, {
+        anchor: selPage?.title ?? (sel.kind === "wiki" ? sel.slug : client.channelRef(sel.channelId)?.name ?? "page"),
+        slug: sel.kind === "wiki" ? sel.slug : undefined,
+        mentionPks: pk ? [pk] : [],
+      });
+    } catch (err) {
+      setComposerError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    setAskDraft("");
+    setAsking({ agent, commentId: "", since });
+  };
+
+  /** Pull the proposed markdown out of the agent's reply. */
+  const extractMarkdown = (reply: string): string | undefined => {
+    const fenced = /````[a-z]*\s*\n([\s\S]*?)````/i.exec(reply);
+    if (fenced) return fenced[1].trimEnd();
+    // No fence: only treat the reply as a block if it actually looks
+    // like markup rather than an agent explaining why it can't help.
+    const trimmed = reply.trim();
+    return /^(#|\||-\s|\*\s|```)/m.test(trimmed) ? trimmed : undefined;
+  };
+
+  // Watch for the agent's answer and bring it back to the composer.
+  useEffect(() => {
+    if (!asking || !sel) return;
+    let live = true;
+    const poll = async () => {
+      const threads = await client.docComments(
+        sel.communityId,
+        sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }
+      );
+      const agentPk = client.pkByName(asking.agent);
+      for (const thread of threads) {
+        for (const reply of [...(thread.replies ?? []), thread]) {
+          const event = reply as { pubkey?: string; created_at?: number; content?: string };
+          if (!event.pubkey || event.pubkey !== agentPk) continue;
+          if ((event.created_at ?? 0) < asking.since) continue;
+          const markdown = extractMarkdown(event.content ?? "");
+          if (!live) return;
+          if (markdown) {
+            setProposal({ agent: asking.agent, markdown });
+          } else {
+            setComposerError(`@${asking.agent} replied without markdown to insert — see the comment thread on this page.`);
+          }
+          setAsking(undefined);
+          return;
+        }
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 3000);
+    // Agents can take a while, but a spinner with no end is a lie.
+    const giveUp = setTimeout(() => {
+      if (!live) return;
+      setAsking(undefined);
+      setComposerError(`@${asking.agent} hasn't answered in 3 minutes — the request is still in this page's comments.`);
+    }, 180_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      clearTimeout(giveUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asking?.since, asking?.agent, sel]);
+
+  const acceptProposal = async () => {
+    if (!proposal || !sel || !latest) return;
+    setBusy(true);
+    try {
+      await publish(`${latest.content.trimEnd()}\n\n${proposal.markdown}\n`);
+      setProposal(undefined);
+    } catch (err) {
+      setComposerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Track whether the caret is sitting in a `/command`. */
+  const updateSlash = (textarea: HTMLTextAreaElement) => {
+    const found = slashAt(textarea.value, textarea.selectionStart);
+    if (!found) {
+      setSlash(undefined);
+      return;
+    }
+    const { top, left } = caretPosition(textarea, found.start);
+    setSlash({ ...found, top: top + 22, left });
+  };
+
+  /**
+   * Replace the typed `/query` with the block's markdown and put the
+   * caret where the template says. The inserted text is ordinary
+   * markdown — nothing about it remembers that a menu was involved.
+   */
+  const insertBlock = (item: BlockMenuItem) => {
+    const textarea = editorRef.current;
+    if (!textarea || !slash) return;
+    const end = slash.start + 1 + slash.query.length;
+    const caretMark = item.template.indexOf("$0");
+    const body = item.template.replace("$0", "");
+    // Templates are blocks: make sure one starts on its own line.
+    const before = draft.slice(0, slash.start);
+    const needsBreak = before.length > 0 && !before.endsWith("\n") && item.template.includes("\n");
+    const prefix = needsBreak ? "\n" : "";
+    const next = before + prefix + body + draft.slice(end);
+    setDraft(next);
+    setSlash(undefined);
+    const caret = slash.start + prefix.length + (caretMark >= 0 ? caretMark : body.length);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
   };
 
   const create = (communityId: string) => {
@@ -559,45 +753,7 @@ export default function WikiView({ client }: { client: FezClient }) {
       </aside>
 
       <section className="wiki-page">
-        {/**
-         * Ask bar. A query you have to publish a document to try is a
-         * query nobody experiments with — you write it blind, save a
-         * version, read it back, and edit again. Here it answers on
-         * Enter, against nothing but the relay. Keep it and it becomes a
-         * block in the page; don't and it never existed.
-         */}
-        <div className="ask-bar">
-          <span className="ask-prompt">?</span>
-          <input
-            className="ask-input"
-            value={askDraft}
-            placeholder="ask — unfinished tasks by page · approvals waiting on me · pages this week"
-            onChange={(e) => setAskDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && askDraft.trim()) setAsk(askDraft.trim());
-              if (e.key === "Escape") {
-                setAsk(undefined);
-                setAskDraft("");
-              }
-            }}
-          />
-          {ask && (
-            <>
-              {sel && (
-                <button className="mini" title="append this query to the open page" onClick={() => void keepAsk()}>
-                  keep in page
-                </button>
-              )}
-              <button className="mini" onClick={() => { setAsk(undefined); setAskDraft(""); }}>clear</button>
-            </>
-          )}
-        </div>
-        {ask && (
-          <div className="ask-result">
-            <QueryBlock client={client} source={ask} communityIds={askCommunityIds} />
-          </div>
-        )}
-
+        <div className="wiki-scroll">
         {!sel && (
           <div className="channel-intro">
             <div className="intro-hash">▤</div>
@@ -658,14 +814,24 @@ export default function WikiView({ client }: { client: FezClient }) {
             </header>
             {editing ? (
               <div className="doc-editor wiki-editor">
-                <textarea
-                  className="doc-textarea"
-                  value={draft}
-                  autoFocus
-                  spellCheck={false}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder="# title\n\nlink other pages with [[their name]]…"
-                />
+                <div className="doc-textarea-wrap">
+                  <textarea
+                    ref={editorRef}
+                    className="doc-textarea"
+                    value={draft}
+                    autoFocus
+                    spellCheck={false}
+                    onChange={(e) => {
+                      setDraft(e.target.value);
+                      updateSlash(e.target);
+                    }}
+                    onKeyUp={(e) => updateSlash(e.currentTarget)}
+                    onClick={(e) => updateSlash(e.currentTarget)}
+                    onBlur={() => setSlash(undefined)}
+                    placeholder="# title — type / for blocks, [[their name]] to link a page"
+                  />
+                  {slash && <SlashMenu state={slash} onPick={insertBlock} onClose={() => setSlash(undefined)} />}
+                </div>
                 <div className="agent-actions">
                   <button className="agent-action" disabled={busy || !draft.trim()} onClick={() => void save()}>
                     {busy ? "publishing…" : latest ? "publish new version" : "publish"}
@@ -795,6 +961,100 @@ export default function WikiView({ client }: { client: FezClient }) {
             )}
           </>
         )}
+        </div>
+
+        {/**
+         * The composer. It sits at the bottom because that is where a
+         * composer sits everywhere else in this app, and because the
+         * previous version — a bar floating above the document — was a
+         * control nobody could place: not part of the page, not part of
+         * chat, just hovering.
+         *
+         * Two speeds, and which one you get depends on what you typed
+         * rather than on which control you picked. A sentence the query
+         * vocabulary fully understands answers instantly, from the relay,
+         * with no agent and no cost. Anything else is a request, and goes
+         * to an agent as a doc comment — the same summons a comment on any
+         * line already is, so nothing new was invented to carry it.
+         */}
+        <div className="doc-composer">
+          {ask && (
+            <div className="doc-composer-result">
+              <QueryBlock client={client} source={ask} communityIds={askCommunityIds} />
+              <div className="doc-composer-actions">
+                {sel && latest && (
+                  <button className="mini" title="append this query to the open page" onClick={() => void keepAsk()}>
+                    keep in page
+                  </button>
+                )}
+                <button className="mini" onClick={() => { setAsk(undefined); setAskDraft(""); }}>dismiss</button>
+              </div>
+            </div>
+          )}
+
+          {asking && (
+            <div className="doc-composer-pending">
+              <span className="doc-composer-spin">⟳</span> @{asking.agent} is working on it…
+              <button className="mini" onClick={() => setAsking(undefined)}>stop waiting</button>
+            </div>
+          )}
+
+          {/**
+           * A proposal is shown AS MARKDOWN and lands in the page only
+           * when you say so. An agent editing the document you are
+           * reading, without showing you first, is the wrong feeling
+           * entirely — and it is the one thing that would make people
+           * stop trusting this surface.
+           */}
+          {proposal && (
+            <div className="doc-composer-proposal">
+              <div className="doc-composer-from">@{proposal.agent} suggests</div>
+              <pre className="doc-composer-md">{proposal.markdown}</pre>
+              <div className="doc-composer-actions">
+                <button className="agent-action" disabled={busy} onClick={() => void acceptProposal()}>
+                  add to page
+                </button>
+                <button className="mini" onClick={() => setProposal(undefined)}>discard</button>
+              </div>
+            </div>
+          )}
+
+          {composerError && <div className="doc-composer-error">{composerError}</div>}
+
+          <div className="doc-composer-row">
+            <textarea
+              className="doc-composer-input"
+              value={askDraft}
+              rows={1}
+              placeholder={
+                sel
+                  ? "ask about this page, or describe a block to add — open tasks by page · a table of last week's spend"
+                  : "ask across your docs — unfinished tasks by page · approvals waiting on me"
+              }
+              onChange={(e) => setAskDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void submitComposer();
+                }
+                if (e.key === "Escape") {
+                  setAsk(undefined);
+                  setProposal(undefined);
+                  setComposerError(undefined);
+                  setAskDraft("");
+                }
+              }}
+            />
+            <button
+              className="composer-send"
+              disabled={!askDraft.trim() || !!asking}
+              title="enter to send"
+              onClick={() => void submitComposer()}
+            >
+              ↵
+            </button>
+          </div>
+        </div>
       </section>
     </main>
   );

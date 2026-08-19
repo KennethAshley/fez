@@ -1240,7 +1240,10 @@ button.author:hover { text-decoration: underline; }
 }
 .wiki-empty-group { color: var(--fg-dim); font-size: 12px; padding: 2px 8px; }
 .wiki-new { margin: 2px 6px 6px; width: calc(100% - 12px); }
-.wiki-page { flex: 1; overflow-y: auto; padding: 18px 26px; min-width: 0; }
+/* The page scrolls; the composer does not. Same shape as a channel:
+   what you're reading moves, what you type into stays put. */
+.wiki-page { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.wiki-scroll { flex: 1; overflow-y: auto; padding: 18px 26px; min-height: 0; }
 .wiki-page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .wiki-title { font-family: var(--font-mono); font-size: 15px; font-weight: 600; }
 .wiki-body { max-width: 760px; }
@@ -1412,7 +1415,60 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .query-card { background: var(--bg1); border: 1px solid var(--hairline); border-radius: 6px; padding: 6px 8px; margin-bottom: 5px; font-size: 12px; }
 
 /* ── ask bar: try a query without publishing anything ── */
-.ask-bar { display: flex; align-items: center; gap: 8px; padding: 0 0 12px; border-bottom: 1px solid var(--hairline); margin-bottom: 14px; }
+/* ── the doc composer ── */
+.doc-composer {
+  flex: none;
+  border-top: 1px solid var(--hairline);
+  padding: 10px 26px 14px;
+  background: var(--bg1);
+}
+.doc-composer-row { display: flex; align-items: flex-end; gap: 6px; }
+.doc-composer-input {
+  flex: 1;
+  background: var(--bg0);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 9px 11px;
+  resize: none;
+  max-height: 140px;
+}
+.doc-composer-input:focus { border-color: var(--accent); outline: none; }
+.doc-composer-input::placeholder { color: var(--fg-dim); opacity: 0.75; }
+.doc-composer-result { max-height: 300px; overflow-y: auto; margin-bottom: 8px; }
+.doc-composer-actions { display: flex; gap: 6px; justify-content: flex-end; padding-top: 6px; }
+.doc-composer-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  padding: 6px 0 8px;
+}
+.doc-composer-spin { color: var(--accent); animation: doc-spin 1.4s linear infinite; display: inline-block; }
+@keyframes doc-spin { to { transform: rotate(360deg); } }
+.doc-composer-proposal {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: var(--bg0);
+}
+.doc-composer-from { color: var(--accent); font-size: 11px; margin-bottom: 6px; }
+.doc-composer-md {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  color: var(--fg);
+}
+.doc-composer-error { color: var(--red); font-size: 12px; padding: 4px 0 8px; }
+
 .ask-prompt { color: var(--accent); font-family: var(--font-mono); flex: none; }
 .ask-input {
   flex: 1; background: none; border: 0; outline: none; color: var(--fg);
@@ -1581,3 +1637,39 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   border-radius: 4px;
   padding: 1px 6px;
 }
+
+/* ── the / menu, at the caret ── */
+.doc-textarea-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
+.doc-textarea-wrap .doc-textarea { flex: 1; }
+.slash-menu {
+  position: absolute;
+  z-index: 40;
+  min-width: 260px;
+  max-width: 340px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg0);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.slash-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+.slash-item.active { background: var(--bg2); }
+.slash-label { font-size: 12.5px; }
+.slash-desc { color: var(--fg-dim); font-size: 11px; }
+.slash-empty { color: var(--fg-dim); font-size: 11.5px; padding: 8px 10px; }

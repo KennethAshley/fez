@@ -47,7 +47,7 @@ export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, 
 export { findPersona, listPersonas, validatePersonaFile, mergeDefaults, KNOWN_EXTRA_KEYS, type Persona, type PersonaValidation } from "./personas.js";
 export { findMcpServer, registerMcpServer, loadMcpServersFromSettings } from "./mcp-servers.js";
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./keys.js";
-export { loadSettings, saveSettings, resolveRelay, DEFAULT_RELAY } from "./settings.js";
+export { loadSettings, saveSettings, resolveRelay, resolveRelays, DEFAULT_RELAY } from "./settings.js";
 export { isValidSlug, conversationKey, engramDTag, parseBodyStrict, bodyIsValid, validateEngram, selectHead, engramHeads, buildEngramEvent, type EngramBody, type ValidEngram } from "./engram.js";
 export { buildDmWraps, buildGroupDmWraps, unwrapDm, dmConvoKey, DM_FUZZ_WINDOW_S, type DmRumor } from "./dm.js";
 export { pairSend, pairReceive, deriveSas, buildPairingUri, parsePairingUri, PAIRING_URI_PREFIX, type PairingCallbacks } from "./pairing.js";

@@ -58,7 +58,17 @@ export interface GuiExtensionApi {
    * your component instead of a code block. The doc context comes with
    * it, so a block can publish (comments, docs) as the viewer.
    */
-  registerBlockRenderer: (lang: string, render: (props: BlockProps) => React.ReactNode) => void;
+  registerBlockRenderer: (
+    lang: string,
+    render: (props: BlockProps) => React.ReactNode,
+    /**
+     * What this block looks like in the doc editor's `/` menu. Without
+     * it a block type is invisible: you can only insert one by already
+     * knowing its fence exists, which is how every block we shipped
+     * stayed undiscoverable.
+     */
+    menu?: BlockMenuItem
+  ) => void;
   /**
    * Offer another way to look at a WHOLE document — a board, a calendar,
    * a deck. `match` decides whether this document is yours; returning
@@ -90,6 +100,16 @@ export interface PageViewProps {
   slug?: string;
   /** false when an old version is on screen — views must not rewrite history */
   editable: boolean;
+}
+
+/** A `/` menu entry: what it's called, and what typing it inserts. */
+export interface BlockMenuItem {
+  label: string;
+  description?: string;
+  /** Markdown inserted at the caret. `$0` marks where the caret lands. */
+  template: string;
+  /** Words that should also match it while typing. */
+  keywords?: string[];
 }
 
 /** What a block renderer receives: its own source plus where it lives. */
@@ -137,8 +157,18 @@ export function docMarkdownPlugins(): readonly unknown[] {
 }
 
 const blockRenderers = new Map<string, (props: BlockProps) => React.ReactNode>();
-export function registerBlockRenderer(lang: string, render: (props: BlockProps) => React.ReactNode): void {
+const blockMenu: BlockMenuItem[] = [];
+export function registerBlockRenderer(
+  lang: string,
+  render: (props: BlockProps) => React.ReactNode,
+  menu?: BlockMenuItem
+): void {
   blockRenderers.set(lang.toLowerCase(), render);
+  if (menu) blockMenu.push(menu);
+}
+/** Extension-contributed `/` entries — a block installed is a block offered. */
+export function extensionBlockMenu(): readonly BlockMenuItem[] {
+  return blockMenu;
 }
 export function blockRenderer(lang: string): ((props: BlockProps) => React.ReactNode) | undefined {
   return blockRenderers.get(lang.toLowerCase());

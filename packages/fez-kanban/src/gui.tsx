@@ -56,7 +56,7 @@ interface GuiApi {
     match: (content: string) => boolean | "default",
     render: (props: PageViewProps) => unknown
   ): void;
-  registerBlockRenderer(lang: string, render: (props: BlockProps) => unknown): void;
+  registerBlockRenderer(lang: string, render: (props: BlockProps) => unknown, menu?: object): void;
   registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
 }
 
@@ -73,7 +73,9 @@ export default function activate(api: GuiApi): void {
 
   // The settings fence is configuration, not content — in the markdown
   // view it reads as a small chip instead of a wall of code.
-  api.registerBlockRenderer(BOARD_LANG, ({ body }) => {
+  api.registerBlockRenderer(
+    BOARD_LANG,
+    ({ body }) => {
     const done = /done\s*:\s*(.+)/i.exec(body)?.[1]?.trim();
     const limits = [...body.matchAll(/limit\s*:\s*(.+?)\s*=\s*(\d+)/gi)].map((m) => `${m[1].trim()} ≤ ${m[2]}`);
     return h(
@@ -81,9 +83,17 @@ export default function activate(api: GuiApi): void {
       { className: "board-settings" },
       h("span", { className: "board-settings-tag" }, "▦ board"),
       done && h("span", { className: "board-settings-item" }, `done: ${done}`),
-      ...limits.map((limit) => h("span", { className: "board-settings-item", key: limit }, limit))
-    );
-  });
+        ...limits.map((limit) => h("span", { className: "board-settings-item", key: limit }, limit))
+      );
+    },
+    {
+      label: "board",
+      description: "kanban — columns are headings, cards are checkboxes",
+      keywords: ["kanban", "cards", "columns", "sprint", "tasks"],
+      template:
+        "```fez:board\ndone: Done\n```\n\n## Backlog\n\n- [ ] $0\n\n## In Progress\n\n## Done\n",
+    }
+  );
 }
 
 interface Drag {
