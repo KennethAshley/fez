@@ -308,6 +308,9 @@ function Shell({
   // it never replaces the list, which is the bug that made a real user
   // think changing the relay had deleted his account.
   const [addingWorkspace, setAddingWorkspace] = useState(false);
+  // Slack's "Browse channels", flat-model shaped: one workspace, so the
+  // list is every channel in it rather than a catalogue of communities.
+  const [browse, setBrowse] = useState<false | { filter: string }>(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -603,6 +606,9 @@ function Shell({
             <input name="relay" className="manage-input" autoFocus placeholder="wss://relay.example — the workspace IS the relay" />
           </form>
         )}
+        <button className="channel home-link" onClick={() => setBrowse({ filter: "" })}>
+          ⌂ browse channels
+        </button>
         <div className="community">
           <div className="community-name">
             {client.state.workspace.name}
@@ -816,6 +822,71 @@ function Shell({
         />
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
+      {browse !== false && (
+        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setBrowse(false)}>
+          <div className="search-box browse-box">
+            <div className="pane-head">
+              <span>channels in {client.state.workspace.name}</span>
+              <button className="pane-close" onClick={() => setBrowse(false)}>✕</button>
+            </div>
+            <input
+              className="search-input"
+              autoFocus
+              placeholder="filter channels…"
+              value={browse.filter}
+              onChange={(e) => setBrowse({ filter: e.target.value })}
+            />
+            <div className="search-results">
+              {(() => {
+                const wanted = browse.filter.trim().toLowerCase();
+                const rows = [...client.state.workspace.channels.values()]
+                  .filter((c) => !wanted || c.name.toLowerCase().includes(wanted))
+                  .map((c) => ({ channel: c, msgs: client.messages(c.id) }))
+                  .sort((a, b) => (b.msgs.at(-1)?.ts ?? 0) - (a.msgs.at(-1)?.ts ?? 0) || a.channel.name.localeCompare(b.channel.name));
+                if (rows.length === 0) {
+                  return <div className="pane-empty">{wanted ? `no channel matches "${wanted}"` : "no channels yet"}</div>;
+                }
+                return rows.map(({ channel, msgs }) => {
+                  const last = msgs.at(-1);
+                  const unread = unreads.get(channel.id) ?? 0;
+                  const here = scope?.channelId === channel.id;
+                  return (
+                    <div key={channel.id} className="browse-row">
+                      <span className="browse-name">
+                        <span className="hash">#</span>{channel.name}
+                        {muted.has(channel.id) && <span className="mute-mark" title="muted">✕</span>}
+                        {unread > 0 && <span className="badge">{unread}</span>}
+                        <span className="community-id">
+                          {last
+                            ? ` · ${client.displayName(last.authorPk)}: ${last.content.replace(/\s+/g, " ").slice(0, 46)}`
+                            : " · nothing said yet"}
+                        </span>
+                      </span>
+                      {here ? (
+                        <span className="role-tag installed-tag">you're here</span>
+                      ) : (
+                        <button
+                          className="agent-action"
+                          onClick={() => {
+                            setBrowse(false);
+                            void openChannel(channel.id);
+                          }}
+                        >
+                          open
+                        </button>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="settings-hint browse-hint">
+              Every channel here is yours already — one roster covers the whole workspace, so there is
+              nothing to join. {client.state.isOwner(client.pubkey) ? "Use manage (+) to add one." : ""}
+            </div>
+          </div>
+        </div>
+      )}
       {settingsOpen && (
         <div className="overlay settings-overlay" onClick={(e) => e.target === e.currentTarget && setSettingsOpen(false)}>
           <div className="settings-modal">
