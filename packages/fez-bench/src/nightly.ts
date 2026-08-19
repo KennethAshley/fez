@@ -6,6 +6,7 @@ import { CASES, ROSTER } from "./cases.js";
 import { formatFailures, summarize, type HistoryEntry } from "./core.js";
 import { harvestedCases } from "./proposals.js";
 import { runBench } from "./runner.js";
+import { casesFor, rosterFor } from "./roster.js";
 
 /**
  * The ambient half of the bench: it runs itself.
@@ -31,13 +32,20 @@ const REGRESSION_DELTA = 0.02;
 /** Below this, say so regardless of the delta — the fleet is misrouting. */
 const FLOOR = Number(process.env.FEZ_BENCH_FLOOR ?? 0.75);
 
-function lastEntry(): HistoryEntry | undefined {
+/**
+ * Last run of the SAME roster mode. A live score compared against a
+ * frozen one would announce a regression that is really just a
+ * different question — the exact trap this task exists to avoid.
+ */
+function lastEntry(mode: "frozen" | "live"): HistoryEntry | undefined {
   try {
     const lines = fs.readFileSync(HISTORY, "utf-8").trim().split("\n");
-    return JSON.parse(lines[lines.length - 1]) as HistoryEntry;
-  } catch {
-    return undefined;
-  }
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const entry = JSON.parse(lines[i]) as HistoryEntry;
+      if ((entry.roster ?? "frozen") === mode) return entry;
+    }
+  } catch { /* no history yet */ }
+  return undefined;
 }
 
 function appendHistory(entry: HistoryEntry): void {
@@ -83,14 +91,19 @@ export function registerNightlyBench(api: FezExtensionAPI): void {
   const tunerName = (process.env.FEZ_BENCH_TUNER ?? "tuner").toLowerCase();
 
   api.registerScheduledTask("bench-nightly", everyH * 3_600_000, async ({ nostr }) => {
-    const previous = lastEntry();
+    // The nightly measures YOUR fleet, so it routes on the live persona
+    // descriptions — that is what makes an approved fix show up in
+    // tomorrow's number instead of never.
+    const { roster, mode } = rosterFor("live");
+    const previous = lastEntry(mode);
     // Don't re-run a battery that already ran this window (a sentinel
     // restart shouldn't mean a fresh 97-case run every boot).
     if (previous && Date.now() - previous.ts < everyH * 3_600_000 * 0.9) return;
 
     let output;
     try {
-      output = await runBench(base, ROSTER, [...CASES, ...harvestedCases()]);
+      const { cases } = casesFor(roster, [...CASES, ...harvestedCases()]);
+      output = await runBench(base, roster, cases);
     } catch (err) {
       // Router down is the normal case on a laptop, not an incident.
       console.log(`📏 bench skipped: ${err instanceof Error ? err.message : err}`);
@@ -99,6 +112,7 @@ export function registerNightlyBench(api: FezExtensionAPI): void {
     const summary = summarize(output.results);
     appendHistory({
       ts: Date.now(),
+      roster: mode,
       hash: output.hash,
       model: output.model,
       accuracy: summary.accuracy,
@@ -148,7 +162,7 @@ export function registerNightlyBench(api: FezExtensionAPI): void {
       ],
       content: [
         headline,
-        `${summary.correct}/${summary.total} correct · ${summary.overRoutes} over-routes · p50 ${summary.p50RouterMs}ms · model ${output.model}`,
+        `${summary.correct}/${summary.total} correct · ${summary.overRoutes} over-routes · p50 ${summary.p50RouterMs}ms · ${mode} roster · model ${output.model}`,
         "",
         failures,
         "",

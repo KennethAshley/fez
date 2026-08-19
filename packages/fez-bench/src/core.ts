@@ -64,6 +64,8 @@ export function hashInputs(tools: object[], model: string): string {
 }
 
 export interface HistoryEntry {
+  /** Which roster produced this score — frozen and live are NOT comparable. */
+  roster?: "frozen" | "live";
   ts: number;
   hash: string;
   model: string;

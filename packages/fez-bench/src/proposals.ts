@@ -110,6 +110,17 @@ export function deny(id: string): void {
 
 function applyDescription(proposal: DescriptionProposal): void {
   const personaPath = path.join(os.homedir(), ".fez", "personas", `${proposal.agent}.md`);
+  // A proposal can name an agent that only exists in the bench roster
+  // (the frozen literal lists agents nobody has a persona file for).
+  // Approving one used to throw a raw ENOENT from deep in the ledger —
+  // say what's wrong and leave the proposal PENDING rather than
+  // recording an approval that never applied.
+  if (!fs.existsSync(personaPath)) {
+    throw new Error(
+      `no persona file for "${proposal.agent}" (~/.fez/personas/${proposal.agent}.md) — ` +
+        `it exists only in the bench roster. Create the persona first, or deny this proposal.`
+    );
+  }
   const content = fs.readFileSync(personaPath, "utf-8");
   const updated = /^description:.*$/m.test(content)
     ? content.replace(/^description:.*$/m, `description: ${proposal.to}`)

@@ -5,6 +5,7 @@ import { CASES, ROSTER } from "./cases.js";
 import { formatFailures, formatScorecard, summarize, type HistoryEntry } from "./core.js";
 import { harvest } from "./harvest.js";
 import { approve, deny, formatLedger, harvestedCases, ledger, propose } from "./proposals.js";
+import { casesFor, formatDrift, rosterDrift, rosterFor } from "./roster.js";
 import { runBench } from "./runner.js";
 
 /**
@@ -87,23 +88,44 @@ if (cmd === "harvest") {
 const FLOOR = Number(process.env.FEZ_BENCH_FLOOR ?? 0.75);
 const HISTORY = path.join(os.homedir(), ".fez", "bench", "routing.jsonl");
 
-function lastEntry(): HistoryEntry | undefined {
+/**
+ * The most recent run OF THE SAME ROSTER MODE. Comparing a live score
+ * against a frozen one would report a "regression" that is really just
+ * a different question being asked.
+ */
+function lastEntry(mode: "frozen" | "live"): HistoryEntry | undefined {
   try {
     const lines = fs.readFileSync(HISTORY, "utf-8").trim().split("\n");
-    return JSON.parse(lines[lines.length - 1]) as HistoryEntry;
-  } catch {
-    return undefined;
-  }
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const entry = JSON.parse(lines[i]) as HistoryEntry;
+      if ((entry.roster ?? "frozen") === mode) return entry;
+    }
+  } catch { /* no history yet */ }
+  return undefined;
 }
 
 const started = Date.now();
 const allCases = [...CASES, ...harvestedCases()];
-process.stdout.write(`routing bench: ${allCases.length} cases (${allCases.length - CASES.length} harvested) → ${BASE}\n`);
-const { results, model, hash } = await runBench(BASE, ROSTER, allCases, (done, total) => {
+// --live measures the personas the runtime ACTUALLY routes on; the
+// default frozen roster keeps scores comparable across machines.
+const wantLive = process.argv.includes("--live") || process.env.FEZ_BENCH_ROSTER === "live";
+const { roster, mode, note } = rosterFor(wantLive ? "live" : "frozen");
+if (note) process.stdout.write(`  ${note}\n`);
+if (mode === "frozen") {
+  const drift = formatDrift(rosterDrift());
+  if (drift) process.stdout.write(drift + "\n\n");
+}
+const { cases: runnableCases, skipped } = casesFor(roster, allCases);
+process.stdout.write(
+  `routing bench: ${runnableCases.length} cases (${allCases.length - CASES.length} harvested` +
+    `${skipped > 0 ? `, ${skipped} skipped — expect agents this roster doesn't have` : ""}) · ` +
+    `${mode} roster (${roster.length} agents) → ${BASE}\n`
+);
+const { results, model, hash } = await runBench(BASE, roster, runnableCases, (done, total) => {
   if (done % 20 === 0) process.stdout.write(`  …${done}/${total}\n`);
 });
 const summary = summarize(results);
-const prev = lastEntry();
+const prev = lastEntry(mode);
 
 console.log("\n" + formatScorecard(summary, model, hash, prev));
 console.log("\n" + formatFailures(results));
@@ -112,6 +134,7 @@ console.log(`\n(${((Date.now() - started) / 1000).toFixed(1)}s total)`);
 fs.mkdirSync(path.dirname(HISTORY), { recursive: true });
 const entry: HistoryEntry = {
   ts: Date.now(),
+  roster: mode,
   hash,
   model,
   accuracy: summary.accuracy,
