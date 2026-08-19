@@ -18,16 +18,15 @@ import { ago, parseLiveBlock, formatLiveBlock, parseLiveCommand, LIVE_LANG } fro
 interface ClientLike {
   displayName(pk: string): string;
   pkByName(name: string): string | undefined;
-  state: { scope?: { channelId: string; communityId: string } };
+  state: { scope?: { channelId: string } };
   sendChannelMessage(text: string, opts?: object): Promise<unknown>;
   publishDocComment(
     channelId: string,
-    communityId: string,
     text: string,
     opts?: { anchor?: string; slug?: string; parentId?: string; mentionPks?: string[]; resolve?: boolean }
   ): Promise<void>;
   docsByChannel(): ReadonlyMap<string, { latestContent: string; latestId: string }>;
-  publishDoc(channelId: string, communityId: string, content: string, baseId?: string): Promise<void>;
+  publishDoc(channelId: string, content: string, baseId?: string): Promise<void>;
 }
 
 interface BlockProps {
@@ -35,7 +34,6 @@ interface BlockProps {
   body: string;
   raw: string;
   channelId: string;
-  communityId: string;
   slug?: string;
 }
 
@@ -54,7 +52,7 @@ export default function activate(api: GuiApi): void {
   h = api.React.createElement;
   const { client } = api;
 
-  api.registerBlockRenderer(LIVE_LANG, ({ info, body, raw, channelId, communityId, slug }) => {
+  api.registerBlockRenderer(LIVE_LANG, ({ info, body, raw, channelId, slug }) => {
     const block = parseLiveBlock(info, body);
     const stale = block.everyMs && block.updatedAt ? Date.now() - block.updatedAt * 1000 > block.everyMs : !block.updatedAt;
 
@@ -63,7 +61,6 @@ export default function activate(api: GuiApi): void {
       const pk = client.pkByName(block.agent);
       await client.publishDocComment(
         channelId,
-        communityId,
         `@${block.agent} refresh this live block. Do the task below, then rewrite ONLY this block in the document — keep the \`\`\`${LIVE_LANG}\`\`\` fence and its agent=/every= attributes, set updated=${Math.floor(Date.now() / 1000)}, put your result under the --- line, and leave the rest of the page untouched.\n\nTask: ${block.prompt}`,
         { anchor: raw.split("\n")[0], slug, mentionPks: pk ? [pk] : [] }
       );
@@ -102,7 +99,7 @@ export default function activate(api: GuiApi): void {
     }
     const doc = client.docsByChannel().get(scope.channelId);
     const next = `${doc?.latestContent?.trim() ? doc.latestContent.trimEnd() + "\n\n" : ""}${formatLiveBlock(parsed.block)}\n`;
-    await client.publishDoc(scope.channelId, scope.communityId, next, doc?.latestId);
+    await client.publishDoc(scope.channelId, next, doc?.latestId);
     return `◉ live block added to this channel's info — @${parsed.block.agent} keeps it current. Open the channel info bar to see it.`;
   });
 }

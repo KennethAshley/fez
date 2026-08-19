@@ -295,7 +295,6 @@ interface DocCliContext {
   pubkey: string;
   relay: import("./relay.js").RelayConnection;
   channelId: string;
-  communityId: string;
   latest?: { id: string; created_at: number; content: string };
 }
 
@@ -329,8 +328,7 @@ async function docContext(channelFlag: string | undefined, personaFlag: string |
     }
   });
   const channelId = match?.tags.find((t) => t[0] === "d")?.[1];
-  const communityId = match?.tags.find((t) => t[0] === "c")?.[1];
-  if (!channelId || !communityId) {
+  if (!channelId) {
     console.error(`No channel "${channelSpec}" on the relay.`);
     relay.disconnect();
     process.exit(1);
@@ -338,7 +336,7 @@ async function docContext(channelFlag: string | undefined, personaFlag: string |
   const versions = await relay.query([{ kinds: [40100], "#h": [channelId], limit: 200 }]);
   const latest = versions.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1)).at(-1);
   const secret = Uint8Array.from(Buffer.from(hex, "hex"));
-  return { secret, pubkey: pk(secret), relay, channelId, communityId, latest };
+  return { secret, pubkey: pk(secret), relay, channelId, latest };
 }
 
 async function docPublish(ctx: DocCliContext, content: string): Promise<void> {
@@ -351,7 +349,7 @@ async function docPublish(ctx: DocCliContext, content: string): Promise<void> {
       {
         kind: 40100,
         created_at: createdAt,
-        tags: [["h", ctx.channelId], ["c", ctx.communityId], ...(ctx.latest ? [["base", ctx.latest.id]] : [])],
+        tags: [["h", ctx.channelId], ...(ctx.latest ? [["base", ctx.latest.id]] : [])],
         content,
       },
       ctx.secret

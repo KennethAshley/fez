@@ -94,13 +94,14 @@ async function resolvePubkey(who: string): Promise<string | undefined> {
   return undefined;
 }
 
-type ChannelRef = { channelId: string; communityId: string; name: string };
+type ChannelRef = { channelId: string; name: string };
 
 /**
- * Name OR id OR id-prefix. Channel names aren't unique across communities
- * (two #generals is the normal case) — an ambiguous name returns the
- * candidate list as an error string so the model retries with an id
- * instead of silently posting into the wrong room.
+ * Name OR id OR id-prefix, within this workspace. A relay is a
+ * workspace, so names are far likelier to be unique now than when two
+ * #generals could sit on one relay — but an ambiguous name still
+ * returns the candidate list as an error string so the model retries
+ * with an id instead of silently posting into the wrong room.
  */
 async function resolveChannel(spec: string): Promise<ChannelRef | { error: string }> {
   const raw = spec.trim().replace(/^#/, "");
@@ -109,13 +110,12 @@ async function resolveChannel(spec: string): Promise<ChannelRef | { error: strin
   const seen = new Map<string, ChannelRef>();
   for (const event of channels) {
     const d = event.tags.find((t) => t[0] === "d")?.[1];
-    const c = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!d || !c || seen.has(d)) continue;
+    if (!d || seen.has(d)) continue;
     let name = d;
     try {
       name = (JSON.parse(event.content).name as string) ?? d;
     } catch { /* keep id */ }
-    seen.set(d, { channelId: d, communityId: c, name });
+    seen.set(d, { channelId: d, name });
   }
   const byId = [...seen.values()].filter((ch) => ch.channelId === raw || (raw.length >= 6 && ch.channelId.startsWith(raw.replace(/\.+$/, ""))));
   if (byId.length === 1) return byId[0];
@@ -145,7 +145,7 @@ server.registerTool(
   async ({ channel, message }) => {
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
-    await relay.publish(sign({ kind: 47103, tags: [["h", ref.channelId], ["c", ref.communityId]], content: message }));
+    await relay.publish(sign({ kind: 47103, tags: [["h", ref.channelId]], content: message }));
     return text(`Posted to #${ref.name}.`);
   }
 );
@@ -171,7 +171,7 @@ server.registerTool(
     const quorum = Number(process.env.FEZ_APPROVAL_QUORUM) >= 1 ? Number(process.env.FEZ_APPROVAL_QUORUM) : undefined;
     const ask = sign({
       kind: 47103,
-      tags: [["h", ref.channelId], ["c", ref.communityId], ["t", "approval-request"], ["p", owner]],
+      tags: [["h", ref.channelId], ["t", "approval-request"], ["p", owner]],
       content: `⛔ approval needed: ${action}\n(react ✅ to approve, ❌ to deny${quorum ? ` — ${quorum} member approval${quorum === 1 ? "" : "s"} suffice` : ""})`,
     });
     await relay.publish(ask);
@@ -215,7 +215,7 @@ server.registerTool(
     ];
     const ask = sign({
       kind: 47103,
-      tags: [["h", ref.channelId], ["c", ref.communityId], ["t", "choice-request"], ["p", owner]],
+      tags: [["h", ref.channelId], ["t", "choice-request"], ["p", owner]],
       content: lines.join("\n"),
     });
     await relay.publish(ask);
@@ -396,7 +396,7 @@ server.registerTool(
       sign({
         kind: 40100,
         created_at: createdAt,
-        tags: [["h", ref.channelId], ["c", ref.communityId], ...(latest ? [["base", latest.id]] : [])],
+        tags: [["h", ref.channelId], ...(latest ? [["base", latest.id]] : [])],
         content: latest ? `${latest.content}\n\n${markdown}` : markdown,
       })
     );
@@ -413,10 +413,9 @@ server.registerTool(
 const wikiSlug = (name: string) =>
   name.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
 
-async function latestWikiPage(communityId: string, slug: string) {
+async function latestWikiPage(slug: string) {
   const versions = await relay.query([{ kinds: [40100], "#d": [slug], limit: 200 }]);
   return versions
-    .filter((v) => v.tags.some((t) => t[0] === "c" && t[1] === communityId))
     .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1))
     .at(-1);
 }
@@ -431,7 +430,7 @@ server.registerTool(
   async ({ channel, page }) => {
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
-    const latest = await latestWikiPage(ref.communityId, wikiSlug(page));
+    const latest = await latestWikiPage(wikiSlug(page));
     if (!latest) return text(`No page named "${page}" in this community yet — fez_wiki_write creates it.`);
     return text(latest.content);
   }
@@ -453,7 +452,7 @@ server.registerTool(
     if ("error" in ref) return text(ref.error);
     const slug = wikiSlug(page);
     if (!slug) return text(`"${page}" makes an empty page name.`);
-    const latest = await latestWikiPage(ref.communityId, slug);
+    const latest = await latestWikiPage(slug);
     const createdAt = Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1);
     await relay.publish(
       sign({
@@ -461,7 +460,6 @@ server.registerTool(
         created_at: createdAt,
         tags: [
           ["h", ref.channelId],
-          ["c", ref.communityId],
           ["d", slug],
           ["title", page.trim()],
           ...(latest ? [["base", latest.id]] : []),
@@ -496,7 +494,6 @@ server.registerTool(
       ? { kinds: [40101], "#d": [wikiSlug(page)], limit: 500 }
       : { kinds: [40101], "#h": [ref.channelId], limit: 500 };
     const events = (await relay.query([filter]))
-      .filter((e) => e.tags.some((t) => t[0] === "c" && t[1] === ref.communityId))
       .sort((a, b) => a.created_at - b.created_at);
     const roots = events.filter((e) => !e.tags.some((t) => t[0] === "e"));
     const resolved = new Set(
@@ -543,7 +540,6 @@ server.registerTool(
         created_at: Math.floor(Date.now() / 1000),
         tags: [
           ["h", root.tags.find((t) => t[0] === "h")?.[1] ?? ref.channelId],
-          ["c", ref.communityId],
           ...(slug ? [["d", slug]] : []),
           ["e", root.id],
           ...(resolve ? [["resolved", "1"]] : []),

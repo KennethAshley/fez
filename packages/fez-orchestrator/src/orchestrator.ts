@@ -288,27 +288,16 @@ async function main() {
   await announce();
   const heartbeat = setInterval(announce, 12 * 60 * 60 * 1000);
 
-  const say = async (channelId: string, communityId: string, content: string, extraTags: string[][] = []) => {
+  const say = async (channelId: string, content: string, extraTags: string[][] = []) => {
     await relay.publish(
       client.signEvent({
         kind: KIND_CHANNEL_MESSAGE,
-        tags: [["h", channelId], ["c", communityId], ...extraTags],
+        tags: [["h", channelId], ...extraTags],
         content,
       })
     );
   };
 
-  // Channel id -> community id, learned from traffic and channel metadata;
-  // greetings need a community tag before any message has arrived.
-  const communityOf = new Map<string, string>();
-  {
-    const channelMeta = await relay.query([{ kinds: [KIND_CHANNEL], "#d": channels }]);
-    for (const event of channelMeta) {
-      const d = event.tags.find((t) => t[0] === "d")?.[1];
-      const c = event.tags.find((t) => t[0] === "c")?.[1];
-      if (d && c) communityOf.set(d, c);
-    }
-  }
 
   // ── The pop-in: fez says hi when it arrives, with the current crew
   // (the ROUTABLE crew — same filter the router sees, so the greeting
@@ -331,9 +320,7 @@ async function main() {
         `👋 popping in — need something done but not sure who does it? Just @${name} it.`,
       ];
   for (const channelId of channels) {
-    const communityId = communityOf.get(channelId);
-    if (!communityId) continue;
-    await say(channelId, communityId, GREETINGS[Math.floor(Math.random() * GREETINGS.length)] + rosterLine()).catch(() => {});
+    await say(channelId, GREETINGS[Math.floor(Math.random() * GREETINGS.length)] + rosterLine()).catch(() => {});
   }
 
   console.log(`🟢 @${name} orchestrating ${channels.length} channel(s) on ${relayUrls.join(", ")}`);
@@ -347,9 +334,7 @@ async function main() {
     tags: string[][];
   }): Promise<void> => {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId || event.pubkey === myPubkey) return;
-    communityOf.set(channelId, communityId);
+    if (!channelId || event.pubkey === myPubkey) return;
     if (!isMention(event)) return;
     if (!(await authorAllowed(event.pubkey))) return;
     if (!(memberships.get(channelId)?.members.has(event.pubkey) ?? false)) return;
@@ -368,7 +353,7 @@ async function main() {
     try {
       const reaction = client.signEvent({
         kind: KIND_REACTION,
-        tags: [["e", event.id], ["h", channelId], ["c", communityId], ["p", event.pubkey]],
+        tags: [["e", event.id], ["h", channelId], ["p", event.pubkey]],
         content: "👀",
       });
       statusReactionIds.push(reaction.id);
@@ -402,13 +387,13 @@ async function main() {
         `Doing great.${names.length > 0 ? ` On deck: ${names.join(", ")}.` : ""} What can I route for you?`,
       ];
       console.log(`💬 Small talk from ${event.pubkey.slice(0, 8)} — answering in person`);
-      await say(channelId, communityId, replies[Math.floor(Math.random() * replies.length)], threadTags).catch(() => {});
+      await say(channelId, replies[Math.floor(Math.random() * replies.length)], threadTags).catch(() => {});
       if (statusReactionIds.length > 0) {
         void relay
           .publish(
             client.signEvent({
               kind: KIND_DELETION,
-              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId], ["c", communityId]],
+              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId]],
               content: "",
             })
           )
@@ -436,13 +421,13 @@ async function main() {
         reply = rows.length > 0 ? `🎩 the fleet right now:\n${rows.join("\n")}` : "🎩 nobody has announced themselves yet.";
       }
       console.log(`📖 Fleet question from ${event.pubkey.slice(0, 8)} — answering from the roster`);
-      await say(channelId, communityId, reply, threadTags).catch(() => {});
+      await say(channelId, reply, threadTags).catch(() => {});
       if (statusReactionIds.length > 0) {
         void relay
           .publish(
             client.signEvent({
               kind: KIND_DELETION,
-              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId], ["c", communityId]],
+              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId]],
               content: "",
             })
           )
@@ -469,7 +454,7 @@ async function main() {
         const askerName = roster.get(event.pubkey)?.name ?? profileNames.get(event.pubkey) ?? event.pubkey.slice(0, 8);
         for (const agentName of picked) {
           const agent = byName.get(agentName)!;
-          await say(channelId, communityId, `@${agentName} (from ${askerName}) ${cleaned}`, [
+          await say(channelId, `@${agentName} (from ${askerName}) ${cleaned}`, [
             ...threadTags,
             ["p", agent.pubkey],
             ["author", event.pubkey],
@@ -480,7 +465,6 @@ async function main() {
         const names = routableNames();
         await say(
           channelId,
-          communityId,
           names.length > 0
             ? `Hmm, not sure who's best for that. Around here: ${names.join(", ")} — mention one directly?`
             : `Nobody's announced themselves yet — once agents are registered I'll route to them.`,
@@ -490,14 +474,14 @@ async function main() {
       }
     } catch (err) {
       console.error(`❌ Routing failed:`, err instanceof Error ? err.message : err);
-      await say(channelId, communityId, `⚠️ My router isn't reachable right now (${baseUrl}).`, threadTags).catch(() => {});
+      await say(channelId, `⚠️ My router isn't reachable right now (${baseUrl}).`, threadTags).catch(() => {});
     } finally {
       if (statusReactionIds.length > 0) {
         void relay
           .publish(
             client.signEvent({
               kind: KIND_DELETION,
-              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId], ["c", communityId]],
+              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId]],
               content: "",
             })
           )
@@ -528,8 +512,7 @@ async function main() {
           welcomed.add(fresh.pubkey);
           lastWelcomeAt = Date.now();
           for (const channelId of channels) {
-            const communityId = communityOf.get(channelId);
-            if (communityId) void say(channelId, communityId, `👋 ${fresh.name} just came online — I'll loop them in when something fits.`).catch(() => {});
+            void say(channelId, `👋 ${fresh.name} just came online — I'll loop them in when something fits.`).catch(() => {});
           }
         } else if (fresh) {
           welcomed.add(fresh.pubkey);
@@ -542,11 +525,9 @@ async function main() {
 
   process.on("SIGINT", () => {
     clearInterval(heartbeat);
-    const goodbyes = channels
-      .map((channelId) => {
-        const communityId = communityOf.get(channelId);
-        return communityId ? say(channelId, communityId, `🎩 ${name} ducking out — back soon.`).catch(() => {}) : Promise.resolve();
-      });
+    const goodbyes = channels.map((channelId) =>
+      say(channelId, `🎩 ${name} ducking out — back soon.`).catch(() => {})
+    );
     void Promise.allSettled(goodbyes).then(() => {
       relay.disconnect();
       console.log(`\n🔴 @${name} stopped.`);

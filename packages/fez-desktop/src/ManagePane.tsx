@@ -2,10 +2,10 @@ import { useState } from "react";
 import type { FezClient } from "@fez/client";
 
 /**
- * Channel/community management — Buzz's ChannelManagementSheet as a fez
+ * Channel/client.state.workspace management — Buzz's ChannelManagementSheet as a fez
  * side pane. Members with roles, creator-gated moderation (kick / ban /
  * unban), invites by @name or pubkey, plus create-channel and
- * create-community. Every action is a client method — the pane renders
+ * create-client.state.workspace. Every action is a client method — the pane renders
  * trust rules it doesn't own: non-creators simply don't see the levers.
  */
 
@@ -15,7 +15,7 @@ export default function ManagePane({
   onClose,
 }: {
   client: FezClient;
-  onOpenChannel: (communityId: string, channelId: string) => void;
+  onOpenChannel: (channelId: string) => void;
   onClose: () => void;
 }) {
   const current = client.state.currentChannel();
@@ -63,12 +63,13 @@ export default function ManagePane({
     );
   }
 
-  const { community, channel } = current;
-  const amCreator = community.creator === client.pubkey;
-  const members = [...channel.members.entries()]
+  const channel = current;
+
+  const amCreator = client.state.isOwner(client.pubkey);
+  const members = [...client.state.workspace.members.entries()]
     .map(([pk, role]) => ({ pk, role, name: client.displayName(pk), online: client.isOnline(pk) }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const banned = [...(community.banned ?? [])];
+  const banned = [...(client.state.workspace.banned ?? [])];
 
   return (
     <aside className="pane">
@@ -79,8 +80,8 @@ export default function ManagePane({
       <div className="pane-body">
         {notice && <div className="manage-notice">{notice}</div>}
         <div className="manage-sub">
-          {community.name} · {members.length} member{members.length === 1 ? "" : "s"}
-          {amCreator ? " · you created this community" : ""}
+          {client.state.workspace.name} · {members.length} member{members.length === 1 ? "" : "s"}
+          {amCreator ? " · you created this client.state.workspace" : ""}
         </div>
 
         <div className="manage-section">members</div>
@@ -89,7 +90,7 @@ export default function ManagePane({
             <span className={member.online ? "dot on" : "dot off"} />
             <span className="manage-name">{member.name}</span>
             <span className="role-tag">{member.role}</span>
-            {amCreator && member.pk !== community.creator && (
+            {amCreator && member.pk !== client.state.workspace.owner && (
               <span className="manage-actions">
                 <button
                   className={armed === `kick:${member.pk}` ? "mini danger armed" : "mini"}
@@ -100,8 +101,8 @@ export default function ManagePane({
                 </button>
                 <button
                   className={armed === `ban:${member.pk}` ? "mini danger armed" : "mini"}
-                  title="ban from the whole community"
-                  onClick={() => confirmThen(`ban:${member.pk}`, () => void run(`banned ${member.name}`, () => client.banUser(community.id, member.pk)))}
+                  title="ban from the whole workspace"
+                  onClick={() => confirmThen(`ban:${member.pk}`, () => void run(`banned ${member.name}`, () => client.banUser(member.pk)))}
                 >
                   {armed === `ban:${member.pk}` ? "ban?" : "⛔"}
                 </button>
@@ -119,7 +120,7 @@ export default function ManagePane({
               <div key={pk} className="manage-row">
                 <span className="manage-name">{client.displayName(pk)}</span>
                 <span className="manage-actions">
-                  <button className="mini" title="unban" onClick={() => void run(`unbanned ${client.displayName(pk)}`, () => client.unbanUser(community.id, pk))}>
+                  <button className="mini" title="unban" onClick={() => void run(`unbanned ${client.displayName(pk)}`, () => client.unbanUser(pk))}>
                     ↩
                   </button>
                 </span>
@@ -129,7 +130,7 @@ export default function ManagePane({
         )}
 
         <div className="manage-section">invite link</div>
-        <InviteCode communityId={community.id} communityName={community.name} />
+        <InviteCode communityName={client.state.workspace.name} />
 
         {amCreator && (
           <CreateRow
@@ -137,8 +138,8 @@ export default function ManagePane({
             placeholder="channel name"
             onCreate={(name) =>
               void run(`created #${name}`, async () => {
-                const channelId = await client.createChannel(community.id, name);
-                onOpenChannel(community.id, channelId);
+                const channelId = await client.createChannel(name);
+                onOpenChannel(channelId);
               })
             }
           />
@@ -167,7 +168,7 @@ function isLoopback(url: string): boolean {
  * skipped, and when every relay is loopback we say so instead of
  * producing a code that cannot work.
  */
-function InviteCode({ communityId, communityName }: { communityId: string; communityName: string }) {
+function InviteCode({ communityName }: { communityName: string }) {
   const [copied, setCopied] = useState(false);
   const relays = (localStorage.getItem("fez-relay") ?? "ws://localhost:7777")
     .split(",")
@@ -185,7 +186,8 @@ function InviteCode({ communityId, communityName }: { communityId: string; commu
     );
   }
 
-  const code = `fez-join:${reachable}#${communityId}`;
+  // The workspace IS the relay — an invite is its URL, nothing more.
+  const code = `fez-join:${reachable}`;
   return (
     <>
       <code
@@ -199,7 +201,7 @@ function InviteCode({ communityId, communityName }: { communityId: string; commu
       >
         {copied ? "✓ copied" : code}
       </code>
-      <div className="settings-hint">Send this to someone — they paste it under "join community" (or onboard with it) and land in {communityName}.</div>
+      <div className="settings-hint">Send this to someone — they paste it under "join client.state.workspace" (or onboard with it) and land in {communityName}.</div>
     </>
   );
 }
@@ -210,36 +212,34 @@ function JoinByCode({
   onResult,
 }: {
   client: FezClient;
-  onOpenChannel: (communityId: string, channelId: string) => void;
+  onOpenChannel: (channelId: string) => void;
   onResult: (text: string) => void;
 }) {
   const [code, setCode] = useState("");
   const join = async () => {
-    const match = /^fez-join:(.+)#([0-9a-f-]+)$/i.exec(code.trim());
-    if (!match) return onResult("✗ not an invite code — expected fez-join:<relay>#<community>");
-    const [, relay, communityId] = match;
-    // A community on another relay is a reason to ADD that relay, not to
-    // turn someone away. Refusing here was a leftover from when a client
-    // could only talk to one relay — now the invite just widens the set,
-    // which is the entire point of having one.
-    const current = (localStorage.getItem("fez-relay") ?? "ws://localhost:7777").split(",").map((r) => r.trim());
-    if (!current.includes(relay)) {
-      localStorage.setItem("fez-relay", [...current, relay].join(","));
-      onResult(`+ added ${relay} to your relays — reopen fez to finish joining`);
-    }
+    // An invite is just a relay now. The workspace IS the relay, so
+    // there is no community id to carry and nothing to look up — the
+    // old fez-join:<relay>#<community> form is still accepted, with the
+    // trailing id ignored, so codes already in circulation keep working.
+    const match = /^fez-join:([^#]+)(?:#.*)?$/i.exec(code.trim());
+    if (!match) return onResult("✗ not an invite code — expected fez-join:<relay>");
+    const relay = match[1].trim();
     setCode("");
-    const known = await client.joinCommunity(communityId);
-    if (!known) return onResult("✗ joined, but the community hasn't reached this relay yet — it appears when its events do");
-    const community = client.state.communities.get(communityId);
-    const channel = community ? [...community.channels.values()][0] : undefined;
-    if (community && channel) {
-      onOpenChannel(communityId, channel.id);
-      onResult(`✓ joined ${community.name}`);
+    const claimed = await client.openWorkspace(relay);
+    if (!claimed) {
+      return onResult(`+ added ${relay}, but it has no owner yet — it's an unclaimed workspace`);
     }
+    const first = [...client.state.workspace.channels.values()][0];
+    if (first) onOpenChannel(first.id);
+    onResult(
+      client.state.isMember(client.pubkey)
+        ? `✓ joined ${client.state.workspace.name}`
+        : `+ added ${client.state.workspace.name} — ask its owner to invite ${client.pubkey.slice(0, 12)}…`
+    );
   };
   return (
     <>
-      <div className="manage-section">join community</div>
+      <div className="manage-section">join a workspace</div>
       <div className="manage-form">
         <input
           className="manage-input"
@@ -344,19 +344,19 @@ function CreateCommunity({
   onResult,
 }: {
   client: FezClient;
-  onOpenChannel: (communityId: string, channelId: string) => void;
+  onOpenChannel: (channelId: string) => void;
   onResult: (text: string) => void;
 }) {
   return (
     <CreateRow
-      label="new community"
-      placeholder="community name"
+      label="new client.state.workspace"
+      placeholder="client.state.workspace name"
       onCreate={(name) =>
         void (async () => {
           try {
-            const { communityId, channelId } = await client.createCommunity(name);
-            onOpenChannel(communityId, channelId);
-            onResult(`✓ created ${name} — you're in #general`);
+            const { channelId } = await client.claimWorkspace(name);
+            onOpenChannel(channelId);
+            onResult(`✓ created #${name}`);
           } catch (err) {
             onResult(`✗ ${err instanceof Error ? err.message : String(err)}`);
           }

@@ -26,7 +26,7 @@ interface GuiApi {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   React: { createElement: (...args: any[]) => unknown };
   client: {
-    state: { scope?: { channelId: string; communityId: string } };
+    state: { scope?: { channelId: string } };
     sendChannelMessage(text: string, opts?: object): Promise<unknown>;
   };
   registerMessageDecorator(

@@ -14,8 +14,7 @@ export interface CommandCtx {
   client: FezClient;
   wire: BrowserWire;
   channelId?: string;
-  communityId?: string;
-  ui: {
+    ui: {
     openSearch: (query: string) => void;
     watch: (agent: string) => void;
     openDocs: () => void;
@@ -128,11 +127,11 @@ export async function runCommand(text: string, ctx: CommandCtx): Promise<string>
         return `◷ reminder at ${new Date(Date.now() + delay * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: ${note}`;
       }
       case "schedule": {
-        if (!ctx.channelId || !ctx.communityId) return "no channel scope";
+        if (!ctx.channelId) return "no channel scope";
         const delay = parseDelay(rest[0]);
         const body = rest.slice(1).join(" ");
         if (!delay || !body) return "usage: /schedule <10m|2h> <message>";
-        await client.scheduleMessage(ctx.channelId, ctx.communityId, Math.floor(Date.now() / 1000) + delay, body);
+        await client.scheduleMessage(ctx.channelId, Math.floor(Date.now() / 1000) + delay, body);
         return `⏲ scheduled for ${new Date(Date.now() + delay * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — the sentinel sends it`;
       }
       case "invite": {
@@ -148,16 +147,14 @@ export async function runCommand(text: string, ctx: CommandCtx): Promise<string>
         return `✓ removed ${await client.kick(pk)}`;
       }
       case "ban": {
-        if (!ctx.communityId) return "no channel scope";
         const pk = resolvePk(client, rest[0] ?? "");
         if (!pk) return `nobody named "${rest[0] ?? ""}"`;
-        return `✓ banned ${await client.banUser(ctx.communityId, pk)}`;
+        return `✓ banned ${await client.banUser(pk)}`;
       }
       case "unban": {
-        if (!ctx.communityId) return "no channel scope";
         const pk = resolvePk(client, rest[0] ?? "");
         if (!pk) return `nobody named "${rest[0] ?? ""}"`;
-        return `✓ unbanned ${await client.unbanUser(ctx.communityId, pk)}`;
+        return `✓ unbanned ${await client.unbanUser(pk)}`;
       }
       default: {
         const extension = guiCommand(cmd);

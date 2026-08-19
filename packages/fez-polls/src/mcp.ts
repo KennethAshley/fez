@@ -33,20 +33,19 @@ const relay = new RelayConnection({
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
-async function resolveChannel(spec: string): Promise<{ channelId: string; communityId: string; name: string } | { error: string }> {
+async function resolveChannel(spec: string): Promise<{ channelId: string; name: string } | { error: string }> {
   const raw = spec.trim().replace(/^#/, "");
   const wanted = raw.toLowerCase();
   const channels = await relay.query([{ kinds: [47101], limit: 200 }]);
   for (const event of channels) {
     const d = event.tags.find((t) => t[0] === "d")?.[1];
-    const c = event.tags.find((t) => t[0] === "c")?.[1];
     if (!d || !c) continue;
     let name = d;
     try {
       name = (JSON.parse(event.content).name as string) ?? d;
     } catch { /* keep id */ }
     if (name.toLowerCase() === wanted || d === raw || (raw.length >= 6 && d.startsWith(raw))) {
-      return { channelId: d, communityId: c, name };
+      return { channelId: d, name };
     }
   }
   return { error: `no channel "${spec}" on this relay` };
@@ -74,7 +73,7 @@ server.registerTool(
       {
         kind: 47103,
         created_at: Math.floor(Date.now() / 1000),
-        tags: [["h", ref.channelId], ["c", ref.communityId], ["t", "poll"]],
+        tags: [["h", ref.channelId], ["t", "poll"]],
         content: formatPoll(question, options, closesAtMs),
       },
       secret

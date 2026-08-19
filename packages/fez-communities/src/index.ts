@@ -409,9 +409,9 @@ export default function communities(api: FezExtensionAPI): void {
     if (sub === "create") {
       const name = rest.join(" ").trim();
       if (!name) return ctx.reply("Usage: /community create <name>");
-      const { communityId } = await client.createCommunity(name);
+      await client.claimWorkspace();
       refreshUi();
-      ctx.reply(`Created **${name}** with #general — you're in it.\nCommunity id (share to invite): \`${communityId}\``);
+      ctx.reply(`Claimed this relay as a workspace with #general — you're in it.\nShare the relay URL to invite people; a relay IS the workspace now.`);
       return;
     }
     if (sub === "join") {
@@ -525,7 +525,7 @@ export default function communities(api: FezExtensionAPI): void {
     const rows = events
       .filter((e) => {
         const h = e.tags.find((t) => t[0] === "h")?.[1];
-        const c = e.tags.find((t) => t[0] === "c")?.[1] ?? (h ? client.state.communityOfChannel(h) : undefined);
+        const c = undefined; // workspace-scoped: the relay is the scope
         if (!h || !c || !client.state.isMember(c, h, e.pubkey)) return false;
         return client.msgById(e.id)?.deletedBy === undefined; // tombstoned messages don't surface
       })

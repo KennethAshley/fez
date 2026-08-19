@@ -57,18 +57,17 @@ function appendHistory(entry: HistoryEntry): void {
 async function findChannel(
   nostr: ScheduledTaskContext["nostr"],
   wanted: string
-): Promise<{ channelId: string; communityId: string } | undefined> {
+): Promise<{ channelId: string } | undefined> {
   const events = (await nostr.query([{ kinds: [47101], limit: 300 }])) as NostrEvent[];
   const target = wanted.replace(/^#/, "").toLowerCase();
   for (const event of events) {
     const channelId = event.tags.find((t) => t[0] === "d")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId) continue;
+    if (!channelId) continue;
     let name = channelId;
     try {
       name = (JSON.parse(event.content).name as string) ?? channelId;
     } catch { /* unnamed */ }
-    if (name.toLowerCase() === target) return { channelId, communityId };
+    if (name.toLowerCase() === target) return { channelId };
   }
   return undefined;
 }
@@ -139,7 +138,7 @@ export function registerNightlyBench(api: FezExtensionAPI): void {
     if (improved) {
       await nostr.publish({
         kind: 47103,
-        tags: [["h", where.channelId], ["c", where.communityId], ["t", "bench-report"]],
+        tags: [["h", where.channelId], ["t", "bench-report"]],
         content:
           `📏 routing bench improved: ${pct(previous!.accuracy)} → ${pct(summary.accuracy)} ` +
           `(${summary.correct}/${summary.total}, p50 ${summary.p50RouterMs}ms). Whatever changed, it worked.`,
@@ -156,7 +155,6 @@ export function registerNightlyBench(api: FezExtensionAPI): void {
       kind: 47103,
       tags: [
         ["h", where.channelId],
-        ["c", where.communityId],
         ["t", "bench-report"],
         ...(tunerPk ? [["p", tunerPk]] : []),
       ],

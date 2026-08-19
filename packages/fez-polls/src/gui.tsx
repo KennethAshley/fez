@@ -11,10 +11,10 @@ import { formatPoll, parsePoll, parsePollCommand, tallyPoll, OPTION_EMOJI } from
 interface ClientLike {
   pubkey: string;
   reactions(targetId: string): ReadonlyMap<string, ReadonlySet<string>> | undefined;
-  toggleReaction(channelId: string, communityId: string, targetId: string, emoji: string): Promise<void>;
+  toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
   sendChannelMessage(text: string, opts?: object): Promise<unknown>;
   state: {
-    scope?: { channelId: string; communityId: string };
+    scope?: { channelId: string };
     communities: Map<string, { channels: Map<string, { members: Map<string, string> }> }>;
   };
 }
@@ -24,7 +24,7 @@ interface GuiApi {
   client: ClientLike;
   registerMessageDecorator(
     match: (content: string) => boolean,
-    render: (props: { content: string; msgId: string; channelId: string; communityId: string; authorName: string }) => unknown
+    render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => unknown
   ): void;
   registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
 }
@@ -47,7 +47,7 @@ export default function activate(api: GuiApi): void {
 
   api.registerMessageDecorator(
     (content) => content.startsWith("📊 poll: "),
-    ({ content, msgId, channelId, communityId }) => {
+    ({ content, msgId, channelId }) => {
       const poll = parsePoll(content);
       if (!poll) return null;
       const roster = members(channelId);
@@ -71,9 +71,9 @@ export default function activate(api: GuiApi): void {
         const target = OPTION_EMOJI[index];
         // change-of-vote: clear my other option reactions first
         for (const emoji of OPTION_EMOJI.slice(0, poll.options.length)) {
-          if (emoji !== target && mine.has(emoji)) await client.toggleReaction(channelId, communityId, msgId, emoji);
+          if (emoji !== target && mine.has(emoji)) await client.toggleReaction(channelId, msgId, emoji);
         }
-        if (!mine.has(target)) await client.toggleReaction(channelId, communityId, msgId, target);
+        if (!mine.has(target)) await client.toggleReaction(channelId, msgId, target);
       };
 
       return h(

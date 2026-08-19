@@ -16,8 +16,7 @@ const KIND_CHANNEL_MESSAGE = 47103;
 interface MentionRow {
   id: string;
   channelId: string;
-  communityId: string;
-  channelName: string;
+    channelName: string;
   author: string;
   snippet: string;
   ts: number;
@@ -34,17 +33,16 @@ export default function HomeView({
   wire: BrowserWire;
   /** Relay-scanned approval/choice events — see the note in App.tsx. */
   scan?: { msgs: WireEvent[]; answered: Set<string> };
-  onOpenChannel: (communityId: string, channelId: string, msgId?: string) => void;
+  onOpenChannel: (channelId: string, msgId?: string) => void;
   onOpenDm: (convoKey: string) => void;
 }) {
   const [mentions, setMentions] = useState<MentionRow[] | undefined>();
 
   const channels = useMemo(() => {
-    const map = new Map<string, { name: string; communityId: string; communityName: string }>();
-    for (const community of client.state.communities.values()) {
-      if (!client.state.joined.has(community.id)) continue;
-      for (const channel of community.channels.values()) {
-        map.set(channel.id, { name: channel.name, communityId: community.id, communityName: community.name });
+    const map = new Map<string, { name: string; workspaceName: string }>();
+    {
+      for (const channel of client.state.workspace.channels.values()) {
+        map.set(channel.id, { name: channel.name, workspaceName: client.state.workspace.name });
       }
     }
     return map;
@@ -59,11 +57,10 @@ export default function HomeView({
           const channelId = event.tags.find((t) => t[0] === "h")?.[1];
           const ref = channelId ? channels.get(channelId) : undefined;
           if (!channelId || !ref) return undefined;
-          if (!client.state.isMember(ref.communityId, channelId, event.pubkey)) return undefined;
+          if (!client.state.isMember(event.pubkey)) return undefined;
           return {
             id: event.id,
             channelId,
-            communityId: ref.communityId,
             channelName: ref.name,
             author: client.displayName(event.pubkey),
             snippet: event.content.replace(/\s+/g, " ").slice(0, 160),
@@ -103,7 +100,7 @@ export default function HomeView({
           <div className="pane-empty">nothing addressed to you yet — @mentions from any joined channel land here</div>
         )}
         {mentions?.map((row) => (
-          <button key={row.id} className="inbox-row" onClick={() => onOpenChannel(row.communityId, row.channelId, row.id)}>
+          <button key={row.id} className="inbox-row" onClick={() => onOpenChannel(row.id)}>
             <span className="search-meta">
               # {row.channelName} · <span className="inbox-author">{row.author}</span> · {when(row.ts)}
             </span>
@@ -144,8 +141,8 @@ function DraftsSection({
   onOpenDm,
 }: {
   client: FezClient;
-  channels: Map<string, { name: string; communityId: string; communityName: string }>;
-  onOpenChannel: (communityId: string, channelId: string, msgId?: string) => void;
+  channels: Map<string, { name: string; workspaceName: string }>;
+  onOpenChannel: (channelId: string, msgId?: string) => void;
   onOpenDm: (convoKey: string) => void;
 }) {
   const drafts: { label: string; text: string; open: () => void }[] = [];
@@ -159,7 +156,7 @@ function DraftsSection({
     } else if (key.startsWith("fez-draft-")) {
       const channelId = key.slice("fez-draft-".length);
       const ref = channels.get(channelId);
-      if (ref) drafts.push({ label: `# ${ref.name}`, text, open: () => onOpenChannel(ref.communityId, channelId) });
+      if (ref) drafts.push({ label: `# ${ref.name}`, text, open: () => onOpenChannel(channelId) });
     }
   }
   if (drafts.length === 0) return null;

@@ -100,11 +100,10 @@ export default function Composer({
 
   const channelCandidates = useMemo(() => {
     if (token?.type !== "channel") return [];
+    // One workspace, one flat channel list — #autocomplete never has to
+    // ask which community a name came from.
     const names = new Set<string>();
-    for (const communityId of client.state.joined) {
-      const community = client.state.communities.get(communityId);
-      for (const channel of community?.channels.values() ?? []) names.add(channel.name);
-    }
+    for (const channel of client.state.workspace.channels.values()) names.add(channel.name);
     const partial = token.partial.toLowerCase();
     return [...names]
       .filter((name) => name.toLowerCase().includes(partial))

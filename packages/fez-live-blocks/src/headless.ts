@@ -8,9 +8,9 @@ import { formatLiveBlock, isDue, parseLiveBlock, parseLiveCommand, LIVE_LANG } f
  */
 
 interface ClientLike {
-  state: { scope?: { channelId: string; communityId: string } };
+  state: { scope?: { channelId: string } };
   docsByChannel(): ReadonlyMap<string, { latestContent: string; latestId: string }>;
-  publishDoc(channelId: string, communityId: string, content: string, baseId?: string): Promise<void>;
+  publishDoc(channelId: string, content: string, baseId?: string): Promise<void>;
 }
 
 export default function liveBlocks(api: FezExtensionAPI): void {
@@ -29,10 +29,10 @@ export default function liveBlocks(api: FezExtensionAPI): void {
       ctx.reply("◉ open a channel first.");
       return;
     }
-    const { channelId, communityId } = client.state.scope;
+    const { channelId } = client.state.scope;
     const doc = client.docsByChannel().get(channelId);
     const next = `${doc?.latestContent?.trim() ? doc.latestContent.trimEnd() + "\n\n" : ""}${formatLiveBlock(parsed.block)}\n`;
-    await client.publishDoc(channelId, communityId, next, doc?.latestId);
+    await client.publishDoc(channelId, next, doc?.latestId);
     ctx.reply(`◉ live block added to the channel doc — @${parsed.block.agent} owns it. Comment on it (or ↻ in the GUI) to refresh.`);
   });
 
@@ -88,8 +88,7 @@ function registerScheduler(api: FezExtensionAPI): void {
     for (const doc of newest.values()) {
       if (fired >= MAX_PER_TICK) break;
       const channelId = doc.tags.find((t) => t[0] === "h")?.[1];
-      const communityId = doc.tags.find((t) => t[0] === "c")?.[1];
-      if (!channelId || !communityId) continue;
+      if (!channelId) continue;
       const slug = doc.tags.find((t) => t[0] === "d")?.[1];
       for (const fence of doc.content.matchAll(new RegExp("```" + LIVE_LANG + "([^\\n]*)\\n([\\s\\S]*?)```", "g"))) {
         if (fired >= MAX_PER_TICK) break;
@@ -102,7 +101,6 @@ function registerScheduler(api: FezExtensionAPI): void {
           kind: 40101,
           tags: [
             ["h", channelId],
-            ["c", communityId],
             ...(slug ? [["d", slug]] : []),
             ["anchor", ("```" + LIVE_LANG + fence[1]).slice(0, 300)],
             ["p", agentPk],

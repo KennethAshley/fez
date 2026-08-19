@@ -16,9 +16,9 @@ import type { FezExtensionAPI } from "./api-types.js";
  */
 
 interface ClientLike {
-  state: { scope?: { channelId: string; communityId: string } };
+  state: { scope?: { channelId: string } };
   channelRef(channelId: string): { name: string } | undefined;
-  docVersions(channelId: string, communityId: string): Promise<{ content: string; created_at: number }[]>;
+  docVersions(channelId: string): Promise<{ content: string; created_at: number }[]>;
   messages?(channelId: string): readonly { authorName: string; content: string; ts: number }[];
 }
 
@@ -55,7 +55,7 @@ export default function obsidian(api: FezExtensionAPI): void {
     const channelName = client.channelRef(scope.channelId)?.name ?? scope.channelId.slice(0, 8);
     const noteName = (trimmed || channelName).replace(/[^\w\s-]/g, "").trim() || channelName;
 
-    const versions = await client.docVersions(scope.channelId, scope.communityId);
+    const versions = await client.docVersions(scope.channelId);
     const doc = versions.at(-1);
     if (!doc) {
       ctx.reply(`🟣 #${channelName} has no doc yet (/doc set <text>) — nothing to export.`);

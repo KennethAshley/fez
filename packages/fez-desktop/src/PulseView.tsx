@@ -80,11 +80,8 @@ export default function PulseView({
       records.sort((a, b) => a.ts - b.ts);
       setTurns(records);
 
-      const channels: { id: string; name: string }[] = [];
-      for (const communityId of client.state.joined) {
-        const community = client.state.communities.get(communityId);
-        for (const channel of community?.channels.values() ?? []) channels.push({ id: channel.id, name: channel.name });
-      }
+      const channels: { id: string; name: string }[] = [...client.state.workspace.channels.values()]
+        .map((channel) => ({ id: channel.id, name: channel.name }));
       // agents may work in channels this client hasn't joined (TUI-made agent
       // channels) — include their scopes so summons/edges still reconstruct
       for (const record of records) {
@@ -135,9 +132,8 @@ export default function PulseView({
   const rangeMs = RANGES.find((r) => r.key === range)?.ms ?? DAY_MS;
   const channels = useMemo(() => {
     const out: { id: string; name: string }[] = [];
-    for (const communityId of client.state.joined) {
-      const community = client.state.communities.get(communityId);
-      for (const channel of community?.channels.values() ?? []) out.push({ id: channel.id, name: channel.name });
+    {
+      for (const channel of client.state.workspace.channels.values()) out.push({ id: channel.id, name: channel.name });
     }
     for (const record of turns ?? []) {
       if (!record.scope?.startsWith("ch:")) continue;
@@ -248,9 +244,8 @@ export default function PulseView({
         failed: t.status === "failed",
       });
     }
-    for (const communityId of client.state.joined) {
-      const community = client.state.communities.get(communityId);
-      for (const channel of community?.channels.values() ?? []) {
+    {
+      for (const channel of client.state.workspace.channels.values()) {
         if (!inScope(channel.id)) continue;
         for (const artifact of client.artifacts(channel.id)) {
           if (artifact.ts < windowStart) continue;
@@ -743,10 +738,8 @@ function HeatRow({ label, days, unit, now }: { label: string; days: Map<string, 
 function channelLabel(client: FezClient, scope: string): string {
   if (scope.startsWith("dm:")) return "a DM";
   const channelId = scope.startsWith("ch:") ? scope.slice(3) : scope;
-  for (const community of client.state.communities.values()) {
-    for (const channel of community.channels.values()) {
-      if (channel.id === channelId || channel.id.startsWith(channelId)) return `#${channel.name}`;
-    }
+  for (const channel of client.state.workspace.channels.values()) {
+    if (channel.id === channelId || channel.id.startsWith(channelId)) return `#${channel.name}`;
   }
   return `#${channelId.slice(0, 8)}`;
 }

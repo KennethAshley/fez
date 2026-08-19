@@ -15,14 +15,12 @@ import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
 export default function ChannelInfo({
   client,
   channelId,
-  communityId,
   channelName,
   onJump,
 }: {
   client: FezClient;
   channelId: string;
-  communityId: string;
-  channelName: string;
+    channelName: string;
   onJump: (msgId: string) => void;
 }) {
   const key = `fez-chinfo-${channelId}`;
@@ -56,7 +54,7 @@ export default function ChannelInfo({
   const publish = async () => {
     setBusy(true);
     try {
-      await client.publishDoc(channelId, communityId, draft, doc?.latestId);
+      await client.publishDoc(channelId, draft, doc?.latestId);
       setEditing(false);
     } finally {
       setBusy(false);
@@ -127,7 +125,6 @@ export default function ChannelInfo({
                             body,
                             raw: `${infoLine}\n${body}\n\`\`\``,
                             channelId,
-                            communityId,
                           })}
                         </>
                       );

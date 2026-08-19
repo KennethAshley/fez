@@ -11,14 +11,12 @@ import type { FezClient, WireEvent } from "@fez/client";
 export default function DocsPane({
   client,
   channelId,
-  communityId,
   renderMd,
   onClose,
 }: {
   client: FezClient;
   channelId: string;
-  communityId: string;
-  renderMd: (text: string) => React.ReactNode;
+    renderMd: (text: string) => React.ReactNode;
   onClose: () => void;
 }) {
   const [versions, setVersions] = useState<WireEvent[] | undefined>();
@@ -28,8 +26,8 @@ export default function DocsPane({
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    setVersions(await client.docVersions(channelId, communityId));
-  }, [client, channelId, communityId]);
+    setVersions(await client.docVersions(channelId));
+  }, [client, channelId]);
 
   useEffect(() => {
     void load();
@@ -43,7 +41,7 @@ export default function DocsPane({
     if (!draft.trim()) return;
     setBusy(true);
     try {
-      await client.publishDoc(channelId, communityId, draft, latest?.id);
+      await client.publishDoc(channelId, draft, latest?.id);
       setEditing(false);
       setViewing(undefined);
       await load();

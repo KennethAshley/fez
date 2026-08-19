@@ -300,10 +300,10 @@ function AgentDetail({
     })();
   }, [tab, costs, wire, client, name]);
 
-  // Invite into the CURRENT channel — creator-only, and only if absent.
-  const scope = client.state.currentChannel();
-  const canInvite =
-    !!scope && scope.community.creator === client.pubkey && !scope.channel.members.has(pk);
+  // Invite into the WORKSPACE — owner-only, and only if they aren't
+  // already on the roster. One roster, so this puts the agent in every
+  // channel at once rather than the one that happens to be open.
+  const canInvite = client.state.isOwner(client.pubkey) && !client.state.isMember(pk);
 
   const invite = async () => {
     setInviteState("sending");
@@ -335,7 +335,7 @@ function AgentDetail({
           {onEdit && <button className="agent-action" onClick={onEdit}>✎ edit persona</button>}
           {canInvite && (
             <button className="agent-action" disabled={inviteState === "sending"} onClick={() => void invite()}>
-              {inviteState === "idle" && `+ invite to #${scope.channel.name}`}
+              {inviteState === "idle" && `+ invite to ${client.state.workspace.name}`}
               {inviteState === "sending" && "inviting…"}
               {inviteState === "done" && "✓ invited"}
               {inviteState === "error" && "invite failed"}

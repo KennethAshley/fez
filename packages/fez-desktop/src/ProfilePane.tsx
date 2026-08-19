@@ -49,9 +49,8 @@ export default function ProfilePane({
   const busy = agentName ? working.get(agentName) : undefined;
   const live = busy && Date.now() - busy.ts < 30_000;
 
-  const scope = client.state.currentChannel();
-  const role = scope?.channel.members.get(pk);
-  const canInvite = !!scope && scope.community.creator === client.pubkey && !scope.channel.members.has(pk) && !self;
+  const role = client.state.roleOf(pk);
+  const canInvite = client.state.isOwner(client.pubkey) && !client.state.workspace.members.has(pk) && !self;
   const [inviteState, setInviteState] = useState<"idle" | "sending" | "done" | "error">("idle");
 
   const copyPk = () => {
@@ -111,7 +110,7 @@ export default function ProfilePane({
           {agentName && <button className="agent-action" onClick={() => onWatch(agentName)}>◉ watch live</button>}
           {canInvite && (
             <button className="agent-action" disabled={inviteState === "sending"} onClick={() => void invite()}>
-              {inviteState === "idle" && `+ invite to #${scope.channel.name}`}
+              {inviteState === "idle" && `+ invite to ${client.state.workspace.name}`}
               {inviteState === "sending" && "inviting…"}
               {inviteState === "done" && "✓ invited"}
               {inviteState === "error" && "invite failed"}

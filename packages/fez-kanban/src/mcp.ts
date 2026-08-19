@@ -47,7 +47,6 @@ interface Page {
   title: string;
   content: string;
   channelId: string;
-  communityId: string;
   baseId: string;
   baseTs: number;
 }
@@ -85,7 +84,6 @@ async function resolvePage(spec: string): Promise<Page | { error: string }> {
       title: event.tags.find((t) => t[0] === "title")?.[1] ?? slug,
       content: event.content,
       channelId: event.tags.find((t) => t[0] === "h")?.[1] ?? "",
-      communityId: event.tags.find((t) => t[0] === "c")?.[1] ?? "",
       baseId: event.id,
       baseTs: event.created_at,
     }];
@@ -122,7 +120,6 @@ async function publish(page: Page, markdown: string): Promise<void> {
       tags: [
         ["d", page.slug],
         ["h", page.channelId],
-        ["c", page.communityId],
         ["title", page.title],
         ...(page.baseId ? [["base", page.baseId]] : []),
       ],

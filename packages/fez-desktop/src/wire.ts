@@ -1,6 +1,7 @@
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { nip44, nip59, type Event, type EventTemplate } from "nostr-tools";
 import type { Wire, WireEvent, WireFilter, DmRumor } from "@fez/client";
+import { fetchRelayInfo } from "../../../src/nip11.js";
 
 /**
  * Browser Wire for @fez/client — the same eight-function seam the TUI
@@ -398,6 +399,15 @@ export class BrowserWire implements Wire {
       await this.publishSigned(wrap as Event);
     }
     return (rumor as { id: string }).id;
+  }
+
+  /**
+   * The workspace's identity card. Asked of the FIRST relay: under the
+   * flat model a workspace is one relay, and any extra URLs are mirrors
+   * of it, so the primary is the one that names the owner.
+   */
+  async relayInfo(relay?: string): Promise<{ name?: string; description?: string; pubkey?: string; icon?: string } | undefined> {
+    return fetchRelayInfo(relay ?? this.urls[0]);
   }
 
   unwrapDm(event: WireEvent): DmRumor | undefined {

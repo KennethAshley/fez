@@ -972,8 +972,7 @@ async function main() {
     doc?: { rootId: string; anchor: string; slug?: string }
   ): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-      const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-      if (!channelId || !communityId || event.pubkey === myPubkey) return;
+      if (!channelId || event.pubkey === myPubkey) return;
       if (!redispatch && seenEventIds.has(event.id)) return;
       seenEventIds.add(event.id);
       if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
@@ -1037,7 +1036,7 @@ async function main() {
         try {
           const reaction = client.signEvent({
             kind: KIND_REACTION,
-            tags: [["e", event.id], ["h", channelId], ["c", communityId], ["p", event.pubkey]],
+            tags: [["e", event.id], ["h", channelId], ["p", event.pubkey]],
             content: emoji,
           });
           statusReactionIds.push(reaction.id);
@@ -1050,7 +1049,7 @@ async function main() {
           .publish(
             client.signEvent({
               kind: KIND_DELETION,
-              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId], ["c", communityId]],
+              tags: [...statusReactionIds.map((id) => ["e", id]), ["h", channelId]],
               content: "",
             })
           )
@@ -1076,7 +1075,6 @@ async function main() {
               kind: KIND_TYPING,
               tags: [
                 ["h", channelId],
-                ["c", communityId],
                 ...(typingThreadRoot ? [["e", typingThreadRoot, "", "root"]] : []),
               ],
               content: JSON.stringify({ name: personaId }),
@@ -1102,7 +1100,6 @@ async function main() {
       const replyTags = doc
         ? [
             ["h", channelId],
-            ["c", communityId],
             ...(doc.slug ? [["d", doc.slug]] : []),
             ["e", doc.rootId],
             ["p", event.pubkey],
@@ -1110,7 +1107,6 @@ async function main() {
           ]
         : [
             ["h", channelId],
-            ["c", communityId],
             ...(triggerRoot ? [["e", triggerRoot, "", "root"]] : []),
             ["e", event.id, "", "reply"],
             ["p", event.pubkey],
@@ -1254,7 +1250,7 @@ async function main() {
             .publish(
               client.signEvent({
                 kind: KIND_ARTIFACT,
-                tags: [["h", channelId], ["c", communityId], ["type", artifact.type]],
+                tags: [["h", channelId], ["type", artifact.type]],
                 content: JSON.stringify(artifact),
               })
             )

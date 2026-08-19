@@ -61,7 +61,7 @@ export function OpenLoops({
   client: FezClient;
   /** Relay-scanned approval/choice messages — see the note in App.tsx. */
   scan?: { msgs: WireEvent[]; answered: Set<string> };
-  onOpenMessage: (communityId: string, channelId: string, msgId: string) => void;
+  onOpenMessage: (channelId: string, msgId: string) => void;
 }) {
   const [proposals, setProposals] = useState<ReturnType<typeof foldLedger>>();
   const [, bump] = useState(0);
@@ -85,8 +85,7 @@ export function OpenLoops({
   for (const event of scan?.msgs ?? []) {
     if (scan?.answered.has(event.id)) continue;
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId) continue;
+    if (!channelId) continue;
     const who = client.displayName(event.pubkey);
     const where = nameOf(channelId)?.name;
 
@@ -102,8 +101,8 @@ export function OpenLoops({
         detail: rest.join(" ").replace(/^\(|\)$/g, "") || undefined,
         ts: event.created_at * 1000,
         blocked: true,
-        act: (approve) => void client.toggleReaction(channelId, communityId, event.id, approve ? "✅" : "❌"),
-        open: () => onOpenMessage(communityId, channelId, event.id),
+        act: (approve) => void client.toggleReaction(channelId, event.id, approve ? "✅" : "❌"),
+        open: () => onOpenMessage(channelId, event.id),
       });
       continue;
     }
@@ -127,8 +126,8 @@ export function OpenLoops({
       ts: event.created_at * 1000,
       blocked: true,
       options,
-      act: (index) => void client.toggleReaction(channelId, communityId, event.id, CHOICE_EMOJI[index as number]),
-      open: () => onOpenMessage(communityId, channelId, event.id),
+      act: (index) => void client.toggleReaction(channelId, event.id, CHOICE_EMOJI[index as number]),
+      open: () => onOpenMessage(channelId, event.id),
     });
   }
 

@@ -16,6 +16,7 @@ import {
   KIND_CHANNEL_MESSAGE,
   KIND_DOC_COMMENT,
   KIND_MEMBERSHIP,
+  ROSTER_D,
   KIND_GIFT_WRAP,
   KIND_OBSERVER,
 } from "@fez/protocol";
@@ -226,14 +227,25 @@ async function main() {
       .catch(() => attested.delete(agentPubkey));
   }
 
-  async function inviteToChannel(agentPubkey: string, channelId: string, communityId: string): Promise<void> {
-    const memberships = await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": [channelId] }]);
-    const latest = memberships.sort((a, b) => a.created_at - b.created_at).at(-1);
+  /**
+   * Add a spawned agent to the WORKSPACE roster — one roster, so the
+   * agent lands with access to every channel rather than being invited
+   * per room. created_at is bumped past the current roster so two
+   * invites in the same second can't tie.
+   */
+  async function inviteToWorkspace(agentPubkey: string): Promise<void> {
+    const rosters = await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
+    const latest = rosters.sort((a, b) => a.created_at - b.created_at).at(-1);
     const ptags = latest?.tags.filter((t) => t[0] === "p") ?? [];
     if (ptags.some((t) => t[1] === agentPubkey)) return;
     ptags.push(["p", agentPubkey, "bot"]);
     await relay.publish(
-      client.signEvent({ kind: KIND_MEMBERSHIP, tags: [["d", channelId], ["c", communityId], ...ptags], content: "" })
+      client.signEvent({
+        kind: KIND_MEMBERSHIP,
+        tags: [["d", ROSTER_D], ...ptags],
+        content: "",
+        created_at: Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1),
+      })
     );
   }
 
@@ -255,7 +267,7 @@ async function main() {
 
   // ── watchers ──────────────────────────────────────────────────────────
   const spawning = new Set<string>();
-  const pendingInvites = new Map<string, { channelId: string; communityId: string }>();
+  const pendingInvites = new Map<string, { channelId: string }>();
   const seenDmIds = new Set<string>();
   const sessionStartS = Math.floor(Date.now() / 1000);
   let dmWatchLive = false;
@@ -294,7 +306,7 @@ async function main() {
         if (target) {
           pendingInvites.delete(name);
           attestAgent(event.pubkey);
-          void inviteToChannel(event.pubkey, target.channelId, target.communityId)
+          void inviteToWorkspace(event.pubkey)
             .then(() => console.log(`🤝 @${name} announced — invited to its channel`))
             .catch(() => console.warn(`⚠️  invite for @${name} failed`));
         }
@@ -310,12 +322,11 @@ async function main() {
         }
         if (event.pubkey !== myPubkey && !attestedSiblings.has(event.pubkey)) return;
         const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-        const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-        if (!channelId || !communityId) return;
+        if (!channelId) return;
         for (const match of event.content.matchAll(/@([\w-]+)/g)) {
           const persona = match[1].toLowerCase();
           if (spawning.has(persona) || !personaExists(persona) || agentProcessAlive(persona)) continue;
-          pendingInvites.set(persona, { channelId, communityId });
+          pendingInvites.set(persona, { channelId });
           summon(persona, [channelId], `doc comment by ${nameOf(event.pubkey)}`);
         }
         return;
@@ -330,8 +341,7 @@ async function main() {
         if (event.pubkey !== myPubkey && !attestedSiblings.has(event.pubkey)) return;
         if (Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0) >= MAX_CHAIN_DEPTH) return;
         const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-        const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-        if (!channelId || !communityId) return;
+        if (!channelId) return;
         for (const match of event.content.matchAll(/@([\w-]+)/g)) {
           const persona = match[1].toLowerCase();
           if (spawning.has(persona) || !personaExists(persona)) continue;
@@ -341,7 +351,7 @@ async function main() {
             const entry = loadRegistry().find((t) => t.persona === persona);
             if (entry && !entry.channels.includes(channelId)) {
               spawning.add(persona);
-              pendingInvites.set(persona, { channelId, communityId });
+              pendingInvites.set(persona, { channelId });
               console.log(`🔁 pulling @${persona} into a new channel (restart with union)`);
               try { execSync(`pkill -f "(fez|cli\\.js) agent ${persona}"`, { stdio: "pipe" }); } catch { /* already gone */ }
               void spawnAgent(persona, [...entry.channels, channelId])
@@ -350,7 +360,7 @@ async function main() {
             }
             continue;
           }
-          pendingInvites.set(persona, { channelId, communityId });
+          pendingInvites.set(persona, { channelId });
           summon(persona, [channelId], `mention by ${nameOf(event.pubkey)}`);
         }
         return;
@@ -422,7 +432,7 @@ async function main() {
       const h = intent.tags.find((t) => t[0] === "h")?.[1];
       const c = intent.tags.find((t) => t[0] === "c")?.[1];
       if (h && c) {
-        await relay.publish(client.signEvent({ kind: KIND_CHANNEL_MSG, tags: [["h", h], ["c", c]], content: intent.content }));
+        await relay.publish(client.signEvent({ kind: KIND_CHANNEL_MSG, tags: [["h", h]], content: intent.content }));
         console.log(`⏲ delivered scheduled message to channel ${h.slice(0, 8)}…`);
       }
     } else {

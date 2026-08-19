@@ -190,13 +190,14 @@ export default function herdr(api: FezExtensionAPI): void {
   const KIND_AGENT_ATTESTATION = 47006;
   const KIND_CHANNEL_MESSAGE = 47103;
   const KIND_MEMBERSHIP = 47102;
+  const ROSTER_D = "roster"; // one roster per workspace (see src/kinds.ts)
   const KIND_GIFT_WRAP = 1059; // NIP-59 wrap carrying a NIP-17 DM — see fez src/dm.ts
   const DM_FUZZ_WINDOW_S = 2 * 86_400; // wrap timestamps fuzz up to 2 days BACK
   const spawning = new Set<string>();
   // pubkey -> persona name, from 47000 announcements. Any DM-able agent
   // has one (the sender needed its pubkey, and pubkeys travel via 47000).
   const agentPkToName = new Map<string, string>();
-  const pendingInvites = new Map<string, { channelId: string; communityId: string }>(); // persona -> where to invite
+  const pendingInvites = new Map<string, { channelId: string }>(); // persona -> where it was summoned
   const attested = new Set<string>(); // agent pubkeys attested this session
   // Pubkeys allowed to summon local personas via @mention (self is implicit):
   // hydrated from the user's own 47006 attestations, grown on new attests.
@@ -263,16 +264,22 @@ export default function herdr(api: FezExtensionAPI): void {
     }
   }
 
-  async function inviteToChannel(agentPubkey: string, channelId: string, communityId: string): Promise<void> {
-    const memberships = await api.nostr!.query([{ kinds: [KIND_MEMBERSHIP], "#d": [channelId] }]);
-    const latest = memberships.sort((a, b) => a.created_at - b.created_at).at(-1);
+  /**
+   * Add a spawned agent to the WORKSPACE roster. One roster per relay,
+   * so the agent arrives with access to every channel — there is no
+   * per-channel invite left to forget.
+   */
+  async function inviteToWorkspace(agentPubkey: string): Promise<void> {
+    const rosters = await api.nostr!.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
+    const latest = rosters.sort((a, b) => a.created_at - b.created_at).at(-1);
     const ptags = latest?.tags.filter((t) => t[0] === "p") ?? [];
-    if (ptags.some((t) => t[1] === agentPubkey)) return; // already a member
+    if (ptags.some((t) => t[1] === agentPubkey)) return; // already on the roster
     ptags.push(["p", agentPubkey, "bot"]);
     await api.nostr!.publish({
       kind: KIND_MEMBERSHIP,
-      tags: [["d", channelId], ["c", communityId], ...ptags],
+      tags: [["d", ROSTER_D], ...ptags],
       content: "",
+      created_at: Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1),
     });
   }
 
@@ -397,8 +404,7 @@ export default function herdr(api: FezExtensionAPI): void {
         // Chain-capped events don't summon — same loop guard agents use.
         if (Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0) >= 5) return;
         const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-        const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-        if (!channelId || !communityId) return;
+        if (!channelId) return;
         for (const match of event.content.matchAll(/@([\w-]+)/g)) {
           const persona = match[1].toLowerCase();
           if (spawning.has(persona) || !personaExists(persona)) continue;
@@ -408,7 +414,7 @@ export default function herdr(api: FezExtensionAPI): void {
             // restart its pane with the union — one process per persona.
             if (!existing.channels.includes(channelId)) {
               spawning.add(persona);
-              pendingInvites.set(persona, { channelId, communityId });
+              pendingInvites.set(persona, { channelId });
               api.ui.notify("herdr · " + `pulling **@${persona}** into this channel…`);
               expandAgentChannels(existing, channelId)
                 .catch((err) => {
@@ -419,7 +425,7 @@ export default function herdr(api: FezExtensionAPI): void {
             continue;
           }
           spawning.add(persona);
-          pendingInvites.set(persona, { channelId, communityId });
+          pendingInvites.set(persona, { channelId });
           api.ui.notify("herdr · " + `summoning **@${persona}** — spawning it in a herdr tab…`);
           // respondTo=owner (Buzz's default posture): the summoner and
           // attested sibling agents can trigger it; strangers can't.
@@ -451,7 +457,7 @@ export default function herdr(api: FezExtensionAPI): void {
         const target = pendingInvites.get(name)!;
         pendingInvites.delete(name);
         spawning.delete(name);
-        inviteToChannel(event.pubkey, target.channelId, target.communityId)
+        inviteToWorkspace(event.pubkey)
           .then(() => api.ui.notify("herdr · " + `**@${name}** is up and invited — it'll answer your mention momentarily.`))
           .catch(() => api.ui.notify("herdr · " + `⚠️ @${name} spawned but the invite failed — /invite ${event.pubkey} bot`));
       }

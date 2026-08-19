@@ -44,7 +44,7 @@ export interface GuiExtensionApi {
    * mounted under the message body (how the polls card enters). */
   registerMessageDecorator: (
     match: (content: string) => boolean,
-    render: (props: { content: string; msgId: string; channelId: string; communityId: string; authorName: string }) => React.ReactNode
+    render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => React.ReactNode
   ) => void;
   /** Add a slash command to the GUI composer (/name). */
   registerGuiCommand: (name: string, run: (args: string) => Promise<string> | string) => void;
@@ -96,8 +96,7 @@ export interface PageViewProps {
   comment: (text: string, anchor: string, mentions: string[]) => Promise<void>;
   title: string;
   channelId: string;
-  communityId: string;
-  slug?: string;
+    slug?: string;
   /** false when an old version is on screen — views must not rewrite history */
   editable: boolean;
 }
@@ -121,15 +120,14 @@ export interface BlockProps {
   /** the whole fenced block verbatim — the anchor for a comment on it */
   raw: string;
   channelId: string;
-  communityId: string;
-  /** wiki page slug, absent for a channel doc */
+    /** wiki page slug, absent for a channel doc */
   slug?: string;
 }
 
 // ── decorator + command registries (host side of the seams) ────────
 export interface MessageDecorator {
   match: (content: string) => boolean;
-  render: (props: { content: string; msgId: string; channelId: string; communityId: string; authorName: string }) => React.ReactNode;
+  render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => React.ReactNode;
 }
 const decorators: MessageDecorator[] = [];
 export function registerMessageDecorator(match: MessageDecorator["match"], render: MessageDecorator["render"]): void {

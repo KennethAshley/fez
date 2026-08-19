@@ -87,7 +87,7 @@ type SidePane =
   | { kind: "manage" }
   | { kind: "profile"; pk: string }
   | { kind: "reminders" }
-  | { kind: "docs"; channelId: string; communityId: string }
+  | { kind: "docs"; channelId: string }
   | undefined;
 
 function useForceRender(): () => void {
@@ -143,34 +143,17 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     // final identity — you cannot be a member before you are anybody,
     // and claiming it earlier would bind the membership to a key that
     // is about to be replaced.
-    const pendingInvite = localStorage.getItem("fez-pending-invite");
-    if (pendingInvite) {
+    // An invite is a relay URL now — the workspace IS the relay, so
+    // "joining" is opening it. Nothing to claim against a community id.
+    const pendingRelay = localStorage.getItem("fez-pending-invite");
+    if (pendingRelay) {
       localStorage.removeItem("fez-pending-invite");
       try {
-        await client.joinCommunity(pendingInvite);
-      } catch { /* the community's events haven't reached this relay yet */ }
-    }
-
-    if (client.state.joined.size === 0) {
-      for (const community of await client.listCommunities()) {
-        await client.joinCommunity(community.id);
-      }
-      // Default scope: the LIVELIEST channel we're a member of — not map
-      // order, which landed users in stale one-person rooms (found live:
-      // three mentions shouted into an empty ghost town).
-      let best: { communityId: string; channelId: string; members: number } | undefined;
-      for (const community of client.state.communities.values()) {
-        for (const channel of community.channels.values()) {
-          if (!channel.members.has(client.pubkey)) continue;
-          if (!best || channel.members.size > best.members) {
-            best = { communityId: community.id, channelId: channel.id, members: channel.members.size };
-          }
-        }
-      }
-      if (best) client.setScope(best.communityId, best.channelId);
+        await client.openWorkspace(pendingRelay);
+      } catch { /* unreachable relay — the rail still remembers it */ }
     }
     const scope = client.state.scope;
-    if (scope) await client.loadChannelHistory(scope.channelId, scope.communityId);
+    if (scope) await client.loadChannelHistory(scope.channelId);
     void loadGuiExtensions(client); // gui parts of installed packages — non-blocking
     return { client, wire };
   })();
@@ -258,7 +241,7 @@ function Shell({
     localStorage.setItem("fez-muted", JSON.stringify([...next]));
     setMuted(next);
   };
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; channelId: string; communityId: string }>();
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; channelId: string }>();
   useEffect(() => {
     if (!ctxMenu) return;
     const close = () => setCtxMenu(undefined);
@@ -321,11 +304,10 @@ function Shell({
   // ⌘K — Buzz's topbar search, as a palette (also /search <words>).
   const [searchOpen, setSearchOpen] = useState<false | { query: string }>(false);
   const [selfMenu, setSelfMenu] = useState(false);
-  const [browse, setBrowse] = useState<{ id: string; name: string; joined: boolean }[]>();
-  const openBrowse = () => {
-    setBrowse([]);
-    void client.listCommunities().then((list) => setBrowse(list));
-  };
+  // The rail: every workspace you have added. Switching SELECTS one —
+  // it never replaces the list, which is the bug that made a real user
+  // think changing the relay had deleted his account.
+  const [addingWorkspace, setAddingWorkspace] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -369,12 +351,7 @@ function Shell({
   useEffect(() => {
     let live = true;
     const scan = async () => {
-      const channelIds: string[] = [];
-      for (const communityId of client.state.joined) {
-        for (const channel of client.state.communities.get(communityId)?.channels.values() ?? []) {
-          channelIds.push(channel.id);
-        }
-      }
+      const channelIds = [...client.state.workspace.channels.keys()];
       if (channelIds.length === 0) return;
       try {
         const msgs = (await wire.query([
@@ -408,10 +385,10 @@ function Shell({
     benchPending;
   const working = client.workingAgents();
 
-  const openChannel = async (communityId: string, channelId: string, focus?: string) => {
-    client.setScope(communityId, channelId);
+  const openChannel = async (channelId: string, focus?: string) => {
+    client.setScope(channelId);
     setView({ kind: "channel", focus });
-    await client.loadChannelHistory(channelId, communityId);
+    await client.loadChannelHistory(channelId);
     render();
   };
 
@@ -427,12 +404,11 @@ function Shell({
       client,
       wire,
       channelId: scope?.channelId,
-      communityId: scope?.communityId,
       ui: {
         openSearch: (query) => setSearchOpen({ query }),
         watch: (agent) => setPane({ kind: "watch", agent }),
         openDocs: () => {
-          if (scope) setPane({ kind: "docs", channelId: scope.channelId, communityId: scope.communityId });
+          if (scope) setPane({ kind: "docs", channelId: scope.channelId });
         },
         openAgents: () => setPane({ kind: "agents" }),
         openDm,
@@ -459,28 +435,17 @@ function Shell({
   // Leave uses a two-click confirm (webview dialogs are ugly): first ×
   // arms it, the second click within 4s commits.
   const [armedLeave, setArmedLeave] = useState<string>();
-  const leaveCommunity = (communityId: string) => {
+  const leaveWorkspace = (communityId: string) => {
     if (armedLeave !== communityId) {
       setArmedLeave(communityId);
       setTimeout(() => setArmedLeave((current) => (current === communityId ? undefined : current)), 4000);
       return;
     }
     setArmedLeave(undefined);
-    client.leaveCommunity(communityId);
-    // If we just left the room we were in, hop to the liveliest remaining.
-    if (!client.state.scope) {
-      let best: { communityId: string; channelId: string; members: number } | undefined;
-      for (const community of client.state.communities.values()) {
-        if (!client.state.joined.has(community.id)) continue;
-        for (const channel of community.channels.values()) {
-          if (!channel.members.has(client.pubkey)) continue;
-          if (!best || channel.members.size > best.members) {
-            best = { communityId: community.id, channelId: channel.id, members: channel.members.size };
-          }
-        }
-      }
-      if (best) void openChannel(best.communityId, best.channelId);
-    }
+    // Leaving a workspace drops it from the rail only — nothing is
+    // published, the roster still lists you, and re-adding the relay
+    // restores everything.
+    client.forgetWorkspace(client.state.workspace.relay);
     render();
   };
 
@@ -603,62 +568,90 @@ function Shell({
         <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
           » workflows
         </button>
-        <button className="channel home-link" onClick={openBrowse}>
-          ⌂ browse communities
-        </button>
-        {[...client.state.communities.values()]
-          .filter((community) => client.state.joined.has(community.id))
-          .map((community, _index, joined) => (
-            <div key={community.id} className="community">
-              <div className="community-name">
-                {community.name}
-                {joined.filter((other) => other.name === community.name).length > 1 && (
-                  <span className="community-id"> ·{community.id.slice(0, 4)}</span>
-                )}
-                <button
-                  className="community-add"
-                  title="manage — create channels, invite members, roles"
-                  onClick={() => {
-                    const first = [...community.channels.values()][0];
-                    if (first) {
-                      void openChannel(community.id, first.id).then(() => setPane({ kind: "manage" }));
-                    }
-                  }}
-                >
-                  +
-                </button>
-                <button
-                  className={armedLeave === community.id ? "leave armed" : "leave"}
-                  title={armedLeave === community.id ? "click again to leave" : `leave ${community.name} (local — rejoin anytime)`}
-                  onClick={() => leaveCommunity(community.id)}
-                >
-                  {armedLeave === community.id ? "leave?" : "×"}
-                </button>
-              </div>
-              {[...community.channels.values()].map((channel) => {
-                const active = view.kind === "channel" && scope?.channelId === channel.id;
-                const unread = unreads.get(channel.id) ?? 0;
-                return (
-                  <button
-                    key={channel.id}
-                    className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}`}
-                    title={`${channel.members.size} member${channel.members.size === 1 ? "" : "s"} — right-click for options`}
-                    onClick={() => void openChannel(community.id, channel.id)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setCtxMenu({ x: e.clientX, y: e.clientY, channelId: channel.id, communityId: community.id });
-                    }}
-                  >
-                    <span className="hash">#</span> {channel.name}
-                    {muted.has(channel.id) && <span className="mute-mark" title="muted">✕</span>}
-                    {channel.members.size <= 1 && <span className="ghost" title="nobody else is in this channel">∅</span>}
-                    {unread > 0 && !active && !muted.has(channel.id) && <span className="badge">{unread}</span>}
-                  </button>
-                );
-              })}
-            </div>
+        {/* The rail: every workspace you've added. Selecting one never
+            drops the others — the whole point of the flat model. */}
+        <div className="workspace-rail">
+          {client.workspaces().map((ws) => (
+            <button
+              key={ws.relay}
+              className={ws.active ? "channel home-link active" : "channel home-link"}
+              title={ws.relay}
+              onClick={() => {
+                if (ws.active) return;
+                void client.openWorkspace(ws.relay).then(render);
+              }}
+            >
+              ▦ {ws.name}
+            </button>
           ))}
+          <button className="channel home-link" onClick={() => setAddingWorkspace(true)}>
+            + add workspace
+          </button>
+        </div>
+        {addingWorkspace && (
+          <form
+            className="workspace-add"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const relay = new FormData(e.currentTarget).get("relay");
+              if (typeof relay === "string" && relay.trim()) {
+                void client.openWorkspace(relay.trim()).then(render);
+              }
+              setAddingWorkspace(false);
+            }}
+          >
+            <input name="relay" className="manage-input" autoFocus placeholder="wss://relay.example — the workspace IS the relay" />
+          </form>
+        )}
+        <div className="community">
+          <div className="community-name">
+            {client.state.workspace.name}
+            {!client.state.workspace.owner && <span className="community-id" title="no owner in this relay's NIP-11 document"> · unclaimed</span>}
+            {client.state.isOwner(client.pubkey) && (
+              <button
+                className="community-add"
+                title="manage — create channels, invite members, roles"
+                onClick={() => setPane({ kind: "manage" })}
+              >
+                +
+              </button>
+            )}
+            <button
+              className={armedLeave === client.state.workspace.relay ? "leave armed" : "leave"}
+              title={armedLeave === client.state.workspace.relay ? "click again to leave" : "remove from your rail (local — re-add anytime)"}
+              onClick={() => leaveWorkspace(client.state.workspace.relay)}
+            >
+              {armedLeave === client.state.workspace.relay ? "leave?" : "×"}
+            </button>
+          </div>
+          {[...client.state.workspace.channels.values()].map((channel) => {
+            const active = view.kind === "channel" && scope?.channelId === channel.id;
+            const unread = unreads.get(channel.id) ?? 0;
+            const members = client.state.workspace.members.size;
+            return (
+              <button
+                key={channel.id}
+                className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}`}
+                title={`${members} member${members === 1 ? "" : "s"} in this workspace — right-click for options`}
+                onClick={() => void openChannel(channel.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCtxMenu({ x: e.clientX, y: e.clientY, channelId: channel.id });
+                }}
+              >
+                <span className="hash">#</span> {channel.name}
+                {muted.has(channel.id) && <span className="mute-mark" title="muted">✕</span>}
+                {unread > 0 && !active && !muted.has(channel.id) && <span className="badge">{unread}</span>}
+              </button>
+            );
+          })}
+          {client.state.workspace.channels.size === 0 && (
+            <div className="community-id" style={{ padding: "4px 10px" }}>
+              {client.state.workspace.owner ? "no channels yet" : "unclaimed — claim it to start"}
+            </div>
+          )}
+        </div>
         <div className="community">
           <div className="community-name">
             dms
@@ -753,7 +746,7 @@ function Shell({
             setPane(
               pane?.kind === "docs" && pane.channelId === scope.channelId
                 ? undefined
-                : { kind: "docs", channelId: scope.channelId, communityId: scope.communityId }
+                : { kind: "docs", channelId: scope.channelId }
             )
           }
           onCommand={runSlash}
@@ -773,7 +766,7 @@ function Shell({
           client={client}
           wire={wire}
           scan={loopScan}
-          onOpenChannel={(communityId, channelId, msgId) => void openChannel(communityId, channelId, msgId)}
+          onOpenChannel={(channelId, msgId) => void openChannel(channelId, msgId)}
           onOpenDm={openDm}
         />
       )}
@@ -835,13 +828,10 @@ function Shell({
           client={client}
           wire={wire}
           onJumpToMessage={(msgId) => {
-            for (const communityId of client.state.joined) {
-              const community = client.state.community(communityId);
-              for (const channel of community?.channels.values() ?? []) {
-                if (client.messages(channel.id).some((m) => m.id === msgId)) {
-                  void openChannel(communityId, channel.id, msgId);
-                  return;
-                }
+            for (const channel of client.state.workspace.channels.values()) {
+              if (client.messages(channel.id).some((m) => m.id === msgId)) {
+                void openChannel(channel.id, msgId);
+                return;
               }
             }
           }}
@@ -852,7 +842,6 @@ function Shell({
         <DocsPane
           client={client}
           channelId={pane.channelId}
-          communityId={pane.communityId}
           renderMd={(text) => <MdBody text={text} />}
           onClose={() => setPane(undefined)}
         />
@@ -871,7 +860,7 @@ function Shell({
       {pane?.kind === "manage" && (
         <ManagePane
           client={client}
-          onOpenChannel={(communityId, channelId) => void openChannel(communityId, channelId)}
+          onOpenChannel={(channelId) => void openChannel(channelId)}
           onClose={() => setPane(undefined)}
         />
       )}
@@ -886,50 +875,12 @@ function Shell({
           onClose={() => setPane(undefined)}
         />
       )}
-      {browse !== undefined && (
-        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setBrowse(undefined)}>
-          <div className="search-box browse-box">
-            <div className="pane-head"><span>communities on this relay</span>
-              <button className="pane-close" onClick={() => setBrowse(undefined)}>✕</button>
-            </div>
-            <div className="search-results">
-              {browse.length === 0 && <div className="pane-empty">loading…</div>}
-              {browse.map((community) => (
-                <div key={community.id} className="browse-row">
-                  <span className="browse-name">
-                    {community.name} <span className="community-id">·{community.id.slice(0, 6)}</span>
-                  </span>
-                  {community.joined ? (
-                    <span className="role-tag installed-tag">joined</span>
-                  ) : (
-                    <button
-                      className="agent-action"
-                      onClick={() =>
-                        void client.joinCommunity(community.id).then(() => {
-                          render();
-                          void client.listCommunities().then(setBrowse);
-                        })
-                      }
-                    >
-                      join
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="settings-hint browse-hint">
-              Joining shows the community's channels in your sidebar. Reading member-gated channels still requires
-              the creator to /invite you; agents can't hear you in channels you're not a member of.
-            </div>
-          </div>
-        </div>
-      )}
       {searchOpen && (
         <SearchOverlay
           client={client}
           wire={wire}
           initialQuery={searchOpen.query}
-          onJump={(communityId, channelId, msgId) => void openChannel(communityId, channelId, msgId)}
+          onJump={(channelId, msgId) => void openChannel(channelId, msgId)}
           onClose={() => setSearchOpen(false)}
         />
       )}
@@ -1039,7 +990,6 @@ function ChannelView({
     return client.messages(channelId).find((m) => m.id === focusId)?.rootId;
   });
   const [editing, setEditing] = useState<{ id: string; original: string } | undefined>();
-  const communityId = client.state.scope?.communityId ?? "";
   const bottomRef = useRef<HTMLDivElement>(null);
   const messages = client.messages(channelId);
   const shown = threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages.filter((m) => !m.parentId);
@@ -1085,8 +1035,8 @@ function ChannelView({
    * @name in the draft that can't hear you in THIS channel gets called
    * out before you send — summonable, invitable, or unknown.
    */
-  const members = client.state.currentChannel()?.channel.members;
-  const amCreator = client.state.currentChannel()?.community.creator === client.pubkey;
+  const members = client.state.workspace.members;
+  const amCreator = client.state.isOwner(client.pubkey);
   const mentionWarnings: { name: string; pk?: string; kind: "summon" | "absent" | "unknown" }[] = [];
   if (members) {
     const seen = new Set<string>();
@@ -1122,7 +1072,7 @@ function ChannelView({
     if (editing) {
       const target = editing;
       setEditing(undefined);
-      if (text !== target.original) await client.editMessage(channelId, communityId, target.id, text);
+      if (text !== target.original) await client.editMessage(channelId, target.id, text);
       return;
     }
     // Against THIS channel's roster, not every name the client has ever
@@ -1191,7 +1141,7 @@ function ChannelView({
               title="members"
               onClick={() => setMembersOpen((open) => !open)}
             >
-              ⚉ {client.state.currentChannel()?.channel.members.size ?? 0}
+              ⚉ {client.state.workspace.members.size ?? 0}
             </button>
             <button className="topbar-tool" title="channel doc" onClick={onDocs}>
               ≡{client.docsByChannel().has(channelId) && <span className="doc-dot" />}
@@ -1205,8 +1155,8 @@ function ChannelView({
           <>
             <div className="menu-backdrop" onClick={() => setMembersOpen(false)} />
             <div className="members-pop">
-              <div className="self-menu-head">{client.state.currentChannel()?.channel.members.size ?? 0} members</div>
-              {[...(client.state.currentChannel()?.channel.members.keys() ?? [])]
+              <div className="self-menu-head">{client.state.workspace.members.size ?? 0} members</div>
+              {[...(client.state.workspace.members.keys() ?? [])]
                 .map((pk) => ({ pk, name: client.knownNames().get(pk) ?? pk.slice(0, 8) }))
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map(({ pk, name }) => (
@@ -1232,18 +1182,17 @@ function ChannelView({
         <ChannelInfo
           client={client}
           channelId={channelId}
-          communityId={communityId}
           channelName={channelName}
           onJump={(msgId) => document.getElementById(`msg-${msgId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
         />
       )}
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
-        {(client.state.currentChannel()?.channel.members.size ?? 0) <= 1 && (
+        {(client.state.workspace.members.size ?? 0) <= 1 && (
           <div className="empty-room">
             Nobody else is in this channel — agents can't hear you here. Pick a channel without the ∅ mark, or /invite members from the TUI.
           </div>
         )}
-        {messages.length === 0 && (client.state.currentChannel()?.channel.members.size ?? 0) > 1 && (
+        {messages.length === 0 && (client.state.workspace.members.size ?? 0) > 1 && (
           <FirstRun
             client={client}
             channelName={channelName}
@@ -1270,7 +1219,6 @@ function ChannelView({
             <Bubble
               client={client}
               channelId={channelId}
-              communityId={communityId}
               msg={msg}
               wire={wire}
               inThread={!!threadRoot}
@@ -1692,13 +1640,11 @@ function ApprovalCard({
   client,
   msg,
   channelId,
-  communityId,
 }: {
   client: FezClient;
   msg: Msg;
   channelId: string;
-  communityId: string;
-}) {
+  }) {
   const reactions = client.reactions(msg.id);
   const decided = reactions
     ? [...reactions.entries()].find(([emoji, who]) => (emoji === "✅" || emoji === "❌") && who.size > 0)?.[0]
@@ -1711,7 +1657,7 @@ function ApprovalCard({
     const current = client.reactions(msg.id);
     const alreadyDecided = current && [...current.entries()].some(([e, who]) => (e === "✅" || e === "❌") && who.size > 0);
     if (alreadyDecided) return;
-    void client.toggleReaction(channelId, communityId, msg.id, emoji);
+    void client.toggleReaction(channelId, msg.id, emoji);
   };
   return (
     <div className={`inline-proposal ${decided === "✅" ? "approved" : decided === "❌" ? "denied" : "pending"}`}>
@@ -1750,13 +1696,11 @@ function ChoiceCard({
   client,
   msg,
   channelId,
-  communityId,
 }: {
   client: FezClient;
   msg: Msg;
   channelId: string;
-  communityId: string;
-}) {
+  }) {
   const lines = msg.content.split("\n");
   const question = lines[0].replace(/^❓ choose:\s*/, "");
   const options: { label: string; recommended: boolean }[] = [];
@@ -1780,7 +1724,7 @@ function ChoiceCard({
 
   const pick = (index: number) => {
     if (chosen !== undefined) return; // an answer, once given, stands
-    void client.toggleReaction(channelId, communityId, msg.id, CHOICE_EMOJI[index]);
+    void client.toggleReaction(channelId, msg.id, CHOICE_EMOJI[index]);
   };
 
   return (
@@ -1812,7 +1756,6 @@ function ChoiceCard({
 function Bubble({
   client,
   channelId,
-  communityId,
   msg,
   wire,
   inThread,
@@ -1822,8 +1765,7 @@ function Bubble({
 }: {
   client: FezClient;
   channelId: string;
-  communityId: string;
-  msg: Msg;
+    msg: Msg;
   wire: BrowserWire;
   inThread: boolean;
   onOpenThread: () => void;
@@ -1853,14 +1795,14 @@ function Bubble({
 
   /** fez-moderation's /report: 1984, reason NIP-44'd to the community creator. */
   const sendReport = async () => {
-    const creator = client.state.communities.get(communityId)?.creator;
+    const creator = client.state.workspace.owner;
     const reason = reportReason.trim();
     if (!creator || !reason) return;
     setReportOpen(false);
     setReportReason("");
     await wire.publish({
       kind: 1984,
-      tags: [["c", communityId], ["p", creator]],
+      tags: [["p", creator]],
       content: wire.encrypt(creator, JSON.stringify({ targetPk: msg.authorPk, reason: `${reason} (msg: ${msg.content.slice(0, 60)})`, ts: Date.now() })),
     });
     setReported(true);
@@ -1869,7 +1811,7 @@ function Bubble({
 
   const react = (emoji: string) => {
     setPickerAt(undefined);
-    void client.toggleReaction(channelId, communityId, msg.id, emoji);
+    void client.toggleReaction(channelId, msg.id, emoji);
   };
 
   /** Buzz's remind-me-later: a preset menu, subject = this message. */
@@ -1924,10 +1866,10 @@ function Bubble({
               setCopied(true);
               setTimeout(() => setCopied(false), 2000);
             })}
-            {!pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, communityId, msg.id))}
+            {!pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, msg.id))}
             {mine && onEdit && menuItem("edit message", "✎", onEdit)}
             {!mine && menuItem("report to community creator…", "⚑!", () => setReportOpen(true))}
-            {client.canDeleteMessage(communityId, msg) && (
+            {client.canDeleteMessage(msg) && (
               <button
                 className="self-menu-item danger"
                 onClick={() => {
@@ -1938,7 +1880,7 @@ function Bubble({
                   }
                   setArmedDelete(false);
                   setMenu(undefined);
-                  void client.deleteMessage(channelId, communityId, msg.id);
+                  void client.deleteMessage(channelId, msg.id);
                 }}
               >
                 <span className="menu-glyph">⌫</span>
@@ -1981,12 +1923,12 @@ function Bubble({
             <button
               title={pinned ? "pinned" : "pin"}
               onClick={() => {
-                if (!pinned) void client.pinMessage(channelId, communityId, msg.id);
+                if (!pinned) void client.pinMessage(channelId, msg.id);
               }}
             >
               ⚑
             </button>
-            {client.canDeleteMessage(communityId, msg) && (
+            {client.canDeleteMessage(msg) && (
               <button
                 className={armedDelete ? "danger armed-delete" : "danger"}
                 title={armedDelete ? "click again — leaves a visible tombstone" : "delete"}
@@ -1997,7 +1939,7 @@ function Bubble({
                     return;
                   }
                   setArmedDelete(false);
-                  void client.deleteMessage(channelId, communityId, msg.id);
+                  void client.deleteMessage(channelId, msg.id);
                 }}
               >
                 {armedDelete ? "⌫?" : "⌫"}
@@ -2042,16 +1984,16 @@ function Bubble({
         <InlineProposal key={id} id={id} />
       ))}
       {msg.content.startsWith("⛔ approval needed:") && (
-        <ApprovalCard client={client} msg={msg} channelId={channelId} communityId={communityId} />
+        <ApprovalCard client={client} msg={msg} channelId={channelId} />
       )}
       {msg.content.startsWith("❓ choose:") && (
-        <ChoiceCard client={client} msg={msg} channelId={channelId} communityId={communityId} />
+        <ChoiceCard client={client} msg={msg} channelId={channelId} />
       )}
       {messageDecorators()
         .filter((d) => d.match(msg.content))
         .map((d, i) => (
           <div key={`deco-${i}`} className="msg-decoration">
-            {d.render({ content: msg.content, msgId: msg.id, channelId, communityId, authorName: msg.authorName })}
+            {d.render({ content: msg.content, msgId: msg.id, channelId, authorName: msg.authorName })}
           </div>
         ))}
       <div className="bubble-foot">

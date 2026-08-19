@@ -36,7 +36,6 @@ interface PageViewProps {
   comment: (text: string, anchor: string, mentions: string[]) => Promise<void>;
   title: string;
   channelId: string;
-  communityId: string;
   slug?: string;
   editable: boolean;
 }

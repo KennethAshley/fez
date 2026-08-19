@@ -33,7 +33,6 @@ import { loadServiceKey, parseThreadRef, resolveChannels } from "./service-commo
 
 export interface ThreadStats {
   channelId: string;
-  communityId: string;
   replyCount: number;
   lastReplyAt: number;
   participants: string[];
@@ -129,9 +128,8 @@ async function main() {
     const { rootId } = parseThreadRef(event.tags);
     if (!rootId) return undefined; // roots don't need summarizing until they get replies
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-    const communityId = event.tags.find((t) => t[0] === "c")?.[1];
-    if (!channelId || !communityId || !channels.includes(channelId)) return undefined;
-    const current = stats[rootId] ?? { channelId, communityId, replyCount: 0, lastReplyAt: 0, participants: [] };
+    if (!channelId || !channels.includes(channelId)) return undefined;
+    const current = stats[rootId] ?? { channelId, replyCount: 0, lastReplyAt: 0, participants: [] };
     current.replyCount += 1;
     current.lastReplyAt = Math.max(current.lastReplyAt, event.created_at);
     if (!current.participants.includes(event.pubkey)) current.participants.push(event.pubkey);
@@ -152,7 +150,7 @@ async function main() {
           .publish(
             client.signEvent({
               kind: KIND_THREAD_SUMMARY,
-              tags: [["d", rootId], ["h", s.channelId], ["c", s.communityId]],
+              tags: [["d", rootId], ["h", s.channelId]],
               content: JSON.stringify({
                 replyCount: s.replyCount,
                 lastReplyAt: s.lastReplyAt,

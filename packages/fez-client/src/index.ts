@@ -840,7 +840,6 @@ export class FezClient {
 
   async setTaskDone(
     channelId: string,
-    communityId: string,
     itemText: string,
     done: boolean,
     slug?: string
@@ -928,7 +927,6 @@ export class FezClient {
   /** Leave a comment (or reply). Mentions are p-tagged so agents get summoned. */
   async publishDocComment(
     channelId: string,
-    communityId: string,
     text: string,
     opts: { anchor?: string; slug?: string; parentId?: string; mentionPks?: string[]; resolve?: boolean } = {}
   ): Promise<void> {

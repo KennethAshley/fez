@@ -43,8 +43,8 @@ export default function docs(api: FezExtensionAPI): void {
     api.ui.appendMessage(client.displayName(doc.pubkey), doc.content, doc.created_at);
   }
 
-  async function openDocView(channelId: string, communityId: string, channelName: string, versionNo?: number): Promise<void> {
-    const versions = await client.docVersions(channelId, communityId);
+  async function openDocView(channelId: string, channelName: string, versionNo?: number): Promise<void> {
+    const versions = await client.docVersions(channelId);
     const doc = versionNo ? versions[versionNo - 1] : versions.at(-1);
     views.claim("docs");
     renderDocView(doc as NostrEvent | undefined, versionNo ?? versions.length, versions.length, channelName);
@@ -97,7 +97,7 @@ export default function docs(api: FezExtensionAPI): void {
           if (!ref || content.trim() === (info?.latestContent ?? "").trim()) return;
           lastMirrored.set(full, content);
           void client
-            .publishDoc(channelId, ref.communityId, content, info?.latestId || undefined)
+            .publishDoc(channelId, content, info?.latestId || undefined)
             .then(() => api.ui.notify(`📄 ${path.basename(full)} saved → published doc v${(info?.count ?? 0) + 1} to #${ref.name}`))
             .catch(() => api.ui.notify(`⚠️ couldn't publish ${path.basename(full)} — relay unreachable?`));
         }, 400)
@@ -112,7 +112,7 @@ export default function docs(api: FezExtensionAPI): void {
     mirrorWrite(channelId);
     if (views.owner() === "docs" && client.state.scope?.channelId === channelId) {
       const ref = client.channelRef(channelId);
-      if (ref) void openDocView(channelId, ref.communityId, ref.name);
+      if (ref) void openDocView(channelId, ref.name);
     } else if (
       client.state.scope?.channelId === channelId &&
       client.docsByChannel().get(channelId)?.latestAuthor !== client.pubkey
@@ -127,8 +127,8 @@ export default function docs(api: FezExtensionAPI): void {
     const channelId = url.slice("fez-doc://open/".length);
     const ref = client.channelRef(channelId);
     if (!ref) return;
-    client.setScope(ref.communityId, channelId);
-    void openDocView(channelId, ref.communityId, ref.name);
+    client.setScope(channelId);
+    void openDocView(channelId, ref.name);
   });
 
   api.registerCommand("doc", async (args, ctx) => {

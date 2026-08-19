@@ -133,15 +133,14 @@ async function gather(client: FezClient, query: Query, communityId: string): Pro
     // events for what's done — an unticked task has no event at all.
     const pages = [...client.wikiDocs().values()].filter((page) => page.communityId === communityId);
     const channelDocs = [...client.docsByChannel().entries()]
-      .map(([channelId, info]) => ({ channelId, info, ref: client.channelRef(channelId) }))
-      .filter((doc) => doc.ref?.communityId === communityId);
+      .map(([channelId, info]) => ({ channelId, info, ref: client.channelRef(channelId) }));
 
     const states = new Map<string, { done: boolean; byPk: string }>();
     for (const page of pages) {
-      for (const [key, state] of await client.docTasks(communityId, { slug: page.slug })) states.set(key, state);
+      for (const [key, state] of await client.docTasks({ slug: page.slug })) states.set(key, state);
     }
     for (const doc of channelDocs) {
-      for (const [key, state] of await client.docTasks(communityId, { channelId: doc.channelId })) {
+      for (const [key, state] of await client.docTasks({ channelId: doc.channelId })) {
         states.set(key, state);
       }
     }
@@ -173,9 +172,7 @@ async function gather(client: FezClient, query: Query, communityId: string): Pro
 
   if (query.source === "approvals" || query.source === "mentions") {
     const channelIds: string[] = [];
-    for (const channel of client.state.communities.get(communityId)?.channels.values() ?? []) {
-      channelIds.push(channel.id);
-    }
+    for (const channel of client.state.workspace.channels.values()) channelIds.push(channel.id);
     const events = await wire.query([{ kinds: [47103], "#h": channelIds, limit: 500, ...(since ? { since } : {}) }]);
     const wanted =
       query.source === "approvals"

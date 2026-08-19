@@ -17,8 +17,7 @@ interface Row {
   id: string;
   kind: number;
   channelId: string;
-  communityId: string;
-  channelName: string;
+    channelName: string;
   author: string;
   snippet: string;
   ts: number;
@@ -34,7 +33,7 @@ export default function SearchOverlay({
   client: FezClient;
   wire: BrowserWire;
   initialQuery?: string;
-  onJump: (communityId: string, channelId: string, msgId?: string) => void;
+  onJump: (channelId: string, msgId?: string) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState(initialQuery ?? "");
@@ -45,12 +44,9 @@ export default function SearchOverlay({
 
   // channelId → names, for labeling hits and scoping the filter.
   const channels = useMemo(() => {
-    const map = new Map<string, { name: string; communityId: string }>();
-    for (const community of client.state.communities.values()) {
-      if (!client.state.joined.has(community.id)) continue;
-      for (const channel of community.channels.values()) {
-        map.set(channel.id, { name: channel.name, communityId: community.id });
-      }
+    const map = new Map<string, { name: string }>();
+    for (const channel of client.state.workspace.channels.values()) {
+      map.set(channel.id, { name: channel.name });
     }
     return map;
   }, [client]);
@@ -79,7 +75,6 @@ export default function SearchOverlay({
               id: event.id,
               kind: event.kind,
               channelId,
-              communityId: ref.communityId,
               channelName: ref.name,
               author: client.displayName(event.pubkey),
               snippet: event.content.replace(/\s+/g, " ").slice(0, 140),
@@ -96,7 +91,7 @@ export default function SearchOverlay({
   }, [query, wire, channels, client]);
 
   const jump = (row: Row) => {
-    onJump(row.communityId, row.channelId, row.kind === KIND_CHANNEL_MESSAGE ? row.id : undefined);
+    if (row.channelId) onJump(row.channelId, row.kind === KIND_CHANNEL_MESSAGE ? row.id : undefined);
     onClose();
   };
 

@@ -9,7 +9,7 @@ import { formatPoll, parsePollCommand } from "./format.js";
  */
 
 interface ClientLike {
-  state: { scope?: { channelId: string; communityId: string } };
+  state: { scope?: { channelId: string } };
   sendChannelMessage(text: string, opts?: object): Promise<unknown>;
 }
 

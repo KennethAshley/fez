@@ -31,8 +31,8 @@ import type { BlockMenuItem } from "./gui-extensions";
  */
 
 type Sel =
-  | { kind: "wiki"; communityId: string; slug: string }
-  | { kind: "channel"; channelId: string; communityId: string };
+  | { kind: "wiki"; slug: string }
+  | { kind: "channel"; channelId: string };
 
 /**
  * [[Page Name]] → a wiki: link our renderer intercepts.
@@ -246,10 +246,10 @@ export default function WikiView({ client }: { client: FezClient }) {
     if (!sel) return;
     const [nextVersions, nextThreads, nextTasks] = await Promise.all([
       sel.kind === "wiki"
-        ? client.wikiVersions(sel.communityId, sel.slug)
-        : client.docVersions(sel.channelId, sel.communityId),
-      client.docComments(sel.communityId, sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
-      client.docTasks(sel.communityId, sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
+        ? client.wikiVersions(sel.slug)
+        : client.docVersions(sel.channelId),
+      client.docComments(sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
+      client.docTasks(sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
     ]);
     setVersions(nextVersions);
     setThreads(nextThreads);
@@ -271,13 +271,13 @@ export default function WikiView({ client }: { client: FezClient }) {
     if (!sel) return;
     const body = text.trim();
     if (!body && !resolve) return;
-    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
+    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
     if (!channelId) return;
     // Roster-scoped, like the channel composer: a doc comment that
     // @mentions a name nobody here has must not look like it worked.
     // Names picked from the autocomplete come with their pubkey already.
     const mentionPks = client.resolveMentionsIn(body, channelId, bindings).pubkeys;
-    await client.publishDocComment(channelId, sel.communityId, body, {
+    await client.publishDocComment(channelId, body, {
       anchor,
       slug: sel.kind === "wiki" ? sel.slug : undefined,
       parentId,
@@ -304,7 +304,7 @@ export default function WikiView({ client }: { client: FezClient }) {
   const channelDocs = [...client.docsByChannel().entries()]
     .map(([channelId, info]) => ({ channelId, info, ref: client.channelRef(channelId) }))
     .filter((d) => d.ref && d.info.latestContent);
-  const communities = [...client.state.communities.values()].filter((c) => client.state.joined.has(c.id));
+  const communities = [...client.state.workspace.channels.values()];
 
   /**
    * Pages whose text links here. What makes a pile of notes a wiki: you
@@ -314,7 +314,7 @@ export default function WikiView({ client }: { client: FezClient }) {
     sel?.kind === "wiki"
       ? [...client.wikiDocs().values()].filter(
           (page) =>
-            page.communityId === sel.communityId &&
+            page.communityId === client.state.workspace.relay &&
             page.slug !== sel.slug &&
             [...page.latestContent.matchAll(/\[\[([^\]|]+)\]\]/g)].some((m) => wikiSlug(m[1]) === sel.slug)
         )
@@ -322,7 +322,7 @@ export default function WikiView({ client }: { client: FezClient }) {
 
   const latest = versions?.at(-1);
   const shown = viewing ? versions?.find((v) => v.id === viewing) : latest;
-  const selPage = sel?.kind === "wiki" ? client.wikiDocs().get(`${sel.communityId}:${sel.slug}`) : undefined;
+  const selPage = sel?.kind === "wiki" ? client.wikiDocs().get(`${client.state.workspace.relay}:${sel.slug}`) : undefined;
 
   // Which lenses recognize what's on screen. `pageView === ""` is an
   // explicit "show me the markdown"; undefined means nobody has chosen,
@@ -332,10 +332,9 @@ export default function WikiView({ client }: { client: FezClient }) {
   const activeViewImpl = shownViews.views.find((view) => view.name === activeView);
 
   /** Any member-visible channel works as the page's home; prefer where you are. */
-  const homeChannel = (communityId: string): string | undefined => {
-    const scope = client.state.scope;
-    if (scope && scope.communityId === communityId) return scope.channelId;
-    return [...(client.state.community(communityId)?.channels.keys() ?? [])][0];
+  const homeChannel = (): string | undefined => {
+    // Prefer where you already are; any channel in the workspace works.
+    return client.state.scope?.channelId ?? [...client.state.workspace.channels.keys()][0];
   };
 
   /**
@@ -345,14 +344,14 @@ export default function WikiView({ client }: { client: FezClient }) {
    */
   const commentChannelId = sel
     ? sel.kind === "wiki"
-      ? selPage?.channelId ?? homeChannel(sel.communityId)
+      ? selPage?.channelId ?? homeChannel()
       : sel.channelId
     : undefined;
   const commentRoster: MentionCandidate[] = commentChannelId ? client.mentionCandidates(commentChannelId) : [];
 
-  const openWiki = (communityId: string, slug: string, title?: string) => {
-    setSel({ kind: "wiki", communityId, slug });
-    const exists = client.wikiDocs().has(`${communityId}:${slug}`);
+  const openWiki = (slug: string, title?: string) => {
+    setSel({ kind: "wiki", slug });
+    const exists = client.wikiDocs().has(slug);
     if (!exists) {
       // an unwritten page opens as a fresh editor — obsidian's move
       setDraft(`# ${title ?? slug}\n\n`);
@@ -369,11 +368,11 @@ export default function WikiView({ client }: { client: FezClient }) {
   const publish = async (next: string) => {
     if (!sel) return;
     if (sel.kind === "wiki") {
-      const channelId = selPage?.channelId ?? homeChannel(sel.communityId);
+      const channelId = selPage?.channelId ?? homeChannel();
       if (!channelId) return;
-      await client.publishWikiDoc(channelId, sel.communityId, selPage?.title ?? sel.slug, next, latest?.id);
+      await client.publishWikiDoc(channelId, selPage?.title ?? sel.slug, next, latest?.id);
     } else {
-      await client.publishDoc(sel.channelId, sel.communityId, next, latest?.id);
+      await client.publishDoc(sel.channelId, next, latest?.id);
     }
     setViewing(undefined);
     await load();
@@ -393,18 +392,18 @@ export default function WikiView({ client }: { client: FezClient }) {
   /** Tick/untick: one small signed event, then re-read. */
   const toggleTask = async (itemText: string, done: boolean) => {
     if (!sel) return;
-    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
+    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
     if (!channelId) return;
-    await client.setTaskDone(channelId, sel.communityId, itemText, done, sel.kind === "wiki" ? sel.slug : undefined);
+    await client.setTaskDone(channelId, itemText, done, sel.kind === "wiki" ? sel.slug : undefined);
     setTasks(
-      await client.docTasks(sel.communityId, sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId })
+      await client.docTasks(sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId })
     );
   };
 
   /** The open page's community, or every joined one when nothing is open. */
   const askCommunityIds = sel
-    ? [sel.communityId]
-    : [...client.state.communities.values()].filter((c) => client.state.joined.has(c.id)).map((c) => c.id);
+    ? [client.state.workspace.relay]
+    : [...client.state.workspace.channels.values()].map((c) => c.id);
 
   /** Promote a scratch query into the open page as a real block. */
   const keepAsk = async () => {
@@ -424,8 +423,6 @@ export default function WikiView({ client }: { client: FezClient }) {
   const pickAgent = (text: string): string | undefined => {
     const mentioned = /@([\w-]+)/.exec(text)?.[1];
     if (mentioned && client.pkByName(mentioned)) return mentioned;
-    const communityId = sel?.communityId ?? askCommunityIds[0];
-    if (!communityId) return undefined;
     // agents(): pubkey → persona name
     for (const [, name] of client.agents()) {
       if (name && client.pkByName(name)) return name;
@@ -468,7 +465,7 @@ export default function WikiView({ client }: { client: FezClient }) {
       setComposerError("no agents here yet — invite one, or phrase it in query vocabulary (open tasks, by page).");
       return;
     }
-    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
+    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
     if (!channelId) return;
 
     const request = [
@@ -486,7 +483,7 @@ export default function WikiView({ client }: { client: FezClient }) {
     const pk = client.pkByName(agent);
     const since = Math.floor(Date.now() / 1000) - 5;
     try {
-      await client.publishDocComment(channelId, sel.communityId, request, {
+      await client.publishDocComment(channelId, request, {
         anchor: selPage?.title ?? (sel.kind === "wiki" ? sel.slug : client.channelRef(sel.channelId)?.name ?? "page"),
         slug: sel.kind === "wiki" ? sel.slug : undefined,
         mentionPks: pk ? [pk] : [],
@@ -515,7 +512,6 @@ export default function WikiView({ client }: { client: FezClient }) {
     let live = true;
     const poll = async () => {
       const threads = await client.docComments(
-        sel.communityId,
         sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }
       );
       const agentPk = client.pkByName(asking.agent);
@@ -601,11 +597,11 @@ export default function WikiView({ client }: { client: FezClient }) {
     });
   };
 
-  const create = (communityId: string) => {
+  const create = () => {
     const title = newTitle?.trim();
     setNewTitle(undefined);
     if (!title) return;
-    openWiki(communityId, wikiSlug(title), title);
+    openWiki(wikiSlug(title), title);
   };
 
   const md = (text: string, communityId: string) => (
@@ -678,8 +674,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                   info: infoLine.trim().slice(3 + lang!.length).trim(),
                   body,
                   raw: `${infoLine}\n${body}\n\`\`\``,
-                  channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(communityId) ?? "" : sel.channelId,
-                  communityId,
+                  channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
                   slug: sel.kind === "wiki" ? sel.slug : undefined,
                 })}
               </>
@@ -690,14 +685,14 @@ export default function WikiView({ client }: { client: FezClient }) {
         a: ({ href, children, className }) => {
           if (href?.startsWith("wiki:")) {
             const [slug, section] = href.slice(5).split("#");
-            const exists = client.wikiDocs().has(`${communityId}:${slug}`);
+            const exists = client.wikiDocs().has(slug);
             return (
               <a
                 href={href}
                 className={exists ? "wiki-link" : "wiki-link missing"}
                 onClick={(e) => {
                   e.preventDefault();
-                  openWiki(communityId, slug, String(children));
+                  openWiki(slug, String(children));
                   // the page renders after this tick — scroll once it exists
                   if (section) {
                     setTimeout(() => document.getElementById(section)?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
@@ -736,9 +731,8 @@ export default function WikiView({ client }: { client: FezClient }) {
         <div className="wiki-list-head">docs</div>
         {communities.map((community) => {
           const communityPages = pages
-            .filter((p) => p.communityId === community.id)
             .sort((a, b) => a.title.localeCompare(b.title));
-          const communityChannelDocs = channelDocs.filter((d) => d.ref!.communityId === community.id);
+          const communityChannelDocs = channelDocs;
           return (
             <div key={community.id} className="wiki-group">
               <div className="wiki-group-name">
@@ -759,7 +753,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                   placeholder="page title…"
                   onChange={(e) => setNewTitle(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") create(community.id);
+                    if (e.key === "Enter") create();
                     if (e.key === "Escape") setNewTitle(undefined);
                   }}
                 />
@@ -768,11 +762,11 @@ export default function WikiView({ client }: { client: FezClient }) {
                 <button
                   key={page.slug}
                   className={
-                    sel?.kind === "wiki" && sel.communityId === page.communityId && sel.slug === page.slug
+                    sel?.kind === "wiki" && client.state.workspace.relay === page.communityId && sel.slug === page.slug
                       ? "channel active"
                       : "channel"
                   }
-                  onClick={() => openWiki(page.communityId, page.slug)}
+                  onClick={() => openWiki(page.slug)}
                 >
                   ▤ {page.title}
                 </button>
@@ -781,7 +775,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                 <button
                   key={channelId}
                   className={sel?.kind === "channel" && sel.channelId === channelId ? "channel active" : "channel"}
-                  onClick={() => setSel({ kind: "channel", channelId, communityId: ref!.communityId })}
+                  onClick={() => setSel({ kind: "channel", channelId })}
                 >
                   <span className="hash">#</span> {ref!.name} doc
                 </button>
@@ -899,9 +893,9 @@ export default function WikiView({ client }: { client: FezClient }) {
                         comment: async (text, anchor, mentions) => {
                           if (!sel) return;
                           const channelId =
-                            sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
+                            sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
                           if (!channelId) return;
-                          await client.publishDocComment(channelId, sel.communityId, text, {
+                          await client.publishDocComment(channelId, text, {
                             anchor,
                             slug: sel.kind === "wiki" ? sel.slug : undefined,
                             mentionPks: mentions
@@ -911,8 +905,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                           await load();
                         },
                         title: sel.kind === "wiki" ? selPage?.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
-                        channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) ?? "" : sel.channelId,
-                        communityId: sel.communityId,
+                        channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
                         slug: sel.kind === "wiki" ? sel.slug : undefined,
                         editable: shown.id === latest?.id,
                       })}
@@ -924,7 +917,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                       const open = anchored.filter((t) => !t.resolved);
                       return (
                         <div key={index} className={commenting === block ? "doc-line commenting" : "doc-line"}>
-                          <div className="doc-line-body">{md(block, sel.communityId)}</div>
+                          <div className="doc-line-body">{md(block, client.state.workspace.relay)}</div>
                           <button
                             className={open.length ? "line-comment has" : "line-comment"}
                             title={open.length ? `${open.length} comment${open.length === 1 ? "" : "s"}` : "comment on this line — @mention an agent to give it work here"}
@@ -986,7 +979,7 @@ export default function WikiView({ client }: { client: FezClient }) {
               <div className="wiki-backlinks">
                 <div className="manage-section">linked from</div>
                 {backlinks.map((page) => (
-                  <button key={page.slug} className="version-row" onClick={() => openWiki(page.communityId, page.slug)}>
+                  <button key={page.slug} className="version-row" onClick={() => openWiki(page.slug)}>
                     ▤ {page.title}
                   </button>
                 ))}

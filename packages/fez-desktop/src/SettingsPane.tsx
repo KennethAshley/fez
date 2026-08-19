@@ -312,9 +312,8 @@ function ArchiveExport({
         { authors: [client.pubkey], limit: 500 },
         { "#p": [client.pubkey], limit: 500 },
       ];
-      for (const communityId of client.state.joined) {
-        const community = client.state.communities.get(communityId);
-        for (const channel of community?.channels.values() ?? []) {
+      {
+        for (const channel of client.state.workspace.channels.values()) {
           filters.push({ "#h": [channel.id], limit: 500 } as never);
         }
       }
