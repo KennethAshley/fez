@@ -7,7 +7,38 @@ There's no fez cloud to depend on. A complete deployment is a relay plus whateve
 always-on services you want on the machines that own agents — and the relay is
 one process.
 
-## The relay
+## The relay set
+
+Your client publishes to **every relay you list** and reads the union of all of
+them. That's what makes "decentralized" a fact rather than a description: no
+operator — including whoever runs the default — can lose your history, decline
+to carry it, or take it away by going offline.
+
+```bash
+fez relay list                        # what you're using, and where it came from
+fez relay add wss://relay.example     # add one
+fez relay remove wss://relay.example  # drop one (never the last)
+```
+
+`FEZ_RELAY=a,b,c` and `-r a,b,c` work too, and agents inherit the set when they
+spawn. One relay behaves exactly as it always did — `fez doctor` will just point
+out that you have a single point of failure.
+
+Three rules worth knowing, because each is a way a relay set can quietly stop
+being one:
+
+- A publish **succeeds when any relay accepts.** Requiring all of them would
+  give the least reliable relay on your list a veto, making each addition a
+  liability instead of insurance. If one relay rejects on policy while another
+  accepts, the event is published — you're told, but it isn't an error.
+- Reads are the **union**, deduped by id, so an event that only ever reached one
+  relay still arrives.
+- Every relay is repaired, not just the last one standing. A client that asks
+  "am I connected to anything?" answers yes while two of three relays are dead,
+  and spends the week on one relay reporting full health. The status shows a
+  count for this reason: amber means some are down.
+
+## Running one
 
 ```bash
 node packages/fez-relay/dist/cli.js --port 7777 --store events.jsonl
