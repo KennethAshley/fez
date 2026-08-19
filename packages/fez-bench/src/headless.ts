@@ -2,6 +2,7 @@ import type { FezExtensionAPI } from "./api-types.js";
 import { CASES, ROSTER } from "./cases.js";
 import { formatFailures, formatScorecard, summarize } from "./core.js";
 import { runBench } from "./runner.js";
+import { registerNightlyBench } from "./nightly.js";
 
 /**
  * fez-bench, headless part — /bench in any client. Same battery and
@@ -13,6 +14,10 @@ import { runBench } from "./runner.js";
 const BASE = (process.env.FEZ_ORCHESTRATOR_URL ?? "http://127.0.0.1:8080/v1").replace(/\/$/, "");
 
 export default function bench(api: FezExtensionAPI): void {
+  // Background half: runs itself on the sentinel's scheduler. Registered
+  // first — hosts without a UI (the sentinel) have no api.ui to speak of.
+  registerNightlyBench(api);
+
   api.registerCommand("bench", async (_args, ctx) => {
     ctx.reply(`📏 routing bench: ${CASES.length} cases → ${BASE} (this takes ~a minute)…`);
     try {

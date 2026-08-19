@@ -37,7 +37,18 @@ export interface CommandContext {
   reply(content: string): void;
 }
 
+export interface ScheduledTaskContext {
+  nostr: {
+    pubkey: string;
+    publish(template: { kind: number; tags: string[][]; content: string }): Promise<NostrEvent>;
+    query(filters: object[]): Promise<NostrEvent[]>;
+  };
+  ownerPubkey: string;
+  missedWindow: boolean;
+}
+
 export interface FezExtensionAPI {
+  registerScheduledTask(name: string, everyMs: number, run: (ctx: ScheduledTaskContext) => Promise<void> | void): void;
   registerCommand(name: string, handler: (args: string, ctx: CommandContext) => void | Promise<void>): void;
   registerInputHandler(handler: (text: string) => Promise<boolean>): void;
   registerUrlHandler(prefix: string, handler: (url: string) => void): void;
