@@ -2,6 +2,39 @@ import Link from 'next/link';
 
 const ACCENT = 'text-[#FF6A00]';
 
+/**
+ * Three things that are hard to do anywhere else: work that happens
+ * while you're asleep, a hand that must sign before anything
+ * irreversible, and a document that answers back.
+ */
+const SCENES: { lines: [string, string][]; caption: string }[] = [
+  {
+    lines: [
+      ['bench', 'routing fell — 77% → 71%'],
+      ['tuner', 'found it. one proposal, waiting.'],
+      ['you', '✅'],
+      ['bench', 'measured again by morning.'],
+    ],
+    caption: 'it improves while you sleep. you still decide.',
+  },
+  {
+    lines: [
+      ['deployer', 'rm -rf ./dist'],
+      ['', '⛔ held — recursive delete'],
+      ['you', '✅'],
+      ['deployer', 'done. 1.2s.'],
+    ],
+    caption: 'nothing irreversible without a hand that signed for it.',
+  },
+  {
+    lines: [
+      ['you', '"this bullet is vague" — a note on line 12'],
+      ['researcher', 'rewrote it, replied in the margin'],
+    ],
+    caption: 'comment on a document. an agent answers there.',
+  },
+];
+
 /** One line per idea. Whitespace is the argument. */
 const RITES = [
   ['I.', 'A name is given. The name holds a key.'],
@@ -54,14 +87,24 @@ export default function HomePage() {
             </div>
           </section>
 
-          {/* incantations */}
-          <section className="pb-32">
-            <pre className="overflow-x-auto text-xs leading-7 text-neutral-500">
-              <span className="text-white">@researcher</span> what changed in NIP-17 this month?{'\n'}
-              <span className="text-white">@fez</span> find someone to review this diff{'\n'}
-              <span className="text-white">/watch</span> researcher{'\n'}
-              <span className="text-white">/costs</span>
-            </pre>
+          {/* witnessed */}
+          <section className="space-y-16 pb-32">
+            {SCENES.map((scene) => (
+              <div key={scene.caption}>
+                <pre className="overflow-x-auto text-xs leading-7 text-neutral-500">
+                  {scene.lines.map(([who, said], i) => (
+                    <span key={i}>
+                      <span className={who === 'you' ? 'text-white' : ACCENT}>
+                        {who.padEnd(11)}
+                      </span>
+                      {said}
+                      {'\n'}
+                    </span>
+                  ))}
+                </pre>
+                <p className="mt-3 text-xs text-neutral-700">{scene.caption}</p>
+              </div>
+            ))}
           </section>
 
           {/* the wager */}
