@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
+import type { SystemPromptMode } from "./system-prompt.js";
 import { notice } from "./notices.js";
 import { classifyToolCall, type RiskVerdict } from "./command-risk.js";
 
@@ -44,6 +45,13 @@ export interface HarnessAdapter {
   aliases: string[];
   /** The binary this adapter spawns. */
   command: string;
+  /**
+   * How this harness can carry standing instructions. Declared, never
+   * assumed: only "native" is a real privilege boundary, and claiming
+   * one that isn't there would make `fez doctor` lie about whether an
+   * agent can be talked out of its own rules.
+   */
+  systemPromptMode?: SystemPromptMode;
   detect(): Promise<boolean>;
   /**
    * onProgress fires (throttled) with the accumulated text so far, before the call resolves.
@@ -73,7 +81,13 @@ export interface HarnessAdapter {
    * timeouts (optional) size the per-prompt idle/hard deadlines — see
    * SESSION_TIMEOUTS for the defaults and their rationale.
    */
-  openSession?(cwd: string, mcpServers?: McpServer[], timeouts?: TimeoutOptions): Promise<HarnessSession>;
+  openSession?(
+    cwd: string,
+    mcpServers?: McpServer[],
+    timeouts?: TimeoutOptions,
+    /** Standing instructions, delivered by this adapter's declared mode. */
+    systemPrompt?: string
+  ): Promise<HarnessSession>;
 }
 
 /** A live harness conversation. prompt() calls MUST be sequential (no overlap). */
@@ -445,7 +459,8 @@ function openAcpSession(
   descriptor: AcpDescriptor,
   cwd: string,
   mcpServers?: McpServer[],
-  timeouts: TimeoutOptions = SESSION_TIMEOUTS
+  timeouts: TimeoutOptions = SESSION_TIMEOUTS,
+  systemPrompt?: string
 ): Promise<HarnessSession> {
   const { command } = descriptor;
   const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
@@ -477,9 +492,22 @@ function openAcpSession(
 
     const run = app
       .connectWith(stream, async (ctx) => {
-        let builder = ctx.buildSession(cwd);
+        // ACP's NewSessionRequest has no system-prompt field — cwd,
+        // additionalDirectories, mcpServers, _meta, and nothing else. So
+        // the standing prompt goes in _meta for any agent that reads it
+        // (the spec's own extensibility hatch) and is ALSO prefixed onto
+        // the first turn, because the spec says implementations must not
+        // assume anything about _meta keys and most will ignore it.
+        //
+        // Belt and braces on purpose: an agent that honours _meta gets a
+        // real frame, one that doesn't still gets the text. What neither
+        // gets is a privilege boundary — see SystemPromptMode.
+        let builder = systemPrompt
+          ? ctx.buildSession({ cwd, _meta: { "fez/systemPrompt": systemPrompt } } as never)
+          : ctx.buildSession(cwd);
         for (const server of mcpServers ?? []) builder = builder.withMcpServer(server);
         const session = await builder.start();
+        let pendingSystemPrompt = systemPrompt;
 
         const handle: HarnessSession = {
           get alive() {
@@ -488,7 +516,14 @@ function openAcpSession(
           async prompt(instruction, onProgress, onUpdate, signal) {
             if (!alive) throw new Error(`${command} session is closed`);
             try {
-              return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal, timeouts);
+              // Prefix once, on the first turn only: the session is
+              // persistent, so re-sending it every turn would be paying
+              // for the same tokens forever to say the same thing.
+              const framed = pendingSystemPrompt
+                ? `${pendingSystemPrompt}\n\n---\n\n${instruction}`
+                : instruction;
+              pendingSystemPrompt = undefined;
+              return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts);
             } catch (err) {
               // A failed prompt may leave the session mid-stream — the
               // caller decides whether to recycle; surface stderr context.
@@ -534,7 +569,12 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
     command,
     detect: () => spawnDetect(command, ["--version"]),
 
-    openSession: (cwd, mcpServers, timeouts) => openAcpSession(descriptor, cwd, mcpServers, timeouts),
+    // ACP has no system-prompt field, so the honest declaration is
+    // "meta": we put it where the spec allows and prefix it too, but
+    // no agent is obliged to treat it as outranking the conversation.
+    systemPromptMode: "meta" as const,
+    openSession: (cwd, mcpServers, timeouts, systemPrompt) =>
+      openAcpSession(descriptor, cwd, mcpServers, timeouts, systemPrompt),
 
     async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal) {
       const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });

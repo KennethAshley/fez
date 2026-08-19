@@ -10,6 +10,7 @@ import type { FezClient } from "../packages/fez-client/dist/index.js";
 import { registerMcpServer } from "./mcp-servers.js";
 import { registerCommand, type CommandHandler } from "./commands.js";
 import { setStatus } from "./status.js";
+import { registerSystemPromptSection } from "./system-prompt.js";
 import { LEGACY_GRANT } from "./extension-permissions.js";
 
 /**
@@ -187,6 +188,17 @@ export interface FezExtensionAPI {
    * task is logged and retried on the next tick, never fatal.
    */
   registerScheduledTask(name: string, everyMs: number, run: (ctx: ScheduledTaskContext) => Promise<void> | void): void;
+  /**
+   * Add standing instructions to every agent this host starts — a
+   * compliance rule, a house style, a workflow's operating conditions.
+   *
+   * Contributed, never assigned: nobody owns the whole prompt, because
+   * an extension that could replace it could also delete the trust
+   * boundary that stops a channel message giving orders. Sections are
+   * ordered (default 500; core reserves under 100) and re-registering
+   * the same id replaces it, so a reload cannot duplicate a rule.
+   */
+  registerSystemPromptSection(section: { id: string; text: string | (() => string | undefined); order?: number }): void;
   nostr?: NostrAccess;
   /**
    * The process's ONE shared @fez/client instance — protocol state,
@@ -291,7 +303,7 @@ export function findUrlHandler(url: string): UrlHandler | undefined {
  * granted are REPLACED with no-ops that say so once — an extension that
  * quietly does nothing is worse to debug than one that logs why.
  */
-function buildApi(granted: readonly string[]): FezExtensionAPI {
+function buildApi(granted: readonly string[], extensionName = "extension"): FezExtensionAPI {
   const refuse = (permission: string, what: string) => {
     let warned = false;
     return () => {
@@ -332,6 +344,11 @@ function buildApi(granted: readonly string[]): FezExtensionAPI {
       if (!may("background")) return refuse("background", "register a scheduled task")();
       scheduledTasks.push({ name, everyMs, run });
     },
+    // Ids are namespaced by extension so two packages can both register
+    // a "rules" section without one silently replacing the other.
+    registerSystemPromptSection: may("system-prompt")
+      ? (section) => registerSystemPromptSection({ ...section, id: `${extensionName}:${section.id}` })
+      : () => console.warn(`⚠️  extension "${extensionName}" tried to add system-prompt rules without the "system-prompt" permission — ignored`),
     nostr: gatedNostr,
     client: may("read:channels") ? clientBackend : undefined,
     ui: {
@@ -401,7 +418,7 @@ export async function loadExtensions(
     if (only && !only.includes(name)) continue;
     // Each extension gets its OWN api object, narrowed to what it was
     // granted — a shared api would hand every extension everything.
-    const api = buildApi(grants[name] ?? LEGACY_GRANT);
+    const api = buildApi(grants[name] ?? LEGACY_GRANT, name);
     const filePath = path.join(dir, entry);
 
     try {

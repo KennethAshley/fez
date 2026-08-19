@@ -40,6 +40,8 @@ import {
   describeAuthorPolicy,
   untrustedValue,
   UNTRUSTED_CONTENT_NOTICE,
+  registerSystemPromptSection,
+  composeSystemPrompt,
 } from "@fez/protocol";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
@@ -418,6 +420,12 @@ async function main() {
   // Only the sibling LOOKUP lives here, because it needs the relay.
   const authorPolicy = parseRespondTo(respondTo);
 
+  // The trust boundary goes through the SAME seam an extension uses —
+  // core gets no private channel into the prompt. Order 10 puts it ahead
+  // of anything contributed later, because a rule that can be preceded
+  // by "disregard the following" is not a rule.
+  registerSystemPromptSection({ id: "fez:trust-boundary", order: 10, text: UNTRUSTED_CONTENT_NOTICE });
+
   // Sibling verification (Buzz's NIP-OA gate, fez-shaped): an author is a
   // sibling if OUR owner has published a 47006 attestation p-tagging them.
   // Only the owner's signature counts — self-declared ownership is
@@ -764,7 +772,12 @@ async function main() {
       if (!oldestKey) break;
       dropSession(oldestKey);
     }
-    const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts);
+    // Standing instructions at session open, not per turn: the session
+    // is persistent, so the frame is established once and every later
+    // turn inherits it. composeSystemPrompt gathers the persona, core's
+    // trust boundary, and anything an extension registered.
+    const standing = composeSystemPrompt(persona.systemPrompt);
+    const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts, standing || undefined);
     const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false };
     sessionPool.set(scope, pooled);
     console.log(`🧠 opened harness session for ${scope} (${sessionPool.size} live)`);

@@ -48,6 +48,10 @@ const KNOWN: Record<string, Omit<PermissionInfo, "id">> = {
   commands: { description: "Add slash commands", sensitive: false },
   ui: { description: "Add panels, themes, and message cards", sensitive: false },
   background: { description: "Run on a schedule while you're away", sensitive: true },
+  // Sensitive: standing instructions reach every agent this host starts,
+  // on every turn, ahead of anything a person says to them. An extension
+  // with this can change what your agents will and won't do.
+  "system-prompt": { description: "Add standing instructions to all your agents", sensitive: true },
 };
 
 export interface ParsedPermissions {
