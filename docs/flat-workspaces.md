@@ -131,23 +131,27 @@ Heaviest: `fez-desktop` (15 files), then `fez-polls`, `fez-communities`,
 `communityId` through their own APIs, so the extension API surface changes too
 — which means installed extensions break and need a version bump.
 
-## Migration
+## Migration — not needed
 
-Existing data is small enough to convert rather than abandon: 7 communities and
-9 channels total across both relays.
+Decided during the build: the existing data is test data and is being
+abandoned rather than converted. No migration script exists, and none
+should be written.
 
-1. **Pick one community per relay to survive.** Local: `Web3Builders` or one
-   `Home`. DO: Douglas's `Home`. The rest are dropped.
-2. **Rewrite channels and memberships** as owner-signed events without `c`.
-   Messages already carry `h` (channel), so history survives untouched — only
-   the redundant `c` tag goes stale, and readers ignore unknown tags.
-3. **Publish the NIP-11 `owner`** on each relay (fez-relay config).
-4. **The stranded groups become their own relays** if they are wanted.
-   `Live Gate Test` on the DO box is somebody else's; under the flat model it
-   needs its own relay or it goes away.
+What that means in practice:
 
-A dry-run script should print exactly what will be rewritten and dropped before
-anything is published.
+- Old-model events (47100 communities, `c`-tagged channels, per-channel
+  47102 rosters) are simply **ignored** by the new code — they are
+  unowned relative to the relay's NIP-11 `owner`, so nothing absorbs
+  them. They sit inert in the store.
+- A relay coming to the flat model needs two things: an `--owner`, and
+  someone to claim it (`claimWorkspace`), which publishes the first
+  channel and a roster.
+- Until a relay has an owner, it reports itself as an unclaimed
+  workspace rather than looking empty — the honest state.
+
+If a future relay ever does hold data worth keeping, the conversion is
+mechanical (rewrite 47101/47102 owner-signed without `c`; messages
+already carry `h` and need nothing), but it is not built.
 
 ## What this costs
 
