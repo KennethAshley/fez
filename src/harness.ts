@@ -502,8 +502,13 @@ function openAcpSession(
         // Belt and braces on purpose: an agent that honours _meta gets a
         // real frame, one that doesn't still gets the text. What neither
         // gets is a privilege boundary — see SystemPromptMode.
+        // The object form takes a FULL NewSessionRequest, so mcpServers
+        // must be present even when empty — omitting it left the SDK
+        // iterating undefined and every session open failed with
+        // "request.mcpServers is not iterable". The string form defaults
+        // it; the object form does not.
         let builder = systemPrompt
-          ? ctx.buildSession({ cwd, _meta: { "fez/systemPrompt": systemPrompt } } as never)
+          ? ctx.buildSession({ cwd, mcpServers: [], _meta: { "fez/systemPrompt": systemPrompt } } as never)
           : ctx.buildSession(cwd);
         for (const server of mcpServers ?? []) builder = builder.withMcpServer(server);
         const session = await builder.start();

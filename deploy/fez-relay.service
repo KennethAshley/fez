@@ -27,12 +27,24 @@ WorkingDirectory=/opt/fez
 #                  any fez process reading channel content MUST pass an
 #                  authSigner or it will look healthy and see an empty
 #                  world.
+# A relay IS a workspace. --owner is the pubkey whose signature makes a
+# channel or roster event count; it is served in the NIP-11 document and
+# is what the membership policy enforces. Without it every governed kind
+# is refused and the relay refuses to start rather than looking healthy
+# while rejecting everything.
+#
+# 47100 is absent from the whitelist on purpose: the community kind is
+# retired, and the number stays burned.
 ExecStart=/usr/bin/node /opt/fez/fez-relay.mjs \
   --port 7777 \
   --store /var/lib/fez/relay.sqlite \
+  --owner 4d9a4f800e4875128d59044b58365de32cb223b433e72e948e8d610b3cd3342a \
+  --name "Block Party" \
+  --description "A fez workspace" \
   --policy rate-limit=600 \
   --policy membership \
-  --policy kind-whitelist=0,5,7,1059,1984,20001,20002,20003,20004,20005,22242,24134,30047,30078,30174,30315,39005,40003,40004,40005,40006,40007,40100,40101,40102,40200,40201,40300,47000,47001,47002,47003,47004,47005,47006,47010,47011,47012,47020,47030,47100,47101,47102,47103,47200
+  --policy moderation \
+  --policy kind-whitelist=0,5,7,1059,1984,20001,20002,20003,20004,20005,22242,24134,30047,30078,30174,30315,39005,40003,40004,40005,40006,40007,40100,40101,40102,40200,40201,40300,47000,47001,47002,47003,47004,47005,47006,47010,47011,47012,47020,47030,47101,47102,47103,47200
 
 Restart=always
 RestartSec=3
