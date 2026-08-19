@@ -204,3 +204,36 @@ describe("keeping the set a set", () => {
     conn.disconnect();
   });
 });
+
+/**
+ * A publish that reports success when the event reached nobody is the
+ * worst failure this system can have: every other guarantee — history,
+ * audit trail, "an agent did this" — rests on the claim that a signed
+ * event was recorded. nostr-tools resolves rather than rejects on a
+ * connection failure, handing back the reason as a plain STRING, so
+ * counting fulfilled promises counted "could not connect" as "accepted".
+ * Both the single-relay and multi-relay implementations did this.
+ */
+describe("publishing into the void", () => {
+  for (const [label, url] of [
+    ["a refused port", "ws://127.0.0.1:7898"],
+    ["a TLS port with nothing behind it", "wss://127.0.0.1:7898"],
+    ["a host that does not resolve", "wss://nope.invalid.example"],
+  ] as const) {
+    test(`throws for ${label}`, async () => {
+      const conn = new RelayConnection({ url, watchdogMs: 50_000 });
+      await conn.connect();
+      await expect(conn.publish(event(`into the void: ${label}`))).rejects.toThrow(/publish failed/);
+      conn.disconnect();
+    }, 30_000);
+  }
+
+  test("one reachable relay in a set is still a real success", async () => {
+    const conn = new RelayConnection({ urls: [A.url, "ws://127.0.0.1:7898"], watchdogMs: 50_000 });
+    await conn.connect();
+    const e = event("half the set is dead");
+    await expect(conn.publish(e)).resolves.toBeUndefined();
+    expect(A.has(e.id)).toBe(true);
+    conn.disconnect();
+  }, 30_000);
+});

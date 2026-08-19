@@ -1,0 +1,62 @@
+[Unit]
+Description=fez relay
+Documentation=https://github.com/KennethAshley/fez
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fez
+Group=fez
+WorkingDirectory=/opt/fez
+
+# Policies are deliberately explicit rather than defaulted.
+#
+#   rate-limit      caps events per connection per minute — without it a
+#                   public relay is a free write endpoint for anyone.
+#   kind-whitelist  MUST carry its list: the built-in parses an empty
+#                   argument as [0], which would reject every fez event
+#                   and look like a relay that simply doesn't work.
+#
+# Reads are open. Private channels are unlisted, not private, until
+# `--policy membership` is added here (and clients authenticate).
+ExecStart=/usr/bin/node /opt/fez/fez-relay.mjs \
+  --port 7777 \
+  --store /var/lib/fez/relay.sqlite \
+  --policy rate-limit=600 \
+  --policy kind-whitelist=0,5,7,1059,1984,20001,20002,20003,20004,20005,22242,24134,30047,30078,30174,30315,39005,40003,40004,40005,40006,40007,40100,40101,40102,40200,40201,40300,47000,47001,47002,47003,47004,47005,47006,47010,47011,47012,47020,47030,47100,47101,47102,47103,47200
+
+Restart=always
+RestartSec=3
+# A crash loop should be loud, not a silently dead relay: give up after
+# 5 failures in 60s so `systemctl status` shows failed rather than
+# "activating" forever.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# The relay's index lives in memory and grows with history. Cap it below
+# the box's RAM so an unbounded process is restarted rather than taking
+# sshd down with it.
+MemoryMax=650M
+MemoryHigh=550M
+
+# Hardening: it needs a network socket and one directory. Nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+ReadWritePaths=/var/lib/fez
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fez-relay
+
+[Install]
+WantedBy=multi-user.target

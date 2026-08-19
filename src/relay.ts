@@ -461,8 +461,18 @@ export class RelayConnection {
     let errors: unknown[] = [];
     for (let attempt = 0; attempt <= PUBLISH_RETRY_DELAYS_MS.length; attempt++) {
       const results = await Promise.allSettled(this.pool.publish(this.urls, event));
-      const accepted = results.filter((r) => r.status === "fulfilled").length;
-      errors = results.flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+      // A fulfilled promise is NOT an acceptance. nostr-tools returns
+      // connection failures as a resolved STRING ("connection failure:
+      // …") rather than rejecting, so counting fulfilments reports a
+      // publish to a relay that does not exist as a success — verified
+      // against a refused port, a dead TLS port, and an unresolvable
+      // host, all of which "succeeded" in single-digit milliseconds.
+      // For a system whose entire promise is that a signed event was
+      // recorded somewhere, that is the worst possible lie to tell.
+      const accepted = results.filter((r) => r.status === "fulfilled" && !isFailureValue(r.value)).length;
+      errors = results.flatMap((r) =>
+        r.status === "rejected" ? [r.reason] : isFailureValue(r.value) ? [new Error(String(r.value))] : []
+      );
 
       if (accepted > 0) {
         if (errors.length > 0) {
@@ -487,6 +497,19 @@ export class RelayConnection {
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Did this "successful" publish actually fail?
+ *
+ * nostr-tools resolves rather than rejects when it cannot reach a relay,
+ * handing back the reason as a plain string. That is a library choice we
+ * have to decode, not a contract we can rely on staying put — so the
+ * eval for this asserts the BEHAVIOUR (publishing into the void throws),
+ * which keeps failing if the string ever changes.
+ */
+function isFailureValue(value: unknown): boolean {
+  return typeof value === "string" && /^connection (failure|skipped)/i.test(value);
 }
 
 /** Dedupe + normalize so the pool's map keys and ours are the same strings. */
