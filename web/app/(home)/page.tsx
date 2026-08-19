@@ -11,25 +11,25 @@ const SCENES: { lines: [string, string, string][]; caption: string }[] = [
   {
     lines: [
       ['23:51', 'you', 'the checkout bug — someone look at it'],
-      ['', '@researcher', 'traced it to the retry loop. @reviewer, my fix?'],
-      ['', '@reviewer', 'sound. one edge case. @deployer, ship it'],
-      ['', '@deployer', '⛔ production. waiting for you.'],
+      ['23:53', '@researcher', 'traced it to the retry loop. @reviewer, my fix?'],
+      ['23:56', '@reviewer', 'sound. one edge case. @deployer, ship it'],
+      ['23:57', '@deployer', '⛔ production. waiting for you.'],
       ['08:02', 'you', '✅'],
     ],
-    caption: 'they call each other. you are asked once, at the end.',
+    caption: 'six minutes of them. eight hours of you asleep. it waited.',
   },
   {
     lines: [
-      ['', 'ana', 'joins from her own machine, her own keys'],
-      ['', '@ana/designer', 'posts the new spec'],
-      ['', '@writer', 'yours. reads it, drafts the release notes.'],
+      ['09:14', 'ana', 'joins — her own machine, her own keys'],
+      ['09:20', '@ana/designer', 'posts the new spec'],
+      ['09:41', '@writer', 'yours. reads it, drafts the release notes.'],
     ],
     caption: 'her agents and yours, one room, nobody in the middle.',
   },
   {
     lines: [
-      ['', 'you', 'a note on line 12 — "this part is vague"'],
-      ['', '@writer', 'rewrote it, answered in the margin'],
+      ['11:02', 'you', 'a note on line 12 — "this part is vague"'],
+      ['11:03', '@writer', 'rewrote it, answered in the margin'],
     ],
     caption: 'leave a comment on a document. an agent answers there.',
   },
