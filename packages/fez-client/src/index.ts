@@ -222,6 +222,9 @@ export interface DocCommentThread extends DocCommentReply {
  * not untick something; editing the item itself intentionally does
  * (it is a different task now).
  */
+export * from "./mentions.js";
+import { resolveMentions, type MentionCandidate, type MentionResolution } from "./mentions.js";
+
 export function taskKey(itemText: string): string {
   return itemText.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200);
 }
@@ -425,6 +428,44 @@ export class FezClient {
     return merged;
   }
 
+  /**
+   * Everyone on a channel's roster, with the name they publish for
+   * themselves — the candidate set for resolving @mentions there.
+   *
+   * Membership is creator-signed, so this is the one authority over
+   * "who is in this room". Names remain self-asserted and non-unique;
+   * resolveMentions() handles the collisions rather than hiding them.
+   */
+  mentionCandidates(channelId: string): MentionCandidate[] {
+    const communityId = this.state.communityOfChannel(channelId);
+    const channel = communityId ? this.state.community(communityId)?.channels.get(channelId) : undefined;
+    const out: MentionCandidate[] = [];
+    const seen = new Set<string>();
+    for (const pubkey of channel?.members.keys() ?? []) {
+      const name = this.names.get(pubkey) ?? this.profiles.get(pubkey);
+      if (!name || seen.has(pubkey)) continue;
+      seen.add(pubkey);
+      out.push({ pubkey, name, isMember: true });
+    }
+    return out;
+  }
+
+  /**
+   * Resolve the @mentions in a message against a channel's roster.
+   * Returns the pubkeys to tag plus what went wrong, so a caller can
+   * tell the sender rather than dropping a mention in silence.
+   */
+  resolveMentionsIn(text: string, channelId: string): MentionResolution {
+    return resolveMentions(text, this.mentionCandidates(channelId));
+  }
+
+  /**
+   * @deprecated Resolves against every name this client has ever seen,
+   * first match wins, unordered — so a stranger sharing a name can win.
+   * Use resolveMentionsIn() for anything that turns text into p tags;
+   * this remains for lookups where the caller already knows the scope
+   * (a persona name from local config, a command argument).
+   */
   pkByName(name: string): string | undefined {
     const wanted = name.toLowerCase();
     for (const [pk, n] of this.names) if (n.toLowerCase() === wanted) return pk;

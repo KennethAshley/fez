@@ -245,9 +245,9 @@ export default function WikiView({ client }: { client: FezClient }) {
     if (!body && !resolve) return;
     const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel(sel.communityId) : sel.channelId;
     if (!channelId) return;
-    const mentionPks = [...body.matchAll(/@([\w-]+)/g)]
-      .map((match) => client.pkByName(match[1]))
-      .filter((pk): pk is string => !!pk);
+    // Roster-scoped, like the channel composer: a doc comment that
+    // @mentions a name nobody here has must not look like it worked.
+    const mentionPks = client.resolveMentionsIn(body, channelId).pubkeys;
     await client.publishDocComment(channelId, sel.communityId, body, {
       anchor,
       slug: sel.kind === "wiki" ? sel.slug : undefined,

@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fez/client";
 import { BrowserWire } from "./wire";
+import { describeMentionProblems } from "@fez/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
@@ -746,6 +747,7 @@ function Shell({
           onWatch={(agent) => setPane({ kind: "watch", agent })}
           onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
           onAgents={() => setPane({ kind: "agents" })}
+          onNotice={(text) => { setBanner(text); setTimeout(() => setBanner(undefined), 6000); }}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
           onDocs={() =>
             setPane(
@@ -982,6 +984,7 @@ function ChannelView({
   onProfile,
   onDocs,
   onCommand,
+  onNotice,
   focusId,
 }: {
   client: FezClient;
@@ -996,6 +999,8 @@ function ChannelView({
   onProfile: (pk: string) => void;
   onDocs: () => void;
   onCommand: (text: string) => Promise<string>;
+  /** Surfaced to the sender — a mention that reached nobody must not be silent. */
+  onNotice: (text: string) => void;
 }) {
   // Drafts persist per channel (Buzz's DraftsPanel decision, minimal
   // form): switching channels no longer eats half-typed messages.
@@ -1096,10 +1101,13 @@ function ChannelView({
       if (text !== target.original) await client.editMessage(channelId, communityId, target.id, text);
       return;
     }
-    const mentionPks = [...text.matchAll(/@([\w-]+)/g)]
-      .map((match) => client.pkByName(match[1]))
-      .filter((pk): pk is string => !!pk);
-    await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks });
+    // Against THIS channel's roster, not every name the client has ever
+    // seen — and a mention that reached nobody is said out loud, because
+    // it otherwise looks exactly like one that worked.
+    const resolution = client.resolveMentionsIn(text, channelId);
+    const problem = describeMentionProblems(resolution);
+    await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks: resolution.pubkeys });
+    if (problem) onNotice(problem);
   };
 
   /** Discord's up-arrow: empty composer + ↑ edits your latest message in view. */
