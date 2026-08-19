@@ -322,6 +322,53 @@ async function main() {
   const channels = channelSpecs.length > 0 ? await resolveChannels(relay, channelSpecs, relayUrls.join(", ")) : [];
 
   /**
+   * Who a pubkey is.
+   *
+   * Every one of these call sites used to print `pubkey.slice(0, 8)`, so
+   * an agent was told "4d9a4f80 said this" and — following the callback
+   * convention — dutifully wrote `@4d9a4f80` back. That mention resolves
+   * to nobody: it p-tags no one, notifies no one, and renders in the GUI
+   * as a chip that looks like it worked. Worse, in a channel with two
+   * humans an agent reading only hex cannot tell them apart.
+   *
+   * Humans publish kind-0 profiles, agents publish kind-47000 metadata.
+   * Both are just a name, so both land in one map, resolved lazily and
+   * cached — a name that arrives later (someone sets their profile
+   * mid-conversation) is picked up on the next miss.
+   */
+  const nameCache = new Map<string, string | undefined>();
+
+  async function resolveName(pubkey: string): Promise<string | undefined> {
+    if (nameCache.has(pubkey)) return nameCache.get(pubkey);
+    let name: string | undefined;
+    try {
+      const events = await relay.query([
+        { kinds: [0], authors: [pubkey], limit: 3 },
+        { kinds: [KIND_AGENT_METADATA], authors: [pubkey], limit: 3 },
+      ]);
+      name = events
+        .sort((a, b) => b.created_at - a.created_at)
+        .map((e) => {
+          try {
+            return (JSON.parse(e.content) as { name?: string }).name?.trim();
+          } catch {
+            return undefined;
+          }
+        })
+        .find((candidate) => !!candidate);
+    } catch { /* relay hiccup — fall back to hex, and retry on the next miss */ }
+    // Only cache a hit. A miss stays uncached so a profile published
+    // later is picked up rather than being wrong for the whole session.
+    if (name) nameCache.set(pubkey, name);
+    return name;
+  }
+
+  /** The label to show an agent. Hex only when there is genuinely no name. */
+  function who(pubkey: string): string {
+    return nameCache.get(pubkey) ?? pubkey.slice(0, 8);
+  }
+
+  /**
    * Mechanical approval gate. Until now, "ask before doing something
    * destructive" was a CONVENTION in the spawn prompt — an agent that
    * forgot, or decided otherwise, just ran the command, because the ACP
@@ -859,7 +906,7 @@ async function main() {
       // already frames them as "these also arrived — weave them in").
       const last = items[items.length - 1];
       for (const item of items.slice(0, -1)) {
-        steerMessages.push(`${item.chEvent!.pubkey.slice(0, 8)}: ${item.chEvent!.content}`);
+        steerMessages.push(`${who(item.chEvent!.pubkey)}: ${item.chEvent!.content}`);
       }
       if (items.length > 1) console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
       setTimeout(() => void handleChannelMessage(last.chEvent!, true, attempts), 100);
@@ -922,7 +969,7 @@ async function main() {
       if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
 
       const context = recent.get(channelId) ?? [];
-      context.push(`${event.pubkey.slice(0, 8)}: ${event.content}`);
+      context.push(`${who(event.pubkey)}: ${event.content}`);
       recent.set(channelId, context.slice(-10));
 
       const mentioned = isMention(event);
@@ -957,7 +1004,7 @@ async function main() {
       // restart with the new message woven in) or QUEUE (process after).
       if (busy) {
         if (onBusy === "steer" && turnController && turnKind === "ch") {
-          steerMessages.push(`${event.pubkey.slice(0, 8)}: ${event.content}`);
+          steerMessages.push(`${who(event.pubkey)}: ${event.content}`);
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
         } else {
@@ -1068,7 +1115,7 @@ async function main() {
         // agent sees the line it was called on and answers in the margin.
         const docFraming = doc
           ? [
-              `${event.pubkey.slice(0, 8)} left a COMMENT on ${doc.slug ? `the wiki page "${doc.slug}"` : `this channel's doc`}, anchored to this line:`,
+              `${who(event.pubkey)} left a COMMENT on ${doc.slug ? `the wiki page "${doc.slug}"` : `this channel's doc`}, anchored to this line:`,
               `> ${doc.anchor}`,
               `Their comment: ${event.content}`,
               `Do what they asked — read the document first (${doc.slug ? `fez_wiki_read page "${doc.slug}"` : "fez_doc_get"}) and EDIT it if the request calls for an edit (${doc.slug ? "fez_wiki_write" : "fez doc append/set"}).`,
@@ -1079,7 +1126,7 @@ async function main() {
         const buildPrompt = async (fresh: boolean): Promise<string> => {
           if (!fresh) {
             return [
-              docFraming ?? `New message in the channel from ${event.pubkey.slice(0, 8)}: ${event.content}`,
+              docFraming ?? `New message in the channel from ${who(event.pubkey)}: ${event.content}`,
               ...(steering.length > 0
                 ? [
                     `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response:`,
@@ -1105,6 +1152,7 @@ async function main() {
             `- Wiki: the community keeps shared markdown pages (fez_wiki_read / fez_wiki_write). Durable knowledge worth outliving this conversation belongs in a page, linked to related pages with [[Their Name]] — read before you rewrite; owners see every edit signed by you.`,
             `- Boards: if the fez_board_* tools are available, some pages are kanban boards and work you're given may be a CARD on one. Move your own card: fez_board_move to the in-progress column when you start and to the done column when you finish, so the board shows the truth without anyone asking you for a status. fez_board_add files work you found but aren't doing now. Never rewrite a board page with fez_wiki_write — use the board tools, which leave the rest of the document untouched.`,
             `- Doc comments: when a message says someone commented on a doc line, use fez_doc_comments to read the thread, do the work, then fez_comment_reply to answer IN that thread (resolve only when it is actually done) — the comment is the request, so answering in chat alone leaves it open.`,
+            `- Names: everyone in a channel appears by their name, not a key. An @mention only reaches someone if you use that NAME — writing @ followed by a hex id reaches nobody, notifies nobody, and merely looks like it worked. If all you can see for someone is a short hex id they have no name published; refer to them without an @.`,
             `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
             ...(shareLevel
               ? [
@@ -1148,7 +1196,11 @@ async function main() {
           ].filter(Boolean).join("\n\n");
         };
 
-        console.log(`💬 Mention from ${event.pubkey.slice(0, 8)}… — invoking ${persona.harness}`);
+        // Warm the name cache before the prompt is built: who() is sync
+        // so the context builders can stay sync, and an unresolved name
+        // would silently render as hex for the whole turn.
+        await resolveName(event.pubkey);
+        console.log(`💬 Mention from ${who(event.pubkey)} — invoking ${persona.harness}`);
         void react("💬"); // "working" — the turn is actually starting
 
         // Stream the reply as it generates: ephemeral drafts (never stored
@@ -1470,7 +1522,8 @@ async function main() {
     // A reply that mentions us is still a request — answer in that same
     // thread (its root), not a new one.
     const rootId = parent ?? event.id;
-    console.log(`📝 Doc comment from ${event.pubkey.slice(0, 8)}… on ${slug ? `page "${slug}"` : "the channel doc"}`);
+    await resolveName(event.pubkey);
+    console.log(`📝 Doc comment from ${who(event.pubkey)} on ${slug ? `page "${slug}"` : "the channel doc"}`);
     await handleChannelMessage(event, false, 0, { rootId, anchor, slug });
   };
 

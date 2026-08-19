@@ -151,12 +151,41 @@ export default function ManagePane({
   );
 }
 
-/** A fez invite is a URI, not a hosted link — there's no server to host one. */
+/** A relay only this machine can reach — useless in an invite. */
+function isLoopback(url: string): boolean {
+  return /^wss?:\/\/(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?|0\.0\.0\.0)(:|\/|$)/i.test(url.trim());
+}
+
+/**
+ * A fez invite is a URI, not a hosted link — there's no server to host one.
+ *
+ * It names ONE relay for the guest to look at, and that relay has to be
+ * one THEY can reach. Handing out `ws://localhost:7777` — the first
+ * entry in most developers' relay sets — sends the guest to their own
+ * machine, where they find nothing and get no error, because an empty
+ * relay and a wrong relay look identical. So loopback addresses are
+ * skipped, and when every relay is loopback we say so instead of
+ * producing a code that cannot work.
+ */
 function InviteCode({ communityId, communityName }: { communityId: string; communityName: string }) {
   const [copied, setCopied] = useState(false);
-  // The FIRST relay in the set: an invite has to name one place to look,
-  // and the rest of the set is the inviter's business, not the guest's.
-  const code = `fez-join:${(localStorage.getItem("fez-relay") ?? "ws://localhost:7777").split(",")[0].trim()}#${communityId}`;
+  const relays = (localStorage.getItem("fez-relay") ?? "ws://localhost:7777")
+    .split(",")
+    .map((r) => r.trim())
+    .filter(Boolean);
+  const reachable = relays.find((r) => !isLoopback(r));
+
+  if (!reachable) {
+    return (
+      <div className="settings-hint">
+        Your only relay is <code className="pk-code">{relays[0]}</code>, which points at whatever machine
+        opens the invite — so a code made from it would send guests to themselves. Add a relay they can
+        reach (a LAN or Tailscale address, or a hosted one) and the code appears here.
+      </div>
+    );
+  }
+
+  const code = `fez-join:${reachable}#${communityId}`;
   return (
     <>
       <code
