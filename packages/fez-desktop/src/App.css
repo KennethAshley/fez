@@ -182,7 +182,7 @@ body {
 .mention-pop {
   position: absolute; bottom: 100%; left: 18px; margin-bottom: 4px; min-width: 220px;
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 8px; overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 60;
+  box-shadow: 0 8px 24px rgb(0,0,0,0.45); z-index: 60;
 }
 .mention-item {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
@@ -194,12 +194,12 @@ body {
 
 /* ── ⌘K search overlay ─────────────────────────────────────── */
 .overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50;
+  position: fixed; inset: 0; background: rgb(0,0,0,0.55); z-index: 50;
   display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh;
 }
 .search-box {
   width: min(620px, 90vw); background: var(--bg1); border: 1px solid var(--bg2);
-  border-radius: 12px; overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  border-radius: 12px; overflow: hidden; box-shadow: 0 16px 48px rgb(0,0,0,0.6);
 }
 .search-input {
   width: 100%; background: var(--bg0); border: 0; border-bottom: 1px solid var(--bg2);
@@ -222,6 +222,7 @@ body {
 }
 .rail-tool:hover { color: var(--yellow); }
 .member-row .working { color: var(--yellow); margin-left: 2px; animation: spin 2s linear infinite; display: inline-block; }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 .member-row .status { margin-left: auto; font-size: 11px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
 .dm-note { margin-left: auto; font-size: 11px; color: var(--fg-dim); font-weight: 400; }
@@ -352,6 +353,7 @@ body {
 .stream.compact { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stream-text { font-style: italic; }
 .cursor { animation: blink 1s steps(1) infinite; color: var(--accent); }
+
 @keyframes blink { 50% { opacity: 0; } }
 
 .activity-strip {
@@ -368,9 +370,10 @@ body {
 }
 .shimmer {
   background: linear-gradient(90deg, var(--fg-dim) 40%, var(--fg) 50%, var(--fg-dim) 60%);
-  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
+  background-size: 200% 100%; background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; animation: shimmer 2s linear infinite;
 }
+
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ── message actions + markdown ─────────────────────────────── */
@@ -527,7 +530,7 @@ body {
    the fez wears its red tassel in the wordmark.
    ═══════════════════════════════════════════════════════════════ */
 :root {
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", menlo, monospace;
   --bg-rail: #17191a;
   --hairline: #32302f;
   --phosphor: #b8bb26;
@@ -582,6 +585,7 @@ body {
 }
 .stream-text { color: color-mix(in srgb, var(--phosphor) 55%, var(--fg)); }
 .cursor { color: var(--phosphor); }
+
 @keyframes phosphor-pulse {
   from { border-left-color: var(--phosphor); }
   to { border-left-color: color-mix(in srgb, var(--phosphor) 30%, var(--bg0)); }
@@ -593,6 +597,7 @@ body {
   background-size: 200% 100%;
   animation: live-wire 2.6s linear infinite;
 }
+
 @keyframes live-wire {
   from { background-position: 200% 0; }
   to { background-position: -200% 0; }
@@ -768,6 +773,7 @@ button.author:hover { text-decoration: underline; }
 
 /* jump-to-message landing flash */
 .focus-flash > .bubble { animation: focus-fade 2.4s ease-out; border-radius: 6px; }
+
 @keyframes focus-fade {
   from { background: color-mix(in srgb, var(--accent) 22%, transparent); }
   to { background: transparent; }
@@ -843,7 +849,7 @@ button.author:hover { text-decoration: underline; }
 .emoji-grid-pop {
   position: absolute; bottom: 100%; right: 18px; margin-bottom: 4px; width: 320px;
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 5; padding: 8px;
+  box-shadow: 0 8px 24px rgb(0,0,0,0.45); z-index: 5; padding: 8px;
 }
 .emoji-grid-search {
   width: 100%; background: var(--bg0); border: 1px solid var(--hairline); border-radius: 6px;
@@ -869,7 +875,7 @@ button.author:hover { text-decoration: underline; }
 .ctx-menu {
   position: fixed; z-index: 60; min-width: 150px;
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5); overflow: hidden; padding: 4px;
+  box-shadow: 0 8px 24px rgb(0,0,0,0.5); overflow: hidden; padding: 4px;
 }
 .ctx-menu button {
   display: block; width: 100%; text-align: left; background: none; border: 0;
@@ -929,7 +935,7 @@ button.author:hover { text-decoration: underline; }
 .self-menu {
   position: absolute; bottom: calc(100% + 6px); left: 8px; right: 8px; z-index: 40;
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 10px; overflow: hidden;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.5); padding: 4px 0;
+  box-shadow: 0 12px 32px rgb(0,0,0,0.5); padding: 4px 0;
 }
 .self-menu-head {
   padding: 8px 12px 6px; font-size: 10.5px; color: var(--fg-dim);
@@ -951,7 +957,7 @@ button.author:hover { text-decoration: underline; }
 .settings-modal { width: min(640px, 92vw); max-height: 82vh; display: flex; }
 .settings-modal .pane {
   width: 100%; min-width: 0; border-left: 0; border: 1px solid var(--bg2);
-  border-radius: 12px; overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+  border-radius: 12px; overflow: hidden; box-shadow: 0 16px 48px rgb(0,0,0,0.6);
   max-height: 82vh;
 }
 .agent-ghost { color: var(--fg-dim); font-size: 14px; width: 18px; text-align: center; }
@@ -960,7 +966,7 @@ button.author:hover { text-decoration: underline; }
 .format-tray {
   position: absolute; bottom: 100%; left: 18px; margin-bottom: 4px; display: flex; gap: 2px;
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px; padding: 3px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 5;
+  box-shadow: 0 8px 24px rgb(0,0,0,0.45); z-index: 5;
 }
 /* Matches .format-bar — same buttons, same component, so the floating
    tray and the docked bar had no business being different sizes. */
@@ -1104,6 +1110,7 @@ button.author:hover { text-decoration: underline; }
   width: 8px; height: 8px; border-radius: 50%; background: var(--viz-ok);
   animation: livepulse 1.4s ease-in-out infinite;
 }
+
 @keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 .live-feed { max-height: 260px; overflow-y: auto; }
 .live-row { display: flex; align-items: center; gap: 8px; padding: 2px 4px; font-size: 12px; border-radius: 4px; }
@@ -1123,7 +1130,7 @@ button.author:hover { text-decoration: underline; }
   position: absolute; top: calc(100% + 4px); right: 14px; z-index: 40; min-width: 220px;
   max-height: 320px; overflow-y: auto;
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.5); padding: 4px 0; font-weight: 400;
+  box-shadow: 0 12px 32px rgb(0,0,0,0.5); padding: 4px 0; font-weight: 400;
 }
 
 .composer-actions { display: flex; align-items: center; gap: 4px; padding: 6px 2px 0; }
@@ -1157,7 +1164,7 @@ button.author:hover { text-decoration: underline; }
   position: fixed; z-index: 60; width: 250px;
   display: flex; flex-direction: column; gap: 8px;
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.55); padding: 10px 12px;
+  box-shadow: 0 12px 32px rgb(0,0,0,0.55); padding: 10px 12px;
   font-weight: 400; font-size: 12.5px; text-align: left; white-space: normal; cursor: default;
 }
 
@@ -1444,7 +1451,7 @@ button.author:hover { text-decoration: underline; }
 .msg-menu {
   position: fixed; z-index: 60; min-width: 210px; padding: 4px;
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column;
+  box-shadow: 0 8px 28px rgb(0, 0, 0, 0.45); display: flex; flex-direction: column;
 }
 .msg-menu .self-menu-item { border-radius: 5px; }
 .msg-menu .self-menu-item.danger { color: var(--red); }
@@ -1453,7 +1460,7 @@ button.author:hover { text-decoration: underline; }
 /* reaction selector: fixed popover at the cursor/button, quick row + searchable grid */
 .react-picker {
   position: fixed; z-index: 60; margin: 0; flex-direction: column; align-items: stretch;
-  width: 264px; padding: 8px; gap: 6px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  width: 264px; padding: 8px; gap: 6px; box-shadow: 0 8px 28px rgb(0, 0, 0, 0.45);
 }
 .react-picker-quick { display: flex; gap: 4px; }
 .react-picker-quick button { font-size: 16px; padding: 3px 7px; background: none; border: none; border-radius: 5px; cursor: pointer; }
@@ -1581,7 +1588,7 @@ button.author:hover { text-decoration: underline; }
   background: color-mix(in srgb, var(--tint) 9%, var(--bg1));
   border: 1px solid color-mix(in srgb, var(--tint) 30%, var(--hairline));
   border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 12.5px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  box-shadow: 0 6px 20px rgb(0,0,0,0.35);
 }
 .comment-thread.resolved {
   --tint: var(--green);
@@ -1818,6 +1825,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   padding: 6px 0 8px;
 }
 .doc-composer-spin { color: var(--accent); animation: doc-spin 1.4s linear infinite; display: inline-block; }
+
 @keyframes doc-spin { to { transform: rotate(360deg); } }
 .doc-composer-proposal {
   border: 1px solid var(--accent);
@@ -2050,7 +2058,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   border: 1px solid var(--hairline);
   border-radius: 8px;
   padding: 4px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 28px rgb(0, 0, 0, 0.45);
 }
 .slash-item {
   display: flex;
@@ -2175,11 +2183,14 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   from { opacity: 0; transform: translateX(10px); }
   to   { opacity: 1; transform: none; }
 }
+
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
 }
+
 @keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+
 @keyframes box-in {
   from { opacity: 0; transform: translateY(-6px) scale(0.99); }
   to   { opacity: 1; transform: none; }
