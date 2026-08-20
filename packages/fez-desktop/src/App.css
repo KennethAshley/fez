@@ -1996,3 +1996,79 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   padding: 0;
   text-decoration: underline;
 }
+
+/* ══ motion ═══════════════════════════════════════════════════
+   Restraint is the whole brief. Two durations and one curve:
+   110ms for feedback (you did a thing, it acknowledged), 160ms for
+   arrival (something is entering the room). Nothing bounces, nothing
+   overshoots, nothing moves more than a few pixels — an interface that
+   performs is an interface you wait for, and this one already has its
+   ambient motion doing real work (the phosphor pulse, the live wire,
+   the working spinner). This layer only removes the snap.
+
+   Deliberately NOT tokenised into :root: theme packs must satisfy every
+   token declared there, and a theme has no business setting how fast a
+   hover fades. Literals keep that contract meaning what it says.
+
+   Everything is opt-in per family rather than a blanket `* { transition }`,
+   which would animate layout during resize drags and scroll. */
+
+/* ── feedback: things you point at ─────────────────────────── */
+.channel, .home-link,
+.mini, .agent-action, .composer-tool, .composer-send, .pane-close, .topbar-tool,
+.skill-link, .ext-tab, .ext-filter, .line-comment, .fleet-history,
+.self-menu-item, .mention-item, .format-bar button, .format-tray button,
+.doc-format-bar button, .version-row, .react-btn, .msg-menu-item {
+  transition: background 110ms ease, color 110ms ease, opacity 110ms ease, border-color 110ms ease;
+}
+/* Rows lift rather than flash — the change is in the surface, not the text. */
+.skill-row, .find-hit, .member-row, .agent-row {
+  transition: background 110ms ease, border-color 110ms ease;
+}
+/* The one place a nudge reads as physical: a button that commits. */
+.agent-action:active, .composer-send:active, .mini:active { transform: translateY(1px); }
+
+/* ── arrival: things that enter ────────────────────────────── */
+@keyframes pane-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes box-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The right drawer slides in from its own edge — the direction it lives. */
+.pane { animation: pane-in 160ms cubic-bezier(0.2, 0, 0.2, 1); }
+
+/* Popovers rise a few pixels from whatever opened them. */
+.mention-pop, .self-menu, .msg-menu, .hovercard, .format-tray, .emoji-grid, .slash-menu {
+  animation: rise-in 110ms ease-out;
+}
+
+/* Dialogs: the scrim fades, the box arrives just behind it. */
+.overlay { animation: scrim-in 120ms ease-out; }
+.overlay > * { animation: box-in 160ms cubic-bezier(0.2, 0, 0.2, 1); }
+
+/* A view swap shouldn't feel like a page load — just enough to say the
+   content changed. Only the body, never the header, so the chrome that
+   stays put looks like it stayed put.
+
+   .pane-body is deliberately absent: it rides inside .pane, which is
+   already sliding, and two animations on nested elements read as one
+   thing wobbling rather than one thing arriving. */
+.timeline, .wiki-scroll { animation: rise-in 140ms ease-out; }
+
+/* ── opt out ───────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
