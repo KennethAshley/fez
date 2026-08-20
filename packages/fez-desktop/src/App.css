@@ -151,13 +151,7 @@ body {
 }
 
 .typing { padding: 0 18px 4px; color: var(--fg-dim); font-size: 12px; font-style: italic; }
-/* The band. Same construction as .doc-composer, which is the one that
-   reads correctly: a full-bleed strip in --bg1 closed by a top rule —
-   not a rounded box floating in padding. */
-.composer {
-  padding: 10px 18px 16px; position: relative;
-  background: var(--bg1); border-top: 1px solid var(--hairline);
-}
+.composer { padding: 10px 18px 16px; position: relative; }
 .composer textarea {
   width: 100%; background: var(--bg1); border: 1px solid var(--bg2); border-radius: 8px;
   color: var(--fg); font: inherit; padding: 10px 14px; outline: none;
@@ -1454,14 +1448,22 @@ button.author:hover { text-decoration: underline; }
    --bg0, which is exactly the page colour, so the box existed only as a
    hairline and the thing read as three loose rows rather than an
    editor. */
-/* Layout only. It used to draw its own border and ground, which put a
-   second frame inside the band and made the whole composer read as one
-   slab whatever tone it took. The band is the surface; the toolbar and
-   action row sit directly on it, and the textarea is the only thing
-   inside that gets an edge. */
-.composer-box { background: none; border: 0; border-radius: 0; padding: 0; }
-/* Focus lives on the field now, not on a frame that no longer draws. */
-.composer.dragging .composer-box textarea { border-color: var(--accent); border-style: dashed; }
+/* Slack's composer, which is what this is copying: ONE rounded outline
+   on the page ground, and nothing drawn inside it. The toolbar, the
+   typing area and the action row are all the same surface — the border
+   is the only thing saying "this is the composer".
+
+   Every tone I tried before this was wrong for the same reason: a
+   second ground anywhere inside (on the box, on the textarea, or both)
+   splits one control into two, and no value fixes that. */
+.composer-box {
+  background: var(--bg0);
+  border: 1px solid var(--bg2);
+  border-radius: 8px;
+  padding: 4px 10px 6px;
+}
+.composer:focus-within .composer-box { border-color: color-mix(in srgb, var(--fg) 28%, var(--bg2)); }
+.composer.dragging .composer-box { border-color: var(--accent); border-style: dashed; }
 /* The textarea keeps a ground of its own inside the box. It had been
    stripped to `background: none`, which left the writing area exactly
    the colour of the chrome around it — the toolbar and the action row
@@ -1472,17 +1474,11 @@ button.author:hover { text-decoration: underline; }
    — the page tone — so the place you type is the lightest thing in
    light and the deepest in dark, stepped away from its frame either
    way. Uniform was the mistake: it made the whole composer one slab. */
-/* The field — the same three values .doc-composer-input uses, so the
-   two writing surfaces in the app are the same thing. */
 .composer .composer-box textarea,
+.composer .composer-box textarea:focus,
 .composer .composer-box textarea.editing {
-  background: var(--bg0);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  box-shadow: none;
-  padding: 8px 10px;
+  background: none; border: 0; box-shadow: none; padding: 6px 2px;
 }
-.composer .composer-box textarea:focus { border-color: var(--accent); }
 .composer .composer-box textarea.editing { color: var(--yellow); }
 
 .format-bar {
@@ -1496,8 +1492,7 @@ button.author:hover { text-decoration: underline; }
 }
 .format-bar button:hover { background: var(--bg2); color: var(--fg); }
 .format-bar .tray-sep { margin: 3px 5px; }
-/* Separators inside the box read against --bg1 now. */
-.composer-box .format-bar { border-bottom-color: var(--hairline); }
+.composer-box .format-bar { border-bottom-color: var(--bg2); }
 
 /* @fez/bittensor gui part: subnet dev-activity card */
 .bt-card {
