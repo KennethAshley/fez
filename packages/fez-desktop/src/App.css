@@ -169,7 +169,7 @@ body {
 .mention-pop {
   position: absolute; bottom: 100%; left: 18px; margin-bottom: 4px; min-width: 220px;
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 8px; overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 5;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 60;
 }
 .mention-item {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
@@ -1586,9 +1586,13 @@ button.author:hover { text-decoration: underline; }
    --bg0, which is the comment box's own background — the channel
    composer's rounder, heavier frame belongs to a persistent bar at
    the bottom of a window, not to a note attached to a line. */
+/* No overflow:hidden here. It clipped the inner textarea to the rounded
+   corners, but the mention popover is positioned OUTSIDE this box
+   (bottom:100%), so the clip cut it off — and a clip is not something a
+   z-index can escape. The tray rounds its own top corners instead, which
+   is all the clip was really doing. */
 .mention-box.formatted {
   background: var(--bg0); border: 1px solid var(--bg2); border-radius: 6px;
-  overflow: hidden;
 }
 .mention-box.formatted:focus-within { border-color: var(--accent); }
 /* The textarea gives up its own frame to the wrapper. */
@@ -1597,7 +1601,7 @@ button.author:hover { text-decoration: underline; }
 }
 .mention-box.formatted .comment-input:focus { border-color: transparent; }
 .mention-box.formatted .format-tray {
-  position: static; border: 0; border-bottom: 1px solid var(--bg2); border-radius: 0;
+  position: static; border: 0; border-bottom: 1px solid var(--bg2); border-radius: 5px 5px 0 0;
   box-shadow: none; background: var(--bg1); padding: 3px 6px;
 }
 
