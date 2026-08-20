@@ -283,7 +283,9 @@ export default function PulseView({
 
   return (
     <main className="main">
-      <header className="topbar">◉ pulse</header>
+      <header className="topbar">
+        <div className="topbar-row">◉ pulse</div>
+      </header>
       <div className="timeline pulse-scroll">
         {roster.length === 0 && (
           <div className="pane-empty">no agents known yet — cards appear as their metadata reaches your relay</div>

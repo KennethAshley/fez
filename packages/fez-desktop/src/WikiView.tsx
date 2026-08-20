@@ -788,7 +788,8 @@ export default function WikiView({ client }: { client: FezClient }) {
 
       <section className="wiki-page">
         {sel && (
-            <header className="wiki-page-head">
+          <header className="topbar">
+            <div className="topbar-row wiki-page-head">
               <span className="wiki-title">
                 {sel.kind === "wiki"
                   ? `▤ ${selPage?.title ?? sel.slug}`
@@ -832,7 +833,8 @@ export default function WikiView({ client }: { client: FezClient }) {
                   ✎ {latest ? "edit" : "write"}
                 </button>
               )}
-            </header>
+            </div>
+          </header>
         )}
         <div className="wiki-scroll">
         {!sel && (

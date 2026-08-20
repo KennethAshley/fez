@@ -84,6 +84,13 @@ body {
   padding: 12px 18px 0;
   font-weight: 600; display: flex; align-items: center; gap: 8px;
 }
+/* The row carries no bottom padding because in a channel the doc
+   subtitle sits under it and supplies its own (.channel-info-bar,
+   11px). A page header has no second row, so without this it closed
+   flush against its rule and came out visibly shorter than the channel
+   header it is meant to match. 11px is that same number, so both end up
+   the same height. */
+.topbar-row:only-child { padding-bottom: 11px; }
 .thread-exit {
   margin-left: auto; background: var(--bg2); border: 0; color: var(--accent);
   font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
@@ -477,7 +484,6 @@ body {
 /* The line under the OS title bar follows the theme like every other rule. */
 .shell { box-shadow: inset 0 1px 0 var(--hairline); }
 .pane-head { font-family: var(--font-mono); font-size: 13px; border-bottom-color: var(--hairline); }
-.wiki-page-head { border-bottom-color: var(--hairline); }
 .community-name, .manage-section, .home-section { font-family: var(--font-mono); }
 .time, .search-meta, .agent-sub, .manage-sub, .dm-note, .settings-field label { font-family: var(--font-mono); }
 .role-tag, .badge, .pill { font-family: var(--font-mono); }
@@ -1434,15 +1440,10 @@ button.author:hover { text-decoration: underline; }
    what you're reading moves, what you type into stays put. */
 .wiki-page { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .wiki-scroll { flex: 1; overflow-y: auto; padding: 18px 26px; min-height: 0; }
-/* A real top bar, like every other main view has: it sits outside the
-   scroller (so the doc's title stays put while you read) and closes
-   with the same rule .topbar uses. It used to be the first thing INSIDE
-   the scroll area, which is why this column alone had no bar across
-   the top. */
-.wiki-page-head {
-  display: flex; align-items: center; gap: 10px; flex: none;
-  padding: 12px 26px; border-bottom: 1px solid var(--bg2);
-}
+/* It IS a .topbar-row now — same height, same rule, same everything as
+   the channel header. Only the horizontal inset differs, matching
+   .wiki-scroll's 26px so the title sits over the text it names. */
+.wiki-page-head { gap: 10px; padding-left: 26px; padding-right: 26px; }
 .wiki-title { font-family: var(--font-mono); font-size: 15px; font-weight: 600; }
 .wiki-body { max-width: 760px; }
 .wiki-editor { height: calc(100% - 60px); display: flex; flex-direction: column; gap: 8px; }

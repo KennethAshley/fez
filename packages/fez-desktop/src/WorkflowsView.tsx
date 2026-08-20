@@ -39,7 +39,9 @@ export default function WorkflowsView({ client }: { client: FezClient }) {
 
   return (
     <main className="main">
-      <header className="topbar">» workflows</header>
+      <header className="topbar">
+        <div className="topbar-row">» workflows</div>
+      </header>
       <div className="timeline">
         {runs.length === 0 && (
           <div className="pane-empty">

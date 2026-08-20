@@ -88,7 +88,9 @@ export default function HomeView({
 
   return (
     <main className="main">
-      <header className="topbar">▤ inbox</header>
+      <header className="topbar">
+        <div className="topbar-row">▤ inbox</div>
+      </header>
       <div className="timeline home">
         {/* Decisions first: everything else here can wait, these are
             blocking an agent right now. */}
