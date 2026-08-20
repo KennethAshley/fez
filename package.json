@@ -1,7 +1,7 @@
 {
   "name": "@fez/protocol",
   "version": "0.1.0",
-  "description": "Fez — a decentralized MCP for agents. Any agent can call any other agent by name over Nostr.",
+  "description": "Fez \u2014 a decentralized MCP for agents. Any agent can call any other agent by name over Nostr.",
   "type": "module",
   "bin": {
     "fez": "./dist/cli.js"
@@ -24,7 +24,7 @@
     "VISION.md"
   ],
   "scripts": {
-    "build": "npm run build --prefix packages/fez-tui && npm run build --prefix packages/fez-relay && tsc && chmod +x dist/cli.js",
+    "build": "node scripts/build-all.mjs",
     "dev": "tsc --watch",
     "test": "vitest --run",
     "prepublishOnly": "npm run build",
@@ -37,7 +37,8 @@
     "orchestrator:build": "npm run build --prefix packages/fez-orchestrator",
     "workflows:build": "npm run build --prefix packages/fez-workflows",
     "acp:build": "npm run build --prefix packages/fez-acp",
-    "evals": "npm test --prefix packages/fez-evals"
+    "evals": "npm test --prefix packages/fez-evals",
+    "build:core": "tsc && chmod +x dist/cli.js"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",
