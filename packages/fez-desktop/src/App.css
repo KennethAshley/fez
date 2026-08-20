@@ -149,7 +149,7 @@ body {
 .time { font-size: 11px; color: var(--fg-dim); }
 .bubble-body {
   background: var(--bg1); border-radius: 8px; padding: 8px 12px;
-  white-space: pre-wrap; word-break: break-word;
+  white-space: pre-wrap; overflow-wrap: break-word;
 }
 .bubble.mine .bubble-body { background: var(--bg-mine); }
 .tombstone { color: var(--fg-dim); font-style: italic; padding: 4px 0; }
@@ -258,8 +258,8 @@ body {
 .turn-marker.cancelled { color: var(--yellow); }
 .turn-marker.done { color: var(--green); }
 .tool-line { color: var(--yellow); margin: 3px 0; }
-.thought { color: var(--fg-dim); font-style: italic; margin: 4px 0; white-space: pre-wrap; word-break: break-word; }
-.reply-preview { color: var(--fg); margin: 4px 0; white-space: pre-wrap; word-break: break-word; border-left: 2px solid var(--accent); padding-left: 8px; }
+.thought { color: var(--fg-dim); font-style: italic; margin: 4px 0; white-space: pre-wrap; overflow-wrap: break-word; }
+.reply-preview { color: var(--fg); margin: 4px 0; white-space: pre-wrap; overflow-wrap: break-word; border-left: 2px solid var(--accent); padding-left: 8px; }
 .cost-row { border-bottom: 1px solid var(--bg2); padding: 10px 0; }
 .cost-agent { font-weight: 700; color: var(--yellow); margin-bottom: 2px; }
 .cost-detail { color: var(--fg-dim); font-size: 12px; }
@@ -370,7 +370,7 @@ body {
 }
 .shimmer {
   background: linear-gradient(90deg, var(--fg-dim) 40%, var(--fg) 50%, var(--fg-dim) 60%);
-  background-size: 200% 100%; background-clip: text; background-clip: text;
+  background-size: 200% 100%; background-clip: text;
   -webkit-text-fill-color: transparent; animation: shimmer 2s linear infinite;
 }
 
@@ -446,7 +446,7 @@ body {
 .agent-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
 .engram { margin-bottom: 14px; }
 .engram-slug { font-weight: 600; color: var(--yellow); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-.engram-body { white-space: pre-wrap; word-break: break-word; font-size: 13px; margin-top: 4px; }
+.engram-body { white-space: pre-wrap; overflow-wrap: break-word; font-size: 13px; margin-top: 4px; }
 
 /* ── manage pane ───────────────────────────────────────────── */
 /* 18px in a 5px-padded box was small twice over: these glyphs (🔍 ☰ ⚙)
@@ -1003,7 +1003,7 @@ button.author:hover { text-decoration: underline; }
 .draft-content {
   background: var(--bg0); border: 1px solid var(--hairline); border-radius: 6px;
   padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
-  white-space: pre-wrap; word-break: break-word; margin-bottom: 10px; max-height: 45vh; overflow-y: auto;
+  white-space: pre-wrap; overflow-wrap: break-word; margin-bottom: 10px; max-height: 45vh; overflow-y: auto;
 }
 
 /* ── skills catalog + marketplace ──────────────────────────── */
@@ -1598,7 +1598,7 @@ button.author:hover { text-decoration: underline; }
 }
 .comment-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
 .comment-author { font-weight: 600; color: var(--accent); font-family: var(--font-mono); font-size: 12px; }
-.comment-text { white-space: pre-wrap; word-break: break-word; }
+.comment-text { white-space: pre-wrap; overflow-wrap: break-word; }
 .comment-reply { margin-top: 6px; padding-left: 8px; border-left: 1px solid var(--bg2); }
 .comment-actions { display: flex; gap: 6px; margin-top: 6px; }
 .comment-compose { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }

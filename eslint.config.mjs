@@ -58,6 +58,12 @@ export default tseslint.config(
       // stays visible without blocking.
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-non-null-assertion": "off",
+      // `let verdict = false; try { verdict = … } catch {}` — the rule is
+      // right that the initial value is never read, and wrong that this
+      // is a defect: the initialiser is what makes the variable defined
+      // when the try throws. Editing correct code to satisfy a rule is
+      // how a lint config starts costing more than it catches.
+      "no-useless-assignment": "off",
     },
   },
   {

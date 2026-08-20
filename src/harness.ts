@@ -274,6 +274,7 @@ interface AcpDescriptor {
  * session is recycled on the next hard failure anyway.
  */
 export async function drainAbandonedTurn(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ACP session updates are whatever the adapter sent; narrowing happens below.
   session: { nextUpdate(): Promise<any> },
   budgetMs = DRAIN_BUDGET_MS
 ): Promise<void> {
@@ -299,6 +300,7 @@ export async function drainAbandonedTurn(
 const DRAIN_BUDGET_MS = 30_000;
 
 async function drivePrompt(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ACP session updates are whatever the adapter sent; narrowing happens below.
   session: { prompt(text: string): Promise<unknown>; nextUpdate(): Promise<any> },
   command: string,
   instruction: string,

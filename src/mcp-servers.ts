@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import type { McpServer } from "@agentclientprotocol/sdk";
 
 /**
@@ -103,8 +104,6 @@ function resolveHeaders(
 function keychainSecret(skill: string, key: string): string | undefined {
   if (process.platform !== "darwin") return undefined;
   try {
-     
-    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
     const value = execFileSync(
       "security",
       ["find-generic-password", "-s", "fez-skill-env", "-a", `${skill}.${key}`, "-w"],

@@ -90,7 +90,6 @@ class LinePrefix implements Component {
 import { CapabilityClient } from "./client.js";
 import { FezClient } from "../packages/fez-client/dist/index.js";
 import { installNodeStatePersistence } from "../packages/fez-client/dist/state-node.js";
-import { Agent } from "./agent.js";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
@@ -808,7 +807,7 @@ export class FezTUI {
         break;
 
       case "agents":
-      case "list":
+      case "list": {
         const installed = await this.getInstalledAgents();
         this.addMessage({
           id: `cmd-agents`,
@@ -819,6 +818,7 @@ export class FezTUI {
           timestamp: new Date(),
         });
         break;
+      }
 
       case "key":
         this.addMessage({

@@ -17,7 +17,7 @@ const troll = generateSecretKey();
 const trollPk = getPublicKey(troll);
 const mallory = generateSecretKey();
 const now = () => Math.floor(Date.now() / 1000);
-const COMM = "mod-comm";
+const _COMM = "mod-comm";
 const CH = "mod-chan";
 
 const signAs = (key: Uint8Array, kind: number, content: string, tags: string[][] = [], created_at = now()) =>

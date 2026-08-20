@@ -260,6 +260,10 @@ export default function PulseView({
     }
     rows.sort((a, b) => b.ts - a.ts);
     return rows.slice(0, 300);
+    // inScope is rebuilt every render and reads only channelFilter,
+    // which IS a dep — listing it would rerun this every render for no
+    // new information.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, client, now, rangeMs, channelFilter]);
 
   // live feed: merge every agent's observer entries into one ticker.

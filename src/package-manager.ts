@@ -237,7 +237,7 @@ export class PackageManager {
 
   private async installNpm(source: string, version?: string): Promise<void> {
     const pkgName = source.replace("npm:", "");
-    const target = version ? `${pkgName}@${version}` : pkgName;
+    const _target = version ? `${pkgName}@${version}` : pkgName;
     const installPath = path.join(NPM_DIR, pkgName.replace("@fez/", ""));
 
     await fs.mkdir(installPath, { recursive: true });

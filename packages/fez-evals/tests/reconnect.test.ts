@@ -82,7 +82,8 @@ class MiniRelay {
   stop(): Promise<void> {
     return new Promise((resolve) => {
       this.dropClients();
-      this.wss ? this.wss.close(() => resolve()) : resolve();
+      if (this.wss) this.wss.close(() => resolve());
+      else resolve();
     });
   }
 }

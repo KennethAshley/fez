@@ -171,6 +171,10 @@ export async function pairReceive(
   await relay.connect();
   // Session opens against "whoever hellos us" — pinned to the first
   // counterparty and never re-pinned (the SAS covers exactly that pair).
+  // Assigned once, but not where it is declared: the subscription
+  // closure below reads it to ignore a second hello, so the declaration
+  // has to precede the closure and const cannot compile here.
+  // eslint-disable-next-line prefer-const
   let session: Session | undefined;
   const hello = await new Promise<{ from: string }>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("pairing timed out — no device sent a hello")), timeoutMs);

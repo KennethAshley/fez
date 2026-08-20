@@ -21,7 +21,7 @@ const member = generateSecretKey();
 const stranger = generateSecretKey();
 const memberPk = getPublicKey(member);
 const now = () => Math.floor(Date.now() / 1000);
-const COMM = "rg-comm";
+const _COMM = "rg-comm";
 const CH = "rg-chan";
 
 const signAs = (key: Uint8Array, kind: number, content: string, tags: string[][] = [], created_at = now()) =>

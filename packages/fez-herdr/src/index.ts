@@ -86,7 +86,7 @@ function saveRegistry(tabs: RegisteredTab[]): void {
 
 const OSC8 = (url: string, label: string) => `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
 const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
-const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
+const _bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
 
 export default function herdr(api: FezExtensionAPI): void {
   let registered = loadRegistry();
@@ -454,7 +454,7 @@ export default function herdr(api: FezExtensionAPI): void {
         // fleet, regardless of how it was started.
         if (registered.some((t) => t.persona === name)) attestAgent(event.pubkey);
         if (!pendingInvites.has(name)) return;
-        const target = pendingInvites.get(name)!;
+        const _target = pendingInvites.get(name)!;
         pendingInvites.delete(name);
         spawning.delete(name);
         inviteToWorkspace(event.pubkey)
