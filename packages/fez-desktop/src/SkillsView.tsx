@@ -476,9 +476,9 @@ export default function SkillsView({
                       {localPath && (
                         <span
                           className="role-tag local-tag"
-                          title="Its command names a path on this machine, so it exists nowhere else. Publish it to npm and the command becomes portable."
+                          title="Its command names a path on this machine, so it exists nowhere else — nobody else could install it. Publish the package and the command becomes portable."
                         >
-                          this machine only
+                          local
                         </span>
                       )}
                     </span>
@@ -489,9 +489,10 @@ export default function SkillsView({
                     {/* Every part it has, not only the one with a
                         command — a row showing just the mcp line looked
                         like a bare MCP server when it is three parts. */}
-                    {parts.filter((part) => part !== "skill" && PART_WHERE[part]).map((part) => (
-                      <code key={part} className="skill-cmd">{PART_WHERE[part].what}</code>
-                    ))}
+                    {!only &&
+                      parts.filter((part) => part !== "skill" && PART_WHERE[part]).map((part) => (
+                        <code key={part} className="skill-cmd">{PART_WHERE[part].what}</code>
+                      ))}
                     {config?.env && Object.keys(config.env).length > 0 && (
                       <span className="skill-env skill-deps">
                         env:{" "}

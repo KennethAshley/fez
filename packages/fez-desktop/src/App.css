@@ -2231,3 +2231,16 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   font-family: var(--font-mono); font-size: 26px; font-weight: 700; letter-spacing: 3px;
   color: var(--accent); padding: 8px 0;
 }
+
+/* ── the extensions/skills sections inside settings ─────────
+   These were built as a full-width page and now live in a ~700px
+   modal column, where the page's spacing reads as enormous: a row
+   carrying one line of text was ~110px tall. Tighter here only —
+   the standalone page is unchanged. */
+.settings-content .skill-row { padding: 7px 10px; margin-bottom: 5px; gap: 8px; }
+.settings-content .skill-name { flex-wrap: wrap; gap: 6px; }
+.settings-content .pulse-section { padding: 10px 12px; }
+.settings-content .ext-legend { padding: 9px 12px; margin-bottom: 10px; }
+.settings-content .ext-parts-row dt { flex: 0 0 66px; }
+/* A tag must never be wide enough to break the name beside it. */
+.settings-content .role-tag { white-space: nowrap; }
