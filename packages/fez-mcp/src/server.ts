@@ -534,6 +534,18 @@ server.registerTool(
     const root = candidates.find((e) => e.id.startsWith(commentId) || e.id === commentId);
     if (!root) return text(`No comment "${commentId}" found — list them with fez_doc_comments first.`);
     const slug = root.tags.find((t) => t[0] === "d")?.[1];
+    // p tags, which this reply carried none of.
+    //
+    // Agents subscribe to doc comments by {"#p": [self]} — a tag is the
+    // only way an event reaches them. So a reply naming "@researcher"
+    // read as a request to a human and reached nobody: the name is text,
+    // and nothing downstream reads text. Tag whoever is replied to, and
+    // whoever the reply names.
+    const mentionedPks: string[] = [];
+    for (const raw of new Set((reply.match(/@([\w-]+)/g) ?? []).map((m) => m.slice(1)))) {
+      const pk = await resolvePubkey(raw).catch(() => undefined);
+      if (pk && pk !== root.pubkey) mentionedPks.push(pk);
+    }
     await relay.publish(
       sign({
         kind: 40101,
@@ -542,6 +554,8 @@ server.registerTool(
           ["h", root.tags.find((t) => t[0] === "h")?.[1] ?? ref.channelId],
           ...(slug ? [["d", slug]] : []),
           ["e", root.id],
+          ["p", root.pubkey],
+          ...mentionedPks.map((pk) => ["p", pk]),
           ...(resolve ? [["resolved", "1"]] : []),
         ],
         content: reply,
