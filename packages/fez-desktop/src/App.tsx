@@ -538,13 +538,6 @@ function Shell({
           ▤ inbox
           {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
         </button>
-        <button
-          className={pane?.kind === "agents" ? "channel active home-link" : "channel home-link"}
-          onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}
-        >
-          ⚉ agents
-          {benchPending > 0 && <span className="badge">{benchPending}</span>}
-        </button>
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
           ▤ docs
         </button>
@@ -647,6 +640,16 @@ function Shell({
             )}
           </div>
         )}
+        {/* The fleet lives at the foot of the rail with the live
+            strip and your own card — "who is working" is ambient,
+            not a destination alongside inbox and docs. */}
+        <button
+          className={pane?.kind === "agents" ? "channel active home-link" : "channel home-link"}
+          onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}
+        >
+          ⚉ agents
+          {benchPending > 0 && <span className="badge">{benchPending}</span>}
+        </button>
         <div className="self-wrap">
           {selfMenu && (
             <>

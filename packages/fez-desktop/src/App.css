@@ -460,6 +460,10 @@ body {
    list — and with the active row now carrying its own ground, the gaps
    were doing separation work the colour already does. */
 .home-link { margin-bottom: 4px; font-weight: 600; }
+/* The agents row lives in the rail's foot now, outside the scrolling
+   nav — it needs a little air above it rather than the 4px it uses
+   between siblings in the list. */
+.rail > .home-link { margin-top: 6px; }
 .home-section {
   font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim);
   margin: 18px 0 8px;
