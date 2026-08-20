@@ -1129,7 +1129,10 @@ button.author:hover { text-decoration: underline; }
   margin-left: auto; background: var(--accent); border: 0; color: var(--bg0);
   font: inherit; font-size: 16px; font-weight: 700; width: 34px; height: 32px; border-radius: 16px; cursor: pointer;
 }
-.composer-send:disabled { background: var(--bg2); color: var(--fg-dim); cursor: default; }
+/* Stays the primary colour when there is nothing to send — dimmed, not
+   greyed. Swapping to --bg2 made it disappear into the composer, so the
+   send button only existed once you were already typing. */
+.composer-send:disabled { background: var(--accent); color: var(--bg0); opacity: 0.4; cursor: default; }
 
 .agent-edit { margin-left: 4px; color: var(--fg-dim); padding: 3px 7px; border-radius: 6px; font-size: 14px; }
 .agent-edit:hover { color: var(--accent); background: var(--bg2); }
