@@ -378,6 +378,39 @@ async function main() {
     return name;
   }
 
+  /**
+   * name → pubkey, over the workspace roster.
+   *
+   * The inverse of resolveName, and needed because an agent writes
+   * mentions as NAMES: "@reviewer please review". Nothing downstream can
+   * act on that — p tags are what the inbox, notifications and unread
+   * counts read — so a mention an agent sent reached the other agent
+   * (herdr scans text) while reaching the person it named not at all.
+   *
+   * Roster-scoped on purpose: a name only resolves to someone this
+   * workspace actually has, so an agent cannot tag an arbitrary key by
+   * writing a name at it.
+   */
+  async function pubkeyForName(name: string): Promise<string | undefined> {
+    const wanted = name.toLowerCase();
+    for (const pubkey of roster.members) {
+      const known = await resolveName(pubkey);
+      if (known && known.toLowerCase() === wanted) return pubkey;
+    }
+    return undefined;
+  }
+
+  /** Every name a message @-mentions, resolved and deduped. Self excluded. */
+  async function mentionTags(text: string): Promise<string[][]> {
+    const names = new Set((text.match(/@([\w-]+)/g) ?? []).map((m) => m.slice(1).toLowerCase()));
+    const tags: string[][] = [];
+    for (const name of names) {
+      const pubkey = await pubkeyForName(name);
+      if (pubkey && pubkey !== myPubkey) tags.push(["p", pubkey]);
+    }
+    return tags;
+  }
+
   /** The label to show an agent. Hex only when there is genuinely no name. */
   function who(pubkey: string): string {
     return nameCache.get(pubkey) ?? pubkey.slice(0, 8);
@@ -1249,9 +1282,14 @@ async function main() {
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
         const reply = capReply(rawText);
 
+        // Whoever the reply names is tagged, on top of whoever triggered
+        // it — otherwise an agent handing work to you notifies nobody.
+        const mentioned = (await mentionTags(reply).catch(() => [])).filter(
+          (tag) => !replyTags.some((existing) => existing[0] === "p" && existing[1] === tag[1])
+        );
         const replyEvent = client.signEvent({
           kind: replyKind,
-          tags: replyTags,
+          tags: [...replyTags, ...mentioned],
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
         await relay.publish(replyEvent);

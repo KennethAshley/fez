@@ -257,6 +257,47 @@ interface AcpDescriptor {
  * persistent sessions — the loop is identical, only the session's
  * lifetime differs.
  */
+/**
+ * Consume what a dead turn is still producing.
+ *
+ * drivePrompt leaves its loop only on "stop". Every other exit — steer,
+ * idle timeout, hard deadline — throws, and the prompt fired at the top
+ * of it keeps running: the model finishes its answer and those updates
+ * queue up. The next turn's loop then reads them first and accumulates
+ * them into ITS text, so a reply arrives with the previous answer fused
+ * onto the front, no separator. Drain to the dead turn's "stop" before
+ * starting a new one.
+ *
+ * Bounded, because the abandoned turn may never stop (the harness itself
+ * may be wedged, which is why we timed out). Giving up leaves the queue
+ * dirty — but a bounded drain is strictly better than none, and the
+ * session is recycled on the next hard failure anyway.
+ */
+export async function drainAbandonedTurn(
+  session: { nextUpdate(): Promise<any> },
+  budgetMs = DRAIN_BUDGET_MS
+): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline) {
+    let handle: ReturnType<typeof setTimeout>;
+    const expiry = new Promise<"expired">((resolve) => {
+      handle = setTimeout(() => resolve("expired"), deadline - Date.now());
+    });
+    try {
+      const message = await Promise.race([session.nextUpdate(), expiry]);
+      if (message === "expired") return;
+      if (message.kind === "stop") return;
+    } catch {
+      return; // stream is done or broken; nothing left to inherit
+    } finally {
+      clearTimeout(handle!);
+    }
+  }
+}
+
+/** How long to wait for an abandoned turn to finish before giving up. */
+const DRAIN_BUDGET_MS = 30_000;
+
 async function drivePrompt(
   session: { prompt(text: string): Promise<unknown>; nextUpdate(): Promise<any> },
   command: string,
@@ -513,6 +554,9 @@ function openAcpSession(
         for (const server of mcpServers ?? []) builder = builder.withMcpServer(server);
         const session = await builder.start();
         let pendingSystemPrompt = systemPrompt;
+        // Set when a turn exits without its "stop" — the next prompt must
+        // drain that turn's tail before it reads anything of its own.
+        let dirty = false;
 
         const handle: HarnessSession = {
           get alive() {
@@ -528,7 +572,17 @@ function openAcpSession(
                 ? `${pendingSystemPrompt}\n\n---\n\n${instruction}`
                 : instruction;
               pendingSystemPrompt = undefined;
-              return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts);
+              if (dirty) {
+                dirty = false;
+                await drainAbandonedTurn(session);
+              }
+              try {
+                return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts);
+              } catch (err) {
+                // Steer, timeout, deadline: the prompt is still running.
+                dirty = true;
+                throw err;
+              }
             } catch (err) {
               // A failed prompt may leave the session mid-stream — the
               // caller decides whether to recycle; surface stderr context.
