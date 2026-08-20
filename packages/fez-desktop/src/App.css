@@ -2283,3 +2283,19 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .mention-link { font: inherit; color: var(--accent); font-weight: 600;
   background: none; border: 0; padding: 0; cursor: pointer; }
 .mention-link:hover { text-decoration: underline; }
+
+/* ── inputs fill their column ────────────────────────────────
+   An input narrower than the space it sits in reads as unfinished, and
+   in the rail it left a ragged right edge against the channel rows it
+   sits between. border-box so the padding and border count inside the
+   100% — without it every one of these overflows by 22px. */
+.sidebar .manage-input,
+.wiki-list .manage-input,
+.sidebar input[type="text"],
+.sidebar input:not([type]) {
+  width: 100%;
+  box-sizing: border-box;
+}
+/* Was width: calc(100% - 12px) to fake the rail's inset; the margin
+   already does that, and the two together double-counted it. */
+.wiki-new { margin: 2px 6px 6px; width: auto; }
