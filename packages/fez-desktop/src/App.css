@@ -226,9 +226,17 @@ body {
 .member-row .status { margin-left: auto; font-size: 11px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
 .dm-note { margin-left: auto; font-size: 11px; color: var(--fg-dim); font-weight: 400; }
 
+/* EVERYTHING about a pane's box lives here — four components share this
+   class, so a second .pane block elsewhere is four surfaces changing at
+   once by accident. Add pane properties HERE. */
 .pane {
-  border-left: 1px solid var(--bg2);
-  background: var(--bg1); display: flex; flex-direction: column;
+  width: var(--pane-w, 340px);
+  min-width: var(--pane-w, 340px);
+  border-left: 1px solid var(--hairline, var(--bg2));
+  background: var(--bg1);
+  display: flex;
+  flex-direction: column;
+  animation: pane-in 160ms cubic-bezier(0.2, 0, 0.2, 1);
 }
 .pane-head {
   padding: 12px 14px; border-bottom: 1px solid var(--bg2); font-weight: 600;
@@ -1200,7 +1208,6 @@ button.author:hover { text-decoration: underline; }
 }
 
 /* resizable sidebars */
-.pane { width: var(--pane-w, 340px); min-width: var(--pane-w, 340px); }
 /* 5px between two surfaces is a target you have to aim at, and missing
    it reads as "this doesn't resize" rather than "you missed". The strip
    is 11px of grab zone now, painting only its middle 3px on hover so
@@ -2184,7 +2191,6 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 }
 
 /* The right drawer slides in from its own edge — the direction it lives. */
-.pane { animation: pane-in 160ms cubic-bezier(0.2, 0, 0.2, 1); }
 
 /* Popovers rise a few pixels from whatever opened them. */
 .mention-pop, .self-menu, .msg-menu, .hovercard, .format-tray, .emoji-grid, .slash-menu {

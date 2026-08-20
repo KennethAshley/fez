@@ -38,7 +38,8 @@
     "workflows:build": "npm run build --prefix packages/fez-workflows",
     "acp:build": "npm run build --prefix packages/fez-acp",
     "evals": "npm test --prefix packages/fez-evals",
-    "build:core": "tsc && chmod +x dist/cli.js"
+    "build:core": "tsc && chmod +x dist/cli.js",
+    "check:css": "node scripts/check-css.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",
