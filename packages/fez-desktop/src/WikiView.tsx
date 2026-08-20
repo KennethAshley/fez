@@ -931,7 +931,11 @@ export default function WikiView({ client }: { client: FezClient }) {
                           <div className="doc-line-body">{md(block)}</div>
                           <button
                             className={open.length ? "line-comment has" : "line-comment"}
-                            title={open.length ? `${open.length} comment${open.length === 1 ? "" : "s"}` : "comment on this line — @mention an agent to give it work here"}
+                            title={
+                              open.length
+                                ? `${open.length} comment${open.length === 1 ? "" : "s"} — click to ${commenting === block ? "hide" : "show"}`
+                                : "comment on this line — @mention an agent to give it work here"
+                            }
                             onClick={() => {
                               setCommenting(commenting === block ? undefined : block);
                               setCommentDraft("");
@@ -939,7 +943,15 @@ export default function WikiView({ client }: { client: FezClient }) {
                           >
                             ✎{open.length > 0 && <span className="line-comment-count">{open.length}</span>}
                           </button>
-                          {(commenting === block || anchored.length > 0) && (
+                          {/* One toggle for the whole panel. This used to
+                              also render whenever the line HAD a thread
+                              (`|| anchored.length > 0`), which meant an
+                              answered comment sat open over the document
+                              forever with nothing to close it — the ✎
+                              toggled only the compose box underneath.
+                              The badge is the affordance: ✎1 says a
+                              thread is there, clicking shows it. */}
+                          {commenting === block && (
                             <div className="line-threads">
                               {anchored.map((thread) => (
                                 <CommentThread
