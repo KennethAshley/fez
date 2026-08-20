@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 /**
@@ -27,6 +27,8 @@ interface NpmHit {
   publisher?: string;
   date?: string;
   npmUrl: string;
+  /** Weekly installs — undefined until the second fetch lands, null if it failed. */
+  downloads?: number | null;
 }
 
 /** npm's public search — the same index the website queries. */
@@ -50,6 +52,44 @@ async function searchNpm(query: string, signal: AbortSignal): Promise<NpmHit[]> 
     }));
 }
 
+/**
+ * Weekly installs, one request per package.
+ *
+ * GitHub stars would be the intuitive thing to sort on, but npm's search
+ * index doesn't carry them — they'd need a GitHub API call per result,
+ * against a rate limit, and only for packages that even name a repo.
+ * Downloads are the better signal anyway for the decision being made
+ * here: stars measure how many people liked a page, installs measure how
+ * many people actually run the thing. The gap is decisive in practice —
+ * @brave/brave-search-mcp-server pulls ~14k/week against ~1k for its
+ * nearest namesake.
+ *
+ * The bulk endpoint refuses scoped packages, and half of these are
+ * scoped, so it's one call each. Failures resolve to null and the row
+ * simply says nothing rather than implying zero.
+ */
+async function fetchDownloads(names: string[], signal: AbortSignal): Promise<Map<string, number | null>> {
+  const entries = await Promise.all(
+    names.map(async (name): Promise<[string, number | null]> => {
+      try {
+        const res = await fetch(`https://api.npmjs.org/downloads/point/last-week/${name}`, { signal });
+        if (!res.ok) return [name, null];
+        const body = (await res.json()) as { downloads?: number };
+        return [name, typeof body.downloads === "number" ? body.downloads : null];
+      } catch {
+        return [name, null];
+      }
+    })
+  );
+  return new Map(entries);
+}
+
+function compactCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
+
 export default function FindSource({
   skill,
   agent,
@@ -68,13 +108,23 @@ export default function FindSource({
   const [hits, setHits] = useState<NpmHit[]>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [sort, setSort] = useState<"downloads" | "relevance">("downloads");
 
   const run = useCallback((text: string, signal: AbortSignal) => {
     if (!text.trim()) return;
     setBusy(true);
     setError(undefined);
     searchNpm(text, signal)
-      .then((results) => { setHits(results); setBusy(false); })
+      .then((results) => {
+        // Render on the search alone, then fill installs in — a second
+        // round trip per result shouldn't hold the list hostage.
+        setHits(results);
+        setBusy(false);
+        return fetchDownloads(results.map((hit) => hit.name), signal).then((counts) => {
+          if (signal.aborted) return;
+          setHits(results.map((hit) => ({ ...hit, downloads: counts.get(hit.name) ?? null })));
+        });
+      })
       .catch((err) => {
         if (signal.aborted) return;
         setError(String(err));
@@ -95,6 +145,17 @@ export default function FindSource({
     const controller = new AbortController();
     run(query, controller.signal);
   };
+
+  /**
+   * Sorting is stable and never drops a row: a package whose install
+   * count failed to load sinks rather than vanishing, because "npm's
+   * downloads endpoint hiccuped" must not look like "this package
+   * doesn't exist".
+   */
+  const ranked = useMemo(() => {
+    if (sort === "relevance") return hits ?? [];
+    return [...(hits ?? [])].sort((a, b) => (b.downloads ?? -1) - (a.downloads ?? -1));
+  }, [hits, sort]);
 
   return (
     <div className="overlay" onMouseDown={onCancel}>
@@ -121,6 +182,19 @@ export default function FindSource({
           />
           <button className="mini" onClick={search} disabled={busy}>search</button>
         </div>
+        <div className="find-sort">
+          <span>sort</span>
+          {(["downloads", "relevance"] as const).map((key) => (
+            <button
+              key={key}
+              className={sort === key ? "ext-filter active" : "ext-filter"}
+              onClick={() => setSort(key)}
+              title={key === "downloads" ? "weekly installs from npm — how many people actually run it" : "npm's own search ranking"}
+            >
+              {key === "downloads" ? "installs" : key}
+            </button>
+          ))}
+        </div>
 
         {busy && <div className="pane-empty">searching npm…</div>}
         {error && <div className="ob-error">{error}</div>}
@@ -131,17 +205,24 @@ export default function FindSource({
         )}
 
         <div className="find-results">
-          {(hits ?? []).map((hit) => (
+          {ranked.map((hit) => (
             <div key={hit.name} className="find-hit">
               <div className="skill-main">
                 <span className="skill-name">
                   {hit.name}
                   {hit.version && <span className="role-tag">{hit.version}</span>}
+                  {typeof hit.downloads === "number" && (
+                    <span className="find-installs" title={`${hit.downloads.toLocaleString()} installs in the last week`}>
+                      ⇩ {compactCount(hit.downloads)}/wk
+                    </span>
+                  )}
                 </span>
                 {hit.description && <span className="skill-desc">{hit.description}</span>}
                 <span className="skill-author">
-                  {/* The only field here that separates the official
-                      package from a fork of it. */}
+                  {/* Publisher and install count together are what
+                      separate an official package from a fork of it —
+                      the fork usually copies the description verbatim,
+                      so the description tells you nothing. */}
                   published by <strong>{hit.publisher ?? "unknown"}</strong>
                   <button className="skill-link" onClick={() => void openUrl(hit.npmUrl)}>read it on npm</button>
                 </span>

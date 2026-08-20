@@ -33,6 +33,22 @@ interface CostSummary {
   ms: number;
 }
 
+const DAY_MS = 24 * 3600_000;
+const FLEET_DAYS = 14;
+
+const dayKey = (ts: number) => {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+interface TurnRec {
+  agent: string;
+  status?: string;
+  durationMs?: number;
+  usage?: { costUsd?: number };
+  ts: number;
+}
+
 /**
  * The fleet at a glance — what the pane shows when no single agent is
  * selected.
@@ -43,6 +59,16 @@ interface CostSummary {
  * never "done"), while turns and failures are retrospective. Failures
  * lead, because a stuck agent is the thing nothing else surfaces —
  * today it is one message in a channel you may not be looking at.
+ *
+ * Three numbers in a row was not enough to replace pulse, which is what
+ * this pane took over. Shape beats value for the question actually
+ * being asked here: "is anything off?" is answered by a column that is
+ * suddenly red or an agent whose sparkline flatlined, and neither shows
+ * up in a total. So the same charts pulse used come along — a 14-day
+ * stacked column for the fleet, and a per-agent sparkline underneath —
+ * sized for a 340px drawer rather than a full page. Pulse keeps the
+ * things that genuinely need width: the 12-week heatmaps and the
+ * message graph, one click away.
  */
 function FleetSummary({
   client,
@@ -55,32 +81,76 @@ function FleetSummary({
   working: ReadonlyMap<string, { activity: string; ts: number }>;
   onHistory: () => void;
 }) {
-  const [tally, setTally] = useState<{ turns: number; failed: number; ms: number; since: number }>();
+  const [turns, setTurns] = useState<TurnRec[]>();
+  const [hover, setHover] = useState<number>();
 
   useEffect(() => {
     void (async () => {
       try {
-        const events = await wire.query([{ kinds: [KIND_TURN_METRIC], "#p": [client.pubkey], limit: 500 }]);
-        const cutoff = Math.floor(Date.now() / 1000) - 7 * 86400;
-        const sum = { turns: 0, failed: 0, ms: 0, since: cutoff };
+        const since = Math.floor((Date.now() - FLEET_DAYS * DAY_MS) / 1000);
+        const events = await wire.query([
+          { kinds: [KIND_TURN_METRIC], "#p": [client.pubkey], since, limit: 2000 },
+        ]);
+        const records: TurnRec[] = [];
         for (const event of events) {
-          if (event.created_at < cutoff) continue;
           try {
-            const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as {
-              status?: string;
-              durationMs?: number;
-            };
-            sum.turns++;
-            if (metric.status === "failed") sum.failed++;
-            sum.ms += metric.durationMs ?? 0;
+            const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as TurnRec;
+            if (metric.agent && metric.ts) records.push(metric);
           } catch { /* not ours to read */ }
         }
-        setTally(sum);
+        setTurns(records);
       } catch { /* relay unreachable — the live half still works */ }
     })();
   }, [client, wire]);
 
-  const live = [...working.entries()].filter(([, w]) => Date.now() - w.ts < 30_000);
+  const now = Date.now();
+
+  /** One bucket per day, oldest first — the x axis for both charts. */
+  const days = useMemo(() => {
+    const out: { key: string; label: string; ok: number; failed: number; ms: number; cost: number }[] = [];
+    for (let i = FLEET_DAYS - 1; i >= 0; i--) {
+      const d = new Date(now - i * DAY_MS);
+      out.push({ key: dayKey(d.getTime()), label: `${d.getMonth() + 1}/${d.getDate()}`, ok: 0, failed: 0, ms: 0, cost: 0 });
+    }
+    const index = new Map(out.map((d, i) => [d.key, i]));
+    for (const t of turns ?? []) {
+      const i = index.get(dayKey(t.ts));
+      if (i === undefined) continue;
+      if (t.status === "failed") out[i].failed++;
+      else out[i].ok++;
+      out[i].ms += t.durationMs ?? 0;
+      out[i].cost += t.usage?.costUsd ?? 0;
+    }
+    return out;
+  }, [turns, now]);
+
+  const totals = useMemo(
+    () => days.reduce(
+      (acc, d) => ({ turns: acc.turns + d.ok + d.failed, failed: acc.failed + d.failed, ms: acc.ms + d.ms, cost: acc.cost + d.cost }),
+      { turns: 0, failed: 0, ms: 0, cost: 0 }
+    ),
+    [days]
+  );
+
+  /** Per agent: the same 14 buckets, so every sparkline shares one x axis. */
+  const byAgent = useMemo(() => {
+    const index = new Map(days.map((d, i) => [d.key, i]));
+    const map = new Map<string, { spark: number[]; turns: number; failed: number }>();
+    for (const t of turns ?? []) {
+      const i = index.get(dayKey(t.ts));
+      if (i === undefined) continue;
+      let row = map.get(t.agent);
+      if (!row) map.set(t.agent, (row = { spark: new Array(FLEET_DAYS).fill(0), turns: 0, failed: 0 }));
+      row.spark[i]++;
+      row.turns++;
+      if (t.status === "failed") row.failed++;
+    }
+    return [...map.entries()].sort((a, b) => b[1].failed - a[1].failed || b[1].turns - a[1].turns);
+  }, [turns, days]);
+
+  const maxDay = Math.max(1, ...days.map((d) => d.ok + d.failed));
+  const live = [...working.entries()].filter(([, w]) => now - w.ts < 30_000);
+  const hovered = hover !== undefined ? days[hover] : undefined;
 
   return (
     <div className="fleet">
@@ -97,15 +167,85 @@ function FleetSummary({
           ))
         )}
       </div>
-      {tally && tally.turns > 0 && (
-        <div className="fleet-stats">
-          <span><strong>{tally.turns}</strong> turns this week</span>
-          {tally.failed > 0 && (
-            <span className="fleet-failed"><strong>{tally.failed}</strong> failed</span>
+
+      {turns && totals.turns > 0 && (
+        <>
+          {/* ── the fleet's last 14 days ──────────────────────
+              Hovering reads out that day rather than showing a
+              tooltip per column: in a narrow drawer a floating
+              tooltip covers the chart it describes. */}
+          <div className="fleet-chart-head">
+            <span>{hovered ? `${hovered.label} · ${hovered.ok + hovered.failed} turns${hovered.failed ? ` · ${hovered.failed} failed` : ""}` : "turns · 14 days"}</span>
+            <span className="pulse-legend">
+              <span className="viz-swatch ok" /> ok <span className="viz-swatch fail" /> failed
+            </span>
+          </div>
+          <div className="pulse-chart fleet-chart" onMouseLeave={() => setHover(undefined)}>
+            {days.map((d, i) => (
+              <div
+                key={d.key}
+                className={`pulse-col${hover === i ? " hover" : ""}`}
+                onMouseEnter={() => setHover(i)}
+              >
+                <div className="pulse-col-bars">
+                  {d.failed > 0 && <div className="pulse-bar fail" style={{ height: `${(d.failed / maxDay) * 100}%` }} />}
+                  {d.ok > 0 && <div className="pulse-bar ok" style={{ height: `${(d.ok / maxDay) * 100}%` }} />}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Failures first and coloured — a total that hides a
+              stuck agent is the failure mode this pane exists for. */}
+          <div className="fleet-tiles">
+            <div className="fleet-tile">
+              <strong>{totals.turns}</strong><span>turns</span>
+            </div>
+            <div className={totals.failed > 0 ? "fleet-tile alert" : "fleet-tile"}>
+              <strong>{totals.failed}</strong><span>failed</span>
+            </div>
+            <div className="fleet-tile">
+              <strong>{Math.round(totals.ms / 60_000)}m</strong><span>working</span>
+            </div>
+            {totals.cost > 0 && (
+              <div className="fleet-tile">
+                <strong>${totals.cost.toFixed(2)}</strong><span>spend</span>
+              </div>
+            )}
+          </div>
+
+          {byAgent.length > 0 && (
+            <div className="fleet-agents">
+              {byAgent.map(([name, row]) => {
+                const max = Math.max(1, ...row.spark);
+                return (
+                  <div key={name} className="fleet-agent-row" title={`@${name} — ${row.turns} turns over 14 days${row.failed ? `, ${row.failed} failed` : ""}`}>
+                    <span className="fleet-agent-name">@{name}</span>
+                    <span className="pulse-spark fleet-spark">
+                      {row.spark.map((v, i) => (
+                        <span
+                          key={i}
+                          className="pulse-spark-bar"
+                          style={{ height: `${Math.max(v > 0 ? 18 : 4, (v / max) * 100)}%`, opacity: v > 0 ? 1 : 0.3 }}
+                        />
+                      ))}
+                    </span>
+                    <span className="fleet-agent-count">
+                      {row.turns}
+                      {row.failed > 0 && <em className="fleet-failed"> ⚠{row.failed}</em>}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           )}
-          <span>{Math.round(tally.ms / 60000)}m of work</span>
-        </div>
+        </>
       )}
+
+      {turns && totals.turns === 0 && (
+        <div className="fleet-stats">no turns in the last {FLEET_DAYS} days</div>
+      )}
+
       <button className="fleet-history" onClick={onHistory}>full history, trends and the graph →</button>
     </div>
   );

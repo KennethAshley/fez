@@ -953,13 +953,32 @@ export default function WikiView({ client }: { client: FezClient }) {
                                     onSubmit={() => void comment(commentDraft, block, undefined, undefined, commentBindings)}
                                     onEscape={() => setCommenting(undefined)}
                                   />
-                                  <button
-                                    className="agent-action"
-                                    disabled={!commentDraft.trim()}
-                                    onClick={() => void comment(commentDraft, block, undefined, undefined, commentBindings)}
-                                  >
-                                    comment
-                                  </button>
+                                  {/* The way out. There wasn't one: the
+                                      only exits were Escape (needs focus
+                                      in the textarea, and the mention
+                                      popup eats the first press) and
+                                      re-clicking the ✎, which is
+                                      opacity:0 unless you happen to be
+                                      hovering that exact line. A box you
+                                      can open and not close is a trap. */}
+                                  <div className="comment-compose-actions">
+                                    <button
+                                      className="agent-action"
+                                      disabled={!commentDraft.trim()}
+                                      onClick={() => void comment(commentDraft, block, undefined, undefined, commentBindings)}
+                                    >
+                                      comment
+                                    </button>
+                                    <button
+                                      className="mini"
+                                      onClick={() => {
+                                        setCommenting(undefined);
+                                        setCommentDraft("");
+                                      }}
+                                    >
+                                      cancel
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </div>

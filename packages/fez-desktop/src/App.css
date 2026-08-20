@@ -33,7 +33,9 @@ body {
   width: 240px; min-width: 240px;
   background: var(--bg1);
   border-right: 1px solid var(--bg2);
-  padding: 12px 8px;
+  /* No top padding: the header owns the top of the column now, and its
+     rule has to touch both edges to line up with the other columns'. */
+  padding: 0 8px;
   overflow-y: auto;
 }
 .community { margin-bottom: 14px; }
@@ -465,6 +467,8 @@ body {
 }
 .pane { border-left-color: var(--hairline); }
 .pane-head { font-family: var(--font-mono); font-size: 13px; border-bottom-color: var(--hairline); }
+/* The header band's rule follows the theme's hairline like the rest. */
+.workspace-title, .wiki-list-head { border-bottom-color: var(--hairline); }
 .community-name, .manage-section, .home-section { font-family: var(--font-mono); }
 .time, .search-meta, .agent-sub, .manage-sub, .dm-note, .settings-field label { font-family: var(--font-mono); }
 .role-tag, .badge, .pill { font-family: var(--font-mono); }
@@ -826,7 +830,9 @@ button.author:hover { text-decoration: underline; }
 
 /* ── self card (bottom-left, Discord's pattern) ────────────── */
 .rail { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
-.rail-scroll { flex: 1; overflow-y: auto; min-height: 0; margin: 0 -8px; padding: 0 8px; }
+/* The rail's top padding moved onto the header, so the nav restores its
+   own breathing room below the rule. */
+.rail-scroll { flex: 1; overflow-y: auto; min-height: 0; margin: 0 -8px; padding: 10px 8px 0; }
 .self-card {
   display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); margin: 0 -8px;
   padding: 10px 12px; background: var(--bg0); border: 0; border-top: 1px solid var(--hairline);
@@ -967,6 +973,8 @@ button.author:hover { text-decoration: underline; }
 }
 .find-hit .skill-name { font-size: 13px; }
 .find-hit .skill-desc { font-size: 12px; color: var(--fg-dim); }
+.find-sort { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg-dim); }
+.find-installs { font-family: var(--font-mono); font-size: 11px; color: var(--accent); font-weight: 400; }
 .skill-installs { font-family: var(--font-mono); font-size: 11px; color: var(--accent); font-weight: 400; }
 .installed-tag { color: var(--green); }
 .skill-install-cmd {
@@ -1149,10 +1157,18 @@ button.author:hover { text-decoration: underline; }
 /* ── workspace title — the header itself ─────────────────────── */
 /* It replaced the wordmark: which app you are in is not news, where you
    are is. The relay-health dot rides with it. */
+/* Every column's header closes with the same rule at the same height,
+   so the top of the window reads as one band rather than four panels
+   that happen to be adjacent. The drawer had this line and the rail
+   didn't, which is what made the left side look unfinished. 44px is
+   .pane-head's natural height (12px padding + a 13px mono line). */
 .workspace-title {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px 12px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
-  color: var(--fg); min-width: 0;
+  display: flex; align-items: center; gap: 8px; box-sizing: border-box;
+  min-height: 44px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
+  color: var(--fg); min-width: 0; border-bottom: 1px solid var(--bg2);
+  /* Cancel the column's 8px gutter so the rule reaches both edges, then
+     add it back inside so the title still lines up with the nav below. */
+  margin: 0 -8px; padding: 10px 20px;
 }
 .workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-unclaimed {
@@ -1200,6 +1216,43 @@ button.author:hover { text-decoration: underline; }
 }
 /* Failure leads, because nothing else surfaces a stuck agent. */
 .fleet-failed { color: var(--red); }
+
+/* ── fleet charts in the 340px drawer ───────────────────────
+   Same marks as pulse, scaled down: shorter columns, no day
+   labels (14 of them do not fit and the hover readout says it
+   better), and the readout replaces the section title so the
+   header costs no extra vertical space. */
+.fleet-chart-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin: 12px 0 6px; font-size: 10.5px; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 0.07em;
+}
+.fleet-chart-head .pulse-legend { flex: none; }
+.fleet-chart { height: 54px; gap: 3px; }
+.fleet-chart .pulse-col-bars { padding: 0 1px; }
+
+.fleet-tiles { display: flex; gap: 6px; margin-top: 9px; }
+.fleet-tile {
+  flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0;
+  background: var(--bg2); border-radius: 6px; padding: 5px 7px;
+}
+.fleet-tile strong { font-family: var(--font-mono); font-size: 13px; line-height: 1.1; }
+.fleet-tile span { font-size: 9.5px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+/* A zero here is good news and stays quiet; a non-zero is the
+   one thing on this pane that should catch the eye. */
+.fleet-tile.alert strong { color: var(--red); }
+
+.fleet-agents { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.fleet-agent-row { display: flex; align-items: flex-end; gap: 8px; }
+.fleet-agent-name {
+  flex: 0 0 88px; font-size: 11px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; line-height: 1.6;
+}
+.fleet-spark { flex: 1; height: 16px; margin-top: 0; gap: 1.5px; }
+.fleet-agent-count {
+  flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim); line-height: 1.6;
+}
+.fleet-agent-count em { font-style: normal; }
 .fleet-history {
   margin-top: 9px; background: none; border: 0; padding: 0; cursor: pointer;
   color: var(--accent); font: inherit; font-size: 11.5px; text-align: left;
@@ -1363,9 +1416,17 @@ button.author:hover { text-decoration: underline; }
 .wiki-main { display: flex; flex-direction: row; padding: 0; }
 .wiki-list {
   width: 230px; flex: none; border-right: 1px solid var(--hairline);
-  overflow-y: auto; padding: 10px 8px;
+  overflow-y: auto; padding: 0 8px 10px;
 }
-.wiki-list-head { font-family: var(--font-mono); color: var(--fg-dim); font-size: 12px; padding: 2px 8px 8px; }
+.wiki-list-head {
+  font-family: var(--font-mono); color: var(--fg-dim); font-size: 12px;
+  box-sizing: border-box; min-height: 44px; display: flex; align-items: center;
+  border-bottom: 1px solid var(--bg2);
+  /* Same edge-to-edge trick as .workspace-title, so all three rules
+     land on one line across the window. */
+  margin: 0 -8px 10px; padding: 12px 16px;
+  position: sticky; top: 0; background: var(--bg0); z-index: 1;
+}
 .wiki-group { margin-bottom: 12px; }
 .wiki-group-name {
   display: flex; align-items: center; gap: 4px; font-family: var(--font-mono);
@@ -1415,6 +1476,11 @@ button.author:hover { text-decoration: underline; }
 .comment-reply { margin-top: 6px; padding-left: 8px; border-left: 1px solid var(--bg2); }
 .comment-actions { display: flex; gap: 6px; margin-top: 6px; }
 .comment-compose { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+.comment-compose-actions { display: flex; align-items: center; gap: 6px; }
+/* Keep the toggle visible on the line you are commenting on — it is
+   opacity:0 until hover, so the control you used to open the box
+   disappeared the moment you moved the pointer into the box. */
+.doc-line.commenting .line-comment { opacity: 1; color: var(--accent); }
 /* The mention popup anchors to the box it belongs to, wherever that box is. */
 .mention-box { position: relative; display: flex; flex-direction: column; }
 .mention-box .mention-pop { left: 0; }
