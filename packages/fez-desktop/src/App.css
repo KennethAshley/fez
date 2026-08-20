@@ -425,9 +425,15 @@ body {
 .engram-body { white-space: pre-wrap; word-break: break-word; font-size: 13px; margin-top: 4px; }
 
 /* ── manage pane ───────────────────────────────────────────── */
+/* 18px in a 5px-padded box was small twice over: these glyphs (🔍 ☰ ⚙)
+   carry much less ink than a letter at the same size, and the target
+   was under 30px. 21px in a 32px square — the same target the format
+   bars use — so they land as buttons rather than marks. */
 .topbar-tool {
   margin-left: auto; background: none; border: 0; color: var(--fg-dim);
-  font: inherit; font-size: 18px; cursor: pointer; padding: 2px 5px; border-radius: 6px;
+  font: inherit; font-size: 21px; line-height: 1; cursor: pointer; border-radius: 7px;
+  width: 32px; height: 32px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .topbar-tool:hover { background: var(--bg2); color: var(--fg); }
 .topbar-tool:hover { color: var(--fg); }
@@ -1095,7 +1101,10 @@ button.author:hover { text-decoration: underline; }
 /* Buzz-parity: sidebar search, topbar members popover, composer actions */
 
 .topbar { position: relative; }
-.topbar-members { width: auto; padding: 0 8px; font-size: 12px; }
+/* Carries a count as well as a glyph, so it keeps its own width — but
+   it was two sizes below its neighbours and read as a different class
+   of control. Same height, same row. */
+.topbar-members { width: auto; padding: 0 9px; font-size: 15px; gap: 5px; }
 .members-pop {
   position: absolute; top: calc(100% + 4px); right: 14px; z-index: 40; min-width: 220px;
   max-height: 320px; overflow-y: auto;
@@ -1434,7 +1443,21 @@ button.author:hover { text-decoration: underline; }
 .tray-sep { width: 1px; align-self: stretch; margin: 2px 3px; background: var(--bg2); }
 
 /* the composer is ONE box (Slack): format bar / textarea / action row inside a single border */
-.composer-box { background: var(--bg0); border: 1px solid var(--hairline); border-radius: 10px; padding: 6px 10px; }
+/* The whole editor is one surface — format bar, typing area and
+   action row on a single ground, a step off the page behind it. It was
+   --bg0, which is exactly the page colour, so the box existed only as a
+   hairline and the thing read as three loose rows rather than an
+   editor. */
+.composer-box {
+  /* --bg1 was the obvious pick and measured 1.09:1 against the page in
+     light and 1.04:1 in dark — the two grounds are neighbours, so it
+     would have stayed invisible. Stepping toward --fg instead darkens
+     on paper and lightens at night from one declaration, and lands at
+     1.31:1 / 1.22:1: a panel you can see without a box that shouts. */
+  background: color-mix(in srgb, var(--fg) 9%, var(--bg1));
+  border: 1px solid var(--hairline);
+  border-radius: 10px; padding: 6px 10px;
+}
 .composer:focus-within .composer-box {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
@@ -1448,11 +1471,7 @@ button.author:hover { text-decoration: underline; }
 .composer .composer-box textarea,
 .composer .composer-box textarea:focus,
 .composer .composer-box textarea.editing {
-  background: var(--bg1);
-  border: 1px solid var(--bg2);
-  border-radius: 7px;
-  box-shadow: none;
-  padding: 8px 10px;
+  background: none; border: 0; box-shadow: none; padding: 6px 4px;
 }
 .composer .composer-box textarea.editing { color: var(--yellow); }
 
@@ -1467,6 +1486,8 @@ button.author:hover { text-decoration: underline; }
 }
 .format-bar button:hover { background: var(--bg2); color: var(--fg); }
 .format-bar .tray-sep { margin: 3px 5px; }
+/* Separators inside the box read against --bg1 now. */
+.composer-box .format-bar { border-bottom-color: var(--bg2); }
 
 /* @fez/bittensor gui part: subnet dev-activity card */
 .bt-card {
