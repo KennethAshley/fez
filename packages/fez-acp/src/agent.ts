@@ -858,7 +858,7 @@ async function main() {
       );
       // The replay came back empty too — the harness/provider is down,
       // not blinking. Fail the turn (outer ladder decides what's next).
-      if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down");
+      if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down", { cause: err });
       pooled.primed = true;
       pooled.turns++;
       pooled.lastUsed = Date.now();
@@ -973,7 +973,7 @@ async function main() {
   const onBusy = process.env.FEZ_AGENT_ON_BUSY === "queue" ? "queue" : "steer";
   let turnController: AbortController | undefined;
   let turnKind: "ch" | "dm" | undefined; // steer may only abort CHANNEL turns; cancel aborts either
-  let steerMessages: string[] = [];
+  const steerMessages: string[] = [];
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a

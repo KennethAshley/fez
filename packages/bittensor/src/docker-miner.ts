@@ -87,7 +87,7 @@ export class DockerMiner {
       buildLog += output;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Docker build failed: ${msg}`);
+      throw new Error(`Docker build failed: ${msg}`, { cause: err });
     }
 
     return { imageName, dockerfilePath, buildLog };

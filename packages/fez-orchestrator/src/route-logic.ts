@@ -11,7 +11,7 @@
  * still routed to an agent — so this stays regex, not model.
  */
 export const SMALL_TALK_RE =
-  /^(yo|hey( there)?|hi( there)?|hiya|hello|howdy|sup|what'?s up|gm|good (morning|afternoon|evening|night)|how are you( doing)?( today)?|how's it going|you (there|ok|good)|thanks?|thank you|ty|nice( one)?|cool|great|awesome|lol|ok(ay)?( cool| great| thanks)?|sounds good|nice one)([\s!?.,…]+fez)?[\s!?.,…🎩👋]*$/i;
+  /^(yo|hey( there)?|hi( there)?|hiya|hello|howdy|sup|what'?s up|gm|good (morning|afternoon|evening|night)|how are you( doing)?( today)?|how's it going|you (there|ok|good)|thanks?|thank you|ty|nice( one)?|cool|great|awesome|lol|ok(ay)?( cool| great| thanks)?|sounds good|nice one)([\s!?.,…]+fez)?[\s!?.,…🎩👋]*$/iu;
 
 export function isSmallTalk(text: string): boolean {
   return text.split(/\s+/).length <= 6 && SMALL_TALK_RE.test(text);

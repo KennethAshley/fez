@@ -205,7 +205,7 @@ function isolatedClaudeEnv(): NodeJS.ProcessEnv {
     fs.mkdirSync(dir, { recursive: true });
     const configFile = path.join(dir, ".claude.json");
     if (!fs.existsSync(configFile)) {
-      let seed: Record<string, unknown> = {};
+      const seed: Record<string, unknown> = {};
       try {
         const global = JSON.parse(fs.readFileSync(path.join(os.homedir(), ".claude.json"), "utf-8"));
         for (const key of ["oauthAccount", "hasCompletedOnboarding", "userID", "firstStartTime"]) {

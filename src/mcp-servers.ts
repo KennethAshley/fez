@@ -103,7 +103,7 @@ function resolveHeaders(
 function keychainSecret(skill: string, key: string): string | undefined {
   if (process.platform !== "darwin") return undefined;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
     const value = execFileSync(
       "security",

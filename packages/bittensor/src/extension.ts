@@ -36,7 +36,7 @@ interface MinerStatus {
 
 let panel: PanelHandle | null = null;
 let subnets: SubnetInfo[] = [];
-let miners: MinerStatus[] = [];
+const miners: MinerStatus[] = [];
 let api: FezExtensionAPI;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

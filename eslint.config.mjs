@@ -30,6 +30,11 @@ export default tseslint.config(
       // eslint-plugin-react predates flat config — loading it here
       // crashes the run. `next lint` covers it there.
       "web/**",
+      // Build artifacts. deploy/fez-relay.mjs is an esbuild bundle
+      // (deploy/deploy.sh --outfile) — 10k lines of vendored code whose
+      // findings are not ours to fix and drown the ones that are.
+      "deploy/*.mjs",
+      "**/*.min.js",
       "**/*.d.ts",
     ],
   },
