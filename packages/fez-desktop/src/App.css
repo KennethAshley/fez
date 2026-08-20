@@ -1440,10 +1440,19 @@ button.author:hover { text-decoration: underline; }
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .composer.dragging .composer-box { border-color: var(--accent); border-style: dashed; }
+/* The textarea keeps a ground of its own inside the box. It had been
+   stripped to `background: none`, which left the writing area exactly
+   the colour of the chrome around it — the toolbar and the action row
+   read as surfaces and the place you actually type did not. The box
+   still owns the outer frame; this is the field inside it. */
 .composer .composer-box textarea,
 .composer .composer-box textarea:focus,
 .composer .composer-box textarea.editing {
-  background: none; border: 0; box-shadow: none; padding: 6px 4px;
+  background: var(--bg1);
+  border: 1px solid var(--bg2);
+  border-radius: 7px;
+  box-shadow: none;
+  padding: 8px 10px;
 }
 .composer .composer-box textarea.editing { color: var(--yellow); }
 
@@ -2160,13 +2169,23 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
    which is what happened to "not installed" and "find it…". Each card
    publishes its own --tint, so a control can take a deeper draw of the
    SAME colour and separate by the amount it always did. */
+/* Mixing 26% of the tint into --bg2 moved the HUE but barely the
+   luminance — measured 1.5:1 against the card in light and 1.4:1 in
+   dark, which is why it still looked flat. A chip needs a step in
+   brightness, and --fg is the only colour guaranteed to be far from
+   the ground in BOTH themes, so the step is toward that: it darkens on
+   paper and lightens at night, from one declaration. The border does
+   the rest — a defined edge reads as a surface at contrast a fill
+   alone cannot reach at this size. */
 :is(.ext-missing .skill-row, .comment-thread, .live-block, .loop.blocked, .query-block, .board-card)
   :is(.role-tag, .agent-action, .mini) {
-  background: color-mix(in srgb, var(--tint) 26%, var(--bg2));
+  background: color-mix(in srgb, var(--fg) 12%, color-mix(in srgb, var(--tint) 18%, var(--bg2)));
+  border: 1px solid color-mix(in srgb, var(--tint) 45%, var(--hairline));
 }
 :is(.ext-missing .skill-row, .comment-thread, .live-block, .loop.blocked, .query-block, .board-card)
   :is(.agent-action, .mini):hover {
-  background: color-mix(in srgb, var(--tint) 40%, var(--bg2));
+  background: color-mix(in srgb, var(--fg) 20%, color-mix(in srgb, var(--tint) 24%, var(--bg2)));
+  border-color: color-mix(in srgb, var(--tint) 65%, var(--hairline));
 }
 /* Inputs too — a text field on a tinted card had the same problem. */
 :is(.ext-missing .skill-row, .comment-thread, .live-block, .loop.blocked, .query-block, .board-card)
