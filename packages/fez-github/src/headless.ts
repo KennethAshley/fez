@@ -239,7 +239,7 @@ export default function github(api: FezExtensionAPI): void {
     }
 
     const gh = await ready();
-    const health = gh.ok ? "gh ready" : gh.why;
+    const health = gh.ok ? `connected as ${gh.login}` : gh.why;
     ctx.reply(
       config.repos.length === 0
         ? `⑂ ${health} · watching nothing\n/github watch owner/name`

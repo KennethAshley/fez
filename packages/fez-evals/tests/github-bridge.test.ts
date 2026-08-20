@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { changeLine, keyFor, type Seen } from "../../fez-github/src/state.js";
 import { channelNameFor, headline, validRepo, type Item } from "../../fez-github/src/github.js";
 import { CONFIG_D, parseConfig } from "../../fez-github/src/config.js";
+import { isExpired, readPoll } from "../../fez-github/src/auth.js";
 
 /**
  * The bridge's judgement calls, isolated from the network.
@@ -210,5 +211,68 @@ describe("a repo is marked seen independently of its items", () => {
     for (const i of items) state[keyFor("o/empty", i.number)] = i;
     expect(Object.keys(state)).toHaveLength(1);
     expect(state[seenMarker("o/empty")]).toBeDefined();
+  });
+});
+
+/**
+ * Device flow, without fifteen minutes of real time.
+ *
+ * The whole point of device flow here is that a desktop app cannot keep
+ * a client secret — so any flow needing one is a flow that lies. What
+ * remains to get right is the polling state machine, where every wrong
+ * branch is a hang or a spin against someone else's rate limit.
+ */
+describe("device flow polling", () => {
+  test("a token comes back with its expiry resolved to a moment", () => {
+    const at = 1_000_000;
+    const r = readPoll({ access_token: "ghu_x", refresh_token: "ghr_y", expires_in: 28800 }, at);
+    expect(r).toEqual({
+      status: "ok",
+      tokens: { token: "ghu_x", refreshToken: "ghr_y", expiresAt: at + 28_800_000 },
+    });
+  });
+
+  test("a token with no expiry does not get a fake one", () => {
+    const r = readPoll({ access_token: "ghu_x" }, 1000);
+    expect(r.status === "ok" && r.tokens.expiresAt).toBeUndefined();
+  });
+
+  test("pending means keep waiting — not an error", () => {
+    expect(readPoll({ error: "authorization_pending" })).toEqual({ status: "pending" });
+  });
+
+  /** Ignoring this spins against GitHub's limiter and gets slower, not faster. */
+  test("slow_down carries how much longer to wait", () => {
+    expect(readPoll({ error: "slow_down", interval: 10 })).toEqual({ status: "slow_down", addSeconds: 10 });
+    expect(readPoll({ error: "slow_down" })).toEqual({ status: "slow_down", addSeconds: 5 });
+  });
+
+  test("expiry ends the loop rather than raising", () => {
+    expect(readPoll({ error: "expired_token" })).toEqual({ status: "expired" });
+  });
+
+  test("a refusal says so in words a person can act on", () => {
+    expect(readPoll({ error: "access_denied" })).toEqual({ status: "denied", why: "you declined the authorization" });
+    expect(readPoll({ error: "bad_verification_code", error_description: "code is wrong" }))
+      .toEqual({ status: "denied", why: "code is wrong" });
+  });
+
+  test("an unrecognised payload is denied, never silently ok", () => {
+    expect(readPoll({}).status).toBe("denied");
+  });
+});
+
+describe("token expiry has slack", () => {
+  const at = 1_000_000;
+  test("a token with no expiry never expires", () => {
+    expect(isExpired(undefined, at)).toBe(false);
+  });
+  test("expired is expired", () => {
+    expect(isExpired(at - 1, at)).toBe(true);
+  });
+  /** Without the skew a token can die between the check and the request. */
+  test("about to expire counts as expired", () => {
+    expect(isExpired(at + 30_000, at)).toBe(true);
+    expect(isExpired(at + 120_000, at)).toBe(false);
   });
 });

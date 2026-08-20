@@ -1,22 +1,30 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const run = promisify(execFile);
+import { Octokit } from "@octokit/rest";
+import { throttling } from "@octokit/plugin-throttling";
+import { retry } from "@octokit/plugin-retry";
+import { currentToken } from "./auth.js";
 
 /**
- * GitHub, read side — over the `gh` CLI.
+ * GitHub, read side.
  *
- * gh already holds the credential (macOS keyring), refreshes it, and
- * knows the API's pagination, rate limits and error shapes. Reaching
- * past it to fetch() means reimplementing all three and inventing a
- * second place for a token to live. It is a hard dependency and the
- * extension says so plainly when it is missing, rather than failing in
- * some way you have to debug.
+ * Octokit rather than raw fetch, and rather than the `gh` CLI it started
+ * as. gh was chosen because it already held a credential — once fez
+ * holds its own (device flow, GitHub App), gh's remaining value was
+ * pagination and rate limits, which a library gives without requiring an
+ * install. Dropping it means the extension works on a machine with no
+ * developer tooling at all, which is the whole point of the OAuth move.
  *
- *   https://github.com/cli/cli#installation
+ * The two plugins are not decoration. The hand-rolled version I wrote
+ * first had already shipped a real bug — per_page=30 with no pagination,
+ * so a repo with 40 open pull requests silently lost 10 — and had no
+ * answer at all for GitHub's secondary rate limits, which are separate
+ * from the 5000/hour everyone knows about.
  *
- * Everything here is read-only. Nothing in this module writes to GitHub.
+ * Everything here is read-only, and not merely by convention: the app's
+ * permissions are Issues/Pull requests/Checks READ, fixed at install.
+ * There is no call in this file that GitHub would let us make anyway.
  */
+
+const FezOctokit = Octokit.plugin(throttling, retry);
 
 export interface Item {
   kind: "pr" | "issue";
@@ -31,67 +39,87 @@ export interface Item {
   comments: number;
 }
 
-/** `owner/name`, and nothing else — this string is interpolated into an API path. */
+/** `owner/name`, and nothing else. */
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 export const validRepo = (repo: string): boolean => REPO.test(repo);
 
-export type Readiness = { ok: true } | { ok: false; why: string };
+export type Readiness = { ok: true; login: string } | { ok: false; why: string };
 
-/** Is gh installed and logged in? The two failures need different fixes, so they read differently. */
+let client: InstanceType<typeof FezOctokit> | undefined;
+let clientToken: string | undefined;
+
+async function api(): Promise<InstanceType<typeof FezOctokit>> {
+  const token = await currentToken();
+  if (!token) throw new Error("not connected to GitHub — run: fez github connect --client-id <id>");
+  // Rebuild when the token rotates: GitHub App user tokens last 8 hours,
+  // so a long-lived sentinel WILL outlive the one it started with.
+  if (!client || clientToken !== token) {
+    clientToken = token;
+    client = new FezOctokit({
+      auth: token,
+      userAgent: "fez-github",
+      throttle: {
+        // Retry a limited number of times, then give up and let the next
+        // poll try. A bridge that waits out a long limit is a bridge
+        // holding the sentinel's task slot for an hour.
+        onRateLimit: (retryAfter: number, options: { method: string; url: string }, _o: unknown, retryCount: number) => {
+          console.warn(`⚠️  fez-github: rate limited on ${options.method} ${options.url} — ${retryAfter}s`);
+          return retryCount < 2;
+        },
+        onSecondaryRateLimit: (retryAfter: number, options: { method: string; url: string }, _o: unknown, retryCount: number) => {
+          console.warn(`⚠️  fez-github: secondary limit on ${options.method} ${options.url} — ${retryAfter}s`);
+          return retryCount < 1;
+        },
+      },
+    });
+  }
+  return client;
+}
+
+/** Is fez connected, and to whom? The two failures need different fixes. */
 export async function ready(): Promise<Readiness> {
+  let octokit: InstanceType<typeof FezOctokit>;
   try {
-    await run("gh", ["--version"], { timeout: 10_000 });
-  } catch {
-    return { ok: false, why: "the gh CLI isn't installed — https://github.com/cli/cli#installation" };
+    octokit = await api();
+  } catch (err) {
+    return { ok: false, why: err instanceof Error ? err.message : String(err) };
   }
   try {
-    await run("gh", ["auth", "status"], { timeout: 15_000 });
-    return { ok: true };
-  } catch {
-    return { ok: false, why: "gh is installed but not logged in — run: gh auth login" };
+    const { data } = await octokit.rest.users.getAuthenticated();
+    return { ok: true, login: data.login };
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 401) return { ok: false, why: "GitHub rejected the token — reconnect: fez github connect" };
+    return { ok: false, why: `GitHub unreachable (${status ?? "network"})` };
   }
-}
-
-async function api<T>(path: string): Promise<T> {
-  // execFile, never exec: no shell, so a repo name can never become a
-  // command. validRepo is belt to this one's braces.
-  const { stdout } = await run("gh", ["api", path], {
-    timeout: 30_000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  return JSON.parse(stdout) as T;
-}
-
-interface RawIssue {
-  number: number;
-  title: string;
-  state: string;
-  html_url: string;
-  updated_at: string;
-  comments: number;
-  user?: { login?: string };
-  pull_request?: { merged_at?: string | null };
 }
 
 /**
  * Recently-touched items, newest activity first.
  *
- * Deliberately NOT paginated. Sorting by `updated_at` desc means the
- * first page is everything that has changed since the last poll —
- * anything below it is by definition older than something we have
- * already recorded. Paginating here would walk the repo's entire
- * history every few minutes to learn nothing.
+ * Deliberately NOT paginated, and that is a different claim from the bug
+ * this replaces. Sorted by `updated_at` desc, the first page IS
+ * everything that changed since the last poll — anything below it is
+ * older than something already recorded. Walking further would re-read
+ * the repo's history every few minutes to learn nothing.
  *
- * The issues endpoint returns PRs too (GitHub models a PR as an issue),
- * so `pull_request` is what separates them. One endpoint rather than two
- * keeps a single ordering, which is what that watermark argument needs.
+ * The issues endpoint returns pull requests too (GitHub models a PR as
+ * an issue), so `pull_request` separates them. One endpoint keeps one
+ * ordering, which is what the watermark argument above depends on.
  */
 export async function recentItems(repo: string, limit = 50): Promise<Item[]> {
   if (!validRepo(repo)) throw new Error(`not a repo name: "${repo}"`);
-  const raw = await api<RawIssue[]>(
-    `repos/${repo}/issues?state=all&sort=updated&direction=desc&per_page=${Math.min(limit, 100)}`
-  );
-  return raw.map((row) => ({
+  const [owner, name] = repo.split("/");
+  const octokit = await api();
+  const { data } = await octokit.rest.issues.listForRepo({
+    owner,
+    repo: name,
+    state: "all",
+    sort: "updated",
+    direction: "desc",
+    per_page: Math.min(limit, 100),
+  });
+  return data.map((row) => ({
     kind: row.pull_request ? "pr" : "issue",
     number: row.number,
     title: row.title,
@@ -107,12 +135,12 @@ export async function recentItems(repo: string, limit = 50): Promise<Item[]> {
 /** The check rollup for a PR's head commit, or undefined when there is none. */
 export async function checksFor(repo: string, number: number): Promise<string | undefined> {
   if (!validRepo(repo)) return undefined;
+  const [owner, name] = repo.split("/");
   try {
-    const pr = await api<{ head?: { sha?: string } }>(`repos/${repo}/pulls/${number}`);
+    const octokit = await api();
+    const { data: pr } = await octokit.rest.pulls.get({ owner, repo: name, pull_number: number });
     if (!pr.head?.sha) return undefined;
-    const runs = await api<{ check_runs?: { conclusion?: string | null; status?: string }[] }>(
-      `repos/${repo}/commits/${pr.head.sha}/check-runs`
-    );
+    const { data: runs } = await octokit.rest.checks.listForRef({ owner, repo: name, ref: pr.head.sha });
     const all = runs.check_runs ?? [];
     if (all.length === 0) return undefined;
     const failed = all.filter((c) => c.conclusion === "failure" || c.conclusion === "timed_out").length;
@@ -130,12 +158,10 @@ export async function checksFor(repo: string, number: number): Promise<string | 
  *
  * The TITLE and a LINK, never the body. A body is long and this is a
  * notification rather than a mirror — but the real reason is that on a
- * public repo anyone can open a PR whose body says whatever they like,
- * and putting that prose in a channel puts attacker-authored text in
- * front of every agent reading the room. A title is small enough to
- * take in at a glance and a link is inert. An agent that needs the body
- * fetches it through the github skill, where it arrives as tool output
- * the harness already treats as untrusted.
+ * public repo anyone can open a pull request whose body says whatever
+ * they like, and putting that prose in a channel puts attacker-authored
+ * text in front of every agent reading the room. A title is small enough
+ * to take in at a glance and a link is inert.
  */
 export function headline(item: Item): string {
   const mark =
