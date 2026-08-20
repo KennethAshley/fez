@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { FezExtensionAPI, NostrEvent, ScheduledTaskContext } from "./api-types.js";
-import { CASES, ROSTER } from "./cases.js";
+import { CASES } from "./cases.js";
 import { formatFailures, summarize, type HistoryEntry } from "./core.js";
 import { harvestedCases } from "./proposals.js";
 import { runBench } from "./runner.js";

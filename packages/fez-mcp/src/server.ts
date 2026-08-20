@@ -7,7 +7,6 @@ import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import {
   RelayConnection,
   getKey,
-  resolveRelay,
   resolveRelays,
   buildDmWraps,
   conversationKey,

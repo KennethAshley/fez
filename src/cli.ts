@@ -41,7 +41,7 @@ if (process.argv.length <= 2) {
   // gets actionable guidance, a starter persona covers the empty case,
   // and the communities extension bootstraps a Home community on its
   // side. Everything lands in ~/.fez/settings.json.
-  const { loadSettings, resolveRelay, resolveRelays } = await import("./settings.js");
+  const { loadSettings, resolveRelays } = await import("./settings.js");
   if (!loadSettings().onboarded && process.stdin.isTTY && process.stdout.isTTY) {
     const { firstRunWizard } = await import("./onboarding.js");
     await firstRunWizard();
@@ -166,7 +166,7 @@ interface MemContext {
 
 async function memContext(personaFlag?: string): Promise<MemContext> {
   const { getKey } = await import("./keys.js");
-  const { resolveRelay, resolveRelays } = await import("./settings.js");
+  const { resolveRelay } = await import("./settings.js");
   const { getPublicKey: pk } = await import("nostr-tools/pure");
   const persona = personaFlag ?? process.env.FEZ_AGENT_PERSONA;
   if (!persona) {
@@ -300,7 +300,7 @@ interface DocCliContext {
 
 async function docContext(channelFlag: string | undefined, personaFlag: string | undefined): Promise<DocCliContext> {
   const { getKey } = await import("./keys.js");
-  const { resolveRelay, resolveRelays } = await import("./settings.js");
+  const { resolveRelays } = await import("./settings.js");
   const { getPublicKey: pk } = await import("nostr-tools/pure");
   const { RelayConnection } = await import("./relay.js");
   const persona = personaFlag ?? process.env.FEZ_AGENT_PERSONA;
@@ -403,7 +403,7 @@ program
   .option("--owner <pubkey>", "owner pubkey (default: your fez identity)")
   .option("--on-busy <mode>", "steer | queue", "steer")
   .action(async (personaId: string, options) => {
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     process.env.FEZ_AGENT_PERSONA = personaId;
     process.env.FEZ_AGENT_CHANNELS = options.channels === "none" ? "" : options.channels;
@@ -443,7 +443,7 @@ program
   .description("Run the always-on watcher: wakes sleeping agents on DMs/mentions, delivers desktop notifications — no TUI needed")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     const { fileURLToPath, pathToFileURL } = await import("node:url");
     const { existsSync } = await import("node:fs");
@@ -468,7 +468,7 @@ program
       console.error("launchd is macOS-only — on Linux, use a systemd user unit running `fez sentinel`.");
       process.exit(1);
     }
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelay } = await import("./settings.js");
     const { execSync } = await import("node:child_process");
     const fsSync = await import("node:fs");
     const relayUrl = resolveRelay(options.relay);
@@ -538,7 +538,7 @@ program
   .description("Run @fez, the routing agent: mentions of @fez get routed to the best agent for the task")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     const { fileURLToPath, pathToFileURL } = await import("node:url");
     const { existsSync } = await import("node:fs");
@@ -563,7 +563,7 @@ program
       console.error("launchd is macOS-only — on Linux, use a systemd user unit running `fez orchestrator`.");
       process.exit(1);
     }
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelay } = await import("./settings.js");
     const { execSync } = await import("node:child_process");
     const fsSync = await import("node:fs");
     const relayUrl = resolveRelay(options.relay);
@@ -725,7 +725,7 @@ skill
   .option("--npm <name>", "npm package name")
   .option("--artifact <type>", "mcp (default) | extension (fez install) | pi-package (persona packages:)")
   .action(async (name: string, options) => {
-    const { loadSettings, resolveRelay, resolveRelays } = await import("./settings.js");
+    const { loadSettings, resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING } = await import("./kinds.js");
     const settings = loadSettings() as { mcpServers?: Record<string, { command?: string; args?: string[]; url?: string; type?: string; env?: Record<string, string> }> };
@@ -794,7 +794,7 @@ skill
   .option("--from <pubkey>", "listing author (default: most-installed listing of that name)")
   .option("--env <pairs...>", "KEY=value for each env key the listing requires (stored locally)")
   .action(async (name: string, options) => {
-    const { loadSettings, saveSettings, resolveRelay, resolveRelays } = await import("./settings.js");
+    const { loadSettings, saveSettings, resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./kinds.js");
     const { RelayConnection } = await import("./relay.js");
@@ -860,7 +860,7 @@ skill
   .description("Browse marketplace listings on the relay")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING } = await import("./kinds.js");
     const { RelayConnection } = await import("./relay.js");
@@ -999,7 +999,7 @@ program
     const { detectHarnesses, listHarnesses, registerBuiltinHarnesses } = await import("./harness.js");
     registerBuiltinHarnesses();
     const { listPersonas } = await import("./personas.js");
-    const { loadSettings, resolveRelay, resolveRelays, DEFAULT_RELAY } = await import("./settings.js");
+    const { loadSettings, resolveRelays, DEFAULT_RELAY } = await import("./settings.js");
     const ok = (s: string) => console.log(`  ${chalk.green("✓")} ${s}`);
     const warn = (s: string, fix?: string) => {
       console.log(`  ${chalk.yellow("!")} ${s}`);
@@ -1172,7 +1172,7 @@ program
     // supervisor like herdr sets it on the launched process — a baked-in
     // commander default silently clobbered it), then the user's saved
     // settings, then the public default.
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
 
     if (options.key) {
@@ -1483,7 +1483,7 @@ pair
   .action(async (options: { as: string; relay?: string }) => {
     const { pairReceive } = await import("./pairing.js");
     const { getKey, setKey } = await import("./keys.js");
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelay } = await import("./settings.js");
     if (getKey(options.as)) {
       console.error(`Account "${options.as}" already holds a key — pairing will not overwrite it. Use --as <other-name> or remove it first.`);
       process.exit(1);
@@ -1576,7 +1576,7 @@ persona
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--github <url>", "source/docs link")
   .action(async (name: string, options) => {
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING } = await import("./kinds.js");
     const { RelayConnection } = await import("./relay.js");
@@ -1616,7 +1616,7 @@ persona
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--from <pubkey>", "listing author")
   .action(async (name: string, options) => {
-    const { resolveRelay, resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./settings.js");
     const { loadOrCreateKey } = await import("./keys.js");
     const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./kinds.js");
     const { RelayConnection } = await import("./relay.js");

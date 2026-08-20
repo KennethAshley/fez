@@ -7,7 +7,6 @@ import {
   RelayConnection,
   CapabilityClient,
   KIND_AGENT_METADATA,
-  KIND_CHANNEL,
   KIND_CHANNEL_MESSAGE,
   KIND_MEMBERSHIP,
   KIND_REACTION,

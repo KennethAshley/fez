@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CASES, ROSTER } from "./cases.js";
+import { CASES } from "./cases.js";
 import { formatFailures, formatScorecard, summarize, type HistoryEntry } from "./core.js";
 import { harvest } from "./harvest.js";
 import { approve, deny, formatLedger, harvestedCases, ledger, propose } from "./proposals.js";

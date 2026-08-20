@@ -8,7 +8,6 @@ import {
   CapabilityClient,
   RelayConnection,
   getKey,
-  resolveRelay,
   resolveRelays,
   DM_FUZZ_WINDOW_S,
   KIND_AGENT_METADATA,
