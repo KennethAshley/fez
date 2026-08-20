@@ -934,6 +934,22 @@ button.author:hover { text-decoration: underline; }
 .publish-form { display: flex; gap: 6px; align-items: center; }
 .publish-form .manage-input { width: 180px; font-size: 11px; padding: 4px 8px; }
 .publish-what { font-size: 11px; color: var(--fg-dim); max-width: 260px; line-height: 1.45; }
+
+/* ── the parts key ─────────────────────────────────────────
+   A key, laid out as one — tag in a fixed column so the three
+   read as a set rather than three sentences that happen to
+   start with a chip. */
+.ext-legend-lead { margin-bottom: 6px; }
+.ext-parts-key { display: flex; flex-direction: column; gap: 3px; margin: 0 0 6px; }
+.ext-parts-row { display: flex; align-items: baseline; gap: 8px; }
+.ext-parts-row dt { flex: 0 0 74px; }
+.ext-parts-row dd { margin: 0; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.ext-parts-row dd code { font-family: var(--font-mono); font-size: 10px; color: var(--fg-dim); opacity: 0.8; }
+.ext-legend-foot { color: var(--fg-dim); }
+/* Not an error — a fact about reach. Yellow is the page's
+   "needs something before it travels" colour already. */
+.local-tag { color: var(--yellow); }
+.skill-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
 .install-box { padding: 16px; }
 .install-head { font-family: var(--font-mono); font-weight: 700; margin-bottom: 8px; }
 

@@ -66,6 +66,20 @@ export function describeSkillSpec(config: SkillSpec): string {
   return config.url ?? [config.command, ...(config.args ?? [])].filter(Boolean).join(" ");
 }
 
+/**
+ * Does this config name a path that only exists HERE? Returns the
+ * offending argument, or undefined when the command is portable.
+ *
+ * A listing carries a pointer, never bytes. Publish `node
+ * /Users/me/proj/dist/mcp.js` and the installer gets that path verbatim,
+ * then their agents spawn against a directory that isn't there — and it
+ * fails silently, because an MCP server that won't start looks exactly
+ * like a skill nobody declared.
+ */
+export function machineLocalPath(config: SkillSpec | undefined): string | undefined {
+  return (config?.args ?? []).find((arg) => /^(\/|~|\.\.?\/)/.test(arg));
+}
+
 /** The one bare name that resolves, because fez owns the @fez npm scope. */
 export function wellKnownSource(name: string): string | undefined {
   const match = /^fez-([\w-]+)$/.exec(name);

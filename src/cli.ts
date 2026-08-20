@@ -741,6 +741,21 @@ skill
       process.exitCode = 1;
       return;
     }
+    // A listing carries a POINTER, never bytes — so it has to point at
+    // something the installer can reach. A path on this disk fails
+    // silently on theirs: the MCP server won't start, and a server that
+    // won't start is indistinguishable from a skill nobody declared.
+    const { machineLocalPath } = await import("./skill-source.js");
+    const localPath = artifact === "mcp" ? machineLocalPath(config) : undefined;
+    if (localPath) {
+      console.error(
+        `Can't publish "${name}" — its command points at ${localPath}, which exists only on this machine.\n` +
+          `Anyone installing it would get that path verbatim and their agents would spawn against nothing.\n` +
+          `Publish the package first, then define the skill from it: fez skill add ${name} --from npm:<package>`
+      );
+      process.exitCode = 1;
+      return;
+    }
     const { RelayConnection } = await import("./relay.js");
     const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
     const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });

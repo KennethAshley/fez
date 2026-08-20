@@ -99,6 +99,27 @@ export function describeSkillSpec(config: SkillSpec): string {
 }
 
 /**
+ * Does this config name a path that only exists HERE? Returns the
+ * offending argument, or undefined when the command is portable.
+ *
+ * A listing carries a pointer, never bytes. `npx -y duckduckgo-mcp-server`
+ * points at something anyone can fetch; `node /Users/me/proj/dist/mcp.js`
+ * points at a directory on one laptop. Publish the second and the
+ * installer's settings.json gets it verbatim — then their next agent
+ * spawns against a path that isn't there, and it fails SILENTLY, because
+ * an MCP server that won't start is indistinguishable from a skill
+ * nobody declared. Unpublished packages are the usual cause, fez's own
+ * included until they reach npm.
+ *
+ * Deliberately conservative: it only flags arguments that are
+ * unambiguously filesystem paths. A package name can't start with `/`,
+ * `~` or `./`, so there is nothing legitimate to catch here.
+ */
+export function machineLocalPath(config: SkillSpec | undefined): string | undefined {
+  return (config?.args ?? []).find((arg) => /^(\/|~|\.\.?\/)/.test(arg));
+}
+
+/**
  * The one case where a bare name DOES resolve: fez's own packages.
  * `fez-kanban` → `@fez/kanban` is safe not because the name looks
  * official but because fez owns the @fez scope on npm — nobody else can

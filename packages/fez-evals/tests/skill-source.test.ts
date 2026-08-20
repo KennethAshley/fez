@@ -4,6 +4,7 @@ import {
   describeSkillSpec,
   wellKnownSource,
   installHint,
+  machineLocalPath,
   parseSkillEntries,
   validatePersonaFile,
   SOURCE_SCHEMES,
@@ -84,6 +85,51 @@ describe("a spec can never smuggle a command", () => {
    */
   test("a pinned version is refused, not quietly ignored", () => {
     expect(parseSkillSource("npm:some-mcp@1.2.3")).toBeUndefined();
+  });
+});
+
+/**
+ * A listing carries a POINTER, never bytes — so it has to point at
+ * something the installer can reach. Publishing `node
+ * /Users/me/proj/dist/mcp.js` hands a teammate a path to your laptop,
+ * and it fails SILENTLY on theirs: an MCP server that won't start is
+ * indistinguishable from a skill nobody declared. Both the GUI's list
+ * button and `fez skill publish` gate on this.
+ */
+describe("a listing can only point at something others can reach", () => {
+  test.each([
+    ["absolute path", ["/Users/ken/Projects/fez/packages/fez-polls/dist/mcp.js"], "/Users/ken/Projects/fez/packages/fez-polls/dist/mcp.js"],
+    ["home-relative", ["~/proj/dist/mcp.js"], "~/proj/dist/mcp.js"],
+    ["cwd-relative", ["./dist/mcp.js"], "./dist/mcp.js"],
+    ["parent-relative", ["../other/dist/mcp.js"], "../other/dist/mcp.js"],
+    ["path after flags", ["--flag", "/opt/thing/server.js"], "/opt/thing/server.js"],
+  ])("%s is caught", (_label, args, expected) => {
+    expect(machineLocalPath({ command: "node", args })).toBe(expected);
+  });
+
+  test.each([
+    ["npx package", { command: "npx", args: ["-y", "duckduckgo-mcp-server"] }],
+    ["scoped package", { command: "npx", args: ["-y", "@brave/brave-search-mcp-server"] }],
+    ["uvx package", { command: "uvx", args: ["browser-use-mcp"] }],
+    ["hosted url", { type: "http", url: "https://mcp.example.com/sse" }],
+    ["no args at all", { command: "some-binary" }],
+    ["undefined config", undefined],
+  ])("%s is portable", (_label, config) => {
+    expect(machineLocalPath(config)).toBeUndefined();
+  });
+
+  /** Every source spec resolves to something portable — that is the point of the schemes. */
+  test.each(["npm:pkg", "uvx:pkg", "pipx:pkg", "https://mcp.example.com/sse"])(
+    "%s resolves to a portable config",
+    (spec) => {
+      expect(machineLocalPath(parseSkillSource(spec))).toBeUndefined();
+    }
+  );
+
+  test("the GUI's mirror agrees", () => {
+    const local = { command: "node", args: ["/Users/ken/dist/mcp.js"] };
+    expect(mirror.machineLocalPath(local)).toBe(machineLocalPath(local));
+    expect(mirror.machineLocalPath(parseSkillSource("npm:pkg"))).toBeUndefined();
   });
 });
 

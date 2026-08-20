@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient, WireEvent } from "@fez/client";
-import { parseSkillEntries, parseSkillSource, describeSkillSpec, wellKnownSource, formatSkillEntries } from "@fez/client";
+import { parseSkillEntries, parseSkillSource, describeSkillSpec, wellKnownSource, formatSkillEntries, machineLocalPath } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
 import { EnvKeyStatus } from "./SkillSecrets";
@@ -78,6 +78,19 @@ interface InstallTarget {
   source?: string;
   rememberIn?: string;
 }
+
+/**
+ * The three parts are PLACES, not kinds — the single most confusing
+ * thing on this page. One npm package can be filed into all three:
+ * fez-polls renders poll cards here, runs a tally service in the
+ * background, AND hands agents a create_poll tool. Reading "gui" and
+ * "skill" as two sorts of thing is what makes the page not parse.
+ */
+const PART_WHERE: Record<string, { where: string; what: string }> = {
+  skill: { where: "settings.json → mcpServers", what: "your agents call it" },
+  headless: { where: "~/.fez/extensions", what: "background work in the TUI" },
+  gui: { where: "~/.fez/gui-extensions", what: "renders in this app" },
+};
 
 const fromListing = (listing: Listing): InstallTarget => ({
   name: listing.name,
@@ -229,6 +242,14 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
   const publish = async (name: string, meta: { description: string; github?: string; npm?: string }) => {
     const config = installed[name];
     if (!config) return;
+    // The button is already disabled for this, but a listing is signed
+    // and travels — the check belongs where the event is built, not
+    // only where it is clicked.
+    const localPath = machineLocalPath(config);
+    if (localPath) {
+      setPublishing(undefined);
+      return flash(`✗ can't list "${name}" — its command points at ${localPath}, which exists only on this machine`);
+    }
     const envKeys = Object.keys(config.env ?? {});
     await wire.publish({
       kind: KIND_SKILL_LISTING,
@@ -303,12 +324,29 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             ))}
           </span>
         </div>
-        {/* The vocabulary, once, at the top. Four words were being used
-            for overlapping things — extension, skill, mcpServer, pack —
-            and without this sentence the page cannot be parsed. */}
+        {/* The vocabulary, once, at the top — as a KEY, not a sentence,
+            because that is what it is. The tags on every row below are
+            these three words, and until you know they name PLACES
+            rather than sorts of thing, a row tagged "gui skill" reads
+            as a contradiction instead of a package with two parts. */}
         <div className="ext-legend">
-          An <strong>extension</strong> is a package. It can give your agents a <strong>skill</strong> to call,
-          run <strong>background</strong> work, and add <strong>UI</strong> here.
+          <div className="ext-legend-lead">
+            An <strong>extension</strong> is one package, filed into up to three places:
+          </div>
+          <dl className="ext-parts-key">
+            {(["skill", "headless", "gui"] as const).map((part) => (
+              <div key={part} className="ext-parts-row">
+                <dt><span className="role-tag">{part}</span></dt>
+                <dd>
+                  {PART_WHERE[part].what}
+                  <code>{PART_WHERE[part].where}</code>
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <div className="ext-legend-foot">
+            Most are more than one — <strong>fez-polls</strong> is all three.
+          </div>
         </div>
       </header>
       <div className="timeline pulse-scroll">
@@ -375,28 +413,41 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             <div className="pulse-section">
               <div className="pulse-section-head"><span>on this machine</span></div>
               {everything.length === 0 && <div className="pane-empty">nothing installed yet — see browse</div>}
-              {everything.map(({ name, parts, config, wanted }) => (
+              {everything.map(({ name, parts, config, wanted }) => {
+                const localPath = machineLocalPath(config);
+                return (
                 <div key={name} className="skill-row">
                   <div className="skill-main">
                     <span className="skill-name">
                       {name}
                       {parts.map((part) => (
-                        <span key={part} className="role-tag">{part}</span>
+                        <span
+                          key={part}
+                          className="role-tag"
+                          title={PART_WHERE[part] ? `${PART_WHERE[part].what} — ${PART_WHERE[part].where}` : part}
+                        >
+                          {part}
+                        </span>
                       ))}
+                      {localPath && (
+                        <span
+                          className="role-tag local-tag"
+                          title="Its command names a path on this machine, so it exists nowhere else. Publish it to npm and the command becomes portable."
+                        >
+                          this machine only
+                        </span>
+                      )}
                     </span>
                     {wanted.length > 0 && (
                       <span className="skill-desc">used by {wanted.map((a) => `@${a}`).join(", ")}</span>
                     )}
                     {config && <code className="skill-cmd">{runsLine(config)}</code>}
-                    {!config && (
-                      <code className="skill-cmd">
-                        {parts.includes("gui") && parts.includes("headless")
-                          ? "loads in this app and the TUI"
-                          : parts.includes("gui")
-                            ? "loads in this app"
-                            : "loads in the TUI and other clients"}
-                      </code>
-                    )}
+                    {/* Every part it has, not only the one with a
+                        command — a row showing just the mcp line looked
+                        like a bare MCP server when it is three parts. */}
+                    {parts.filter((part) => part !== "skill" && PART_WHERE[part]).map((part) => (
+                      <code key={part} className="skill-cmd">{PART_WHERE[part].what}</code>
+                    ))}
                     {config?.env && Object.keys(config.env).length > 0 && (
                       <span className="skill-env skill-deps">
                         env:{" "}
@@ -420,7 +471,12 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                               legible: you list it, it shows up listed. */}
                           <button
                             className="mini"
-                            title={`publish a signed listing to this workspace's relay — everyone here sees "${name}", the command it runs, and the names of any keys it needs. Values stay on this machine.`}
+                            disabled={!!localPath}
+                            title={
+                              localPath
+                                ? `Can't list this: its command points at ${localPath}, which exists only on this machine. Anyone installing it would get that path verbatim and their agents would spawn against a directory that isn't there. Publish the package first.`
+                                : `publish a signed listing to this workspace's relay — everyone here sees "${name}", the command it runs, and the names of any keys it needs. Values stay on this machine.`
+                            }
                             onClick={() => setPublishing(name)}
                           >
                             ↗ list on relay
@@ -431,7 +487,8 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}
