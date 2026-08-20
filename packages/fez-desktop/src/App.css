@@ -1187,18 +1187,11 @@ button.author:hover { text-decoration: underline; }
 .settings-content { flex: 1; min-width: 0; }
 .settings-modal .settings-pane { min-height: 480px; }
 
-/* Vercel-style env editor: key/value grid, .env paste splits into rows */
-.env-editor { margin-bottom: 14px; }
-.env-grid-head {
+
   display: grid; grid-template-columns: 1fr 1.6fr 28px; gap: 6px;
   font-size: 10.5px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.08em;
   padding: 0 2px 4px;
 }
-.env-grid-row { display: grid; grid-template-columns: 1fr 1.6fr 28px; gap: 6px; margin-bottom: 6px; align-items: center; }
-.env-key { font-family: var(--font-mono); font-size: 12px; }
-.env-value { font-size: 12px; }
-.env-actions { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
-.env-skill { margin-bottom: 6px; }
 
 /* resizable sidebars */
 .rail { width: var(--rail-w, 240px); min-width: var(--rail-w, 240px); }
@@ -2231,3 +2224,51 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   font-family: var(--font-mono); font-size: 26px; font-weight: 700; letter-spacing: 3px;
   color: var(--accent); padding: 8px 0;
 }
+
+/* ── env editor (Vercel's shape) ────────────────────────────
+   Stacked labelled fields rather than a dense grid: a secret is
+   typed once and carefully, so the row wants room, not density.
+   The eye reveals what you just TYPED — it is never a read-back,
+   because set_skill_secret has no counterpart. */
+.env-skill { margin-bottom: 18px; }
+.env-editor { display: flex; flex-direction: column; gap: 14px; }
+.env-entry { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: end; }
+.env-field { display: flex; flex-direction: column; gap: 5px; grid-column: 1; }
+.env-field label { font-size: 12px; color: var(--dim); }
+.env-input {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 13px;
+  padding: 8px 10px; border-radius: 7px;
+  border: 1px solid var(--bg2); background: var(--bg0); color: var(--fg);
+}
+.env-input:focus { outline: none; border-color: var(--accent); }
+.env-value-wrap { position: relative; display: flex; }
+.env-value-wrap .env-input { padding-right: 34px; }
+.env-eye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  border: 0; background: none; color: var(--dim); cursor: pointer;
+  font-size: 14px; padding: 4px 6px; border-radius: 5px;
+}
+.env-eye:hover { color: var(--fg); background: var(--bg1); }
+.env-remove {
+  grid-column: 2; grid-row: 1 / span 2; align-self: end; margin-bottom: 6px;
+  border: 1px solid var(--bg2); background: var(--bg0); color: var(--dim);
+  border-radius: 7px; padding: 7px 9px; cursor: pointer; font-size: 12px;
+}
+.env-remove:hover { color: var(--fg); border-color: var(--dim); }
+.env-add {
+  align-self: flex-start; font: inherit; font-size: 13px;
+  border: 1px solid var(--bg2); background: var(--bg0); color: var(--fg);
+  border-radius: 7px; padding: 8px 14px; cursor: pointer;
+}
+.env-add:hover { border-color: var(--dim); }
+.env-footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border-top: 1px solid var(--bg2); padding-top: 12px;
+}
+.env-footer-hint { font-size: 12px; color: var(--dim); }
+.env-save {
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+  border: 0; border-radius: 7px; padding: 8px 18px;
+  background: var(--accent); color: var(--bg0);
+}
+.env-save:disabled { opacity: 0.45; cursor: default; }

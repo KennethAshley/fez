@@ -128,6 +128,7 @@ function EnvEditor({
   );
   const [statuses, setStatuses] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+  const [shown, setShown] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     void (async () => {
@@ -179,6 +180,7 @@ function EnvEditor({
       if (saved > 0) {
         onNotice(`✓ ${saved} secret${saved === 1 ? "" : "s"} for ${skill} → keychain (agents pick them up on next spawn)`);
         setRows((prev) => prev.map((row) => ({ ...row, value: "" })));
+        setShown({});
         setStatuses((prev) => ({ ...prev, ...Object.fromEntries(rows.filter((r) => r.key && r.value).map((r) => [r.key.trim(), true])) }));
       }
     } catch (err) {
@@ -190,43 +192,67 @@ function EnvEditor({
 
   return (
     <div className="env-editor">
-      <div className="env-grid-head">
-        <span>key</span>
-        <span>value</span>
-        <span />
-      </div>
       {rows.map((row, index) => (
-        <div key={index} className="env-grid-row">
-          <input
-            className="manage-input env-key"
-            value={row.key}
-            spellCheck={false}
-            placeholder="e.g. API_KEY"
-            onChange={(e) => setRow(index, { key: e.target.value })}
-            onPaste={(e) => handlePaste(index, e)}
-          />
-          <input
-            className="manage-input env-value"
-            type="password"
-            value={row.value}
-            placeholder={statuses[row.key] ? "•••••• in keychain — paste to replace" : "value (paste a whole .env here too)"}
-            onChange={(e) => setRow(index, { value: e.target.value })}
-            onPaste={(e) => handlePaste(index, e)}
-            onKeyDown={(e) => e.stopPropagation()}
-          />
-          <button
-            className="mini"
-            title="remove row"
-            onClick={() => setRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : [{ key: "", value: "" }]))}
-          >
-            ✕
-          </button>
+        <div key={index} className="env-entry">
+          <div className="env-field">
+            <label>Key</label>
+            <input
+              className="env-input"
+              value={row.key}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              onChange={(e) => setRow(index, { key: e.target.value })}
+              onPaste={(e) => handlePaste(index, e)}
+            />
+          </div>
+          <div className="env-field">
+            <label>Value</label>
+            <div className="env-value-wrap">
+              <input
+                className="env-input"
+                type={shown[index] ? "text" : "password"}
+                value={row.value}
+                placeholder={statuses[row.key] ? "•••••• stored — type to replace" : ""}
+                onChange={(e) => setRow(index, { value: e.target.value })}
+                onPaste={(e) => handlePaste(index, e)}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+              {/* Reveal is local and momentary: this is what you just typed,
+                  not a value read back — nothing can read the keychain. */}
+              <button
+                className="env-eye"
+                type="button"
+                title={shown[index] ? "hide" : "show what you typed"}
+                onClick={() => setShown((prev) => ({ ...prev, [index]: !prev[index] }))}
+              >
+                {shown[index] ? "◎" : "◉"}
+              </button>
+            </div>
+          </div>
+          {rows.length > 1 && (
+            <button
+              className="env-remove"
+              type="button"
+              title="remove"
+              onClick={() => setRows((prev) => prev.filter((_, i) => i !== index))}
+            >
+              ✕
+            </button>
+          )}
         </div>
       ))}
-      <div className="env-actions">
-        <button className="mini" onClick={() => setRows((prev) => [...prev, { key: "", value: "" }])}>+ add another</button>
-        <button className="agent-action" disabled={busy || !rows.some((r) => r.key.trim() && r.value.trim())} onClick={() => void saveAll()}>
-          {busy ? "saving…" : "🔒 save to keychain"}
+      <button className="env-add" type="button" onClick={() => setRows((prev) => [...prev, { key: "", value: "" }])}>
+        + Add Another
+      </button>
+      <div className="env-footer">
+        <span className="env-footer-hint">or paste .env contents in a Key field</span>
+        <button
+          className="env-save"
+          disabled={busy || !rows.some((r) => r.key.trim() && r.value.trim())}
+          onClick={() => void saveAll()}
+        >
+          {busy ? "Saving…" : "Save"}
         </button>
       </div>
     </div>
