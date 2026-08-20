@@ -1457,7 +1457,7 @@ button.author:hover { text-decoration: underline; }
    second ground anywhere inside (on the box, on the textarea, or both)
    splits one control into two, and no value fixes that. */
 .composer-box {
-  background: var(--bg0);
+  background: var(--bg-rail);
   border: 1px solid var(--bg2);
   border-radius: 8px;
   padding: 4px 10px 6px;
