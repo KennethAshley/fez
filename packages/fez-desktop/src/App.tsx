@@ -1293,6 +1293,7 @@ function ChannelView({
               onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)}
               onEdit={() => beginEdit(msg)}
               onAuthor={() => onProfile(msg.authorPk)}
+              onProfile={onProfile}
             />
             {!threadRoot && <RootLiveArea client={client} rootId={msg.id} drafts={draftsForRoot(msg.id)} />}
           </div>
@@ -1830,6 +1831,7 @@ function Bubble({
   onOpenThread,
   onEdit,
   onAuthor,
+  onProfile,
 }: {
   client: FezClient;
   channelId: string;
@@ -1839,6 +1841,7 @@ function Bubble({
   onOpenThread: () => void;
   onEdit?: () => void;
   onAuthor?: () => void;
+  onProfile?: (pk: string) => void;
 }) {
   const mine = msg.authorPk === client.pubkey;
   const replies = client.threadReplyCount(channelId, msg.id);
@@ -1859,6 +1862,10 @@ function Bubble({
     ...taggedNames,
     ...[...client.knownNames().values()].map((n) => n.toLowerCase()),
   ]);
+  const openMention = (name: string) => {
+    const hit = [...client.knownNames().entries()].find(([, known]) => known.toLowerCase() === name.toLowerCase());
+    if (hit) onProfile?.(hit[0]);
+  };
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number }>();
   const [remindOpen, setRemindOpen] = useState(false);
   const [remindSet, setRemindSet] = useState(false);
@@ -2053,7 +2060,7 @@ function Bubble({
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
         <div className="bubble-body md">
-          <MdBody text={msg.content} tagged={mentionNames} />
+          <MdBody text={msg.content} tagged={mentionNames} onMention={openMention} />
         </div>
       )}
       {proposalIdsIn(msg.content).map((id) => (
@@ -2108,16 +2115,22 @@ function Bubble({
  * participants whatever you type. There the accent is typography, not
  * a claim, so every name keeps it.
  */
-function renderMentions(text: string, tagged?: ReadonlySet<string>) {
-  return text.split(/(@[\w-]+)/g).map((part, index) =>
-    part.startsWith("@") && (!tagged || tagged.has(part.slice(1).toLowerCase())) ? (
-      <span key={index} className="mention">
+function renderMentions(text: string, tagged?: ReadonlySet<string>, onMention?: (name: string) => void) {
+  return text.split(/(@[\w-]+)/g).map((part, index) => {
+    const name = part.slice(1);
+    if (!part.startsWith("@") || (tagged && !tagged.has(name.toLowerCase()))) {
+      return <span key={index}>{part}</span>;
+    }
+    // Accented and inert reads the same as accented and live, so only
+    // give it a button when there is somewhere to go.
+    return onMention ? (
+      <button key={index} className="mention mention-link" title={`open ${name}'s profile`} onClick={() => onMention(name)}>
         {part}
-      </span>
+      </button>
     ) : (
-      <span key={index}>{part}</span>
-    )
-  );
+      <span key={index} className="mention">{part}</span>
+    );
+  });
 }
 
 const IMAGE_URL = /https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg)(?:\?\S*)?/gi;
@@ -2125,7 +2138,7 @@ const IMAGE_URL = /https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg)(?:\?\S*)?/gi;
 const MEDIA_LINE = /📎\s+(\S+\.(?:png|jpe?g|gif|webp|svg))\s+\([^)]*\)\s+(https?:\/\/\S+)/i;
 
 /** Markdown body: gfm, @mention accents, external links via the OS browser, inline images. */
-function MdBody({ text, tagged }: { text: string; tagged?: ReadonlySet<string> }) {
+function MdBody({ text, tagged, onMention }: { text: string; tagged?: ReadonlySet<string>; onMention?: (name: string) => void }) {
   const images = [...new Set([...(text.match(IMAGE_URL) ?? []), ...(text.match(MEDIA_LINE) ? [text.match(MEDIA_LINE)![2]] : [])])];
   return (
     <>
@@ -2163,8 +2176,8 @@ function MdBody({ text, tagged }: { text: string; tagged?: ReadonlySet<string> }
             }
             return <code className={className}>{children}</code>;
           },
-          p: ({ children }) => <p>{accentMentions(children, tagged)}</p>,
-          li: ({ children }) => <li>{accentMentions(children, tagged)}</li>,
+          p: ({ children }) => <p>{accentMentions(children, tagged, onMention)}</p>,
+          li: ({ children }) => <li>{accentMentions(children, tagged, onMention)}</li>,
         }}
       >
         {text}
@@ -2177,9 +2190,9 @@ function MdBody({ text, tagged }: { text: string; tagged?: ReadonlySet<string> }
 }
 
 /** Wrap @names in accent spans inside rendered markdown children. */
-function accentMentions(children: React.ReactNode, tagged?: ReadonlySet<string>): React.ReactNode {
+function accentMentions(children: React.ReactNode, tagged?: ReadonlySet<string>, onMention?: (name: string) => void): React.ReactNode {
   const walk = (node: React.ReactNode): React.ReactNode => {
-    if (typeof node === "string") return renderMentions(node, tagged);
+    if (typeof node === "string") return renderMentions(node, tagged, onMention);
     if (Array.isArray(node)) return node.map((child, i) => <span key={i}>{walk(child)}</span>);
     return node;
   };
