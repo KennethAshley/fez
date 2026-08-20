@@ -6,6 +6,7 @@ import { RelayConnection, CapabilityClient } from "@fez/protocol";
 import { BrowserWire } from "../../fez-desktop/src/wire.js";
 import { FezClient, setStatePersistence } from "../../fez-client/dist/index.js";
 import { fetchRelayInfo } from "../../../src/nip11.js";
+import { waitForPort } from "./mini-relay.js";
 
 /**
  * The production relay, run locally, on an EMPTY store.
@@ -65,7 +66,7 @@ beforeAll(async () => {
     ],
     { stdio: "ignore" }
   );
-  await new Promise((r) => setTimeout(r, 1200));
+  await waitForPort(PORT);
 });
 
 afterAll(() => {

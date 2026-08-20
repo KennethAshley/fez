@@ -123,3 +123,36 @@ export function waitFor(predicate: () => boolean, timeoutMs: number, label: stri
     }, 25);
   });
 }
+
+/**
+ * Wait until a spawned relay is actually accepting connections.
+ *
+ * These suites used to sleep a fixed 900ms after spawn and hope. That
+ * holds on a warm laptop and fails on a cold CI runner, where the same
+ * two suites burned 65s and 126s failing every assertion after the
+ * first — not a logic error, a race the sleep only papered over.
+ *
+ * Polls the port instead, so it costs a few milliseconds when the relay
+ * is quick and still waits when the machine is loaded.
+ */
+export async function waitForPort(port: number, timeoutMs = 20_000): Promise<void> {
+  const { connect } = await import("node:net");
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const open = await new Promise<boolean>((resolve) => {
+      const socket = connect({ port, host: "127.0.0.1" });
+      const done = (ok: boolean) => {
+        socket.destroy();
+        resolve(ok);
+      };
+      socket.once("connect", () => done(true));
+      socket.once("error", () => done(false));
+      socket.setTimeout(1000, () => done(false));
+    });
+    if (open) return;
+    if (Date.now() > deadline) {
+      throw new Error(`relay never listened on ${port} within ${timeoutMs}ms`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}

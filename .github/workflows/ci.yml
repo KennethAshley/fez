@@ -18,11 +18,16 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install (root + tested packages)
+      # Every package, not a hand-kept list. The list said eight, while
+      # the eval suite imports from fez-kanban, fez-github and
+      # fez-desktop too — so those suites failed on a missing module and
+      # had been failing for as long as the list was stale. A list you
+      # maintain by hand drifts the first time someone adds a package.
+      - name: Install (root + every package)
         run: |
           npm install
-          for pkg in fez-tui fez-relay fez-client fez-acp fez-communities fez-workflows fez-media fez-evals; do
-            npm install --prefix "packages/$pkg"
+          for dir in packages/*/; do
+            [ -f "$dir/package.json" ] && npm install --prefix "$dir"
           done
 
       # Before the build, because neither linter needs one and a failure
@@ -32,24 +37,19 @@ jobs:
       - name: Lint gate
         run: npm run lint
 
-      # build:core, not build: `npm run build` walks packages/ and builds
-      # everything, which is right on a dev machine and wrong here — CI
-      # installs only the packages it tests, so the rest have no deps to
-      # build against. This step names what it needs, in order.
-      # Order matters: the root tsc type-checks src/tui.ts which imports
-      # fez-client's dist, so fez-client (pure tsc, no root dependency)
-      # must build FIRST. fez-tui must precede fez-client (its d.ts feeds
-      # the root), and fez-relay before evals.
+      # The first four are ordered by hand because they must be: the root
+      # tsc type-checks src/tui.ts, which imports fez-client's dist, so
+      # fez-client builds FIRST; fez-tui precedes it (its d.ts feeds the
+      # root); build:core is the root alone. Then `npm run build` walks
+      # packages/ for everything else, so a new package is covered the
+      # day it has a build script.
       - name: Build
         run: |
           npm run build --prefix packages/fez-tui
           npm run build --prefix packages/fez-relay
           npm run build --prefix packages/fez-client
           npm run build:core
-          npm run build --prefix packages/fez-acp
-          npm run build --prefix packages/fez-communities
-          npm run build --prefix packages/fez-workflows
-          npm run build --prefix packages/fez-media
+          npm run build
 
       - name: Test gate
         run: npx vitest --run

@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { BrowserWire } from "../../fez-desktop/src/wire.js";
 import { FezClient, setStatePersistence } from "../../fez-client/dist/index.js";
+import { waitForPort } from "./mini-relay.js";
 
 /**
  * The requirement, end to end, against the real relay binary:
@@ -66,7 +67,7 @@ beforeAll(async () => {
     ],
     { stdio: "ignore" }
   );
-  await new Promise((r) => setTimeout(r, 900));
+  await waitForPort(PORT);
 }, 30_000);
 
 afterAll(() => {
