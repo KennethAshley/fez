@@ -57,7 +57,7 @@ beforeAll(async () => {
   relay = spawn(
     "node",
     [
-      new globalThis.URL("../../../deploy/fez-relay.mjs", import.meta.url).pathname,
+      new globalThis.URL("../../fez-relay/dist/cli.js", import.meta.url).pathname,
       "--port", String(PORT),
       "--store", STORE,
       "--policy", "membership",
@@ -65,9 +65,9 @@ beforeAll(async () => {
       "--owner", ownerPk,
       "--name", "Raleigh, NC",
     ],
-    { stdio: "ignore" }
+    { stdio: ["ignore", "ignore", "pipe"] }
   );
-  await waitForPort(PORT);
+  await waitForPort(PORT, 20_000, relay);
 }, 30_000);
 
 afterAll(() => {

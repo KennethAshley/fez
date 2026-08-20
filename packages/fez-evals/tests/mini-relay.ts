@@ -135,7 +135,14 @@ export function waitFor(predicate: () => boolean, timeoutMs: number, label: stri
  * Polls the port instead, so it costs a few milliseconds when the relay
  * is quick and still waits when the machine is loaded.
  */
-export async function waitForPort(port: number, timeoutMs = 20_000): Promise<void> {
+export async function waitForPort(
+  port: number,
+  timeoutMs = 20_000,
+  /** The spawned process, so a boot failure reports ITS error, not ours. */
+  child?: { stderr?: { on(e: "data", f: (c: unknown) => void): void } }
+): Promise<void> {
+  let stderr = "";
+  child?.stderr?.on("data", (chunk) => { stderr += String(chunk); });
   const { connect } = await import("node:net");
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -151,7 +158,10 @@ export async function waitForPort(port: number, timeoutMs = 20_000): Promise<voi
     });
     if (open) return;
     if (Date.now() > deadline) {
-      throw new Error(`relay never listened on ${port} within ${timeoutMs}ms`);
+      throw new Error(
+        `relay never listened on ${port} within ${timeoutMs}ms` +
+          (stderr.trim() ? `\nits stderr:\n${stderr.trim().slice(0, 2000)}` : " (and wrote nothing to stderr)")
+      );
     }
     await new Promise((r) => setTimeout(r, 50));
   }
