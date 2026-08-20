@@ -32,6 +32,10 @@ jobs:
       - name: Lint gate
         run: npm run lint
 
+      # build:core, not build: `npm run build` walks packages/ and builds
+      # everything, which is right on a dev machine and wrong here — CI
+      # installs only the packages it tests, so the rest have no deps to
+      # build against. This step names what it needs, in order.
       # Order matters: the root tsc type-checks src/tui.ts which imports
       # fez-client's dist, so fez-client (pure tsc, no root dependency)
       # must build FIRST. fez-tui must precede fez-client (its d.ts feeds
@@ -41,7 +45,7 @@ jobs:
           npm run build --prefix packages/fez-tui
           npm run build --prefix packages/fez-relay
           npm run build --prefix packages/fez-client
-          npm run build
+          npm run build:core
           npm run build --prefix packages/fez-acp
           npm run build --prefix packages/fez-communities
           npm run build --prefix packages/fez-workflows
