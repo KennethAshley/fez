@@ -1217,6 +1217,30 @@ button.author:hover { text-decoration: underline; }
 .poll-meta { font-size: 11px; color: var(--fg-dim); }
 
 /* extensions view: filter chips */
+/* ── extensions page ────────────────────────────────────────── */
+/* installed | browse — two modes, because managing what you have and
+   shopping for more are different jobs and were stacked in one scroll. */
+.ext-tabs { display: flex; gap: 2px; margin-left: auto; }
+.ext-tab {
+  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 12px;
+  font-family: var(--font-mono); padding: 3px 10px; border-radius: 6px; cursor: pointer;
+}
+.ext-tab:hover { color: var(--fg); }
+.ext-tab.active { background: var(--bg2); color: var(--fg); font-weight: 700; }
+.ext-tab-count { margin-left: 5px; opacity: 0.6; font-size: 11px; }
+
+/* The vocabulary, said once. Four words were in play — extension,
+   skill, mcpServer, pack — with nothing relating them. */
+.ext-legend {
+  padding: 0 18px 11px; font-size: 11.5px; color: var(--fg-dim); line-height: 1.5; max-width: 640px;
+}
+.ext-legend strong { color: var(--fg); font-weight: 700; }
+
+/* A gap an agent will actually hit — the only row here that is a
+   problem, so it is the only one that gets colour. */
+.ext-missing .skill-row { border-left: 2px solid var(--red); padding-left: 10px; }
+.missing-tag { color: var(--red); border-color: var(--red); }
+
 .ext-filters { display: flex; gap: 4px; text-transform: none; letter-spacing: 0; }
 .ext-filter {
   background: none; border: 1px solid var(--bg2); color: var(--fg-dim); font: inherit; font-size: 11px;

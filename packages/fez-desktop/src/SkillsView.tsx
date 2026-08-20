@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient, WireEvent } from "@fez/client";
@@ -51,6 +51,7 @@ interface Listing {
 
 
 export default function SkillsView({ client, wire }: { client: FezClient; wire: BrowserWire }) {
+  const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [filter, setFilter] = useState<"all" | "agents" | "skills" | "packs">("all");
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
   const [listings, setListings] = useState<Listing[]>();
@@ -61,6 +62,42 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
   const [copied, setCopied] = useState<string>();
   const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[] }[]>([]);
   const [localParts, setLocalParts] = useState<Record<string, string[]>>({});
+
+  /**
+   * One row per thing on this machine, whatever kind it is. An
+   * extension and a bare MCP server were shown as two separate lists,
+   * which is most of why the page did not parse: `fez-polls` appeared
+   * only as a skill while its gui and headless parts went unmentioned.
+   */
+  const everything: {
+    name: string;
+    parts: string[];
+    config?: SkillConfig;
+    wanted: string[];
+  }[] = useMemo(() => {
+    const names = new Set([...Object.keys(localParts), ...Object.keys(installed)]);
+    return [...names]
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => {
+        const parts = [...(localParts[name] ?? [])];
+        if (installed[name]) parts.unshift("skill");
+        return {
+          name,
+          parts,
+          config: installed[name],
+          wanted: agentDeps.filter((dep) => dep.skills.includes(name)).map((dep) => dep.agent),
+        };
+      });
+  }, [localParts, installed, agentDeps]);
+
+  /** Declared by a persona, not present here — the only actionable gap. */
+  const missing: { agent: string; skill: string }[] = useMemo(
+    () =>
+      agentDeps.flatMap((dep) =>
+        dep.skills.filter((skill) => !installed[skill]).map((skill) => ({ agent: dep.agent, skill }))
+      ),
+    [agentDeps, installed]
+  );
 
   const flash = (text: string) => {
     setNotice(text);
@@ -197,57 +234,137 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
 
   return (
     <main className="main">
-      <header className="topbar">⊞ extensions</header>
+      <header className="topbar">
+        <div className="topbar-row">
+          ⊞ extensions
+          <span className="ext-tabs">
+            {(["installed", "browse"] as const).map((name) => (
+              <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} onClick={() => setTab(name)}>
+                {name}
+                {name === "installed" && <span className="ext-tab-count">{everything.length}</span>}
+              </button>
+            ))}
+          </span>
+        </div>
+        {/* The vocabulary, once, at the top. Four words were being used
+            for overlapping things — extension, skill, mcpServer, pack —
+            and without this sentence the page cannot be parsed. */}
+        <div className="ext-legend">
+          An <strong>extension</strong> is a package. It can give your agents a <strong>skill</strong> to call,
+          run <strong>background</strong> work, and add <strong>UI</strong> here.
+        </div>
+      </header>
       <div className="timeline pulse-scroll">
         {notice && <div className="manage-notice">{notice}</div>}
 
-        {/* ── 1 · what your agents need ─────────────────────────── */}
-        {agentDeps.length > 0 && (
-          <div className="pulse-section">
-            <div className="pulse-section-head"><span>what your agents need</span></div>
-            <div className="settings-hint">
-              Every skill your agents declare, and its status here: ✓ ready · ○ needs a secret (settings ⌘,) ·
-              red means no definition — install one below.
-            </div>
-            {agentDeps.map(({ agent, skills }) => (
-              <div key={agent} className="dep-row">
-                <span className="dep-agent">@{agent}</span>
-                <span className="dep-skills">
-                  {skills.map((skill) => (
-                    <SkillDep
-                      key={skill}
-                      skill={skill}
-                      config={installed[skill]}
-                      listing={skillListings.find((l) => l.name === skill)}
-                      onInstall={(l) => setInstalling(l)}
-                    />
-                  ))}
-                </span>
+        {tab === "installed" && (
+          <>
+            {/* ── what your agents are missing ─────────────────────
+                Only rendered when something is actually missing: a
+                permanent "requirements" section that is always green
+                trains you to stop reading it. */}
+            {missing.length > 0 && (
+              <div className="pulse-section ext-missing">
+                <div className="pulse-section-head"><span>your agents need something</span></div>
+                {missing.map(({ agent, skill }) => (
+                  <div key={`${agent}:${skill}`} className="skill-row">
+                    <div className="skill-main">
+                      <span className="skill-name">
+                        {skill}
+                        <span className="role-tag missing-tag">not installed</span>
+                      </span>
+                      <span className="skill-desc">@{agent} declares it — until it exists, that agent runs without it</span>
+                    </div>
+                    <div className="skill-actions">
+                      {skillListings.find((l) => l.name === skill) ? (
+                        <button className="agent-action" onClick={() => setInstalling(skillListings.find((l) => l.name === skill)!)}>
+                          install…
+                        </button>
+                      ) : (
+                        <span className="skill-env">no source known yet</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+
+            {/* ── everything on this machine ───────────────────── */}
+            <div className="pulse-section">
+              <div className="pulse-section-head"><span>on this machine</span></div>
+              {everything.length === 0 && <div className="pane-empty">nothing installed yet — see browse</div>}
+              {everything.map(({ name, parts, config, wanted }) => (
+                <div key={name} className="skill-row">
+                  <div className="skill-main">
+                    <span className="skill-name">
+                      {name}
+                      {parts.map((part) => (
+                        <span key={part} className="role-tag">{part}</span>
+                      ))}
+                    </span>
+                    {wanted.length > 0 && (
+                      <span className="skill-desc">used by {wanted.map((a) => `@${a}`).join(", ")}</span>
+                    )}
+                    {config && <code className="skill-cmd">{runsLine(config)}</code>}
+                    {!config && (
+                      <code className="skill-cmd">
+                        {parts.includes("gui") && parts.includes("headless")
+                          ? "loads in this app and the TUI"
+                          : parts.includes("gui")
+                            ? "loads in this app"
+                            : "loads in the TUI and other clients"}
+                      </code>
+                    )}
+                    {config?.env && Object.keys(config.env).length > 0 && (
+                      <span className="skill-env skill-deps">
+                        env:{" "}
+                        {Object.keys(config.env).map((key) => (
+                          <EnvKeyStatus key={key} skill={name} envKey={key} plaintext={!!config.env?.[key]?.trim()} editable={false} />
+                        ))}
+                      </span>
+                    )}
+                  </div>
+                  {config && (
+                    <div className="skill-actions">
+                      {publishing === name ? (
+                        <PublishForm onPublish={(meta) => void publish(name, meta)} onCancel={() => setPublishing(undefined)} />
+                      ) : (
+                        <>
+                          <button className="mini" title="sign a listing to your relay so others can install this" onClick={() => setPublishing(name)}>↗ share</button>
+                          <button className="mini" title="remove from this machine" onClick={() => void invoke("remove_skill", { name }).then(reload)}>✕</button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
         )}
 
-        {/* ── 2 · top extensions (ranked by installs) ───────────── */}
-        <div className="pulse-section">
-          <div className="pulse-section-head">
-            <span>top extensions</span>
-            <span className="pulse-readout" />
-            <span className="ext-filters">
-              {(["all", "agents", "skills", "packs"] as const).map((name) => (
-                <button key={name} className={filter === name ? "ext-filter active" : "ext-filter"} onClick={() => setFilter(name)}>
-                  {name}
-                </button>
-              ))}
-            </span>
-          </div>
-          <div className="settings-hint">
-            Signed listings on your relay, ranked by installs. Installing an agent lands as a DRAFT you review;
-            installing a skill adds its definition (secrets stay yours, in the keychain). Read before installing.
-          </div>
-          {!listings && <div className="pane-empty">loading…</div>}
-          {listings && ranked.length === 0 && <div className="pane-empty">nothing listed yet — share something of yours from "on this machine" below</div>}
-          {ranked.map((listing) => {
+        {tab === "browse" && (
+          <div className="pulse-section">
+            <div className="pulse-section-head">
+              <span>listed on your relay</span>
+              <span className="ext-filters">
+                {(["all", "agents", "skills", "packs"] as const).map((name) => (
+                  <button key={name} className={filter === name ? "ext-filter active" : "ext-filter"} onClick={() => setFilter(name)}>
+                    {name}
+                  </button>
+                ))}
+              </span>
+            </div>
+            <div className="settings-hint">
+              Signed listings, ranked by installs. Installing an agent lands as a DRAFT you review; installing a
+              skill adds its definition (secrets stay yours, in the keychain). Read before installing.
+            </div>
+            {!listings && <div className="pane-empty">loading…</div>}
+            {listings && ranked.length === 0 && (
+              <div className="pane-empty">
+                nothing listed on this relay yet — share something of yours from the installed tab
+              </div>
+            )}
+            {ranked.map((listing) => {
             const key = `${listing.authorPk}:${listing.name}`;
             const count = installs.get(countKey(listing)) ?? 0;
             const isPersona = listing.artifact === "persona";
@@ -306,71 +423,8 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
               </div>
             );
           })}
-        </div>
-
-        {/* ── 3 · on this machine ───────────────────────────────── */}
-        <div className="pulse-section">
-          <div className="pulse-section-head"><span>on this machine</span></div>
-          <div className="settings-hint">
-            Your local definitions. Secrets are managed in settings (⌘,) → skills &amp; secrets. "Share" signs a
-            listing to your relay so others can install it (env values are never included).
           </div>
-          {Object.keys(installed).length === 0 && Object.keys(localParts).length === 0 && (
-            <div className="pane-empty">nothing installed yet</div>
-          )}
-          {Object.entries(localParts)
-            .filter(([name]) => !installed[name])
-            .map(([name, parts]) => (
-              <div key={name} className="skill-row">
-                <div className="skill-main">
-                  <span className="skill-name">{name}</span>
-                  <span className="skill-deps">
-                    {parts.map((part) => (
-                      <span key={part} className="role-tag">{part}</span>
-                    ))}
-                  </span>
-                  <code className="skill-cmd">
-                    extension parts — {parts.includes("gui") ? "loads in this app" : "loads in the TUI/clients"}
-                    {parts.includes("gui") && parts.includes("headless") ? " and the TUI" : ""}
-                  </code>
-                </div>
-              </div>
-            ))}
-          {Object.entries(installed).map(([name, config]) => (
-            <div key={name} className="skill-row">
-              <div className="skill-main">
-                <span className="skill-name">{name}</span>
-                {localParts[name] && (
-                  <span className="skill-deps">
-                    {localParts[name].map((part) => (
-                      <span key={part} className="role-tag">{part}</span>
-                    ))}
-                    <span className="role-tag">skill</span>
-                  </span>
-                )}
-                <code className="skill-cmd">{runsLine(config)}</code>
-                {config.env && Object.keys(config.env).length > 0 && (
-                  <span className="skill-env skill-deps">
-                    env:{" "}
-                    {Object.keys(config.env).map((key) => (
-                      <EnvKeyStatus key={key} skill={name} envKey={key} plaintext={!!config.env?.[key]?.trim()} editable={false} />
-                    ))}
-                  </span>
-                )}
-              </div>
-              <div className="skill-actions">
-                {publishing === name ? (
-                  <PublishForm onPublish={(meta) => void publish(name, meta)} onCancel={() => setPublishing(undefined)} />
-                ) : (
-                  <>
-                    <button className="mini" title="sign a listing to your relay so others can install this" onClick={() => setPublishing(name)}>↗ share</button>
-                    <button className="mini" title="remove from this machine" onClick={() => void invoke("remove_skill", { name }).then(reload)}>✕</button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+        )}
 
         {installing && (
           <InstallDialog
@@ -480,53 +534,3 @@ function InstallDialog({ listing, wire, onDone }: { listing: Listing; wire: Brow
 }
 
 
-/**
- * One declared skill on the dependency board: ready / needs env (with
- * inline keychain fill) / undefined (with install if a listing exists).
- */
-function SkillDep({
-  skill,
-  config,
-  listing,
-  onInstall,
-}: {
-  skill: string;
-  config?: SkillConfig;
-  listing?: Listing;
-  onInstall: (listing: Listing) => void;
-}) {
-  const envKeys = Object.keys(config?.env ?? {});
-  const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({});
-  useEffect(() => {
-    void (async () => {
-      const status: Record<string, boolean> = {};
-      for (const key of envKeys) {
-        status[key] = await invoke<boolean>("has_skill_secret", { skill, key }).catch(() => false);
-      }
-      setSecretStatus(status);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skill, envKeys.join(",")]);
-
-  if (!config) {
-    return (
-      <span className="skill-dep missing">
-        {skill}
-        {listing ? (
-          <button className="skill-link" onClick={() => onInstall(listing)}>install</button>
-        ) : (
-          " — no definition"
-        )}
-      </span>
-    );
-  }
-  const unfilled = envKeys.filter((key) => !secretStatus[key] && !config.env?.[key]?.trim());
-  if (unfilled.length === 0) {
-    return <span className="skill-dep ready" title={envKeys.length ? "env resolved (keychain/settings)" : "no env needed"}>{skill} ✓</span>;
-  }
-  return (
-    <span className="skill-dep needs-env" title={`needs ${unfilled.join(", ")} — fill in settings (⌘,) → skills & secrets`}>
-      {skill} ○ needs {unfilled.join(", ")} — settings ⌘,
-    </span>
-  );
-}
