@@ -1196,8 +1196,20 @@ button.author:hover { text-decoration: underline; }
 /* resizable sidebars */
 .rail { width: var(--rail-w, 240px); min-width: var(--rail-w, 240px); }
 .pane { width: var(--pane-w, 340px); min-width: var(--pane-w, 340px); }
-.rz { width: 5px; min-width: 5px; cursor: col-resize; flex-shrink: 0; background: transparent; transition: background 0.15s; }
-.rz:hover { background: var(--accent); }
+/* 5px between two surfaces is a target you have to aim at, and missing
+   it reads as "this doesn't resize" rather than "you missed". The strip
+   is 11px of grab zone now, painting only its middle 3px on hover so
+   the seam still looks like a hairline. z-index because it must win
+   against whatever it sits between, not just be adjacent to it. */
+.rz {
+  width: 11px; min-width: 11px; margin: 0 -3px; cursor: col-resize;
+  flex-shrink: 0; background: transparent; position: relative; z-index: 5;
+}
+.rz::after {
+  content: ""; position: absolute; inset: 0 4px; border-radius: 2px;
+  background: transparent; transition: background 0.15s;
+}
+.rz:hover::after { background: var(--accent); }
 
 /* bench proposal diffs */
 .proposal-from { color: var(--red); }
@@ -2295,8 +2307,11 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
    in the rail it left a ragged right edge against the channel rows it
    sits between. border-box so the padding and border count inside the
    100% — without it every one of these overflows by 22px. */
+.rail .manage-input,
 .sidebar .manage-input,
 .wiki-list .manage-input,
+.rail input[type="text"],
+.rail input:not([type]),
 .sidebar input[type="text"],
 .sidebar input:not([type]) {
   width: 100%;
