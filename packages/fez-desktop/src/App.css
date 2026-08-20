@@ -40,7 +40,6 @@ body {
 
 /* ── left rail ─────────────────────────────────────────────── */
 .rail {
-  width: 240px; min-width: 240px;
   background: var(--bg1);
   border-right: 1px solid var(--bg2);
   padding: 12px 8px;
@@ -214,7 +213,7 @@ body {
 .dm-note { margin-left: auto; font-size: 11px; color: var(--fg-dim); font-weight: 400; }
 
 .pane {
-  width: 340px; min-width: 340px; border-left: 1px solid var(--bg2);
+  border-left: 1px solid var(--bg2);
   background: var(--bg1); display: flex; flex-direction: column;
 }
 .pane-head {
@@ -1194,7 +1193,6 @@ button.author:hover { text-decoration: underline; }
 }
 
 /* resizable sidebars */
-.rail { width: var(--rail-w, 240px); min-width: var(--rail-w, 240px); }
 .pane { width: var(--pane-w, 340px); min-width: var(--pane-w, 340px); }
 /* 5px between two surfaces is a target you have to aim at, and missing
    it reads as "this doesn't resize" rather than "you missed". The strip
