@@ -456,7 +456,10 @@ body {
 }
 
 /* ── home + settings ───────────────────────────────────────── */
-.home-link { margin-bottom: 10px; font-weight: 600; }
+/* 10px between nav rows read as five separate buttons rather than one
+   list — and with the active row now carrying its own ground, the gaps
+   were doing separation work the colour already does. */
+.home-link { margin-bottom: 4px; font-weight: 600; }
 .home-section {
   font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim);
   margin: 18px 0 8px;
