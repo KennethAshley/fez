@@ -933,6 +933,7 @@ button.author:hover { text-decoration: underline; }
 .skill-actions { display: flex; gap: 6px; align-items: center; flex: none; }
 .publish-form { display: flex; gap: 6px; align-items: center; }
 .publish-form .manage-input { width: 180px; font-size: 11px; padding: 4px 8px; }
+.publish-what { font-size: 11px; color: var(--fg-dim); max-width: 260px; line-height: 1.45; }
 .install-box { padding: 16px; }
 .install-head { font-family: var(--font-mono); font-weight: 700; margin-bottom: 8px; }
 

@@ -412,7 +412,19 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                         <PublishForm onPublish={(meta) => void publish(name, meta)} onCancel={() => setPublishing(undefined)} />
                       ) : (
                         <>
-                          <button className="mini" title="sign a listing to your relay so others can install this" onClick={() => setPublishing(name)}>↗ share</button>
+                          {/* "share" read as Slack-share — share it WHERE,
+                              with whom? It publishes a signed listing to
+                              this workspace's relay, and the browse tab
+                              calls those "listed on your relay". Same
+                              word both ends, so the round trip is
+                              legible: you list it, it shows up listed. */}
+                          <button
+                            className="mini"
+                            title={`publish a signed listing to this workspace's relay — everyone here sees "${name}", the command it runs, and the names of any keys it needs. Values stay on this machine.`}
+                            onClick={() => setPublishing(name)}
+                          >
+                            ↗ list on relay
+                          </button>
                           <button className="mini" title="remove from this machine" onClick={() => void invoke("remove_skill", { name }).then(reload)}>✕</button>
                         </>
                       )}
@@ -574,6 +586,13 @@ function PublishForm({
   };
   return (
     <span className="publish-form stacked">
+      {/* Publishing is a signature, so the form says whose and over
+          what. The listing carries the COMMAND — that is the thing
+          other people will run — and the env KEY NAMES, never values. */}
+      <span className="publish-what">
+        Signed by you, to this workspace's relay. Everyone here will see the command it runs and can install it in
+        one click. Your env values stay on this machine — only the key names travel.
+      </span>
       <input className="manage-input" value={description} autoFocus placeholder="what does it do?" onChange={(e) => setDescription(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
       <input className="manage-input" value={github} spellCheck={false} placeholder="github url (optional)" onChange={(e) => setGithub(e.target.value)} />
       <input className="manage-input" value={npm} spellCheck={false} placeholder="npm package (optional)" onChange={(e) => setNpm(e.target.value)} />
