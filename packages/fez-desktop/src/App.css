@@ -1303,8 +1303,12 @@ button.author:hover { text-decoration: underline; }
 
 /* The vocabulary, said once. Four words were in play — extension,
    skill, mcpServer, pack — with nothing relating them. */
+/* Body content now, not header chrome — so it takes a card like the
+   sections it introduces rather than the topbar's flush padding. */
 .ext-legend {
-  padding: 0 18px 11px; font-size: 11.5px; color: var(--fg-dim); line-height: 1.5; max-width: 640px;
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 11px 14px; margin-bottom: 12px;
+  font-size: 11.5px; color: var(--fg-dim); line-height: 1.5; max-width: 640px;
 }
 .ext-legend strong { color: var(--fg); font-weight: 700; }
 
@@ -1472,6 +1476,27 @@ button.author:hover { text-decoration: underline; }
 .mention-box { position: relative; display: flex; flex-direction: column; }
 .mention-box .mention-pop { left: 0; }
 .comment-input { width: 100%; resize: vertical; font-size: 12.5px; }
+
+/* ── the doc comment editor ─────────────────────────────────
+   One box, like the channel composer: the toolbar and the textarea
+   share a single border instead of stacking two. The ground stays
+   --bg0, which is the comment box's own background — the channel
+   composer's rounder, heavier frame belongs to a persistent bar at
+   the bottom of a window, not to a note attached to a line. */
+.mention-box.formatted {
+  background: var(--bg0); border: 1px solid var(--bg2); border-radius: 6px;
+  overflow: hidden;
+}
+.mention-box.formatted:focus-within { border-color: var(--accent); }
+/* The textarea gives up its own frame to the wrapper. */
+.mention-box.formatted .comment-input {
+  background: none; border: 0; border-radius: 0; padding: 6px 10px;
+}
+.mention-box.formatted .comment-input:focus { border-color: transparent; }
+.mention-box.formatted .format-tray {
+  position: static; border: 0; border-bottom: 1px solid var(--bg2); border-radius: 0;
+  box-shadow: none; background: var(--bg1); padding: 3px 6px;
+}
 
 /* ── channel info: the channel's doc + pins, always at hand ── */
 .channel-info { flex: none; }

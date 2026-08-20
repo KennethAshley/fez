@@ -132,6 +132,7 @@ function CommentThread({
         <div className="comment-compose">
           <MentionBox
             client={client}
+            format
             roster={roster}
             value={draft}
             autoFocus
@@ -944,6 +945,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                                 <div className="comment-compose">
                                   <MentionBox
                                     client={client}
+                                    format
                                     roster={commentRoster}
                                     value={commentDraft}
                                     autoFocus

@@ -324,11 +324,18 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             ))}
           </span>
         </div>
+      </header>
+      <div className="timeline pulse-scroll">
         {/* The vocabulary, once, at the top — as a KEY, not a sentence,
             because that is what it is. The tags on every row below are
             these three words, and until you know they name PLACES
             rather than sorts of thing, a row tagged "gui skill" reads
-            as a contradiction instead of a package with two parts. */}
+            as a contradiction instead of a package with two parts.
+
+            It sits in the BODY, not the header: putting it in the
+            topbar made the bar four rows tall and pushed its bottom
+            rule off the top of the window, so this view alone looked
+            like it had no header at all. */}
         <div className="ext-legend">
           <div className="ext-legend-lead">
             An <strong>extension</strong> is one package, filed into up to three places:
@@ -348,8 +355,6 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             Most are more than one — <strong>fez-polls</strong> is all three.
           </div>
         </div>
-      </header>
-      <div className="timeline pulse-scroll">
         {notice && <div className="manage-notice">{notice}</div>}
 
         {tab === "installed" && (

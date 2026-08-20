@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, MentionCandidate } from "@fez/client";
 import { MentionList, mentionToken, rosterMatches } from "./mentions";
+import { FormatBar, markdownFormatOps } from "./format-bar";
 
 /**
- * A plain textarea that knows who is in the room.
+ * A textarea that knows who is in the room, and how to format.
  *
  * Doc comments are a summon path — "@researcher fix this line" hands an
  * agent the line as work — so the same guarantee chat has must hold
- * here: you pick a person, and that person is who gets tagged. The full
- * Composer would drag a format bar, emoji grid and upload button into a
- * two-row comment box, so this is the mention half on its own.
+ * here: you pick a person, and that person is who gets tagged.
+ *
+ * With `format`, it also gets the channel composer's markdown toolbar,
+ * from the same implementation (format-bar.tsx). The two used to differ
+ * only because the toolbar happened to live inside Composer: the
+ * channel had bold and lists, and the other place you write prose for
+ * people and agents to read had a bare box. What stays out is the rest
+ * of Composer's action row — emoji grid, uploads, slash commands —
+ * which is chat furniture, not authoring.
  */
 
 export default function MentionBox({
@@ -23,6 +30,7 @@ export default function MentionBox({
   placeholder,
   autoFocus,
   rows = 2,
+  format = false,
   className = "manage-input comment-input",
 }: {
   client: FezClient;
@@ -37,12 +45,15 @@ export default function MentionBox({
   placeholder?: string;
   autoFocus?: boolean;
   rows?: number;
+  /** Show the markdown toolbar on selection, like the channel composer. */
+  format?: boolean;
   className?: string;
 }) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = useState(0);
   const [pickIndex, setPickIndex] = useState(0);
   const [suppressed, setSuppressed] = useState(false); // esc closed it for this token
+  const [hasSelection, setHasSelection] = useState(false);
 
   const token = useMemo(() => mentionToken(value, caret), [value, caret]);
   const candidates = useMemo(
@@ -72,15 +83,27 @@ export default function MentionBox({
     });
   };
 
-  const syncCaret = () => setCaret(areaRef.current?.selectionStart ?? 0);
+  const syncCaret = () => {
+    const area = areaRef.current;
+    setCaret(area?.selectionStart ?? 0);
+    setHasSelection(!!area && area.selectionStart !== area.selectionEnd);
+  };
+
+  const ops = markdownFormatOps(areaRef, value, onChange, (range) => setHasSelection(!!range));
 
   return (
-    <div className="mention-box">
+    <div className={format ? "mention-box formatted" : "mention-box"}>
       {open && (
         <div className="mention-pop">
           <MentionList client={client} candidates={candidates} pickIndex={pickIndex} onPick={pick} />
         </div>
       )}
+      {/* Same toolbar the channel composer uses, inside the same single
+          border — a doc comment is prose other people and agents read,
+          so it gets the same authoring surface. It appears on selection
+          rather than always, because a two-row bar over a two-row box
+          is mostly chrome. */}
+      {format && hasSelection && !open && <FormatBar ops={ops} className="format-tray" />}
       <textarea
         ref={areaRef}
         className={className}
@@ -94,6 +117,8 @@ export default function MentionBox({
         }}
         onKeyUp={syncCaret}
         onClick={syncCaret}
+        onSelect={syncCaret}
+        onBlur={() => setHasSelection(false)}
         onKeyDown={(e) => {
           if (open) {
             if (e.key === "ArrowDown") {
