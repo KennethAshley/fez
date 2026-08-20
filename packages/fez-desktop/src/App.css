@@ -1871,7 +1871,31 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 }
 
 /* ── the / menu, at the caret ── */
-.doc-textarea-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
+/* ── the document editor ────────────────────────────────────
+   One box, same as the composer: the toolbar and the textarea share a
+   single border rather than stacking two framed elements. The wrap was
+   a ROW, so a bar added as a child landed beside the textarea instead
+   of above it — hence the column. */
+.doc-textarea-wrap {
+  position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0;
+  background: var(--bg0); border: 1px solid var(--hairline); border-radius: 6px;
+}
+.doc-textarea-wrap:focus-within { border-color: var(--accent); }
+/* The textarea gives up its own frame to the wrapper. */
+.doc-textarea-wrap .doc-textarea {
+  background: none; border: 0; border-radius: 0;
+}
+.doc-textarea-wrap .doc-textarea:focus { border-color: transparent; }
+.doc-format-bar {
+  flex: none; padding: 3px 8px; margin: 0;
+  border-bottom: 1px solid var(--hairline); background: var(--bg1);
+  border-radius: 6px 6px 0 0;
+}
+.doc-format-bar button {
+  background: none; border: 0; color: var(--fg); font-family: var(--font-mono); font-size: 12px;
+  width: 28px; height: 24px; border-radius: 5px; cursor: pointer;
+}
+.doc-format-bar button:hover { background: var(--bg2); color: var(--accent); }
 .doc-textarea-wrap .doc-textarea { flex: 1; }
 .slash-menu {
   position: absolute;

@@ -16,6 +16,7 @@ import {
   type WireEvent,
 } from "@fez/client";
 import MentionBox from "./MentionBox";
+import { FormatBar, markdownFormatOps } from "./format-bar";
 import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";
 import QueryBlock from "./QueryBlock";
 import SlashMenu, { caretPosition, slashAt, type SlashState } from "./SlashMenu";
@@ -233,6 +234,10 @@ export default function WikiView({ client }: { client: FezClient }) {
   const [composerError, setComposerError] = useState<string>();
   const [slash, setSlash] = useState<SlashState>();
   const editorRef = React.useRef<HTMLTextAreaElement>(null);
+  // The document body gets the same markdown toolbar the channel
+  // composer and the comment boxes use — one implementation, three
+  // places you write prose here (format-bar.tsx).
+  const docFormat = markdownFormatOps(editorRef, draft, setDraft);
 
   // live: agent/other-client versions repaint the list and the open page
   useEffect(() => {
@@ -853,6 +858,10 @@ export default function WikiView({ client }: { client: FezClient }) {
             {editing ? (
               <div className="doc-editor wiki-editor">
                 <div className="doc-textarea-wrap">
+                  {/* Persistent here, unlike the comment box: this is a
+                      full-page editor, so a bar that appears only on
+                      selection would be hide-and-seek. */}
+                  <FormatBar ops={docFormat} className="format-bar doc-format-bar" />
                   <textarea
                     ref={editorRef}
                     className="doc-textarea"
