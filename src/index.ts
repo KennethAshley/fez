@@ -49,6 +49,8 @@ export { findPersona, listPersonas, validatePersonaFile, mergeDefaults, parseSki
 export { parseSkillSource, describeSkillSpec, wellKnownSource, installHint, machineLocalPath, SOURCE_SCHEMES, type SkillSpec } from "./skill-source.js";
 export { findMcpServer, registerMcpServer, loadMcpServersFromSettings } from "./mcp-servers.js";
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./keys.js";
+/** A background process needs the PATH a person has, not the one launchd gives it. */
+export { adoptUserPath, whichBinary } from "./user-path.js";
 export { loadSettings, saveSettings, resolveRelay, resolveRelays, DEFAULT_RELAY } from "./settings.js";
 export { parseRespondTo, authorAllowed, describeAuthorPolicy, type AuthorPolicy, type AuthorMode } from "./author-gate.js";
 export { untrustedValue, UNTRUSTED_CONTENT_NOTICE } from "./prompt-values.js";

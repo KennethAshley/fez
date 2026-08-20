@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { changeLine, keyFor, type Seen } from "../../fez-github/src/state.js";
 import { channelNameFor, headline, validRepo, type Item } from "../../fez-github/src/github.js";
+import { CONFIG_D, parseConfig } from "../../fez-github/src/config.js";
 
 /**
  * The bridge's judgement calls, isolated from the network.
@@ -145,5 +146,69 @@ describe("headlines quote the title, never the body", () => {
 
   test("issues are not PRs", () => {
     expect(headline(item({ kind: "issue", merged: undefined, state: "open" }))).toContain("open");
+  });
+});
+
+/**
+ * Config moved from ~/.fez/github.json onto the relay so the GUI could
+ * reach it (a webview has no filesystem) and so it syncs across
+ * machines. It is self-encrypted because a repo list NAMES things —
+ * `owner/private-thing` discloses something to a workspace member who
+ * cannot read the repo.
+ */
+describe("relay config is namespaced and defensive", () => {
+  test("the d-tag can never look like a channel's read state", () => {
+    // fez publishes read state on the same kind, keyed by channel UUID.
+    expect(CONFIG_D.startsWith("ext:")).toBe(true);
+    expect(CONFIG_D).not.toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/i);
+  });
+
+  test.each([
+    ["null", null],
+    ["a string", "repos"],
+    ["an array", ["o/r"]],
+    ["repos missing", {}],
+    ["repos not an array", { repos: "o/r" }],
+  ])("%s parses to empty rather than throwing", (_label, raw) => {
+    expect(parseConfig(raw)).toEqual({ repos: [] });
+  });
+
+  test("non-string entries are dropped, not coerced", () => {
+    expect(parseConfig({ repos: ["o/r", 42, null, "a/b"] })).toEqual({ repos: ["o/r", "a/b"] });
+  });
+
+  test("a nonsense interval is dropped so the floor applies", () => {
+    expect(parseConfig({ repos: [], pollSeconds: "fast" })).toEqual({ repos: [] });
+    expect(parseConfig({ repos: [], pollSeconds: Number.POSITIVE_INFINITY })).toEqual({ repos: [] });
+    expect(parseConfig({ repos: [], pollSeconds: 300 })).toEqual({ repos: [], pollSeconds: 300 });
+  });
+});
+
+/**
+ * The first-sight watermark. An empty repo produces no item keys, so
+ * deriving "seen" from them made every poll look like the first one —
+ * the summary would have reposted every three minutes, forever.
+ */
+describe("a repo is marked seen independently of its items", () => {
+  const seenMarker = (repo: string) => `${repo}#!`;
+
+  test("the marker cannot collide with an item's key", () => {
+    // Issue and PR numbers are integers; "!" is not one.
+    expect(seenMarker("o/r")).not.toBe(keyFor("o/r", 1));
+    expect(seenMarker("o/r")).not.toBe(keyFor("o/r", 0));
+  });
+
+  test("two repos get distinct markers", () => {
+    expect(seenMarker("o/r")).not.toBe(seenMarker("o/other"));
+  });
+
+  /** The bug: an empty repo left no trace, so it was never "seen". */
+  test("an empty repo still leaves a marker", () => {
+    const state: Record<string, unknown> = {};
+    const items: Item[] = [];
+    state[seenMarker("o/empty")] = { updatedAt: "now", state: "watching", comments: 0, rootId: "" };
+    for (const i of items) state[keyFor("o/empty", i.number)] = i;
+    expect(Object.keys(state)).toHaveLength(1);
+    expect(state[seenMarker("o/empty")]).toBeDefined();
   });
 });

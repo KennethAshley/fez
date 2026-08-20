@@ -1115,6 +1115,42 @@ program
       }
     }
 
+    // ── external tools installed extensions declare ──────────────
+    // An extension that shells out to a missing binary does not crash:
+    // it loads, registers, runs on schedule, and quietly does nothing.
+    // That failure only ever appeared as a warning in a log nobody
+    // reads, so it belongs here, where someone is already looking.
+    {
+      const { adoptUserPath, whichBinary } = await import("./user-path.js");
+      adoptUserPath();
+      const extDir = path.join(os.homedir(), ".fez", "extensions");
+      const requirements = new Map<string, string[]>(); // binary → extensions wanting it
+      let scanned = 0;
+      for (const dir of [path.join(process.cwd(), "packages"), extDir]) {
+        let entries: string[] = [];
+        try { entries = await fs.readdir(dir); } catch { continue; }
+        for (const entry of entries) {
+          const manifest = path.join(dir, entry, "package.json");
+          try {
+            const pkg = JSON.parse(await fs.readFile(manifest, "utf-8")) as { fez?: { requires?: string[] } };
+            const needs = pkg.fez?.requires ?? [];
+            if (needs.length === 0) continue;
+            scanned++;
+            for (const binary of needs) {
+              requirements.set(binary, [...(requirements.get(binary) ?? []), entry]);
+            }
+          } catch { /* not a fez package */ }
+        }
+      }
+      for (const [binary, wanters] of requirements) {
+        const found = whichBinary(binary);
+        const who = wanters.join(", ");
+        if (found) ok(`${binary} — ${found} (${who})`);
+        else warn(`${binary} not found, needed by ${who}`, `install it, then: launchctl kickstart -k gui/$(id -u)/com.fez.sentinel`);
+      }
+      if (scanned === 0) ok("no extension declares an external tool");
+    }
+
     console.log(failures === 0 ? chalk.green("\nAll clear.") : chalk.red(`\n${failures} problem(s).`));
     process.exitCode = failures === 0 ? 0 : 1;
   });

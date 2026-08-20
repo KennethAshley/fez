@@ -144,6 +144,15 @@ function agentProcessAlive(persona: string): boolean {
 }
 
 async function main() {
+  // BEFORE anything shells out. launchd hands this process
+  // PATH=/usr/bin:/bin:/usr/sbin:/sbin, so Homebrew, uv, cargo and nvm
+  // are all invisible — and an extension that shells out reports the
+  // tool as "not installed" when it is sitting right there. Adopting the
+  // login shell's PATH once fixes every extension at once, including
+  // ones written by people who never hit this.
+  const { adoptUserPath } = await import("@fez/protocol");
+  adoptUserPath();
+
   const keyHex = getKey("default");
   if (!keyHex) {
     console.error("No fez identity (fez keygen first) — the sentinel signs invites/attestations as you.");

@@ -6,8 +6,19 @@
   "type": "module",
   "fez": {
     "type": "extension",
-    "parts": { "headless": "dist/headless.js" },
-    "permissions": ["read:channels", "publish", "commands", "background"]
+    "parts": {
+      "headless": "dist/headless.js",
+      "background": true
+    },
+    "permissions": [
+      "read:channels",
+      "publish",
+      "commands",
+      "background"
+    ],
+    "requires": [
+      "gh"
+    ]
   },
   "scripts": {
     "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js",

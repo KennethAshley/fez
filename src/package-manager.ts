@@ -25,6 +25,18 @@ export interface FezManifest {
   fez: {
     type: "integration" | "agent" | "extension" | "persona-pack";
     /**
+     * External binaries this package shells out to — `["gh"]`, `["uvx"]`.
+     *
+     * Declared rather than discovered, so "needs gh" is data that can be
+     * checked at install, at startup, and on a second machine — instead
+     * of a warning line in a log nobody reads. The failure this prevents
+     * is the quiet one: an extension that loads, registers, runs, and
+     * silently does nothing because a tool isn't there.
+     *
+     * fez never installs these. It reports them.
+     */
+    requires?: string[];
+    /**
      * Persona packs: a directory of persona .md files installed into
      * ~/.fez/personas as a team bundle. Every persona is VALIDATED before
      * anything installs (one bad file rejects the pack); `defaults` merge
