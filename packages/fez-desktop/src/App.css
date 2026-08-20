@@ -2299,3 +2299,17 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 /* Was width: calc(100% - 12px) to fake the rail's inset; the margin
    already does that, and the two together double-counted it. */
 .wiki-new { margin: 2px 6px 6px; width: auto; }
+
+/* A labelled field owns its column, wherever the column is. The rail
+   rule below covered the sidebar only, which left every pane form —
+   agent editing above all — with 350px controls floating in a 790px
+   pane, the same unfinished look in a place it shows more. A field
+   stacked under its own label has nothing to sit beside, so there is
+   no case here where filling the width is wrong. */
+.settings-field > .manage-input,
+.settings-field > .manage-select,
+.settings-field > textarea,
+.settings-field > input {
+  width: 100%;
+  box-sizing: border-box;
+}
