@@ -1468,10 +1468,19 @@ button.author:hover { text-decoration: underline; }
    the colour of the chrome around it — the toolbar and the action row
    read as surfaces and the place you actually type did not. The box
    still owns the outer frame; this is the field inside it. */
+/* The FIELD, inside the frame. The box carries a tone so the toolbar
+   and the action row read as chrome; the textarea drops back to --bg0
+   — the page tone — so the place you type is the lightest thing in
+   light and the deepest in dark, stepped away from its frame either
+   way. Uniform was the mistake: it made the whole composer one slab. */
 .composer .composer-box textarea,
 .composer .composer-box textarea:focus,
 .composer .composer-box textarea.editing {
-  background: none; border: 0; box-shadow: none; padding: 6px 4px;
+  background: var(--bg0);
+  border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  border-radius: 7px;
+  box-shadow: none;
+  padding: 8px 10px;
 }
 .composer .composer-box textarea.editing { color: var(--yellow); }
 

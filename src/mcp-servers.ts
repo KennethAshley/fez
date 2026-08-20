@@ -49,8 +49,13 @@ export function loadMcpServersFromSettings(
   settingsLoaded = true;
   for (const [name, config] of Object.entries(entries)) {
     if (!config || typeof config !== "object") continue;
-    const resolved = { ...config, env: resolveEnv(name, config.env as Record<string, string> | undefined) };
+    const resolved = {
+      ...config,
+      env: resolveEnv(name, config.env as Record<string, string> | undefined),
+      headers: resolveHeaders(name, config.headers as { name: string; value: string }[] | undefined),
+    };
     if (!resolved.env) delete (resolved as { env?: unknown }).env;
+    if (!resolved.headers) delete (resolved as { headers?: unknown }).headers;
     const server = { name, ...(config.command && !config.type ? { type: undefined } : {}), ...resolved } as unknown as McpServer;
     if (registry.has(name)) continue;
     registry.set(name, server);
@@ -71,6 +76,28 @@ function resolveEnv(skill: string, env: Record<string, string> | undefined): Rec
     out[key] = keychainSecret(skill, key) ?? plaintext;
   }
   return out;
+}
+
+/**
+ * The same custody for a HOSTED skill's auth.
+ *
+ * An http MCP server authenticates with a header, not an env var, so a
+ * hosted skill had no way to hold a secret: settings.json is a plaintext
+ * file in a git-adjacent directory, and the keychain path only resolved
+ * `env`. A header with an empty value is filled from the keychain under
+ * the same service and the same "<skill>.<KEY>" account as env keys, so
+ * `Authorization` and `GITHUB_TOKEN` are stored, listed and rotated by
+ * one mechanism.
+ */
+function resolveHeaders(
+  skill: string,
+  headers: { name: string; value: string }[] | undefined
+): { name: string; value: string }[] | undefined {
+  if (!headers || headers.length === 0) return headers;
+  return headers.map((header) => ({
+    ...header,
+    value: header.value?.trim() ? header.value : keychainSecret(skill, header.name) ?? "",
+  }));
 }
 
 function keychainSecret(skill: string, key: string): string | undefined {
