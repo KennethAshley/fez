@@ -46,7 +46,12 @@ body {
   padding: 12px 8px;
   overflow-y: auto;
 }
-.community { margin-bottom: 14px; }
+/* The channel groups are a different LEVEL, not the next item — the nav
+   above them is where you go, these are what you are in. Tightening the
+   nav rows to 4px made them one block, which only works if the gap to
+   the next block is clearly bigger than the gap inside it. */
+.community { margin-bottom: 14px; margin-top: 18px; }
+.community + .community { margin-top: 14px; }
 .community-name {
   font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
   color: var(--fg-dim); padding: 4px 10px;
@@ -1369,7 +1374,10 @@ button.author:hover { text-decoration: underline; }
 
 /* A gap an agent will actually hit — the only row here that is a
    problem, so it is the only one that gets colour. */
-.ext-missing .skill-row { border-left: 2px solid var(--red); padding-left: 10px; }
+.ext-missing .skill-row {
+  background: color-mix(in srgb, var(--red) 9%, var(--bg1));
+  border-color: color-mix(in srgb, var(--red) 32%, var(--hairline));
+}
 .missing-tag { color: var(--red); border-color: var(--red); }
 
 .ext-filters { display: flex; gap: 4px; text-transform: none; letter-spacing: 0; }
@@ -1506,11 +1514,16 @@ button.author:hover { text-decoration: underline; }
 .line-comment-count { font-size: 10px; margin-left: 2px; }
 .line-threads { position: absolute; right: 0; top: 100%; z-index: 5; width: 320px; }
 .comment-thread {
-  background: var(--bg1); border: 1px solid var(--hairline); border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg1));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
   border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 12.5px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.35);
 }
-.comment-thread.resolved { border-left-color: var(--green); opacity: 0.72; }
+.comment-thread.resolved {
+  background: color-mix(in srgb, var(--green) 9%, var(--bg1));
+  border-color: color-mix(in srgb, var(--green) 30%, var(--hairline));
+  opacity: 0.72;
+}
 .comment-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
 .comment-author { font-weight: 600; color: var(--accent); font-family: var(--font-mono); font-size: 12px; }
 .comment-text { white-space: pre-wrap; word-break: break-word; }
@@ -1593,10 +1606,14 @@ button.author:hover { text-decoration: underline; }
 
 /* ── live blocks (fez-live-blocks extension) ── */
 .live-block {
-  border: 1px solid var(--hairline); border-left: 2px solid var(--accent);
-  border-radius: 8px; padding: 8px 12px; margin: 8px 0; background: var(--bg0);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
+  border-radius: 8px; padding: 8px 12px; margin: 8px 0;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg0));
 }
-.live-block.stale { border-left-color: var(--yellow); }
+.live-block.stale {
+  background: color-mix(in srgb, var(--yellow) 8%, var(--bg0));
+  border-color: color-mix(in srgb, var(--yellow) 30%, var(--hairline));
+}
 .live-block-head {
   display: flex; align-items: center; gap: 7px; margin-bottom: 6px;
   font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-dim);
@@ -1630,8 +1647,8 @@ button.author:hover { text-decoration: underline; }
 }
 .loop:hover { background: var(--bg1); }
 .loop.blocked {
-  display: block; border: 1px solid var(--hairline); border-left: 2px solid var(--accent);
-  background: var(--bg0); padding: 10px 12px; margin-bottom: 8px;
+  display: block; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg0)); padding: 10px 12px; margin-bottom: 8px;
 }
 .loop-line { display: flex; align-items: baseline; gap: 8px; }
 .loop-glyph { flex: none; }
@@ -1673,7 +1690,11 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .heading-anchor:hover { color: var(--accent); }
 
 /* ── fez:query — a question in a document ── */
-.query-block { border: 1px solid var(--hairline); border-left: 2px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+.query-block {
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 8px; padding: 10px 12px; margin: 10px 0;
+}
 .query-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; font-family: var(--font-mono); font-size: 11.5px; }
 .query-count { color: var(--accent); font-weight: 600; }
 .query-desc { color: var(--fg-dim); }
@@ -1820,17 +1841,19 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 }
 .board-card {
   position: relative;
-  background: var(--bg1);
-  border: 1px solid var(--hairline);
-  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg1));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--hairline));
   border-radius: 6px;
   padding: 7px 9px;
   margin-bottom: 6px;
   cursor: grab;
 }
-.board-card:hover { border-color: var(--bg2); border-left-color: var(--accent); }
+.board-card:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--hairline)); }
 .board-card.dragging { opacity: 0.4; }
-.board-card.done { border-left-color: var(--green); }
+.board-card.done {
+  background: color-mix(in srgb, var(--green) 8%, var(--bg1));
+  border-color: color-mix(in srgb, var(--green) 28%, var(--hairline));
+}
 .board-card.done .board-card-text { color: var(--fg-dim); }
 .board-card-text { font-size: 12.5px; line-height: 1.45; }
 .board-card-tick { color: var(--green); margin-right: 5px; }
