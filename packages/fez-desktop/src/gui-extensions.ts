@@ -51,7 +51,16 @@ export interface GuiExtensionApi {
   /** Add a slash command to the GUI composer (/name). */
   registerGuiCommand: (name: string, run: (args: string) => Promise<string> | string) => void;
   /** A card on the extensions page where this extension is configured. */
-  registerSettingsPanel: (name: string, render: () => React.ReactNode) => void;
+  /**
+   * A card in settings. `opts.source` names the channel source this
+   * panel configures, which is what lets the rail's group for those
+   * channels offer a settings button.
+   */
+  registerSettingsPanel: (
+    name: string,
+    render: () => React.ReactNode,
+    opts?: { source?: string }
+  ) => void;
   /**
    * This extension's own secrets, namespaced to it, and WRITE-ONLY —
    * `set` and `has`, never `get`. The keychain has no read path from the
@@ -574,8 +583,14 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
           may("ui") ? invoke<boolean>("has_skill_secret", { skill: name, key }) : Promise.resolve(false),
       },
       openUrl: (url: string) => (may("ui") ? openUrl(url) : Promise.resolve(refuse("ui", "open a link")() as void)),
+      // The label is ignored on purpose — a panel is filed under the
+      // extension's own name, so one cannot present itself as another.
+      // `opts` is NOT ignored: it carries which channel source this
+      // panel configures, and dropping it silently was why the rail's
+      // group had no settings button.
       registerSettingsPanel: may("ui")
-        ? (_label: string, render: () => React.ReactNode) => registerSettingsPanel(name, render)
+        ? (_label: string, render: () => React.ReactNode, opts?: { source?: string }) =>
+            registerSettingsPanel(name, render, opts)
         : (refuse("ui", "add a settings panel") as never),
     };
     try {
