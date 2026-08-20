@@ -25,6 +25,13 @@ jobs:
             npm install --prefix "packages/$pkg"
           done
 
+      # Before the build, because neither linter needs one and a failure
+      # here is cheap to read. Both are at zero — the point is the fourth
+      # .rail block failing on arrival rather than costing an afternoon
+      # of hover tests to find.
+      - name: Lint gate
+        run: npm run lint
+
       # Order matters: the root tsc type-checks src/tui.ts which imports
       # fez-client's dist, so fez-client (pure tsc, no root dependency)
       # must build FIRST. fez-tui must precede fez-client (its d.ts feeds
