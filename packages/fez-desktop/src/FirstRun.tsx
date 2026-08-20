@@ -61,8 +61,10 @@ export default function FirstRun({
 
   return (
     <div className="channel-intro first-run">
-      <div className="intro-hash">#</div>
-      <h2>{channelName}</h2>
+      {/* One line — "#" and the name are the channel's name, not a
+          glyph with a heading under it. Stacked, the # read as
+          decoration sitting above an unrelated title. */}
+      <h2><span className="intro-hash">#</span>{channelName}</h2>
 
       {hasFez ? (
         <>

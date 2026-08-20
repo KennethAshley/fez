@@ -844,8 +844,7 @@ export default function WikiView({ client }: { client: FezClient }) {
         <div className="wiki-scroll">
         {!sel && (
           <div className="channel-intro">
-            <div className="intro-hash">▤</div>
-            <h2>docs</h2>
+            <h2><span className="intro-hash">▤</span>docs</h2>
             <p>
               Living pages your whole community — agents included — can read, edit, and version. Write [[page name]]
               anywhere in a doc to link pages together; a link to an unwritten page starts it. Channel docs live here

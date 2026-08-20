@@ -801,8 +801,13 @@ button.author:hover { text-decoration: underline; }
 }
 .day-divider::before, .day-divider::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
 .channel-intro { padding: 28px 0 18px; max-width: 640px; }
-.intro-hash { font-family: var(--font-mono); font-size: 40px; color: var(--bg2); line-height: 1; }
-.channel-intro h2 { font-family: var(--font-mono); margin: 6px 0 4px; }
+/* Inline with the name it belongs to, and only a shade quieter — it is
+   part of the title, not a watermark above it. */
+.intro-hash { color: var(--fg-dim); margin-right: 4px; font-weight: 400; }
+.channel-intro h2 {
+  font-family: var(--font-mono); margin: 0 0 4px; font-size: 26px;
+  display: flex; align-items: baseline;
+}
 .channel-intro p { color: var(--fg-dim); font-size: 13px; }
 .armed-delete { background: var(--red) !important; color: var(--bg0) !important; font-weight: 700; }
 .composer-row { display: flex; align-items: flex-end; gap: 6px; }
@@ -1375,8 +1380,9 @@ button.author:hover { text-decoration: underline; }
 /* A gap an agent will actually hit — the only row here that is a
    problem, so it is the only one that gets colour. */
 .ext-missing .skill-row {
-  background: color-mix(in srgb, var(--red) 9%, var(--bg1));
-  border-color: color-mix(in srgb, var(--red) 32%, var(--hairline));
+  --tint: var(--red);
+  background: color-mix(in srgb, var(--tint) 9%, var(--bg1));
+  border-color: color-mix(in srgb, var(--tint) 32%, var(--hairline));
 }
 .missing-tag { color: var(--red); border-color: var(--red); }
 
@@ -1514,14 +1520,16 @@ button.author:hover { text-decoration: underline; }
 .line-comment-count { font-size: 10px; margin-left: 2px; }
 .line-threads { position: absolute; right: 0; top: 100%; z-index: 5; width: 320px; }
 .comment-thread {
-  background: color-mix(in srgb, var(--accent) 9%, var(--bg1));
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
+  --tint: var(--accent);
+  background: color-mix(in srgb, var(--tint) 9%, var(--bg1));
+  border: 1px solid color-mix(in srgb, var(--tint) 30%, var(--hairline));
   border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; font-size: 12.5px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.35);
 }
 .comment-thread.resolved {
-  background: color-mix(in srgb, var(--green) 9%, var(--bg1));
-  border-color: color-mix(in srgb, var(--green) 30%, var(--hairline));
+  --tint: var(--green);
+  background: color-mix(in srgb, var(--tint) 9%, var(--bg1));
+  border-color: color-mix(in srgb, var(--tint) 30%, var(--hairline));
   opacity: 0.72;
 }
 .comment-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
@@ -1606,13 +1614,15 @@ button.author:hover { text-decoration: underline; }
 
 /* ── live blocks (fez-live-blocks extension) ── */
 .live-block {
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
+  --tint: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--tint) 30%, var(--hairline));
   border-radius: 8px; padding: 8px 12px; margin: 8px 0;
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg0));
+  background: color-mix(in srgb, var(--tint) 8%, var(--bg0));
 }
 .live-block.stale {
-  background: color-mix(in srgb, var(--yellow) 8%, var(--bg0));
-  border-color: color-mix(in srgb, var(--yellow) 30%, var(--hairline));
+  --tint: var(--yellow);
+  background: color-mix(in srgb, var(--tint) 8%, var(--bg0));
+  border-color: color-mix(in srgb, var(--tint) 30%, var(--hairline));
 }
 .live-block-head {
   display: flex; align-items: center; gap: 7px; margin-bottom: 6px;
@@ -1647,8 +1657,9 @@ button.author:hover { text-decoration: underline; }
 }
 .loop:hover { background: var(--bg1); }
 .loop.blocked {
-  display: block; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg0)); padding: 10px 12px; margin-bottom: 8px;
+  --tint: var(--accent);
+  display: block; border: 1px solid color-mix(in srgb, var(--tint) 30%, var(--hairline));
+  background: color-mix(in srgb, var(--tint) 8%, var(--bg0)); padding: 10px 12px; margin-bottom: 8px;
 }
 .loop-line { display: flex; align-items: baseline; gap: 8px; }
 .loop-glyph { flex: none; }
@@ -1691,8 +1702,9 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 
 /* ── fez:query — a question in a document ── */
 .query-block {
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hairline));
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  --tint: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--tint) 30%, var(--hairline));
+  background: color-mix(in srgb, var(--tint) 8%, transparent);
   border-radius: 8px; padding: 10px 12px; margin: 10px 0;
 }
 .query-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; font-family: var(--font-mono); font-size: 11.5px; }
@@ -1841,8 +1853,9 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 }
 .board-card {
   position: relative;
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg1));
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--hairline));
+  --tint: var(--accent);
+  background: color-mix(in srgb, var(--tint) 8%, var(--bg1));
+  border: 1px solid color-mix(in srgb, var(--tint) 28%, var(--hairline));
   border-radius: 6px;
   padding: 7px 9px;
   margin-bottom: 6px;
@@ -1851,8 +1864,9 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .board-card:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--hairline)); }
 .board-card.dragging { opacity: 0.4; }
 .board-card.done {
-  background: color-mix(in srgb, var(--green) 8%, var(--bg1));
-  border-color: color-mix(in srgb, var(--green) 28%, var(--hairline));
+  --tint: var(--green);
+  background: color-mix(in srgb, var(--tint) 8%, var(--bg1));
+  border-color: color-mix(in srgb, var(--tint) 28%, var(--hairline));
 }
 .board-card.done .board-card-text { color: var(--fg-dim); }
 .board-card-text { font-size: 12.5px; line-height: 1.45; }
@@ -2138,4 +2152,25 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Chips and buttons INSIDE a tinted card.
+   They all default to --bg2, which is a neutral one step off the
+   neutral ground — put that on a tinted ground and it nearly vanishes,
+   which is what happened to "not installed" and "find it…". Each card
+   publishes its own --tint, so a control can take a deeper draw of the
+   SAME colour and separate by the amount it always did. */
+:is(.ext-missing .skill-row, .comment-thread, .live-block, .loop.blocked, .query-block, .board-card)
+  :is(.role-tag, .agent-action, .mini) {
+  background: color-mix(in srgb, var(--tint) 26%, var(--bg2));
+}
+:is(.ext-missing .skill-row, .comment-thread, .live-block, .loop.blocked, .query-block, .board-card)
+  :is(.agent-action, .mini):hover {
+  background: color-mix(in srgb, var(--tint) 40%, var(--bg2));
+}
+/* Inputs too — a text field on a tinted card had the same problem. */
+:is(.ext-missing .skill-row, .comment-thread, .live-block, .loop.blocked, .query-block, .board-card)
+  .manage-input {
+  background: color-mix(in srgb, var(--tint) 6%, var(--bg0));
+  border-color: color-mix(in srgb, var(--tint) 26%, var(--bg2));
 }
