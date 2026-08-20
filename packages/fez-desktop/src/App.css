@@ -528,6 +528,9 @@ body {
 }
 .mini:hover { color: var(--fg); }
 .mini.danger.armed { background: var(--red); color: var(--bg0); font-weight: 700; }
+/* A toggle that is ON has to look different from one that is merely
+   hovered, or "triage on" and "triage off" read as the same control. */
+.mini.on { background: var(--accent); color: var(--bg0); font-weight: 600; }
 .manage-form { display: flex; gap: 6px; }
 .manage-input {
   flex: 1; min-width: 0; border: 1px solid var(--bg2); border-radius: 6px;

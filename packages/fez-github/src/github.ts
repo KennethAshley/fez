@@ -94,6 +94,41 @@ export async function ready(): Promise<Readiness> {
   }
 }
 
+export interface InstalledRepo {
+  repo: string;
+  private: boolean;
+}
+
+/**
+ * The repos this App is installed on — i.e. everything fez can see.
+ *
+ * The picker used to be a text box you typed `owner/name` into, which
+ * let you ask for a repo the App was not installed on and get silence:
+ * the poll would 404 forever and the channel would never open. Asking
+ * GitHub what it will actually serve makes the wrong choice
+ * unrepresentable.
+ *
+ * Two hops because that is how GitHub models it — the user's
+ * installations, then each installation's repositories — and paginated
+ * for real here, unlike recentItems: this is a full list with no
+ * recency ordering to lean on, so page two is not older news, it is
+ * simply the rest of the answer.
+ */
+export async function installedRepos(): Promise<InstalledRepo[]> {
+  const octokit = await api();
+  const { data: installs } = await octokit.rest.apps.listInstallationsForAuthenticatedUser({ per_page: 100 });
+  const out: InstalledRepo[] = [];
+  for (const install of installs.installations) {
+    const repos = await octokit.paginate(octokit.rest.apps.listInstallationReposForAuthenticatedUser, {
+      installation_id: install.id,
+      per_page: 100,
+    });
+    for (const repo of repos) out.push({ repo: repo.full_name, private: repo.private });
+  }
+  // Stable order, so the picker does not reshuffle between polls.
+  return out.sort((a, b) => a.repo.localeCompare(b.repo));
+}
+
 /**
  * Recently-touched items, newest activity first.
  *

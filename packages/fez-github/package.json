@@ -2,7 +2,7 @@
   "name": "@fez/github",
   "version": "0.1.0",
   "private": true,
-  "description": "GitHub in fez \u2014 a repo is a channel, each pull request and issue a thread in it. Connects with a read-only, per-repo GitHub App over device flow; polls on the owner's machine and publishes to the relay, so teammates and agents without GitHub access still see the work.",
+  "description": "GitHub in fez — a repo is a channel, each pull request and issue a thread in it. Connects with a read-only, per-repo GitHub App over device flow; polls on the owner's machine and publishes to the relay, so teammates and agents without GitHub access still see the work.",
   "type": "module",
   "fez": {
     "type": "extension",
@@ -24,6 +24,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@octokit/auth-oauth-device": "^8.0.4",
     "@octokit/plugin-retry": "^8.1.1",
     "@octokit/plugin-throttling": "^11.0.5",
     "@octokit/rest": "^22.0.1"

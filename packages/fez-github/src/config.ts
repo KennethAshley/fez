@@ -34,20 +34,59 @@ const KIND_APP_DATA = 30078;
 export const CONFIG_D = "ext:fez-github";
 
 export interface Config {
+  /** Repos being watched — a channel each. */
   repos: string[];
   /** Floor of 60s — this spends someone else's API quota. */
   pollSeconds?: number;
+  /** Who we connected as. Public, and only ever decoration. */
+  login?: string;
+  /**
+   * Every repo the App is installed on, cached by the poller.
+   *
+   * The panel cannot ask GitHub itself: the webview holds a token only
+   * during connect, because the keychain has no read path back into it
+   * (set_skill_secret exists, read_skill_secret does not, deliberately).
+   * So the half that HAS the token writes down what it can see, and the
+   * half that draws the picker reads that.
+   */
+  available?: { repo: string; private: boolean }[];
+  /**
+   * Repos whose new items get routed to an agent, by name.
+   *
+   * Opt-in per repo because it spends money: every new issue or pull
+   * request costs an orchestrator turn plus whatever the agent it picks
+   * then does. On a busy public repo that is a bill and an attack
+   * surface — anyone can open an issue — so it is never on by default,
+   * and a repo you removed stays removed.
+   */
+  triage?: string[];
 }
 
 export const EMPTY: Config = { repos: [] };
 
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((r): r is string => typeof r === "string") : [];
+
 /** Drop anything that isn't shaped like config, whatever the relay handed us. */
 export function parseConfig(raw: unknown): Config {
   if (!raw || typeof raw !== "object") return EMPTY;
-  const value = raw as { repos?: unknown; pollSeconds?: unknown };
-  const repos = Array.isArray(value.repos) ? value.repos.filter((r): r is string => typeof r === "string") : [];
-  const pollSeconds = typeof value.pollSeconds === "number" && Number.isFinite(value.pollSeconds) ? value.pollSeconds : undefined;
-  return pollSeconds === undefined ? { repos } : { repos, pollSeconds };
+  const value = raw as Record<string, unknown>;
+  const config: Config = { repos: strings(value.repos) };
+  if (typeof value.pollSeconds === "number" && Number.isFinite(value.pollSeconds)) {
+    config.pollSeconds = value.pollSeconds;
+  }
+  if (typeof value.login === "string" && value.login) config.login = value.login;
+  if (Array.isArray(value.available)) {
+    const available = value.available
+      .filter((row): row is { repo: string; private?: unknown } => !!row && typeof row === "object" && typeof (row as { repo?: unknown }).repo === "string")
+      .map((row) => ({ repo: row.repo, private: row.private === true }));
+    if (available.length > 0) config.available = available;
+  }
+  // Only ever a subset of what is watched: triage on a repo the bridge
+  // no longer polls would be a standing instruction nothing enforces.
+  const triage = strings(value.triage).filter((repo) => config.repos.includes(repo));
+  if (triage.length > 0) config.triage = triage;
+  return config;
 }
 
 export async function loadConfig(nostr: NostrAccess, owner: string): Promise<Config> {

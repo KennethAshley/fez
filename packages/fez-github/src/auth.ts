@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createOAuthDeviceAuth } from "@octokit/auth-oauth-device";
+import { DEFAULT_CLIENT_ID, type DeviceCodeLike } from "./app-id.js";
 
 const run = promisify(execFile);
 
@@ -7,20 +9,27 @@ const run = promisify(execFile);
  * GitHub auth by device flow — no client secret, because a desktop app
  * cannot keep one.
  *
- * Any flow that needs a secret on the user's machine is a flow that
- * lies: the "secret" ships inside the app and anyone can read it out.
- * The device flow exists for exactly this shape of program — it is what
+ * Any flow needing a secret on the user's machine is a flow that lies:
+ * the "secret" ships inside the app and anyone can read it out. The
+ * device flow exists for exactly this shape of program — it is what
  * `gh auth login` uses — and needs only the client ID, which is public.
  *
+ * The protocol itself is @octokit/auth-oauth-device, GitHub's own
+ * strategy package, rather than the hand-rolled version this file used
+ * to hold: requesting the code, polling, honouring `slow_down` (GitHub
+ * adds five seconds every time you poll too fast), and giving up when
+ * the code expires. That was ~120 lines of protocol we had to keep
+ * correct against someone else's spec, and the package is isomorphic —
+ * the SAME call runs in the webview, so the panel and the CLI cannot
+ * drift into two different flows.
+ *
  * The app is a GITHUB App, not an OAuth App, so there are no scopes to
- * request here. Its permissions (issues, pull requests, checks — all
+ * request. Its permissions (issues, pull requests, checks — all
  * read-only) and its repository list are fixed when you install it, on
  * GitHub, before fez asks for anything. A repo the app is not installed
- * on is not one fez declines to read; it is one fez cannot see. See
- * SETUP.md.
+ * on is not one fez declines to read; it is one fez cannot see.
  */
 
-const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const TOKEN_URL = "https://github.com/login/oauth/access_token";
 
 /** Keychain custody, same service the rest of fez's third-party secrets use. */
@@ -29,15 +38,6 @@ const ACCOUNT_TOKEN = "fez-github.token";
 const ACCOUNT_REFRESH = "fez-github.refresh";
 const ACCOUNT_CLIENT = "fez-github.client_id";
 
-export interface DeviceCode {
-  deviceCode: string;
-  userCode: string;
-  verificationUri: string;
-  /** Seconds between polls — GitHub adds 5s every time you go too fast. */
-  interval: number;
-  expiresIn: number;
-}
-
 export interface Tokens {
   token: string;
   refreshToken?: string;
@@ -45,116 +45,76 @@ export interface Tokens {
   expiresAt?: number;
 }
 
-async function post(url: string, body: Record<string, string>): Promise<Record<string, unknown>> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`GitHub ${res.status} from ${new URL(url).pathname}`);
-  return (await res.json()) as Record<string, unknown>;
+/** The App to authenticate as — fez's own unless you point it elsewhere. */
+export function appClientId(): string {
+  return process.env.FEZ_GITHUB_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID;
 }
 
-/** Step 1: ask for a code the user will type into github.com. */
-export async function requestDeviceCode(clientId: string): Promise<DeviceCode> {
-  const body = await post(DEVICE_CODE_URL, { client_id: clientId });
-  if (typeof body.device_code !== "string" || typeof body.user_code !== "string") {
-    // The commonest cause by far, and the error GitHub returns for it is
-    // unhelpful — so name the fix rather than echoing the payload.
+/**
+ * Connect: hand back the code to show, resolve when the human approves.
+ *
+ * `onCode` fires once, as soon as GitHub issues the code — that is the
+ * moment to open the browser and put the code on the clipboard. The
+ * promise then sits there until they approve, decline, or the code
+ * dies, which is the package's problem rather than ours.
+ */
+export async function connect(
+  onCode: (code: DeviceCodeLike) => void,
+  clientId = appClientId()
+): Promise<Tokens> {
+  const auth = createOAuthDeviceAuth({
+    clientType: "github-app",
+    clientId,
+    onVerification: (v) => onCode({ userCode: v.user_code, verificationUri: v.verification_uri }),
+  });
+  const result = (await auth({ type: "oauth" })) as {
+    token: string;
+    refreshToken?: string;
+    expiresAt?: string;
+  };
+  const tokens: Tokens = {
+    token: result.token,
+    refreshToken: result.refreshToken,
+    expiresAt: result.expiresAt ? Date.parse(result.expiresAt) : undefined,
+  };
+  await saveTokens(clientId, tokens);
+  return tokens;
+}
+
+/**
+ * Refresh a short-lived user token — by hand, and deliberately.
+ *
+ * @octokit/oauth-methods has refreshToken(), but its signature requires
+ * a clientSecret, so fez cannot call it. GitHub's API turns out not to
+ * require one for a token the device flow minted: posting client_id +
+ * grant_type=refresh_token alone is accepted. Verified against the live
+ * API on 2026-08-20 — the response carried a fresh 8h token and a new
+ * refresh token.
+ *
+ * So this is fifteen lines the package cannot replace rather than
+ * fifteen lines nobody checked, and it is what lets the extension
+ * outlive its first eight hours on a machine holding no secret. If
+ * GitHub ever tightens this, the fix is to turn OFF expiring user
+ * tokens on the App, which removes the need for any refresh at all.
+ */
+export async function refresh(clientId: string, refreshToken: string): Promise<Tokens> {
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, grant_type: "refresh_token", refresh_token: refreshToken }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const body = (await res.json()) as Record<string, unknown>;
+  if (typeof body.access_token !== "string") {
     throw new Error(
-      `GitHub refused the device code request. Device Flow is OFF by default: ` +
-        `enable it on the app's settings page. (${JSON.stringify(body).slice(0, 160)})`
+      `refresh refused (${String(body.error ?? res.status)}) — reconnect from settings → extensions → fez-github`
     );
   }
   return {
-    deviceCode: body.device_code,
-    userCode: body.user_code,
-    verificationUri: typeof body.verification_uri === "string" ? body.verification_uri : "https://github.com/login/device",
-    interval: typeof body.interval === "number" ? body.interval : 5,
-    expiresIn: typeof body.expires_in === "number" ? body.expires_in : 900,
+    token: body.access_token,
+    refreshToken: typeof body.refresh_token === "string" ? body.refresh_token : refreshToken,
+    expiresAt: typeof body.expires_in === "number" ? Date.now() + body.expires_in * 1000 : undefined,
   };
-}
-
-/**
- * One poll. Returns tokens, or the reason to keep waiting.
- *
- * Split out from the loop so the four outcomes are testable without
- * fifteen minutes of real time: still waiting, slow down, the user said
- * no, the code died.
- */
-export type PollResult =
-  | { status: "ok"; tokens: Tokens }
-  | { status: "pending" }
-  | { status: "slow_down"; addSeconds: number }
-  | { status: "denied"; why: string }
-  | { status: "expired" };
-
-export function readPoll(body: Record<string, unknown>, now = Date.now()): PollResult {
-  if (typeof body.access_token === "string") {
-    const expiresIn = typeof body.expires_in === "number" ? body.expires_in : undefined;
-    return {
-      status: "ok",
-      tokens: {
-        token: body.access_token,
-        refreshToken: typeof body.refresh_token === "string" ? body.refresh_token : undefined,
-        expiresAt: expiresIn ? now + expiresIn * 1000 : undefined,
-      },
-    };
-  }
-  switch (body.error) {
-    case "authorization_pending":
-      return { status: "pending" };
-    case "slow_down":
-      // GitHub adds 5s to the required interval each time this happens.
-      return { status: "slow_down", addSeconds: typeof body.interval === "number" ? body.interval : 5 };
-    case "expired_token":
-      return { status: "expired" };
-    case "access_denied":
-      return { status: "denied", why: "you declined the authorization" };
-    default:
-      return { status: "denied", why: typeof body.error_description === "string" ? body.error_description : String(body.error ?? "unknown error") };
-  }
-}
-
-/** Step 3: poll until the user finishes, or the code dies. */
-export async function pollForToken(clientId: string, code: DeviceCode, onWait?: (seconds: number) => void): Promise<Tokens> {
-  let interval = code.interval;
-  const deadline = Date.now() + code.expiresIn * 1000;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, interval * 1000));
-    onWait?.(interval);
-    const body = await post(TOKEN_URL, {
-      client_id: clientId,
-      device_code: code.deviceCode,
-      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-    });
-    const result = readPoll(body);
-    if (result.status === "ok") return result.tokens;
-    if (result.status === "slow_down") { interval += result.addSeconds; continue; }
-    if (result.status === "pending") continue;
-    if (result.status === "expired") break;
-    throw new Error(result.why);
-  }
-  throw new Error("the code expired — run connect again");
-}
-
-/**
- * Refresh a short-lived user token.
- *
- * GitHub App user tokens last 8 hours. Refreshing normally needs the
- * client secret — except for tokens minted by the device flow, which is
- * the one reason this can work at all in a program with no server.
- */
-export async function refresh(clientId: string, refreshToken: string): Promise<Tokens> {
-  const body = await post(TOKEN_URL, {
-    client_id: clientId,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-  });
-  const result = readPoll(body);
-  if (result.status !== "ok") throw new Error("refresh failed — reconnect with: fez github connect");
-  return result.tokens;
 }
 
 // ── keychain ────────────────────────────────────────────────────────

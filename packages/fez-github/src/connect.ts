@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { pollForToken, requestDeviceCode, saveTokens, savedClientId } from "./auth.js";
+import { appClientId, connect } from "./auth.js";
+import { verificationUrl } from "./app-id.js";
 import { ready } from "./github.js";
 
 /**
@@ -21,7 +22,9 @@ import { ready } from "./github.js";
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const flag = args.indexOf("--client-id");
-  const clientId = (flag >= 0 ? args[flag + 1] : undefined) ?? (await savedClientId());
+  // Still overridable, for anyone running their own App — but no longer
+  // something you must have before this command does anything.
+  const clientId = (flag >= 0 ? args[flag + 1] : undefined) ?? appClientId();
 
   if (args[0] === "status" || args.includes("--status")) {
     const who = await ready();
@@ -29,23 +32,12 @@ async function main(): Promise<void> {
     process.exit(who.ok ? 0 : 1);
   }
 
-  if (!clientId) {
-    console.error(
-      "Need a Client ID.\n" +
-        "  1. register a GitHub App (read-only, per-repo) — see SETUP.md\n" +
-        "  2. enable Device Flow in its settings (it is OFF by default)\n" +
-        "  3. fez-github connect --client-id Iv23li…"
-    );
-    process.exit(1);
-  }
+  await connect((code) => {
+    console.log(`\n  Open ${verificationUrl(code)}\n`);
+    console.log(`  and enter:  ${code.userCode}\n`);
+    console.log("  Waiting for you to approve it…");
+  }, clientId);
 
-  const code = await requestDeviceCode(clientId);
-  console.log(`\n  Open ${code.verificationUri} and enter:\n`);
-  console.log(`      ${code.userCode}\n`);
-  console.log(`  Waiting… the code lasts ${Math.round(code.expiresIn / 60)} minutes.`);
-
-  const tokens = await pollForToken(clientId, code);
-  await saveTokens(clientId, tokens);
   const who = await ready();
   console.log(
     who.ok
