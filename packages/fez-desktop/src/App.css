@@ -1260,7 +1260,13 @@ button.author:hover { text-decoration: underline; }
 
 /* ── the fleet, at the head of the agents pane ───────────────── */
 /* "Who is in the fleet" and "how is the fleet doing" are one drawer. */
-.fleet { padding: 10px 14px 12px; border-bottom: 1px solid var(--hairline); }
+/* Sits inside .pane-body, which already pads 14px, so its own padding
+   was doubling the gutter — "nothing running" and everything under it
+   started 28px in while the agent list below sat at 14px. The negative
+   margin cancels the body's padding so the text lines up with that list
+   and the hairline still spans the full pane, which is why this block
+   pads itself at all. */
+.fleet { margin: -12px -14px 0; padding: 10px 14px 12px; border-bottom: 1px solid var(--hairline); }
 .fleet-now { display: flex; flex-direction: column; gap: 4px; }
 .fleet-idle { color: var(--fg-dim); font-size: 12px; font-style: italic; }
 .fleet-live { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
