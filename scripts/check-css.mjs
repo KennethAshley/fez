@@ -23,7 +23,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const SHEETS = [join(ROOT, "packages/fez-desktop/src/App.css")];
+const SHEETS = [process.env.CHECK_CSS_FILE ?? join(ROOT, "packages/fez-desktop/src/App.css")];
 
 let failed = false;
 
@@ -50,6 +50,26 @@ for (const sheet of SHEETS) {
     if (!seen.has(selector)) seen.set(selector, []);
     seen.get(selector).push(index + 1);
   });
+
+  // Braces first: an orphaned declaration block — a selector deleted and
+  // its body left behind — makes the parser drop rules from there on, and
+  // the damage shows up somewhere unrelated. That happened: a regex took
+  // out .env-grid-head's selector but not its declarations, and the whole
+  // window painted accent-orange on hover, 700 lines away.
+  let braceDepth = 0;
+  lines.forEach((line, index) => {
+    braceDepth += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+    if (braceDepth < 0) {
+      failed = true;
+      console.error(`\n✗ ${relative(ROOT, sheet)}:${index + 1} — unbalanced brace: a } with no block open.`);
+      console.error("  Usually a selector was deleted and its declarations left behind.\n");
+      braceDepth = 0;
+    }
+  });
+  if (braceDepth !== 0) {
+    failed = true;
+    console.error(`\n✗ ${relative(ROOT, sheet)} — ${braceDepth} block(s) left unclosed at end of file.\n`);
+  }
 
   const dupes = [...seen.entries()].filter(([, at]) => at.length > 1);
   const where = relative(ROOT, sheet);

@@ -1202,11 +1202,6 @@ button.author:hover { text-decoration: underline; }
 .settings-modal .settings-pane { min-height: 480px; }
 
 
-  display: grid; grid-template-columns: 1fr 1.6fr 28px; gap: 6px;
-  font-size: 10.5px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.08em;
-  padding: 0 2px 4px;
-}
-
 /* resizable sidebars */
 /* 5px between two surfaces is a target you have to aim at, and missing
    it reads as "this doesn't resize" rather than "you missed". The strip
