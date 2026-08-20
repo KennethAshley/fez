@@ -20,5 +20,9 @@ export interface GuiExtensionAPI {
   /** Write-only, namespaced to this extension. There is no get(). */
   secrets: { set(key: string, value: string): Promise<void>; has(key: string): Promise<boolean> };
   openUrl(url: string): Promise<void>;
-  registerSettingsPanel(name: string, render: () => El): void;
+  /**
+   * `source` names the channel source this panel configures, so the
+   * rail's group for those channels can offer a settings button.
+   */
+  registerSettingsPanel(name: string, render: () => El, opts?: { source?: string }): void;
 }

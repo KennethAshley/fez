@@ -2347,3 +2347,11 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   width: 100%;
   box-sizing: border-box;
 }
+
+/* An extension's settings, opened from the channels it owns. Narrower
+   than the app's own settings modal — one panel, not a nav plus a
+   panel — and it scrolls internally so a long repo list cannot push
+   its close button off the bottom. */
+.ext-modal { width: min(560px, 92vw); max-height: 80vh; flex-direction: column; }
+.ext-modal .pane-body { flex: 1; min-height: 0; overflow-y: auto; }
+.ext-modal .pane-head { flex: 0 0 auto; }

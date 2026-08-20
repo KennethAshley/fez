@@ -1,0 +1,73 @@
+[Unit]
+Description=fez router model (llama.cpp + Qwen3-0.6B)
+Documentation=https://github.com/KennethAshley/fez
+After=network-online.target
+Wants=network-online.target
+# A crash loop should be loud, not a silently dead router.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=fezrouter
+Group=fezrouter
+WorkingDirectory=/opt/fez-router
+
+# Bound to loopback on purpose. The gateway is the only public surface —
+# llama-server's /slots endpoint and web UI have no business on the
+# internet, and this is what keeps them off it.
+#
+#   --reasoning off   Qwen3 thinks by default. A router picking between
+#                     four functions has nothing to think about, and the
+#                     think block is pure latency on one vCPU.
+#   --jinja           required for tool calling at all.
+#   -c 8192           the tools list plus one short message. Bigger only
+#                     costs KV cache on a box that has none to spare.
+#   -np 1             one slot. Concurrency on a single vCPU doesn't make
+#                     anything faster, it just makes every caller wait
+#                     for a share of the same core.
+#   --no-webui        nothing to serve; one less thing to reach.
+#   -n 96             server-side ceiling to match the gateway clamp, so
+#                     the limit holds even if the gateway is bypassed on
+#                     loopback.
+ExecStart=/opt/fez-router/bin/llama-server \
+  --model /var/lib/fez-router/model.gguf \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --alias fez-router \
+  --jinja \
+  --reasoning off \
+  --ctx-size 8192 \
+  --parallel 1 \
+  --predict 96 \
+  --no-webui \
+  --threads 1
+
+Restart=always
+RestartSec=3
+
+# The model is ~400 MB resident plus KV cache and slack. On a 2 GB box
+# this leaves room for the gateway, Caddy and the OS; if it is ever hit,
+# a restart is far better than the OOM killer choosing for us.
+MemoryMax=1200M
+MemoryHigh=1000M
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+ReadWritePaths=/var/lib/fez-router
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fez-router
+
+[Install]
+WantedBy=multi-user.target

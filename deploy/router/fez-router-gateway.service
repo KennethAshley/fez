@@ -1,0 +1,54 @@
+[Unit]
+Description=fez router gateway (rate limit, clamps, auth)
+Documentation=https://github.com/KennethAshley/fez
+After=network-online.target fez-router.service
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=fezrouter
+Group=fezrouter
+WorkingDirectory=/opt/fez-router
+
+# Policy lives here, explicit, the same way the relay unit carries its
+# --policy flags. Defaults are sized for "a person mentions @fez": 20
+# routes a minute is far more than a human generates and far less than a
+# script needs to be interesting.
+Environment=PORT=8081
+Environment=UPSTREAM=http://127.0.0.1:8080
+Environment=RATE_PER_MIN=20
+Environment=RATE_BURST=2
+Environment=MAX_TOKENS=96
+Environment=MAX_BODY_BYTES=65536
+# Set ROUTER_API_KEY here to close the endpoint. Left unset the router
+# answers anyone, which is the entire point of a zero-install default —
+# revisit if the rate limit stops being enough.
+EnvironmentFile=-/etc/fez-router.env
+
+ExecStart=/usr/bin/node /opt/fez-router/gateway.mjs
+
+Restart=always
+RestartSec=3
+
+MemoryMax=200M
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fez-router-gw
+
+[Install]
+WantedBy=multi-user.target

@@ -308,5 +308,8 @@ export default function activate(api: GuiExtensionAPI): void {
     );
   }
 
-  api.registerSettingsPanel("fez-github", () => h(GitHubPanel));
+  // The `source` is what ties this panel to the channels the bridge
+  // opens: the rail groups by it and offers a settings button that
+  // renders whatever panel claims it, without knowing what GitHub is.
+  api.registerSettingsPanel("fez-github", () => h(GitHubPanel), { source: "github" });
 }

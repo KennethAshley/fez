@@ -11,7 +11,17 @@ import {
   KIND_REACTION,
   resolveRelays,
 } from "@fez/protocol";
-import { isSmallTalk, agentTool, fleetQuestion, noneTool, explicitActor, scrubNames } from "./route-logic.js";
+import {
+  isSmallTalk,
+  agentTool,
+  fleetQuestion,
+  noneTool,
+  explicitActor,
+  scrubNames,
+  detectProfile,
+  routerBody,
+  type RouterProfile,
+} from "./route-logic.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 
 /**
@@ -31,23 +41,26 @@ import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-commo
  * the words, only the choice.
  *
  * The model behind it is a seam: FEZ_ORCHESTRATOR_URL is any
- * OpenAI-compatible endpoint. The reference setup is fully local —
- * cactus serve + needle (a 26M-param tool-calling model):
+ * OpenAI-compatible endpoint — the hosted fez router, a local cactus +
+ * needle, ollama, llama.cpp, or a cloud model.
  *
- *   brew install cactus-compute/cactus/cactus
- *   cactus serve Cactus-Compute/needle --no-cloud-handoff --no-cloud-tele
- *
- * Prompt shape is tuned for tiny routers (verified against needle): no
- * system message, tool name = agent name, verb-heavy description.
- * Bigger endpoints just route better with the same shape.
+ * The seam is a URL *and a profile*, because the request shape is part
+ * of the model choice. Measured on the 97-case battery: Qwen3-0.6B sent
+ * needle's shape scores 70.1% vs needle's 71.1% — the bigger model buys
+ * nothing by itself — while the shape it wants takes it to ~91% and
+ * drops needle to 19.6%. See RouterProfile in route-logic.ts. The
+ * profile is auto-detected from the model id, so a local needle setup
+ * needs no config change.
  *
  * Config (env):
- *   FEZ_ORCHESTRATOR_URL    OpenAI-compatible base (default http://127.0.0.1:8080/v1)
- *   FEZ_ORCHESTRATOR_MODEL  model id (default: first model the endpoint lists)
- *   FEZ_ORCHESTRATOR_NAME   the orchestrator's @name (default fez)
- *   FEZ_AGENT_CHANNELS      comma-separated channel names/ids to serve
- *   FEZ_AGENT_RESPOND_TO    anyone | owner | allowlist:<pk,...> (default owner)
- *   FEZ_AGENT_OWNER         owner pubkey (owner mode + sibling gate)
+ *   FEZ_ORCHESTRATOR_URL      OpenAI-compatible base (default http://127.0.0.1:8080/v1)
+ *   FEZ_ORCHESTRATOR_MODEL    model id (default: first model the endpoint lists)
+ *   FEZ_ORCHESTRATOR_PROFILE  needle | tools (default: detected from the model id)
+ *   FEZ_ORCHESTRATOR_KEY      bearer token, for endpoints that want one
+ *   FEZ_ORCHESTRATOR_NAME     the orchestrator's @name (default fez)
+ *   FEZ_AGENT_CHANNELS        comma-separated channel names/ids to serve
+ *   FEZ_AGENT_RESPOND_TO      anyone | owner | allowlist:<pk,...> (default owner)
+ *   FEZ_AGENT_OWNER           owner pubkey (owner mode + sibling gate)
  */
 const MAX_CHAIN_DEPTH = 5;
 
@@ -94,11 +107,21 @@ async function main() {
     process.exit(1);
   }
 
+  // A hosted endpoint needs a credential; a loopback one never does.
+  // Env is the documented home for it — a persona file is a plain
+  // markdown doc people paste into issues, which is a poor place for a
+  // token, so `key:` is supported for parity but not advertised.
+  const routerKey = process.env.FEZ_ORCHESTRATOR_KEY || persona?.extra.key;
+  const routerHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(routerKey ? { Authorization: `Bearer ${routerKey}` } : {}),
+  };
+
   // Model id: env wins, then the persona file; otherwise ask the endpoint.
   let model = process.env.FEZ_ORCHESTRATOR_MODEL || persona?.extra.model;
   if (!model) {
     try {
-      const res = await fetch(`${baseUrl}/models`);
+      const res = await fetch(`${baseUrl}/models`, { headers: routerHeaders });
       const body = (await res.json()) as { data?: { id: string }[] };
       model = body.data?.[0]?.id;
     } catch {
@@ -109,6 +132,19 @@ async function main() {
     console.error(`No model at ${baseUrl} — is the router endpoint running? (e.g. cactus serve Cactus-Compute/needle)`);
     process.exit(1);
   }
+
+  // The request shape travels with the model, not the URL — see
+  // RouterProfile. Auto-detection keeps every existing local cactus
+  // setup on the shape it was tuned for without touching its persona.
+  const profileRaw = process.env.FEZ_ORCHESTRATOR_PROFILE || persona?.extra.profile;
+  if (profileRaw && profileRaw !== "needle" && profileRaw !== "tools") {
+    console.error(`Unknown router profile "${profileRaw}" — expected "needle" or "tools".`);
+    process.exit(1);
+  }
+  const profile: RouterProfile = (profileRaw as RouterProfile) || detectProfile(model);
+  // Narrowed once here: `model` is a let, so its non-undefined type is
+  // lost inside route()'s closure.
+  const modelId: string = model;
 
   const client = new CapabilityClient({ relay: relayUrls, privateKey: loadServiceKey(name) });
   const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
@@ -240,12 +276,8 @@ async function main() {
     if (tools.length === 0) return [];
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: message }],
-        tools,
-      }),
+      headers: routerHeaders,
+      body: JSON.stringify(routerBody(profile, modelId, message, tools)),
     });
     if (!res.ok) throw new Error(`router ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const body = (await res.json()) as {
@@ -323,7 +355,9 @@ async function main() {
   }
 
   console.log(`🟢 @${name} orchestrating ${channels.length} channel(s) on ${relayUrls.join(", ")}`);
-  console.log(`   Router: ${baseUrl} (${model}) | roster: ${roster.size} agent(s) | respondTo: ${respondTo}`);
+  console.log(
+    `   Router: ${baseUrl} (${model}, ${profile}${routerKey ? ", keyed" : ""}) | roster: ${roster.size} agent(s) | respondTo: ${respondTo}`
+  );
 
   const handleMention = async (event: {
     id: string;

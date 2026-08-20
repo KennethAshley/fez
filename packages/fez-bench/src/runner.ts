@@ -1,4 +1,14 @@
-import { agentTool, explicitActor, fleetQuestion, isSmallTalk, noneTool, scrubNames } from "../../fez-orchestrator/src/route-logic.js";
+import {
+  agentTool,
+  detectProfile,
+  explicitActor,
+  fleetQuestion,
+  isSmallTalk,
+  noneTool,
+  routerBody,
+  scrubNames,
+  type RouterProfile,
+} from "../../fez-orchestrator/src/route-logic.js";
 import type { BenchCase, RosterAgent } from "./cases.js";
 import type { CaseResult } from "./core.js";
 import { hashInputs } from "./core.js";
@@ -17,9 +27,15 @@ export interface RunOutput {
   hash: string;
 }
 
+/** Same bearer as the routing calls — a keyed endpoint 401s here first. */
+export function routerAuthHeaders(): Record<string, string> {
+  const key = process.env.FEZ_ORCHESTRATOR_KEY;
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
 export async function resolveModel(base: string): Promise<string | null> {
   try {
-    const res = await fetch(`${base}/models`, { signal: AbortSignal.timeout(2500) });
+    const res = await fetch(`${base}/models`, { headers: routerAuthHeaders(), signal: AbortSignal.timeout(2500) });
     const body = (await res.json()) as { data?: { id: string }[] };
     return body.data?.[0]?.id ?? null;
   } catch {
@@ -37,7 +53,12 @@ export async function runBench(
   if (!model) throw new Error(`no router at ${base} — start it (cactus serve …) or set FEZ_ORCHESTRATOR_URL`);
   const tools = [...roster.map(agentTool), noneTool()];
   const names = roster.map((agent) => agent.name);
-  const hash = hashInputs(tools, model);
+  // Same shape the runtime sends, or the bench measures a router nobody
+  // ships. It also pins temperature: llama.cpp defaults to 0.8, which
+  // moved scores ±4 points between identical runs until this landed.
+  const profile: RouterProfile =
+    (process.env.FEZ_ORCHESTRATOR_PROFILE as RouterProfile | undefined) || detectProfile(model);
+  const hash = hashInputs([...tools, { profile }], model);
 
   const results: CaseResult[] = [];
   for (const bench of cases) {
@@ -53,8 +74,8 @@ export async function runBench(
     } else {
       const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: scrubNames(bench.q, names) }], tools }),
+        headers: { "Content-Type": "application/json", ...routerAuthHeaders() },
+        body: JSON.stringify(routerBody(profile, model, scrubNames(bench.q, names), tools)),
       });
       const body = (await res.json()) as {
         choices?: { message?: { tool_calls?: { function?: { name?: string } }[] } }[];

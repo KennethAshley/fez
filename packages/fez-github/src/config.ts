@@ -28,7 +28,8 @@ import type { NostrAccess, NostrEvent } from "./api-types.js";
  */
 
 /** NIP-78 application data. */
-const KIND_APP_DATA = 30078;
+export const CONFIG_KIND = 30078;
+const KIND_APP_DATA = CONFIG_KIND;
 
 /** Namespaced so an extension's config can never look like a channel's read state. */
 export const CONFIG_D = "ext:fez-github";

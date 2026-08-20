@@ -46,15 +46,38 @@ export interface NostrAccess {
   pubkey: string;
   publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<NostrEvent>;
   query(filters: Record<string, unknown>[]): Promise<NostrEvent[]>;
+  /** Live events. Returns its own unsubscribe. */
+  subscribe(filters: Record<string, unknown>[], onEvent: (event: NostrEvent) => void): () => void;
   /** NIP-44 with the user's key. Encrypting to your OWN pubkey is the self-encrypt path. */
   encrypt(peerPubkey: string, plaintext: string): string;
   /** Throws on wrong key/garbage — callers decide whether that's ignorable. */
   decrypt(peerPubkey: string, ciphertext: string): string;
 }
 
+/**
+ * Channels without the wire — mirrors core's src/channels.ts.
+ *
+ * This extension used to carry its own copies of KIND_CHANNEL and
+ * KIND_MESSAGE and build fez's threading tags by hand, because there
+ * was nothing else on offer. There is now, and this is the shape of it.
+ */
+export interface ChannelsAccess {
+  list(): Promise<{ id: string; name: string; source?: string; meta?: Record<string, string> }[]>;
+  /** Find by name or open it. Undefined when this key may not create channels. */
+  ensure(spec: {
+    name: string;
+    source?: string;
+    meta?: Record<string, string>;
+    visibility?: "open" | "closed";
+  }): Promise<string | undefined>;
+  /** Returns the message id — the handle a thread hangs off. */
+  say(channelId: string, text: string, opts?: { threadRoot?: string }): Promise<string>;
+}
+
 export interface ScheduledTaskContext {
   nostr: NostrAccess;
   ownerPubkey: string;
+  channels: ChannelsAccess;
   /** True when the machine slept through intervals — catch up ONCE, never replay. */
   missedWindow: boolean;
 }

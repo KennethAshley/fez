@@ -174,17 +174,37 @@ export interface SettingsPanel {
   /** The extension's name, used as the card's heading. */
   name: string;
   render: () => React.ReactNode;
+  /**
+   * The channel `source` this panel configures, when it configures one.
+   *
+   * A bridge opens channels stamped with a source ("github"), and the
+   * rail groups them under that heading. Naming the source here is what
+   * lets the group offer a settings button WITHOUT the rail knowing
+   * what GitHub is: it asks which panel claims this source and renders
+   * whatever answers. The next bridge gets the button by declaring it.
+   */
+  source?: string;
 }
 const settingsPanels: SettingsPanel[] = [];
-export function registerSettingsPanel(name: string, render: SettingsPanel["render"]): void {
+export function registerSettingsPanel(
+  name: string,
+  render: SettingsPanel["render"],
+  opts?: { source?: string }
+): void {
+  const panel: SettingsPanel = { name, render, source: opts?.source };
   // Re-registering replaces, so a reload cannot stack two copies of the
   // same card — the same rule registerSystemPromptSection uses.
-  const at = settingsPanels.findIndex((panel) => panel.name === name);
-  if (at >= 0) settingsPanels[at] = { name, render };
-  else settingsPanels.push({ name, render });
+  const at = settingsPanels.findIndex((existing) => existing.name === name);
+  if (at >= 0) settingsPanels[at] = panel;
+  else settingsPanels.push(panel);
 }
 export function extensionSettingsPanels(): readonly SettingsPanel[] {
   return settingsPanels;
+}
+
+/** The panel that configures a bridge's channels, if one claims them. */
+export function settingsPanelForSource(source: string): SettingsPanel | undefined {
+  return settingsPanels.find((panel) => panel.source === source);
 }
 
 const guiCommands = new Map<string, (args: string) => Promise<string> | string>();

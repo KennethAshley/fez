@@ -103,7 +103,23 @@ export const KIND_PAIRING = 24134;
  * Membership is **workspace-wide, not per channel**: you are invited to
  * the workspace and you see every channel in it. One roster, one d-tag.
  */
-export const KIND_CHANNEL = 47101;         // owner-signed; ["d", channelId]; content {name, description, visibility}
+/**
+ * Channel. Owner-signed; ["d", channelId].
+ *
+ * content: {name, description?, visibility, source?, meta?}
+ *
+ * `source` names what MADE the channel when it wasn't a person —
+ * "github", "email" — so a client can group a bridge's channels under
+ * one heading instead of scattering a repo per line among the rooms
+ * people opened. `meta` is whatever the maker needs to recognise it
+ * again (the full owner/name behind a short repo channel). Both are
+ * hints for presentation: they carry no authority, and a client that
+ * ignores them loses nothing but the grouping.
+ *
+ * Extensions should reach these through src/channels.ts rather than
+ * building the event, so the vocabulary has one definition.
+ */
+export const KIND_CHANNEL = 47101;
 export const KIND_MEMBERSHIP = 47102;      // owner-signed; ["d", ROSTER_D], ["p", pubkey, role]*; owner|admin|member|bot
 export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["p", mentionPubkey]*; content = text
 

@@ -31,7 +31,7 @@ import { runCommand } from "./commands";
 import Onboarding from "./Onboarding";
 import FirstRun from "./FirstRun";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
-import { messageDecorators } from "./gui-extensions";
+import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
 import { EMOJI, searchEmoji } from "./emoji";
 import "./App.css";
 
@@ -506,6 +506,54 @@ function Shell({
       window.removeEventListener("mouseup", up);
     };
   }, []);
+  /**
+   * One channel row, wherever it is listed.
+   *
+   * Extracted because the rail now renders channels in more than one
+   * place — the rooms people opened, and a group per bridge — and two
+   * copies of a row is how one of them quietly loses unread badges.
+   */
+  const channelRow = (channel: { id: string; name: string }) => {
+    const active = view.kind === "channel" && scope?.channelId === channel.id;
+    const unread = unreads.get(channel.id) ?? 0;
+    const members = client.state.workspace.members.size;
+    return (
+      <button
+        key={channel.id}
+        className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}`}
+        title={`${members} member${members === 1 ? "" : "s"} in this workspace — right-click for options`}
+        onClick={() => void openChannel(channel.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setCtxMenu({ x: e.clientX, y: e.clientY, channelId: channel.id });
+        }}
+      >
+        <span className="hash">#</span> {channel.name}
+        {muted.has(channel.id) && <span className="mute-mark" title="muted">✕</span>}
+        {unread > 0 && !active && !muted.has(channel.id) && <span className="badge">{unread}</span>}
+      </button>
+    );
+  };
+
+  // Channels a person opened, and channels something opened on their
+  // behalf. `source` is set by whatever created the channel; absent for
+  // everything anybody made by hand, which is most of them.
+  const ownChannels: { id: string; name: string }[] = [];
+  const bridged = new Map<string, { id: string; name: string }[]>();
+  for (const channel of client.state.workspace.channels.values()) {
+    if (!channel.source) {
+      ownChannels.push(channel);
+      continue;
+    }
+    const group = bridged.get(channel.source) ?? [];
+    group.push(channel);
+    bridged.set(channel.source, group);
+  }
+
+  // Which extension's settings modal is open, by panel name.
+  const [extSettings, setExtSettings] = useState<string | undefined>(undefined);
+
   const startDrag = (which: "rail" | "pane") => {
     dragRef.current = which;
     document.body.style.cursor = "col-resize";
@@ -579,34 +627,43 @@ function Shell({
               </button>
             )}
           </div>
-          {[...client.state.workspace.channels.values()].map((channel) => {
-            const active = view.kind === "channel" && scope?.channelId === channel.id;
-            const unread = unreads.get(channel.id) ?? 0;
-            const members = client.state.workspace.members.size;
-            return (
-              <button
-                key={channel.id}
-                className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}`}
-                title={`${members} member${members === 1 ? "" : "s"} in this workspace — right-click for options`}
-                onClick={() => void openChannel(channel.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setCtxMenu({ x: e.clientX, y: e.clientY, channelId: channel.id });
-                }}
-              >
-                <span className="hash">#</span> {channel.name}
-                {muted.has(channel.id) && <span className="mute-mark" title="muted">✕</span>}
-                {unread > 0 && !active && !muted.has(channel.id) && <span className="badge">{unread}</span>}
-              </button>
-            );
-          })}
+          {ownChannels.map(channelRow)}
           {client.state.workspace.channels.size === 0 && (
             <div className="community-id" style={{ padding: "4px 10px" }}>
               {client.state.workspace.owner ? "no channels yet" : "unclaimed — claim it to start"}
             </div>
           )}
         </div>
+        {/* A bridge opens a channel per thing it mirrors. Left in the
+            main list, twelve repos read as twelve rooms you are
+            neglecting; under their own heading they read as one
+            integration. The heading comes from the channel event itself
+            (`source`), so fez needs to know nothing about GitHub to
+            group GitHub. */}
+        {[...bridged.entries()].map(([source, channels]) => {
+          // Settings live where the thing they configure is. A bridge's
+          // group offers its own panel, and the rail does not know what
+          // any particular bridge is — it asks which panel claims this
+          // source and shows a button only if one answers.
+          const panel = settingsPanelForSource(source);
+          return (
+            <div className="community" key={source}>
+              <div className="community-name">
+                {source}
+                {panel && (
+                  <button
+                    className="community-add"
+                    title={`${source} settings — choose repositories and how they behave`}
+                    onClick={() => setExtSettings(panel.name)}
+                  >
+                    ⚙
+                  </button>
+                )}
+              </div>
+              {channels.map(channelRow)}
+            </div>
+          );
+        })}
         <div className="community">
           <div className="community-name">
             dms
@@ -875,6 +932,26 @@ function Shell({
         <div className="overlay settings-overlay" onClick={(e) => e.target === e.currentTarget && setSettingsOpen(false)}>
           <div className="settings-modal">
             <SettingsPane client={client} wire={wire} onClose={() => setSettingsOpen(false)} />
+          </div>
+        </div>
+      )}
+      {/* One extension's settings, opened from the group of channels it
+          owns. The same panel object the settings pane renders — an
+          extension writes it once and it appears wherever its work is. */}
+      {extSettings && (
+        <div className="overlay settings-overlay" onClick={(e) => e.target === e.currentTarget && setExtSettings(undefined)}>
+          <div className="settings-modal ext-modal">
+            <header className="pane-head">
+              <div className="topbar-row">
+                <span className="wiki-title">{extSettings}</span>
+                <button className="pane-close" onClick={() => setExtSettings(undefined)}>✕</button>
+              </div>
+            </header>
+            <div className="pane-body">
+              {extensionSettingsPanels().find((panel) => panel.name === extSettings)?.render() ?? (
+                <div className="settings-hint">this extension is no longer loaded</div>
+              )}
+            </div>
           </div>
         </div>
       )}

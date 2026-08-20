@@ -97,6 +97,79 @@ export function noneTool(): object {
   };
 }
 
+/**
+ * The request shape is part of the model choice, not separate from it.
+ *
+ * Measured head-to-head on the 97-case battery (Aug 2026): Qwen3-0.6B
+ * given needle's shape scores 70.1% against needle's 71.1% — a bigger
+ * model buys nothing on its own. The +20 points come entirely from the
+ * shape below, and needle COLLAPSES under it (71.1% → 19.6%: a system
+ * message costs it every direct case). So an endpoint URL alone is not
+ * a sufficient seam; each endpoint also needs the shape it was measured
+ * with, and mixing them silently is how you ship the worst of both.
+ *
+ *   needle  no system message, no tool_choice, no sampling overrides.
+ *   tools   general instruct models behind an OpenAI-compatible API.
+ */
+export type RouterProfile = "needle" | "tools";
+
+/**
+ * Kept short deliberately. Longer variants scored no better, and every
+ * token here is prompt-eval time on a 1-vCPU box.
+ */
+export const ROUTER_SYSTEM =
+  "You are a router. Call exactly one function to pick who should handle the user's request. " +
+  "Do not write any prose. Do not answer the request yourself. If no function fits, call nobody.";
+
+/**
+ * Why 96: general models write a prose preamble before the tool call,
+ * and uncapped they ramble into the context limit — 10-12s on one CPU
+ * core, per route. Measured, cap 96 scores IDENTICALLY to cap 512
+ * (90.7% both, same cases) because nothing legitimate needs more, so
+ * this is a pure latency-tail fix, not an accuracy trade.
+ */
+export const ROUTER_MAX_TOKENS = 96;
+
+/**
+ * Greedy, always. llama.cpp defaults to temperature 0.8, which moved
+ * every score ±4 points run-to-run and made the bench unreproducible
+ * until it was pinned. A router picking a different agent for the same
+ * sentence twice is a bug, not variety.
+ */
+export const ROUTER_TEMPERATURE = 0;
+
+/**
+ * Which shape an endpoint wants, inferred from the model id it reports.
+ * Explicit config beats this everywhere it's used — it exists so the
+ * local cactus setup keeps working with no persona edit.
+ */
+export function detectProfile(model: string): RouterProfile {
+  return /needle/i.test(model) ? "needle" : "tools";
+}
+
+/** The `/chat/completions` body for one routing decision. */
+export function routerBody(
+  profile: RouterProfile,
+  model: string,
+  message: string,
+  tools: object[]
+): object {
+  if (profile === "needle") {
+    return { model, messages: [{ role: "user", content: message }], tools };
+  }
+  return {
+    model,
+    messages: [
+      { role: "system", content: ROUTER_SYSTEM },
+      { role: "user", content: message },
+    ],
+    tools,
+    tool_choice: "required",
+    temperature: ROUTER_TEMPERATURE,
+    max_tokens: ROUTER_MAX_TOKENS,
+  };
+}
+
 const nameAlt = (names: string[]) => names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 
 /**

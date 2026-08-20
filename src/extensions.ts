@@ -3,6 +3,7 @@ import path from "path";
 import os from "os";
 import { pathToFileURL } from "url";
 import type { McpServer } from "@agentclientprotocol/sdk";
+import type { ChannelsAccess } from "./channels.js";
 import type { Event, Filter } from "nostr-tools";
 import { registerHarness, type HarnessAdapter } from "./harness.js";
 import type { DmRumor } from "./dm.js";
@@ -230,6 +231,16 @@ export interface ScheduledTaskContext {
   nostr: NostrAccess;
   /** The machine owner's pubkey — the authority a task acts on behalf of. */
   ownerPubkey: string;
+  /**
+   * Open channels and post in them, without knowing the wire.
+   *
+   * A bridge's whole job is "mirror this thing into a channel", and
+   * before this it had to copy kind numbers and threading tags out of
+   * src/kinds.ts to do it — which fez-github did, and was the only
+   * package in the repo doing. Signed by the same key the task already
+   * had; the owner-only rule on creating a channel is unchanged.
+   */
+  channels: ChannelsAccess;
   /**
    * True when this tick follows a gap much longer than the interval (the
    * machine slept). Tasks should catch up ONCE, never replay the backlog.

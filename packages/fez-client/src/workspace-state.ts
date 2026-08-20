@@ -26,6 +26,20 @@ export interface Channel {
   name: string;
   /** created_at of the winning 47101 — later owner edits rename in place. */
   createdAt: number;
+  /**
+   * What made this channel, when something other than a person did.
+   *
+   * A bridge opens a channel per thing it mirrors — a repo, a mailbox,
+   * a board — and a rail that lists twelve repos beside #general reads
+   * as twelve rooms you are neglecting rather than one integration.
+   * Grouping needs the client to know the difference, and only the
+   * event that created the channel does.
+   *
+   * Free-form and owner-signed: the same key that may create a channel
+   * says where it came from, so this grants nothing a channel did not
+   * already have. Absent for channels people made, which is most.
+   */
+  source?: string;
 }
 
 export interface Workspace {
@@ -219,13 +233,22 @@ export class WorkspaceState {
       const channelId = tag("d");
       if (!channelId) return false;
       let name = channelId;
+      let source: string | undefined;
       try {
-        name = JSON.parse(event.content).name ?? channelId;
+        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown };
+        if (typeof content.name === "string" && content.name) name = content.name;
+        // Constrained before it reaches a UI: this becomes a section
+        // heading in the rail, and a "source" of a thousand newlines
+        // would be a channel deciding how the sidebar looks.
+        if (typeof content.source === "string") {
+          const clean = content.source.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 24);
+          if (clean) source = clean;
+        }
       } catch { /* keep fallback */ }
       const existing = ws.channels.get(channelId);
       // A later owner event renames; an older one replayed must not undo it.
       if (existing && event.created_at < existing.createdAt) return false;
-      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at });
+      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source });
       return true;
     }
 

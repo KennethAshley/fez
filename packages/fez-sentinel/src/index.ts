@@ -18,6 +18,7 @@ import {
   ROSTER_D,
   KIND_GIFT_WRAP,
   KIND_OBSERVER,
+  makeChannels,
 } from "@fez/protocol";
 
 /**
@@ -500,7 +501,11 @@ async function main() {
         const missedWindow = Date.now() - lastTickAt > everyMs * 2;
         lastTickAt = Date.now();
         try {
-          await task.run({ nostr: buildTaskNostr(), ownerPubkey: myPubkey, missedWindow });
+          // One nostr per tick, and the channels seam built over it —
+          // so a bridge says "open the channel for this repo" instead of
+          // copying kind numbers out of src/kinds.ts.
+          const nostr = buildTaskNostr() as never;
+          await task.run({ nostr, ownerPubkey: myPubkey, channels: makeChannels(nostr, myPubkey), missedWindow });
         } catch (err) {
           console.warn(`⚠️  scheduled task "${task.name}" failed: ${err instanceof Error ? err.message : err}`);
         }
