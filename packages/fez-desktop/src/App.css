@@ -56,9 +56,37 @@ body {
   background: none; border: 0; color: var(--fg-dim); font: inherit;
   padding: 5px 10px; border-radius: 6px; cursor: pointer; text-align: left;
 }
-.channel:hover { background: var(--bg2); color: var(--fg); }
-.channel.active { background: var(--bg2); color: var(--fg); font-weight: 600; }
-.hash { color: var(--fg-dim); }
+/* ── channel states ────────────────────────────────────────
+   These were indistinguishable: :hover and .active both painted
+   --bg2 with --fg, so the only thing saying "you are here" was a font
+   weight, and hovering any channel made it look selected. Three steps
+   now, each doing one job:
+
+     idle    dim text, no ground — present, not competing
+     hover   a PARTIAL ground, so it reads as a preview of selection
+             rather than selection itself
+     active  the full ground, plus the one accent mark on the rail
+
+   The left bar is the app's own idiom (comment threads and missing-skill
+   rows already use a 2px left edge to mean "this one"), and it is drawn
+   with an inset shadow rather than a border or ::before so nothing
+   shifts by a pixel between states. */
+.channel:hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); color: var(--fg); }
+.channel.active {
+  background: var(--bg2); color: var(--fg); font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Hovering what you already have open lifts slightly — enough to say
+   the row is live, not enough to look like a different state. */
+.channel.active:hover { background: color-mix(in srgb, var(--fg) 7%, var(--bg2)); }
+.channel:active { transform: translateY(0.5px); }
+/* Keyboard users get the same answer the mouse gets. */
+.channel:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.hash { color: var(--fg-dim); transition: color 110ms ease; }
+/* In your own room the marker takes the light — the one place the
+   accent touches the channel list. */
+.channel.active .hash { color: var(--accent); }
 .badge {
   margin-left: auto; background: var(--red); color: var(--bg0);
   border-radius: 9px; font-size: 11px; font-weight: 700; padding: 0 6px;
