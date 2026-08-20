@@ -86,6 +86,56 @@ export interface Wire {
   relayInfo?(relay: string): Promise<{ name?: string; description?: string; pubkey?: string; icon?: string } | undefined>;
 }
 
+// ── Mentions (mirror of src/mentions.ts) ─────────────────────────────────
+// Duplicated by design, same as the kinds below: this package stays
+// dependency-light and browser-safe. An equivalence gate in fez-evals
+// proves the two agree, so the surface that PAINTS a mention and the
+// surface that TAGS it can never disagree about what a mention is —
+// which is exactly how a highlight came to promise a reach it didn't
+// have.
+
+/** @see src/mentions.ts — the @ must open a word, so emails don't mention. */
+const MENTION = /(?:^|[^\w@/])@([\w-]+)/g;
+
+/** Every name a message @-mentions, lowercased, in first-seen order. */
+export function mentionedNames(content: string): string[] {
+  const names: string[] = [];
+  for (const match of content.matchAll(MENTION)) {
+    const name = match[1].toLowerCase();
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+export interface MentionPart {
+  /** The literal text of this run, mention or not. */
+  text: string;
+  /** Present when this run IS a mention: the name, as written. */
+  name?: string;
+}
+
+/**
+ * The same content, cut into runs so a renderer can style the mentions
+ * without owning a second opinion about where they are. Every part
+ * concatenated back is the input, exactly.
+ */
+export function splitMentions(content: string): MentionPart[] {
+  const parts: MentionPart[] = [];
+  let cut = 0;
+  for (const match of content.matchAll(MENTION)) {
+    // The pattern eats the character BEFORE the @ (that is what proves
+    // the @ opens a word), so find the @ inside the match rather than
+    // slicing from its start and swallowing that character.
+    const start = (match.index ?? 0) + match[0].indexOf("@");
+    const end = start + 1 + match[1].length;
+    if (start > cut) parts.push({ text: content.slice(cut, start) });
+    parts.push({ text: content.slice(start, end), name: match[1] });
+    cut = end;
+  }
+  if (cut < content.length) parts.push({ text: content.slice(cut) });
+  return parts;
+}
+
 // ── Kinds (fez registry — see src/kinds.ts for the full docs) ────────────
 // Duplicated by design (this package stays dependency-light), exported so
 // the registry-agreement gate in fez-evals can prove it never drifts from

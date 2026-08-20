@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fez/client";
 import { BrowserWire } from "./wire";
-import { bindMention, describeMentionProblems, type MentionBindings } from "@fez/client";
+import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fez/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
@@ -2116,9 +2116,12 @@ function Bubble({
  * a claim, so every name keeps it.
  */
 function renderMentions(text: string, tagged?: ReadonlySet<string>, onMention?: (name: string) => void) {
-  return text.split(/(@[\w-]+)/g).map((part, index) => {
-    const name = part.slice(1);
-    if (!part.startsWith("@") || (tagged && !tagged.has(name.toLowerCase()))) {
+  // splitMentions, not a regex of our own: the surface that PAINTS a
+  // mention and the surface that TAGS it must agree on what one is, or
+  // the paint promises a reach the tag never made. A gate in fez-evals
+  // holds @fez/client's copy to src/mentions.ts.
+  return splitMentions(text).map(({ text: part, name }, index) => {
+    if (!name || (tagged && !tagged.has(name.toLowerCase()))) {
       return <span key={index}>{part}</span>;
     }
     // Accented and inert reads the same as accented and live, so only
