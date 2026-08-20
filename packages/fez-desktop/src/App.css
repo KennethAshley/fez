@@ -935,6 +935,21 @@ button.author:hover { text-decoration: underline; }
 .publish-form .manage-input { width: 180px; font-size: 11px; padding: 4px 8px; }
 .install-box { padding: 16px; }
 .install-head { font-family: var(--font-mono); font-weight: 700; margin-bottom: 8px; }
+
+/* ── find a source on npm ───────────────────────────────────
+   Wider than the consent dialog because the whole job here is
+   comparing candidates side by side; the publisher line is the only
+   thing separating an official package from a fork of it. */
+.find-box { width: min(680px, 92vw); display: flex; flex-direction: column; gap: 10px; }
+.find-search { display: flex; gap: 6px; }
+.find-search .manage-input { flex: 1; }
+.find-results { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.find-hit {
+  display: flex; align-items: flex-start; gap: 10px; background: var(--bg0);
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 9px 12px;
+}
+.find-hit .skill-name { font-size: 13px; }
+.find-hit .skill-desc { font-size: 12px; color: var(--fg-dim); }
 .skill-installs { font-family: var(--font-mono); font-size: 11px; color: var(--accent); font-weight: 400; }
 .installed-tag { color: var(--green); }
 .skill-install-cmd {

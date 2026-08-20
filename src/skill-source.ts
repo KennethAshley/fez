@@ -1,0 +1,130 @@
+/**
+ * Where a skill COMES FROM.
+ *
+ * A persona declaring `mcpServers: [web-search]` says nothing about what
+ * to install. "web-search" is a local alias — a name in a namespace
+ * nobody owns. npm has at least three unrelated packages answering to
+ * it (@fuyouai/web-search-mcp, agent-search-mcp, @tongxiao/…), and
+ * "brave-search" resolves to both Brave's own server and a stranger's
+ * fork. Resolving a bare name by search would mean running arbitrary
+ * code because a string matched. Fez does not do that.
+ *
+ * So the persona says where instead:
+ *
+ *   mcpServers: [web-search=npm:@brave/brave-search-mcp-server, github]
+ *
+ * The entry left of `=` stays the alias the prompt and the ACP session
+ * see; the right side is a SOURCE SPEC, and it makes the install
+ * deterministic — nothing to look up, nothing to guess, and the persona
+ * becomes portable: hand it to someone and their fez knows exactly what
+ * to fetch. This is what package.json and Cargo.toml do, for the same
+ * reason. An entry with no `=` (`github` above) is still just a name,
+ * and stays unresolvable by design.
+ *
+ * THE SECURITY PROPERTY, stated plainly: a spec names a PUBLISHED
+ * PACKAGE or a URL. It can never name an arbitrary command. A persona
+ * file arrives over the wire from whoever wrote it — if `command:` were
+ * declarable there, installing a persona would be arbitrary code
+ * execution wearing a frontmatter key. Declaring is a request;
+ * installing is the approval, and the approval still renders the full
+ * resolved command verbatim before anything runs.
+ */
+
+/** Exactly what settings.json stores under mcpServers[name]. */
+export interface SkillSpec {
+  command?: string;
+  args?: string[];
+  type?: string;
+  url?: string;
+  env?: Record<string, string>;
+}
+
+/**
+ * The schemes, and the runner each one implies. Deliberately short: one
+ * per ecosystem that actually ships MCP servers today. Each maps to a
+ * launcher that fetches-and-runs a published package by name, which is
+ * the whole reason a spec can't smuggle a command through.
+ */
+const RUNNERS: Record<string, (pkg: string) => SkillSpec> = {
+  "npm:": (pkg) => ({ command: "npx", args: ["-y", pkg] }),
+  "uvx:": (pkg) => ({ command: "uvx", args: [pkg] }),
+  "pipx:": (pkg) => ({ command: "pipx", args: ["run", pkg] }),
+};
+
+export const SOURCE_SCHEMES = [...Object.keys(RUNNERS), "https://", "http://"];
+
+/**
+ * Package names we'll actually hand to a runner. npm's own grammar plus
+ * the subset PyPI shares, and no more: no path separators beyond a
+ * single scope slash, no whitespace, no leading dash (which argv would
+ * read as a flag), no `@version` — pinning belongs in a later pass with
+ * a lockfile behind it, and silently accepting a version we then drop
+ * would be worse than refusing it.
+ */
+const PACKAGE = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i;
+
+/**
+ * A source spec → the skill config it installs as, or undefined when the
+ * spec is malformed or uses a scheme fez doesn't know. Undefined is not
+ * an error to swallow: the caller shows the raw spec and says it can't
+ * resolve it, which is honest, where guessing would not be.
+ */
+export function parseSkillSource(spec: string): SkillSpec | undefined {
+  const trimmed = spec.trim();
+  if (!trimmed) return undefined;
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    // A hosted MCP server. Parsed, not pattern-matched, so a spec like
+    // `https://x.com evil` can't slip through as a URL.
+    try {
+      const url = new URL(trimmed);
+      if (url.username || url.password) return undefined; // credentials belong in env, not a shared persona
+      return { type: "http", url: url.toString() };
+    } catch {
+      return undefined;
+    }
+  }
+
+  for (const [scheme, run] of Object.entries(RUNNERS)) {
+    if (!trimmed.toLowerCase().startsWith(scheme)) continue;
+    const pkg = trimmed.slice(scheme.length);
+    return PACKAGE.test(pkg) ? run(pkg) : undefined;
+  }
+  return undefined;
+}
+
+/** The command line a spec resolves to, for rendering before consent. */
+export function describeSkillSpec(config: SkillSpec): string {
+  return config.url ?? [config.command, ...(config.args ?? [])].filter(Boolean).join(" ");
+}
+
+/**
+ * The one case where a bare name DOES resolve: fez's own packages.
+ * `fez-kanban` → `@fez/kanban` is safe not because the name looks
+ * official but because fez owns the @fez scope on npm — nobody else can
+ * publish into it. That is a property of owning the namespace, and it
+ * generalizes to no other prefix. Everything else stays unresolvable.
+ */
+export function wellKnownSource(name: string): string | undefined {
+  const match = /^fez-([\w-]+)$/.exec(name);
+  return match ? `npm:@fez/${match[1]}` : undefined;
+}
+
+/**
+ * Resolve a declared skill for a spawn. Order is a trust order:
+ *
+ *  1. what's INSTALLED wins always — the local machine's answer to what
+ *     this name means, already approved by a human;
+ *  2. otherwise the declared source is reported, NOT run. A persona
+ *     naming a source has asked for something; it has not been granted
+ *     it. Headless spawns therefore proceed without the skill and say
+ *     so, exactly as they already did for an unknown bare name.
+ */
+export function installHint(name: string, source: string | undefined): string {
+  if (!source) return `${name} — no source declared; fez can't know what package that is`;
+  const config = parseSkillSource(source);
+  if (!config) {
+    return `${name} — declared source "${source}" isn't a scheme fez knows (${SOURCE_SCHEMES.join(", ")})`;
+  }
+  return `${name} — declared ${source}; install it with: fez skill add ${name} --from ${source}`;
+}

@@ -247,6 +247,7 @@ export interface DocCommentThread extends DocCommentReply {
  * (it is a different task now).
  */
 export * from "./mentions.js";
+export * from "./skill-source.js";
 import {
   resolveMentions,
   type MentionBindings,

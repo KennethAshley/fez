@@ -19,6 +19,7 @@ Each machine keeps a catalog of skill definitions: command, args, and the
 **names** of required env vars.
 
 ```bash
+fez skill add web-search --from npm:@brave/brave-search-mcp-server
 fez skill add web-search --command npx --args "-y,duckduckgo-mcp-server"
 fez skill list
 fez skill remove web-search
@@ -36,6 +37,58 @@ machine the agent spawns on actually defines that skill. The desktop app's
 market shows this honestly: every local agent's declared skills as status
 chips — ready ✓, needs a secret, or no definition (with one-click install
 when a listing exists).
+
+## A name is not a package
+
+`web-search` is a **local alias**. It says what the prompt calls the capability;
+it says nothing about what to install. npm has at least three unrelated packages
+answering to that name, and searching `brave-search` returns Brave's own server
+next to a stranger's fork carrying a byte-identical description. So fez never
+resolves a bare name on your behalf — doing that would mean running whoever won
+the search ranking that day.
+
+Instead a persona can say **where the skill comes from**, after an `=`:
+
+```yaml
+mcpServers: [web-search=npm:@brave/brave-search-mcp-server, github]
+```
+
+Now the install is deterministic — nothing to look up, nothing to guess — and
+the persona is **portable**: hand it to someone and their fez knows exactly what
+to fetch. It is what `package.json` and `Cargo.toml` do, for the same reason. The
+name left of the `=` is still what the prompt and the ACP session see, and a
+locally defined skill of that name always wins.
+
+Four schemes, each naming a *published package* or a URL:
+
+| Spec | Runs |
+|---|---|
+| `npm:<package>` | `npx -y <package>` |
+| `uvx:<package>` | `uvx <package>` |
+| `pipx:<package>` | `pipx run <package>` |
+| `https://…` | a hosted MCP server |
+
+A spec can **never** name an arbitrary command. Personas travel — if `command:`
+were reachable from frontmatter, installing one would be arbitrary code execution
+wearing a YAML key.
+
+And declaring a source does not install it. Declaring is a request; installing is
+the approval, and the approval still renders the resolved command verbatim first.
+A headless agent that spawns without the skill says so and carries on, exactly as
+it does for a name it has never heard of.
+
+### When there's only a name
+
+Existing personas, or a name you typed yourself. Then fez refuses to guess and
+puts you in the loop: the extensions page offers **find it…**, searches npm, and
+shows you the candidates *with their publishers* — the one field that separates
+an official package from a fork of it. You pick; the resolved command appears for
+consent; and the source is written back into the persona that declared it, so
+neither you nor the next machine has to answer the question again.
+
+The one bare name that does resolve is `fez-*` → `@fez/*`, and only because fez
+owns that npm scope. That is a property of owning the namespace, and it
+generalizes to no other prefix.
 
 ## Inject — at spawn
 

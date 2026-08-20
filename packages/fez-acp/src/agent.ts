@@ -8,6 +8,8 @@ import {
   findHarness,
   findPersona,
   findMcpServer,
+  installHint,
+  wellKnownSource,
   invokeWithRetry,
   KIND_AGENT_ENGRAM,
   registerBuiltinHarnesses,
@@ -155,7 +157,15 @@ async function main() {
 
   const missingSkills = persona.mcpServers.filter((name) => !findMcpServer(name));
   if (missingSkills.length > 0) {
-    console.warn(`⚠️  Skills declared but not loadable here: ${missingSkills.join(", ")} — the agent will disclose the gap when relevant`);
+    // Declaring a source does NOT install it — a persona file arrives
+    // from whoever wrote it, and running what it names would make
+    // installing a persona arbitrary code execution. So we print the
+    // one-line install and carry on without the skill, exactly as we
+    // already did for a name with no source at all.
+    console.warn(`⚠️  Skills declared but not loadable here — the agent will disclose the gap when relevant:`);
+    for (const name of missingSkills) {
+      console.warn(`   ${installHint(name, persona.mcpSources?.[name] ?? wellKnownSource(name))}`);
+    }
   }
   const mcpServers = persona.mcpServers
     .map((name) => findMcpServer(name))

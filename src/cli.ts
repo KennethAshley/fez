@@ -626,14 +626,25 @@ const skill = program.command("skill").description("Skills (MCP servers) persona
 skill
   .command("add <name>")
   .description("Define a skill: what the name means on THIS machine (personas reference it via mcpServers:)")
+  .option("--from <spec>", "source spec — npm:<pkg>, uvx:<pkg>, pipx:<pkg> or an https:// url")
   .option("--command <cmd>", "executable to launch (stdio MCP server)")
   .option("--args <list>", "comma-separated arguments")
   .option("--url <url>", "HTTP MCP server URL instead of a command")
   .option("--env <pairs...>", "KEY=value pairs (stored locally, never published)")
   .action(async (name: string, options) => {
     const { loadSettings, saveSettings } = await import("./settings.js");
-    if (!options.command && !options.url) {
-      console.error("A skill needs --command (stdio) or --url (http).");
+    const { parseSkillSource, describeSkillSpec, SOURCE_SCHEMES } = await import("./skill-source.js");
+    // --from is the shorthand a persona's `name=spec` declares; it
+    // expands to exactly the same command/args a hand-written --command
+    // would, and we echo that expansion so nothing installs unseen.
+    const fromSpec = options.from ? parseSkillSource(options.from as string) : undefined;
+    if (options.from && !fromSpec) {
+      console.error(`Can't resolve "${options.from}" — expected one of: ${SOURCE_SCHEMES.join(", ")}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (!fromSpec && !options.command && !options.url) {
+      console.error("A skill needs --from (a published package), --command (stdio) or --url (http).");
       process.exitCode = 1;
       return;
     }
@@ -642,13 +653,16 @@ skill
       const eq = pair.indexOf("=");
       if (eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
     }
-    const config: Record<string, unknown> = options.url
+    const config: Record<string, unknown> = fromSpec
+      ? { ...fromSpec, ...(Object.keys(env).length ? { env } : {}) }
+      : options.url
       ? { type: "http", url: options.url }
       : {
           command: options.command,
           ...(options.args ? { args: (options.args as string).split(",").map((a: string) => a.trim()) } : {}),
           ...(Object.keys(env).length ? { env } : {}),
         };
+    if (fromSpec) console.log(`   runs: ${chalk.dim(describeSkillSpec(fromSpec))}`);
     const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
     saveSettings({ mcpServers: { ...settings.mcpServers, [name]: config } } as never);
     console.log(`✅ skill "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn.`);
@@ -671,10 +685,21 @@ skill
       const what = config.url ?? [config.command].join(" ");
       console.log(`  ${chalk.green(name.padEnd(18))} ${what}${config.env ? chalk.dim(` (env: ${Object.keys(config.env).join(", ")})`) : ""}${users.length ? chalk.cyan(`  ← ${users.join(", ")}`) : ""}`);
     }
+    // Declared-but-undefined is the actionable gap, so print the fix
+    // rather than only the complaint — a persona that declared a source
+    // has already answered "which package?", which is the hard part.
+    const { installHint, wellKnownSource } = await import("./skill-source.js");
+    const declaredSource = new Map<string, string>();
+    for (const persona of personas) {
+      for (const [name, source] of Object.entries(persona.mcpSources ?? {})) declaredSource.set(name, source);
+    }
     const declared = new Set<string>(personas.flatMap((persona) => persona.mcpServers));
     const undefinedSkills = [...declared].filter((name) => !skills[name]);
     if (undefinedSkills.length > 0) {
-      console.log(chalk.yellow(`  ⚠ declared but undefined: ${undefinedSkills.join(", ")} — agents disclose the gap until you define them`));
+      console.log(chalk.yellow(`  ⚠ declared but undefined — agents disclose the gap until you define them:`));
+      for (const name of undefinedSkills) {
+        console.log(chalk.yellow(`    ${installHint(name, declaredSource.get(name) ?? wellKnownSource(name))}`));
+      }
     }
   });
 

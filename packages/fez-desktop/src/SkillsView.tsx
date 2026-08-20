@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient, WireEvent } from "@fez/client";
+import { parseSkillEntries, parseSkillSource, describeSkillSpec, wellKnownSource, formatSkillEntries } from "@fez/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
 import { EnvKeyStatus } from "./SkillSecrets";
+import FindSource from "./FindSource";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -14,6 +16,13 @@ import { EnvKeyStatus } from "./SkillSecrets";
  * renders verbatim before you accept, env keys are filled here and
  * never ride the wire. A listing is a recommendation from a pubkey —
  * nothing runs until you install it AND a persona declares it.
+ *
+ * A missing skill now has three ways to become installable, in trust
+ * order — the persona said where it comes from; someone on the relay
+ * signed a listing for it; or you searched npm and picked one yourself.
+ * There is deliberately no fourth: fez never resolves a bare name on
+ * your behalf, because "web-search" is an alias, not an identifier, and
+ * npm has several unrelated packages answering to it.
  */
 
 const KIND_SKILL_LISTING = 40200;
@@ -48,19 +57,50 @@ interface Listing {
   ts: number;
 }
 
+/**
+ * What the consent dialog is being asked to install, whatever produced
+ * it. `authorPk` is what separates a relay listing (whose install count
+ * gets a signed receipt) from a source you resolved yourself; `source`
+ * + `rememberIn` are how a name you just pinned down gets written back
+ * into the persona that declared it, so the next machine doesn't have
+ * to guess either.
+ */
+interface InstallTarget {
+  name: string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  envKeys?: string[];
+  /** Set only for relay listings — publishing a receipt for anything else would credit a stranger. */
+  authorPk?: string;
+  /** Provenance, shown above the command: where this answer came from. */
+  provenance: string;
+  source?: string;
+  rememberIn?: string;
+}
 
+const fromListing = (listing: Listing): InstallTarget => ({
+  name: listing.name,
+  command: listing.command,
+  args: listing.args,
+  url: listing.url,
+  envKeys: listing.envKeys,
+  authorPk: listing.authorPk,
+  provenance: "listed on your relay — a recommendation from a pubkey, not a guarantee",
+});
 
 export default function SkillsView({ client, wire }: { client: FezClient; wire: BrowserWire }) {
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [filter, setFilter] = useState<"all" | "agents" | "skills" | "packs">("all");
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
   const [listings, setListings] = useState<Listing[]>();
-  const [installing, setInstalling] = useState<Listing>();
+  const [installing, setInstalling] = useState<InstallTarget>();
+  const [finding, setFinding] = useState<{ agent: string; skill: string }>();
   const [publishing, setPublishing] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [installs, setInstalls] = useState<Map<string, number>>(new Map());
   const [copied, setCopied] = useState<string>();
-  const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[] }[]>([]);
+  const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[]; sources: Record<string, string> }[]>([]);
   const [localParts, setLocalParts] = useState<Record<string, string[]>>({});
 
   /**
@@ -90,11 +130,24 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
       });
   }, [localParts, installed, agentDeps]);
 
-  /** Declared by a persona, not present here — the only actionable gap. */
-  const missing: { agent: string; skill: string }[] = useMemo(
+  /**
+   * Declared by a persona, not present here — the only actionable gap.
+   * `source` is what the persona said (or, for fez's own packages, what
+   * owning the @fez scope lets us infer); `runs` is that spec resolved
+   * to the literal command line, so the row can show it before you
+   * commit rather than after. No source means no source: the row offers
+   * a search, never a guess.
+   */
+  const missing: { agent: string; skill: string; source?: string; runs?: string }[] = useMemo(
     () =>
       agentDeps.flatMap((dep) =>
-        dep.skills.filter((skill) => !installed[skill]).map((skill) => ({ agent: dep.agent, skill }))
+        dep.skills
+          .filter((skill) => !installed[skill])
+          .map((skill) => {
+            const source = dep.sources[skill] ?? wellKnownSource(skill);
+            const config = source ? parseSkillSource(source) : undefined;
+            return { agent: dep.agent, skill, source, runs: config && describeSkillSpec(config) };
+          })
       ),
     [agentDeps, installed]
   );
@@ -118,12 +171,16 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
     void (async () => {
       try {
         const names = await invoke<string[]>("list_personas");
-        const deps: { agent: string; skills: string[] }[] = [];
+        const deps: { agent: string; skills: string[]; sources: Record<string, string> }[] = [];
         for (const agent of names) {
           const content = await invoke<string>("read_persona", { name: agent }).catch(() => "");
           const match = content.match(/^mcpServers:\s*\[([^\]]*)\]/m);
-          const skills = match ? match[1].split(",").map((skill) => skill.trim()).filter(Boolean) : [];
-          if (skills.length > 0) deps.push({ agent, skills });
+          const entries = match ? match[1].split(",").map((skill) => skill.trim()).filter(Boolean) : [];
+          // `web-search=npm:@brave/…` — the name the prompt sees, plus
+          // where it comes from. parseSkillEntries is the same splitter
+          // the CLI uses, mirrored into @fez/client for exactly this.
+          const { names: skills, sources } = parseSkillEntries(entries);
+          if (skills.length > 0) deps.push({ agent, skills, sources });
         }
         setAgentDeps(deps);
       } catch { /* no personas dir */ }
@@ -266,26 +323,51 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
             {missing.length > 0 && (
               <div className="pulse-section ext-missing">
                 <div className="pulse-section-head"><span>your agents need something</span></div>
-                {missing.map(({ agent, skill }) => (
-                  <div key={`${agent}:${skill}`} className="skill-row">
-                    <div className="skill-main">
-                      <span className="skill-name">
-                        {skill}
-                        <span className="role-tag missing-tag">not installed</span>
-                      </span>
-                      <span className="skill-desc">@{agent} declares it — until it exists, that agent runs without it</span>
+                {missing.map(({ agent, skill, source, runs }) => {
+                  const listing = skillListings.find((l) => l.name === skill);
+                  return (
+                    <div key={`${agent}:${skill}`} className="skill-row">
+                      <div className="skill-main">
+                        <span className="skill-name">
+                          {skill}
+                          <span className="role-tag missing-tag">not installed</span>
+                        </span>
+                        <span className="skill-desc">@{agent} declares it — until it exists, that agent runs without it</span>
+                        {/* The command, before the button, not after it. */}
+                        {runs && <code className="skill-cmd">{runs}</code>}
+                        {source && !runs && (
+                          <span className="skill-env">@{agent} declares <code>{source}</code>, which fez can't resolve</span>
+                        )}
+                        {!source && !listing && (
+                          <span className="skill-env">
+                            no source declared — "{skill}" is a name, and several unrelated packages answer to names like it
+                          </span>
+                        )}
+                      </div>
+                      <div className="skill-actions">
+                        {runs && source ? (
+                          <button
+                            className="agent-action"
+                            onClick={() =>
+                              setInstalling({
+                                name: skill,
+                                ...parseSkillSource(source)!,
+                                provenance: `@${agent} declares this source in its persona file`,
+                                source,
+                              })
+                            }
+                          >
+                            install…
+                          </button>
+                        ) : listing ? (
+                          <button className="agent-action" onClick={() => setInstalling(fromListing(listing))}>install…</button>
+                        ) : (
+                          <button className="agent-action" onClick={() => setFinding({ agent, skill })}>find it…</button>
+                        )}
+                      </div>
                     </div>
-                    <div className="skill-actions">
-                      {skillListings.find((l) => l.name === skill) ? (
-                        <button className="agent-action" onClick={() => setInstalling(skillListings.find((l) => l.name === skill)!)}>
-                          install…
-                        </button>
-                      ) : (
-                        <span className="skill-env">no source known yet</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -418,7 +500,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                     ) : (
                       <button className="agent-action" onClick={() => void installPersona(listing)}>install as draft…</button>
                     ))}
-                  {isMcp && !isInstalled && <button className="agent-action" onClick={() => setInstalling(listing)}>install…</button>}
+                  {isMcp && !isInstalled && <button className="agent-action" onClick={() => setInstalling(fromListing(listing))}>install…</button>}
                 </div>
               </div>
             );
@@ -426,15 +508,47 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
           </div>
         )}
 
+        {finding && (
+          <FindSource
+            skill={finding.skill}
+            agent={finding.agent}
+            onCancel={() => setFinding(undefined)}
+            onPick={(source, provenance) => {
+              setFinding(undefined);
+              setInstalling({
+                name: finding.skill,
+                ...parseSkillSource(source)!,
+                provenance,
+                source,
+                // You just answered "which package?" — writing it back
+                // means neither you nor the next machine has to answer
+                // it again, and the persona becomes portable.
+                rememberIn: finding.agent,
+              });
+            }}
+          />
+        )}
+
         {installing && (
           <InstallDialog
-            listing={installing}
+            target={installing}
             wire={wire}
             onDone={(didInstall) => {
+              const done = installing;
               setInstalling(undefined);
-              if (didInstall) {
-                reload();
-                flash(`✓ "${installing.name}" installed — declare it in a persona (mcpServers) and it loads on next spawn`);
+              if (!didInstall) return;
+              reload();
+              if (done.rememberIn && done.source) {
+                void rememberSource(done.rememberIn, done.name, done.source)
+                  .then((ok) =>
+                    flash(
+                      ok
+                        ? `✓ "${done.name}" installed, and @${done.rememberIn} now records where it came from — hand that persona to anyone and their fez knows what to fetch`
+                        : `✓ "${done.name}" installed — couldn't update @${done.rememberIn}'s file, so add =${done.source} there by hand to make it portable`
+                    )
+                  );
+              } else {
+                flash(`✓ "${done.name}" installed — declare it in a persona (mcpServers) and it loads on next spawn`);
               }
             }}
           />
@@ -471,33 +585,61 @@ function PublishForm({
   );
 }
 
+/**
+ * Write a source back into the persona that declared the bare name, so
+ * `mcpServers: [web-search]` becomes `[web-search=npm:@brave/…]`. Only
+ * ever touches the one entry it was told about, and leaves the file
+ * alone entirely if the line isn't there to edit.
+ */
+async function rememberSource(agent: string, skill: string, source: string): Promise<boolean> {
+  try {
+    const content = await invoke<string>("read_persona", { name: agent });
+    const line = content.match(/^mcpServers:\s*\[([^\]]*)\]/m);
+    if (!line) return false;
+    const entries = line[1].split(",").map((s) => s.trim()).filter(Boolean);
+    const { names, sources } = parseSkillEntries(entries);
+    if (!names.includes(skill)) return false;
+    sources[skill] = source;
+    const rewritten = content.replace(line[0], `mcpServers: [${formatSkillEntries(names, sources)}]`);
+    if (rewritten === content) return false;
+    await invoke("update_persona", { name: agent, content: rewritten });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The consent gate: full command verbatim + env values filled locally. */
-function InstallDialog({ listing, wire, onDone }: { listing: Listing; wire: BrowserWire; onDone: (didInstall: boolean) => void }) {
+function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: BrowserWire; onDone: (didInstall: boolean) => void }) {
   const [env, setEnv] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
 
   const install = async () => {
-    const missing = (listing.envKeys ?? []).filter((key) => !env[key]?.trim());
+    const missing = (target.envKeys ?? []).filter((key) => !env[key]?.trim());
     if (missing.length > 0) return setError(`fill in: ${missing.join(", ")}`);
-    const config: SkillConfig = listing.url
-      ? { type: "http", url: listing.url }
+    const config: SkillConfig = target.url
+      ? { type: "http", url: target.url }
       : {
-          command: listing.command,
-          ...(listing.args?.length ? { args: listing.args } : {}),
-          ...(listing.envKeys?.length ? { env } : {}),
+          command: target.command,
+          ...(target.args?.length ? { args: target.args } : {}),
+          ...(target.envKeys?.length ? { env } : {}),
         };
     try {
-      await invoke("write_skill", { name: listing.name, configJson: JSON.stringify(config) });
+      await invoke("write_skill", { name: target.name, configJson: JSON.stringify(config) });
       // The receipt: +1 on the listing's install count, signed by you —
-      // on the relay (truth) and pushed to the cross-relay index (number).
-      const receipt = wire.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", listing.name], ["p", listing.authorPk]], content: "" });
-      await wire.publish({ kind: receipt.kind, tags: receipt.tags, content: receipt.content, created_at: receipt.created_at }).catch(() => {});
-      if (countsUrl()) void fetch(countsUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(receipt),
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => {});
+      // on the relay (truth) and pushed to the cross-relay index
+      // (number). Only for relay listings: a receipt names an author,
+      // and there is nobody to credit for a package you found yourself.
+      if (target.authorPk) {
+        const receipt = wire.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", target.name], ["p", target.authorPk]], content: "" });
+        await wire.publish({ kind: receipt.kind, tags: receipt.tags, content: receipt.content, created_at: receipt.created_at }).catch(() => {});
+        if (countsUrl()) void fetch(countsUrl(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(receipt),
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => {});
+      }
       onDone(true);
     } catch (err) {
       setError(String(err));
@@ -507,12 +649,13 @@ function InstallDialog({ listing, wire, onDone }: { listing: Listing; wire: Brow
   return (
     <div className="overlay" onMouseDown={() => onDone(false)}>
       <div className="search-box install-box" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="install-head">install "{listing.name}"</div>
+        <div className="install-head">install "{target.name}"</div>
+        <div className="settings-hint">{target.provenance}</div>
         <div className="settings-hint">
           This exact command will run on your machine whenever an agent with this skill spawns:
         </div>
-        <pre className="draft-content">{listing.url ?? [listing.command, ...(listing.args ?? [])].join(" ")}</pre>
-        {(listing.envKeys ?? []).map((key) => (
+        <pre className="draft-content">{target.url ?? [target.command, ...(target.args ?? [])].join(" ")}</pre>
+        {(target.envKeys ?? []).map((key) => (
           <div key={key} className="settings-field">
             <label>{key} (stored locally, never published)</label>
             <input

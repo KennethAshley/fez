@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { notice } from "./notices.js";
+import { parseSkillSource, SOURCE_SCHEMES } from "./skill-source.js";
 
 /**
  * A named agent identity a user has configured — references a harness
@@ -17,7 +18,7 @@ import { notice } from "./notices.js";
  * ---
  * harness: claude-code
  * aliases: [research]
- * mcpServers: [web-search]
+ * mcpServers: [web-search=npm:@brave/brave-search-mcp-server, obsidian]
  * ---
  * You are a research assistant.
  *
@@ -26,6 +27,12 @@ import { notice } from "./notices.js";
  * @reviewer declares [obsidian]. Fez resolves each name against whatever's
  * registered (built in or via an extension) when routing to this persona;
  * an unresolved name is dropped with a warning, not a hard failure.
+ *
+ * An entry may carry a SOURCE after `=` — `web-search=npm:<pkg>` — which
+ * says where that name comes from, so the skill is installable in one
+ * click on a machine that doesn't have it, and the persona is portable.
+ * The name alone still resolves against local settings first; see
+ * skill-source.ts for why a bare name deliberately resolves to nothing.
  */
 export interface Persona {
   id: string;
@@ -35,6 +42,13 @@ export interface Persona {
   systemPrompt?: string;
   /** Names looked up in the mcp-servers.ts registry — see the interface doc above. */
   mcpServers: string[];
+  /**
+   * name → source spec, for the entries that declared one (`npm:<pkg>`,
+   * `uvx:<pkg>`, `https://…`). Kept apart from `mcpServers` so every
+   * existing consumer keeps seeing plain names: a source is what makes a
+   * missing skill installable, never what makes it run.
+   */
+  mcpSources: Record<string, string>;
   /**
    * One-line self-description published in the agent's 47000 metadata —
    * what orchestrators route on. Write it as verb phrases ("search the
@@ -70,10 +84,29 @@ function parseList(raw: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * `[web-search=npm:@brave/x, github]` -> names + the sources declared for
+ * them. Split on the FIRST `=` only: a spec is itself full of colons and
+ * slashes, and `npm:@scope/pkg` must survive intact.
+ */
+export function parseSkillEntries(entries: string[]): { names: string[]; sources: Record<string, string> } {
+  const names: string[] = [];
+  const sources: Record<string, string> = {};
+  for (const entry of entries) {
+    const eq = entry.indexOf("=");
+    const name = (eq === -1 ? entry : entry.slice(0, eq)).trim();
+    if (!name) continue;
+    names.push(name);
+    const source = eq === -1 ? "" : entry.slice(eq + 1).trim();
+    if (source) sources[name] = source;
+  }
+  return { names, sources };
+}
+
 /** Deliberately minimal — this frontmatter only ever needs a few flat fields, a real YAML parser would be overkill. */
-function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; description?: string; extra: Record<string, string>; body: string } {
+function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; mcpSources: Record<string, string>; description?: string; extra: Record<string, string>; body: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { aliases: [], mcpServers: [], extra: {}, body: raw.trim() };
+  if (!match) return { aliases: [], mcpServers: [], mcpSources: {}, extra: {}, body: raw.trim() };
 
   const [, frontmatter, body] = match;
   const meta: Record<string, string> = {};
@@ -85,10 +118,13 @@ function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; m
   const known = new Set(["harness", "aliases", "mcpServers", "description"]);
   const extra = Object.fromEntries(Object.entries(meta).filter(([k]) => !known.has(k)));
 
+  const skills = parseSkillEntries(meta.mcpServers ? parseList(meta.mcpServers) : []);
+
   return {
     harness: meta.harness || undefined,
     aliases: meta.aliases ? parseList(meta.aliases) : [],
-    mcpServers: meta.mcpServers ? parseList(meta.mcpServers) : [],
+    mcpServers: skills.names,
+    mcpSources: skills.sources,
     description: meta.description || undefined,
     extra,
     body: body.trim(),
@@ -105,7 +141,7 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
   const id = path.basename(filePath, ".md");
   try {
     const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf-8"), fs.stat(filePath)]);
-    const { harness, aliases, mcpServers, description, extra, body } = parseFrontmatter(raw);
+    const { harness, aliases, mcpServers, mcpSources, description, extra, body } = parseFrontmatter(raw);
     if (!harness) {
       notice(`⚠️  ${id}.md has no "harness:" in its frontmatter — skipped`);
       return undefined;
@@ -115,6 +151,7 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
       aliases,
       harness,
       mcpServers,
+      mcpSources,
       description,
       extra,
       systemPrompt: body || undefined,
@@ -200,6 +237,17 @@ export function validatePersonaFile(raw: string, id: string, knownHarnesses?: st
   for (const key of Object.keys(parsed.extra)) {
     if (!KNOWN_EXTRA_KEYS.has(key)) {
       warnings.push(`unknown frontmatter key "${key}" — no fez consumer reads it (typo? extensions that own it can ignore this)`);
+    }
+  }
+  // A source that doesn't parse is worse than no source: it LOOKS like
+  // the skill is installable and silently isn't. Warn, don't fail —
+  // schemes can grow, and a persona is still usable without the hint.
+  for (const [name, source] of Object.entries(parsed.mcpSources)) {
+    if (!parseSkillSource(source)) {
+      warnings.push(
+        `mcpServers "${name}=${source}" — not a source fez can resolve (${SOURCE_SCHEMES.join(", ")}); ` +
+          `the name still works if the skill is defined locally`
+      );
     }
   }
   return { errors, warnings };
