@@ -40,6 +40,12 @@ export interface Channel {
    * already have. Absent for channels people made, which is most.
    */
   source?: string;
+  /**
+   * Whatever made this channel needs to recognise it again — the full
+   * `owner/name` behind a short repo channel, the branch it tracks.
+   * Strings only, and never a secret: this rides in a public event.
+   */
+  meta?: Record<string, string>;
 }
 
 export interface Workspace {
@@ -234,8 +240,9 @@ export class WorkspaceState {
       if (!channelId) return false;
       let name = channelId;
       let source: string | undefined;
+      let meta: Record<string, string> | undefined;
       try {
-        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown };
+        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown; meta?: unknown };
         if (typeof content.name === "string" && content.name) name = content.name;
         // Constrained before it reaches a UI: this becomes a section
         // heading in the rail, and a "source" of a thousand newlines
@@ -244,11 +251,21 @@ export class WorkspaceState {
           const clean = content.source.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 24);
           if (clean) source = clean;
         }
+        // Values are capped rather than trusted: they reach a header,
+        // and a "branch" of ten thousand characters is a channel
+        // deciding how the app looks.
+        if (content.meta && typeof content.meta === "object" && !Array.isArray(content.meta)) {
+          const clean: Record<string, string> = {};
+          for (const [key, value] of Object.entries(content.meta as Record<string, unknown>)) {
+            if (typeof value === "string") clean[key.slice(0, 32)] = value.slice(0, 200);
+          }
+          if (Object.keys(clean).length > 0) meta = clean;
+        }
       } catch { /* keep fallback */ }
       const existing = ws.channels.get(channelId);
       // A later owner event renames; an older one replayed must not undo it.
       if (existing && event.created_at < existing.createdAt) return false;
-      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source });
+      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source, meta });
       return true;
     }
 

@@ -446,7 +446,12 @@ export default function SkillsView({
                 almost always an ACTION — connect an account, choose
                 what to watch — while the list below is a fact. An
                 extension with nothing to configure adds nothing. */}
-            {only !== "skills" && extensionSettingsPanels().map((panel) => (
+            {/* Panels that claim a channel source are configured from
+                the rail group for those channels, where the thing they
+                configure actually is. Listing them here as well is the
+                same settings in two places, which is how the two drift
+                into disagreeing about which one is real. */}
+            {only !== "skills" && extensionSettingsPanels().filter((panel) => !panel.source).map((panel) => (
               <div key={panel.name} className="pulse-section ext-settings">
                 <div className="pulse-section-head"><span>{panel.name}</span></div>
                 <ExtensionPanel panel={panel} />

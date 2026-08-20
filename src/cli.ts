@@ -1106,12 +1106,23 @@ program
     const fezPersona = await findPersona("fez");
     const routerUrl = process.env.FEZ_ORCHESTRATOR_URL || fezPersona?.extra.url;
     if (routerUrl) {
+      const key = process.env.FEZ_ORCHESTRATOR_KEY || fezPersona?.extra.key;
+      const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[?::1\]?)\b/.test(routerUrl);
       try {
-        const res = await fetch(`${routerUrl.replace(/\/$/, "")}/models`, { signal: AbortSignal.timeout(2500) });
+        const res = await fetch(`${routerUrl.replace(/\/$/, "")}/models`, {
+          headers: key ? { Authorization: `Bearer ${key}` } : {},
+          // A hosted router is a network round trip, not a loopback call.
+          signal: AbortSignal.timeout(local ? 2500 : 8000),
+        });
         const body = (await res.json()) as { data?: { id: string }[] };
         ok(`orchestrator router at ${routerUrl} (${body.data?.[0]?.id ?? "?"})`);
       } catch {
-        warn(`orchestrator router ${routerUrl} not responding`, "cactus serve ~/.cache/cactus/weights/needle-prebuilt --no-cloud-handoff --no-cloud-tele");
+        warn(
+          `orchestrator router ${routerUrl} not responding`,
+          local
+            ? "start it, or point fez.md at the hosted router: url: https://137-184-135-188.sslip.io/v1"
+            : "check the URL, or run a local one and set url: http://127.0.0.1:8080/v1 in ~/.fez/personas/fez.md"
+        );
       }
     }
 

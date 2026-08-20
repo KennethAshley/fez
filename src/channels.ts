@@ -122,8 +122,17 @@ export function makeChannels(nostr: NostrAccess, ownerPubkey: string): ChannelsA
         // a person started, and would sit outside its group forever.
         // Re-signing the same `d` is a rename in place — clients already
         // resolve those by created_at — so stamp it once and move on.
+        //
+        // META COUNTS TOO. Checking only `source` meant a bridge could
+        // learn something new about a channel — the branch a repo
+        // tracks — and have no way to say so, because the source it had
+        // already matched. The comparison is over everything the caller
+        // is claiming, not just the part that groups it.
         const wantSource = cleanSource(spec.source);
-        if (wantSource && existing.source !== wantSource && nostr.pubkey === ownerPubkey) {
+        const changed =
+          (wantSource !== undefined && existing.source !== wantSource) ||
+          JSON.stringify(spec.meta ?? {}) !== JSON.stringify(existing.meta ?? {});
+        if (changed && nostr.pubkey === ownerPubkey) {
           await nostr.publish({ kind: KIND_CHANNEL, tags: [["d", existing.id]], content: contentFor(spec) });
         }
         return existing.id;

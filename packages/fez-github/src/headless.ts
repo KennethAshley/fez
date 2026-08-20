@@ -35,11 +35,16 @@ export default function github(api: FezExtensionAPI): void {
    * carries the full owner/name, since the channel is named for the
    * short half and two owners can both have a `docs`.
    */
-  async function channelFor(ctx: ScheduledTaskContext, repo: string): Promise<string | undefined> {
+  async function channelFor(
+    ctx: ScheduledTaskContext,
+    repo: string,
+    config: Config
+  ): Promise<string | undefined> {
+    const branch = config.available?.find((row) => row.repo === repo)?.defaultBranch;
     const id = await ctx.channels.ensure({
       name: channelNameFor(repo),
       source: "github",
-      meta: { repo },
+      meta: branch ? { repo, branch } : { repo },
     });
     if (!id) {
       console.warn(`⚠️  fez-github: no #${channelNameFor(repo)} channel, and only the workspace owner can add one`);
@@ -96,7 +101,7 @@ export default function github(api: FezExtensionAPI): void {
       console.warn(`⚠️  fez-github ${repo}: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
-    const channelId = await channelFor(ctx, repo);
+    const channelId = await channelFor(ctx, repo, config);
     if (!channelId) return false;
 
     // FIRST SIGHT: record the watermark, say one line, publish nothing
@@ -204,9 +209,13 @@ export default function github(api: FezExtensionAPI): void {
     availableCheckedAt = Date.now();
     try {
       const available = await installedRepos();
-      const before = JSON.stringify(config.available ?? []);
-      if (JSON.stringify(available) === before) return;
+      if (JSON.stringify(available) === JSON.stringify(config.available ?? [])) return;
       await saveConfig(ctx.nostr, { ...config, available });
+      // Also update the copy THIS poll is using. Without it the branch a
+      // repo tracks is known but unused until the next tick, because the
+      // config was read before this ran — three minutes of a channel
+      // header missing something already on disk.
+      config.available = available;
     } catch (err) {
       // The picker keeps its last answer; never fail a poll over it.
       console.warn(`⚠️  fez-github: couldn't list installed repos — ${err instanceof Error ? err.message : String(err)}`);

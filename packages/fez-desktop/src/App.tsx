@@ -541,6 +541,14 @@ function Shell({
   // everything anybody made by hand, which is most of them.
   const ownChannels: { id: string; name: string }[] = [];
   const bridged = new Map<string, { id: string; name: string }[]>();
+  // A bridge's group exists because the extension is INSTALLED, not
+  // because it has already opened a channel. Otherwise a freshly
+  // installed bridge shows nothing at all, and the only way to set it
+  // up is to already know it lives in settings — the extension would be
+  // invisible until after the thing you needed it for.
+  for (const panel of extensionSettingsPanels()) {
+    if (panel.source) bridged.set(panel.source, []);
+  }
   for (const channel of client.state.workspace.channels.values()) {
     if (!channel.source) {
       ownChannels.push(channel);
@@ -661,6 +669,11 @@ function Shell({
                 )}
               </div>
               {channels.map(channelRow)}
+              {channels.length === 0 && (
+                <button className="channel bridge-empty" onClick={() => panel && setExtSettings(panel.name)}>
+                  set it up →
+                </button>
+              )}
             </div>
           );
         })}
@@ -941,11 +954,12 @@ function Shell({
       {extSettings && (
         <div className="overlay settings-overlay" onClick={(e) => e.target === e.currentTarget && setExtSettings(undefined)}>
           <div className="settings-modal ext-modal">
+            {/* Title and close are pane-head's OWN children: it already
+                space-betweens them, and wrapping both in a row put them
+                in one box together at the left. */}
             <header className="pane-head">
-              <div className="topbar-row">
-                <span className="wiki-title">{extSettings}</span>
-                <button className="pane-close" onClick={() => setExtSettings(undefined)}>✕</button>
-              </div>
+              <span className="wiki-title">{extSettings}</span>
+              <button className="pane-close" onClick={() => setExtSettings(undefined)}>✕</button>
             </header>
             <div className="pane-body">
               {extensionSettingsPanels().find((panel) => panel.name === extSettings)?.render() ?? (
@@ -1251,7 +1265,12 @@ function ChannelView({
     setUploading(undefined);
   };
 
-  const channelName = client.channelRef(channelId)?.name ?? channelId.slice(0, 8);
+  const channelRef = client.channelRef(channelId);
+  const channelName = channelRef?.name ?? channelId.slice(0, 8);
+  // What a bridge wants said about this channel beside its name — the
+  // branch a repo tracks. Generic: the header shows whatever `branch`
+  // the channel carries, and knows nothing about GitHub.
+  const channelBranch = channelRef?.meta?.branch;
   const typing = client.typingWho();
 
   return (
@@ -1267,6 +1286,12 @@ function ChannelView({
       <header className="topbar">
         <div className="topbar-row">
         <span className="hash">#</span> {channelName}
+        {channelBranch && !threadRoot && (
+          <span className="channel-branch" title={`tracking ${channelBranch}`}>
+            <span className="channel-branch-mark">⑂</span>
+            {channelBranch}
+          </span>
+        )}
         {threadRoot && (
           <button className="thread-exit" onClick={() => setThreadRoot(undefined)}>← back to channel</button>
         )}

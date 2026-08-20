@@ -651,9 +651,21 @@ export class FezClient {
     return this.exhaustedChannels.has(channelId);
   }
   /** Name a channel and the workspace it sits in — breadcrumbs, jump-to, notifications. */
-  channelRef(channelId: string): { name: string; workspaceName: string } | undefined {
+  channelRef(
+    channelId: string
+  ): { name: string; workspaceName: string; source?: string; meta?: Record<string, string> } | undefined {
     const channel = this.state.workspace.channels.get(channelId);
-    return channel ? { name: channel.name, workspaceName: this.state.workspace.name } : undefined;
+    return channel
+      ? {
+          name: channel.name,
+          workspaceName: this.state.workspace.name,
+          // What opened it, and what it wants said about itself — a
+          // header showing the branch a repo tracks needs both, and
+          // neither is reachable from a name.
+          source: channel.source,
+          meta: channel.meta,
+        }
+      : undefined;
   }
 
   // ── Actions ─────────────────────────────────────────────────────────────

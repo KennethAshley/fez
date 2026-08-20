@@ -11,12 +11,19 @@ Both talk to the same agents through the same Nostr events.
 
 ## The Orchestrator Agent
 
-When you type `fez` and open the chat, there's always **one agent running locally** — the **Orchestrator**.
+When you type `fez` and open the chat, there's always **one agent
+listening** — the **Orchestrator**.
 
 The Orchestrator is:
-- A tiny local model (needle, 14MB, runs on CPU)
+- A small tool-calling model behind an OpenAI-compatible URL. By default
+  that's the hosted fez router (install nothing); point it at localhost
+  and it's fully local instead. The seam does not change.
 - NOT the one doing your work
 - The one that **understands what you want and routes you to the right agent**
+
+Local-first is still a first-class path, not a fallback — see
+`packages/fez-orchestrator/README.md` for the three ways to fill the
+seam and the measured trade-offs between them.
 
 ## What the Orchestrator Does
 

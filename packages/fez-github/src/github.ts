@@ -97,6 +97,8 @@ export async function ready(): Promise<Readiness> {
 export interface InstalledRepo {
   repo: string;
   private: boolean;
+  /** What "the code" means for this repo right now — shown beside the channel. */
+  defaultBranch?: string;
 }
 
 /**
@@ -123,7 +125,7 @@ export async function installedRepos(): Promise<InstalledRepo[]> {
       installation_id: install.id,
       per_page: 100,
     });
-    for (const repo of repos) out.push({ repo: repo.full_name, private: repo.private });
+    for (const repo of repos) out.push({ repo: repo.full_name, private: repo.private, defaultBranch: repo.default_branch });
   }
   // Stable order, so the picker does not reshuffle between polls.
   return out.sort((a, b) => a.repo.localeCompare(b.repo));

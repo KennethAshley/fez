@@ -12,18 +12,66 @@ threading, steer, and budgets all apply to it like any other agent.
 
 ## The router is a seam
 
-`FEZ_ORCHESTRATOR_URL` is any OpenAI-compatible endpoint. The reference
-setup is **fully local** — [cactus](https://github.com/cactus-compute/cactus)
-serving [needle](https://huggingface.co/Cactus-Compute/needle), a
-26M-parameter tool-calling model (instant, free, private):
+`FEZ_ORCHESTRATOR_URL` is any OpenAI-compatible endpoint. Three ways to
+fill it, in order of how much you want to install:
+
+**Hosted (default — install nothing).** A fez-run router serving
+Qwen3-0.6B. `@fez` works out of the box:
+
+```markdown
+url: https://137-184-135-188.sslip.io/v1
+```
+
+Your message text leaves your machine on every route, which is the
+trade. If that's not acceptable, run one of the local options — the
+seam is the same either way, and nothing else changes.
+
+**Local, no brew.** Any OpenAI-compatible server with the same model:
+[llama.cpp](https://github.com/ggml-org/llama.cpp) or ollama.
+
+```bash
+llama-server -m Qwen3-0.6B-Q4_K_M.gguf --jinja --reasoning off -c 2048
+```
+
+**Local, cactus + needle.** [cactus](https://github.com/cactus-compute/cactus)
+serving [needle](https://huggingface.co/Cactus-Compute/needle), a 26M
+tool-calling model — the smallest and fastest option, and macOS/ARM only:
 
 ```bash
 brew install cactus-compute/cactus/cactus
 cactus serve Cactus-Compute/needle --no-cloud-handoff --no-cloud-tele
 ```
 
-Anything else that speaks `/v1/chat/completions` with function calling
-works the same: ollama, llama.cpp server, or a cloud model.
+## The seam is a URL *and* a profile
+
+The request shape is part of the model choice, not separate from it.
+Measured on the 97-case battery in `@fez/bench`:
+
+| router | accuracy | over-routes |
+| --- | --- | --- |
+| needle 26M, its own shape | 71% | 8 |
+| Qwen3-0.6B, needle's shape | 70% | 0 |
+| Qwen3-0.6B, its own shape | **90%** | 1 |
+| needle, Qwen3's shape | **20%** | 9 |
+
+A bigger model buys nothing on its own — the gain is entirely in the
+shape, and the shape that wins for one model *destroys* the other.
+So each endpoint carries a profile:
+
+- `needle` — no system message, no `tool_choice`, no sampling overrides.
+- `tools` — short router system message, `tool_choice: required`,
+  `temperature: 0`, `max_tokens: 96`.
+
+It's auto-detected from the model id (anything matching `needle` gets
+the needle profile), so existing local setups need no edit. Override
+with `profile:` in the persona or `FEZ_ORCHESTRATOR_PROFILE`.
+
+Two details worth keeping if you plug in your own model: **pin
+temperature to 0** (llama.cpp defaults to 0.8, which moved bench scores
+±4 points between identical runs), and **cap `max_tokens`** (general
+models write a prose preamble before the tool call and will otherwise
+ramble to the context limit — 10-12s per route on a small CPU; a cap of
+96 scores identically to 512).
 
 ## Setup — a persona file, like any other agent
 
@@ -58,10 +106,14 @@ Then invite its pubkey (printed on first run) as the community creator:
 `/invite <pubkey> bot`.
 
 Env overrides (each beats the persona file): `FEZ_ORCHESTRATOR_URL`,
-`FEZ_ORCHESTRATOR_MODEL`, `FEZ_ORCHESTRATOR_NAME` (default `fez` — also
-picks which persona file loads), `FEZ_AGENT_CHANNELS`,
-`FEZ_AGENT_RESPOND_TO` (`anyone` | `owner` | `allowlist:<pk,...>`),
-`FEZ_AGENT_OWNER`.
+`FEZ_ORCHESTRATOR_MODEL`, `FEZ_ORCHESTRATOR_PROFILE` (`needle` |
+`tools`), `FEZ_ORCHESTRATOR_KEY` (bearer token, for endpoints that want
+one), `FEZ_ORCHESTRATOR_NAME` (default `fez` — also picks which persona
+file loads), `FEZ_AGENT_CHANNELS`, `FEZ_AGENT_RESPOND_TO` (`anyone` |
+`owner` | `allowlist:<pk,...>`), `FEZ_AGENT_OWNER`.
+
+Keep the token in the env var, not the persona file — a persona is a
+plain markdown doc people paste into issues.
 
 ## How fez knows who's around
 

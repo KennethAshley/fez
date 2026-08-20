@@ -50,7 +50,7 @@ export interface Config {
    * So the half that HAS the token writes down what it can see, and the
    * half that draws the picker reads that.
    */
-  available?: { repo: string; private: boolean }[];
+  available?: { repo: string; private: boolean; defaultBranch?: string }[];
   /**
    * Repos whose new items get routed to an agent, by name.
    *
@@ -79,8 +79,16 @@ export function parseConfig(raw: unknown): Config {
   if (typeof value.login === "string" && value.login) config.login = value.login;
   if (Array.isArray(value.available)) {
     const available = value.available
-      .filter((row): row is { repo: string; private?: unknown } => !!row && typeof row === "object" && typeof (row as { repo?: unknown }).repo === "string")
-      .map((row) => ({ repo: row.repo, private: row.private === true }));
+      .filter((row): row is { repo: string; private?: unknown; defaultBranch?: unknown } => !!row && typeof row === "object" && typeof (row as { repo?: unknown }).repo === "string")
+      .map((row) => {
+        const entry: { repo: string; private: boolean; defaultBranch?: string } = {
+          repo: row.repo,
+          private: row.private === true,
+        };
+        const branch = (row as { defaultBranch?: unknown }).defaultBranch;
+        if (typeof branch === "string" && branch) entry.defaultBranch = branch;
+        return entry;
+      });
     if (available.length > 0) config.available = available;
   }
   // Only ever a subset of what is watched: triage on a repo the bridge
