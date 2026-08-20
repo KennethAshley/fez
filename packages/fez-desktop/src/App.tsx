@@ -387,6 +387,19 @@ function Shell({
   const working = client.workingAgents();
 
   const openChannel = async (channelId: string, focus?: string) => {
+    // Refuse an id that names no channel rather than opening a room
+    // that cannot exist. The inbox used to hand this the MESSAGE id, and
+    // because nothing checked, the header rendered the first 8 hex
+    // characters as a channel name and showed an empty room — a wrong
+    // destination that looked like a real, if unfamiliar, one. Agents
+    // publish into channels this client may not have joined, so the
+    // check is against known channels, and the miss is logged rather
+    // than thrown: a caller passing something unopenable is a bug in
+    // the caller, and it should be visible where it happens.
+    if (!client.state.workspace.channels.has(channelId)) {
+      console.warn(`openChannel: "${channelId}" is not a channel in this workspace — ignoring`);
+      return;
+    }
     client.setScope(channelId);
     setView({ kind: "channel", focus });
     await client.loadChannelHistory(channelId);

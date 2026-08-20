@@ -101,8 +101,15 @@ export default function HomeView({
         {mentions?.length === 0 && (
           <div className="pane-empty">nothing addressed to you yet — @mentions from any joined channel land here</div>
         )}
+        {/* row.id is the MESSAGE; row.channelId is where it lives.
+            Passing row.id opened a "channel" whose id was an event id —
+            the header rendered its first 8 hex characters as a name and
+            the room came up empty, because nothing on this path checked
+            that a channel id names a channel. The second argument is
+            what scrolls to and highlights the message, which is why the
+            signature takes one. */}
         {mentions?.map((row) => (
-          <button key={row.id} className="inbox-row" onClick={() => onOpenChannel(row.id)}>
+          <button key={row.id} className="inbox-row" onClick={() => onOpenChannel(row.channelId, row.id)}>
             <span className="search-meta">
               # {row.channelName} · <span className="inbox-author">{row.author}</span> · {when(row.ts)}
             </span>
