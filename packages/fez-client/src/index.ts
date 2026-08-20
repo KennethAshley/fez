@@ -119,6 +119,8 @@ export const K = {
   SCHEDULED: 40006,
   REMINDER: 40007,
   READ_STATE: 30078,
+  /** NIP-78 application data. Same kind as READ_STATE; the `d` tag separates them. */
+  APP_DATA: 30078,
   PROFILE: 0,
   USER_STATUS: 30315,
   BAN_LIST: 30047,
@@ -1152,6 +1154,47 @@ export class FezClient {
     if (!banned.delete(pubkey)) throw new Error("not banned");
     await this.publishBanList(banned);
     return this.displayName(pubkey);
+  }
+
+  /**
+   * An extension's own configuration, on the relay, encrypted to you.
+   *
+   * The seam exists because the alternative is every extension deriving
+   * this for itself: NIP-78's kind, a `d` tag that must not collide with
+   * fez's own read state (which uses a channel UUID on the same kind),
+   * and self-encryption. Getting any of those subtly wrong is silent —
+   * a config nobody can read, or one that overwrites something else.
+   *
+   * A dotfile would have been simpler and is what fez-github started
+   * with, but a webview has no filesystem, so config on disk can never
+   * be edited from the desktop app. On the relay it is editable, and it
+   * follows you to another machine for free.
+   *
+   * SELF-ENCRYPTED, always. Config names things — which repos, which
+   * host, which project — and workspace members can read the relay.
+   * Secrets do not go here regardless: those live in the keychain.
+   */
+  async extensionConfig<T>(extension: string): Promise<T | undefined> {
+    const events = await this.wire.query([
+      { kinds: [K.APP_DATA], authors: [this.pubkey], "#d": [`ext:${extension}`], limit: 5 },
+    ]);
+    // Newest wins: a replaceable kind SHOULD leave one, but a relay that
+    // kept two must not be resolved by whichever arrived first.
+    const newest = [...events].sort((a, b) => b.created_at - a.created_at)[0];
+    if (!newest) return undefined;
+    try {
+      return JSON.parse(this.wire.decrypt(this.pubkey, newest.content)) as T;
+    } catch {
+      return undefined; // not ours to read, or malformed
+    }
+  }
+
+  async saveExtensionConfig(extension: string, config: unknown): Promise<void> {
+    await this.wire.publish({
+      kind: K.APP_DATA,
+      tags: [["d", `ext:${extension}`]],
+      content: this.wire.encrypt(this.pubkey, JSON.stringify(config)),
+    });
   }
 
   async queryEngrams(agentPk: string): Promise<WireEvent[]> {

@@ -1,5 +1,6 @@
 import React from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient } from "@fez/client";
 import { registerArtifactViewer } from "./artifact-viewers";
 
@@ -49,6 +50,22 @@ export interface GuiExtensionApi {
   ) => void;
   /** Add a slash command to the GUI composer (/name). */
   registerGuiCommand: (name: string, run: (args: string) => Promise<string> | string) => void;
+  /** A card on the extensions page where this extension is configured. */
+  registerSettingsPanel: (name: string, render: () => React.ReactNode) => void;
+  /**
+   * This extension's own secrets, namespaced to it, and WRITE-ONLY —
+   * `set` and `has`, never `get`. The keychain has no read path from the
+   * webview by design, and an extension is not the place to open one:
+   * whatever needs the value (a poller, a spawned agent) reads it host-
+   * side. So a panel can store a token it just obtained, and can ask
+   * whether one exists, and cannot exfiltrate it.
+   */
+  secrets: {
+    set(key: string, value: string): Promise<void>;
+    has(key: string): Promise<boolean>;
+  };
+  /** Open a link in the real browser — an OAuth page, a repo. */
+  openUrl(url: string): Promise<void>;
   /**
    * Extend markdown PARSING everywhere docs render — a remark plugin
    * (callouts, math, footnotes…). Runs after remark-gfm.
@@ -136,6 +153,38 @@ export function registerMessageDecorator(match: MessageDecorator["match"], rende
 }
 export function messageDecorators(): readonly MessageDecorator[] {
   return decorators;
+}
+
+/**
+ * An extension's own settings, rendered on the extensions page.
+ *
+ * The gap this fills: an extension could decorate a message, own a
+ * document view, or add a slash command — but had nowhere to put the
+ * one thing almost every non-trivial extension needs, which is a place
+ * to be SET UP. fez-github made that concrete: connecting an account
+ * and choosing repos meant hand-editing settings.json and a dotfile,
+ * because no seam existed for the extension to ask.
+ *
+ * The panel is a plain component. It gets nothing but its own name —
+ * anything it needs (relay, keychain) it reaches the same way the rest
+ * of the webview does, which keeps this seam from growing a surface of
+ * its own every time an extension wants something new.
+ */
+export interface SettingsPanel {
+  /** The extension's name, used as the card's heading. */
+  name: string;
+  render: () => React.ReactNode;
+}
+const settingsPanels: SettingsPanel[] = [];
+export function registerSettingsPanel(name: string, render: SettingsPanel["render"]): void {
+  // Re-registering replaces, so a reload cannot stack two copies of the
+  // same card — the same rule registerSystemPromptSection uses.
+  const at = settingsPanels.findIndex((panel) => panel.name === name);
+  if (at >= 0) settingsPanels[at] = { name, render };
+  else settingsPanels.push({ name, render });
+}
+export function extensionSettingsPanels(): readonly SettingsPanel[] {
+  return settingsPanels;
 }
 
 const guiCommands = new Map<string, (args: string) => Promise<string> | string>();
@@ -491,6 +540,23 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       registerPageView: may("ui") ? registerPageView : (refuse("ui", "add a page view") as never),
       registerMarkdownPlugin: may("ui") ? registerMarkdownPlugin : (refuse("ui", "extend markdown") as never),
       registerGuiCommand: may("commands") ? registerGuiCommand : (refuse("commands", "add a slash command") as never),
+      // Keyed by the EXTENSION's name, not one it picks: two packages
+      // must not be able to claim the same card, and a card should say
+      // which extension it configures.
+      // Namespaced to THIS extension: one package cannot read or clobber
+      // another's credential by naming it.
+      secrets: {
+        set: (key: string, value: string) =>
+          may("ui")
+            ? invoke<void>("set_skill_secret", { skill: name, key, value })
+            : Promise.resolve(refuse("ui", "store a secret")() as void),
+        has: (key: string) =>
+          may("ui") ? invoke<boolean>("has_skill_secret", { skill: name, key }) : Promise.resolve(false),
+      },
+      openUrl: (url: string) => (may("ui") ? openUrl(url) : Promise.resolve(refuse("ui", "open a link")() as void)),
+      registerSettingsPanel: may("ui")
+        ? (_label: string, render: () => React.ReactNode) => registerSettingsPanel(name, render)
+        : (refuse("ui", "add a settings panel") as never),
     };
     try {
       const mod = await importModule(code, name, hosts);

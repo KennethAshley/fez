@@ -2222,3 +2222,12 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   background: color-mix(in srgb, var(--tint) 6%, var(--bg0));
   border-color: color-mix(in srgb, var(--tint) 26%, var(--bg2));
 }
+
+/* An extension's own settings card — an action, so it leads the page. */
+.ext-settings { margin-bottom: 12px; }
+.ext-panel-broken { color: var(--red); font-size: 12px; }
+.gh-code { margin: 8px 0; }
+.gh-code-value {
+  font-family: var(--font-mono); font-size: 26px; font-weight: 700; letter-spacing: 3px;
+  color: var(--accent); padding: 8px 0;
+}

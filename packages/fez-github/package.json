@@ -8,17 +8,19 @@
     "type": "extension",
     "parts": {
       "headless": "dist/headless.js",
-      "background": true
+      "background": true,
+      "gui": "dist/gui.js"
     },
     "permissions": [
       "read:channels",
       "publish",
       "commands",
-      "background"
+      "background",
+      "ui"
     ]
   },
   "scripts": {
-    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/connect.ts --bundle --format=esm --platform=node --outfile=dist/connect.js",
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/connect.ts --bundle --format=esm --platform=node --outfile=dist/connect.js && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {

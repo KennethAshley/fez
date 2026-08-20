@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient, WireEvent } from "@fez/client";
@@ -7,6 +7,7 @@ import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
 import { EnvKeyStatus } from "./SkillSecrets";
 import FindSource from "./FindSource";
+import { extensionSettingsPanels } from "./gui-extensions";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -414,6 +415,18 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
               </div>
             )}
 
+            {/* ── extensions that need setting up ────────────────
+                Rendered above the inventory because a card here is
+                almost always an ACTION — connect an account, choose
+                what to watch — while the list below is a fact. An
+                extension with nothing to configure adds nothing. */}
+            {extensionSettingsPanels().map((panel) => (
+              <div key={panel.name} className="pulse-section ext-settings">
+                <div className="pulse-section-head"><span>{panel.name}</span></div>
+                <ExtensionPanel panel={panel} />
+              </div>
+            ))}
+
             {/* ── everything on this machine ───────────────────── */}
             <div className="pulse-section">
               <div className="pulse-section-head"><span>on this machine</span></div>
@@ -757,4 +770,26 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
   );
 }
 
-
+/**
+ * One extension's settings card, fenced.
+ *
+ * Third-party render code on a page the user needs in order to REMOVE
+ * that extension: without a boundary, a card that throws takes the
+ * extensions page with it and the only way out is a config file.
+ */
+class ExtensionPanel extends Component<{ panel: { name: string; render: () => React.ReactNode } }, { failed?: string }> {
+  state: { failed?: string } = {};
+  static getDerivedStateFromError(err: unknown): { failed: string } {
+    return { failed: err instanceof Error ? err.message : String(err) };
+  }
+  render(): React.ReactNode {
+    if (this.state.failed) {
+      return <div className="ext-panel-broken">this extension's settings failed to render — {this.state.failed}</div>;
+    }
+    try {
+      return <>{this.props.panel.render()}</>;
+    } catch (err) {
+      return <div className="ext-panel-broken">this extension's settings failed to render — {String(err)}</div>;
+    }
+  }
+}
