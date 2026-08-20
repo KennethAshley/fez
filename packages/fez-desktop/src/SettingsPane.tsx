@@ -23,7 +23,6 @@ const SETTINGS_TABS = {
   servers: "servers",
   appearance: "appearance",
   skills: "skills & secrets",
-  extensions: "extensions",
   agents: "agent defaults",
   backup: "backup & identity",
 } as const;
@@ -176,9 +175,6 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         <SkillSecretsSection onNotice={flash} />
         <SkillsView client={client} wire={wire} only="skills" />
 
-        </>)}
-        {section === "extensions" && (<>
-        <SkillsView client={client} wire={wire} only="extensions" />
         </>)}
         {section === "agents" && (<>
         <div className="manage-section">agent defaults</div>

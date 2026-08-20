@@ -675,6 +675,7 @@ function Shell({
                     ["@", "agents", () => setPane({ kind: "agents" })],
                     ["$", "costs", () => setPane({ kind: "costs" })],
                     ["◷", "reminders", () => setPane({ kind: "reminders" })],
+                    ["⊞", "extensions", () => setView({ kind: "skills" })],
                   ] as [string, string, () => void, string?][]
                 ).map(([glyph, label, action, key]) => (
                   <button

@@ -934,7 +934,7 @@ button.author:hover { text-decoration: underline; }
 
 /* settings as a centered modal (Claude's pattern) */
 .settings-overlay { align-items: center; padding-top: 0; }
-.settings-modal { width: min(1020px, 94vw); max-height: 88vh; display: flex; }
+.settings-modal { width: min(640px, 92vw); max-height: 82vh; display: flex; }
 .settings-modal .pane {
   width: 100%; min-width: 0; border-left: 0; border: 1px solid var(--bg2);
   border-radius: 12px; overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,0.6);
@@ -1185,7 +1185,7 @@ button.author:hover { text-decoration: underline; }
 .settings-nav-item:hover { background: var(--bg2); color: var(--fg); }
 .settings-nav-item.active { background: var(--bg2); color: var(--accent); font-weight: 600; }
 .settings-content { flex: 1; min-width: 0; }
-.settings-modal .settings-pane { min-height: 560px; }
+.settings-modal .settings-pane { min-height: 480px; }
 
 /* Vercel-style env editor: key/value grid, .env paste splits into rows */
 .env-editor { margin-bottom: 14px; }
@@ -2231,16 +2231,3 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   font-family: var(--font-mono); font-size: 26px; font-weight: 700; letter-spacing: 3px;
   color: var(--accent); padding: 8px 0;
 }
-
-/* ── the extensions/skills sections inside settings ─────────
-   These were built as a full-width page and now live in a ~700px
-   modal column, where the page's spacing reads as enormous: a row
-   carrying one line of text was ~110px tall. Tighter here only —
-   the standalone page is unchanged. */
-.settings-content .skill-row { padding: 7px 10px; margin-bottom: 5px; gap: 8px; }
-.settings-content .skill-name { gap: 6px; min-width: 0; }
-.settings-content .pulse-section { padding: 10px 12px; }
-.settings-content .ext-legend { padding: 9px 12px; margin-bottom: 10px; }
-.settings-content .ext-parts-row dt { flex: 0 0 66px; }
-/* A tag must never be wide enough to break the name beside it. */
-.settings-content .role-tag { white-space: nowrap; }
