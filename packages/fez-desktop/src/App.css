@@ -38,12 +38,26 @@ body {
   box-shadow: inset 0 1px 0 var(--bg2);
 }
 
-/* ── left rail ─────────────────────────────────────────────── */
+/* ── left rail ─────────────────────────────────────────────────
+   EVERYTHING about the rail's box lives here. It used to be four .rail
+   blocks spread over 1,200 lines — one setting a flat 240px, one
+   reading --rail-w, and only source order deciding which won. The drag
+   handler was correct the whole time; the width simply could not move,
+   and the ambiguity was invisible to anyone reading any one block.
+   Add rail properties HERE, not in a new .rail block further down. */
 .rail {
-  background: var(--bg1);
-  border-right: 1px solid var(--bg2);
-  padding: 12px 8px;
-  overflow-y: auto;
+  width: var(--rail-w, 240px);
+  min-width: var(--rail-w, 240px);
+  background: var(--bg-rail, var(--bg1));
+  border-right: 1px solid var(--hairline, var(--bg2));
+  padding: 12px 8px 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  /* hidden, not auto: .rail-scroll is the scrolling child, and a rail
+     that scrolls as a whole takes the self card out of view with it. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 /* The channel groups are a different LEVEL, not the next item — the nav
    above them is where you go, these are what you are in. Tightening the
@@ -512,12 +526,6 @@ body {
 }
 
 /* ── terminal chrome ── */
-.rail {
-  background: var(--bg-rail);
-  border-right-color: var(--hairline);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-}
 /* fez▴ — the wordmark the site uses. It was a red dot, which read as a
    recording indicator or an unread badge rather than a logo. */
 .topbar {
@@ -893,7 +901,6 @@ button.author:hover { text-decoration: underline; }
 .cmd-notice { font-family: var(--font-mono); }
 
 /* ── self card (bottom-left, Discord's pattern) ────────────── */
-.rail { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
 .rail-scroll { flex: 1; overflow-y: auto; min-height: 0; margin: 0 -8px; padding: 0 8px; }
 .self-card {
   display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); margin: 0 -8px;

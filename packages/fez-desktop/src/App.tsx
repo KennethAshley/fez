@@ -526,7 +526,7 @@ function Shell({
         </div>
       )}
       {banner && <div className="conn-bar error">{banner}</div>}
-      <aside className="rail" style={{ width: railW, minWidth: railW }}>
+      <aside className="rail">
         {/* The workspace IS the header. The wordmark told you which
             app you were in — which you know — while the thing you
             actually need, WHERE you are, sat below it. The relay-health
