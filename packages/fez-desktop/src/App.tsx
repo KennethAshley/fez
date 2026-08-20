@@ -1851,6 +1851,14 @@ function Bubble({
     () => new Set(msg.mentionPks.map((pk) => client.displayName(pk).toLowerCase())),
     [client, msg.mentionPks]
   );
+  // …plus anyone this workspace can name. Agents publish their mentions
+  // without p tags — reviewer answered a plain-looking "@reviewer" — so
+  // tags alone made working mentions read as typos. A name nobody here
+  // answers to still renders plain, which is what the gate was for.
+  const mentionNames = new Set([
+    ...taggedNames,
+    ...[...client.knownNames().values()].map((n) => n.toLowerCase()),
+  ]);
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number }>();
   const [remindOpen, setRemindOpen] = useState(false);
   const [remindSet, setRemindSet] = useState(false);
@@ -2045,7 +2053,7 @@ function Bubble({
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
         <div className="bubble-body md">
-          <MdBody text={msg.content} tagged={taggedNames} />
+          <MdBody text={msg.content} tagged={mentionNames} />
         </div>
       )}
       {proposalIdsIn(msg.content).map((id) => (
@@ -2091,6 +2099,9 @@ function Bubble({
  * name. Highlighting every @word made a mention that reached nobody
  * look exactly like one that worked — the silence the send path stopped
  * producing, coming back on the way out.
+ *
+ * "Really tagged" means the event's p tags OR a name the workspace can
+ * resolve, since agents publish mentions untagged.
  *
  * `tagged` undefined means the surface has no tags to check against: a
  * doc body's @name notifies nobody by design, and a DM reaches its
