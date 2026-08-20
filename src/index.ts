@@ -26,6 +26,7 @@
 export { Agent, type AgentConfig, type TaskPayload, type TaskResult } from "./agent.js";
 export { CapabilityClient, type ClientConfig, type Capability, type TaskOptions, type TaskResult as ClientTaskResult } from "./client.js";
 export { RelayConnection, type RelayOptions } from "./relay.js";
+export { mentionedNames, mentionTags } from "./mentions.js";
 export { FezTUI } from "./tui.js";
 export { PackageManager, type FezPackage, type FezManifest } from "./package-manager.js";
 export * from "./kinds.js";

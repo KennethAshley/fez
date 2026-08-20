@@ -14,6 +14,7 @@ import {
   engramHeads,
   buildEngramEvent,
   isValidSlug,
+  mentionTags,
   KIND_AGENT_ENGRAM,
 } from "@fez/protocol";
 
@@ -541,11 +542,7 @@ server.registerTool(
     // read as a request to a human and reached nobody: the name is text,
     // and nothing downstream reads text. Tag whoever is replied to, and
     // whoever the reply names.
-    const mentionedPks: string[] = [];
-    for (const raw of new Set((reply.match(/@([\w-]+)/g) ?? []).map((m) => m.slice(1)))) {
-      const pk = await resolvePubkey(raw).catch(() => undefined);
-      if (pk && pk !== root.pubkey) mentionedPks.push(pk);
-    }
+    const mentioned = await mentionTags(reply, resolvePubkey, [root.pubkey]);
     await relay.publish(
       sign({
         kind: 40101,
@@ -555,7 +552,7 @@ server.registerTool(
           ...(slug ? [["d", slug]] : []),
           ["e", root.id],
           ["p", root.pubkey],
-          ...mentionedPks.map((pk) => ["p", pk]),
+          ...mentioned,
           ...(resolve ? [["resolved", "1"]] : []),
         ],
         content: reply,

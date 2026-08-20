@@ -18,6 +18,7 @@ import {
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
+  mentionTags,
   KIND_DELETION,
   KIND_DOC_COMMENT,
   KIND_DRAFT,
@@ -398,17 +399,6 @@ async function main() {
       if (known && known.toLowerCase() === wanted) return pubkey;
     }
     return undefined;
-  }
-
-  /** Every name a message @-mentions, resolved and deduped. Self excluded. */
-  async function mentionTags(text: string): Promise<string[][]> {
-    const names = new Set((text.match(/@([\w-]+)/g) ?? []).map((m) => m.slice(1).toLowerCase()));
-    const tags: string[][] = [];
-    for (const name of names) {
-      const pubkey = await pubkeyForName(name);
-      if (pubkey && pubkey !== myPubkey) tags.push(["p", pubkey]);
-    }
-    return tags;
   }
 
   /** The label to show an agent. Hex only when there is genuinely no name. */
@@ -1284,9 +1274,10 @@ async function main() {
 
         // Whoever the reply names is tagged, on top of whoever triggered
         // it — otherwise an agent handing work to you notifies nobody.
-        const mentioned = (await mentionTags(reply).catch(() => [])).filter(
-          (tag) => !replyTags.some((existing) => existing[0] === "p" && existing[1] === tag[1])
-        );
+        const mentioned = await mentionTags(reply, pubkeyForName, [
+          myPubkey,
+          ...replyTags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
+        ]).catch(() => []);
         const replyEvent = client.signEvent({
           kind: replyKind,
           tags: [...replyTags, ...mentioned],

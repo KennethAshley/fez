@@ -1,154 +1,67 @@
-import { describe, expect, it } from "vitest";
-import {
-  bindMention,
-  resolveMentions,
-  describeMentionProblems,
-  type MentionCandidate,
-} from "../../fez-client/dist/mentions.js";
+import { describe, it, expect } from "vitest";
+import { mentionedNames, mentionTags } from "@fez/protocol";
 
 /**
- * A name is not an identity — it is an unverified, non-unique claim
- * someone published about themselves, in a namespace nobody owns. So
- * "@deployer" only means anything relative to an authority, and the
- * channel's creator-signed roster is the one available.
- *
- * The behaviour being replaced: a linear scan over every name the
- * client had ever seen, first match wins, map iteration order deciding.
- * A stranger who joined yesterday and called themselves "deployer"
- * could capture mentions meant for yours, silently.
+ * The one place a name becomes a tag. Everything downstream — the inbox,
+ * unread counts, notifications, an agent's own {"#p": [self]} filter —
+ * reads tags, never text, so a path that writes the name without the tag
+ * ships a message that looks addressed and reaches nobody.
  */
-
-const OWNER = "a".repeat(64);
-const DEPLOYER = "b".repeat(64);
-const IMPOSTOR = "c".repeat(64);
-const SHORT = "d".repeat(64);
-const OUTSIDER = "e".repeat(64);
-
-const roster: MentionCandidate[] = [
-  { pubkey: OWNER, name: "Raleigh_CA", isMember: true },
-  { pubkey: DEPLOYER, name: "deployer", isMember: true },
-  { pubkey: SHORT, name: "dep", isMember: true },
-  { pubkey: OUTSIDER, name: "researcher", isMember: false },
-];
-
-describe("the roster is the namespace", () => {
-  it("resolves a member by name", () => {
-    expect(resolveMentions("@deployer ship it", roster).pubkeys).toEqual([DEPLOYER]);
+describe("mentionedNames", () => {
+  it("finds names anywhere in a message, deduped and lowercased", () => {
+    expect(mentionedNames("@Reviewer please review\n\nthen @researcher, and @reviewer again")).toEqual([
+      "reviewer",
+      "researcher",
+    ]);
   });
 
-  it("ignores non-members — tagging someone who can't read the channel is a false alarm", () => {
-    const out = resolveMentions("@researcher take a look", roster);
-    expect(out.pubkeys).toEqual([]);
-    expect(out.unresolved).toEqual(["researcher"]);
+  it("does not mention the domain of an email address", () => {
+    // The hand-rolled /@([\w-]+)/g each path used matched here, so
+    // quoting "ken@example.com" tagged whoever was called "example".
+    expect(mentionedNames("write to ken@example.com about it")).toEqual([]);
+    expect(mentionedNames("ken@example.com and @reviewer")).toEqual(["reviewer"]);
   });
 
-  it("does not let an outsider capture a name", () => {
-    // The exact attack: someone joins the relay, calls themselves
-    // "deployer", and is NOT on this channel's roster.
-    const withImpostor = [...roster, { pubkey: IMPOSTOR, name: "deployer", isMember: false }];
-    expect(resolveMentions("@deployer ship it", withImpostor).pubkeys).toEqual([DEPLOYER]);
+  it("keeps a name that opens a line or follows punctuation", () => {
+    expect(mentionedNames("done. @coder your turn (@reviewer too)")).toEqual(["coder", "reviewer"]);
+  });
+
+  it("finds nothing in a message that names nobody", () => {
+    expect(mentionedNames("reviewer already confirmed this")).toEqual([]);
   });
 });
 
-describe("matching", () => {
-  it("prefers the longer name, so a short name isn't spuriously tagged", () => {
-    expect(resolveMentions("@deployer go", roster).pubkeys).toEqual([DEPLOYER]);
-    expect(resolveMentions("@dep go", roster).pubkeys).toEqual([SHORT]);
+describe("mentionTags", () => {
+  const roster: Record<string, string> = { reviewer: "pk-reviewer", researcher: "pk-researcher" };
+  const resolve = (name: string) => roster[name];
+
+  it("tags each resolvable name once", async () => {
+    expect(await mentionTags("@reviewer and @researcher and @reviewer", resolve)).toEqual([
+      ["p", "pk-reviewer"],
+      ["p", "pk-researcher"],
+    ]);
   });
 
-  it("is case-insensitive, because people type how they like", () => {
-    expect(resolveMentions("@DEPLOYER go", roster).pubkeys).toEqual([DEPLOYER]);
-    expect(resolveMentions("@Raleigh_ca hi", roster).pubkeys).toEqual([OWNER]);
+  it("drops a name nobody here answers to rather than guessing", async () => {
+    expect(await mentionTags("@nobody please help", resolve)).toEqual([]);
   });
 
-  it("treats trailing punctuation as prose", () => {
-    expect(resolveMentions("thanks @deployer, that worked", roster).pubkeys).toEqual([DEPLOYER]);
-    expect(resolveMentions("ping @deployer!", roster).pubkeys).toEqual([DEPLOYER]);
+  it("honours exclusions, so a path cannot double-tag or self-tag", async () => {
+    expect(await mentionTags("@reviewer @researcher", resolve, ["pk-reviewer"])).toEqual([
+      ["p", "pk-researcher"],
+    ]);
   });
 
-  it("does not fire mid-token, so emails and handles in prose are safe", () => {
-    expect(resolveMentions("mail ken@deployer.example", roster).pubkeys).toEqual([]);
-    expect(resolveMentions("path/to@deployer", roster).pubkeys).toEqual([]);
+  it("treats a failed lookup as unresolved, not as a crash", async () => {
+    const flaky = (name: string) => {
+      if (name === "reviewer") throw new Error("relay hiccup");
+      return roster[name];
+    };
+    expect(await mentionTags("@reviewer @researcher", flaky)).toEqual([["p", "pk-researcher"]]);
   });
 
-  it("tags a repeated name once", () => {
-    expect(resolveMentions("@deployer and again @deployer", roster).pubkeys).toEqual([DEPLOYER]);
-  });
-
-  it("handles several mentions in one message", () => {
-    const out = resolveMentions("@deployer and @Raleigh_CA — go", roster);
-    expect(out.pubkeys.sort()).toEqual([OWNER, DEPLOYER].sort());
-  });
-});
-
-describe("ambiguity is surfaced, not guessed", () => {
-  const twins: MentionCandidate[] = [
-    { pubkey: DEPLOYER, name: "deployer", isMember: true },
-    { pubkey: IMPOSTOR, name: "Deployer", isMember: true },
-  ];
-
-  it("tags every member who genuinely shares the name", () => {
-    // A coin flip the sender never sees is the thing being removed.
-    const out = resolveMentions("@deployer ship", twins);
-    expect(out.pubkeys.sort()).toEqual([DEPLOYER, IMPOSTOR].sort());
-    expect(out.ambiguous).toEqual([{ name: "deployer", pubkeys: [DEPLOYER, IMPOSTOR] }]);
-  });
-
-  it("says so in words the sender can act on", () => {
-    expect(describeMentionProblems(resolveMentions("@deployer ship", twins))).toMatch(/matches 2 members/);
-    expect(describeMentionProblems(resolveMentions("@nobody ship", roster))).toMatch(/nobody here is called @nobody/);
-    expect(describeMentionProblems(resolveMentions("@deployer ship", roster))).toBeUndefined();
-  });
-});
-
-describe("picking someone is the answer, not a hint", () => {
-  const twins: MentionCandidate[] = [
-    { pubkey: DEPLOYER, name: "deployer", isMember: true },
-    { pubkey: IMPOSTOR, name: "Deployer", isMember: true },
-  ];
-  const bind = (name: string, pubkey: string) => bindMention(new Map(), name, pubkey);
-
-  it("tags exactly who was chosen, where a name alone is ambiguous", () => {
-    const out = resolveMentions("@deployer ship", twins, bind("deployer", IMPOSTOR));
-    expect(out.pubkeys).toEqual([IMPOSTOR]);
-    expect(out.ambiguous).toEqual([]);
-    expect(describeMentionProblems(out)).toBeUndefined();
-  });
-
-  it("matches the binding however the sender later cases it", () => {
-    expect(resolveMentions("@DEPLOYER go", twins, bind("Deployer", DEPLOYER)).pubkeys).toEqual([DEPLOYER]);
-  });
-
-  it("does not apply to a name the sender edited away from", () => {
-    // Picked @deployer, then typed over it — the binding must not leak
-    // onto a different name.
-    const out = resolveMentions("@dep go", roster, bind("deployer", DEPLOYER));
-    expect(out.pubkeys).toEqual([SHORT]);
-  });
-
-  it("is not a way around the roster — someone kicked since you picked them", () => {
-    const kicked = roster.filter((c) => c.pubkey !== DEPLOYER);
-    const out = resolveMentions("@deployer ship", kicked, bind("deployer", DEPLOYER));
-    expect(out.pubkeys).toEqual([]);
-    expect(out.unresolved).toEqual(["deployer"]);
-  });
-
-  it("leaves names that were merely typed to ordinary resolution", () => {
-    const out = resolveMentions("@deployer and @Raleigh_CA", roster, bind("deployer", DEPLOYER));
-    expect(out.pubkeys.sort()).toEqual([OWNER, DEPLOYER].sort());
-  });
-
-  it("re-picking the same name replaces the choice rather than adding one", () => {
-    const bound = bindMention(bindMention(new Map(), "deployer", DEPLOYER), "deployer", IMPOSTOR);
-    expect(resolveMentions("@deployer ship", twins, bound).pubkeys).toEqual([IMPOSTOR]);
-  });
-});
-
-describe("what an agent writing hex now gets", () => {
-  it("resolves to nobody, and is reported rather than silently dropped", () => {
-    const out = resolveMentions("@4d9a4f80 the passage is verified", roster);
-    expect(out.pubkeys).toEqual([]);
-    expect(out.unresolved).toEqual(["4d9a4f80"]);
-    expect(describeMentionProblems(out)).toMatch(/@4d9a4f80/);
+  it("resolves asynchronously, since a roster walk is a query", async () => {
+    const slow = async (name: string) => roster[name];
+    expect(await mentionTags("@researcher", slow)).toEqual([["p", "pk-researcher"]]);
   });
 });
