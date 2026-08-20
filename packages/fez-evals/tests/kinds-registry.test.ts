@@ -45,6 +45,10 @@ const K_TO_REGISTRY: Record<string, string> = {
   DELETION: "KIND_DELETION",
   GIFT_WRAP: "KIND_GIFT_WRAP",
   READ_STATE: "KIND_READ_STATE",
+  // One kind, two namespaces. 30078 is NIP-78 app data; read state keys it
+  // by channel id and extension config keys it "ext:<name>", so they share
+  // the number and can never collide on a d-tag. Both names map here.
+  APP_DATA: "KIND_READ_STATE",
   MSG_EDIT: "KIND_MSG_EDIT",
   MSG_PIN: "KIND_MSG_PIN",
   MSG_BOOKMARK: "KIND_MSG_BOOKMARK",

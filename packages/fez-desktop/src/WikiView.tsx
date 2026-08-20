@@ -310,7 +310,6 @@ export default function WikiView({ client }: { client: FezClient }) {
   const channelDocs = [...client.docsByChannel().entries()]
     .map(([channelId, info]) => ({ channelId, info, ref: client.channelRef(channelId) }))
     .filter((d) => d.ref && d.info.latestContent);
-  const communities = [...client.state.workspace.channels.values()];
 
   /**
    * Pages whose text links here. What makes a pile of notes a wiki: you
@@ -731,64 +730,51 @@ export default function WikiView({ client }: { client: FezClient }) {
   return (
     <main className="main wiki-main">
       <aside className="wiki-list">
-        <div className="wiki-list-head">docs</div>
-        {communities.map((community) => {
-          const communityPages = pages
-            .sort((a, b) => a.title.localeCompare(b.title));
-          const communityChannelDocs = channelDocs;
-          return (
-            <div key={community.id} className="wiki-group">
-              <div className="wiki-group-name">
-                {community.name}
-                <button
-                  className="community-add"
-                  title="new page"
-                  onClick={() => setNewTitle(newTitle === undefined ? "" : undefined)}
-                >
-                  +
-                </button>
-              </div>
-              {newTitle !== undefined && (
-                <input
-                  className="manage-input wiki-new"
-                  value={newTitle}
-                  autoFocus
-                  placeholder="page title…"
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") create();
-                    if (e.key === "Escape") setNewTitle(undefined);
-                  }}
-                />
-              )}
-              {communityPages.map((page) => (
-                <button
-                  key={page.slug}
-                  className={
-                    sel?.kind === "wiki" && client.state.workspace.relay === client.state.workspace.relay && sel.slug === page.slug
-                      ? "channel active"
-                      : "channel"
-                  }
-                  onClick={() => openWiki(page.slug)}
-                >
-                  ▤ {page.title}
-                </button>
-              ))}
-              {communityChannelDocs.map(({ channelId, ref }) => (
-                <button
-                  key={channelId}
-                  className={sel?.kind === "channel" && sel.channelId === channelId ? "channel active" : "channel"}
-                  onClick={() => setSel({ kind: "channel", channelId })}
-                >
-                  <span className="hash">#</span> {ref!.name} doc
-                </button>
-              ))}
-              {communityPages.length === 0 && communityChannelDocs.length === 0 && (
-                <div className="wiki-empty-group">no docs yet</div>
-              )}
-            </div>
-          );
-        })}
+        <div className="wiki-list-head">
+          docs
+          <button className="community-add" title="new page" onClick={() => setNewTitle(newTitle === undefined ? "" : undefined)}>
+            +
+          </button>
+        </div>
+        {/* One list. Flattening (#108) made the relay the workspace, so
+            grouping by channel here meant looping channels and rendering
+            the SAME full doc list inside each — three groups, identical
+            contents. Pages are workspace-level; a channel doc names its
+            channel, which is all the grouping that was ever doing. */}
+        {newTitle !== undefined && (
+          <input
+            className="manage-input wiki-new"
+            value={newTitle}
+            autoFocus
+            placeholder="page title…"
+            onChange={(e) => setNewTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") create();
+              if (e.key === "Escape") setNewTitle(undefined);
+            }}
+          />
+        )}
+        {[...pages]
+          .sort((a, b) => a.title.localeCompare(b.title))
+          .map((page) => (
+            <button
+              key={page.slug}
+              className={sel?.kind === "wiki" && sel.slug === page.slug ? "channel active" : "channel"}
+              onClick={() => openWiki(page.slug)}
+            >
+              ▤ {page.title}
+            </button>
+          ))}
+        {channelDocs.map(({ channelId, ref }) => (
+          <button
+            key={channelId}
+            className={sel?.kind === "channel" && sel.channelId === channelId ? "channel active" : "channel"}
+            onClick={() => setSel({ kind: "channel", channelId })}
+          >
+            <span className="hash">#</span> {ref!.name} doc
+          </button>
+        ))}
+        {pages.length === 0 && channelDocs.length === 0 && <div className="wiki-empty-group">no docs yet</div>}
       </aside>
 
       <section className="wiki-page">
