@@ -103,7 +103,26 @@ const fromListing = (listing: Listing): InstallTarget => ({
   provenance: "listed on your relay — a recommendation from a pubkey, not a guarantee",
 });
 
-export default function SkillsView({ client, wire }: { client: FezClient; wire: BrowserWire }) {
+/**
+ * Two audiences, one component.
+ *
+ * `only` splits what was a single page into the two settings sections it
+ * always contained: SKILLS are definitions an agent can call (web-search,
+ * github — most belong to no package at all), EXTENSIONS are packages,
+ * one of whose parts may be a skill. Keeping one component means the
+ * shared machinery — install consent, source resolution, the local-path
+ * guard — cannot drift between them.
+ */
+export default function SkillsView({
+  client,
+  wire,
+  only,
+}: {
+  client: FezClient;
+  wire: BrowserWire;
+  /** Undefined shows everything (the old standalone page). */
+  only?: "skills" | "extensions";
+}) {
   const [tab, setTab] = useState<"installed" | "browse">("installed");
   const [filter, setFilter] = useState<"all" | "agents" | "skills" | "packs">("all");
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
@@ -141,8 +160,15 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
           config: installed[name],
           wanted: agentDeps.filter((dep) => dep.skills.includes(name)).map((dep) => dep.agent),
         };
+      })
+      // A row is a PACKAGE when it files code into this app or the TUI;
+      // anything that is only a settings.json entry is a bare skill.
+      .filter((row) => {
+        if (!only) return true;
+        const isPackage = row.parts.some((part) => part === "gui" || part === "headless");
+        return only === "extensions" ? isPackage : !isPackage;
       });
-  }, [localParts, installed, agentDeps]);
+  }, [localParts, installed, agentDeps, only]);
 
   /**
    * Declared by a persona, not present here — the only actionable gap.
@@ -316,14 +342,14 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
       <header className="topbar">
         <div className="topbar-row">
           ⊞ extensions
-          <span className="ext-tabs">
+          {only !== "extensions" && <span className="ext-tabs">
             {(["installed", "browse"] as const).map((name) => (
               <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} onClick={() => setTab(name)}>
                 {name}
                 {name === "installed" && <span className="ext-tab-count">{everything.length}</span>}
               </button>
             ))}
-          </span>
+          </span>}
         </div>
       </header>
       <div className="timeline pulse-scroll">
@@ -364,7 +390,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                 Only rendered when something is actually missing: a
                 permanent "requirements" section that is always green
                 trains you to stop reading it. */}
-            {missing.length > 0 && (
+            {only !== "extensions" && missing.length > 0 && (
               <div className="pulse-section ext-missing">
                 <div className="pulse-section-head"><span>your agents need something</span></div>
                 {missing.map(({ agent, skill, source, runs }) => {
@@ -420,7 +446,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
                 almost always an ACTION — connect an account, choose
                 what to watch — while the list below is a fact. An
                 extension with nothing to configure adds nothing. */}
-            {extensionSettingsPanels().map((panel) => (
+            {only !== "skills" && extensionSettingsPanels().map((panel) => (
               <div key={panel.name} className="pulse-section ext-settings">
                 <div className="pulse-section-head"><span>{panel.name}</span></div>
                 <ExtensionPanel panel={panel} />
@@ -429,7 +455,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
 
             {/* ── everything on this machine ───────────────────── */}
             <div className="pulse-section">
-              <div className="pulse-section-head"><span>on this machine</span></div>
+              <div className="pulse-section-head"><span>{only === "extensions" ? "installed" : "defined here"}</span></div>
               {everything.length === 0 && <div className="pane-empty">nothing installed yet — see browse</div>}
               {everything.map(({ name, parts, config, wanted }) => {
                 const localPath = machineLocalPath(config);
@@ -511,7 +537,7 @@ export default function SkillsView({ client, wire }: { client: FezClient; wire: 
           </>
         )}
 
-        {tab === "browse" && (
+        {tab === "browse" && only !== "extensions" && (
           <div className="pulse-section">
             <div className="pulse-section-head">
               <span>listed on your relay</span>

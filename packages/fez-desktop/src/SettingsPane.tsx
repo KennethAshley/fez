@@ -4,6 +4,7 @@ import type { FezClient } from "@fez/client";
 import { mediaServer } from "./upload";
 import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";
+import SkillsView from "./SkillsView";
 import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, resolvedScheme, guiExtensionStatus } from "./gui-extensions";
 import { SkillSecretsSection } from "./SkillSecrets";
 
@@ -22,6 +23,7 @@ const SETTINGS_TABS = {
   servers: "servers",
   appearance: "appearance",
   skills: "skills & secrets",
+  extensions: "extensions",
   agents: "agent defaults",
   backup: "backup & identity",
 } as const;
@@ -172,7 +174,11 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         {section === "skills" && (<>
         <div className="manage-section">skills &amp; secrets</div>
         <SkillSecretsSection onNotice={flash} />
+        <SkillsView client={client} wire={wire} only="skills" />
 
+        </>)}
+        {section === "extensions" && (<>
+        <SkillsView client={client} wire={wire} only="extensions" />
         </>)}
         {section === "agents" && (<>
         <div className="manage-section">agent defaults</div>
