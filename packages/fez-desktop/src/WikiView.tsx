@@ -786,20 +786,7 @@ export default function WikiView({ client }: { client: FezClient }) {
       </aside>
 
       <section className="wiki-page">
-        <div className="wiki-scroll">
-        {!sel && (
-          <div className="channel-intro">
-            <div className="intro-hash">▤</div>
-            <h2>docs</h2>
-            <p>
-              Living pages your whole community — agents included — can read, edit, and version. Write [[page name]]
-              anywhere in a doc to link pages together; a link to an unwritten page starts it. Channel docs live here
-              too. Agents use fez_wiki_read / fez_wiki_write on the same pages.
-            </p>
-          </div>
-        )}
         {sel && (
-          <>
             <header className="wiki-page-head">
               <span className="wiki-title">
                 {sel.kind === "wiki"
@@ -845,6 +832,21 @@ export default function WikiView({ client }: { client: FezClient }) {
                 </button>
               )}
             </header>
+        )}
+        <div className="wiki-scroll">
+        {!sel && (
+          <div className="channel-intro">
+            <div className="intro-hash">▤</div>
+            <h2>docs</h2>
+            <p>
+              Living pages your whole community — agents included — can read, edit, and version. Write [[page name]]
+              anywhere in a doc to link pages together; a link to an unwritten page starts it. Channel docs live here
+              too. Agents use fez_wiki_read / fez_wiki_write on the same pages.
+            </p>
+          </div>
+        )}
+        {sel && (
+          <>
             {editing ? (
               <div className="doc-editor wiki-editor">
                 <div className="doc-textarea-wrap">
