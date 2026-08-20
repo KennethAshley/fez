@@ -71,22 +71,21 @@ body {
    rows already use a 2px left edge to mean "this one"), and it is drawn
    with an inset shadow rather than a border or ::before so nothing
    shifts by a pixel between states. */
+/* Hover is a neutral ground; active is its OWN colour, faintly carrying
+   the accent. That difference in hue is the whole signal — no bar, no
+   marker — and it works because the two grounds are different kinds of
+   thing rather than two strengths of the same one. */
 .channel:hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); color: var(--fg); }
 .channel.active {
-  background: var(--bg2); color: var(--fg); font-weight: 600;
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg2));
+  color: var(--fg); font-weight: 600;
 }
-/* Hovering what you already have open lifts slightly — enough to say
-   the row is live, not enough to look like a different state. */
-.channel.active:hover { background: color-mix(in srgb, var(--fg) 7%, var(--bg2)); }
+.channel.active:hover { background: color-mix(in srgb, var(--accent) 24%, var(--bg2)); }
 .channel:active { transform: translateY(0.5px); }
 /* Keyboard users get the same answer the mouse gets. */
 .channel:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 .hash { color: var(--fg-dim); transition: color 110ms ease; }
-/* In your own room the marker takes the light — the one place the
-   accent touches the channel list. */
-.channel.active .hash { color: var(--accent); }
 .badge {
   margin-left: auto; background: var(--red); color: var(--bg0);
   border-radius: 9px; font-size: 11px; font-weight: 700; padding: 0 6px;
@@ -926,9 +925,12 @@ button.author:hover { text-decoration: underline; }
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px; padding: 3px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 5;
 }
+/* Matches .format-bar — same buttons, same component, so the floating
+   tray and the docked bar had no business being different sizes. */
 .format-tray button {
-  background: none; border: 0; color: var(--fg); font-family: var(--font-mono); font-size: 12px;
-  width: 28px; height: 24px; border-radius: 5px; cursor: pointer;
+  background: none; border: 0; color: var(--fg); cursor: pointer;
+  font-family: inherit; font-size: 14.5px; font-weight: 600;
+  width: 32px; height: 28px; border-radius: 6px;
 }
 .format-tray button:hover { background: var(--bg2); color: var(--accent); }
 .community-name { display: flex; align-items: center; gap: 6px; }
@@ -1919,11 +1921,18 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   border-bottom: 1px solid var(--hairline); background: var(--bg1);
   border-radius: 6px 6px 0 0;
 }
+/* The document editor is a full-page writing surface, so its toolbar is
+   the largest of the three — 16px glyphs in a 36px target, comfortably
+   over the 24px minimum a pointer wants. It had been copied from the
+   floating tray at 12px/28x24, which was two sizes out of one shared
+   component and the smallest text in the app. */
 .doc-format-bar button {
-  background: none; border: 0; color: var(--fg); font-family: var(--font-mono); font-size: 12px;
-  width: 28px; height: 24px; border-radius: 5px; cursor: pointer;
+  background: none; border: 0; color: var(--fg-dim); cursor: pointer;
+  font-family: inherit; font-size: 16px; font-weight: 600;
+  width: 36px; height: 32px; border-radius: 6px;
 }
 .doc-format-bar button:hover { background: var(--bg2); color: var(--accent); }
+.doc-format-bar .tray-sep { margin: 3px 6px; }
 .doc-textarea-wrap .doc-textarea { flex: 1; }
 .slash-menu {
   position: absolute;
