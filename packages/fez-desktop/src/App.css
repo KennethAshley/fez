@@ -2283,3 +2283,15 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .mention-link { font: inherit; color: var(--accent); font-weight: 600;
   background: none; border: 0; padding: 0; cursor: pointer; }
 .mention-link:hover { text-decoration: underline; }
+
+/* The agents button, carrying the fleet's state. One line: the name and
+   what it is doing must share the rail's width, so the activity takes
+   whatever the name leaves and truncates rather than wraps — a rail
+   entry that grows a second line shifts everything below it. */
+.agents-link { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.agents-working-name { flex: 0 0 auto; font-weight: 600; }
+.agents-working-doing {
+  flex: 1 1 auto; min-width: 0; color: var(--fg-dim); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agents-link .badge { flex: 0 0 auto; margin-left: auto; }

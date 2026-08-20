@@ -627,37 +627,40 @@ function Shell({
             })}
         </div>
         </div>
-        {/* Ambient, not a destination: what is running right now is a
-            thing you glance at, never a thing you clear. Empty when the
-            fleet is idle, so it costs nothing when there is nothing. */}
-        {working.size > 0 && (
-          <div className="rail-live" title="agents working now">
-            {[...working.entries()].slice(0, 3).map(([name, w]) => (
-              <button
-                key={name}
-                className="rail-live-row"
-                onClick={() => setPane({ kind: "watch", agent: name })}
-              >
-                <span className="rail-live-spin">⚙</span>
-                <span className="rail-live-name">{name}</span>
-                <span className="rail-live-doing">{w.activity}</span>
-              </button>
-            ))}
-            {working.size > 3 && (
-              <button className="rail-live-row more" onClick={() => setPane({ kind: "agents" })}>
-                +{working.size - 3} more working
-              </button>
-            )}
-          </div>
-        )}
-        {/* The fleet lives at the foot of the rail with the live
-            strip and your own card — "who is working" is ambient,
-            not a destination alongside inbox and docs. */}
+        {/* The fleet lives at the foot of the rail. When something is
+            working, that IS the fleet's state, so it belongs in the
+            button rather than stacked above it: two elements saying
+            "agents" — one a label, one a status — read as two things.
+            Idle costs nothing; working replaces the label.
+
+            Still one button, so the destination never moves under the
+            cursor. A single worker names itself; several are counted,
+            because three names in a rail-width button is a smear. */}
         <button
-          className={pane?.kind === "agents" ? "channel active home-link" : "channel home-link"}
+          className={pane?.kind === "agents" ? "channel active home-link agents-link" : "channel home-link agents-link"}
           onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}
+          title={
+            working.size > 0
+              ? [...working.entries()].map(([name, w]) => `${name}: ${w.activity}`).join("\n")
+              : undefined
+          }
         >
-          ⚉ agents
+          {working.size > 0 ? (
+            <>
+              <span className="rail-live-spin">⚙</span>
+              {working.size === 1 ? (
+                <>
+                  <span className="agents-working-name">{[...working.keys()][0]}</span>
+                  <span className="agents-working-doing">{[...working.values()][0].activity}</span>
+                </>
+              ) : (
+                <span className="agents-working-name">{working.size} agents working</span>
+              )}
+            </>
+          ) : (
+            <>              ⚉ agents
+            </>
+          )}
           {benchPending > 0 && <span className="badge">{benchPending}</span>}
         </button>
         <div className="self-wrap">
