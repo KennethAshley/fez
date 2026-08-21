@@ -49,3 +49,16 @@ describe("fleetQuestion", () => {
     expect(fleetQuestion("what can nonexistent do?", NAMES)).toBeUndefined();
   });
 });
+
+describe("roster phrasings that used to miss", () => {
+  test.each(["who's on the team?", "who is on the roster", "who's here"])(
+    "%j asks for the roster",
+    (text) => {
+      expect(fleetQuestion(text, NAMES)).toEqual({ kind: "roster" });
+    }
+  );
+
+  test("does not swallow a real question that starts the same way", () => {
+    expect(fleetQuestion("who is on call for the outage", NAMES)).toBeUndefined();
+  });
+});

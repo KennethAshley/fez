@@ -27,3 +27,27 @@ describe("small-talk gate", () => {
     test(`task (must route): "${q}"`, () => expect(isSmallTalk(q)).toBe(false));
   }
 });
+
+describe("chained pleasantries", () => {
+  // Each half matched alone but the pair did not, so these fell through
+  // to the router and paid a model call to be told nobody fits.
+  test.each([
+    "hey how's it going",
+    "hi there thanks",
+    "ok cool thanks",
+    "hello, how are you",
+    "yo sup",
+  ])("absorbs %j", (text) => {
+    expect(isSmallTalk(text)).toBe(true);
+  });
+
+  // The repetition must not swallow a real request that merely opens
+  // with a greeting — the tail has to match too, or nothing does.
+  test.each([
+    "hi there is a bug in relay.ts",
+    "thanks for nothing, now deploy v2",
+    "cool, can you review my patch",
+  ])("still routes %j", (text) => {
+    expect(isSmallTalk(text)).toBe(false);
+  });
+});

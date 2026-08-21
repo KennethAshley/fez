@@ -10,8 +10,22 @@
  * needle (26M): a router-side "chat" pseudo-tool does NOT work — "yo"
  * still routed to an agent — so this stays regex, not model.
  */
-export const SMALL_TALK_RE =
-  /^(yo|hey( there)?|hi( there)?|hiya|hello|howdy|sup|what'?s up|gm|good (morning|afternoon|evening|night)|how are you( doing)?( today)?|how's it going|you (there|ok|good)|thanks?|thank you|ty|nice( one)?|cool|great|awesome|lol|ok(ay)?( cool| great| thanks)?|sounds good|nice one)([\s!?.,…]+fez)?[\s!?.,…🎩👋]*$/iu;
+const SMALL_TALK_ATOM =
+  "yo|hey( there)?|hi( there)?|hiya|hello|howdy|sup|what'?s up|gm|good (morning|afternoon|evening|night)|how are you( doing)?( today)?|how'?s it going|you (there|ok|good)|thanks?|thank you|ty|nice( one)?|cool|great|awesome|lol|ok(ay)?( cool| great| thanks)?|sounds good";
+
+/**
+ * Repeated, because people CHAIN pleasantries: "hey how's it going",
+ * "hi there thanks", "ok cool thanks". Each half matched on its own but
+ * the whole string did not, so those fell through to the router and paid
+ * ~90ms to be told nobody fits. The ≤6-word guard in isSmallTalk is what
+ * keeps the repetition from swallowing a real request that happens to
+ * open with a greeting ("hi there is a bug in relay.ts" still routes —
+ * the tail does not match an atom, so the whole match fails).
+ */
+export const SMALL_TALK_RE = new RegExp(
+  `^(?:(?:${SMALL_TALK_ATOM})[\\s,]*)+([\\s!?.,…]+fez)?[\\s!?.,…🎩👋]*$`,
+  "iu"
+);
 
 export function isSmallTalk(text: string): boolean {
   return text.split(/\s+/).length <= 6 && SMALL_TALK_RE.test(text);
@@ -37,7 +51,7 @@ export type FleetQuestion = { kind: "agent"; name: string } | { kind: "roster" }
 export function fleetQuestion(text: string, agentNames: string[]): FleetQuestion | undefined {
   const t = text.trim().toLowerCase().replace(/[\s?!.…]+$/, "");
   if (
-    /^(what agents? (are (there|available|around|online)|do (you|we) have|can i use)|who('s| is) (available|around|online|on deck|in the fleet)|list (the |your |all )?agents?|what can (you all|everyone|the fleet) do|who do you have)$/.test(
+    /^(what agents? (are (there|available|around|online)|do (you|we) have|can i use)|who('s| is) (available|around|online|on deck|in the fleet|on the (team|roster)|here)|list (the |your |all )?agents?|what can (you all|everyone|the fleet) do|who do you have)$/.test(
       t
     )
   ) {

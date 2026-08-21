@@ -11,6 +11,16 @@
  * pipeline must NOT summon anyone (small talk and fleet questions are
  * answered by deterministic layers, no-fit tasks deserve honesty over
  * a guess).
+ *
+ * FROZEN IS NOT FROZEN FOREVER. Re-synced from the live personas on
+ * 2026-08-21: `reviewer`'s description here had fallen a rewrite behind
+ * the persona file, and the gap was worth 10 points — 78/98 frozen
+ * against 88/98 with `--live`, entirely on cases whose wording the newer
+ * description covers ("tear apart my draft README", "poke holes in it").
+ * A default that reads 10 points low is a bad signal, so the freeze gets
+ * refreshed when the drift check reports one. The check is the point of
+ * the freeze, not the number itself: `--live` still measures reality,
+ * and this stays fixed in between so two runs mean the same thing.
  */
 
 export interface RosterAgent {
@@ -21,7 +31,7 @@ export interface RosterAgent {
 
 export const ROSTER: RosterAgent[] = [
   { name: "researcher", about: "search the web, find papers and specs, look up github repositories and facts", skills: ["web-search", "github"] },
-  { name: "reviewer", about: "review code, critique pull requests, give feedback on changes", skills: [] },
+  { name: "reviewer", about: "review, critique, and poke holes in code, patches, pull requests, scripts, and written work — READMEs, design docs, API design, error-message wording; look over or sanity-check something before it runs, flag style problems, and point out gaps in test coverage", skills: [] },
   { name: "deployer", about: "deploy, ship, release, roll out, and promote builds to production with docker", skills: ["docker"] },
 ];
 
