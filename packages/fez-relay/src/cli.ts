@@ -135,6 +135,7 @@ async function main() {
     const loaded = await loadRelayExtensions({
       dir: extensionsDir || undefined,
       origins,
+      owner: workspace.owner,
       query: (filter) => handle.query(filter),
       log: (line) => console.log(line),
     });

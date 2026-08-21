@@ -53,6 +53,16 @@ export interface RelayExtensionAPI {
    * Behind a proxy the relay cannot know this — the operator says.
    */
   origins: readonly string[];
+  /**
+   * The workspace owner's pubkey, from NIP-11.
+   *
+   * Anything authorizing against the roster needs it: 47102 only counts
+   * when the owner signed it, and the owner is implicitly a member of
+   * their own workspace. Undefined means unclaimed — and an extension
+   * that gates on membership should then allow nobody, because on an
+   * unclaimed relay no roster can be valid.
+   */
+  owner?: string;
   log(line: string): void;
 }
 
@@ -67,6 +77,7 @@ export interface LoadOptions {
   /** Where extensions may store bytes. Defaults to ~/.fez/relay-data. */
   dataRoot?: string;
   origins?: readonly string[];
+  owner?: string;
   query(filter: Record<string, unknown>): StoredEvent[];
   log?: (line: string) => void;
 }
@@ -104,6 +115,7 @@ export async function loadRelayExtensions(opts: LoadOptions): Promise<LoadedRela
         return target;
       },
       origins: opts.origins ?? [],
+      owner: opts.owner,
       log: (line) => log(`${name}: ${line}`),
     };
     try {

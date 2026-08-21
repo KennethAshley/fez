@@ -14,12 +14,21 @@ import { gitAuthUrl } from "./auth.js";
  * anywhere to create, rotate or leak.
  *
  * Setup:
+ *   git config --global --unset-all credential.helper   # see below
  *   git config --global credential.helper fez
  *   git config --global credential.useHttpPath true
  *
  * useHttpPath is REQUIRED, not advice. Without it git hands the helper
- * only a host, and the token could not be scoped to one repository —
- * a credential for any repo on the relay would open all of them.
+ * only a host, and the token could not be scoped to one repository — a
+ * credential for any repo on the relay would open all of them.
+ *
+ * The unset matters on macOS. Apple's Command Line Tools ship a SYSTEM
+ * gitconfig setting credential.helper=osxkeychain, and git runs every
+ * configured helper rather than the first that answers. osxkeychain
+ * cannot store an authtype credential, so it reports "failed to store:
+ * -1" on every push — an alarming line about a push that completely
+ * succeeded. Clearing the list first (or `-c credential.helper=` for one
+ * command) removes it. Verified against a live relay.
  *
  * The key comes from the macOS keychain by default, the same custody the
  * rest of fez uses, so nothing here reads a key file lying on disk.
@@ -32,7 +41,7 @@ function readStdin(): string {
   try {
     return readFileSync(0, "utf-8");
   } catch {
-    return "";
+    return ""; // no stdin (a bare `git credential-fez get` by hand)
   }
 }
 
@@ -50,10 +59,17 @@ function main(): void {
   // git invokes the helper as `get`, `store` or `erase`. Only get means
   // anything here: there is nothing to store (the key already exists)
   // and nothing to erase (no credential was cached).
+  //
+  // But stdin is DRAINED first regardless. git writes the credential to
+  // the helper on `store`, and exiting without reading it leaves git
+  // writing into a closed pipe — which it reports on every single push
+  // as "failed to store: -1". Nothing was broken; the helper just hung
+  // up mid-sentence.
+  const input = readStdin();
   if (process.argv[2] !== "get") process.exit(0);
 
   const request = Object.fromEntries(
-    readStdin()
+    input
       .split("\n")
       .filter(Boolean)
       .map((line) => {

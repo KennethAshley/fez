@@ -20,11 +20,19 @@ interface RelayExtensionAPI {
   query(filter: Record<string, unknown>): StoredEvent[];
   dataDir(name: string): string;
   origins: readonly string[];
+  owner?: string;
   log(line: string): void;
 }
 
 export default function activate(api: RelayExtensionAPI): void {
   const root = path.join(api.dataDir("fez-git"), "repos");
+
+  if (!api.owner) {
+    // Without an owner no roster event can be valid, so rosterAccess
+    // would allow nobody — say that rather than serving 403s that look
+    // like a bug in the credential helper.
+    api.log("⚠️  this relay is unclaimed (--owner not set): nobody can read or write a repo here.");
+  }
 
   if (api.origins.length === 0) {
     // Not fatal — a dev relay on localhost is a legitimate posture — but
@@ -40,7 +48,7 @@ export default function activate(api: RelayExtensionAPI): void {
     // invented: the same 47102 that decides whether your messages are
     // delivered decides whether you may clone, and the same 30047 ban
     // takes both away at once.
-    access: rosterAccess((filter) => api.query(filter)),
+    access: rosterAccess((filter) => api.query(filter), api.owner),
     log: (line) => api.log(line),
   });
 
