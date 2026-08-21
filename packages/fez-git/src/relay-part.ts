@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { gitServer, rosterAccess, type StoredEvent } from "./serve.js";
 import { nip98Authenticator } from "./auth.js";
 
@@ -16,9 +17,12 @@ import { nip98Authenticator } from "./auth.js";
  */
 
 interface RelayExtensionAPI {
-  registerHttpHandler(handler: { handle(req: never, res: never): boolean | Promise<boolean> }): void;
+  registerHttpHandler(handler: {
+    handle(req: IncomingMessage, res: ServerResponse): boolean | Promise<boolean>;
+  }): void;
   query(filter: Record<string, unknown>): StoredEvent[];
   dataDir(name: string): string;
+  advertise(key: string, value: unknown): void;
   origins: readonly string[];
   owner?: string;
   log(line: string): void;
@@ -52,6 +56,21 @@ export default function activate(api: RelayExtensionAPI): void {
     log: (line) => api.log(line),
   });
 
-  api.registerHttpHandler(server as never);
+  api.registerHttpHandler(server);
+
+  // Say where git is, rather than leaving clients to rebuild the URL from
+  // the websocket address. That derivation is right on a laptop and wrong
+  // behind any proxy that terminates TLS or moves git to another host —
+  // and wrong silently, which is the worst way for it to be wrong. The
+  // operator already stated the public origin with --origin; this just
+  // publishes it. Buzz reaches the same conclusion from the other end:
+  // its repo announcements carry an explicit `clone` tag.
+  //
+  // No origin means no advertisement. A client that finds nothing here
+  // knows it cannot learn the URL, which is a better answer than a
+  // confident guess it will only discover is wrong on `git push`.
+  const base = api.origins[0];
+  if (base) api.advertise("fez_git", { clone_base: `${base.replace(/\/+$/, "")}/git` });
+
   api.log(`serving git from ${root}`);
 }

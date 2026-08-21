@@ -482,8 +482,29 @@ async function main() {
   // retried next tick; it can never take the sentinel down.
   await (async () => {
    try {
-    const { loadExtensions, registeredScheduledTasks, setNostrBackend, loadSettings } = await import("@fez/protocol");
+    const { loadExtensions, registeredScheduledTasks, setNostrBackend, setWorkspaceBackend, loadSettings, fetchRelayInfo } =
+      await import("@fez/protocol");
     setNostrBackend(buildTaskNostr() as never);
+    // Which workspace this is, and who owns it. The sentinel has no
+    // FezClient, so without this the extension API had nowhere to learn
+    // the owner and fell back to "the local key" — meaning a sentinel
+    // pointed at someone else's relay believed it owned the place, and
+    // every channel it tried to open was refused with no explanation.
+    // An unreadable NIP-11 leaves the owner undefined, which is the
+    // honest answer: seams that need one go quiet instead of guessing.
+    const info = await fetchRelayInfo(relayUrls[0]);
+    const workspaceOwner = info?.pubkey;
+    setWorkspaceBackend({
+      relayUrl: relayUrls[0],
+      owner: workspaceOwner,
+      info: info as Record<string, unknown> | undefined,
+    });
+    if (!workspaceOwner) {
+      // No owner means no channel, roster or ban event can be valid here,
+      // so nothing a scheduled task publishes into a channel would count.
+      // Saying so once beats every bridge failing quietly on its own.
+      console.log("   ⏱  relay is unclaimed (no owner in NIP-11) — channel-scoped tasks cannot publish");
+    }
     // Only extensions that ASKED for background life (fez.parts.background
     // in their manifest, recorded at install time) run here.
     const background = (loadSettings() as { backgroundExtensions?: string[] }).backgroundExtensions ?? [];
@@ -504,8 +525,26 @@ async function main() {
           // One nostr per tick, and the channels seam built over it —
           // so a bridge says "open the channel for this repo" instead of
           // copying kind numbers out of src/kinds.ts.
+          //
+          // The channels seam is keyed on the WORKSPACE owner from
+          // NIP-11, not this machine's key. They are the same on your own
+          // relay and different on anyone else's, and using the local key
+          // there fails silently in both directions: list() queries
+          // `authors: [owner]` and comes back empty, so a bridge decides
+          // every channel is missing and re-opens all of them.
+          //
+          // `ownerPubkey` stays this MACHINE's key — the authority the
+          // task acts on behalf of, which is a different question from
+          // who owns the workspace. On an unclaimed relay there is no
+          // workspace owner, and "" matches no pubkey, so list() comes
+          // back empty and ensure() refuses — which is the truth there.
           const nostr = buildTaskNostr() as never;
-          await task.run({ nostr, ownerPubkey: myPubkey, channels: makeChannels(nostr, myPubkey), missedWindow });
+          await task.run({
+            nostr,
+            ownerPubkey: myPubkey,
+            channels: makeChannels(nostr, workspaceOwner ?? ""),
+            missedWindow,
+          });
         } catch (err) {
           console.warn(`⚠️  scheduled task "${task.name}" failed: ${err instanceof Error ? err.message : err}`);
         }

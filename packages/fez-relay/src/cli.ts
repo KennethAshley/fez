@@ -137,6 +137,7 @@ async function main() {
       origins,
       owner: workspace.owner,
       query: (filter) => handle.query(filter),
+      advertise: (key, value) => handle.advertise(key, value),
       log: (line) => console.log(line),
     });
     // Registered AFTER start rather than passed in, because an extension

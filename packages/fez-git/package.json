@@ -7,15 +7,20 @@
   "fez": {
     "type": "extension",
     "parts": {
-      "relay": "dist/relay-part.js"
+      "relay": "dist/relay-part.js",
+      "headless": "dist/headless.js"
     },
-    "permissions": []
+    "permissions": [
+      "commands",
+      "read:channels",
+      "publish"
+    ]
   },
   "bin": {
     "git-credential-fez": "dist/credential.js"
   },
   "scripts": {
-    "build": "esbuild src/relay-part.ts --bundle --format=esm --platform=node --outfile=dist/relay-part.js && esbuild src/credential.ts --bundle --format=esm --platform=node --outfile=dist/credential.js && chmod +x dist/credential.js",
+    "build": "esbuild src/relay-part.ts --bundle --format=esm --platform=node --outfile=dist/relay-part.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/credential.ts --bundle --format=esm --platform=node --outfile=dist/credential.js && chmod +x dist/credential.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {

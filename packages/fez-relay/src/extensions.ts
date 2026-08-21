@@ -39,6 +39,20 @@ export interface RelayExtensionAPI {
   /** Enforce something at ingest — the same seam --config policies use. */
   registerPolicy(policy: RelayPolicy): void;
   /**
+   * Describe what you added, in the relay's NIP-11 document.
+   *
+   * An extension serving something over HTTP has to say where it is, or
+   * every client derives the URL from the websocket address — which is
+   * silently wrong the moment a proxy puts that surface on another host.
+   * Buzz makes the same call: its repo announcements carry an explicit
+   * `clone` tag rather than letting clients reconstruct one.
+   *
+   * Namespace the key by package (`fez_git`, not `git`) so two
+   * extensions cannot collide. The relay's own fields always win, so
+   * this cannot be used to restate who owns the workspace.
+   */
+  advertise(key: string, value: unknown): void;
+  /**
    * Read what the relay has stored.
    *
    * This is how an extension authorizes against facts the workspace
@@ -79,6 +93,8 @@ export interface LoadOptions {
   origins?: readonly string[];
   owner?: string;
   query(filter: Record<string, unknown>): StoredEvent[];
+  /** Where an advertised NIP-11 field lands — RelayHandle.advertise. */
+  advertise?: (key: string, value: unknown) => void;
   log?: (line: string) => void;
 }
 
@@ -108,6 +124,7 @@ export async function loadRelayExtensions(opts: LoadOptions): Promise<LoadedRela
     const api: RelayExtensionAPI = {
       registerHttpHandler: (handler) => loaded.httpHandlers.push(handler),
       registerPolicy: (policy) => loaded.policies.push(policy),
+      advertise: (key, value) => opts.advertise?.(key, value),
       query: opts.query,
       dataDir: (who) => {
         const target = path.join(dataRoot, who);
