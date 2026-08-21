@@ -44,7 +44,7 @@ export interface NostrAccess {
 }
 
 export interface FezExtensionAPI {
-  nostr: NostrAccess;
+  nostr?: NostrAccess;
   registerCommand(name: string, handler: (args: string, ctx: CommandContext) => void | Promise<void>): void;
   registerInputHandler(handler: (text: string) => Promise<boolean>): void;
   registerUrlHandler(prefix: string, handler: (url: string) => void): void;
