@@ -619,6 +619,126 @@ program
     console.log("✅ @fez launchd service removed (any running instance was stopped).");
   });
 
+program
+  .command("router-install")
+  .description("Run @fez's routing model on this machine (launchd) and point fez.md at it")
+  .requiredOption("-m, --model <path>", "GGUF model file (Qwen3-0.6B q4 is what the bench is tuned against)")
+  .option("-s, --server <path>", "llama-server binary", path.join(os.homedir(), ".fez", "bin", "llama-server"))
+  .option("-p, --port <port>", "Port to serve on", "8080")
+  .action(async (options) => {
+    if (process.platform !== "darwin") {
+      console.error("launchd is macOS-only — on Linux, run llama-server under a systemd user unit and set `url:` in ~/.fez/personas/fez.md.");
+      process.exit(1);
+    }
+    const { execSync } = await import("node:child_process");
+    const fsSync = await import("node:fs");
+    const model = path.resolve(options.model);
+    const server = path.resolve(options.server);
+    for (const [what, p] of [["model", model], ["llama-server", server]] as const) {
+      if (!fsSync.existsSync(p)) {
+        console.error(`✗ no ${what} at ${p}`);
+        console.error("  Get a build from https://github.com/ggml-org/llama.cpp/releases and a Qwen3-0.6B GGUF from Hugging Face.");
+        process.exit(1);
+      }
+    }
+    const logDir = path.join(os.homedir(), ".fez", "logs");
+    fsSync.mkdirSync(logDir, { recursive: true });
+    const label = "com.fez.router";
+    const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
+    const arg = (s: string) => `    <string>${s}</string>`;
+    // --alias fez-router matters: detectProfile() keys the request shape
+    // off the model id, and anything not matching /needle/ gets the
+    // `tools` profile — the one with tool_choice required, which is what
+    // makes a general chat model emit a routing call instead of prose.
+    // --predict 96 caps the prose preamble; measured identical to 512.
+    // --parallel 1 keeps ONE KV cache, so the repeated roster prefix
+    // stays cached: a warm route is ~90ms instead of ~230ms.
+    const args = [
+      server, "-m", model,
+      "--host", "127.0.0.1", "--port", String(options.port),
+      "-c", "8192", "--jinja", "--reasoning", "off",
+      "--alias", "fez-router", "--no-webui",
+      "--parallel", "1", "--predict", "96",
+    ];
+    fsSync.writeFileSync(
+      plistPath,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args.map(arg).join("\n")}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>HOME</key><string>${os.homedir()}</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>StandardOutPath</key><string>${path.join(logDir, "router.log")}</string>
+  <key>StandardErrorPath</key><string>${path.join(logDir, "router.log")}</string>
+</dict>
+</plist>
+`
+    );
+    try { execSync(`launchctl bootout gui/$(id -u) ${plistPath} 2>/dev/null`); } catch { /* not loaded */ }
+    execSync(`launchctl bootstrap gui/$(id -u) ${plistPath}`);
+
+    // The switch itself is one line of frontmatter. Rewritten rather
+    // than appended so re-running this is idempotent, and left alone if
+    // the persona already points somewhere local — someone who chose a
+    // port or a second machine should keep it.
+    const url = `http://127.0.0.1:${options.port}/v1`;
+    const personaFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
+    if (fsSync.existsSync(personaFile)) {
+      const before = fsSync.readFileSync(personaFile, "utf-8");
+      const after = /^url:.*$/m.test(before)
+        ? before.replace(/^url:.*$/m, `url: ${url}`)
+        : before.replace(/^---\n/, `---\nurl: ${url}\n`);
+      if (after !== before) {
+        fsSync.writeFileSync(personaFile, after, "utf-8");
+        console.log(`✅ @fez now routes via ${url}`);
+      } else {
+        console.log(`✅ router installed; @fez already points at ${url}`);
+      }
+    } else {
+      console.log(`✅ router installed at ${url}`);
+      console.log("   No ~/.fez/personas/fez.md yet — run `fez setup` to create @fez.");
+    }
+    console.log(`   plist: ${plistPath}`);
+    console.log(`   logs:  ${path.join(logDir, "router.log")}`);
+    console.log("   Restart @fez to pick it up: fez orchestrator-install (or restart the service).");
+    console.log("   remove anytime: fez router-uninstall");
+  });
+
+program
+  .command("router-uninstall")
+  .description("Stop the local routing model and send @fez back to the hosted router")
+  .action(async () => {
+    const { execSync } = await import("node:child_process");
+    const fsSync = await import("node:fs");
+    const { HOSTED_ROUTER } = await import("./settings.js");
+    const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "com.fez.router.plist");
+    try { execSync(`launchctl bootout gui/$(id -u) ${plistPath} 2>/dev/null`); } catch { /* not loaded */ }
+    fsSync.rmSync(plistPath, { force: true });
+    const personaFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
+    if (fsSync.existsSync(personaFile)) {
+      const before = fsSync.readFileSync(personaFile, "utf-8");
+      // Only reclaim a LOCAL url — a deliberate third-party endpoint is
+      // not ours to overwrite on the way out.
+      const after = before.replace(/^url:\s*https?:\/\/(127\.0\.0\.1|localhost|\[?::1\]?)\b.*$/m, `url: ${HOSTED_ROUTER}`);
+      if (after !== before) {
+        fsSync.writeFileSync(personaFile, after, "utf-8");
+        console.log(`✅ local router removed — @fez back on ${HOSTED_ROUTER}`);
+      } else {
+        console.log("✅ local router removed — @fez's url: was not local, left as-is.");
+      }
+    } else {
+      console.log("✅ local router removed.");
+    }
+  });
+
 // ─── skill — the machine's MCP catalog + the decentralized marketplace ──────
 
 const skill = program.command("skill").description("Skills (MCP servers) personas can declare — define locally, publish/install via the relay");
