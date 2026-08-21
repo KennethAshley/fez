@@ -207,6 +207,7 @@ async function main() {
     if (owner && event.pubkey && event.pubkey !== owner) return;
     if (event.created_at < membersAt) return;
     members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
+    if (owner) members.add(owner); // invariant, on live updates too
     membersAt = event.created_at;
   }
   const membershipEvents = await relay.query([
@@ -547,7 +548,11 @@ async function main() {
   relay.subscribe(
     [
       { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
-      { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+      // The workspace roster, same `d` the initial read uses. This was
+      // also still filtering on channel ids, so an invite never reached a
+      // RUNNING orchestrator — you had to restart it before it would
+      // answer the person you had just let in.
+      { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], since: Math.floor(Date.now() / 1000) },
       { kinds: [KIND_AGENT_METADATA], since: Math.floor(Date.now() / 1000) },
     ],
     (event) => {

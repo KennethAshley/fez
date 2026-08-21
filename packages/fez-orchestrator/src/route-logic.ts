@@ -83,6 +83,15 @@ export function agentTool(agent: RoutableAgent): object {
     function: {
       name: agent.name,
       description,
+      // The `task` argument is generated and then THROWN AWAY — the
+      // orchestrator reads only `function.name` and forwards the asker's
+      // original words, because small routers extract lossy task spans.
+      //
+      // It still earns its tokens. Removing it (2026-08-21) dropped the
+      // battery from 87/98 to 75/98, under-routes 10 → 22: writing the
+      // task out is what makes the model commit to a pick instead of
+      // bailing to `nobody`. It is cheap chain-of-thought wearing a
+      // schema, and the ~7 tokens it costs are the price of 12 points.
       parameters: {
         type: "object",
         properties: { task: { type: "string" } },

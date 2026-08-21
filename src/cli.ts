@@ -690,6 +690,62 @@ program
     relay.disconnect();
   });
 
+const router = program.command("router").description("Where @fez routes — the `url:` in ~/.fez/personas/fez.md");
+
+router
+  .command("show")
+  .description("Which endpoint @fez uses, and whether it answers")
+  .action(async () => {
+    const { findPersona } = await import("./personas.js");
+    const { HOSTED_ROUTER } = await import("./settings.js");
+    const persona = await findPersona("fez");
+    if (!persona) {
+      console.log("No @fez persona — run `fez setup` to create one.");
+      return;
+    }
+    // Same precedence the runtime uses, so this reports what would
+    // actually happen rather than what the file says.
+    const env = process.env.FEZ_ORCHESTRATOR_URL;
+    const url = (env || persona.extra.url || "http://127.0.0.1:8080/v1").replace(/\/$/, "");
+    const from = env ? "FEZ_ORCHESTRATOR_URL" : persona.extra.url ? "persona" : "default";
+    const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[?::1\]?)\b/.test(url);
+    console.log(`${url}  (${from}${url === HOSTED_ROUTER ? ", hosted" : local ? ", local" : ""})`);
+    try {
+      const res = await fetch(`${url}/models`, { signal: AbortSignal.timeout(local ? 2500 : 8000) });
+      const body = (await res.json()) as { data?: { id: string }[] };
+      console.log(`  ✓ answering — model ${body.data?.[0]?.id ?? "?"}`);
+    } catch {
+      console.log("  ✗ not answering");
+    }
+  });
+
+router
+  .command("set <url>")
+  .description("Point @fez at an endpoint (any OpenAI-compatible /v1 base)")
+  .action(async (url: string) => {
+    const fsSync = await import("node:fs");
+    if (!/^https?:\/\//i.test(url)) {
+      console.error(`✗ "${url}" is not an http(s) URL`);
+      process.exit(1);
+    }
+    const personaFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
+    if (!fsSync.existsSync(personaFile)) {
+      console.error("No ~/.fez/personas/fez.md — run `fez setup` first.");
+      process.exit(1);
+    }
+    const clean = url.replace(/\/$/, "");
+    const before = fsSync.readFileSync(personaFile, "utf-8");
+    const after = /^url:.*$/m.test(before)
+      ? before.replace(/^url:.*$/m, `url: ${clean}`)
+      : before.replace(/^---\n/, `---\nurl: ${clean}\n`);
+    fsSync.writeFileSync(personaFile, after, "utf-8");
+    console.log(`✅ @fez → ${clean}`);
+    if (process.env.FEZ_ORCHESTRATOR_URL) {
+      console.log(`   ⚠️  FEZ_ORCHESTRATOR_URL=${process.env.FEZ_ORCHESTRATOR_URL} is set and WINS over this.`);
+    }
+    console.log("   Restart @fez to pick it up.");
+  });
+
 program
   .command("router-install")
   .description("Run @fez's routing model on this machine (launchd) and point fez.md at it")
