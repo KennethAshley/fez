@@ -492,13 +492,28 @@ async function main() {
     // every channel it tried to open was refused with no explanation.
     // An unreadable NIP-11 leaves the owner undefined, which is the
     // honest answer: seams that need one go quiet instead of guessing.
-    const info = await fetchRelayInfo(relayUrls[0]);
-    const workspaceOwner = info?.pubkey;
-    setWorkspaceBackend({
-      relayUrl: relayUrls[0],
-      owner: workspaceOwner,
-      info: info as Record<string, unknown> | undefined,
-    });
+    //
+    // Resolved lazily and RETRIED, not fetched once at boot. The sentinel
+    // starts at login, so it races the relay coming up — and a one-shot
+    // read that lost that race would leave the owner unknown for the
+    // whole process lifetime, silently disabling channel creation for
+    // every scheduled task until somebody restarted it.
+    let workspaceOwner: string | undefined;
+    const resolveOwner = async (): Promise<string | undefined> => {
+      if (workspaceOwner) return workspaceOwner;
+      const info = await fetchRelayInfo(relayUrls[0]);
+      if (info?.pubkey) {
+        workspaceOwner = info.pubkey;
+        setWorkspaceBackend({
+          relayUrl: relayUrls[0],
+          owner: workspaceOwner,
+          info: info as Record<string, unknown>,
+        });
+        console.log(`   ⏱  workspace owner ${workspaceOwner.slice(0, 12)}…`);
+      }
+      return workspaceOwner;
+    };
+    await resolveOwner();
     if (!workspaceOwner) {
       // No owner means no channel, roster or ban event can be valid here,
       // so nothing a scheduled task publishes into a channel would count.
@@ -539,10 +554,13 @@ async function main() {
           // workspace owner, and "" matches no pubkey, so list() comes
           // back empty and ensure() refuses — which is the truth there.
           const nostr = buildTaskNostr() as never;
+          // Retried here, so a sentinel that outraced the relay at login
+          // recovers on the next tick instead of staying half-dead.
+          const owner = await resolveOwner();
           await task.run({
             nostr,
             ownerPubkey: myPubkey,
-            channels: makeChannels(nostr, workspaceOwner ?? ""),
+            channels: makeChannels(nostr, owner ?? ""),
             missedWindow,
           });
         } catch (err) {
