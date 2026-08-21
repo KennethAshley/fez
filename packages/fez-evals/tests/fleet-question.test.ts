@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { fleetQuestion } from "../../fez-orchestrator/src/route-logic";
+import { fleetQuestion } from "../../fez-orchestrator/src/route-logic.js";
 
 /**
  * Fleet meta-questions must never reach the router — found live:

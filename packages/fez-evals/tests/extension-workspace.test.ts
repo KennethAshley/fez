@@ -34,8 +34,22 @@ beforeAll(async () => {
 
   setNostrBackend({
     pubkey: OWNER,
-    publish: async (t) => ({ ...t, id: "", pubkey: OWNER, created_at: 0, sig: "" }),
-    signEvent: (t) => ({ ...t, id: "", pubkey: OWNER, created_at: 0, sig: "" }),
+    // Annotated because the `as never` below switches off contextual
+    // typing for this literal, which would otherwise infer these.
+    publish: async (t: { kind: number; tags: string[][]; content: string }) => ({
+      ...t,
+      id: "",
+      pubkey: OWNER,
+      created_at: 0,
+      sig: "",
+    }),
+    signEvent: (t: { kind: number; tags: string[][]; content: string }) => ({
+      ...t,
+      id: "",
+      pubkey: OWNER,
+      created_at: 0,
+      sig: "",
+    }),
     subscribe: () => () => {},
     query: async () => [],
     encrypt: () => "",

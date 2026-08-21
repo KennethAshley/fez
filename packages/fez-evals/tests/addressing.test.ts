@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isAddressedTo, type AddressableEvent } from "../../fez-acp/src/addressing";
+import { isAddressedTo, type AddressableEvent } from "../../fez-acp/src/addressing.js";
 
 /**
  * Addressing semantics — every case here was a live incident first.

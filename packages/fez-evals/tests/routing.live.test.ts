@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentTool, isSmallTalk, routerBody, detectProfile } from "../../fez-orchestrator/src/route-logic";
+import { agentTool, isSmallTalk, routerBody, detectProfile } from "../../fez-orchestrator/src/route-logic.js";
 
 /**
  * LIVE routing accuracy against the orchestrator's real endpoint — the

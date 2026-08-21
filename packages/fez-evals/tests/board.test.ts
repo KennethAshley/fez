@@ -12,7 +12,7 @@ import {
   parseBoard,
   parseSettings,
   serializeBoard,
-} from "../../fez-kanban/dist/board.js";
+} from "../../fez-kanban/src/board.js";
 
 /**
  * The board rewrites the user's document on every drag. If the parser

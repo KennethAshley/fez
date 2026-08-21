@@ -80,7 +80,13 @@ beforeAll(async () => {
       gitServer({
         root: gitRoot,
         authenticate: nip98Authenticator({ origins: [ORIGIN] }),
-        access: { canRead: (_r, w) => allowed.has(w.pubkey), canWrite: (_r, w) => allowed.has(w.pubkey) },
+        // pubkey is optional on the who — an unauthenticated request has
+        // none, and "no pubkey" must read as denied rather than as a
+        // lookup of undefined.
+        access: {
+          canRead: (_r, w) => !!w.pubkey && allowed.has(w.pubkey),
+          canWrite: (_r, w) => !!w.pubkey && allowed.has(w.pubkey),
+        },
       }),
     ],
   });

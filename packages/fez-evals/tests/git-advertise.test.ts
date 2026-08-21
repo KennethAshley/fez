@@ -46,7 +46,7 @@ describe("a relay advertising what its extensions added", () => {
     const bare = startRelay({ port: PORT + 1, workspace: { name: "bare" }, log: () => {} });
     try {
       const res = await fetch(`http://127.0.0.1:${PORT + 1}`, { headers: { Accept: "application/nostr+json" } });
-      expect((await res.json()).fez_git).toBeUndefined();
+      expect(((await res.json()) as { fez_git?: unknown }).fez_git).toBeUndefined();
     } finally {
       bare.close();
     }

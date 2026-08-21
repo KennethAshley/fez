@@ -33,6 +33,8 @@ export interface WireEvent {
 }
 
 export interface WireFilter {
+  /** NIP-01 filter by event id — how you fetch specific events back. */
+  ids?: string[];
   kinds?: number[];
   authors?: string[];
   since?: number;

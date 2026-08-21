@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { capReply } from "../../fez-acp/src/bridge-policy";
+import { capReply } from "../../fez-acp/src/bridge-policy.js";
 
 /** The bridge cap is structural, not prompt-based — pin it. */
 describe("capReply", () => {

@@ -138,8 +138,15 @@ export function waitFor(predicate: () => boolean, timeoutMs: number, label: stri
 export async function waitForPort(
   port: number,
   timeoutMs = 20_000,
-  /** The spawned process, so a boot failure reports ITS error, not ours. */
-  child?: { stderr?: { on(e: "data", f: (c: unknown) => void): void } }
+  /**
+   * The spawned process, so a boot failure reports ITS error, not ours.
+   *
+   * `stderr` is nullable, not merely absent: node types ChildProcess.stderr
+   * as `Readable | null` (it is null whenever that fd was not piped), so a
+   * caller passing a real ChildProcess would not type-check against an
+   * optional-only shape. The body already optional-chains through it.
+   */
+  child?: { stderr?: { on(e: "data", f: (c: unknown) => void): void } | null }
 ): Promise<void> {
   let stderr = "";
   child?.stderr?.on("data", (chunk) => { stderr += String(chunk); });

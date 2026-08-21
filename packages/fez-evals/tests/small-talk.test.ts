@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isSmallTalk } from "../../fez-orchestrator/src/route-logic";
+import { isSmallTalk } from "../../fez-orchestrator/src/route-logic.js";
 
 /**
  * Small talk never reaches the router (measured: needle routes "yo" to
