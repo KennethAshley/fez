@@ -481,7 +481,14 @@ export class PackageManager {
 
   private async installParts(
     name: string,
-    parts: { skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string }; headless?: string; gui?: string; background?: boolean }
+    parts: {
+      skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
+      headless?: string;
+      gui?: string;
+      /** Code that runs INSIDE a relay — see packages/fez-relay/src/extensions.ts. */
+      relay?: string;
+      background?: boolean;
+    }
   ): Promise<void> {
     const pkgDir = this.getContentDir(this.packages.get(name)!);
     if (parts.headless) {
@@ -492,6 +499,18 @@ export class PackageManager {
       await fs.mkdir(guiDir, { recursive: true });
       await fs.copyFile(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/gui-extensions/${name}.js`));
+    }
+    if (parts.relay) {
+      // A fourth place, same shape as the others. It only does anything
+      // on a machine that RUNS a relay, and only when that relay is
+      // started with --extensions: this is code inside the process
+      // holding everyone's events, so installing it and enabling it are
+      // deliberately two acts.
+      const relayDir = path.join(os.homedir(), ".fez", "relay-extensions");
+      await fs.mkdir(relayDir, { recursive: true });
+      await fs.copyFile(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
+      console.log(chalk.dim(`   Created ~/.fez/relay-extensions/${name}.js`));
+      console.log(chalk.dim("   Start the relay with --extensions to load it."));
     }
     if (parts.background) {
       const { loadSettings, saveSettings } = await import("./settings.js");

@@ -35,6 +35,9 @@ async function main() {
   // workspace owner, and --owner may appear after --policy on the line.
   const policySpecs: { name: string; value?: string }[] = [];
   let configPath: string | undefined;
+  /** undefined = don't load any; "" = the default directory; else a path. */
+  let extensionsDir: string | undefined;
+  const origins: string[] = [];
   let owner: string | undefined;
   let name: string | undefined;
   let description: string | undefined;
@@ -46,6 +49,8 @@ async function main() {
     else if (arg === "--store") store = args[++i];
     else if (arg === "--no-verify") verifySignatures = false;
     else if (arg === "--config") configPath = args[++i];
+    else if (arg === "--extensions") extensionsDir = args[i + 1]?.startsWith("--") === false ? args[++i] : "";
+    else if (arg === "--origin") origins.push(args[++i]);
     else if (arg === "--owner") owner = args[++i];
     else if (arg === "--name") name = args[++i];
     else if (arg === "--description") description = args[++i];
@@ -61,7 +66,13 @@ async function main() {
     } else if (arg === "--help" || arg === "-h") {
       console.log(
         "Usage: fez-relay [--port N] [--store FILE] [--no-verify] [--policy NAME[=ARG]]... [--config FILE]\n" +
-          "                 [--owner HEX] [--name TEXT] [--description TEXT] [--icon URL]\n\n" +
+          "                 [--owner HEX] [--name TEXT] [--description TEXT] [--icon URL]\n" +
+          "                 [--extensions [DIR]] [--origin URL]...\n\n" +
+          "--extensions loads ~/.fez/relay-extensions (or DIR): code that runs INSIDE this\n" +
+          "relay, installed by `fez install`. Off unless asked for — installing an\n" +
+          "extension and letting it into the event store are two decisions.\n" +
+          "--origin is the PUBLIC url this relay answers to; extensions that verify\n" +
+          "signed requests need it, because behind a proxy the relay cannot know.\n\n" +
           "A relay is a workspace. --owner is the pubkey whose signature makes a channel\n" +
           "or roster event count; it is served in the NIP-11 document and is what the\n" +
           "membership and moderation policies enforce. Without it the workspace is\n" +
@@ -107,14 +118,33 @@ async function main() {
     process.exit(1);
   }
 
-  startRelay({
+  // Started first so extensions can read stored events (the roster is
+  // how they authorize), then handed what the extensions registered.
+  const handle = startRelay({
     port: port ?? config.port ?? 7777,
     store: store ?? config.store,
     eventStore: config.eventStore,
     verifySignatures: verifySignatures ?? config.verifySignatures,
     workspace,
     policies: [...(config.policies ?? []), ...policies],
+    httpHandlers: config.httpHandlers ?? [],
   });
+
+  if (extensionsDir !== undefined) {
+    const { loadRelayExtensions } = await import("./extensions.js");
+    const loaded = await loadRelayExtensions({
+      dir: extensionsDir || undefined,
+      origins,
+      query: (filter) => handle.query(filter),
+      log: (line) => console.log(line),
+    });
+    // Registered AFTER start rather than passed in, because an extension
+    // needs the relay's own store to decide anything — and a handler
+    // list the relay reads live is the only way to add one without a
+    // second construction phase.
+    handle.httpHandlers.push(...loaded.httpHandlers);
+    for (const policy of loaded.policies) handle.policies.push(policy);
+  }
 }
 
 main().catch((err) => {

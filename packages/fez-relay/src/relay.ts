@@ -1,5 +1,16 @@
 import { randomBytes } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+/**
+ * Anything that can answer an HTTP request on the relay's port.
+ *
+ * Declared here rather than imported from git.js so the relay depends on
+ * the SHAPE, not on any particular handler — the same reason RelayPolicy
+ * lives beside the pipeline that runs it.
+ */
+export interface HttpHandler {
+  /** Return true when this handler answered; false to pass it along. */
+  handle(req: IncomingMessage, res: ServerResponse): boolean | Promise<boolean>;
+}
 import { WebSocketServer, WebSocket } from "ws";
 import { verifyEvent } from "nostr-tools";
 import type { DeliverContext, PolicyContext, RelayPolicy } from "./policies.js";
@@ -102,6 +113,21 @@ export interface RelayOptions {
   verifySignatures?: boolean;
   policies?: RelayPolicy[];
   limits?: RelayLimits;
+  /**
+   * Things that may answer an HTTP request before NIP-11 does.
+   *
+   * A list, not a field named after a feature, because the relay should
+   * not know what git is any more than it knows what a moderation policy
+   * is. Each handler is asked in turn and the first to claim a request
+   * owns it; anything unclaimed falls through to NIP-11 exactly as
+   * before.
+   *
+   * Populated by hand (a --config module) or by installed relay
+   * extensions (extensions.ts, `parts.relay`). Empty is the default and
+   * the decentralized floor: a bare relay is a dumb event store that
+   * answers NIP-11 and nothing else.
+   */
+  httpHandlers?: HttpHandler[];
   log?: (line: string) => void;
 }
 
@@ -204,12 +230,29 @@ export function matches(event: StoredEvent, filter: Filter): boolean {
 export interface RelayHandle {
   close(): void;
   readonly eventCount: number;
+  /**
+   * Read what is stored — the same view policies get.
+   *
+   * This is what makes a relay extension able to authorize against facts
+   * the workspace already signed (roster, bans) instead of inventing a
+   * weaker rule beside them.
+   */
+  query(filter: Record<string, unknown>): StoredEvent[];
+  /**
+   * Live registries. An extension registers AFTER start because it needs
+   * query() to decide anything, so these are read on each request rather
+   * than captured at construction.
+   */
+  readonly httpHandlers: HttpHandler[];
+  readonly policies: RelayPolicy[];
 }
 
 export function startRelay(options: RelayOptions): RelayHandle {
   const log = options.log ?? ((line: string) => console.log(line));
   const verify = options.verifySignatures !== false;
-  const policies = options.policies ?? [];
+  // Mutable on purpose: relay extensions push onto these after start.
+  const policies = [...(options.policies ?? [])];
+  const httpHandlers = [...(options.httpHandlers ?? [])];
   const limits = { ...LIMIT_DEFAULTS, ...options.limits };
 
   const store = options.eventStore ?? (options.store ? storeForPath(options.store) : undefined);
@@ -286,6 +329,27 @@ export function startRelay(options: RelayOptions): RelayHandle {
   });
 
   const http = createServer((req, res) => {
+    // Ask each handler in turn; the first to claim the request owns it.
+    // Nothing claimed means NIP-11, which is what a relay without any
+    // handlers does for every request — identical to before this existed.
+    const handlers = httpHandlers;
+    if (handlers.length === 0) {
+      serveNip11(req, res);
+      return;
+    }
+    void (async () => {
+      for (const handler of handlers) {
+        if (await handler.handle(req, res)) return;
+      }
+      serveNip11(req, res);
+    })().catch((err) => {
+      log(`http handler failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (!res.headersSent) res.writeHead(500).end();
+      res.end();
+    });
+  });
+
+  function serveNip11(req: IncomingMessage, res: ServerResponse): void {
     // Served regardless of Accept — every relay in the wild does, and a
     // browser fetch cannot always set the header.
     if (req.method === "GET" || req.method === "HEAD") {
@@ -299,7 +363,7 @@ export function startRelay(options: RelayOptions): RelayHandle {
       return;
     }
     res.writeHead(405).end();
-  });
+  }
 
   const wss = new WebSocketServer({ server: http, maxPayload: limits.maxFrameBytes });
   http.listen(options.port);
@@ -516,6 +580,9 @@ export function startRelay(options: RelayOptions): RelayHandle {
   );
 
   return {
+    query: (filter) => events.filter((e) => matches(e, filter as Filter)),
+    httpHandlers,
+    policies,
     // Both listeners, or the process keeps a handle open — the http
     // server owns the port now, so closing only the wss leaves it bound.
     close: () => {

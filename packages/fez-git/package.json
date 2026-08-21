@@ -1,0 +1,24 @@
+{
+  "name": "@fez/git",
+  "version": "0.1.0",
+  "private": true,
+  "description": "git hosting for a fez relay \u2014 the workspace roster is the repo's access control, and an agent's own key is its git credential.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "relay": "dist/relay-part.js"
+    },
+    "permissions": []
+  },
+  "bin": {
+    "git-credential-fez": "dist/credential.js"
+  },
+  "scripts": {
+    "build": "esbuild src/relay-part.ts --bundle --format=esm --platform=node --outfile=dist/relay-part.js && esbuild src/credential.ts --bundle --format=esm --platform=node --outfile=dist/credential.js && chmod +x dist/credential.js",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fez/protocol": "file:../.."
+  }
+}

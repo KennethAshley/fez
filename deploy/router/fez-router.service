@@ -31,9 +31,13 @@ WorkingDirectory=/opt/fez-router
 #                     real one and keeps the whole process near 650 MB.
 #                     If routing ever truncates, raise this AND check free
 #                     memory — silently swapping looks like a slow CPU.
-#   -np 1             one slot. Concurrency on a single vCPU doesn't make
-#                     anything faster, it just makes every caller wait
-#                     for a share of the same core.
+#   -np 1             one slot. Routing is latency-bound, not
+#                     throughput-bound: giving one request every core
+#                     beats giving two requests half the box each.
+#   --threads 2       match the vCPU count. Must be updated if the
+#                     droplet is resized — llama.cpp does not infer it
+#                     from the box, and a stale value silently leaves
+#                     half the CPU idle.
 #   --no-webui        nothing to serve; one less thing to reach.
 #   -n 96             server-side ceiling to match the gateway clamp, so
 #                     the limit holds even if the gateway is bypassed on
@@ -49,7 +53,7 @@ ExecStart=/opt/fez-router/bin/llama-server \
   --parallel 1 \
   --predict 96 \
   --no-webui \
-  --threads 1
+  --threads 2
 
 Restart=always
 RestartSec=3

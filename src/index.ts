@@ -28,6 +28,7 @@ export { CapabilityClient, type ClientConfig, type Capability, type TaskOptions,
 export { RelayConnection, type RelayOptions } from "./relay.js";
 export { mentionedNames, mentionTags } from "./mentions.js";
 export { makeChannels, cleanSource, type ChannelsAccess, type ChannelSpec, type ChannelRef } from "./channels.js";
+export { KIND_HTTP_AUTH, buildNip98Header, verifyNip98Header, type Nip98Result, type VerifyOptions } from "./nip98.js";
 export { FezTUI } from "./tui.js";
 export { PackageManager, type FezPackage, type FezManifest } from "./package-manager.js";
 export * from "./kinds.js";
