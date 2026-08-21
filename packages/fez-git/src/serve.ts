@@ -190,6 +190,24 @@ export function gitServer(options: GitOptions): GitServer {
         }
         // First authorized push brings the repo into being.
         await run("git", ["init", "--bare", "--quiet", repoDir]);
+        // Partial clone, on by default.
+        //
+        // A fleet of agents each takes its own checkout, so the cost that
+        // matters is per-agent clone size, and `--filter=blob:none` is
+        // what keeps it bounded — it skips every historical blob and
+        // fetches only what a working tree actually opens. Measured on a
+        // 2369-commit repo: 185M full, 127M filtered, 12M filtered plus a
+        // sparse cone.
+        //
+        // Off by default in git, and the failure is quiet: the client
+        // prints "filtering not recognized by server, ignoring" and
+        // silently downloads everything. A default that degrades without
+        // erroring is exactly the kind of thing nobody notices until the
+        // disk is full, so it is set once, here, at creation.
+        await run("git", ["-C", repoDir, "config", "uploadpack.allowFilter", "true"]);
+        // Lets a client ask for an object by sha it learned elsewhere —
+        // required for lazily back-filling blobs a partial clone skipped.
+        await run("git", ["-C", repoDir, "config", "uploadpack.allowAnySHA1InWant", "true"]);
         log(`git: created ${route.repo}.git`);
       }
 

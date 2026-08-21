@@ -55,6 +55,7 @@ import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
 import { capReply as capReplyPure } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
+import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 
 /**
  * fez-acp — the standing agent runtime, buzz-acp's role in fez: a
@@ -125,6 +126,11 @@ async function main() {
     console.error(`No persona "${personaId}" (looked in ~/.fez/personas/)`);
     process.exit(1);
   }
+  // `persona` is narrowed by the guard above, but the hoisted function
+  // declarations further down (getSession) are analysed as if they could
+  // run before it, so the narrowing does not reach them. Capturing it
+  // once here is the fix; a `!` at each use would only hide the question.
+  const activePersona = persona;
   const harness = findHarness(persona.harness);
   if (!harness || !(await harness.detect())) {
     console.error(`Persona "${personaId}" needs harness "${persona.harness}" which isn't available`);
@@ -201,9 +207,49 @@ async function main() {
   // (.mcp.json, AGENTS.md) bleeding into a chat agent, plus a stable
   // scratch space that survives restarts. Coding personas that should
   // live in a repo set `workdir:` in their frontmatter.
-  const workDir = persona.extra.workdir
+  //
+  // A persona naming a `repo:` gets a CHECKOUT instead of a folder,
+  // built by whichever installed provider claims it (workspaces.ts).
+  // The checkout is disposable — identity lives on the relay, so the
+  // working copy is scratch that happens to have code in it — and it is
+  // per-agent on a per-agent branch, which is what lets a fleet work one
+  // repo at once without racing for refs.
+  let workDir = persona.extra.workdir
     ? path.resolve(persona.extra.workdir)
     : path.join(os.homedir(), ".fez", "agents", "work", personaId);
+
+  if (persona.extra.repo) {
+    // Loaded here rather than at first publish because the checkout is
+    // authenticated as this agent: it clones and pushes with its own
+    // key, which is what keeps commit authorship honest.
+    const keyForGit = loadServiceKey(personaId);
+    const branch = persona.extra.branch?.trim() || defaultBranchFor(personaId);
+    const scope = persona.extra.scope
+      ? persona.extra.scope.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const checkout = path.join(os.homedir(), ".fez", "agents", "repos", personaId);
+    // Failure is FATAL on purpose. An agent told to work on a repo that
+    // silently got an empty scratch directory instead would run a full
+    // turn, touch nothing that matters, and report success — the most
+    // expensive way possible to do nothing.
+    const ws = await resolveWorkspace({
+      repo: persona.extra.repo,
+      branch,
+      dir: checkout,
+      scope,
+      relayUrl: relayUrls[0],
+      secretKeyHex: keyForGit,
+      log: (line) => console.log(`   ⑂ ${line}`),
+    });
+    if (!ws) {
+      throw new Error(
+        `persona "${personaId}" names repo "${persona.extra.repo}" but no workspace provider claimed it. ` +
+          `Install one (\`fez install @fez/git\`) or remove \`repo:\` from the persona.`
+      );
+    }
+    workDir = ws.dir;
+    console.log(`   ⑂ ${persona.extra.repo} @ ${ws.branch}${ws.empty ? " (new repo)" : ""} → ${ws.dir}`);
+  }
   fs.mkdirSync(workDir, { recursive: true });
 
   // pi personas: brain selection and hygiene ride pi's own project
@@ -804,7 +850,7 @@ async function main() {
     // is persistent, so the frame is established once and every later
     // turn inherits it. composeSystemPrompt gathers the persona, core's
     // trust boundary, and anything an extension registered.
-    const standing = composeSystemPrompt(persona.systemPrompt);
+    const standing = composeSystemPrompt(activePersona.systemPrompt);
     const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts, standing || undefined);
     const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false };
     sessionPool.set(scope, pooled);

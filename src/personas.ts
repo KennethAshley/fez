@@ -170,6 +170,9 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
  */
 export const KNOWN_EXTRA_KEYS = new Set([
   "workdir", // fez-acp: per-persona working directory
+  "repo", // fez-acp: work out of a CHECKOUT of this repo, not a scratch folder (needs a workspace provider)
+  "branch", // fez-acp: pin to a branch; default is <agent>/work, one per agent so a fleet never races
+  "scope", // fez-acp: sparse-checkout cone(s) — the agent's assignment, made physical
   "provider", // pi: defaultProvider
   "model", // pi: defaultModel
   "packages", // pi: registry packages
