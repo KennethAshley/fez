@@ -30,8 +30,8 @@ export interface RosterAgent {
 }
 
 export const ROSTER: RosterAgent[] = [
-  { name: "researcher", about: "search the web, find papers and specs, look up github repositories and facts", skills: ["web-search", "github"] },
-  { name: "reviewer", about: "review, critique, and poke holes in code, patches, pull requests, scripts, and written work — READMEs, design docs, API design, error-message wording; look over or sanity-check something before it runs, flag style problems, and point out gaps in test coverage", skills: [] },
+  { name: "researcher", about: "search the web, find papers and specs, look up github repositories and facts, licenses and versions; answer whether an approach or setting is a good idea", skills: ["web-search", "github"] },
+  { name: "reviewer", about: "review, critique, and poke holes in code, patches, pull requests, scripts, and written work — READMEs, design docs, API design, error-message wording; look over or sanity-check something before it runs, flag style problems, and point out gaps in test coverage; be a second pair of eyes on a diff", skills: [] },
   { name: "deployer", about: "deploy, ship, release, roll out, and promote builds to production with docker", skills: ["docker"] },
 ];
 
