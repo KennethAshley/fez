@@ -53,7 +53,7 @@ describe("the CSS declares tokens; themes must supply them", () => {
   });
 
   it("the built-in default covers every token, light and dark", async () => {
-    const { BUILT_IN_DEFAULT } = await import("../../fez-desktop/src/gui-extensions.js");
+    const { BUILT_IN_DEFAULT } = await import("../../fez-desktop/src/theme-default.js");
     for (const scheme of ["dark", "light"] as const) {
       const missing = [...required].filter((t) => !(t in (BUILT_IN_DEFAULT as never)[scheme]));
       expect(missing, `default/${scheme} is missing ${missing.join(", ")}`).toEqual([]);
@@ -75,7 +75,7 @@ describe("the CSS declares tokens; themes must supply them", () => {
       const n = parseInt(hex.replace("#", ""), 16);
       return (((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114) / 255;
     };
-    const { BUILT_IN_DEFAULT } = await import("../../fez-desktop/src/gui-extensions.js");
+    const { BUILT_IN_DEFAULT } = await import("../../fez-desktop/src/theme-default.js");
     const fez = await packFrom("../../fez-theme-fez/src/gui.js");
     for (const [name, pack] of [["default", BUILT_IN_DEFAULT], ["fez", fez]] as const) {
       for (const token of ["--bg0", "--bg1", "--bg-rail"]) {
