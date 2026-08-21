@@ -620,6 +620,77 @@ program
   });
 
 program
+  .command("invite <pubkey> [role]")
+  .description("Add a pubkey to the workspace roster (member|admin|bot) — the owner-signed 47102")
+  .option("-r, --relay <url>", "Relay to publish to (default: settings/env)")
+  .action(async (pubkey: string, role = "member", options: { relay?: string }) => {
+    const ROLES = ["member", "admin", "bot", "owner"];
+    if (!/^[0-9a-f]{64}$/i.test(pubkey)) {
+      console.error(`✗ "${pubkey}" is not a 64-hex pubkey`);
+      process.exit(1);
+    }
+    if (!ROLES.includes(role)) {
+      console.error(`✗ role must be one of: ${ROLES.join(", ")}`);
+      process.exit(1);
+    }
+    const { getKey } = await import("./keys.js");
+    const { resolveRelays } = await import("./settings.js");
+    const { CapabilityClient } = await import("./client.js");
+    const { RelayConnection } = await import("./relay.js");
+    const { KIND_MEMBERSHIP, ROSTER_D } = await import("./kinds.js");
+    const { fetchRelayInfo } = await import("./nip11.js");
+
+    const keyHex = getKey("default");
+    if (!keyHex) {
+      console.error("No fez identity — run `fez keygen` first.");
+      process.exit(1);
+    }
+    const relays = options.relay ? [options.relay] : resolveRelays();
+    const client = new CapabilityClient({ relay: relays, privateKey: keyHex });
+    const relay = new RelayConnection({ urls: relays, authSigner: client.authSigner });
+    await relay.connect();
+    const me = client.getPubkey();
+
+    // Only the owner's roster counts, so refuse early rather than
+    // publishing an event every other client will ignore.
+    const info = await fetchRelayInfo(relays[0]);
+    if (info?.pubkey && info.pubkey !== me) {
+      console.error(`✗ only the workspace owner can invite — this relay's owner is ${info.pubkey.slice(0, 12)}…, you are ${me.slice(0, 12)}…`);
+      relay.disconnect();
+      process.exit(1);
+    }
+
+    // Rebuild from the CURRENT roster: 47102 is replaceable, so
+    // publishing a roster of one would evict everybody else.
+    const existing = await relay.query([{ kinds: [KIND_MEMBERSHIP], authors: [me], "#d": [ROSTER_D], limit: 1 }]);
+    const members = new Map<string, string>();
+    const latest = existing.sort((a, b) => b.created_at - a.created_at)[0];
+    for (const tag of latest?.tags ?? []) if (tag[0] === "p" && tag[1]) members.set(tag[1], tag[2] || "member");
+    members.set(me, "owner"); // the owner is always on their own roster
+
+    if (members.get(pubkey) === role) {
+      console.log(`✓ ${pubkey.slice(0, 12)}… is already on the roster as ${role}`);
+      relay.disconnect();
+      return;
+    }
+    const had = members.has(pubkey);
+    members.set(pubkey, role);
+
+    // created_at must beat the event being replaced, or relays keep the old one.
+    const createdAt = Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1);
+    await relay.publish(
+      client.signEvent({
+        kind: KIND_MEMBERSHIP,
+        tags: [["d", ROSTER_D], ...[...members.entries()].map(([pk, r]) => ["p", pk, r])],
+        content: "",
+        created_at: createdAt,
+      })
+    );
+    console.log(`✅ ${had ? "updated" : "invited"} ${pubkey.slice(0, 12)}… as ${role} (${members.size} on the roster)`);
+    relay.disconnect();
+  });
+
+program
   .command("router-install")
   .description("Run @fez's routing model on this machine (launchd) and point fez.md at it")
   .requiredOption("-m, --model <path>", "GGUF model file (Qwen3-0.6B q4 is what the bench is tuned against)")
