@@ -276,9 +276,16 @@ const FEZ_SERVICE_KEYS: SkillConfig = { env: { FEZ_ORCHESTRATOR_KEY: "" } };
 export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => void }) {
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
   useEffect(() => {
-    void invoke<string>("read_skills")
-      .then((json) => setInstalled(JSON.parse(json) as Record<string, SkillConfig>))
-      .catch(() => setInstalled({}));
+    // read_skills is the mcpServers map in settings.json — which installing
+    // a skill-bearing extension writes. Re-read on the same signal the
+    // extensions view fires, so this panel reflects installs live.
+    const load = () =>
+      void invoke<string>("read_skills")
+        .then((json) => setInstalled(JSON.parse(json) as Record<string, SkillConfig>))
+        .catch(() => setInstalled({}));
+    load();
+    window.addEventListener("fez-extensions-changed", load);
+    return () => window.removeEventListener("fez-extensions-changed", load);
   }, []);
   const skills = Object.entries(installed);
   return (
