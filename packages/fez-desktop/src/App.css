@@ -1285,6 +1285,41 @@ button.author:hover { text-decoration: underline; }
 .keymap-reset { background: none; border: none; cursor: pointer; color: var(--fg-dim); font-size: 14px; }
 .keymap-reset:hover { color: var(--fg); }
 
+/* extension install gallery — curated cards with one-click install */
+.ext-gallery { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.gallery-card {
+  display: flex; align-items: center; gap: 14px; padding: 12px 14px;
+  border: 1px solid var(--hairline); border-radius: 10px; background: color-mix(in srgb, var(--bg2) 40%, transparent);
+}
+.gallery-main { flex: 1; min-width: 0; }
+.gallery-head { display: flex; align-items: baseline; gap: 8px; }
+.gallery-title { font-weight: 600; font-size: 14px; color: var(--fg); }
+.gallery-name { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
+.gallery-blurb { font-size: 12.5px; color: var(--fg-dim); margin-top: 3px; line-height: 1.4; }
+.gallery-install {
+  flex: none; padding: 6px 16px; border-radius: 7px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600;
+  color: var(--bg0); background: var(--accent); border: 1px solid var(--accent);
+}
+.gallery-install:hover:not(:disabled) { filter: brightness(1.1); }
+.gallery-install:disabled { cursor: default; }
+.gallery-install.installed { color: var(--fg-dim); background: none; border-color: var(--hairline); font-weight: 500; }
+
+.ext-modal-backdrop {
+  position: fixed; inset: 0; background: color-mix(in srgb, #000 45%, transparent);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.ext-modal {
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 12px;
+  padding: 20px; max-width: 440px; width: 90%; display: flex; flex-direction: column; gap: 10px;
+}
+.ext-modal-head { font-size: 14px; color: var(--fg); }
+.gallery-perms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.gallery-perms li { font-size: 12.5px; color: var(--fg-dim); }
+.gallery-perms li.sensitive { color: var(--yellow); }
+.gallery-perms code { font-family: var(--font-mono); font-size: 11px; opacity: 0.7; }
+.ext-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.mini.primary { color: var(--bg0); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+
 /* resizable sidebars */
 /* 5px between two surfaces is a target you have to aim at, and missing
    it reads as "this doesn't resize" rather than "you missed". The strip

@@ -7,6 +7,7 @@ import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
 import { EnvKeyStatus } from "./SkillSecrets";
 import FindSource from "./FindSource";
+import { ExtensionGallery } from "./ExtensionGallery";
 import { extensionSettingsPanels } from "./gui-extensions";
 
 /**
@@ -342,7 +343,7 @@ export default function SkillsView({
       <header className="topbar">
         <div className="topbar-row">
           {only === "skills" ? "🔧 skills" : "⊞ extensions"}
-          {only !== "extensions" && <span className="ext-tabs">
+          {<span className="ext-tabs">
             {(["installed", "browse"] as const).map((name) => (
               <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} onClick={() => setTab(name)}>
                 {name}
@@ -534,6 +535,14 @@ export default function SkillsView({
           </>
         )}
 
+        {tab === "browse" && only === "extensions" && (
+          <ExtensionGallery
+            client={client}
+            installed={new Set(everything.map((row) => row.name))}
+            onInstalled={reload}
+            onNotice={flash}
+          />
+        )}
         {tab === "browse" && only !== "extensions" && (
           <div className="pulse-section">
             <div className="pulse-section-head">

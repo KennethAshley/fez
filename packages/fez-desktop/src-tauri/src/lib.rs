@@ -249,6 +249,40 @@ fn read_extension_grants() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn install_package(name: String) -> Result<String, String> {
+    // A package name, not a command: npm-name characters only, so it can't
+    // carry shell metacharacters into the login-shell invocation below.
+    if name.is_empty()
+        || name.len() > 128
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '-' | '.' | '_'))
+    {
+        return Err("not a valid package name".to_string());
+    }
+    // Run through a LOGIN shell so `fez` resolves from the user's PATH — a
+    // GUI app launched from /Applications has none of their shell profile.
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let output = Command::new(&shell)
+        .arg("-lc")
+        .arg(format!("fez install '{name}'"))
+        .output()
+        .map_err(|e| format!("couldn't start install: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if output.status.success() {
+        Ok(stdout)
+    } else {
+        // "command not found" is the common first failure — say so plainly.
+        if stderr.contains("not found") || stderr.contains("No such file") {
+            Err(format!("couldn't find the `fez` CLI on your PATH. Install fez globally (npm i -g @fezchat/protocol) or run `fez install {name}` in a terminal.\n\n{stderr}"))
+        } else {
+            Err(format!("{stdout}{stderr}"))
+        }
+    }
+}
+
+#[tauri::command]
 fn read_keymap() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
     let path = std::path::Path::new(&home).join(".fez").join("keymap.json");
@@ -515,7 +549,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
