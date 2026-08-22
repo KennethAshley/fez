@@ -1,0 +1,91 @@
+#!/usr/bin/env node
+/**
+ * Publish @fezchat/protocol + the installable extensions, in order.
+ *
+ *   node scripts/publish-batch.mjs --dry     # validate tarballs, publish nothing
+ *   node scripts/publish-batch.mjs           # real publish (needs npm auth)
+ *
+ * For each package: rewrite `file:` @fezchat deps → a real range
+ * (prepare-publish), drop `private` so npm will take it, publish public,
+ * then `git checkout` the package.json back to its dev state. Protocol
+ * goes first so the externalizers' ^range resolves.
+ */
+import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+const DRY = process.argv.includes("--dry");
+const ROOT = process.cwd();
+
+// protocol is published from the repo root; the rest are package dirs.
+const EXTENSIONS = [
+  "packages/fez-git",
+  "packages/fez-github",
+  "packages/fez-kanban",
+  "packages/fez-polls",
+  "packages/fez-communities",
+  "packages/fez-docs",
+  "packages/fez-dms",
+  "packages/fez-media",
+  "packages/fez-moderation",
+  "packages/fez-notifications",
+  "packages/fez-live-blocks",
+  "packages/fez-obsidian",
+  "packages/fez-workflows",
+  "packages/fez-mcp",
+  "packages/claude-code",
+  "packages/bittensor",
+];
+
+function run(cmd, args, cwd) {
+  return execFileSync(cmd, args, { cwd: cwd ?? ROOT, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+function stripPrivate(dir) {
+  const p = path.join(dir, "package.json");
+  const d = JSON.parse(readFileSync(p, "utf-8"));
+  if (d.private) { delete d.private; writeFileSync(p, JSON.stringify(d, null, 2) + "\n"); }
+}
+
+function publishDir(dir, label) {
+  const args = ["publish", "--access", "public"];
+  if (DRY) args.push("--dry-run");
+  try {
+    const out = run("npm", args, dir);
+    const name = /name:\s*(\S+)/.exec(out)?.[1] ?? label;
+    const ver = /version:\s*(\S+)/.exec(out)?.[1] ?? "?";
+    console.log(`  ✓ ${DRY ? "[dry] " : ""}${name}@${ver}`);
+    return true;
+  } catch (err) {
+    console.error(`  ✗ ${label} FAILED:\n${(err.stdout ?? "") + (err.stderr ?? "")}`.split("\n").slice(0, 12).join("\n"));
+    return false;
+  }
+}
+
+function restore(dir) {
+  try { run("git", ["checkout", "--", path.join(dir, "package.json")]); } catch {}
+}
+
+let ok = 0, fail = 0;
+
+// 1) protocol, from the root
+console.log(`\n${DRY ? "DRY-RUN" : "PUBLISH"} — @fezchat/protocol (root)`);
+if (publishDir(ROOT, "@fezchat/protocol")) ok++; else fail++;
+
+// 2) the extensions
+console.log(`\n${DRY ? "DRY-RUN" : "PUBLISH"} — ${EXTENSIONS.length} extensions`);
+for (const dir of EXTENSIONS) {
+  try {
+    run("node", ["scripts/prepare-publish.mjs", dir]);
+    stripPrivate(dir);
+    if (publishDir(dir, dir)) ok++; else fail++;
+  } catch (err) {
+    console.error(`  ✗ ${dir} prep FAILED: ${err.message}`);
+    fail++;
+  } finally {
+    restore(dir);
+  }
+}
+
+console.log(`\n${DRY ? "DRY-RUN" : "PUBLISH"} done — ${ok} ok, ${fail} failed`);
+process.exit(fail ? 1 : 0);
