@@ -1310,16 +1310,19 @@ button.author:hover { text-decoration: underline; }
 .gallery-install:disabled { cursor: default; }
 .gallery-install.installed { color: var(--fg-dim); background: none; border-color: var(--hairline); font-weight: 500; }
 
-.ext-modal-backdrop {
+/* install-consent dialog — a distinct class from the extension SETTINGS
+   modal (.ext-modal), which paints itself via .pane-body; sharing the class
+   double-padded that one. */
+.consent-backdrop {
   position: fixed; inset: 0; background: color-mix(in srgb, #000 45%, transparent);
   display: flex; align-items: center; justify-content: center; z-index: 50;
 }
-.ext-modal {
+.consent-modal {
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 12px;
   padding: 16px 18px; max-width: 440px; width: 90%; display: flex; flex-direction: column; gap: 8px;
 }
-.ext-modal .settings-hint { margin: 0; }
-.ext-modal .gallery-perms { margin: 2px 0; }
+.consent-modal .settings-hint { margin: 0; }
+.consent-modal .gallery-perms { margin: 2px 0; }
 
 /* extension detail page */
 .gallery-main.clickable { cursor: pointer; }

@@ -26,7 +26,7 @@ import { viewerFor } from "./artifact-viewers";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
 import { loadKeymap, matchAction, nextUnreadChannel, DEFAULT_KEYMAP, type ActionId } from "./keymap";
 import { Toaster } from "./Toaster";
-import { InstallOffer, installOffers } from "./InstallOffer";
+import { InstallOffer, installOffers, stripInstallMarkers } from "./InstallOffer";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
@@ -2309,7 +2309,7 @@ function Bubble({
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
         <div className="bubble-body md">
-          <MdBody text={msg.content} tagged={mentionNames} onMention={openMention} />
+          <MdBody text={stripInstallMarkers(msg.content)} tagged={mentionNames} onMention={openMention} />
         </div>
       )}
       {proposalIdsIn(msg.content).map((id) => (

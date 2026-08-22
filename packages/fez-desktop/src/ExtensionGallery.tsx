@@ -245,8 +245,8 @@ export function ExtensionGallery({
       })}
 
       {confirming && (
-        <div className="ext-modal-backdrop" onClick={() => setConfirming(undefined)}>
-          <div className="ext-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="consent-backdrop" onClick={() => setConfirming(undefined)}>
+          <div className="consent-modal" onClick={(e) => e.stopPropagation()}>
             <div className="ext-modal-head">
               Install <strong>{confirming.title}</strong> <code>{confirming.name}</code>?
             </div>

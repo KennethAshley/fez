@@ -15,6 +15,15 @@ export function installOffers(content: string): string[] {
   return [...new Set(out)];
 }
 
+/** The message text with the raw `fez:install …` markers removed — the card renders instead. */
+export function stripInstallMarkers(content: string): string {
+  return content
+    .replace(/^[ \t]*fez:install[ \t]+@fezchat\/[a-z0-9-]+[ \t]*$/gim, "")
+    .replace(/fez:install[ \t]+@fezchat\/[a-z0-9-]+/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /**
  * Renders under a message that offers an install. Crucially LOCAL: the
  * button installs onto THIS machine, gated by this user's click and the
