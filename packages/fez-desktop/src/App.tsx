@@ -79,6 +79,7 @@ type MainView =
   | { kind: "home" }
   | { kind: "pulse" }
   | { kind: "wiki" }
+  | { kind: "extensions" }
   | { kind: "skills" };
 type SidePane =
   | { kind: "watch"; agent: string }
@@ -799,7 +800,7 @@ function Shell({
                     ["@", "agents", () => setPane({ kind: "agents" })],
                     ["$", "costs", () => setPane({ kind: "costs" })],
                     ["◷", "reminders", () => setPane({ kind: "reminders" })],
-                    ["⊞", "extensions", () => setView({ kind: "skills" })],
+                    ["⊞", "extensions", () => setView({ kind: "extensions" })],
                   ] as [string, string, () => void, string?][]
                 ).map(([glyph, label, action, key]) => (
                   <button
@@ -894,7 +895,8 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
-      {view.kind === "skills" && <SkillsView client={client} wire={wire} />}
+      {view.kind === "extensions" && <SkillsView only="extensions" client={client} wire={wire} />}
+      {view.kind === "skills" && <SkillsView only="skills" client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
@@ -1078,6 +1080,7 @@ function Shell({
           onCancel={(agent) => void cancelAgent(agent)}
           onDm={(pk) => openDm(pk)}
           onHistory={() => { setPane(undefined); setView({ kind: "pulse" }); }}
+          onOpenSkills={() => { setPane(undefined); setView({ kind: "skills" }); }}
           onClose={() => setPane(undefined)}
         />
       )}

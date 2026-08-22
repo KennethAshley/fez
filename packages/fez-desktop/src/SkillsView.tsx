@@ -341,7 +341,7 @@ export default function SkillsView({
     <main className="main">
       <header className="topbar">
         <div className="topbar-row">
-          ⊞ extensions
+          {only === "skills" ? "🔧 skills" : "⊞ extensions"}
           {only !== "extensions" && <span className="ext-tabs">
             {(["installed", "browse"] as const).map((name) => (
               <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} onClick={() => setTab(name)}>
@@ -364,23 +364,15 @@ export default function SkillsView({
             rule off the top of the window, so this view alone looked
             like it had no header at all. */}
         <div className="ext-legend">
-          <div className="ext-legend-lead">
-            An <strong>extension</strong> is one package, filed into up to three places:
-          </div>
-          <dl className="ext-parts-key">
-            {(["skill", "headless", "gui"] as const).map((part) => (
-              <div key={part} className="ext-parts-row">
-                <dt><span className="role-tag">{part}</span></dt>
-                <dd>
-                  {PART_WHERE[part].what}
-                  <code>{PART_WHERE[part].where}</code>
-                </dd>
-              </div>
-            ))}
-          </dl>
-          <div className="ext-legend-foot">
-            Most are more than one — <strong>fez-polls</strong> is all three.
-          </div>
+          {only === "skills" ? (
+            <div className="ext-legend-lead">
+              <strong>Skills</strong> are tools your agents call — an MCP server, granted to an agent in its persona. You configure them here; your agents use them.
+            </div>
+          ) : (
+            <div className="ext-legend-lead">
+              <strong>Extensions</strong> are features you install — a board, a repo panel, a slash command. Some also give your agents a skill, which shows up under <strong>Agents → skills</strong>.
+            </div>
+          )}
         </div>
         {notice && <div className="manage-notice">{notice}</div>}
 
