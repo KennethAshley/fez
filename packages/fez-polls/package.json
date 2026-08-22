@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/polls",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Polls for fez — /poll in any client, vote-by-reaction with member-roll tallying, agents get fez_poll to act on outcomes. One package, three parts.",
   "type": "module",

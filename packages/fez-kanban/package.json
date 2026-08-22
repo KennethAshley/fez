@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/kanban",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Kanban boards for fez docs — columns are headings, cards are checkboxes, moving a card moves a line. Agents move cards with fez_board_move; the board is just the markdown.",
   "type": "module",

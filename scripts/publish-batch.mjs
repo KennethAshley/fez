@@ -86,13 +86,21 @@ function restore(dir) {
 
 let ok = 0, fail = 0;
 
-// 1) protocol, from the root
-console.log(`\n${DRY ? "DRY-RUN" : "PUBLISH"} — @fezchat/protocol (root)`);
-if (publishDir(ROOT, "@fezchat/protocol")) ok++; else fail++;
+// Targeted mode: `node scripts/publish-batch.mjs [--dry] packages/fez-kanban …`
+// publishes only the named dirs (a republish), skipping protocol + the
+// full list. No args → the whole batch.
+const targets = process.argv.slice(2).filter((a) => a !== "--dry" && !a.startsWith("--"));
+const dirs = targets.length ? targets : EXTENSIONS;
 
-// 2) the extensions
-console.log(`\n${DRY ? "DRY-RUN" : "PUBLISH"} — ${EXTENSIONS.length} extensions`);
-for (const dir of EXTENSIONS) {
+// 1) protocol, from the root — only in a full run
+if (!targets.length) {
+  console.log(`\n${DRY ? "DRY-RUN" : "PUBLISH"} — @fezchat/protocol (root)`);
+  if (publishDir(ROOT, "@fezchat/protocol")) ok++; else fail++;
+}
+
+// 2) the extensions (or just the targeted dirs)
+console.log(`\n${DRY ? "DRY-RUN" : "PUBLISH"} — ${dirs.length} package(s)`);
+for (const dir of dirs) {
   try {
     run("node", ["scripts/prepare-publish.mjs", dir]);
     stripPrivate(dir);
