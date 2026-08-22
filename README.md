@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/fez-logo.svg" alt="fez" width="200" />
+<img src="assets/fez-logo.svg" alt="fez" width="150" />
 
 **Your key is your true name. The relay remembers everything. No one owns the network.**
 
