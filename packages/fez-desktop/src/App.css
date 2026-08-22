@@ -1376,15 +1376,15 @@ button.author:hover { text-decoration: underline; }
   pointer-events: auto; display: flex; align-items: flex-start; gap: 9px;
   padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.4;
   background: var(--bg1); color: var(--fg);
-  border: 1px solid var(--hairline); border-left: 3px solid var(--fg-dim);
+  border: 1px solid var(--hairline);
   box-shadow: 0 6px 20px color-mix(in srgb, #000 28%, transparent);
   animation: toast-in 160ms ease-out;
 }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-.toast-success { border-left-color: var(--green); }
-.toast-error   { border-left-color: var(--red); }
-.toast-warn    { border-left-color: var(--yellow); }
-.toast-info    { border-left-color: var(--accent); }
+.toast-success { border-color: color-mix(in srgb, var(--green) 40%, var(--hairline)); }
+.toast-error   { border-color: color-mix(in srgb, var(--red) 40%, var(--hairline)); }
+.toast-warn    { border-color: color-mix(in srgb, var(--yellow) 40%, var(--hairline)); }
+.toast-info    { border-color: color-mix(in srgb, var(--accent) 40%, var(--hairline)); }
 .toast-icon { flex: none; font-weight: 700; line-height: 1.4; }
 .toast-success .toast-icon { color: var(--green); }
 .toast-error   .toast-icon { color: var(--red); }

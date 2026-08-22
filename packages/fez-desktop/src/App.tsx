@@ -24,7 +24,8 @@ import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
-import { loadKeymap, matchAction, nextUnreadChannel, DEFAULT_KEYMAP, type ActionId } from "./keymap";
+import { matchAction, nextUnreadChannel } from "./keymap";
+import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers } from "./InstallOffer";
 import Avatar from "./Avatar";
@@ -353,16 +354,10 @@ function Shell({
   // edited by hand or by the Keyboard settings panel. One global listener
   // dispatches to the matched action; see keyActionRef, kept current below.
   const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
-  const [keymap, setKeymap] = useState<Record<ActionId, string>>(() => ({ ...DEFAULT_KEYMAP }));
+  // Keymap comes from the one config store — the Keyboard panel's write fires
+  // fez-keymap-changed, the store re-reads, and this re-renders with it.
+  const { keymap } = useConfig();
   const keyActionRef = useRef<(e: KeyboardEvent) => void>(() => {});
-  useEffect(() => {
-    const load = () => invoke<string>("read_keymap").then((json) => setKeymap(loadKeymap(json))).catch(() => {});
-    void load();
-    // The Keyboard settings panel fires this after writing the file, so a
-    // rebind takes effect in the running app immediately, not on relaunch.
-    window.addEventListener("fez-keymap-changed", load);
-    return () => window.removeEventListener("fez-keymap-changed", load);
-  }, []);
   // Install/uninstall/update re-scan the gui-extension registries and fire
   // this — re-render so a new panel/view appears (or a removed one vanishes)
   // without a relaunch.
