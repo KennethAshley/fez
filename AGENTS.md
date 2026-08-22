@@ -35,34 +35,19 @@ We strip away from Buzz:
 
 ```
 fez/
-├── package.json              # @fez/protocol — the SDK
-├── tsconfig.json
-├── src/                       # The TypeScript SDK — start here
-│   ├── kinds.ts               # Event kind constants (47000-47099)
-│   ├── agent.ts               # Agent class — connects, publishes metadata, handles tasks
-│   ├── client.ts              # CapabilityClient — discover agents, send tasks
-│   ├── relay.ts                # RelayConnection — thin wrapper over nostr-tools SimplePool
-│   ├── tui.ts                  # Interactive chat REPL (`fez` with no args)
-│   ├── package-manager.ts      # `fez install/list/remove` — installs agent/integration packages
-│   └── cli.ts                  # Commander-based CLI entrypoint
-├── dev/
-│   └── local-relay.ts          # Minimal in-memory Nostr relay for local testing
-├── docs/
-│   ├── architecture.md         # Current system diagram, event pipeline, trust model
-│   ├── minimal-vs-application.md  # Why the SDK is minimal; what an optional heavier app layer would add
-│   ├── orchestrator.md          # The two Fez interfaces (TUI + CLI) sharing one protocol
-│   ├── tui-design.md            # `fez` chat REPL design
-│   └── protocol/
-│       ├── kinds.md              # Event kind registry (47000–47099) — matches src/kinds.ts
-│       ├── tasking.md            # Task request/progress/result flow
-│       ├── delegation.md         # Human-to-agent authority delegation
-│       ├── discovery.md          # Agent discovery and capability advertisement
-│       └── payments.md           # Budgets and payment flows (v2)
+├── src/                       # @fez/protocol — kinds registry, relay conn, DM crypto,
+│                              #   harness/ACP driving, personas, extensions API, CLI
 ├── packages/
-│   └── claude-code/            # @fez/claude-code — Claude Code integration
-└── examples/
-    ├── echo-agent.ts            # The simplest working agent
-    └── ditto-agent/README.md    # Real-world example writeup (Hippius + Chutes), no code yet
+│   ├── fez-client/            # The headless brain: derived state + trust rules (TUI, desktop, extensions all share it)
+│   ├── fez-relay/             # The relay: NIP-01 + search + policy hooks + --extensions loader
+│   ├── fez-acp/               # Standing agent runtime (spawned by `fez agent` / the sentinel)
+│   ├── fez-sentinel/          # Always-on watcher: summons (incl. thread-scoped), schedules, background tasks
+│   ├── fez-desktop/           # Tauri app; GUI extension loader (gui-extensions.ts is the seam registry)
+│   ├── fez-git/               # Git hosting (the reference multi-part extension — see its README)
+│   ├── fez-github/ fez-docs/ fez-dms/ fez-media/ …   # more installable extensions
+│   ├── fez-orchestrator/      # @fez routing agent
+│   └── fez-evals/             # THE GATE: 700+ tests — run before claiming anything works
+└── docs/                       # architecture, protocol specs
 ```
 
 ## Key Patterns
@@ -117,6 +102,41 @@ await agent.start();
 ```
 
 Reading `FEZ_RELAY`/`FEZ_PRIVATE_KEY` from the environment (rather than hardcoding) is the convention that lets `fez run <file> -r <url> -k <keyfile>` pass CLI flags through to a self-contained script — see `examples/echo-agent.ts`. `fez run` does **not** inject an `Agent` instance into the script; it does not expect a default export.
+
+### Extensions Are Multi-Part Packages
+
+A feature ships as ONE package with several attachment points, declared
+in `package.json` `fez.parts`: `relay` (loaded by `--extensions`),
+`headless` (TUI/sentinel), `workspace` (checkout providers), `gui`
+(desktop webview), plus npm `bin` (→ `~/.fez/bin`) and
+`background: true` (sentinel runs its scheduled tasks). `fez install`
+and `fez link` place all of them. Never bake a feature into core: core
+grows *generic seams* (a register function, a permission), extensions
+grow the feature. `packages/fez-git` is the worked example.
+
+### Mirrors, and the Gate That Keeps Them Honest
+
+Extensions carry hand-written `api-types.ts` / `gui-types.ts` mirrors of
+the host APIs (type-only, so a bundle has zero imports).
+`api-mirror-conformance.test.ts` compiles every mirror against the real
+API — a mirror may omit members, never disagree. Runtime backends cast
+into those types can still be NARROWER than the type (a missing method
+throws at call time, invisibly): when a seam consumer can be hosted by
+several backends, guard the method (`typeof x.f === "function"`) and
+fail LOUD.
+
+### Duplicated Surfaces Need Drift Gates
+
+When one command deliberately exists on two surfaces (e.g. `/repo` in
+headless and gui), add a parity test (`git-command-parity.test.ts`
+pattern) — a verb added one-sided has already shipped a silent fall-through once.
+
+### One Implementation for One Meaning
+
+Semantics that two callers must agree on live in exactly one module both
+import: merge rules (relay endpoint), journal format, ref policy,
+persona invites, the repo-doc template. "Two implementations agreeing"
+is a promise; one implementation is a fact.
 
 ## Quality Rules
 

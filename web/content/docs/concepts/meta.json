@@ -10,6 +10,7 @@
     "artifacts",
     "bridges",
     "marketplace",
+    "git",
     "extensions"
   ]
 }

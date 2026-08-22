@@ -54,6 +54,20 @@ territory.
 | --- | --- |
 | `fez doc` | Channel doc (shared markdown): append/set/get in a channel scope |
 
+## Git (with `@fez/git` installed)
+
+| Command | What it does |
+| --- | --- |
+| `~/.fez/bin/fez-adopt [name \| git-url]` | Put the repo you're standing in — or a URL to clone — on the relay: channel, `fez` remote, first push, one step |
+| `/repo new <name>` | Open a repo's channel; the repository appears on the first push |
+| `/repo branch <repo> <line>` | Open a line of work — a thread agents get pointed at |
+| `/repo merge <repo> <branch> [into]` | Fast-forward a branch into its line (owner/admin for protected refs) |
+| `/repo protect <repo> <refs\|none>` | Change which refs are protected (default: `main`) |
+| `/repo` | List repos, clone URLs, and what each protects |
+
+`/repo` works identically in the TUI and the desktop composer; the lane
+board in any ⑂ thread offers merge/diff/watch as buttons.
+
 ## In-TUI slash commands
 
 Inside the TUI: `/help` lists everything — including `/thread`, `/watch <agent>`,

@@ -1,25 +1,46 @@
 ---
 title: Extensions
-description: One package, three attachment points — agent skill, headless client code, GUI surface.
+description: One package, up to six attachment points — relay, headless, workspace, GUI, executables, background.
 ---
 
-Think about what "the google-drive extension" would mean in fez. Three different
-things, actually: an *agent* uploading results to Drive, a */gdrive command* you
-run yourself, and maybe a Drive file-picker panel in the desktop app. fez's
-extension model embraces that: **one package, up to three optional attachment
-points**, declared in the package's `package.json`:
+Think about what "the git extension" means in fez. Five different things,
+actually: the *relay* serving repositories over HTTP, a */repo command*
+you run yourself, a *provider* that turns a persona's `repo:` into a
+checkout, a *panel and lane board* in the desktop, and a credential
+helper on your `PATH`. fez's extension model embraces that: **one
+package, several optional attachment points**, declared in the
+package's `package.json`:
 
 ```json
 "fez": {
   "parts": {
     "skill":      { "command": "npx", "args": ["-y", "some-mcp"], "env": { "API_KEY": "" } },
+    "relay":      "dist/relay-part.js",
     "headless":   "dist/headless.js",
+    "workspace":  "dist/workspace-part.js",
     "gui":        "dist/gui.js",
     "background": true
   },
-  "permissions": ["read:channels", "publish", "commands", "ui", "background"]
+  "bin": { "my-tool": "dist/tool.js" },
+  "permissions": ["read:channels", "publish", "commands", "ui", "background", "personas"]
 }
 ```
+
+- **relay** — HTTP handlers, ingest policies, and NIP-11 advertisements,
+  loaded only by a relay started with `--extensions`. The relay holds no
+  signing key, so a relay part can *record and serve* but never speak.
+- **headless** — commands and scheduled tasks that run beside the
+  owner's key (TUI and sentinel) — the half that CAN speak on the relay.
+- **workspace** — gives a `repo:` persona a working checkout.
+- **gui** — panels, composer commands, and thread views in the desktop,
+  each behind a permission the install dialog names (`personas` is the
+  sensitive one: it is the power to reprogram agents).
+- **bin** — npm's own `bin` map, honored: executables land in
+  `~/.fez/bin`.
+- **background** — opts the headless part's scheduled tasks into the
+  always-on sentinel.
+
+`@fez/git` exercises every one of them and is the worked example.
 
 One `fez install` (or `fez link <dir>` for local dev) registers whatever parts
 exist:
