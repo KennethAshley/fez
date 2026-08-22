@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { notifyEvent } from "./notify";
+import { notifyEvent, installNotificationClick } from "./notify";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { BrowserWire } from "./wire";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
@@ -309,6 +309,7 @@ function Shell({
           title: `@${agent} hit an error`,
           body: frame.text ?? frame.title ?? "a turn failed",
           label: "agents",
+          target: { kind: "agent", name: agent },
         });
       }
       render();
@@ -326,6 +327,7 @@ function Shell({
           title: `${msg.authorName} mentioned you`,
           body: msg.content,
           label: chName ? `#${chName}` : "a channel",
+          target: { kind: "channel", id: channelId },
         });
       }
     }) as never);
@@ -336,6 +338,7 @@ function Shell({
         title: `${client.displayName(dm.senderPk)} (dm)`,
         body: dm.text,
         label: "DMs",
+        target: { kind: "dm", convoKey: dm.senderPk },
       });
     }) as never);
   }, [client, render]);
@@ -359,6 +362,14 @@ function Shell({
     window.addEventListener("fez-keymap-changed", load);
     return () => window.removeEventListener("fez-keymap-changed", load);
   }, []);
+  // Install/uninstall/update re-scan the gui-extension registries and fire
+  // this — re-render so a new panel/view appears (or a removed one vanishes)
+  // without a relaunch.
+  useEffect(() => {
+    const onExtChange = () => render();
+    window.addEventListener("fez-extensions-changed", onExtChange);
+    return () => window.removeEventListener("fez-extensions-changed", onExtChange);
+  }, [render]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => keyActionRef.current(e);
     window.addEventListener("keydown", onKey);
@@ -481,6 +492,18 @@ function Shell({
     render();
   };
 
+  // Clicking a native notification focuses the app and jumps to its source.
+  useEffect(() => {
+    installNotificationClick((t) => {
+      setPane(undefined);
+      if (t.kind === "channel") void openChannel(t.id);
+      else if (t.kind === "dm") openDm(t.convoKey);
+      else if (t.kind === "agent") setPane({ kind: "agents" });
+      else if (t.kind === "proposals") setView({ kind: "pulse" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** Slash commands from the composer — routing over surfaces the GUI already has. */
   const runSlash = (text: string) =>
     runCommand(text, {
@@ -539,6 +562,7 @@ function Shell({
                 ? `@${first.agent} description change: ${first.rationale}`
                 : `new bench case: "${first.q ?? ""}"${fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ""}`,
             label: "proposals",
+            target: { kind: "proposals" },
           });
           localStorage.setItem("fez-bench-seen", JSON.stringify([...seen, ...fresh.map((p) => p.id)].slice(-200)));
         }

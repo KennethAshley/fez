@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
-import { loadGuiExtensions } from "./gui-extensions";
+import { reloadGuiExtensions } from "./gui-extensions";
 
 /**
  * The install gallery — discover the official fez extensions and install
@@ -107,13 +107,20 @@ export function ExtensionGallery({
     } catch { /* ignore */ }
   };
 
+  // Rewind extension registrations to core, load the current set fresh, and
+  // tell the app to re-render — so install/uninstall/update take effect live.
+  const applyLive = async () => {
+    await reloadGuiExtensions(client).catch(() => {});
+    window.dispatchEvent(new CustomEvent("fez-extensions-changed"));
+    onInstalled();
+    await refreshVersions();
+  };
+
   const uninstall = async (entry: GalleryEntry) => {
     try {
       await invoke<string>("remove_extension", { name: norm(entry.name) });
-      onInstalled();
-      // A gui part already registered stays until relaunch — the registries
-      // have no unload path — so the files are gone but the panel lingers.
-      onNotice(`✓ ${entry.title} removed — relaunch to fully unload it`);
+      await applyLive();
+      onNotice(`✓ ${entry.title} removed`);
     } catch (err) {
       onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -125,9 +132,7 @@ export function ExtensionGallery({
     try {
       await invoke<string>("install_package", { name: entry.name });
       // A gui part appears live; headless/relay parts need a restart.
-      await loadGuiExtensions(client).catch(() => {});
-      onInstalled();
-      await refreshVersions();
+      await applyLive();
       onNotice(`✓ ${entry.title} installed — ${entry.where}`);
     } catch (err) {
       onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
@@ -140,10 +145,8 @@ export function ExtensionGallery({
     setInstalling(entry.name);
     try {
       await invoke<string>("install_package", { name: entry.name });
-      await loadGuiExtensions(client).catch(() => {});
-      onInstalled();
-      await refreshVersions();
-      onNotice(`✓ ${entry.title} updated to ${latest[norm(entry.name)] ?? "latest"} — relaunch to load the new version`);
+      await applyLive();
+      onNotice(`✓ ${entry.title} updated to ${latest[norm(entry.name)] ?? "latest"}`);
     } catch (err) {
       onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
     } finally {

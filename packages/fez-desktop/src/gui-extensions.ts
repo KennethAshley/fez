@@ -600,7 +600,65 @@ async function importModule(
   throw new Error("neither an importable module nor an IIFE with global __fezExt");
 }
 
+/**
+ * The registries hold BOTH core registrations (made at boot, before any
+ * extension) and extension ones. To unload an extension live we can't wipe
+ * them — that would drop core's views/themes too. So capture a baseline of
+ * the core-only state on the first load, and rewind to it before a reload:
+ * arrays truncate to their baseline length, Maps keep only baseline keys.
+ * Assumes core registers before the first loadGuiExtensions (it does — the
+ * app boots core, then loads extensions) and extensions only ADD.
+ */
+let baseline:
+  | {
+      decorators: number;
+      settingsPanels: number;
+      guiCommands: string[];
+      markdownPlugins: number;
+      blockRenderers: string[];
+      blockMenu: number;
+      threadViews: number;
+      pageViews: number;
+      themes: string[];
+    }
+  | undefined;
+
+function captureBaseline(): void {
+  if (baseline) return; // core-only, once
+  baseline = {
+    decorators: decorators.length,
+    settingsPanels: settingsPanels.length,
+    guiCommands: [...guiCommands.keys()],
+    markdownPlugins: markdownPlugins.length,
+    blockRenderers: [...blockRenderers.keys()],
+    blockMenu: blockMenu.length,
+    threadViews: threadViews.length,
+    pageViews: pageViews.length,
+    themes: [...themes.keys()],
+  };
+}
+
+function restoreBaseline(): void {
+  if (!baseline) return;
+  decorators.length = baseline.decorators;
+  settingsPanels.length = baseline.settingsPanels;
+  for (const k of [...guiCommands.keys()]) if (!baseline.guiCommands.includes(k)) guiCommands.delete(k);
+  markdownPlugins.length = baseline.markdownPlugins;
+  for (const k of [...blockRenderers.keys()]) if (!baseline.blockRenderers.includes(k)) blockRenderers.delete(k);
+  blockMenu.length = baseline.blockMenu;
+  threadViews.length = baseline.threadViews;
+  pageViews.length = baseline.pageViews;
+  for (const k of [...themes.keys()]) if (!baseline.themes.includes(k)) themes.delete(k);
+}
+
+/** Unload every extension and load the current set fresh — for install/uninstall/update without a relaunch. */
+export async function reloadGuiExtensions(client: FezClient): Promise<string[]> {
+  restoreBaseline();
+  return loadGuiExtensions(client);
+}
+
 export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
+  captureBaseline();
   const loaded: string[] = [];
   status.length = 0;
   let files: [string, string][];

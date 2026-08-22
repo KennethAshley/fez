@@ -12,7 +12,7 @@
       "skill": {
         "command": "node",
         "args": [
-          "/Users/ken/Projects/fez/packages/fez-polls/dist/mcp.js"
+          "dist/mcp.js"
         ]
       }
     },
@@ -24,7 +24,7 @@
     ]
   },
   "scripts": {
-    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/mcp.ts --bundle --format=esm --platform=node --packages=external --outfile=dist/mcp.js",
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
     "check": "tsc --noEmit"
   },
   "devDependencies": {

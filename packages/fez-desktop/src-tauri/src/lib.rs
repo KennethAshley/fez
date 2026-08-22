@@ -365,6 +365,44 @@ fn install_package(name: String) -> Result<String, String> {
         installed.push(format!("{part_key} → ~/.fez/{dir}/{base}.js"));
     }
 
+    // 5b. Skill part → an MCP server in settings.json. A relative .js entry
+    // is copied out of the tarball and made absolute; a bare command (e.g.
+    // `npx <public-server>`) passes through. A skill whose args point at an
+    // absolute path we didn't write is left as-is (a pre-fix publish) — it
+    // won't resolve, but we don't guess.
+    let mut skill_entry: Option<serde_json::Value> = None;
+    if let Some(skill) = parts.and_then(|p| p.get("skill")) {
+        let mut entry = skill.clone();
+        if let Some(args) = skill.get("args").and_then(|v| v.as_array()) {
+            let mut new_args: Vec<serde_json::Value> = Vec::new();
+            for a in args {
+                if let Some(s) = a.as_str() {
+                    if s.ends_with(".js") && !s.starts_with('/') {
+                        if let Some(bytes) = tar_read(&tar_bytes, s) {
+                            let skill_dir = home.join("skills").join(base);
+                            let _ = std::fs::create_dir_all(&skill_dir);
+                            let fname = std::path::Path::new(s)
+                                .file_name()
+                                .and_then(|f| f.to_str())
+                                .unwrap_or("mcp.js");
+                            let dest = skill_dir.join(fname);
+                            if std::fs::write(&dest, bytes).is_ok() {
+                                new_args.push(serde_json::json!(dest.to_string_lossy()));
+                                continue;
+                            }
+                        }
+                    }
+                }
+                new_args.push(a.clone());
+            }
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert("args".to_string(), serde_json::json!(new_args));
+            }
+        }
+        installed.push(format!("skill → settings.json mcpServers/{base}"));
+        skill_entry = Some(entry);
+    }
+
     // 6. Record granted permissions + background opt-in in settings.json.
     let perms: Vec<String> = pkg
         .pointer("/fez/permissions")
@@ -379,6 +417,13 @@ fn install_package(name: String) -> Result<String, String> {
     let version = latest.to_string();
     update_settings(move |json| {
         let obj = json.as_object_mut().unwrap();
+        if let Some(entry) = skill_entry {
+            obj.entry("mcpServers")
+                .or_insert_with(|| serde_json::json!({}))
+                .as_object_mut()
+                .unwrap()
+                .insert(base_owned.clone(), entry);
+        }
         obj.entry("extensionPermissions")
             .or_insert_with(|| serde_json::json!({}))
             .as_object_mut()
@@ -464,6 +509,13 @@ fn remove_extension(name: String) -> Result<String, String> {
             }
         }
     }
+    // The skill part lives in its own dir, and a matching mcpServers entry.
+    for cand in &candidates {
+        let skill_dir = home.join("skills").join(cand);
+        if skill_dir.exists() && std::fs::remove_dir_all(&skill_dir).is_ok() {
+            removed.push(format!("skills/{cand}"));
+        }
+    }
     // Drop the recorded permission grant + background opt-in.
     update_settings(|json| {
         if let Some(obj) = json.as_object_mut() {
@@ -476,6 +528,9 @@ fn remove_extension(name: String) -> Result<String, String> {
                 }
                 if let Some(vers) = obj.get_mut("extensionVersions").and_then(|v| v.as_object_mut()) {
                     vers.remove(cand);
+                }
+                if let Some(mcp) = obj.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+                    mcp.remove(cand);
                 }
             }
         }
