@@ -52,6 +52,7 @@ const KNOWN: Record<string, Omit<PermissionInfo, "id">> = {
   // on every turn, ahead of anything a person says to them. An extension
   // with this can change what your agents will and won't do.
   "system-prompt": { description: "Add standing instructions to all your agents", sensitive: true },
+  personas: { description: "Read and edit your agent personas (their instructions and settings)", sensitive: true },
 };
 
 export interface ParsedPermissions {
@@ -83,6 +84,9 @@ export function parsePermissions(declared: readonly string[] | undefined): Parse
 }
 
 export function describePermission(id: string): PermissionInfo {
+  if (id === "network:relay") {
+    return { id, description: "Reach your relay's HTTP endpoints (git, media) — the server already trusted with your messages", sensitive: false };
+  }
   if (id.startsWith("network:")) {
     const host = id.slice("network:".length);
     return {
@@ -111,8 +115,15 @@ export function has(granted: readonly string[] | undefined, permission: string):
  * everything and is flagged sensitive at install. A malformed URL is
  * refused — the caller can't have meant it.
  */
-export function networkAllowed(hosts: readonly string[] | undefined, url: string): boolean {
-  const list = hosts ?? [];
+export function networkAllowed(hosts: readonly string[] | undefined, url: string, relayHosts: readonly string[] = []): boolean {
+  const list = (hosts ?? []).flatMap((entry) =>
+    // "relay" is not a hostname — it names WHATEVER relay this
+    // workspace uses, resolved by the host at call time. An extension
+    // serving relay HTTP surfaces (git, media) cannot know the host at
+    // publish time, and "network:*" would be claiming far more than
+    // "the server you already trust with every message".
+    entry === "relay" ? relayHosts.map((h) => h.toLowerCase()) : [entry]
+  );
   if (list.length === 0) return false;
   // Parse BEFORE consulting the grant: a url we can't resolve to a host
   // is refused even under "*", because "allow any host" is not the same

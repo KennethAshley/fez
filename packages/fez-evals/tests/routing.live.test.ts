@@ -1,18 +1,23 @@
 import { describe, expect, test } from "vitest";
-import { agentTool, isSmallTalk } from "../../fez-orchestrator/src/route-logic";
+import { agentTool, isSmallTalk, routerBody, detectProfile } from "../../fez-orchestrator/src/route-logic.js";
 
 /**
- * LIVE routing accuracy against the orchestrator's real endpoint
- * (needle by default) — the ad-hoc curl batteries from development,
- * pinned. Models the orchestrator's actual pipeline: small talk
- * short-circuits, everything else goes to the router with the same
- * tool shapes the runtime builds. Skips (loudly) when no endpoint is
- * up, so unit gates still run offline.
+ * LIVE routing accuracy against the orchestrator's real endpoint — the
+ * ad-hoc curl batteries from development, pinned. Models the
+ * orchestrator's ACTUAL pipeline: small talk short-circuits, and
+ * everything else goes through routerBody(), the same request the
+ * runtime sends. Skips (loudly) when no endpoint is up, so unit gates
+ * still run offline.
  *
- * Threshold, not exactness: a 26M router is probabilistic at the
- * margins. 80% floors the measured baseline (needle scored 100% on
- * this set with job-title names + verb descriptions); dipping below
- * means names, descriptions, or the model regressed.
+ * The endpoint decides its own shape: detectProfile() picks `needle`
+ * for a needle model and `tools` for everything else, so this file does
+ * not need to know which router is running. That matters — it did know,
+ * once, and was wrong for as long as it took somebody to look.
+ *
+ * Threshold, not exactness: a small router is probabilistic at the
+ * margins. 80% floors the measured baseline (needle 100% and Qwen3-0.6B
+ * 100% on this set, both with job-title names + verb descriptions);
+ * dipping below means names, descriptions, or the model regressed.
  */
 const BASE = (process.env.FEZ_ORCHESTRATOR_URL ?? "http://127.0.0.1:8080/v1").replace(/\/$/, "");
 
@@ -46,10 +51,26 @@ const model: string | null = await (async () => {
 
 async function route(q: string): Promise<string> {
   if (isSmallTalk(q)) return "none";
+  // routerBody(), NOT a hand-rolled body.
+  //
+  // This test used to build the request itself, and that request was the
+  // NEEDLE shape — bare messages + tools. When the orchestrator moved to
+  // Qwen the runtime started sending the `tools` profile instead: a
+  // system prompt, pinned temperature, a token cap, and above all
+  // `tool_choice: "required"`. The test kept sending the old shape, so a
+  // general chat model answered in prose ("Sure! I can review your
+  // relay.ts changes...") and every prose answer scored as `none`.
+  //
+  // Measured on the same battery, same endpoint: hand-rolled 5-6/9 and
+  // varied run to run because nothing pinned temperature; through
+  // routerBody, 9/9. The test was failing the router, not the reverse.
+  //
+  // So it calls what the runtime calls. A profile or sampling change now
+  // moves this test with it instead of silently invalidating it.
   const res = await fetch(`${BASE}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: q }], tools: ROSTER.map(agentTool) }),
+    body: JSON.stringify(routerBody(detectProfile(model!), model!, q, ROSTER.map(agentTool))),
   });
   const body = (await res.json()) as { choices?: { message?: { tool_calls?: { function?: { name?: string } }[] } }[] };
   return body.choices?.[0]?.message?.tool_calls?.[0]?.function?.name ?? "none";

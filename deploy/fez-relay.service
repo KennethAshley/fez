@@ -35,9 +35,17 @@ WorkingDirectory=/opt/fez
 #
 # 47100 is absent from the whitelist on purpose: the community kind is
 # retired, and the number stays burned.
+# --extensions loads installed relay extensions (fez-git serves /git/*
+# from here — the repos live under --extensions-data, next to the sqlite
+# store so the backup job covers both). --origin is the PUBLIC address:
+# it is what NIP-98 signatures are checked against and what fez-git
+# advertises as the clone URL, so it must be the host Caddy answers to.
 ExecStart=/usr/bin/node /opt/fez/fez-relay.mjs \
   --port 7777 \
   --store /var/lib/fez/relay.sqlite \
+  --extensions /var/lib/fez/relay-extensions \
+  --extensions-data /var/lib/fez/relay-data \
+  --origin https://67-205-188-204.sslip.io \
   --owner 4d9a4f800e4875128d59044b58365de32cb223b433e72e948e8d610b3cd3342a \
   --name "Block Party" \
   --description "A fez workspace" \

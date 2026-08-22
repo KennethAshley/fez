@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import http from "node:http";
 import { createHash } from "node:crypto";
 import { finalizeEvent, generateSecretKey, verifyEvent } from "nostr-tools/pure";
-import { uploadToBlossom, sha256Hex, mimeFor, KIND_BLOSSOM_AUTH } from "../../fez-media/dist/blossom.js";
+import { uploadToBlossom, sha256Hex, mimeFor, KIND_BLOSSOM_AUTH } from "../../fez-media/src/blossom.js";
 
 /**
  * Blossom (BUD-02) upload gate: the signed kind-24242 authorization must

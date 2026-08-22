@@ -55,6 +55,7 @@ import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
 import { capReply as capReplyPure } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
+import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 
 /**
  * fez-acp — the standing agent runtime, buzz-acp's role in fez: a
@@ -125,6 +126,11 @@ async function main() {
     console.error(`No persona "${personaId}" (looked in ~/.fez/personas/)`);
     process.exit(1);
   }
+  // `persona` is narrowed by the guard above, but the hoisted function
+  // declarations further down (getSession) are analysed as if they could
+  // run before it, so the narrowing does not reach them. Capturing it
+  // once here is the fix; a `!` at each use would only hide the question.
+  const activePersona = persona;
   const harness = findHarness(persona.harness);
   if (!harness || !(await harness.detect())) {
     console.error(`Persona "${personaId}" needs harness "${persona.harness}" which isn't available`);
@@ -201,9 +207,72 @@ async function main() {
   // (.mcp.json, AGENTS.md) bleeding into a chat agent, plus a stable
   // scratch space that survives restarts. Coding personas that should
   // live in a repo set `workdir:` in their frontmatter.
-  const workDir = persona.extra.workdir
+  //
+  // A persona naming a `repo:` gets a CHECKOUT instead of a folder,
+  // built by whichever installed provider claims it (workspaces.ts).
+  // The checkout is disposable — identity lives on the relay, so the
+  // working copy is scratch that happens to have code in it — and it is
+  // per-agent on a per-agent branch, which is what lets a fleet work one
+  // repo at once without racing for refs.
+  let workDir = persona.extra.workdir
     ? path.resolve(persona.extra.workdir)
     : path.join(os.homedir(), ".fez", "agents", "work", personaId);
+
+  // Thread-scoped summons: the sentinel names the repo and the LINE the
+  // mention arrived in, and those beat the persona's standing defaults —
+  // the thread is the assignment. A persona with no repo: at all can be
+  // pulled onto one this way, which is exactly the "reviewer gets
+  // deployer to help" flow: guests act where they are summoned.
+  const repoName = process.env.FEZ_AGENT_REPO?.trim() || persona.extra.repo;
+  const baseLine = process.env.FEZ_AGENT_BASE_BRANCH?.trim() || undefined;
+  /** What the 47000 announces — set once the checkout exists (zsh-prompt truth: the branch you can see is the branch it is on). */
+  let announcedWork: { repo: string; branch: string } | undefined;
+
+  if (repoName) {
+    // Loaded here rather than at first publish because the checkout is
+    // authenticated as this agent: it clones and pushes with its own
+    // key, which is what keeps commit authorship honest.
+    const keyForGit = loadServiceKey(personaId);
+    // Exported to the whole agent process, not just the setup: the
+    // credential helper baked into the checkout reads FEZ_SECRET_KEY,
+    // and without it here the helper would fall back to the keychain's
+    // DEFAULT key — the owner's — and the agent's pushes would carry
+    // the wrong identity (and the owner's privileges over `main`).
+    process.env.FEZ_SECRET_KEY = keyForGit;
+    // On a line, the branch IS agent/line — the naming convention the
+    // thread task routes stubs by. Off a line, the standing default.
+    const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+    const branch = baseLine
+      ? `${slug(personaId)}/${slug(baseLine)}`
+      : persona.extra.branch?.trim() || defaultBranchFor(personaId);
+    const scope = persona.extra.scope
+      ? persona.extra.scope.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const checkout = path.join(os.homedir(), ".fez", "agents", "repos", personaId);
+    // Failure is FATAL on purpose. An agent told to work on a repo that
+    // silently got an empty scratch directory instead would run a full
+    // turn, touch nothing that matters, and report success — the most
+    // expensive way possible to do nothing.
+    const ws = await resolveWorkspace({
+      repo: repoName,
+      branch,
+      base: baseLine,
+      dir: checkout,
+      scope,
+      relayUrl: relayUrls[0],
+      secretKeyHex: keyForGit,
+      log: (line) => console.log(`   ⑂ ${line}`),
+    });
+    if (!ws) {
+      throw new Error(
+        `persona "${personaId}" needs repo "${repoName}" but no workspace provider claimed it. ` +
+          `Install one (\`fez install @fez/git\`) or remove \`repo:\` from the persona.`
+      );
+    }
+    workDir = ws.dir;
+    announcedWork = { repo: repoName, branch: ws.branch };
+    console.log(`   ⑂ ${repoName} @ ${ws.branch}${ws.empty ? " (new repo)" : ""}${baseLine ? ` (line ${baseLine})` : ""} → ${ws.dir}`);
+  }
   fs.mkdirSync(workDir, { recursive: true });
 
   // pi personas: brain selection and hygiene ride pi's own project
@@ -581,6 +650,11 @@ async function main() {
         // routes work to an agent that must then refuse it.
         skills: persona.mcpServers.filter((name) => findMcpServer(name)),
         aliases: persona.aliases,
+        // The working context, like a shell prompt: clients render
+        // "researcher ⑂ researcher/work" so nobody has to ask an agent
+        // which branch it is on — the metadata says, and it is the
+        // branch the checkout was actually built on, not a claim.
+        ...(announcedWork ? { repo: announcedWork.repo, branch: announcedWork.branch } : {}),
       }),
     });
     await relay.publish(event);
@@ -804,7 +878,7 @@ async function main() {
     // is persistent, so the frame is established once and every later
     // turn inherits it. composeSystemPrompt gathers the persona, core's
     // trust boundary, and anything an extension registered.
-    const standing = composeSystemPrompt(persona.systemPrompt);
+    const standing = composeSystemPrompt(activePersona.systemPrompt);
     const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts, standing || undefined);
     const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false };
     sessionPool.set(scope, pooled);
@@ -1673,7 +1747,43 @@ async function main() {
   });
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("FAILED:", err);
+  // Say it WHERE THE SUMMONS CAME FROM, not just to a log in a tab
+  // nobody watches. A spawn that dies before its first turn — a
+  // roster-gated clone refused, a missing provider, a bad base branch —
+  // spent a real afternoon looking like "the agent is slow". The
+  // process still has everything needed to leave a note: the channels
+  // it was summoned into, the relay, and its own key (pre-invited by
+  // the sentinel, so the message is deliverable). Best-effort with a
+  // hard timeout: reporting must never keep a dead agent alive.
+  try {
+    const personaId = process.env.FEZ_AGENT_PERSONA;
+    const channelIds = (process.env.FEZ_AGENT_CHANNELS ?? "").split(",").map((c) => c.trim()).filter(Boolean);
+    if (personaId && channelIds.length > 0) {
+      const { loadServiceKey } = await import("./service-common.js");
+      const { RelayConnection, CapabilityClient, resolveRelays, KIND_CHANNEL_MESSAGE } = await import("@fez/protocol");
+      const relays = resolveRelays();
+      const client = new CapabilityClient({ relay: relays, privateKey: loadServiceKey(personaId) });
+      const relay = new RelayConnection({ urls: relays, authSigner: client.authSigner });
+      const reason = (err instanceof Error ? err.message : String(err)).split("\n")[0].slice(0, 300);
+      await Promise.race([
+        (async () => {
+          await relay.connect();
+          for (const channelId of channelIds) {
+            await relay.publish(
+              client.signEvent({
+                kind: KIND_CHANNEL_MESSAGE,
+                tags: [["h", channelId]],
+                content: `⚠️ @${personaId} failed to start: ${reason}`,
+              })
+            );
+          }
+          relay.disconnect();
+        })(),
+        new Promise((resolve) => setTimeout(resolve, 8000)),
+      ]);
+    }
+  } catch { /* the log line above is the floor */ }
   process.exit(1);
 });

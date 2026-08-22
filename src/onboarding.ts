@@ -4,7 +4,7 @@ import path from "node:path";
 import chalk from "chalk";
 import { detectHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { listPersonas } from "./personas.js";
-import { resolveRelay, saveSettings } from "./settings.js";
+import { HOSTED_ROUTER, resolveRelay, saveSettings } from "./settings.js";
 
 /**
  * First-run wizard — the entire required surface of fez is deliberately
@@ -62,6 +62,39 @@ export async function firstRunWizard(): Promise<void> {
       );
       console.log(`  ${chalk.green("✓")} @researcher → ${file} (edit the markdown to shape it)`);
     }
+  }
+
+  // 4. The orchestrator itself. Without this there is nobody to talk to
+  // on a fresh install: @mentions only work if you already know which
+  // agent you want, and the whole point of @fez is not having to.
+  //
+  // `harness: router` is not an agent — it holds no session and writes
+  // no prose. It reads the roster, asks a small model which name fits,
+  // and hands off. So it is created even when no harness is installed:
+  // routing works before thinking does.
+  //
+  // The URL is the HOSTED router, deliberately. A fresh machine has no
+  // model and no server, and an out-of-box orchestrator that silently
+  // does nothing is worse than none at all. `fez router-install` swaps
+  // this one line for a local endpoint — ~90ms instead of ~3s, and no
+  // dependence on somebody else's box.
+  const fezFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
+  if (!fs.existsSync(fezFile)) {
+    fs.mkdirSync(path.dirname(fezFile), { recursive: true });
+    fs.writeFileSync(
+      fezFile,
+      "---\n" +
+        "routable: false\n" +
+        "harness: router\n" +
+        `url: ${HOSTED_ROUTER}\n` +
+        "aliases: [orchestrator]\n" +
+        "description: routes tasks to the right agent — mention @fez with anything\n" +
+        "---\n" +
+        "🎩 fez here. Mention @fez with a task and I'll bring in whoever's best for it.\n",
+      "utf-8"
+    );
+    console.log(`  ${chalk.green("✓")} @fez → ${fezFile} (routes to the hosted router)`);
+    console.log(chalk.dim(`    faster and private: ${chalk.cyan("fez router-install")} runs the router on this machine`));
   }
 
   saveSettings({ relay: relay.trim(), onboarded: true });

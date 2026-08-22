@@ -31,8 +31,14 @@ const human = (n: number) =>
   n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)}MB` : n >= 1024 ? `${Math.round(n / 1024)}KB` : `${n}B`;
 
 export default function media(api: FezExtensionAPI): void {
-  if (!api.client) return;
+  // Both seams are optional on the real API and undefined outside the
+  // TUI/sentinel. Uploading means signing, so without `nostr` there is
+  // no degraded mode worth offering — bail before registering anything,
+  // the same way a missing client already did. Captured in a local so
+  // the narrowing survives into the async command handler.
+  if (!api.client || !api.nostr) return;
   const client = api.client as FezClient;
+  const nostr = api.nostr;
 
   api.registerCommand("upload", async (args, ctx) => {
     const trimmed = args.trim();
@@ -63,7 +69,7 @@ export default function media(api: FezExtensionAPI): void {
     const server = mediaServer();
     ctx.reply(`⬆ uploading ${name} (${human(bytes.length)}) to ${server}…`);
     try {
-      const blob = await uploadToBlossom(server, bytes, mimeFor(name), (tmpl) => api.nostr.signEvent(tmpl));
+      const blob = await uploadToBlossom(server, bytes, mimeFor(name), (tmpl) => nostr.signEvent(tmpl));
       const line = `${caption ? `${caption}\n` : ""}📎 ${name} (${human(blob.size)}) ${blob.url}`;
       await client.sendChannelMessage(line); // scoped to the current channel
       api.ui.appendMessage("You", line); // local echo — the relay copy is deduped as ours

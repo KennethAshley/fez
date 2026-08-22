@@ -15,6 +15,7 @@ import HomeView from "./HomeView";
 import PulseView from "./PulseView";
 import WorkflowsView from "./WorkflowsView";
 import SkillsView from "./SkillsView";
+import { ExtensionPanel } from "./SkillsView";
 import ProfilePane from "./ProfilePane";
 import RemindersPane from "./RemindersPane";
 import DocsPane from "./DocsPane";
@@ -23,7 +24,7 @@ import ChannelInfo from "./ChannelInfo";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
-import { loadGuiExtensions, startAppearanceWatch } from "./gui-extensions";
+import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
@@ -152,6 +153,22 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
         await client.openWorkspace(pendingRelay);
       } catch { /* unreachable relay — the rail still remembers it */ }
     }
+    // A relay provisioned with --owner arrives CLAIMED but empty — the
+    // in-app claim flow (where the owner names the first channel) never
+    // runs for it, so the owner lands in a workspace with no rooms and
+    // no hint that making one is their move. Desktop-level on purpose:
+    // the CLI and tests keep the claim flow's choice of first channel;
+    // this is the app's own promise that a fresh workspace has somewhere
+    // to talk.
+    if (client.state.isOwner(client.pubkey) && client.state.workspace.channels.size === 0) {
+      // FIXED id: a cold relay answering the boot query empty made
+      // "channels.size === 0" true for an established workspace, and a
+      // random-UUID create then minted a second permanent #general
+      // (review finding F6). With one well-known id, racing creates
+      // converge — latest event for the d-tag wins, duplicates cannot
+      // exist by construction.
+      await client.ensureChannel({ name: "general", id: "bootstrap-general" }).catch(() => {});
+    }
     const scope = client.state.scope;
     if (scope) await client.loadChannelHistory(scope.channelId);
     // Paint before anything renders, and keep following the OS: a
@@ -224,6 +241,13 @@ function Shell({
   const render = useForceRender();
   const [view, setView] = useState<MainView>({ kind: "channel" });
   const [pane, setPane] = useState<SidePane>();
+  // Extensions' window into the watch pane (gui-extensions.openWatch):
+  // parked here because the pane is component state and the registry is
+  // module state — the seam pattern every other extension surface uses.
+  useEffect(() => {
+    setWatchOpener((agent) => setPane({ kind: "watch", agent }));
+    return () => setWatchOpener(undefined);
+  }, []);
   const [banner, setBanner] = useState<string>();
   useEffect(() => {
     wire.onError = (message) => {
@@ -962,9 +986,15 @@ function Shell({
               <button className="pane-close" onClick={() => setExtSettings(undefined)}>✕</button>
             </header>
             <div className="pane-body">
-              {extensionSettingsPanels().find((panel) => panel.name === extSettings)?.render() ?? (
-                <div className="settings-hint">this extension is no longer loaded</div>
-              )}
+              {(() => {
+                // Boundaried: an extension that throws mid-render gets a
+                // broken-panel card, not a blank app. Same guard
+                // SkillsView already gives these panels — this call site
+                // predates it and was the one place a bad extension
+                // could still take the whole window down.
+                const panel = extensionSettingsPanels().find((p) => p.name === extSettings);
+                return panel ? <ExtensionPanel panel={panel} /> : <div className="settings-hint">this extension is no longer loaded</div>;
+              })()}
             </div>
           </div>
         </div>
@@ -1141,6 +1171,15 @@ function ChannelView({
   const [editing, setEditing] = useState<{ id: string; original: string } | undefined>();
   const bottomRef = useRef<HTMLDivElement>(null);
   const messages = client.messages(channelId);
+  // Extensions navigate threads through this (gui-extensions.openThreadAt):
+  // parked per channel, id-guarded — see the seam's comment.
+  useEffect(() => {
+    setThreadOpener((forChannel, rootId) => {
+      if (forChannel === channelId) setThreadRoot(rootId);
+    });
+    return () => setThreadOpener(undefined);
+  }, [channelId]);
+
   const shown = threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages.filter((m) => !m.parentId);
   // Typed artifacts interleave by time (channel view only — they don't thread).
   type TimelineRow = { ts: number; msg?: Msg; artifact?: Artifact };
@@ -1369,6 +1408,21 @@ function ChannelView({
             onOpenAgents={onAgents}
           />
         )}
+        {threadRoot && (() => {
+          const root = messages.find((m) => m.id === threadRoot);
+          const view = root ? threadViewFor(root.content) : undefined;
+          if (!root || !view) return null;
+          // Boundaried like every other extension surface: a thread view
+          // that throws mid-render must show a broken card, not unmount
+          // the whole app (review finding F7 — the settings panels got
+          // this guard earlier for exactly the same reason).
+          const props = { channelId, rootId: threadRoot, rootContent: root.content };
+          return (
+            <div className="thread-view">
+              <ExtensionPanel panel={{ name: view.name, render: () => view.render(props) }} />
+            </div>
+          );
+        })()}
         {rows.map((row, index) => {
           if (row.artifact) {
             return (
@@ -2082,11 +2136,32 @@ function Bubble({
         <HoverCard client={client} pk={msg.authorPk}>
           <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
         </HoverCard>
+        {(() => {
+          // The zsh-prompt chip: the branch the agent's checkout is ON,
+          // from its own 47000 announcement — truth from the spawn, not
+          // a claim in chat. Humans have no branch; nothing renders.
+          const work = client.agentInfo(msg.authorPk);
+          return work?.branch ? (
+            <span className="branch-chip" title={work.repo ? `working ${work.repo} on ${work.branch}` : work.branch}>
+              ⑂ {work.branch}
+            </span>
+          ) : null;
+        })()}
         <span className="time">{time}</span>
         {msg.edited && <span className="time">edited</span>}
         {pinned && <span className="pin-mark" title="pinned">⚑</span>}
         {!msg.deletedBy && (
           <div className="actions">
+            <button
+              title="copy text"
+              onClick={() => {
+                void navigator.clipboard.writeText(msg.content);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+            >
+              {copied ? "✓" : "⧉"}
+            </button>
             <button
               title="react"
               onClick={(e) => {

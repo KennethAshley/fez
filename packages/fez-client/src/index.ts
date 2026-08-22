@@ -1,5 +1,5 @@
 export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
-import { WorkspaceState, setStatePersistence, type Role, type StatePersistence } from "./workspace-state.js";
+import { WorkspaceState, cleanSource, setStatePersistence, type Role, type StatePersistence } from "./workspace-state.js";
 export * from "./workspace-state.js";
 
 /**
@@ -33,6 +33,8 @@ export interface WireEvent {
 }
 
 export interface WireFilter {
+  /** NIP-01 filter by event id — how you fetch specific events back. */
+  ids?: string[];
   kinds?: number[];
   authors?: string[];
   since?: number;
@@ -83,8 +85,32 @@ export interface Wire {
    * minimal backend can omit it; without it the workspace stays
    * unclaimed and nothing governed is trusted.
    */
-  relayInfo?(relay: string): Promise<{ name?: string; description?: string; pubkey?: string; icon?: string } | undefined>;
+  relayInfo?(relay: string): Promise<RelayInfoDoc | undefined>;
+  /**
+   * Mint a NIP-98 Authorization header for one HTTP request — the key
+   * stays behind the seam, same custody pattern as signEvent. This is
+   * how a GUI surface reads the relay's gated HTTP endpoints (push
+   * journal, review diff) and knocks on gated writes (merge).
+   */
+  httpAuth?(url: string, method: string): string;
 }
+
+/**
+ * The NIP-11 document, whole.
+ *
+ * The extra fields are the point. A relay extension advertises where it
+ * put something (`fez_git.clone_base`) precisely so clients can find it
+ * without reconstructing a URL from the websocket address — which is
+ * right on a laptop and silently wrong behind any proxy. Narrowing this
+ * to the four identity fields threw those away at the type level while
+ * the bytes were sitting right there.
+ */
+export type RelayInfoDoc = {
+  name?: string;
+  description?: string;
+  pubkey?: string;
+  icon?: string;
+} & Record<string, unknown>;
 
 // ── Mentions (mirror of src/mentions.ts) ─────────────────────────────────
 // Duplicated by design, same as the kinds below: this package stays
@@ -403,6 +429,7 @@ export class FezClient {
   readonly pubkey: string;
 
   private wire: Wire;
+  private relayInfoDoc?: RelayInfoDoc;
   private listeners = new Map<keyof ClientEvents, Set<(...args: never[]) => void>>();
   private unsubscribeLive?: () => void;
   private subscribedChannelIds = "";
@@ -497,9 +524,9 @@ export class FezClient {
   agents(): Map<string, string> {
     return new Map(this.names);
   }
-  private agentMeta = new Map<string, { about?: string; skills?: string[] }>();
-  /** What an agent announced about itself (47000 about/skills) — undefined for humans. */
-  agentInfo(pk: string): { about?: string; skills?: string[] } | undefined {
+  private agentMeta = new Map<string, { about?: string; skills?: string[]; repo?: string; branch?: string }>();
+  /** What an agent announced about itself (47000 about/skills/repo/branch) — undefined for humans. */
+  agentInfo(pk: string): { about?: string; skills?: string[]; repo?: string; branch?: string } | undefined {
     return this.agentMeta.get(pk);
   }
 
@@ -671,9 +698,14 @@ export class FezClient {
   // ── Actions ─────────────────────────────────────────────────────────────
 
   /** Publish into the scoped channel. Thread tags follow Buzz's NIP-10 shape when replying. */
-  async sendChannelMessage(text: string, opts?: { threadRootId?: string; mentionPks?: string[] }): Promise<Msg> {
-    const current = this.state.currentChannel();
-    if (!current) throw new Error("no channel scope");
+  async sendChannelMessage(text: string, opts?: { threadRootId?: string; mentionPks?: string[]; channelId?: string }): Promise<Msg> {
+    // channelId overrides the scope — for surfaces that address a
+    // channel by NAME rather than by standing in it (a /repo command run
+    // from anywhere posting a line root into the repo's channel).
+    const current = opts?.channelId
+      ? this.state.workspace.channels.get(opts.channelId)
+      : this.state.currentChannel();
+    if (!current) throw new Error(opts?.channelId ? "no such channel" : "no channel scope");
     const threadTags: string[][] = [];
     if (opts?.threadRootId) {
       const replies = this.threadReplies(current.id, opts.threadRootId);
@@ -1083,6 +1115,101 @@ export class FezClient {
   }
 
   /**
+   * The channel for a thing, opening it if it isn't open.
+   *
+   * The same contract as `makeChannels().ensure` in the CLI's
+   * src/channels.ts — matched on NAME, meta compared in full, only the
+   * owner may sign one into being. It lives here as well because the
+   * desktop bundle deliberately does not depend on the CLI package, and
+   * the alternative was a second copy inside the GUI extension loader.
+   * @fez/client is the layer the TUI, the desktop and extensions all
+   * already share; a vocabulary that has to reach all three belongs at
+   * the widest point they have in common, not copied to each.
+   *
+   * Reads the channels the client has already absorbed rather than
+   * querying: state is live and the wire is not free.
+   */
+  async ensureChannel(spec: {
+    name: string;
+    source?: string;
+    meta?: Record<string, string>;
+    visibility?: "open" | "closed";
+    /**
+     * Fixed channel id. For bootstrap-created channels: two racing
+     * creates with the same id CONVERGE (latest event with one d-tag
+     * wins) instead of minting two channels — the only duplicate-proof
+     * shape, because no query-first guard survives a cold relay
+     * answering empty (review finding F6).
+     */
+    id?: string;
+  }): Promise<string | undefined> {
+    const existing = this.state.findChannelByName(spec.name);
+    const content = JSON.stringify({
+      name: spec.name,
+      visibility: spec.visibility ?? "open",
+      ...(cleanSource(spec.source) ? { source: cleanSource(spec.source) } : {}),
+      ...(spec.meta && Object.keys(spec.meta).length > 0 ? { meta: spec.meta } : {}),
+    });
+
+    if (existing) {
+      // Re-signing the same `d` is an edit in place. META COUNTS: a repo
+      // learning what it protects must be able to say so even though its
+      // source already matched, which is the bug the CLI copy already
+      // paid for.
+      const wantSource = cleanSource(spec.source);
+      const changed =
+        (wantSource !== undefined && existing.source !== wantSource) ||
+        JSON.stringify(spec.meta ?? {}) !== JSON.stringify(existing.meta ?? {});
+      if (changed && this.state.isOwner(this.pubkey)) {
+        this.state.absorb(await this.wire.publish({ kind: K.CHANNEL, tags: [["d", existing.id]], content }));
+        this.state.save();
+        this.emit("channelsChanged");
+      }
+      // A non-owner cannot EDIT, but the channel exists and is theirs to
+      // use — returning undefined here surfaced as a false "only the
+      // owner can open a channel" for a working channel (review F8).
+      // Same contract as src/channels.ts: the edit is skipped, the id is
+      // truth.
+      return existing.id;
+    }
+
+    // Saying so here saves every caller from discovering it as a silent
+    // no-op that looks like success.
+    if (!this.state.isOwner(this.pubkey)) return undefined;
+    const channelId = spec.id ?? crypto.randomUUID();
+    this.state.absorb(await this.wire.publish({ kind: K.CHANNEL, tags: [["d", channelId]], content }));
+    this.state.save();
+    this.resubscribe();
+    this.emit("channelsChanged");
+    return channelId;
+  }
+
+  /**
+   * What the relay says it is, including whatever its extensions
+   * advertised. Undefined before the workspace is opened, or when the
+   * backend serves no NIP-11 at all.
+   */
+  relayInfo(): RelayInfoDoc | undefined {
+    return this.relayInfoDoc;
+  }
+
+  /**
+   * A NIP-98 header for `url` — or undefined when the wire cannot sign.
+   * Callers treat undefined as "this surface is unavailable", the same
+   * honest degradation as a missing relayInfo.
+   */
+  httpAuthHeader(url: string, method: string): string | undefined {
+    return this.wire.httpAuth?.(url, method);
+  }
+
+  /** Every channel a given maker opened — the rail's grouping, as data. */
+  channelsFrom(source: string): { id: string; name: string; meta?: Record<string, string> }[] {
+    return [...this.state.workspace.channels.values()]
+      .filter((c) => c.source === source)
+      .map((c) => ({ id: c.id, name: c.name, meta: c.meta }));
+  }
+
+  /**
    * Point this client at a workspace and pull its state.
    *
    * The owner comes from the relay's NIP-11 document, and it has to
@@ -1093,6 +1220,7 @@ export class FezClient {
   async openWorkspace(relay: string): Promise<boolean> {
     this.state.open(relay);
     const info = await this.wire.relayInfo?.(relay);
+    this.relayInfoDoc = info;
     this.state.describe({ name: info?.name, owner: info?.pubkey });
     await this.syncWorkspace();
     this.resubscribe();
@@ -1392,16 +1520,40 @@ export class FezClient {
       }
     } catch { /* badges start from zero */ }
 
-    // A client with nothing stored still has a workspace: the relay its
-    // wire is pointed at. Without this it comes up placeless and every
-    // governed event is refused as "unclaimed".
-    if (!this.state.workspace.relay && this.wire.relays?.[0]) {
-      this.state.open(this.wire.relays[0]);
+    // The WIRE is the authority on where this client is. Restored state
+    // remembers where you were last time; the wire says where you are
+    // connected NOW — and when the two disagree (the user changed the
+    // relay in settings and relaunched), following the stored one splits
+    // the brain: sockets on the new relay, identity/NIP-11/owner from
+    // the old. That exact split shipped once — the settings said the new
+    // relay, the panel honestly described the old one, and nothing
+    // looked wrong except everything. open() keeps the old workspace on
+    // the rail, so this is a move, not a loss.
+    // Guarded by membership, not equality: a multi-relay wire may have
+    // its active workspace legitimately on the second relay of the set.
+    // Split-brain is specifically a workspace the wire is not connected
+    // to at all. Compared NORMALIZED (scheme-case, host-case, default
+    // port, trailing slash): a stored invite string like
+    // "wss://Relay.example/" byte-differing from the wire's
+    // "wss://relay.example" force-moved the workspace every boot and
+    // forked one relay into two rail entries (review finding F10).
+    const normalizeRelay = (value: string): string => {
+      try {
+        const url = new URL(value.trim());
+        return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`.toLowerCase();
+      } catch {
+        return value.trim().toLowerCase().replace(/\/+$/, "");
+      }
+    };
+    const wired = (this.wire.relays ?? []).map(normalizeRelay);
+    if (wired[0] && !wired.includes(normalizeRelay(this.state.workspace.relay))) {
+      this.state.open(this.wire.relays![0]);
     }
 
     // Who owns this workspace has to be known before any governed event
     // is absorbed — the state model rejects everything while unclaimed.
     const info = await this.wire.relayInfo?.(this.state.workspace.relay).catch(() => undefined);
+    if (info) this.relayInfoDoc = info;
     this.state.describe({ name: info?.name, owner: info?.pubkey });
 
     await this.syncWorkspace();
@@ -1517,7 +1669,7 @@ export class FezClient {
 
   private absorbName(event: WireEvent, emitChange = true): void {
     try {
-      const meta = JSON.parse(event.content) as { name?: string; about?: string; skills?: unknown };
+      const meta = JSON.parse(event.content) as { name?: string; about?: string; skills?: unknown; repo?: unknown; branch?: unknown };
       if (meta.name && this.names.get(event.pubkey) !== meta.name) {
         this.names.set(event.pubkey, meta.name);
         if (emitChange) this.emit("presenceChanged");
@@ -1526,6 +1678,11 @@ export class FezClient {
         this.agentMeta.set(event.pubkey, {
           about: typeof meta.about === "string" ? meta.about : undefined,
           skills: Array.isArray(meta.skills) ? meta.skills.filter((s): s is string => typeof s === "string") : undefined,
+          // The zsh-prompt fields: what the agent's checkout is actually
+          // on, announced at spawn — capped like channel meta, these
+          // reach a header.
+          repo: typeof meta.repo === "string" ? meta.repo.slice(0, 100) : undefined,
+          branch: typeof meta.branch === "string" ? meta.branch.slice(0, 100) : undefined,
         });
       }
     } catch { /* ignore */ }
@@ -1562,6 +1719,7 @@ export class FezClient {
     for (const kind of [K.CHANNEL, K.MEMBERSHIP, K.BAN_LIST]) {
       for (const event of events.filter((e) => e.kind === kind)) this.state.absorb(event);
     }
+
     this.emit("channelsChanged");
   }
 

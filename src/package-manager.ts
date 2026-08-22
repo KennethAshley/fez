@@ -22,6 +22,12 @@ export interface FezPackage {
 }
 
 export interface FezManifest {
+  /**
+   * npm's own bin map. Honored on install: each entry is copied to
+   * ~/.fez/bin, so an extension can ship executables (a git credential
+   * helper, an adopt command) without being npm-installed globally.
+   */
+  bin?: Record<string, string>;
   fez: {
     type: "integration" | "agent" | "extension" | "persona-pack";
     /**
@@ -59,6 +65,10 @@ export interface FezManifest {
       skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
       headless?: string;
       gui?: string;
+      /** → ~/.fez/relay-extensions; loaded only by a relay started with --extensions */
+      relay?: string;
+      /** → ~/.fez/workspace-providers; gives a `repo:` persona a checkout to work in */
+      workspace?: string;
       /** opt in to running scheduled tasks inside the always-on sentinel */
       background?: boolean;
     };
@@ -312,6 +322,9 @@ export class PackageManager {
     if (manifest.fez.parts) {
       await this.installParts(name, manifest.fez.parts);
     }
+    if (manifest.bin) {
+      await this.installBins(name, manifest.bin);
+    }
 
     // Persona pack — a team bundle of persona .md files
     if (manifest.fez.personas) {
@@ -479,6 +492,35 @@ export class PackageManager {
     }
   }
 
+  /**
+   * A package's executables, into ~/.fez/bin.
+   *
+   * npm's own vocabulary ("bin" in the manifest), not a fez invention —
+   * an extension that ships a credential helper or a CLI declares it
+   * exactly as it would for npm, and installing through fez puts it in
+   * one predictable place. ~/.fez/bin is not assumed to be on PATH;
+   * anything that NEEDS an executable resolves it absolutely (git
+   * helpers are configured by absolute path, siblings are found beside
+   * the caller), and the PATH hint is printed once rather than silently
+   * required.
+   */
+  private async installBins(name: string, bin: Record<string, string>): Promise<void> {
+    const pkg = this.packages.get(name);
+    if (!pkg) return;
+    const pkgDir = this.getContentDir(pkg);
+    const binDir = path.join(os.homedir(), ".fez", "bin");
+    await fs.mkdir(binDir, { recursive: true });
+    for (const [cmd, rel] of Object.entries(bin)) {
+      const target = path.join(binDir, cmd);
+      await fs.copyFile(path.join(pkgDir, rel), target);
+      await fs.chmod(target, 0o755);
+      console.log(chalk.dim(`   Installed ~/.fez/bin/${cmd}`));
+    }
+    if (!(process.env.PATH ?? "").split(":").includes(path.join(os.homedir(), ".fez", "bin"))) {
+      console.log(chalk.dim(`   (~/.fez/bin is not on your PATH — add it to call these by name)`));
+    }
+  }
+
   private async installParts(
     name: string,
     parts: {
@@ -487,6 +529,7 @@ export class PackageManager {
       gui?: string;
       /** Code that runs INSIDE a relay — see packages/fez-relay/src/extensions.ts. */
       relay?: string;
+      workspace?: string;
       background?: boolean;
     }
   ): Promise<void> {
@@ -511,6 +554,22 @@ export class PackageManager {
       await fs.copyFile(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/relay-extensions/${name}.js`));
       console.log(chalk.dim("   Start the relay with --extensions to load it."));
+    }
+    if (parts.workspace) {
+      // A fifth place. This one answers "where does an agent's turn
+      // actually run" for a persona that names a `repo:` — it hands back
+      // a checkout instead of a scratch folder.
+      //
+      // It lives beside the AGENT rather than in ~/.fez/extensions
+      // because `fez agent <persona>` is launched by hand as often as by
+      // the sentinel, and only the sentinel loads extensions. A provider
+      // that worked for a fleet and silently not for a person running
+      // one agent would be the worst kind of half-working.
+      const wsDir = path.join(os.homedir(), ".fez", "workspace-providers");
+      await fs.mkdir(wsDir, { recursive: true });
+      await fs.copyFile(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
+      console.log(chalk.dim(`   Created ~/.fez/workspace-providers/${name}.js`));
+      console.log(chalk.dim("   Personas can now set `repo:` to work from a checkout."));
     }
     if (parts.background) {
       const { loadSettings, saveSettings } = await import("./settings.js");

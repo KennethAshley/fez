@@ -37,6 +37,7 @@ async function main() {
   let configPath: string | undefined;
   /** undefined = don't load any; "" = the default directory; else a path. */
   let extensionsDir: string | undefined;
+  let extensionsData: string | undefined;
   const origins: string[] = [];
   let owner: string | undefined;
   let name: string | undefined;
@@ -50,6 +51,7 @@ async function main() {
     else if (arg === "--no-verify") verifySignatures = false;
     else if (arg === "--config") configPath = args[++i];
     else if (arg === "--extensions") extensionsDir = args[i + 1]?.startsWith("--") === false ? args[++i] : "";
+    else if (arg === "--extensions-data") extensionsData = args[++i];
     else if (arg === "--origin") origins.push(args[++i]);
     else if (arg === "--owner") owner = args[++i];
     else if (arg === "--name") name = args[++i];
@@ -67,7 +69,7 @@ async function main() {
       console.log(
         "Usage: fez-relay [--port N] [--store FILE] [--no-verify] [--policy NAME[=ARG]]... [--config FILE]\n" +
           "                 [--owner HEX] [--name TEXT] [--description TEXT] [--icon URL]\n" +
-          "                 [--extensions [DIR]] [--origin URL]...\n\n" +
+          "                 [--extensions [DIR]] [--extensions-data DIR] [--origin URL]...\n\n" +
           "--extensions loads ~/.fez/relay-extensions (or DIR): code that runs INSIDE this\n" +
           "relay, installed by `fez install`. Off unless asked for — installing an\n" +
           "extension and letting it into the event store are two decisions.\n" +
@@ -134,9 +136,14 @@ async function main() {
     const { loadRelayExtensions } = await import("./extensions.js");
     const loaded = await loadRelayExtensions({
       dir: extensionsDir || undefined,
+      // Where extensions keep BYTES (bare repos, caches). Defaults to
+      // ~/.fez/relay-data, which is right on a laptop and wrong on a
+      // server whose state — and backup job — lives elsewhere.
+      dataRoot: extensionsData,
       origins,
       owner: workspace.owner,
       query: (filter) => handle.query(filter),
+      advertise: (key, value) => handle.advertise(key, value),
       log: (line) => console.log(line),
     });
     // Registered AFTER start rather than passed in, because an extension

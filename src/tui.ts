@@ -94,7 +94,7 @@ import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
 import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { spawn } from "node:child_process";
-import { loadExtensions, setNostrBackend, setUiBackend, setClientBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, registerTheme as registerThemePack, type MessageHandle } from "./extensions.js";
+import { loadExtensions, setNostrBackend, setUiBackend, setClientBackend, setWorkspaceBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, registerTheme as registerThemePack, type MessageHandle } from "./extensions.js";
 import { footer } from "./status.js";
 import { findPersona } from "./personas.js";
 import { findMcpServer } from "./mcp-servers.js";
@@ -266,6 +266,17 @@ export class FezTUI {
     setNostrBackend(wire);
     this.fezClient = new FezClient(wire);
     setClientBackend(this.fezClient);
+    // What extensions may reach the relay by. The owner comes from the
+    // client's own NIP-11 read, so it is filled in when buildApi runs at
+    // extension load; the URL and document are stated here because
+    // deriving them from the websocket address is wrong behind a proxy.
+    void fetchRelayInfo(this.relay.urls[0]).then((info) =>
+      setWorkspaceBackend({
+        relayUrl: this.relay.urls[0],
+        owner: info?.pubkey,
+        info: info as Record<string, unknown> | undefined,
+      })
+    );
     setUiBackend({
       createSidePanel: (opts) => {
         const section = this.sidePanel.addSection({ title: opts?.title, icon: opts?.icon, order: opts?.order });

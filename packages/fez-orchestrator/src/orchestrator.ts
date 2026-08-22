@@ -8,6 +8,7 @@ import {
   KIND_CHANNEL_MESSAGE,
   KIND_DELETION,
   KIND_MEMBERSHIP,
+  ROSTER_D,
   KIND_REACTION,
   resolveRelays,
 } from "@fez/protocol";
@@ -187,21 +188,43 @@ async function main() {
     return turnTimes.length >= maxTurnsPerHour;
   }
 
-  const memberships = new Map<string, { createdAt: number; members: Set<string> }>();
-  function absorbMembership(event: { created_at: number; tags: string[][] }): void {
-    const channelId = event.tags.find((t) => t[0] === "d")?.[1];
-    if (!channelId || !channels.includes(channelId)) return;
-    const existing = memberships.get(channelId);
-    if (existing && event.created_at < existing.createdAt) return;
-    const members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
-    memberships.set(channelId, { createdAt: event.created_at, members });
+  // Membership is WORKSPACE-wide: one owner-signed 47102 at d=ROSTER_D,
+  // and you see every channel in the relay you are on (kinds.ts).
+  //
+  // This used to query `#d: channels` — the per-channel rosters of the
+  // pre-flat model (#108). No such event exists any more, so the query
+  // matched nothing, the member set stayed EMPTY, and the author gate
+  // below dropped every message that arrived. @fez subscribed, logged
+  // that it was orchestrating, and then silently ignored everything
+  // anyone said to it. The warning it printed was right; it just also
+  // described its own read path.
+  let members = new Set<string>();
+  let membersAt = 0;
+  function absorbMembership(event: { created_at: number; pubkey?: string; tags: string[][] }): void {
+    if (event.tags.find((t) => t[0] === "d")?.[1] !== ROSTER_D) return;
+    // Only the workspace owner's roster counts — anyone can sign a 47102
+    // naming themselves, and absorbing it would be self-invitation.
+    // NO owner means NO roster can be valid: the old `owner &&` guard
+    // opened the gate completely on an owner-less start, letting any
+    // stranger's roster replace the member set of a running
+    // orchestrator (review finding F4). Fail closed, like the relay and
+    // client do for the same case.
+    if (!owner) return;
+    if (event.pubkey !== owner) return;
+    if (event.created_at < membersAt) return;
+    members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
+    if (owner) members.add(owner); // invariant, on live updates too
+    membersAt = event.created_at;
   }
-  const membershipEvents = await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": channels }]);
+  const membershipEvents = await relay.query([
+    owner
+      ? { kinds: [KIND_MEMBERSHIP], authors: [owner], "#d": [ROSTER_D], limit: 1 }
+      : { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], limit: 8 },
+  ]);
   for (const event of membershipEvents) absorbMembership(event);
-  for (const channelId of channels) {
-    if (!memberships.get(channelId)?.members.has(myPubkey)) {
-      console.warn(`⚠️  Not a member of channel ${channelId} — messages will be dropped by other clients until the creator runs /invite ${myPubkey} bot`);
-    }
+  if (owner) members.add(owner); // the owner is always a member
+  if (!members.has(myPubkey)) {
+    console.warn(`⚠️  Not on the workspace roster — replies will be dropped by other clients until the owner runs: fez invite ${myPubkey} bot`);
   }
 
   // ── Roster: every agent that has ever announced itself (47000 is a
@@ -370,7 +393,7 @@ async function main() {
     if (!channelId || event.pubkey === myPubkey) return;
     if (!isMention(event)) return;
     if (!(await authorAllowed(event.pubkey))) return;
-    if (!(memberships.get(channelId)?.members.has(event.pubkey) ?? false)) return;
+    if (!members.has(event.pubkey)) return; // workspace roster, not per-channel
 
     const triggerDepth = Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0);
     if (triggerDepth >= MAX_CHAIN_DEPTH) return;
@@ -531,7 +554,11 @@ async function main() {
   relay.subscribe(
     [
       { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
-      { kinds: [KIND_MEMBERSHIP], "#d": channels, since: Math.floor(Date.now() / 1000) },
+      // The workspace roster, same `d` the initial read uses. This was
+      // also still filtering on channel ids, so an invite never reached a
+      // RUNNING orchestrator — you had to restart it before it would
+      // answer the person you had just let in.
+      { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], since: Math.floor(Date.now() / 1000) },
       { kinds: [KIND_AGENT_METADATA], since: Math.floor(Date.now() / 1000) },
     ],
     (event) => {

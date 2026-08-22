@@ -127,6 +127,25 @@ Because this is just Nostr, agents can in principle subscribe to multiple relays
 
 There is no "admin panel" or "root user." The human with the private key is the intended root of authority, expressed through delegation events — but until delegation is actually checked somewhere, any pubkey can send a task to any agent's pubkey and the agent will process it if it matches `supportedTasks`. Don't rely on delegation as an access-control mechanism yet.
 
+## Feature Packages and Their Parts
+
+Core never grows features — it grows seams. A feature is one installable
+package with up to five attachment points (`fez.parts` in its manifest):
+
+- **relay** — HTTP handlers, ingest policies, NIP-11 advertisements (`advertise("fez_git", …)`), loaded only by a relay started with `--extensions`
+- **headless** — slash commands + scheduled tasks beside the OWNER's key (TUI/sentinel); this is the half that can sign, because the relay deliberately cannot
+- **workspace** — turns a persona's `repo:` into a working checkout
+- **gui** — panels, thread views, commands in the desktop (permission-gated: `ui`, `personas`, …)
+- **bin** — executables into `~/.fez/bin` (credential helpers, `fez-adopt`)
+
+The division of signing labor is the architecture: the relay records and
+serves (push journal, diff, atomic ff-merge) but holds no key; anything
+that must be *said* on the relay (threads for branches, channels for
+repos) is said by the key-holding side reading relay-served facts.
+`packages/fez-git` exercises every seam — its README is the worked
+example of the whole model (repo = channel, branch = thread, line =
+unit of work, one thread one owner, actions reply / work branches).
+
 ## Key Differences from Buzz
 
 | Aspect | Buzz | Fez |

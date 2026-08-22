@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { explicitActor, scrubNames } from "../../fez-orchestrator/src/route-logic";
+import { explicitActor, scrubNames } from "../../fez-orchestrator/src/route-logic.js";
 
 /**
  * The deterministic pre-router layers added after the first bench run

@@ -245,6 +245,21 @@ export interface RelayHandle {
    */
   readonly httpHandlers: HttpHandler[];
   readonly policies: RelayPolicy[];
+  /**
+   * Add a field to this relay's NIP-11 document.
+   *
+   * A relay extension that serves something over HTTP has to be able to
+   * SAY SO, or every client is left deriving the URL from the websocket
+   * address — which is wrong the moment a proxy puts git on a different
+   * host, and wrong silently. NIP-11 is where a relay already describes
+   * itself, so it is where an extension describes what it added.
+   *
+   * The relay's own fields are written AFTER these, so no extension can
+   * overwrite `pubkey` and hand the workspace to a key its owner never
+   * chose. Advertising is for describing an extension's own surface, not
+   * for restating what the workspace is.
+   */
+  advertise(key: string, value: unknown): void;
 }
 
 export function startRelay(options: RelayOptions): RelayHandle {
@@ -313,7 +328,14 @@ export function startRelay(options: RelayOptions): RelayHandle {
   // port. A client asks who owns this workspace BEFORE it trusts a
   // channel or roster event, so this has to be reachable without a
   // websocket handshake.
+  // Contributed by relay extensions after start (see RelayHandle.advertise).
+  const advertised: Record<string, unknown> = {};
+
   const nip11 = () => ({
+    // Extension fields first: everything below is the relay's own account
+    // of itself and must win, so `pubkey` in particular cannot be
+    // overwritten by a loaded module.
+    ...advertised,
     name: options.workspace?.name,
     description: options.workspace?.description,
     pubkey: options.workspace?.owner,
@@ -583,6 +605,9 @@ export function startRelay(options: RelayOptions): RelayHandle {
     query: (filter) => events.filter((e) => matches(e, filter as Filter)),
     httpHandlers,
     policies,
+    advertise: (key, value) => {
+      advertised[key] = value;
+    },
     // Both listeners, or the process keeps a handle open — the http
     // server owns the port now, so closing only the wss leaves it bound.
     close: () => {

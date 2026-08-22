@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { fleetQuestion } from "../../fez-orchestrator/src/route-logic";
+import { fleetQuestion } from "../../fez-orchestrator/src/route-logic.js";
 
 /**
  * Fleet meta-questions must never reach the router — found live:
@@ -47,5 +47,18 @@ describe("fleetQuestion", () => {
 
   test("unknown agent name is not an agent question", () => {
     expect(fleetQuestion("what can nonexistent do?", NAMES)).toBeUndefined();
+  });
+});
+
+describe("roster phrasings that used to miss", () => {
+  test.each(["who's on the team?", "who is on the roster", "who's here"])(
+    "%j asks for the roster",
+    (text) => {
+      expect(fleetQuestion(text, NAMES)).toEqual({ kind: "roster" });
+    }
+  );
+
+  test("does not swallow a real question that starts the same way", () => {
+    expect(fleetQuestion("who is on call for the outage", NAMES)).toBeUndefined();
   });
 });

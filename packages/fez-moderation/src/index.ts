@@ -17,8 +17,13 @@ import type { FezClient } from "@fez/client";
 const KIND_REPORT = 1984;
 
 export default function moderation(api: FezExtensionAPI): void {
-  if (!api.client) return;
+  // `nostr` is optional on the real API — undefined outside the
+  // TUI/sentinel. Every verb here publishes or decrypts, so there is
+  // nothing useful to register without it. Captured in a local so the
+  // narrowing survives into the async command handlers.
+  if (!api.client || !api.nostr) return;
   const client = api.client as FezClient;
+  const nostr = api.nostr;
 
   const resolvePk = (raw: string): string | undefined => {
     const name = raw.trim().replace(/^@/, "");
@@ -30,53 +35,64 @@ export default function moderation(api: FezExtensionAPI): void {
     if (!current) return ctx.reply("Not in a channel.");
     const [who, ...reasonParts] = args.trim().split(/\s+/);
     const reason = reasonParts.join(" ");
-    if (!who || !reason) return ctx.reply("Usage: /report <name|pubkey> <reason> — encrypted so only the community creator can read it.");
+    if (!who || !reason) return ctx.reply("Usage: /report <name|pubkey> <reason> — encrypted so only the workspace owner can read it.");
     const targetPk = resolvePk(who);
     if (!targetPk) return ctx.reply(`No one named "${who}" here.`);
-    const creator = current.community.creator;
-    await api.nostr.publish({
+    // The moderator is the workspace owner, per the relay's NIP-11 —
+    // there is no community creator to address any more. Unclaimed relay
+    // means there is nobody to encrypt to, and publishing a report only
+    // the reporter can read is worse than refusing.
+    const owner = client.state.workspace.owner;
+    if (!owner) return ctx.reply("This relay is unclaimed — no owner to send a report to.");
+    await nostr.publish({
       kind: KIND_REPORT,
-      tags: [["c", current.community.id], ["p", creator]],
-      content: api.nostr.encrypt(creator, JSON.stringify({ targetPk, reason, ts: Date.now() })),
+      // Scoped by channel now that the workspace is flat: ["h", channelId]
+      // is what every other channel-scoped kind uses, and what the relay's
+      // membership policy already keys on.
+      tags: [["h", current.id], ["p", owner]],
+      content: nostr.encrypt(owner, JSON.stringify({ targetPk, reason, ts: Date.now() })),
     });
-    ctx.reply(`🚩 reported ${client.displayName(targetPk)} to the community creator — only they can read the reason.`);
+    ctx.reply(`🚩 reported ${client.displayName(targetPk)} to the workspace owner — only they can read the reason.`);
   });
 
   api.registerCommand("reports", async (_args, ctx) => {
-    const events = await api.nostr.query([{ kinds: [KIND_REPORT], "#p": [client.pubkey], limit: 200 }]);
+    const events = await nostr.query([{ kinds: [KIND_REPORT], "#p": [client.pubkey], limit: 200 }]);
     const rows: string[] = [];
     for (const event of events.sort((a, b) => b.created_at - a.created_at)) {
       try {
-        const r = JSON.parse(api.nostr.decrypt(event.pubkey, event.content)) as { targetPk?: string; reason?: string };
+        const r = JSON.parse(nostr.decrypt(event.pubkey, event.content)) as { targetPk?: string; reason?: string };
         if (!r.targetPk) continue;
-        const community = event.tags.find((t) => t[0] === "c")?.[1];
-        const communityName = community ? client.state.communities.get(community)?.name ?? community.slice(0, 8) : "?";
-        rows.push(`• ${client.displayName(r.targetPk)} — "${r.reason}" (by ${client.displayName(event.pubkey)}, ${communityName}) → /ban ${client.displayName(r.targetPk)}`);
+        // Older reports carry ["c", communityId] from before the flat
+        // workspace; read both so a queue built up under the old shape
+        // still renders instead of silently showing "?".
+        const scope = event.tags.find((t) => t[0] === "h")?.[1] ?? event.tags.find((t) => t[0] === "c")?.[1];
+        const where = scope ? client.state.workspace.channels.get(scope)?.name ?? scope.slice(0, 8) : "?";
+        rows.push(`• ${client.displayName(r.targetPk)} — "${r.reason}" (by ${client.displayName(event.pubkey)}, ${where}) → /ban ${client.displayName(r.targetPk)}`);
       } catch { /* not addressed to us */ }
     }
     ctx.reply(rows.length ? [`**Reports** (${rows.length})`, ...rows].join("\n") : "No reports addressed to you.");
   });
 
+  // A ban is WORKSPACE-wide now — one roster, one ban list. So these
+  // three deliberately do not require a current channel: asking someone
+  // to stand in a room before banning a person from the whole workspace
+  // would imply a scope the ban does not have.
   api.registerCommand("ban", async (args, ctx) => {
-    const current = client.state.currentChannel();
-    if (!current) return ctx.reply("Not in a channel.");
     const targetPk = resolvePk(args);
-    if (!targetPk) return ctx.reply("Usage: /ban <name|pubkey> — creator-only; they become a non-member everywhere until /unban.");
+    if (!targetPk) return ctx.reply("Usage: /ban <name|pubkey> — owner-only; they become a non-member of the whole workspace until /unban.");
     try {
-      const name = await client.banUser(current.community.id, targetPk);
-      ctx.reply(`⛔ banned ${name} from ${current.community.name} — their messages stop rendering for every member; history stays. /unban ${name} reverses it.`);
+      const name = await client.banUser(targetPk);
+      ctx.reply(`⛔ banned ${name} from ${client.state.workspace.name} — their messages stop rendering for every member; history stays. /unban ${name} reverses it.`);
     } catch (err) {
       ctx.reply(`Can't ban: ${err instanceof Error ? err.message : err}`);
     }
   });
 
   api.registerCommand("unban", async (args, ctx) => {
-    const current = client.state.currentChannel();
-    if (!current) return ctx.reply("Not in a channel.");
     const targetPk = resolvePk(args);
     if (!targetPk) return ctx.reply("Usage: /unban <name|pubkey>");
     try {
-      const name = await client.unbanUser(current.community.id, targetPk);
+      const name = await client.unbanUser(targetPk);
       ctx.reply(`✅ unbanned ${name} — full standing restored.`);
     } catch (err) {
       ctx.reply(`Can't unban: ${err instanceof Error ? err.message : err}`);
@@ -84,9 +100,11 @@ export default function moderation(api: FezExtensionAPI): void {
   });
 
   api.registerCommand("bans", async (_args, ctx) => {
-    const current = client.state.currentChannel();
-    if (!current) return ctx.reply("Not in a channel.");
-    const banned = [...current.community.banned];
-    ctx.reply(banned.length ? `⛔ banned in ${current.community.name}: ${banned.map((pk) => client.displayName(pk)).join(", ")}` : "No one is banned here.");
+    const banned = [...client.state.workspace.banned];
+    ctx.reply(
+      banned.length
+        ? `⛔ banned in ${client.state.workspace.name}: ${banned.map((pk) => client.displayName(pk)).join(", ")}`
+        : "No one is banned here."
+    );
   });
 }

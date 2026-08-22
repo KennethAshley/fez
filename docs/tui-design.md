@@ -6,7 +6,7 @@ Typing `fez` opens a **minimal terminal chat interface** — like `pi` or Claude
 
 ```
 $ fez
-🧢 Fez — no agents installed yet
+fez — no agents installed yet
 
 You: hello
 🤖 Fez: Hi! I'm running locally on a tiny model. I can chat,
@@ -153,7 +153,7 @@ class FezTUI {
 
 ```bash
 $ fez
-🧢 Fez — running on needle (local, 14MB)
+fez — running on needle (local, 14MB)
 
 You: hello
 🤖 Fez: Hi! I'm a tiny local model. I can chat and help you find
@@ -173,7 +173,7 @@ You: what can you do?
 
 ```bash
 $ fez
-🧢 Fez — 3 agents ready (@ditto, @hindsight, @chutes)
+fez — 3 agents ready (@ditto, @hindsight, @chutes)
 
 You: @ditto store this file
 🤖 Ditto: ✅ Stored at hippius://abc123 (0.02 TAO)
@@ -190,7 +190,7 @@ You: @hindsight review it
 
 ```bash
 $ fez --model claude-sonnet
-🧢 Fez — using Claude Sonnet via API
+fez — using Claude Sonnet via API
 
 You: @ditto store this + @hindsight review it
 🤖 Fez: (Claude parses the compound request)
@@ -204,7 +204,7 @@ Simple. No sidebar, no panels, no complexity:
 
 ```
 ┌──────────────────────────────────────────────┐
-│ 🧢 Fez — 3 agents │ ws://relay.damus.io        │
+│ fez — 3 agents │ ws://relay.damus.io        │
 ├──────────────────────────────────────────────┤
 │                                              │
 │ You: @ditto store this conversation          │

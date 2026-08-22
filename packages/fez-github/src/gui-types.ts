@@ -9,8 +9,8 @@ export interface GuiExtensionAPI {
   React: {
     createElement(type: unknown, props?: Props, ...children: unknown[]): El;
     useState<T>(initial: T | (() => T)): [T, (next: T | ((prev: T) => T)) => void];
-    useEffect(fn: () => void | (() => void), deps?: unknown[]): void;
-    useCallback<T>(fn: T, deps?: unknown[]): T;
+    useEffect(fn: () => void | (() => void), deps?: readonly unknown[]): void;
+    useCallback<T extends (...args: never[]) => unknown>(fn: T, deps: readonly unknown[]): T;
   };
   client: {
     pubkey: string;

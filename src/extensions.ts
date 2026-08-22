@@ -3,7 +3,7 @@ import path from "path";
 import os from "os";
 import { pathToFileURL } from "url";
 import type { McpServer } from "@agentclientprotocol/sdk";
-import type { ChannelsAccess } from "./channels.js";
+import { makeChannels, type ChannelsAccess } from "./channels.js";
 import type { Event, Filter } from "nostr-tools";
 import { registerHarness, type HarnessAdapter } from "./harness.js";
 import type { DmRumor } from "./dm.js";
@@ -54,6 +54,35 @@ export interface NostrAccess {
   sendDm(recipientPubkey: string, text: string): Promise<string>;
   /** Unwrap a kind-1059 gift wrap addressed to the user; undefined if not ours / not a DM. */
   unwrapDm(event: Event): DmRumor | undefined;
+}
+
+/**
+ * The workspace this process is attached to, as the relay describes it.
+ *
+ * Extensions kept needing two facts neither `nostr` nor `client` could
+ * give them: which relay this is, and who owns it. Without them the only
+ * options were to derive a URL from the websocket address (wrong behind
+ * any proxy) or assume the local key is the owner (wrong on every relay
+ * you didn't create) — and both fail silently, which is why this exists
+ * rather than a pair of conventions.
+ *
+ * `info` is the relay's whole NIP-11 document, including fields
+ * contributed by ITS relay extensions. That is how a client learns where
+ * something like git lives: the relay says so, rather than each client
+ * reconstructing it. Anything in here is the relay's own claim about
+ * itself — treat it as a hint for reaching the relay, never as authority
+ * over what an event means.
+ */
+export interface WorkspaceAccess {
+  /** The relay's websocket URL, as this process connected to it. */
+  relayUrl?: string;
+  /**
+   * Owner pubkey from NIP-11. Undefined means the workspace is
+   * UNCLAIMED — no channel, roster or ban event can be valid on it.
+   */
+  owner?: string;
+  /** The relay's NIP-11 document, verbatim. */
+  info?: Record<string, unknown>;
 }
 
 export interface PanelHandle {
@@ -202,6 +231,31 @@ export interface FezExtensionAPI {
   registerSystemPromptSection(section: { id: string; text: string | (() => string | undefined); order?: number }): void;
   nostr?: NostrAccess;
   /**
+   * Open channels and post in them, without knowing the wire.
+   *
+   * The same seam a scheduled task gets, available wherever `nostr` is —
+   * because a COMMAND is how a person asks for a channel, and a bridge
+   * that could only act on a timer would be a strange thing to build.
+   * Undefined outside the TUI/sentinel, exactly like `nostr`.
+   *
+   * The owner is the workspace's, not the caller's: only the owner may
+   * sign a channel into being, so ensure() returns undefined for anyone
+   * else rather than publishing an event the relay will refuse.
+   *
+   * Undefined when the workspace owner is not known — an unclaimed relay,
+   * or one whose NIP-11 could not be read. There is deliberately no
+   * fallback to the local key: assuming you own a relay you merely
+   * connected to made `list()` silently empty and `ensure()` publish
+   * events the relay would refuse, with nothing in either path saying why.
+   */
+  channels?: ChannelsAccess;
+  /**
+   * Which relay this is and who owns it — see WorkspaceAccess.
+   *
+   * Undefined outside the TUI/sentinel, like `nostr`.
+   */
+  workspace?: WorkspaceAccess;
+  /**
    * The process's ONE shared @fez/client instance — protocol state,
    * trust rules, and actions, headless. Extensions render views over it
    * instead of each re-deriving state from raw subscriptions. Undefined
@@ -296,6 +350,20 @@ export function setNostrBackend(backend: NostrAccess): void {
   nostrBackend = backend;
 }
 
+let workspaceBackend: WorkspaceAccess | undefined;
+
+/**
+ * Tell extensions which workspace this process is on.
+ *
+ * Both key-holding hosts must call this: the TUI has the owner in its
+ * client state, but the sentinel has no client at all, and before this it
+ * fell through to "the local key must be the owner" — so a sentinel on
+ * someone else's relay silently believed it owned the place.
+ */
+export function setWorkspaceBackend(workspace: WorkspaceAccess): void {
+  workspaceBackend = workspace;
+}
+
 export function setUiBackend(backend: UiBackend): void {
   uiBackend = backend;
 }
@@ -325,6 +393,20 @@ function buildApi(granted: readonly string[], extensionName = "extension"): FezE
     };
   };
   const may = (permission: string) => granted.includes(permission);
+
+  /**
+   * Who owns this workspace, per the relay's own NIP-11 document — never
+   * the local key. Undefined is a real answer (unclaimed relay), and the
+   * seams that need an owner go undefined with it rather than guessing.
+   *
+   * Resolved on every ACCESS, not once when the api is built. Extensions
+   * are constructed during startup, deliberately BEFORE the client
+   * connects (they have to be listening when its first events land), so
+   * at build time nobody knows the owner yet — a snapshot here is always
+   * undefined and would disable the channels seam permanently. It also
+   * has to survive the user switching relays, which changes the answer.
+   */
+  const workspaceOwner = () => clientBackend?.state.workspace.owner ?? workspaceBackend?.owner;
 
   // The nostr surface is the sharp one: read is the channel firehose,
   // publish signs AS THE USER. Gate them separately.
@@ -361,6 +443,20 @@ function buildApi(granted: readonly string[], extensionName = "extension"): FezE
       ? (section) => registerSystemPromptSection({ ...section, id: `${extensionName}:${section.id}` })
       : () => console.warn(`⚠️  extension "${extensionName}" tried to add system-prompt rules without the "system-prompt" permission — ignored`),
     nostr: gatedNostr,
+    // Getters, for the reason on workspaceOwner: an extension is built
+    // before the client connects, so anything resolved here and now is
+    // resolved too early. The client's live view wins (the TUI learns the
+    // owner from NIP-11 at connect), then whatever the host declared (the
+    // sentinel). No owner means no channels seam — see `channels` above.
+    get channels(): ChannelsAccess | undefined {
+      const owner = workspaceOwner();
+      return gatedNostr && owner ? makeChannels(gatedNostr, owner) : undefined;
+    },
+    get workspace(): WorkspaceAccess | undefined {
+      const owner = workspaceOwner();
+      if (!workspaceBackend && owner === undefined) return undefined;
+      return { relayUrl: workspaceBackend?.relayUrl, owner, info: workspaceBackend?.info };
+    },
     client: may("read:channels") ? clientBackend : undefined,
     ui: {
       setStatus,

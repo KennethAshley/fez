@@ -10,6 +10,16 @@ import { SkillSecretsSection } from "./SkillSecrets";
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
 /**
+ * What the RUNNING app booted with. The wire is a boot-time singleton,
+ * so localStorage can say one thing while the live connection is another
+ * — these are captured at module load, which happens once per page, so
+ * "saved but not yet applied" is a computable fact rather than a hint in
+ * a flash message the user already dismissed.
+ */
+const BOOT_RELAY = localStorage.getItem("fez-relay") ?? "ws://localhost:7777";
+const BOOT_MEDIA = localStorage.getItem("fez-media-server") ?? "";
+
+/**
  * Settings — the small set that matters on a decentralized surface:
  * who you appear as (kind-0 profile, 30315 status), which relay and
  * media server you bring, and your key's escape hatch (backup reveal
@@ -54,8 +64,15 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   const saveServers = () => {
     localStorage.setItem("fez-relay", relay.trim());
     localStorage.setItem("fez-media-server", media.trim());
-    flash("✓ saved — relay changes apply on relaunch");
+    flash("✓ saved");
   };
+
+  // Saved-but-not-applied is read from storage vs boot, not from a flag
+  // set by the save button — so the button also appears when you saved,
+  // closed the pane, and came back still wondering why nothing changed.
+  const needsRelaunch =
+    (localStorage.getItem("fez-relay") ?? BOOT_RELAY) !== BOOT_RELAY ||
+    (localStorage.getItem("fez-media-server") ?? BOOT_MEDIA) !== BOOT_MEDIA;
 
   const reveal = async () => {
     try {
@@ -124,6 +141,20 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           <input className="manage-input" value={media} spellCheck={false} onChange={(e) => setMedia(e.target.value)} />
         </div>
         <button className="agent-action" onClick={saveServers}>save</button>
+        {needsRelaunch && (
+          <div className="settings-field" style={{ marginTop: 8 }}>
+            <div className="settings-hint">
+              Saved, but the app is still connected to <code>{BOOT_RELAY}</code> — the
+              wire is built once at launch.
+            </div>
+            {/* A reload IS the relaunch: every singleton (wire, client,
+                boot promise) is webview module state, and a fresh page
+                rebuilds them from what localStorage now says. */}
+            <button className="agent-action" onClick={() => window.location.reload()}>
+              relaunch now
+            </button>
+          </div>
+        )}
 
         </>)}
         {section === "appearance" && (<>

@@ -1,16 +1,26 @@
-# fez-desktop
+# @fez/desktop
 
-The fez GUI (#30): Tauri 2 shell + React over the same headless
-`@fez/client` brain the TUI uses. The Rust side is ~40 lines (keychain
-identity read); everything else is web code with hot reload.
+fez as a native app — the Tauri desktop client. Everything the TUI does,
+plus the surfaces a terminal cannot render: the lane board, live agent
+watch panes, rich docs, drag-and-drop media, and installable GUI
+extensions.
+
+## The GUI extension seam
+
+The desktop is the host for `gui` extension parts. At launch it loads
+`~/.fez/gui-extensions/*.js`, each an ES module given a permission-gated
+API — panels, thread views, message decorators, slash commands, theme
+packs, the headless client, and a keychain-backed secret store the
+webview can write but never read. `gui-extensions.ts` is the registry;
+`api-mirror-conformance` in `@fez/evals` keeps every extension's mirror
+honest against it.
+
+## Run
 
 ```bash
-npm run tauri dev      # dev window against ws://localhost:7777
-VITE_FEZ_RELAY=wss://your-relay npm run tauri dev
-npm run tauri build    # .app bundle
+cd packages/fez-desktop && npm install
+npm run tauri dev          # or: npm run tauri build
 ```
 
-Identity comes from the macOS keychain (`fez keygen` / `fez pair`), the
-relay connection is a plain WebSocket from the webview (NIP-42 auth
-answered automatically), and joined/scope state persists in
-localStorage via @fez/client's persistence seam.
+Identity comes from the same macOS keychain the CLI uses; point it at a
+relay in Settings and it is the same workspace as `fez` in the terminal.

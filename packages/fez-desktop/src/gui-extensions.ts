@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient } from "@fez/client";
 import { registerArtifactViewer } from "./artifact-viewers";
+import { invitePersona } from "./invite-persona";
 
 /**
  * Mirrors src/extension-permissions.ts (the eval-pinned source of truth).
@@ -11,7 +12,11 @@ import { registerArtifactViewer } from "./artifact-viewers";
  * change there they change here — the eval gate covers the semantics.
  */
 const LEGACY_GRANT = ["read:channels", "read:agents", "commands", "ui"];
-function networkAllowed(hosts: readonly string[], url: string): boolean {
+function networkAllowed(hostsIn: readonly string[], url: string): boolean {
+  // "relay" resolves to this workspace's relay hosts at CALL time — the
+  // extension serving relay HTTP surfaces (git's lane board) cannot know
+  // the hostname at publish time, and the alternative was network:*.
+  const hosts = hostsIn.flatMap((entry) => (entry === "relay" ? relayHostnames() : [entry]));
   if (hosts.length === 0) return false;
   let host: string;
   try {
@@ -22,6 +27,21 @@ function networkAllowed(hosts: readonly string[], url: string): boolean {
   if (!host) return false;
   if (hosts.includes("*")) return true;
   return hosts.some((entry) => (entry.startsWith(".") ? host === entry.slice(1) || host.endsWith(entry) : host === entry));
+}
+
+/** The workspace's relay hostnames, from the same source the wire boots from. */
+function relayHostnames(): string[] {
+  const raw = localStorage.getItem("fez-relay") ?? "";
+  return raw
+    .split(",")
+    .map((u) => {
+      try {
+        return new URL(u.trim().replace(/^ws(s?):\/\//i, "http$1://")).hostname.toLowerCase();
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean);
 }
 
 /**
@@ -40,6 +60,33 @@ export interface GuiExtensionApi {
   React: typeof React;
   client: FezClient;
   registerArtifactViewer: typeof registerArtifactViewer;
+  /**
+   * Agent personas, as files — LIST/READ/UPDATE plus the stable-key
+   * invite. Gated behind the sensitive "personas" permission: a persona
+   * is an agent's programming, and write access here is the power to
+   * reprogram every agent on this machine. Exists so an extension can
+   * ASSIGN an agent (fez-git writing `repo:` into a persona) without
+   * core learning what a repo is.
+   */
+  personas?: {
+    list(): Promise<string[]>;
+    read(name: string): Promise<string>;
+    update(name: string, content: string): Promise<void>;
+    /** Create a NEW persona file — how a twin is minted. */
+    create(name: string, content: string): Promise<void>;
+    /** Roster the persona's stable key now, pre-spawn. */
+    invite(name: string, role?: "bot" | "member"): Promise<"invited" | "no-key" | "unknown">;
+  };
+  /** A lens on a whole thread, keyed off its root's content. */
+  registerThreadView: (
+    name: string,
+    match: (rootContent: string) => boolean,
+    render: (props: ThreadViewProps) => React.ReactNode
+  ) => void;
+  /** Open the live activity pane for an agent, by name. */
+  watchAgent: (name: string) => void;
+  /** Open a thread in the current channel view (no-op for other channels). */
+  openThread: (channelId: string, rootId: string) => void;
   /** A palette, or a { light, dark } pair that follows the OS. */
   registerTheme: (name: string, vars: ThemePack) => void;
   /** Decorate chat messages: when match(content) is true, render() is
@@ -256,6 +303,65 @@ export interface PageView {
   match: (content: string) => boolean | "default";
   render: (props: PageViewProps) => React.ReactNode;
 }
+/**
+ * Thread views — a lens on a whole THREAD, the way a page view is a
+ * lens on a document. `match` reads the thread ROOT's content (that is
+ * where structured threads carry their marker — fez-git's ⑂ roots);
+ * the winning view renders ABOVE the replies rather than replacing
+ * them: a board is an index of the conversation, not a substitute.
+ */
+export interface ThreadViewProps {
+  channelId: string;
+  rootId: string;
+  rootContent: string;
+}
+interface ThreadView {
+  name: string;
+  match: (rootContent: string) => boolean;
+  render: (props: ThreadViewProps) => React.ReactNode;
+}
+const threadViews: ThreadView[] = [];
+export function registerThreadView(name: string, match: ThreadView["match"], render: ThreadView["render"]): void {
+  threadViews.push({ name, match, render });
+}
+export function threadViewFor(rootContent: string): ThreadView | undefined {
+  return threadViews.find((view) => {
+    try {
+      return view.match(rootContent);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * The watch pane, as a capability. Extensions say "show me this agent
+ * working"; WHERE that appears stays the host's business — the pane is
+ * App state, so App parks its opener here at mount.
+ */
+let watchOpener: ((agent: string) => void) | undefined;
+export function setWatchOpener(open: ((agent: string) => void) | undefined): void {
+  watchOpener = open;
+}
+export function openWatch(agent: string): void {
+  watchOpener?.(agent);
+}
+
+/**
+ * Thread navigation, as a capability: extensions say "open this thread"
+ * (a lane from the board, a line from its channel chip) and the host's
+ * channel view — where the thread state lives — decides how. The opener
+ * is parked per open channel and checks the channelId, so a stale
+ * registration from a previous channel can never hijack navigation.
+ */
+let threadOpener: ((channelId: string, rootId: string) => void) | undefined;
+export function setThreadOpener(open: ((channelId: string, rootId: string) => void) | undefined): void {
+  threadOpener = open;
+}
+export function openThreadAt(channelId: string, rootId: string): void {
+  threadOpener?.(channelId, rootId);
+}
+
 const pageViews: PageView[] = [];
 export function registerPageView(name: string, match: PageView["match"], render: PageView["render"]): void {
   pageViews.push({ name, match, render });
@@ -279,64 +385,12 @@ export function pageViewsFor(content: string): { views: PageView[]; preferred?: 
 }
 
 // ── theme registry ─────────────────────────────────────────────────
-/**
- * The built-in palette, both ways up: gruvbox dark (what App.css has
- * always shipped, kept byte-identical so "default" looks unchanged) and
- * gruvbox light, its canonical counterpart.
- *
- * It lives here rather than in CSS because "default" now has to be
- * resolvable like any other theme — the same paint() picks the variant,
- * so following the OS is one code path instead of a special case.
- */
-export const BUILT_IN_DEFAULT = {
-  dark: {
-    "--bg0": "#1d2021",
-    "--bg1": "#282828",
-    "--bg2": "#3c3836",
-    "--bg-mine": "#2d3a40",
-    "--fg": "#ebdbb2",
-    "--fg-dim": "#928374",
-    "--accent": "#83a598",
-    "--green": "#b8bb26",
-    "--red": "#fb4934",
-    "--yellow": "#fabd2f",
-    "--brand": "#FF6A00",
-    // The terminal-chrome layer. These were hard-coded in App.css and
-    // are the reason a light theme used to leave a black sidebar with
-    // near-black text on it — invisible, and the first thing anyone
-    // noticed.
-    "--bg-rail": "#17191a",
-    "--hairline": "#32302f",
-    "--phosphor": "#b8bb26",
-    // Chart marks, CVD-validated against their ground — a pair, not
-    // theme accents, so they are tuned per scheme rather than reused.
-    "--viz-ok": "#43a56c",
-    "--viz-fail": "#fb4934",
-    "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
-  },
-  light: {
-    "--bg0": "#fbf1c7",
-    "--bg1": "#f2e5bc",
-    "--bg2": "#e0d5b0",
-    // Your own messages: a cool tint, same role the dark side gives it.
-    "--bg-mine": "#dbe4e6",
-    "--fg": "#3c3836",
-    "--fg-dim": "#7c6f64",
-    // Gruvbox light's accents are darkened on purpose — the dark set's
-    // pastels have nowhere near enough contrast on paper.
-    "--accent": "#076678",
-    "--green": "#79740e",
-    "--red": "#9d0006",
-    "--yellow": "#b57614",
-    "--brand": "#d45500",
-    "--bg-rail": "#eee0b7",
-    "--hairline": "#d5c4a1",
-    "--phosphor": "#79740e",
-    "--viz-ok": "#427b58",
-    "--viz-fail": "#9d0006",
-    "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
-  },
-};
+// The palette itself is pure data and lives in theme-default.ts, which
+// imports nothing — so a Node test can read the token map without
+// compiling React, Tauri and the DOM. Re-exported here because this is
+// where the rest of the app already looks for it.
+export { BUILT_IN_DEFAULT } from "./theme-default";
+import { BUILT_IN_DEFAULT } from "./theme-default";
 
 export type ThemeVars = Record<string, string>;
 /**
@@ -583,6 +637,20 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
           may("ui") ? invoke<boolean>("has_skill_secret", { skill: name, key }) : Promise.resolve(false),
       },
       openUrl: (url: string) => (may("ui") ? openUrl(url) : Promise.resolve(refuse("ui", "open a link")() as void)),
+      personas: may("personas")
+        ? {
+            list: () => invoke<string[]>("list_personas"),
+            read: (p: string) => invoke<string>("read_persona", { name: p }),
+            update: (p: string, content: string) => invoke<void>("update_persona", { name: p, content }),
+            create: async (p: string, content: string) => {
+              await invoke<string>("write_persona", { name: p, content });
+            },
+            invite: async (p: string, role?: "bot" | "member") => (await invitePersona(client, p, role ?? "bot")).kind,
+          }
+        : undefined,
+      registerThreadView: may("ui") ? registerThreadView : (refuse("ui", "add a thread view") as never),
+      openThread: may("ui") ? openThreadAt : (refuse("ui", "navigate threads") as never),
+      watchAgent: may("read:agents") ? openWatch : (refuse("read:agents", "open the watch pane") as never),
       // The label is ignored on purpose — a panel is filed under the
       // extension's own name, so one cannot present itself as another.
       // `opts` is NOT ignored: it carries which channel source this

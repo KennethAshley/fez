@@ -808,7 +808,7 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
  * that extension: without a boundary, a card that throws takes the
  * extensions page with it and the only way out is a config file.
  */
-class ExtensionPanel extends Component<{ panel: { name: string; render: () => React.ReactNode } }, { failed?: string }> {
+export class ExtensionPanel extends Component<{ panel: { name: string; render: () => React.ReactNode } }, { failed?: string }> {
   state: { failed?: string } = {};
   static getDerivedStateFromError(err: unknown): { failed: string } {
     return { failed: err instanceof Error ? err.message : String(err) };

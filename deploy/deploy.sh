@@ -26,12 +26,25 @@ echo "── smoke test"
 node deploy/fez-relay.mjs --help >/dev/null
 echo "   bundle runs"
 
+# Relay extensions ship WITH the relay — same single-file contract, one
+# bundle per extension, nothing on the box that can drift. Each package
+# that has a relay part and is meant for this box is listed here; the
+# loader picks up every .js in the directory.
+echo "── building extensions"
+(cd packages/fez-git && npm run build >/dev/null)
+[ -s packages/fez-git/dist/relay-part.js ] || { echo "   fez-git relay part missing"; exit 1; }
+
 echo "── shipping to $TARGET"
 scp -q deploy/fez-relay.mjs "$TARGET:/opt/fez/fez-relay.mjs.new"
 scp -q deploy/fez-relay.service "$TARGET:/etc/systemd/system/fez-relay.service"
+ssh "$TARGET" 'mkdir -p /var/lib/fez/relay-extensions'
+scp -q packages/fez-git/dist/relay-part.js "$TARGET:/var/lib/fez/relay-extensions/fez-git.js"
 
 ssh "$TARGET" bash -euo pipefail <<'REMOTE'
   chown fez:fez /opt/fez/fez-relay.mjs.new
+  chown -R fez:fez /var/lib/fez/relay-extensions
+  # fez-git shells out to git for the whole smart-HTTP protocol.
+  command -v git >/dev/null || { echo "   git is not installed on the box"; exit 1; }
   # Swap in atomically, keeping the previous build for a one-command
   # rollback: mv fez-relay.mjs.prev fez-relay.mjs && systemctl restart.
   [ -f /opt/fez/fez-relay.mjs ] && cp /opt/fez/fez-relay.mjs /opt/fez/fez-relay.mjs.prev

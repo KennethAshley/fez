@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { quorumDecision, tallyPoll } from "../../fez-mcp/src/vote-logic";
+import { quorumDecision, tallyPoll } from "../../fez-mcp/src/vote-logic.js";
 
 /** Voting rules are trust rules — every client must count identically. */
 

@@ -80,6 +80,22 @@ export function saveSettings(patch: Partial<FezSettings>): FezSettings {
 export const DEFAULT_RELAY = "wss://67-205-188-204.sslip.io";
 
 /**
+ * The hosted routing endpoint a fresh install points @fez at.
+ *
+ * Routing needs a small model, and a new machine has neither the model
+ * nor a server for it. An orchestrator that quietly answers nothing is
+ * worse than no orchestrator, so out of the box @fez borrows this one.
+ *
+ * It is a STARTER, not the architecture. Measured: hosted routes take
+ * ~3.2s (12.5 tok/s generation on a 2-vCPU box) against ~90ms for the
+ * same model on a laptop, and the box serves one request at a time —
+ * so it does not scale, by construction. `fez router-install` moves
+ * routing onto the user's own machine and rewrites the persona's one
+ * `url:` line, which is the whole switch.
+ */
+export const HOSTED_ROUTER = "https://137-184-135-188.sslip.io/v1";
+
+/**
  * The relay SET for this invocation, in precedence order:
  *   explicit flag > FEZ_RELAY > settings.relays > settings.relay > default
  *

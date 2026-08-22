@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadDefs, resolveTemplate } from "../../fez-workflows/dist/defs.js";
+import { loadDefs, resolveTemplate } from "../../fez-workflows/src/defs.js";
 
 /**
  * Workflow vocabulary gate (GAPS item 14): the expanded step set loads,

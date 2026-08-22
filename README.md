@@ -1,8 +1,10 @@
-# Fez 🧢
+# fez
 
-**A decentralized coordination layer for humans and their agents — built on nostr primitives.**
+**names on a network nobody owns — and the relay remembers.**
 
-Fez is Slack-shaped on the surface (communities, channels, threads, DMs) and radically different underneath: there is no server that owns your data or your identity. A dumb nostr relay stores signed events; every client derives all state — membership, threads, unreads, moderation — from the same trust rules. Your agents (Claude Code, pi, anything with an ACP adapter) are first-class members: mention them, DM them, watch them think, cancel them mid-turn, and see what they cost.
+A coordination layer for humans and their agents, built on nostr primitives. Slack-shaped on the surface, decentralized underneath: no server owns your data or your identity.
+
+A dumb nostr relay stores signed events; every client derives all state — membership, threads, unreads, moderation — from the same trust rules. Your agents (Claude Code, pi, anything with an ACP adapter) are first-class members: mention them, DM them, watch them think, cancel them mid-turn, and see what they cost.
 
 ```bash
 fez                 # the TUI — channels, threads, DMs, agents in your terminal
@@ -32,6 +34,24 @@ Agents get the same powers: every fez agent carries `fez_*` MCP tools (send/read
 3. **Private means encrypted.** DMs (NIP-17 gift wrap, 1:1 and group), agent observer streams, turn costs, reminders, moderation reports, agent memory — all NIP-44 ciphertext on a public relay. Keys live in the macOS keychain; `fez pair` moves your identity to a second device over a SAS-verified handshake.
 4. **Features are packages.** Extensions (`fez install` / `fez link`) own the UI: communities, docs, DMs, media, moderation, notifications, herdr tabs. Persona packs install whole agent teams. Core stays a small protocol + registry surface.
 
+## Agents that ship code
+
+`@fez/git` puts repositories on your relay, and the whole loop stays in
+one place: a repo is a channel, every branch becomes a thread, each
+agent works its own branch (its key is its git credential — commits
+carry *its* name), `main` is protected at the transport, and merging is
+a button. `fez-adopt` puts an existing project — local or GitHub — on
+the relay in one command; syncing back to GitHub is one authorized push
+that keeps every agent as author. See
+[packages/fez-git](packages/fez-git/README.md).
+
+```
+/repo new myproject                    # channel now, repo on first push
+/repo branch myproject feat-x          # open a line of work
+@researcher @reviewer …                # mention agents IN the thread — each gets agent/feat-x
+/repo merge myproject reviewer/feat-x  # fast-forward, owner-gated, journaled
+```
+
 ## Repo map
 
 | Path | What |
@@ -41,11 +61,12 @@ Agents get the same powers: every fez agent carries `fez_*` MCP tools (send/read
 | `packages/fez-relay` | The relay: NIP-01 + NIP-50 search + policy hooks (ingest **and** delivery) |
 | `packages/fez-acp` | Standing agent runtime: persistent sessions, steer/queue/batch, retries, breaker, turn metrics |
 | `packages/fez-communities` · `fez-docs` · `fez-dms` · `fez-media` · `fez-moderation` · `fez-notifications` · `fez-herdr` | Installable view extensions |
+| `packages/fez-git` | Git hosting on the relay: repo = channel, branch = thread, agents push as themselves ([README](packages/fez-git/README.md)) |
 | `packages/fez-mcp` | The `fez_*` MCP tools every agent session gets |
 | `packages/fez-sentinel` | Always-on watcher: DM/mention summons, notifications, schedules/reminders |
 | `packages/fez-workflows` | Deterministic automations: triggers, approval gates (restart-durable), webhooks |
 | `packages/fez-orchestrator` | `@fez` routing agent on a local router model |
-| `packages/fez-evals` | The test gate — 159 tests: trust boundary, relay wire, crypto, reconnect E2E |
+| `packages/fez-evals` | The test gate — 700+ tests: trust boundary, relay wire, crypto, git end-to-end (real `git` binary), cold-start composition, API-mirror conformance |
 
 ## Start here
 

@@ -50,11 +50,15 @@ export const KIND_OBSERVER_CONTROL = 20005;
 /**
  * Report — standard NIP-56 kind 1984, fez-shaped for a PUBLIC relay:
  * the content ({targetPk, reason, aboutEventId?}) is NIP-44-encrypted
- * to the community CREATOR — an accusation is private data between the
+ * to the workspace OWNER — an accusation is private data between the
  * reporter and the moderator (Buzz keeps its report queue server-side
- * private for the same reason). Tags ["c", communityId],
- * ["p", creatorPk] so creators can subscribe; observers learn only
- * "someone reported something in this community".
+ * private for the same reason). Tags ["h", channelId], ["p", ownerPk]
+ * so owners can subscribe; observers learn only "someone reported
+ * something in this channel".
+ *
+ * Reports written before the workspace went flat carry ["c", communityId]
+ * instead; readers should accept either so an existing queue keeps
+ * rendering.
  */
 export const KIND_REPORT = 1984;
 

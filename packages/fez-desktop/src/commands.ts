@@ -1,4 +1,5 @@
 import { guiCommand } from "./gui-extensions";
+import { invitePersona } from "./invite-persona";
 import type { FezClient } from "@fez/client";
 import type { BrowserWire } from "./wire";
 
@@ -136,10 +137,19 @@ export async function runCommand(text: string, ctx: CommandCtx): Promise<string>
       }
       case "invite": {
         const pk = resolvePk(client, rest[0] ?? "");
-        if (!pk) return `nobody named "${rest[0] ?? ""}"`;
-        const role = rest[1] === "bot" ? "bot" : "member";
-        const name = await client.invite(pk, role as never);
-        return `✓ invited ${name} as ${role}`;
+        if (pk) {
+          const role = rest[1] === "bot" ? "bot" : "member";
+          const name = await client.invite(pk, role as never);
+          return `✓ invited ${name} as ${role}`;
+        }
+        // Unknown to the WORKSPACE — but maybe not to this machine:
+        // local personas have stable keys, so inviting one before its
+        // first summon is a real operation. Shared with the agents
+        // pane's invite button (invite-persona.ts).
+        const outcome = await invitePersona(client, rest[0] ?? "", rest[1] === "member" ? "member" : "bot");
+        if (outcome.kind === "invited") return `✓ invited @${outcome.persona} (local persona) as ${outcome.role} — mention @${outcome.persona} to wake it`;
+        if (outcome.kind === "no-key") return `@${outcome.persona} is a local persona that has never run — mention @${outcome.persona} in a channel to spawn it (the sentinel invites it automatically)`;
+        return `nobody named "${rest[0] ?? ""}"`;
       }
       case "kick": {
         const pk = resolvePk(client, rest[0] ?? "");
