@@ -48,8 +48,9 @@ function camel(base: string): string {
 function permissionsFor(surfaces: Surface[]): string[] {
   const set = new Set<string>();
   if (surfaces.includes("gui")) {
-    set.add("ui");
-    set.add("read:channels");
+    set.add("ui"); // settings panel, decorators, page views…
+    set.add("commands"); // registerGuiCommand — the host gates it separately from ui
+    set.add("read:channels"); // the host withholds `client` entirely without it
   }
   if (surfaces.includes("headless")) {
     set.add("read:channels");
