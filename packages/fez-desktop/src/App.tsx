@@ -26,6 +26,7 @@ import { viewerFor } from "./artifact-viewers";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
 import { loadKeymap, matchAction, nextUnreadChannel, DEFAULT_KEYMAP, type ActionId } from "./keymap";
 import { Toaster } from "./Toaster";
+import { InstallOffer, installOffers } from "./InstallOffer";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
@@ -2319,6 +2320,9 @@ function Bubble({
       )}
       {msg.content.startsWith("❓ choose:") && (
         <ChoiceCard client={client} msg={msg} channelId={channelId} />
+      )}
+      {installOffers(msg.content).length > 0 && (
+        <InstallOffer content={msg.content} authorName={msg.authorName} client={client} />
       )}
       {messageDecorators()
         .filter((d) => d.match(msg.content))
