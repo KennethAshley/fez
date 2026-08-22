@@ -26,5 +26,8 @@
     "@types/js-yaml": "^4.0.9",
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

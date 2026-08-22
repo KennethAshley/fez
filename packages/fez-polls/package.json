@@ -29,12 +29,15 @@
   },
   "devDependencies": {
     "esbuild": "^0.21.5",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "@fez/protocol": "file:../.."
   },
   "dependencies": {
-    "@fez/protocol": "file:../..",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "nostr-tools": "^2.14.0",
     "zod": "^3.23.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

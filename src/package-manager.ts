@@ -229,7 +229,16 @@ export class PackageManager {
       return shorthandMap[source];
     }
 
-    // Default to npm if no prefix
+    // An already-scoped name (@fez/git, @acme/thing) is a plain npm
+    // package — DON'T re-scope it. `fez install @fez/kanban` was
+    // becoming npm:@fez/@fez/kanban and 404ing; both the bare shorthand
+    // (`kanban`) and the full scoped name must resolve to the same
+    // package.
+    if (source.startsWith("@")) {
+      return `npm:${source}`;
+    }
+
+    // A bare name is fez-shorthand for the @fez scope.
     return `npm:@fez/${source}`;
   }
 
