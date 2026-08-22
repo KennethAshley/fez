@@ -1662,6 +1662,35 @@ program
   });
 
 program
+  .command("create <name>")
+  .description("Scaffold a new fez extension package (headless + gui by default), typed against @fez/extension-api")
+  .option("--headless", "Include a headless part (slash commands, scheduled tasks — TUI + sentinel)")
+  .option("--gui", "Include a gui part (settings panel, composer command — desktop)")
+  .option("--relay", "Include a relay part (HTTP + NIP-11, loaded by a --extensions relay)")
+  .option("--workspace", "Include a workspace provider (gives a repo: persona a checkout)")
+  .option("-d, --dir <path>", "Output directory (default ./<name>)")
+  .action(async (name: string, options) => {
+    const { scaffold, baseName } = await import("./scaffold.js");
+    const picked = (["headless", "gui", "relay", "workspace"] as const).filter((s) => options[s]);
+    const surfaces = picked.length ? picked : (["headless", "gui"] as const);
+    const dir = options.dir ?? path.join(process.cwd(), baseName(name));
+    try {
+      const result = scaffold({ name, dir, surfaces: [...surfaces], apiVersion: "^0.1.0" });
+      console.log(chalk.green(`✅ ${result.pkgName} — ${result.surfaces.join(" + ")}`));
+      console.log(chalk.dim(`   ${path.relative(process.cwd(), result.dir) || "."}/`));
+      for (const f of result.files) console.log(chalk.dim(`     ${f}`));
+      console.log();
+      console.log(chalk.bold("Next:"));
+      console.log(`  cd ${path.relative(process.cwd(), result.dir) || "."}`);
+      console.log(`  npm install && npm run build`);
+      console.log(`  fez link .            ${chalk.dim("# build, copy parts into ~/.fez, smoke-import")}`);
+    } catch (err) {
+      console.error(chalk.red(`❌ ${err instanceof Error ? err.message : String(err)}`));
+      process.exit(1);
+    }
+  });
+
+program
   .command("link <dir>")
   .description("Dev-install a local extension package: build, copy its entry to ~/.fez/extensions, smoke-import the result")
   .option("--no-build", "Skip the package's npm build script")

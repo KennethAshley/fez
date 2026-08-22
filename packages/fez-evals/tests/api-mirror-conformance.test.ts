@@ -191,3 +191,67 @@ describe("extension api mirrors", () => {
     }
   }, 120_000);
 });
+
+/**
+ * @fez/extension-api — the PUBLISHED contract, held to the real hosts.
+ *
+ * The mirror families above keep each extension's private copy honest.
+ * This keeps the PUBLIC package honest: a third party builds against
+ * @fez/extension-api, so if it ever promises a member a real host does
+ * not provide, that stranger's extension breaks at runtime with nothing
+ * to warn them. So we assign each REAL host API to the package's type —
+ * same direction as a mirror probe: the package may describe only a
+ * slice, never more than the host offers.
+ */
+describe("@fez/extension-api is a faithful subset of the real hosts", () => {
+  const PKG = path.join(REPO, "packages/fez-extension-api/src");
+  const SURFACES = [
+    { name: "FezExtensionAPI", real: REAL_API, pkgFile: "headless.ts", resolution: ["--module", "NodeNext", "--moduleResolution", "NodeNext"] },
+    { name: "RelayExtensionAPI", real: path.join(REPO, "packages/fez-relay/src/extensions.ts"), pkgFile: "relay.ts", resolution: ["--module", "NodeNext", "--moduleResolution", "NodeNext"] },
+    { name: "WorkspaceRequest", real: path.join(REPO, "packages/fez-acp/src/workspaces.ts"), pkgFile: "workspace.ts", resolution: ["--module", "NodeNext", "--moduleResolution", "NodeNext"] },
+    { name: "GuiExtensionApi", real: REAL_GUI_API, pkgFile: "gui.ts", resolution: ["--module", "ESNext", "--moduleResolution", "bundler", "--jsx", "react-jsx"] },
+  ];
+
+  it("every published surface accepts its real host API", () => {
+    fs.rmSync(WORK, { recursive: true, force: true });
+    fs.mkdirSync(WORK, { recursive: true });
+    const rel = (dir: string, target: string) => {
+      const r = path.relative(dir, target).replace(/\.ts$/, ".js");
+      return r.startsWith(".") ? r : `./${r}`;
+    };
+    let output = "";
+    try {
+      for (const s of SURFACES) {
+        const probe = path.join(WORK, `pkg-${s.pkgFile}.ts`);
+        fs.writeFileSync(
+          probe,
+          [
+            `import type { ${s.name} as Real } from "${rel(WORK, s.real)}";`,
+            `import type { ${s.name} as Pub } from "${rel(WORK, path.join(PKG, s.pkgFile))}";`,
+            `export const check: (real: Real) => Pub = (real) => real;`,
+            ``,
+          ].join("\n")
+        );
+        try {
+          execFileSync(
+            path.join(REPO, "node_modules/.bin/tsc"),
+            ["--noEmit", "--strict", "--target", "ES2022", ...s.resolution, "--skipLibCheck", probe],
+            { cwd: REPO, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }
+          );
+        } catch (err) {
+          const e = err as { stdout?: string; stderr?: string };
+          output += `\n[${s.name}]\n${e.stdout ?? ""}${e.stderr ?? ""}`;
+        }
+      }
+      if (output.trim()) {
+        expect.fail(
+          `@fez/extension-api no longer matches the real host(s):\n${output}\n\n` +
+            `Fix packages/fez-extension-api/src/<surface>.ts to describe only what the host offers — ` +
+            `the published contract must never promise a member a host lacks.`
+        );
+      }
+    } finally {
+      fs.rmSync(WORK, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
