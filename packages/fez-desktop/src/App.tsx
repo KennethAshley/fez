@@ -79,7 +79,8 @@ type MainView =
   | { kind: "home" }
   | { kind: "pulse" }
   | { kind: "wiki" }
-  | { kind: "extensions" };
+  | { kind: "extensions" }
+  | { kind: "skills" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
@@ -800,6 +801,7 @@ function Shell({
                     ["$", "costs", () => setPane({ kind: "costs" })],
                     ["◷", "reminders", () => setPane({ kind: "reminders" })],
                     ["⊞", "extensions", () => setView({ kind: "extensions" })],
+                    ["🔧", "skills", () => setView({ kind: "skills" })],
                   ] as [string, string, () => void, string?][]
                 ).map(([glyph, label, action, key]) => (
                   <button
@@ -894,7 +896,8 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
-      {view.kind === "extensions" && <SkillsView client={client} wire={wire} />}
+      {view.kind === "extensions" && <SkillsView only="extensions" client={client} wire={wire} />}
+      {view.kind === "skills" && <SkillsView only="skills" client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
