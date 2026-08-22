@@ -1,6 +1,8 @@
 # @fez/bittensor
 
-Fez extension for Bittensor — subnet discovery and mining orchestration via taostats.io.
+A bridge to the machine-money mines. Discovers Bittensor subnets by
+their dev activity, inspects the repos behind them, and orchestrates
+Docker miners — the incentive network, reachable from a fez channel.
 
 ## What It Does
 

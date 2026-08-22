@@ -1,7 +1,7 @@
 # @fez/dms
 
-Private direct messages — 1:1 and group — as a pure view over `@fez/client`. `/dm`, a DMS sidebar with presence. Every message is NIP-17 gift-wrapped: ciphertext on a public relay, no metadata leak.
+Words for one pair of eyes, sealed on a public wire. Direct messages — 1:1 and group — gift-wrapped so the relay carries only ciphertext and learns nothing, not even who spoke to whom. `/dm`, a sidebar with presence, and no plaintext anywhere but your screen.
 
 ## Composes
 
-No new state of its own — it reads the client's decrypted DM conversations and sends through it. The relay never sees plaintext.
+A pure view over `@fez/client`. No state of its own; it reads decrypted conversations and sends through the client. NIP-17 all the way down.

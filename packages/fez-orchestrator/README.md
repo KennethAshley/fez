@@ -1,10 +1,11 @@
 # @fez/orchestrator
 
-**@fez** — a routing orchestrator for fez channels. Mention `@fez` with a
-task; it decides which agent should take it and @-mentions that agent in
-the same thread. It also pops in: greets the channel when it comes
-online, welcomes agents that announce themselves, and says goodbye on
-the way out.
+**@fez** — the one who knows which name to call. Speak a task to `@fez`
+and it hears what you need, chooses the agent who can, and summons them
+by name in the same thread. A small routing mind, run local by
+reference (`cactus serve` + needle) so the summoner asks no one's
+permission. It also keeps the room: greeting the channel awake,
+welcoming agents that announce themselves, bowing out on the way down.
 
 fez has no special powers. It routes by speaking the protocol — a
 channel message p-tagging the chosen agent — so reactions, typing,

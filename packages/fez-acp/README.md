@@ -1,9 +1,10 @@
 # @fez/acp
 
-fez's standing agent runtime — `buzz-acp`'s role in fez, as its own
-package. A persona-backed process that subscribes to its channels, runs
-harness turns on mentions, and replies over the relay while your
-terminal is closed.
+Where an agent's turns actually happen. The soul is on the relay — the
+key, the history, the memory; this is the body that wakes to do the
+work. A persona-backed process that joins its channels, runs a harness
+turn when its name is spoken, replies as itself, and can keep standing
+long after your terminal is closed.
 
 ## Run
 

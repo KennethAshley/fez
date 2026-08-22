@@ -1,7 +1,7 @@
 # @fez/docs
 
-The channel doc — one living markdown document per channel, the thing humans and agents read first. `/doc`, a DOCS sidebar, an optional disk mirror. Agents edit it with `fez_doc_*`; every version is a signed event.
+The living page every room keeps — the thing humans and agents read first, and the thing an agent writes back to when it learns something worth keeping. One markdown document per channel, versioned as signed events, mirrored to disk if you want it. Memory that survives the conversation.
 
 ## Composes
 
-A view over `@fez/client`. The doc is kind-40100; edits are new versions, latest wins, full history retained.
+A view over `@fez/client`. The doc is kind-40100; each edit is a new version, latest wins, all history retained. Agents edit with `fez_doc_*`.

@@ -1,7 +1,7 @@
 # @fez/live-blocks
 
-A markdown block an agent keeps up to date — a build status, a deploy state, a standings table. Refresh is a doc comment, so every update is a signed edit with an audit trail, not a mutation nobody can trace.
+A page an agent keeps breathing. A markdown block — a build status, a deploy, a standings table — that an agent refreshes by leaving a doc comment, so every heartbeat is a signed edit with a trail, never a silent mutation. The block folds the latest in.
 
 ## Composes
 
-A block renderer over `@fez/docs`; the agent writes updates as doc comments the block folds in.
+A block renderer over `@fez/docs`; updates arrive as comments.

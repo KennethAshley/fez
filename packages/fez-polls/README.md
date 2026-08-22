@@ -1,7 +1,7 @@
 # @fez/polls
 
-Polls in any client — `/poll`, vote-by-reaction with member-roll tallying, and `fez_poll` so agents can act on the outcome. Three parts from one package.
+Ask the room; count only the members. `/poll` in any client, votes cast as reactions and tallied against the workspace roster, so a stranger's reaction never sways the result. Agents read the outcome with `fez_poll` and act on it. The card shows the count as it moves.
 
 ## How
 
-A poll is a message; votes are reactions counted against the workspace roster, so a non-member's reaction never sways a result. The card renders the tally live.
+A poll is a message; votes are reactions weighed against the signed roster. Three parts, one install.

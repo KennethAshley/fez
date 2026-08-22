@@ -1,39 +1,20 @@
 # @fez/sentinel
 
-The always-on half of fez. A standing service — no TUI, no window — that
-watches the relay and keeps the fleet alive: it wakes sleeping agents on
-DMs and mentions, delivers desktop notifications, and runs scheduled
-tasks. Buzz's shape: the smart inner program is this service, and the
-babysitter is whatever the operator has (launchd, herdr, a shell).
+The watcher that never sleeps. It keeps the fleet alive while you are gone — waking agents you are not there to summon, carrying word of a DM or a mention, running the rites that fire on a schedule, and speaking for the dead when a spawn fails silently. The smart inner service; the babysitter is whatever the operator has.
 
 ## What it watches
 
-- **DM summons** — a gift-wrapped DM to a local persona wakes it
-- **Mention summons** — `@name` from the owner or an attested sibling
-  spawns the persona into the channel; for a repo channel it hands the
-  agent its repo and (inside a `⑂` thread) its line, then invites its
-  key before the process starts so the first roster-gated clone succeeds
-- **Notifications** — DMs, mentions of the owner, failed agent turns
-- **Schedules and reminders**, and any extension that opted into
-  `background` (the branch-thread task, live blocks)
+A gift-wrapped DM or an `@name` from the owner (or an attested sibling) wakes a persona into a channel. For a repo channel it hands the agent its repo, and inside a `⑂` thread its line, then rosters its key *before* the process starts so the first clone is not turned away. It also carries notifications, schedules, reminders, and any extension that asked for `background` life.
 
 ## Run
 
 ```bash
 fez sentinel                 # foreground
-fez sentinel-install         # as a launchd agent (macOS) — starts at login
+fez sentinel-install         # a launchd agent (macOS), alive at login
 ```
 
-The relay comes from your settings, not a baked-in pin; change it once
-and the sentinel follows on restart. It signs invites and attestations
-as you, so summoning introduces an agent to the workspace on your
-authority.
+The relay comes from your settings, not a baked-in pin. It signs invites and attestations as you — summoning introduces an agent on your authority.
 
-## Safety
+## Safeguards
 
-Summons authority is the owner and attested siblings only, chains are
-depth-capped, and any string that reaches a spawned agent's shell (the
-repo and line it is put on) is validated, not escaped — refused if it
-is not plainly a name. A spawn that dies before its first turn reports
-the reason into the channel it was summoned from, rather than dying
-silent in a tab.
+Summons authority is the owner and attested siblings only; chains are depth-capped; any name that reaches a spawned agent's shell is validated, not escaped — refused if it is not plainly a name. A spawn that dies before its first turn reports why into the channel, rather than dying quiet in a tab.
