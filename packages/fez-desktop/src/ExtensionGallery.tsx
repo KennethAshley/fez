@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { reloadGuiExtensions } from "./gui-extensions";
 import { CATALOG, PERM_LABEL, SENSITIVE, norm, githubUrl, npmUrl, type CatalogEntry } from "./extensions-catalog";
+import { useConfig } from "./config-store";
 
 /**
  * The install gallery — discover the official fez extensions and install
@@ -51,29 +52,24 @@ export function ExtensionGallery({
       live = false;
     };
   }, [detail]);
-  // Recorded installed versions (keyed by base name) and npm's latest.
-  const [installedVer, setInstalledVer] = useState<Record<string, string>>({});
+  // Recorded installed versions come from the config store (reactive);
+  // npm's latest is a network fetch, kept local.
+  const installedVer = useConfig().versions;
   const [latest, setLatest] = useState<Record<string, string>>({});
 
   const isInstalled = (entry: GalleryEntry) => [...installed].some((i) => norm(i) === norm(entry.name));
 
-  // On open / when the installed set changes: read recorded versions, then
-  // ask npm for latest on the ones we installed (a fez link-era install has
-  // no recorded version, so it's skipped — no update badge, no false alarm).
+  // When the installed set / recorded versions change, ask npm for latest on
+  // the ones we installed (a fez link-era install has no recorded version, so
+  // it's skipped — no update badge, no false alarm).
   useEffect(() => {
     let live = true;
     void (async () => {
-      let iv: Record<string, string> = {};
-      try {
-        iv = JSON.parse(await invoke<string>("read_extension_versions"));
-      } catch { /* none recorded */ }
-      if (!live) return;
-      setInstalledVer(iv);
       const lv: Record<string, string> = {};
       await Promise.all(
         GALLERY.filter(isInstalled).map(async (e) => {
           const key = norm(e.name);
-          if (!iv[key]) return;
+          if (!installedVer[key]) return;
           try {
             lv[key] = await invoke<string>("latest_version", { name: e.name });
           } catch { /* offline / cache */ }
@@ -85,21 +81,15 @@ export function ExtensionGallery({
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [installed]);
-
-  const refreshVersions = async () => {
-    try {
-      setInstalledVer(JSON.parse(await invoke<string>("read_extension_versions")));
-    } catch { /* ignore */ }
-  };
+  }, [installed, installedVer]);
 
   // Rewind extension registrations to core, load the current set fresh, and
-  // tell the app to re-render — so install/uninstall/update take effect live.
+  // tell the app + config store to re-read — so install/uninstall/update take
+  // effect live (the store listens for fez-extensions-changed).
   const applyLive = async () => {
     await reloadGuiExtensions(client).catch(() => {});
     window.dispatchEvent(new CustomEvent("fez-extensions-changed"));
     onInstalled();
-    await refreshVersions();
   };
 
   const uninstall = async (entry: GalleryEntry) => {

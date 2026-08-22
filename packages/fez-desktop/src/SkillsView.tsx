@@ -9,6 +9,7 @@ import { EnvKeyStatus } from "./SkillSecrets";
 import FindSource from "./FindSource";
 import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
+import { useConfig, bumpConfig } from "./config-store";
 import { extensionSettingsPanels } from "./gui-extensions";
 
 /**
@@ -128,7 +129,9 @@ export default function SkillsView({
   // Extensions open on browse — discovery first; skills open on what you have.
   const [tab, setTab] = useState<"installed" | "browse">(only === "extensions" ? "browse" : "installed");
   const [filter, setFilter] = useState<"all" | "agents" | "skills" | "packs">("all");
-  const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
+  // Skills (mcpServers) and installed parts come from the one config store —
+  // reactive to installs/removes without a local fetch to keep in sync.
+  const { skills: installed, localParts } = useConfig() as { skills: Record<string, SkillConfig>; localParts: Record<string, string[]> };
   const [listings, setListings] = useState<Listing[]>();
   const [installing, setInstalling] = useState<InstallTarget>();
   const [finding, setFinding] = useState<{ agent: string; skill: string }>();
@@ -136,7 +139,6 @@ export default function SkillsView({
   const [installs, setInstalls] = useState<Map<string, number>>(new Map());
   const [copied, setCopied] = useState<string>();
   const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[]; sources: Record<string, string> }[]>([]);
-  const [localParts, setLocalParts] = useState<Record<string, string[]>>({});
 
   /**
    * One row per thing on this machine, whatever kind it is. An
@@ -195,14 +197,9 @@ export default function SkillsView({
   );
 
 
-  const reload = useCallback(() => {
-    void invoke<string>("read_skills")
-      .then((json) => setInstalled(JSON.parse(json) as Record<string, SkillConfig>))
-      .catch(() => setInstalled({}));
-    void invoke<[string, string[]][]>("list_local_extensions")
-      .then((rows) => setLocalParts(Object.fromEntries(rows)))
-      .catch(() => setLocalParts({}));
-  }, []);
+  // A write elsewhere (remove_skill, write_skill) or an install → re-read the
+  // store. Anything reading via useConfig() updates from the one signal.
+  const reload = useCallback(() => bumpConfig(), []);
 
   useEffect(() => {
     reload();
