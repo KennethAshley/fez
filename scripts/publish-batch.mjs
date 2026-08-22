@@ -60,7 +60,9 @@ function stripPrivate(dir) {
 }
 
 function publishDir(dir, label) {
-  const args = ["publish", "--access", "public"];
+  // dist/ is already fresh from `npm run build`; --ignore-scripts skips the
+  // per-package prepublishOnly rebuild (protocol's is a full build-all).
+  const args = ["publish", "--access", "public", "--ignore-scripts"];
   if (DRY) args.push("--dry-run");
   try {
     const out = run("npm", args, dir);
@@ -69,7 +71,11 @@ function publishDir(dir, label) {
     console.log(`  ✓ ${DRY ? "[dry] " : ""}${name}@${ver}`);
     return true;
   } catch (err) {
-    console.error(`  ✗ ${label} FAILED:\n${(err.stdout ?? "") + (err.stderr ?? "")}`.split("\n").slice(0, 12).join("\n"));
+    const out = (err.stdout ?? "") + "\n" + (err.stderr ?? "");
+    // Show the actual error, not the tarball notices that precede it.
+    const errLines = out.split("\n").filter((l) => /npm error|npm ERR|forbidden|denied|EOTP|E4\d\d|EPUBLISH|cannot/i.test(l));
+    const shown = (errLines.length ? errLines : out.split("\n").filter(Boolean).slice(-6)).slice(0, 8);
+    console.error(`  ✗ ${label} FAILED:\n    ${shown.join("\n    ")}`);
     return false;
   }
 }
