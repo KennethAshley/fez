@@ -403,6 +403,44 @@ fn install_package(name: String) -> Result<String, String> {
     Ok(format!("installed {name}@{latest}: {}", installed.join(", ")))
 }
 
+/// Uninstall an extension: delete its part files from every ~/.fez dir and
+/// drop it from settings.json. `name` is the de-scoped base (git, kanban) —
+/// tolerate a `fez-` prefix so a `fez link`-era file (fez-git.js) also goes.
+#[tauri::command]
+fn remove_extension(name: String) -> Result<String, String> {
+    if name.is_empty() || name.len() > 128 || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')) {
+        return Err("not a valid extension name".to_string());
+    }
+    let home = fez_home()?;
+    let candidates = [name.clone(), format!("fez-{name}"), name.trim_start_matches("fez-").to_string()];
+    let mut removed: Vec<String> = Vec::new();
+    for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers"] {
+        for cand in &candidates {
+            let file = home.join(dir).join(format!("{cand}.js"));
+            if file.exists() && std::fs::remove_file(&file).is_ok() {
+                removed.push(format!("{dir}/{cand}.js"));
+            }
+        }
+    }
+    // Drop the recorded permission grant + background opt-in.
+    update_settings(|json| {
+        if let Some(obj) = json.as_object_mut() {
+            for cand in [name.as_str(), name.trim_start_matches("fez-")] {
+                if let Some(perms) = obj.get_mut("extensionPermissions").and_then(|v| v.as_object_mut()) {
+                    perms.remove(cand);
+                }
+                if let Some(bg) = obj.get_mut("backgroundExtensions").and_then(|v| v.as_array_mut()) {
+                    bg.retain(|v| v.as_str() != Some(cand));
+                }
+            }
+        }
+    })?;
+    if removed.is_empty() {
+        return Err(format!("nothing installed named \"{name}\""));
+    }
+    Ok(format!("removed {}", removed.join(", ")))
+}
+
 #[tauri::command]
 fn read_keymap() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
@@ -670,7 +708,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

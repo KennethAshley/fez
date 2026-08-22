@@ -21,18 +21,23 @@ interface GalleryEntry {
   name: string;
   title: string;
   blurb: string;
+  /** Where the extension shows up once installed — so "nothing happened" isn't a mystery. */
+  where: string;
   permissions: string[];
 }
 
 // Accurate permissions, read from each package's fez.permissions.
 const GALLERY: GalleryEntry[] = [
-  { name: "@fezchat/git", title: "Git", blurb: "Host repositories on the relay — a repo is a channel, agents push as themselves, and merge is a button.", permissions: ["ui", "commands", "read:channels", "publish", "background", "personas", "network:relay"] },
-  { name: "@fezchat/kanban", title: "Kanban", blurb: "Boards on your docs — columns are headings, cards are checkboxes; agents move their own cards.", permissions: ["ui", "read:channels", "publish"] },
-  { name: "@fezchat/polls", title: "Polls", blurb: "/poll in any channel, vote by reaction, tally in real time.", permissions: ["ui", "commands", "read:channels", "publish"] },
-  { name: "@fezchat/github", title: "GitHub", blurb: "A window onto a GitHub repo — a pull request becomes a thread you can talk in.", permissions: ["ui", "commands", "read:channels", "publish", "background"] },
-  { name: "@fezchat/obsidian", title: "Obsidian", blurb: "/obsidian exports a channel's docs to your Obsidian vault.", permissions: ["ui", "commands", "read:channels"] },
-  { name: "@fezchat/live-blocks", title: "Live Blocks", blurb: "A markdown block an agent keeps breathing — live data that updates itself inside a doc.", permissions: ["ui", "commands", "read:channels", "publish", "background"] },
+  { name: "@fezchat/git", title: "Git", blurb: "Host repositories on the relay — a repo is a channel, agents push as themselves, and merge is a button.", where: "Adds a Repos panel in Settings, and a board on repo threads.", permissions: ["ui", "commands", "read:channels", "publish", "background", "personas", "network:relay"] },
+  { name: "@fezchat/kanban", title: "Kanban", blurb: "Boards on your docs — columns are headings, cards are checkboxes; agents move their own cards.", where: "Opens on any doc that's a board — use the ▦ board toggle in a doc.", permissions: ["ui", "read:channels", "publish"] },
+  { name: "@fezchat/polls", title: "Polls", blurb: "Vote by reaction, tally in real time.", where: "Adds /poll to the composer; poll cards render under the message.", permissions: ["ui", "commands", "read:channels", "publish"] },
+  { name: "@fezchat/github", title: "GitHub", blurb: "A window onto a GitHub repo — a pull request becomes a thread you can talk in.", where: "Adds /github and a GitHub settings panel.", permissions: ["ui", "commands", "read:channels", "publish", "background"] },
+  { name: "@fezchat/obsidian", title: "Obsidian", blurb: "Export a channel's docs to your Obsidian vault.", where: "Adds /obsidian to the composer.", permissions: ["ui", "commands", "read:channels"] },
+  { name: "@fezchat/live-blocks", title: "Live Blocks", blurb: "A markdown block an agent keeps breathing — live data that updates itself inside a doc.", where: "Renders live blocks inside docs.", permissions: ["ui", "commands", "read:channels", "publish", "background"] },
 ];
+
+/** De-scope and drop a `fez-` prefix so @fezchat/git, git, and fez-git all match. */
+const norm = (n: string) => n.replace(/^@fezchat\//, "").replace(/^fez-/, "");
 
 const PERM_LABEL: Record<string, string> = {
   ui: "add panels & views",
@@ -61,8 +66,19 @@ export function ExtensionGallery({
   const [confirming, setConfirming] = useState<GalleryEntry>();
   const [installing, setInstalling] = useState<string>();
 
-  const isInstalled = (entry: GalleryEntry) =>
-    installed.has(entry.name) || installed.has(entry.name.replace(/^@fezchat\//, ""));
+  const isInstalled = (entry: GalleryEntry) => [...installed].some((i) => norm(i) === norm(entry.name));
+
+  const uninstall = async (entry: GalleryEntry) => {
+    try {
+      await invoke<string>("remove_extension", { name: norm(entry.name) });
+      onInstalled();
+      // A gui part already registered stays until relaunch — the registries
+      // have no unload path — so the files are gone but the panel lingers.
+      onNotice(`✓ ${entry.title} removed — relaunch to fully unload it`);
+    } catch (err) {
+      onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   const run = async (entry: GalleryEntry) => {
     setConfirming(undefined);
@@ -72,7 +88,7 @@ export function ExtensionGallery({
       // A gui part appears live; headless/relay parts need a restart.
       await loadGuiExtensions(client).catch(() => {});
       onInstalled();
-      onNotice(`✓ ${entry.title} installed — a panel appears now; a background part needs a sentinel restart`);
+      onNotice(`✓ ${entry.title} installed — ${entry.where}`);
     } catch (err) {
       onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -83,8 +99,8 @@ export function ExtensionGallery({
   return (
     <div className="ext-gallery">
       <div className="settings-hint">
-        Official fez extensions. Installing runs <code>fez install</code> on your machine and grants the permissions
-        shown. Anything not listed: <code>fez install &lt;name&gt;</code> in a terminal.
+        Official fez extensions. Installing fetches the package from npm and grants the permissions shown — no
+        terminal needed. Anything not listed: <code>fez install &lt;name&gt;</code> in a terminal.
       </div>
       {GALLERY.map((entry) => {
         const done = isInstalled(entry);
@@ -97,14 +113,18 @@ export function ExtensionGallery({
                 <code className="gallery-name">{entry.name}</code>
               </div>
               <div className="gallery-blurb">{entry.blurb}</div>
+              <div className="gallery-where">{done ? "✓ installed · " : ""}{entry.where}</div>
             </div>
-            <button
-              className={done ? "gallery-install installed" : "gallery-install"}
-              disabled={done || busy}
-              onClick={() => setConfirming(entry)}
-            >
-              {done ? "installed" : busy ? "installing…" : "install"}
-            </button>
+            {done ? (
+              <div className="gallery-actions">
+                <span className="gallery-install installed">installed</span>
+                <button className="gallery-uninstall" onClick={() => void uninstall(entry)}>uninstall</button>
+              </div>
+            ) : (
+              <button className="gallery-install" disabled={busy} onClick={() => setConfirming(entry)}>
+                {busy ? "installing…" : "install"}
+              </button>
+            )}
           </div>
         );
       })}
