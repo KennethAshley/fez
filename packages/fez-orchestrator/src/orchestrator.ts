@@ -24,6 +24,11 @@ import {
   type RouterProfile,
 } from "./route-logic.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
+import { getPublicKey } from "nostr-tools/pure";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { GUIDE_PERSONA, GUIDE_PERSONA_NAME } from "./guide-persona.js";
 
 /**
  * @fez — the orchestrator. A standing agent (run via `fez run`, same
@@ -99,6 +104,30 @@ async function main() {
     .map((s) => s.trim())
     .filter(Boolean);
   const respondTo = process.env.FEZ_AGENT_RESPOND_TO || persona?.extra.respondTo || "owner";
+
+  // The concierge's fallback: when no specialist fits, @fez brings in a
+  // GUIDE — a real agent grounded in fez itself. Resolved from its
+  // STABLE key (agent:<name>) so it is routable even if it has never
+  // run, but only when its persona file actually exists — routing to a
+  // guide with no persona would leave a mention no one can answer.
+  const fallbackGuideName = (process.env.FEZ_FALLBACK_GUIDE || (persona?.extra.fallback as string | undefined) || GUIDE_PERSONA_NAME).toLowerCase();
+  const guidePersonaPath = path.join(os.homedir(), ".fez", "personas", `${fallbackGuideName}.md`);
+  // Ship the concierge with the orchestrator: if the default guide has
+  // no persona yet, seed the bundled one. Write-if-missing — a guide you
+  // have edited (or a custom fallback: name you point at) is never
+  // touched. This is what makes `fez install @fez/orchestrator` enough
+  // to get a helper about fez, with no extra setup.
+  if (fallbackGuideName === GUIDE_PERSONA_NAME && !existsSync(guidePersonaPath)) {
+    try {
+      mkdirSync(path.dirname(guidePersonaPath), { recursive: true });
+      writeFileSync(guidePersonaPath, GUIDE_PERSONA);
+      console.log(`🧭 seeded the bundled guide → ${guidePersonaPath}`);
+    } catch { /* seeding is a convenience; absence just means the shrug fallback */ }
+  }
+  const fallbackGuidePk = existsSync(guidePersonaPath)
+    ? getPublicKey(Uint8Array.from((loadServiceKey(fallbackGuideName).match(/../g) ?? []).map((b) => parseInt(b, 16))))
+    : undefined;
+  if (fallbackGuidePk) console.log(`🧭 fallback guide: @${fallbackGuideName} — answers when no specialist fits`);
   const owner = process.env.FEZ_AGENT_OWNER || persona?.extra.owner;
 
   if (channelSpecs.length === 0) {
@@ -151,7 +180,9 @@ async function main() {
   const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
+  const watchAll = channelSpecs.some((s) => s === "*" || s.toLowerCase() === "all");
   const channels = await resolveChannels(relay, channelSpecs, relayUrls.join(", "));
+  if (watchAll) console.log("🌐 @fez watching EVERY channel — reachable in any room, silent until called");
 
   const allowlist = respondTo.startsWith("allowlist:")
     ? new Set(respondTo.slice("allowlist:".length).split(",").map((s) => s.trim()))
@@ -373,11 +404,16 @@ async function main() {
         `🎩 @${name} online. Toss me anything and I'll find who should take it.`,
         `👋 popping in — need something done but not sure who does it? Just @${name} it.`,
       ];
-  for (const channelId of channels) {
-    await say(channelId, GREETINGS[Math.floor(Math.random() * GREETINGS.length)] + rosterLine()).catch(() => {});
+  // A concierge in every room does not announce itself in every room —
+  // that would be a broadcast to the whole workspace on boot. Greet only
+  // when watching a named, bounded set.
+  if (!watchAll) {
+    for (const channelId of channels) {
+      await say(channelId, GREETINGS[Math.floor(Math.random() * GREETINGS.length)] + rosterLine()).catch(() => {});
+    }
   }
 
-  console.log(`🟢 @${name} orchestrating ${channels.length} channel(s) on ${relayUrls.join(", ")}`);
+  console.log(`🟢 @${name} orchestrating ${watchAll ? "every" : channels.length} channel(s) on ${relayUrls.join(", ")}`);
   console.log(
     `   Router: ${baseUrl} (${model}, ${profile}${routerKey ? ", keyed" : ""}) | roster: ${roster.size} agent(s) | respondTo: ${respondTo}`
   );
@@ -499,6 +535,7 @@ async function main() {
       const preNames = routableNames();
       const actor = explicitActor(cleaned, preNames);
       const picked = actor ? [actor] : await route(scrubNames(cleaned || event.content, preNames));
+      const askerName = roster.get(event.pubkey)?.name ?? profileNames.get(event.pubkey) ?? event.pubkey.slice(0, 8);
       if (picked.length > 0) {
         const { byName } = buildTools();
         // The forward names its origin: the routed agent's prompt would
@@ -507,7 +544,6 @@ async function main() {
         // author tag carries the pubkey for machines; the (from …)
         // prefix carries it for the model. No @ on the name — an @ is a
         // summons, and the asker doesn't need summoning.
-        const askerName = roster.get(event.pubkey)?.name ?? profileNames.get(event.pubkey) ?? event.pubkey.slice(0, 8);
         for (const agentName of picked) {
           const agent = byName.get(agentName)!;
           await say(channelId, `@${agentName} (from ${askerName}) ${cleaned}`, [
@@ -518,15 +554,28 @@ async function main() {
           console.log(`🎯 Routed to @${agentName} (from ${askerName}): ${cleaned.slice(0, 60)}`);
         }
       } else {
-        const names = routableNames();
-        await say(
-          channelId,
-          names.length > 0
-            ? `Hmm, not sure who's best for that. Around here: ${names.join(", ")} — mention one directly?`
-            : `Nobody's announced themselves yet — once agents are registered I'll route to them.`,
-          // plain names on purpose — an @-list here would summon everyone
-          threadTags
-        );
+        // No specialist fits. Rather than shrug, bring in the guide — a
+        // real agent grounded in fez itself (the protocol, extensions,
+        // commands). The router is a 14MB classifier and cannot answer;
+        // the guide runs on a real harness and can. It is routed exactly
+        // like any specialist, so all the normal machinery applies.
+        if (fallbackGuidePk) {
+          await say(channelId, `@${fallbackGuideName} (from ${askerName}) ${cleaned || event.content}`, [
+            ...threadTags,
+            ["p", fallbackGuidePk],
+            ["author", event.pubkey],
+          ]);
+          console.log(`🧭 No specialist fit — brought in @${fallbackGuideName}`);
+        } else {
+          const names = routableNames();
+          await say(
+            channelId,
+            names.length > 0
+              ? `Hmm, not sure who's best for that. Around here: ${names.join(", ")} — mention one directly?`
+              : `Nobody's announced themselves yet — once agents are registered I'll route to them.`,
+            threadTags
+          );
+        }
       }
     } catch (err) {
       console.error(`❌ Routing failed:`, err instanceof Error ? err.message : err);
@@ -553,7 +602,13 @@ async function main() {
   let lastWelcomeAt = 0;
   relay.subscribe(
     [
-      { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
+      // watchAll drops the #h filter so a channel opened AFTER startup is
+      // covered live — no re-subscribe, no missed room. Membership
+      // delivery still confines this to channels @fez belongs to, which
+      // (workspace-wide roster) is all of them.
+      watchAll
+        ? { kinds: [KIND_CHANNEL_MESSAGE], since: Math.floor(Date.now() / 1000) }
+        : { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
       // The workspace roster, same `d` the initial read uses. This was
       // also still filtering on channel ids, so an invite never reached a
       // RUNNING orchestrator — you had to restart it before it would
@@ -571,7 +626,7 @@ async function main() {
         if (fresh && !welcomed.has(fresh.pubkey) && Date.now() - lastWelcomeAt > 60_000) {
           welcomed.add(fresh.pubkey);
           lastWelcomeAt = Date.now();
-          for (const channelId of channels) {
+          for (const channelId of watchAll ? [] : channels) {
             void say(channelId, `👋 ${fresh.name} just came online — I'll loop them in when something fits.`).catch(() => {});
           }
         } else if (fresh) {

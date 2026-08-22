@@ -24,6 +24,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * nothing resolves — a service with no channels is a misconfiguration.
  */
 export async function resolveChannels(relay: RelayConnection, specs: string[], relayUrl: string): Promise<string[]> {
+  // "*" / "all" = every channel in the workspace. @fez is meant to be
+  // reachable in any room, and membership is workspace-wide, so this
+  // makes it LISTEN everywhere rather than a fixed list.
+  if (specs.some((s) => s === "*" || s.toLowerCase() === "all")) {
+    const all = await relay.query([{ kinds: [KIND_CHANNEL] }]);
+    const ids = [...new Set(all.map((e) => e.tags.find((t) => t[0] === "d")?.[1]).filter((id): id is string => !!id))];
+    console.log(`🔎 "*" → all ${ids.length} channel(s) in the workspace`);
+    return ids;
+  }
   const channels: string[] = specs.filter((s) => UUID_RE.test(s));
   const nameSpecs = specs.filter((s) => !UUID_RE.test(s));
   if (nameSpecs.length > 0) {
