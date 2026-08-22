@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { notifyEvent } from "./notify";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { BrowserWire } from "./wire";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
@@ -95,17 +95,6 @@ type SidePane =
 function useForceRender(): () => void {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   return bump;
-}
-
-/** Native notification, permission-lazy; silently a no-op where unavailable. */
-async function notify(title: string, body: string): Promise<void> {
-  try {
-    let granted = await isPermissionGranted();
-    if (!granted) granted = (await requestPermission()) === "granted";
-    if (granted) sendNotification({ title, body: body.replace(/\s+/g, " ").slice(0, 180) });
-  } catch {
-    /* browser dev server / permission denied */
-  }
 }
 
 function escapeRe(text: string): string {
@@ -312,6 +301,16 @@ function Shell({
       list.push(frame);
       if (list.length > 200) list.splice(0, list.length - 200);
       activityRef.current.set(agent, list);
+      // A turn that ended in failure is the one agent event worth a ping —
+      // silence that looks like slowness is the failure mode this catches.
+      if (frame.type === "turn" && frame.status === "failed") {
+        notifyEvent({
+          key: `agent:${agent}`,
+          title: `@${agent} hit an error`,
+          body: frame.text ?? frame.title ?? "a turn failed",
+          label: "agents",
+        });
+      }
       render();
     }) as never);
     // Native notifications when the window isn't focused: @you in a
@@ -321,12 +320,23 @@ function Shell({
       if (mutedRef.current.has(channelId)) return;
       const myName = client.displayName(client.pubkey);
       if (myName && new RegExp(`@${escapeRe(myName)}\\b`, "i").test(msg.content)) {
-        void notify(`${msg.authorName} mentioned you`, msg.content);
+        const chName = client.state.workspace.channels.get(channelId)?.name;
+        notifyEvent({
+          key: `ch:${channelId}`,
+          title: `${msg.authorName} mentioned you`,
+          body: msg.content,
+          label: chName ? `#${chName}` : "a channel",
+        });
       }
     }) as never);
     client.on("dmMessage", ((dm: { senderPk: string; text: string }, meta?: { live?: boolean }) => {
       if (!meta?.live || dm.senderPk === client.pubkey || document.hasFocus()) return;
-      void notify(`${client.displayName(dm.senderPk)} (dm)`, dm.text);
+      notifyEvent({
+        key: `dm:${dm.senderPk}`,
+        title: `${client.displayName(dm.senderPk)} (dm)`,
+        body: dm.text,
+        label: "DMs",
+      });
     }) as never);
   }, [client, render]);
 
@@ -521,12 +531,15 @@ function Shell({
         const fresh = pending.filter((p) => !seen.has(p.id));
         if (fresh.length > 0) {
           const first = fresh[0];
-          void notify(
-            "fez — proposal awaiting review",
-            first.kind === "description"
-              ? `@${first.agent} description change: ${first.rationale}`
-              : `new bench case: "${first.q ?? ""}"${fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ""}`
-          );
+          notifyEvent({
+            key: "proposals",
+            title: "fez — proposal awaiting review",
+            body:
+              first.kind === "description"
+                ? `@${first.agent} description change: ${first.rationale}`
+                : `new bench case: "${first.q ?? ""}"${fresh.length > 1 ? ` (+${fresh.length - 1} more)` : ""}`,
+            label: "proposals",
+          });
           localStorage.setItem("fez-bench-seen", JSON.stringify([...seen, ...fresh.map((p) => p.id)].slice(-200)));
         }
       } catch { /* ledger absent — fine */ }
