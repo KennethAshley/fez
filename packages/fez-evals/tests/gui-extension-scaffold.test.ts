@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 // The published scaffolder, built. `fez create` calls exactly this.
 import { scaffold } from "../../../dist/scaffold.js";
@@ -115,5 +115,47 @@ describe("a scaffolded GUI extension loads and activates like the host runs it",
     // NOT refused — the bug this catches)
     expect(command).toBeTypeOf("function");
     expect(String(command!("hello"))).toContain("hello");
+  });
+});
+
+describe("a scaffolded HEADLESS extension registers a slash command that runs", () => {
+  const dir = path.join(WORK, "probe-hl");
+
+  // 1) scaffold exactly what `fez create probe-hl --headless` writes
+  scaffold({ name: "probe-hl", dir, surfaces: ["headless"], apiVersion: "^0.1.0" });
+
+  it("loads its default export and its /command replies", async () => {
+    // 2) build the headless part as the generated build script does (ESM).
+    //    The `import type` from @fezchat/extension-api is erased by esbuild,
+    //    so the bundle has no runtime import — it loads standalone.
+    fs.mkdirSync(path.join(dir, "dist"), { recursive: true });
+    const out = path.join(dir, "dist/headless.mjs");
+    execFileSync(
+      ESBUILD,
+      [path.join(dir, "src/headless.ts"), "--bundle", "--format=esm", "--platform=node", "--packages=external", `--outfile=${out}`],
+      { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }
+    );
+
+    // 3) load + activate like the TUI/sentinel extension loader does:
+    //    import the module, call its default export with the live API.
+    const mod = (await import(pathToFileURL(out).href)) as { default?: (api: unknown) => void };
+    expect(typeof mod.default).toBe("function");
+
+    const commands = new Map<string, (args: string, ctx: { reply: (s: string) => void }) => unknown>();
+    const api = {
+      registerCommand: (name: string, handler: (a: string, c: { reply: (s: string) => void }) => unknown) => commands.set(name, handler),
+      registerScheduledTask: () => {},
+      // nostr/channels/workspace absent — the command must degrade, not assume
+    };
+    mod.default!(api);
+
+    // the /probe-hl command registered
+    expect(commands.has("probe-hl")).toBe(true);
+
+    // and running it replies with the args (proving the handler executes)
+    const replies: string[] = [];
+    await commands.get("probe-hl")!("do a thing", { reply: (s) => replies.push(s) });
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toContain("do a thing");
   });
 });
