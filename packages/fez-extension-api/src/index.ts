@@ -1,5 +1,5 @@
 /**
- * @fez/extension-api — the contract you build a fez extension against.
+ * @fezchat/extension-api — the contract you build a fez extension against.
  *
  * A fez package extends one or more SURFACES, each with its own host
  * and API:
@@ -13,8 +13,8 @@
  * bundle time, so your shipped part carries no dependency on fez. The
  * host injects the real API at load time; you type against this.
  *
- *   import type { FezExtensionAPI } from "@fez/extension-api/headless";
- *   import type { GuiExtensionApi } from "@fez/extension-api/gui";
+ *   import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
+ *   import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
  */
 export type * from "./headless.js";
 export type * from "./gui.js";

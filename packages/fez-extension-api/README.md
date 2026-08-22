@@ -1,4 +1,4 @@
-# @fez/extension-api
+# @fezchat/extension-api
 
 The contract you build a fez extension against.
 
@@ -15,8 +15,8 @@ with its own host and its own injected API:
 Import only the surface you extend:
 
 ```ts
-import type { FezExtensionAPI } from "@fez/extension-api/headless";
-import type { GuiExtensionApi } from "@fez/extension-api/gui";
+import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
+import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
 ```
 
 These are **types only** — they erase at bundle time, so your shipped

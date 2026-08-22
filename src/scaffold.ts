@@ -6,7 +6,7 @@
  * workspace provider — never as a patch to core. The fastest way to learn
  * that shape is to start from one that already runs. This writes a package
  * that `fez link`s and loads on the first try, its parts typed against the
- * published contract `@fez/extension-api`, so the compiler teaches the API
+ * published contract `@fezchat/extension-api`, so the compiler teaches the API
  * the moment you open the file.
  */
 import fs from "node:fs";
@@ -22,7 +22,7 @@ export interface ScaffoldOptions {
   dir: string;
   /** Surfaces to include (default `["headless", "gui"]`). */
   surfaces: Surface[];
-  /** Pinned @fez/extension-api range for the generated devDependency. */
+  /** Pinned @fezchat/extension-api range for the generated devDependency. */
   apiVersion: string;
 }
 
@@ -88,7 +88,7 @@ function packageJson(o: ScaffoldOptions, base: string): string {
     },
     files: ["dist"],
     devDependencies: {
-      "@fez/extension-api": o.apiVersion,
+      "@fezchat/extension-api": o.apiVersion,
       esbuild: "^0.21.5",
       typescript: "^5.6.0",
     },
@@ -132,7 +132,7 @@ function headlessStarter(base: string): string {
  * \`channels\`, and \`workspace\` are present only where a key and a relay
  * are — check before you use them, and degrade when they're absent.
  */
-import type { FezExtensionAPI } from "@fez/extension-api/headless";
+import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
 
 export default function ${fn}(api: FezExtensionAPI): void {
   api.registerCommand("${base}", async (args, ctx) => {
@@ -159,7 +159,7 @@ function guiStarter(base: string): string {
  * compiles to \`h(...)\` via the esbuild \`--jsx-factory=h\` in build, and
  * \`h\` is bound to the host's \`createElement\` at activate time.
  */
-import type { GuiExtensionApi, El } from "@fez/extension-api/gui";
+import type { GuiExtensionApi, El } from "@fezchat/extension-api/gui";
 
 // Bound in activate() — see the build script's --jsx-factory=h.
 let h: GuiExtensionApi["React"]["createElement"];
@@ -198,7 +198,7 @@ function relayStarter(base: string): string {
  * serves, it never speaks — anything said on the network is said by the
  * key-holding side, reading what the relay served.
  */
-import type { RelayExtensionAPI } from "@fez/extension-api/relay";
+import type { RelayExtensionAPI } from "@fezchat/extension-api/relay";
 
 export default function ${fn}(api: RelayExtensionAPI): void {
   api.advertise("${base.replace(/-/g, "_")}", { version: 1 });
@@ -228,7 +228,7 @@ function workspaceStarter(base: string): string {
  *                checkout lets an agent run a whole turn touching nothing)
  *   value      → the checkout the agent runs in, as itself
  */
-import type { WorkspaceProvider } from "@fez/extension-api/workspace";
+import type { WorkspaceProvider } from "@fezchat/extension-api/workspace";
 
 const provider: WorkspaceProvider = async (req) => {
   if (!req.repo.startsWith("${base}:")) return undefined; // not mine
@@ -260,7 +260,7 @@ part, fez-desktop for a gui part, a \`--extensions\` relay for a relay part.
 
 ${o.surfaces.map((s) => `- \`src/${s}.${s === "gui" ? "tsx" : "ts"}\` → \`dist/${s}.js\``).join("\n")}
 
-Types come from [\`@fez/extension-api\`](https://www.npmjs.com/package/@fez/extension-api),
+Types come from [\`@fezchat/extension-api\`](https://www.npmjs.com/package/@fezchat/extension-api),
 the published contract — the compiler describes exactly what each host
 offers. Permissions are declared in \`package.json\` under \`fez.permissions\`
 and shown to the user before anything is copied.

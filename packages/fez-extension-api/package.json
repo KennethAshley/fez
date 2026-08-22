@@ -1,19 +1,35 @@
 {
-  "name": "@fez/extension-api",
+  "name": "@fezchat/extension-api",
   "version": "0.1.0",
   "description": "The contract you build a fez extension against — headless, gui, relay, and workspace surfaces, as types. Erases at bundle time; your part carries no dependency on fez.",
   "type": "module",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts" },
-    "./headless": { "types": "./dist/headless.d.ts" },
-    "./gui": { "types": "./dist/gui.d.ts" },
-    "./relay": { "types": "./dist/relay.d.ts" },
-    "./workspace": { "types": "./dist/workspace.d.ts" },
-    "./manifest": { "types": "./dist/manifest.d.ts" },
-    "./nostr": { "types": "./dist/nostr.d.ts" }
+    ".": {
+      "types": "./dist/index.d.ts"
+    },
+    "./headless": {
+      "types": "./dist/headless.d.ts"
+    },
+    "./gui": {
+      "types": "./dist/gui.d.ts"
+    },
+    "./relay": {
+      "types": "./dist/relay.d.ts"
+    },
+    "./workspace": {
+      "types": "./dist/workspace.d.ts"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts"
+    },
+    "./nostr": {
+      "types": "./dist/nostr.d.ts"
+    }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit"
