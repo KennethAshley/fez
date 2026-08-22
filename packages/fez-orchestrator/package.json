@@ -2,7 +2,7 @@
   "name": "@fez/orchestrator",
   "version": "0.1.0",
   "private": true,
-  "description": "@fez \u2014 a routing orchestrator agent for fez channels, backed by any OpenAI-compatible endpoint (reference: cactus serve + needle, fully local)",
+  "description": "@fez \u2014 a routing orchestrator agent for fez channels, backed by any OpenAI-compatible endpoint (a cloud model, ollama, llama.cpp, or a hosted router)",
   "type": "module",
   "fez": {
     "type": "agent",

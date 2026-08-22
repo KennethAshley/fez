@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { isSmallTalk } from "../../fez-orchestrator/src/route-logic.js";
 
 /**
- * Small talk never reaches the router (measured: needle routes "yo" to
+ * Small talk never reaches the router (measured: a tiny router sends "yo" to
  * an agent and returns nothing for "how are you?"). The regex must stay
  * tight — a greeting-prefixed TASK must still route.
  */

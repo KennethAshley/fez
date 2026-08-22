@@ -785,10 +785,11 @@ program
     const label = "com.fez.router";
     const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
     const arg = (s: string) => `    <string>${s}</string>`;
-    // --alias fez-router matters: detectProfile() keys the request shape
-    // off the model id, and anything not matching /needle/ gets the
-    // `tools` profile — the one with tool_choice required, which is what
-    // makes a general chat model emit a routing call instead of prose.
+    // --alias fez-router is cosmetic now: the orchestrator uses the
+    // standard `tools` request shape (tool_choice required) for any
+    // capable model — what makes a general chat model emit a routing
+    // call instead of prose — and only a restricted tiny router opts
+    // into the bare shape.
     // --predict 96 caps the prose preamble; measured identical to 512.
     // --parallel 1 keeps ONE KV cache, so the repeated roster prefix
     // stays cached: a warm route is ~90ms instead of ~230ms.

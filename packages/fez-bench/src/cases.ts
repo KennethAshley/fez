@@ -1,12 +1,12 @@
 /**
  * The routing battery — boundary cases, not happy paths. Categories map
- * to the ways a router actually fails (measured live on needle 26M):
+ * to the ways a router actually fails (measured live on tiny routers):
  * meta-questions routing to a random agent, opaque phrasing, agent
  * names appearing as CONTENT, injection attempts, tasks nobody fits.
  *
  * The roster is FROZEN so scores are comparable across runs and
  * machines — it mirrors the shapes routing.live.test.ts pinned
- * (job-title names + verb descriptions, the combination needle scores
+ * (job-title names + verb descriptions, the combination a tiny router scores
  * best on). `expect` lists every acceptable answer; "none" means the
  * pipeline must NOT summon anyone (small talk and fleet questions are
  * answered by deterministic layers, no-fit tasks deserve honesty over
@@ -83,7 +83,7 @@ export const CASES: BenchCase[] = [
     "who wrote the original kademlia paper",
     "check whether jsr or npm has better esm support notes",
     "get me the changelog for react 19",
-    "what license does the needle model use",
+    "what license does this model use",
     "research how slack implements message threading"),
 
   // ── direct: reviewer ───────────────────────────────────────────────

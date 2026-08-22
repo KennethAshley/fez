@@ -47,21 +47,21 @@ import { GUIDE_PERSONA, GUIDE_PERSONA_NAME } from "./guide-persona.js";
  * the words, only the choice.
  *
  * The model behind it is a seam: FEZ_ORCHESTRATOR_URL is any
- * OpenAI-compatible endpoint — the hosted fez router, a local cactus +
- * needle, ollama, llama.cpp, or a cloud model.
+ * OpenAI-compatible endpoint — a cloud model, ollama, llama.cpp, a
+ * hosted router, or any tuned tiny router.
  *
  * The seam is a URL *and a profile*, because the request shape is part
- * of the model choice. Measured on the 97-case battery: Qwen3-0.6B sent
- * needle's shape scores 70.1% vs needle's 71.1% — the bigger model buys
- * nothing by itself — while the shape it wants takes it to ~91% and
- * drops needle to 19.6%. See RouterProfile in route-logic.ts. The
- * profile is auto-detected from the model id, so a local needle setup
- * needs no config change.
+ * of the model choice. Measured on the 97-case battery, the standard
+ * "tools" shape (system message, tool_choice, pinned sampling) is worth
+ * ~20 points over a bare request and is what any capable model wants;
+ * a few restricted tiny routers need the bare "minimal" shape instead.
+ * See RouterProfile in route-logic.ts. It defaults to "tools", so any
+ * real model works with no config.
  *
  * Config (env):
  *   FEZ_ORCHESTRATOR_URL      OpenAI-compatible base (default http://127.0.0.1:8080/v1)
  *   FEZ_ORCHESTRATOR_MODEL    model id (default: first model the endpoint lists)
- *   FEZ_ORCHESTRATOR_PROFILE  needle | tools (default: detected from the model id)
+ *   FEZ_ORCHESTRATOR_PROFILE  tools | minimal (default: tools — any capable model)
  *   FEZ_ORCHESTRATOR_KEY      bearer token, for endpoints that want one
  *   FEZ_ORCHESTRATOR_NAME     the orchestrator's @name (default fez)
  *   FEZ_AGENT_CHANNELS        comma-separated channel names/ids to serve
@@ -90,8 +90,8 @@ async function main() {
   //   harness: router            required by the persona loader; marks
   //                              this as not-a-channel-agent (no such
   //                              harness exists to spawn)
-  //   url: http://127.0.0.1:8080/v1   OpenAI-compatible router endpoint
-  //   model: needle-prebuilt     optional; auto-discovered when absent
+  //   url: <endpoint>/v1     any OpenAI-compatible endpoint (cloud, ollama, llama.cpp, hosted)
+  //   model: <id>                optional; auto-discovered when absent
   //   channels: [general]        channels to orchestrate
   //   aliases: [orchestrator]    extra @names that reach it
   //   description: ...           47000 about
@@ -159,16 +159,16 @@ async function main() {
     }
   }
   if (!model) {
-    console.error(`No model at ${baseUrl} — is the router endpoint running? (e.g. cactus serve Cactus-Compute/needle)`);
+    console.error(`No model at ${baseUrl} — is the endpoint running and OpenAI-compatible? (a cloud API, ollama, llama.cpp, or a hosted router)`);
     process.exit(1);
   }
 
   // The request shape travels with the model, not the URL — see
-  // RouterProfile. Auto-detection keeps every existing local cactus
+  // RouterProfile — defaults to "tools" for any capable model.
   // setup on the shape it was tuned for without touching its persona.
   const profileRaw = process.env.FEZ_ORCHESTRATOR_PROFILE || persona?.extra.profile;
-  if (profileRaw && profileRaw !== "needle" && profileRaw !== "tools") {
-    console.error(`Unknown router profile "${profileRaw}" — expected "needle" or "tools".`);
+  if (profileRaw && profileRaw !== "minimal" && profileRaw !== "tools") {
+    console.error(`Unknown router profile "${profileRaw}" — expected "tools" or "minimal".`);
     process.exit(1);
   }
   const profile: RouterProfile = (profileRaw as RouterProfile) || detectProfile(model);
@@ -304,7 +304,7 @@ async function main() {
   const metadataEvents = await relay.query([{ kinds: [KIND_AGENT_METADATA] }]);
   for (const event of metadataEvents.sort((a, b) => a.created_at - b.created_at)) absorbAgent(event);
 
-  // One tool per agent. Tuned for tiny routers, verified against needle:
+  // One tool per agent. Tuned to route well even on tiny models:
   // the tool NAME carries most of the routing signal (researcher/reviewer
   // route 6/6, opaque names like scout/critic misroute) — so the name IS
   // the agent name, descriptions are supporting detail. Services that
@@ -466,7 +466,7 @@ async function main() {
     // rewrite the request.
     const cleaned = event.content.replace(nameMentionRe, "$1").replace(/\s+/g, " ").trim();
 
-    // Small talk never reaches the router — measured: needle routes "yo"
+    // Small talk never reaches the router — measured: a tiny router sends "yo"
     // to an agent and returns nothing for "how are you?" (a routing
     // model always wants to route). Greetings are cheap to detect
     // deterministically, and fez answering in person beats delegating

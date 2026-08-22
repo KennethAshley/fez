@@ -66,7 +66,7 @@ When `fez` starts with **nothing installed** and **no API keys configured**, it 
 │  └─────────────────────────────────────┘ │
 └─────────────────────────────────────────┘
               │
-              ├──► Default Agent (needle / local LLM)
+              ├──► Default Agent (any tiny / local LLM)
               │    ├─ Basic chat
               │    ├─ Parse @mentions
               │    └─ Suggest agents to install
@@ -105,7 +105,7 @@ The TUI is a **Nostr client** that renders events and publishes them.
 // Simplified architecture
 class FezTUI {
   private relay: RelayConnection;
-  private localAgent: LocalAgent;  // needle / tiny LLM
+  private localAgent: LocalAgent;  // any tiny / local LLM
   private router: AgentRouter;
   private ui: ChatInterface;
 
@@ -153,7 +153,7 @@ class FezTUI {
 
 ```bash
 $ fez
-fez — running on needle (local, 14MB)
+fez — running on a local router
 
 You: hello
 🤖 Fez: Hi! I'm a tiny local model. I can chat and help you find
@@ -263,7 +263,7 @@ You don't need to know pubkeys. You don't need to remember flags. You just chat.
 ### Phase 1: Minimal TUI + Needle
 
 1. `fez` starts a basic terminal UI
-2. Integrates needle (or any tiny local model) as default agent
+2. Integrates any tiny local model as default agent
 3. Handles basic chat and @mention parsing
 4. Routes to installed agents when available
 
@@ -285,7 +285,7 @@ You don't need to know pubkeys. You don't need to remember flags. You just chat.
 Needle is a 14MB Gemma model. To use it:
 
 ```typescript
-import { Needle } from "@cactus/needle";
+import { LocalRouter } from "./local-router";
 
 const model = await Needle.load();
 
@@ -299,7 +299,7 @@ async function handlePlainText(input: string) {
 ```
 
 Or use any local model runner:
-- **needle** — 14MB, ultra-minimal
+- **a tiny local router** — ultra-minimal
 - **ollama** — pulls models on demand
 - **llama.cpp** — runs GGUF files
 - ** transformers.js** — in-browser models

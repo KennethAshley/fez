@@ -2,9 +2,9 @@
 
 **@fez** — the one who knows which name to call. Speak a task to `@fez`
 and it hears what you need, chooses the agent who can, and summons them
-by name in the same thread. A small routing mind, run local by
-reference (`cactus serve` + needle) so the summoner asks no one's
-permission. It also keeps the room: greeting the channel awake,
+by name in the same thread. A small routing mind that runs on any
+OpenAI-compatible endpoint — hosted or local, tiny or large — so the
+summoner asks no one's permission. It also keeps the room: greeting the channel awake,
 welcoming agents that announce themselves, bowing out on the way down.
 
 fez has no special powers. It routes by speaking the protocol — a
@@ -34,38 +34,22 @@ seam is the same either way, and nothing else changes.
 llama-server -m Qwen3-0.6B-Q4_K_M.gguf --jinja --reasoning off -c 2048
 ```
 
-**Local, cactus + needle.** [cactus](https://github.com/cactus-compute/cactus)
-serving [needle](https://huggingface.co/Cactus-Compute/needle), a 26M
-tool-calling model — the smallest and fastest option, and macOS/ARM only:
-
-```bash
-brew install cactus-compute/cactus/cactus
-cactus serve Cactus-Compute/needle --no-cloud-handoff --no-cloud-tele
-```
-
 ## The seam is a URL *and* a profile
 
 The request shape is part of the model choice, not separate from it.
-Measured on the 97-case battery in `@fez/bench`:
+Measured on the 97-case battery in `@fez/bench`, a capable model with
+the standard function-calling shape beats a bare request by ~20 points
+— and that same shape *destroys* some very small, restricted routers,
+which want no system message at all. So each endpoint carries a profile:
 
-| router | accuracy | over-routes |
-| --- | --- | --- |
-| needle 26M, its own shape | 71% | 8 |
-| Qwen3-0.6B, needle's shape | 70% | 0 |
-| Qwen3-0.6B, its own shape | **90%** | 1 |
-| needle, Qwen3's shape | **20%** | 9 |
+- `tools` (default) — short router system message, `tool_choice: required`,
+  `temperature: 0`, `max_tokens: 96`. What any capable model wants.
+- `minimal` — no system message, no `tool_choice`, no sampling overrides.
+  For a restricted tiny router only; opt in with `profile: minimal` in
+  the persona or `FEZ_ORCHESTRATOR_PROFILE`.
 
-A bigger model buys nothing on its own — the gain is entirely in the
-shape, and the shape that wins for one model *destroys* the other.
-So each endpoint carries a profile:
-
-- `needle` — no system message, no `tool_choice`, no sampling overrides.
-- `tools` — short router system message, `tool_choice: required`,
-  `temperature: 0`, `max_tokens: 96`.
-
-It's auto-detected from the model id (anything matching `needle` gets
-the needle profile), so existing local setups need no edit. Override
-with `profile:` in the persona or `FEZ_ORCHESTRATOR_PROFILE`.
+The default is `tools`, so any real model — a cloud API, ollama,
+llama.cpp, a hosted router — works with no config.
 
 Two details worth keeping if you plug in your own model: **pin
 temperature to 0** (llama.cpp defaults to 0.8, which moved bench scores
@@ -107,7 +91,7 @@ Then invite its pubkey (printed on first run) as the community creator:
 `/invite <pubkey> bot`.
 
 Env overrides (each beats the persona file): `FEZ_ORCHESTRATOR_URL`,
-`FEZ_ORCHESTRATOR_MODEL`, `FEZ_ORCHESTRATOR_PROFILE` (`needle` |
+`FEZ_ORCHESTRATOR_MODEL`, `FEZ_ORCHESTRATOR_PROFILE` (`tools` |
 `tools`), `FEZ_ORCHESTRATOR_KEY` (bearer token, for endpoints that want
 one), `FEZ_ORCHESTRATOR_NAME` (default `fez` — also picks which persona
 file loads), `FEZ_AGENT_CHANNELS`, `FEZ_AGENT_RESPOND_TO` (`anyone` |
@@ -131,7 +115,7 @@ never let them rewrite the request.
 
 ## Naming matters (small-router reality)
 
-Verified against needle: the function **name** carries most of the
+On tiny routers, the function **name** carries most of the
 routing signal, and **verb phrases beat noun bios** in descriptions
 ("review code, critique pull requests" routes; "You are a code
 reviewer." misroutes). So: name personas like job titles

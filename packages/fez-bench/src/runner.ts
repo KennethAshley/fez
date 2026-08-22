@@ -50,7 +50,7 @@ export async function runBench(
   onProgress?: (done: number, total: number) => void
 ): Promise<RunOutput> {
   const model = await resolveModel(base);
-  if (!model) throw new Error(`no router at ${base} — start it (cactus serve …) or set FEZ_ORCHESTRATOR_URL`);
+  if (!model) throw new Error(`no router at ${base} — set FEZ_ORCHESTRATOR_URL to any OpenAI-compatible endpoint`);
   const tools = [...roster.map(agentTool), noneTool()];
   const names = roster.map((agent) => agent.name);
   // Same shape the runtime sends, or the bench measures a router nobody

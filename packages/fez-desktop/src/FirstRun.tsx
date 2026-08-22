@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FezClient } from "@fez/client";
 
 /**
@@ -17,10 +17,6 @@ import type { FezClient } from "@fez/client";
  * in it.
  */
 
-const ROUTER_URL = "http://127.0.0.1:8080/v1/models";
-
-type RouterState = "checking" | "up" | "down";
-
 export default function FirstRun({
   client,
   channelName,
@@ -30,34 +26,21 @@ export default function FirstRun({
   channelName: string;
   onOpenAgents: () => void;
 }) {
-  const [router, setRouter] = useState<RouterState>("checking");
   const [copied, setCopied] = useState(false);
 
-  // @fez runs on a local 26M-param router, so this is a question about
-  // this machine — not about credentials, and not about the network.
-  useEffect(() => {
-    let live = true;
-    const check = async () => {
-      try {
-        const response = await fetch(ROUTER_URL, { signal: AbortSignal.timeout(2500) });
-        if (live) setRouter(response.ok ? "up" : "down");
-      } catch {
-        if (live) setRouter("down");
-      }
-    };
-    void check();
-    const timer = setInterval(() => void check(), 15_000);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, []);
-
+  // @fez's brain is a seam — any OpenAI-compatible endpoint, local or
+  // hosted — so the app cannot (and should not) probe it: a remote
+  // endpoint is CORS-blocked from the webview, and "reachable from your
+  // laptop" is not the question. Presence on the roster is: if @fez has
+  // announced, it is configured and running somewhere.
+  const copyHint = async () => {
+    await navigator.clipboard.writeText("~/.fez/personas/fez.md");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
   const agents = [...client.agents().values()].filter(Boolean);
   const hasFez = agents.some((name) => name.toLowerCase() === "fez");
   const others = agents.filter((name) => name.toLowerCase() !== "fez");
-
-  const commands = "brew install cactus-compute/cactus/cactus\ncactus serve Cactus-Compute/needle --no-cloud-handoff";
 
   return (
     <div className="channel-intro first-run">
@@ -73,34 +56,15 @@ export default function FirstRun({
             whoever's best for the job — that's its whole purpose, so you never have to remember who does what.
           </p>
 
-          {router === "up" && (
-            <p className="fr-ok">
-              ✓ Its router is running locally. Try <span className="fr-try">@fez what can you do?</span>
-            </p>
-          )}
-
-          {router === "down" && (
-            <div className="fr-blocked">
-              <p>
-                It can't answer yet — its router isn't running on this machine. It's a 26M-parameter model that
-                runs locally, so there's no API key and nothing leaves your laptop:
-              </p>
-              <pre
-                className="fr-cmd"
-                title="click to copy"
-                onClick={() => {
-                  void navigator.clipboard.writeText(commands);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                }}
-              >
-                {copied ? "✓ copied" : commands}
-              </pre>
-              <p className="fr-note">This panel notices on its own once it's up.</p>
-            </div>
-          )}
-
-          {router === "checking" && <p className="fr-dim">checking whether its router is running…</p>}
+          <p className="fr-ok">
+            Mention it with anything — <span className="fr-try">@fez what can you do?</span> — and it routes to
+            whoever's best, or answers about fez itself.
+          </p>
+          <p className="fr-note">
+            @fez runs on any OpenAI-compatible endpoint — a hosted router, ollama, llama.cpp, or a cloud model.
+            Set <code>url:</code> in <code>~/.fez/personas/fez.md</code> and restart it.{' '}
+            <button className="fr-link" onClick={() => void copyHint()}>{copied ? '✓ copied' : 'copy the path'}</button>
+          </p>
         </>
       ) : (
         <p>

@@ -737,7 +737,7 @@ export class FezTUI {
 
   private async orchestratorResponse(input: string, parentMsgId: string): Promise<void> {
     // Minimal orchestrator — just basic responses for now
-    // In the future, this calls needle or a local LLM
+    // In the future, this calls the orchestrator's router endpoint
 
     const lower = input.toLowerCase();
 

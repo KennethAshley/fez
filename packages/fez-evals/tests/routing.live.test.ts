@@ -9,13 +9,13 @@ import { agentTool, isSmallTalk, routerBody, detectProfile } from "../../fez-orc
  * runtime sends. Skips (loudly) when no endpoint is up, so unit gates
  * still run offline.
  *
- * The endpoint decides its own shape: detectProfile() picks `needle`
- * for a needle model and `tools` for everything else, so this file does
+ * The endpoint decides its own shape: detectProfile() defaults to
+ * `tools` for any capable model, so this file does
  * not need to know which router is running. That matters — it did know,
  * once, and was wrong for as long as it took somebody to look.
  *
  * Threshold, not exactness: a small router is probabilistic at the
- * margins. 80% floors the measured baseline (needle 100% and Qwen3-0.6B
+ * margins. 80% floors the measured baseline (Qwen3-0.6B
  * 100% on this set, both with job-title names + verb descriptions);
  * dipping below means names, descriptions, or the model regressed.
  */
@@ -93,5 +93,5 @@ describe.skipIf(model === null)(`live routing via ${BASE} (${model ?? "endpoint 
 });
 
 if (model === null) {
-  console.warn(`⚠️  routing evals skipped — no router at ${BASE} (start: cactus serve ~/.cache/cactus/weights/needle-prebuilt --no-cloud-handoff --no-cloud-tele)`);
+  console.warn(`⚠️  routing evals skipped — no router at ${BASE} (point FEZ_ORCHESTRATOR_URL at any OpenAI-compatible endpoint)`);
 }

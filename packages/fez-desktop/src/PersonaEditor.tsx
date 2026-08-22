@@ -128,7 +128,7 @@ export default function PersonaEditor({
       <div className="settings-field">
         <label>harness</label>
         <select className="manage-select" value={field("harness") || "claude-code"} onChange={(e) => update("harness", e.target.value)}>
-          {["claude-code", "pi", ...(field("harness") && !["claude-code", "pi"].includes(field("harness")) ? [field("harness")] : [])].map(
+          {["claude-code", "pi", "router", ...(field("harness") && !["claude-code", "pi", "router"].includes(field("harness")) ? [field("harness")] : [])].map(
             (option) => (
               <option key={option} value={option}>{option}</option>
             )
@@ -139,6 +139,48 @@ export default function PersonaEditor({
         <label>model (pi reads this; claude-code uses its own default)</label>
         <input className="manage-input" value={field("model")} spellCheck={false} placeholder="(harness default)" onChange={(e) => update("model", e.target.value)} />
       </div>
+      {field("harness") === "router" && (
+        <>
+          <div className="manage-section">router — @fez's brain</div>
+          <div className="settings-field">
+            <label>endpoint url (any OpenAI-compatible: a hosted router, ollama, llama.cpp, or a cloud model)</label>
+            <input
+              className="manage-input"
+              value={field("url")}
+              spellCheck={false}
+              placeholder="https://your-router/v1"
+              onChange={(e) => update("url", e.target.value)}
+            />
+          </div>
+          <div className="settings-field">
+            <label>bearer key (only if the endpoint wants one)</label>
+            <input
+              className="manage-input"
+              value={field("key")}
+              spellCheck={false}
+              placeholder="(none)"
+              onChange={(e) => update("key", e.target.value)}
+            />
+          </div>
+          <div className="settings-field">
+            <label>request shape</label>
+            <select className="manage-select" value={field("profile") || "tools"} onChange={(e) => update("profile", e.target.value)}>
+              <option value="tools">tools — any capable model (default)</option>
+              <option value="minimal">minimal — a restricted tiny router</option>
+            </select>
+          </div>
+          <div className="settings-field">
+            <label>fallback guide (answers when no specialist fits)</label>
+            <input
+              className="manage-input"
+              value={field("fallback") || "fez-guide"}
+              spellCheck={false}
+              placeholder="fez-guide"
+              onChange={(e) => update("fallback", e.target.value)}
+            />
+          </div>
+        </>
+      )}
       <div className="settings-field">
         <label>description (helps @fez route to it)</label>
         <input className="manage-input" value={field("description")} onChange={(e) => update("description", e.target.value)} />

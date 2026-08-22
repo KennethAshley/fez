@@ -7,7 +7,7 @@
 /**
  * Greetings/pleasantries, detected deterministically: short and matching
  * a smalltalk shape. Anything else is a task for the router. Measured on
- * needle (26M): a router-side "chat" pseudo-tool does NOT work — "yo"
+ * On very small routers a router-side "chat" pseudo-tool does NOT work — "yo"
  * still routed to an agent — so this stays regex, not model.
  */
 const SMALL_TALK_ATOM =
@@ -69,7 +69,7 @@ export function fleetQuestion(text: string, agentNames: string[]): FleetQuestion
 
 /**
  * One OpenAI function per agent. Tuned for tiny routers, measured on
- * needle: the tool NAME carries most of the routing signal
+ * On tiny routers the tool NAME carries most of the routing signal
  * (researcher/reviewer route 6/6; opaque names like scout/critic
  * misroute), descriptions are supporting verb-phrase detail.
  */
@@ -104,7 +104,7 @@ export function agentTool(agent: RoutableAgent): object {
 /**
  * "Nobody fits" pseudo-tool — gives a router that always wants to route
  * an honest exit. Measured caveat: a chat pseudo-tool did NOT absorb
- * small talk on needle (that stays regex); this one targets no-fit
+ * small talk on a tiny router (that stays regex); this one targets no-fit
  * TASKS ("write me a haiku"), a semantically different decision. The
  * orchestrator filters it out of picks, landing in the existing
  * "not sure who's best" fallback.
@@ -123,18 +123,19 @@ export function noneTool(): object {
 /**
  * The request shape is part of the model choice, not separate from it.
  *
- * Measured head-to-head on the 97-case battery (Aug 2026): Qwen3-0.6B
- * given needle's shape scores 70.1% against needle's 71.1% — a bigger
- * model buys nothing on its own. The +20 points come entirely from the
- * shape below, and needle COLLAPSES under it (71.1% → 19.6%: a system
- * message costs it every direct case). So an endpoint URL alone is not
- * a sufficient seam; each endpoint also needs the shape it was measured
- * with, and mixing them silently is how you ship the worst of both.
+ * Measured on the 97-case battery: the "tools" shape (system message,
+ * tool_choice, pinned sampling) is what capable models want and buys
+ * ~20 points over a bare request. A few very small, restricted routers
+ * do the opposite — a system message costs them every direct case — so
+ * they need the bare "minimal" shape. Mixing a shape with the wrong
+ * endpoint ships the worst of both, so the shape is chosen per endpoint,
+ * defaulting to "tools" for any real model.
  *
- *   needle  no system message, no tool_choice, no sampling overrides.
- *   tools   general instruct models behind an OpenAI-compatible API.
+ *   tools    general instruct models behind an OpenAI-compatible API (default).
+ *   minimal  no system message, no tool_choice, no sampling overrides —
+ *            for restricted tiny routers only, opt in explicitly.
  */
-export type RouterProfile = "needle" | "tools";
+export type RouterProfile = "minimal" | "tools";
 
 /**
  * Kept short deliberately. Longer variants scored no better, and every
@@ -162,12 +163,16 @@ export const ROUTER_MAX_TOKENS = 96;
 export const ROUTER_TEMPERATURE = 0;
 
 /**
- * Which shape an endpoint wants, inferred from the model id it reports.
- * Explicit config beats this everywhere it's used — it exists so the
- * local cactus setup keeps working with no persona edit.
+ * Which request shape an endpoint wants. Standard OpenAI
+ * function-calling ("tools") is the default and works with any capable
+ * model — a cloud API, ollama, llama.cpp, or a tuned router. A few very
+ * small, restricted routers reject the system message / sampling
+ * overrides and need the bare shape; that is "minimal", and it is an
+ * explicit opt-in (`profile: minimal` in the persona, or
+ * FEZ_ORCHESTRATOR_PROFILE=minimal), never guessed from a model name.
  */
-export function detectProfile(model: string): RouterProfile {
-  return /needle/i.test(model) ? "needle" : "tools";
+export function detectProfile(_model: string): RouterProfile {
+  return "tools";
 }
 
 /** The `/chat/completions` body for one routing decision. */
@@ -177,7 +182,7 @@ export function routerBody(
   message: string,
   tools: object[]
 ): object {
-  if (profile === "needle") {
+  if (profile === "minimal") {
     return { model, messages: [{ role: "user", content: message }], tools };
   }
   return {

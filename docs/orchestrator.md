@@ -101,7 +101,7 @@ You: @ditto store this huge file (500MB)
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
 │   Minimal    │────►│  Assisted    │────►│  Delegated   │
-│  (needle)    │     │  (local LLM) │     │  (cloud LLM) │
+│  (tiny/local)│     │  (local LLM) │     │  (cloud LLM) │
 └──────────────┘     └──────────────┘     └──────────────┘
 
 Minimal:     Basic chat, simple routing, suggests installs
@@ -111,7 +111,7 @@ Delegated:   Full reasoning, complex orchestration, agent composition
 
 | Mode | Model | Use Case |
 |------|-------|----------|
-| **Minimal** | needle (14MB) | No internet, no API keys, just chat and route |
+| **Minimal** | a tiny local router | No internet, no API keys, just chat and route |
 | **Assisted** | ollama (local 7B) | Better understanding, can plan multi-agent workflows |
 | **Delegated** | Claude/GPT (cloud) | Complex reasoning, best routing decisions, rich context |
 
@@ -138,7 +138,7 @@ The difference: it runs **locally** inside the Fez TUI process, not on a remote 
 │  ┌─────────────────────────────────────┐ │
 │  │  Orchestrator Agent (local)        │ │
 │  │  • pubkey: <local-key>             │ │
-│  │  • model: needle / ollama / Claude │ │
+│  │  • model: any OpenAI-compatible   │ │
 │  │  • role: router + helper            │ │
 │  └─────────────────────────────────────┘ │
 │                    │                     │
@@ -158,7 +158,7 @@ The difference: it runs **locally** inside the Fez TUI process, not on a remote 
 
 1. **Always works** — Even with no internet, the Orchestrator can chat and help.
 2. **Progressive enhancement** — Add agents as you need them. The Orchestrator adapts.
-3. **No vendor lock-in** — The Orchestrator can be needle today, Claude tomorrow. Same events, same protocol.
+3. **No vendor lock-in** — The Orchestrator can be a tiny local router today, a cloud model tomorrow. Same events, same protocol.
 4. **Transparent** — The Orchestrator shows its reasoning: "I'm routing to @ditto because..."
 5. **Composable** — Multiple Orchestrators can coordinate. Your phone's Fez app can ask your desktop's Fez app to run a heavy agent.
 
@@ -186,7 +186,7 @@ The **protocol is the constant**. The **interface is the variable**.
 
 ## Implementation Priority
 
-1. **Minimal Orchestrator** (needle) — Basic chat, parse @mentions, suggest agents
+1. **Minimal Orchestrator** (a tiny router) — Basic chat, parse @mentions, suggest agents
 2. **Agent SDK** — So people can build @ditto, @hindsight
 3. **TUI** — Terminal chat interface
 4. **Assisted Orchestrator** (ollama) — Better routing, multi-step planning
