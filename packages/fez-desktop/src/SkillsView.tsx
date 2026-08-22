@@ -364,15 +364,9 @@ export default function SkillsView({
             rule off the top of the window, so this view alone looked
             like it had no header at all. */}
         <div className="ext-legend">
-          {only === "skills" ? (
-            <div className="ext-legend-lead">
-              <strong>Skills</strong> are tools your agents call — an MCP server, granted to an agent in its persona. You configure them here; your agents use them.
-            </div>
-          ) : (
-            <div className="ext-legend-lead">
-              <strong>Extensions</strong> are features you install — a board, a repo panel, a slash command. Some also give your agents a skill, which shows up under <strong>Agents → skills</strong>.
-            </div>
-          )}
+          <div className="ext-legend-lead">
+            <strong>Extensions</strong> add to fez — features you use (a board, a repo panel, a slash command) and tools your agents call (a skill). One package can do both; install it once.
+          </div>
         </div>
         {notice && <div className="manage-notice">{notice}</div>}
 

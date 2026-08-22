@@ -260,7 +260,6 @@ export default function AgentsPane({
   onCancel,
   onDm,
   onHistory,
-  onOpenSkills,
   onClose,
 }: {
   client: FezClient;
@@ -270,8 +269,6 @@ export default function AgentsPane({
   onCancel: (agentName: string) => void;
   onDm: (agentPk: string) => void;
   onHistory: () => void;
-  /** Open the Skills view — tools your agents call. Skills live under Agents. */
-  onOpenSkills: () => void;
   onClose: () => void;
 }) {
   const [selected, setSelected] = useState<string>(); // agent pk
@@ -310,10 +307,7 @@ export default function AgentsPane({
           <span>@ agents</span>
         )}
         {!current && !creating && !editingPersona && !reviewing && (
-          <>
-            <button className="agent-action" onClick={onOpenSkills} title="tools your agents can call">🔧 skills</button>
-            <button className="agent-action" onClick={() => setCreating(true)}>+ new agent</button>
-          </>
+          <button className="agent-action" onClick={() => setCreating(true)}>+ new agent</button>
         )}
         <button className="pane-close" onClick={onClose}>✕</button>
       </header>

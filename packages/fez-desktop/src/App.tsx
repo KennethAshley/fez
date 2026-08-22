@@ -79,8 +79,7 @@ type MainView =
   | { kind: "home" }
   | { kind: "pulse" }
   | { kind: "wiki" }
-  | { kind: "extensions" }
-  | { kind: "skills" };
+  | { kind: "extensions" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
@@ -895,8 +894,7 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
-      {view.kind === "extensions" && <SkillsView only="extensions" client={client} wire={wire} />}
-      {view.kind === "skills" && <SkillsView only="skills" client={client} wire={wire} />}
+      {view.kind === "extensions" && <SkillsView client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
@@ -1080,7 +1078,6 @@ function Shell({
           onCancel={(agent) => void cancelAgent(agent)}
           onDm={(pk) => openDm(pk)}
           onHistory={() => { setPane(undefined); setView({ kind: "pulse" }); }}
-          onOpenSkills={() => { setPane(undefined); setView({ kind: "skills" }); }}
           onClose={() => setPane(undefined)}
         />
       )}
