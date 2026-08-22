@@ -1,5 +1,7 @@
 # @fezchat/client
 
+> **0.x — expect breaking changes.** This is the headless brain fez is built on, published early so you can build on it. Its surface is broad and will move between minor versions until 1.0. Pin exact versions.
+
 The one mind every surface shares. Trust cannot be negotiated twice — if two clients disagreed about who is in a room, the room would split. So every rule lives here, once: membership, threads, unreads, reactions, DMs, docs, agent presence, all derived from signed events over an injected wire. The TUI, the desktop, and every extension are lenses on this single instance.
 
 ## Why headless

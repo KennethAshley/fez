@@ -18,7 +18,20 @@ const DRY = process.argv.includes("--dry");
 const ROOT = process.cwd();
 
 // protocol is published from the repo root; the rest are package dirs.
+// Infra libs first (extensions may externalize @fezchat/client etc.), then
+// the installable extensions + agents.
+const INFRA = [
+  "packages/fez-client",
+  "packages/fez-relay",
+  "packages/fez-tui",
+  "packages/fez-theme-fez",
+  "packages/fez-acp",
+  "packages/fez-herdr",
+  "packages/fez-sentinel",
+  "packages/fez-orchestrator",
+];
 const EXTENSIONS = [
+  ...INFRA,
   "packages/fez-git",
   "packages/fez-github",
   "packages/fez-kanban",
