@@ -260,6 +260,17 @@ function EnvEditor({
 }
 
 /** The settings section: every installed skill's env keys, editable. */
+/**
+ * fez's own service keys — the ONE home for secrets the fez services
+ * read (the orchestrator's router bearer key, and whatever else lands
+ * here). Always shown, even with no skills installed, so there is a
+ * single place to put a key. The keychain account is `fez.<VAR>`, which
+ * the CLI bridges into the environment at startup (see src/cli.ts), so a
+ * key set here reaches the orchestrator whether it runs from the app or
+ * the terminal.
+ */
+const FEZ_SERVICE_KEYS: SkillConfig = { env: { FEZ_ORCHESTRATOR_KEY: "" } };
+
 export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => void }) {
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
   useEffect(() => {
@@ -268,22 +279,27 @@ export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => 
       .catch(() => setInstalled({}));
   }, []);
   const skills = Object.entries(installed);
-  if (skills.length === 0) {
-    return <div className="settings-hint">no skills installed yet — definitions appear here once you install one.</div>;
-  }
   return (
     <>
       <div className="settings-hint">
         Secrets live in the macOS keychain, never in files — saving is write-only (nothing can read a value
-        back). Paste a whole .env blob into any field and it splits into rows. Agents pick up new values on
-        their next spawn.
+        back). Paste a whole .env blob into any field and it splits into rows. Agents and services pick up new
+        values on their next spawn.
       </div>
-      {skills.map(([skill, config]) => (
-        <div key={skill} className="env-skill">
-          <div className="manage-section">{skill}</div>
-          <EnvEditor skill={skill} config={config} onNotice={onNotice} />
-        </div>
-      ))}
+      <div className="env-skill">
+        <div className="manage-section">fez — service keys</div>
+        <EnvEditor skill="fez" config={FEZ_SERVICE_KEYS} onNotice={onNotice} />
+      </div>
+      {skills.length === 0 ? (
+        <div className="settings-hint">Install a skill and its own secrets appear here too.</div>
+      ) : (
+        skills.map(([skill, config]) => (
+          <div key={skill} className="env-skill">
+            <div className="manage-section">{skill}</div>
+            <EnvEditor skill={skill} config={config} onNotice={onNotice} />
+          </div>
+        ))
+      )}
     </>
   );
 }

@@ -33,7 +33,7 @@ try {
 // One custody, two faces — .env for the terminal, keychain for the app.
 for (const { env: name, account } of [
   // env var  ←  keychain account the GUI's SecretField writes (<skill>.<key>)
-  { env: "FEZ_ORCHESTRATOR_KEY", account: "orchestrator.FEZ_ORCHESTRATOR_KEY" },
+  { env: "FEZ_ORCHESTRATOR_KEY", account: "fez.FEZ_ORCHESTRATOR_KEY" },
 ]) {
   if (process.env[name]) continue;
   try {
