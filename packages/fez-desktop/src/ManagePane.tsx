@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { FezClient } from "@fezchat/client";
+import { flash } from "./toast";
 
 /**
  * Channel/client.state.workspace management — Buzz's ChannelManagementSheet as a fez
@@ -19,13 +20,7 @@ export default function ManagePane({
   onClose: () => void;
 }) {
   const current = client.state.currentChannel();
-  const [notice, setNotice] = useState<string>();
   const [armed, setArmed] = useState<string>(); // `${verb}:${pk}` two-click confirm
-
-  const flash = (text: string) => {
-    setNotice(text);
-    setTimeout(() => setNotice(undefined), 5000);
-  };
 
   const run = async (label: string, action: () => Promise<unknown>) => {
     try {
@@ -55,7 +50,6 @@ export default function ManagePane({
         </header>
         <div className="pane-body">
           <div className="pane-empty">no channel scope — pick a channel first</div>
-          {notice && <div className="manage-notice">{notice}</div>}
           <CreateCommunity client={client} onOpenChannel={onOpenChannel} onResult={flash} />
           <JoinByCode client={client} onOpenChannel={onOpenChannel} onResult={flash} />
         </div>
@@ -78,7 +72,6 @@ export default function ManagePane({
         <button className="pane-close" onClick={onClose}>✕</button>
       </header>
       <div className="pane-body">
-        {notice && <div className="manage-notice">{notice}</div>}
         <div className="manage-sub">
           {client.state.workspace.name} · {members.length} member{members.length === 1 ? "" : "s"}
           {amCreator ? " · you created this client.state.workspace" : ""}

@@ -7,6 +7,7 @@ import type { BrowserWire } from "./wire";
 import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, resolvedScheme, guiExtensionStatus } from "./gui-extensions";
 import { SkillSecretsSection } from "./SkillSecrets";
 import { KeyboardSettings } from "./KeyboardSettings";
+import { flash } from "./toast";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -45,13 +46,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   const [relay, setRelay] = useState(localStorage.getItem("fez-relay") ?? "ws://localhost:7777");
   const [media, setMedia] = useState(mediaServer());
   const [keyHex, setKeyHex] = useState<string>();
-  const [notice, setNotice] = useState<string>();
   const [section, setSection] = useState<SettingsSection>("profile");
-
-  const flash = (text: string) => {
-    setNotice(text);
-    setTimeout(() => setNotice(undefined), 5000);
-  };
 
   const saveProfile = async () => {
     try {
@@ -99,7 +94,6 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           ))}
         </nav>
       <div className="pane-body settings-content">
-        {notice && <div className="manage-notice">{notice}</div>}
         {section === "profile" && (<>
         <div className="manage-section">profile</div>
         <div className="settings-field">

@@ -1320,6 +1320,37 @@ button.author:hover { text-decoration: underline; }
 .ext-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .mini.primary { color: var(--bg0); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 
+/* toasts — one app-wide layer, stacked bottom-right, theme-token colored */
+.toaster {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  pointer-events: none; max-width: min(380px, 90vw);
+}
+.toast {
+  pointer-events: auto; display: flex; align-items: flex-start; gap: 9px;
+  padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.4;
+  background: var(--bg1); color: var(--fg);
+  border: 1px solid var(--hairline); border-left: 3px solid var(--fg-dim);
+  box-shadow: 0 6px 20px color-mix(in srgb, #000 28%, transparent);
+  animation: toast-in 160ms ease-out;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.toast-success { border-left-color: var(--green); }
+.toast-error   { border-left-color: var(--red); }
+.toast-warn    { border-left-color: var(--yellow); }
+.toast-info    { border-left-color: var(--accent); }
+.toast-icon { flex: none; font-weight: 700; line-height: 1.4; }
+.toast-success .toast-icon { color: var(--green); }
+.toast-error   .toast-icon { color: var(--red); }
+.toast-warn    .toast-icon { color: var(--yellow); }
+.toast-info    .toast-icon { color: var(--accent); }
+.toast-msg { flex: 1; min-width: 0; word-break: break-word; }
+.toast-x {
+  flex: none; background: none; border: none; cursor: pointer; color: var(--fg-dim);
+  font-size: 12px; line-height: 1.4; padding: 0 0 0 4px;
+}
+.toast-x:hover { color: var(--fg); }
+
 /* resizable sidebars */
 /* 5px between two surfaces is a target you have to aim at, and missing
    it reads as "this doesn't resize" rather than "you missed". The strip

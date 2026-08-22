@@ -8,6 +8,7 @@ import Avatar from "./Avatar";
 import { EnvKeyStatus } from "./SkillSecrets";
 import FindSource from "./FindSource";
 import { ExtensionGallery } from "./ExtensionGallery";
+import { flash } from "./toast";
 import { extensionSettingsPanels } from "./gui-extensions";
 
 /**
@@ -132,7 +133,6 @@ export default function SkillsView({
   const [installing, setInstalling] = useState<InstallTarget>();
   const [finding, setFinding] = useState<{ agent: string; skill: string }>();
   const [publishing, setPublishing] = useState<string>();
-  const [notice, setNotice] = useState<string>();
   const [installs, setInstalls] = useState<Map<string, number>>(new Map());
   const [copied, setCopied] = useState<string>();
   const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[]; sources: Record<string, string> }[]>([]);
@@ -194,10 +194,6 @@ export default function SkillsView({
     [agentDeps, installed]
   );
 
-  const flash = (text: string) => {
-    setNotice(text);
-    setTimeout(() => setNotice(undefined), 6000);
-  };
 
   const reload = useCallback(() => {
     void invoke<string>("read_skills")
@@ -376,7 +372,6 @@ export default function SkillsView({
             </div>
           )}
         </div>
-        {notice && <div className="manage-notice">{notice}</div>}
 
         {tab === "installed" && (
           <>

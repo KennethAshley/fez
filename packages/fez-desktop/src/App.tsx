@@ -25,6 +25,7 @@ import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
 import { loadKeymap, matchAction, nextUnreadChannel, DEFAULT_KEYMAP, type ActionId } from "./keymap";
+import { Toaster } from "./Toaster";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
@@ -628,6 +629,7 @@ function Shell({
 
   return (
     <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
+      <Toaster />
       {!connected && (
         <div className="conn-bar">
           {relayHealth.length > 1 ? `all ${relayHealth.length} relays unreachable` : "relay disconnected"} — reconnecting…
