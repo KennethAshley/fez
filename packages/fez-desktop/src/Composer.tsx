@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, MentionCandidate } from "@fezchat/client";
 import { EMOJI, searchEmoji, type EmojiEntry } from "./emoji";
 import { COMMANDS, type CommandMeta } from "./commands";
+import { guiCommandMenu } from "./gui-extensions";
 import { FormatBar, markdownFormatOps } from "./format-bar";
 import { MentionList, rosterMatches } from "./mentions";
 
@@ -115,7 +116,7 @@ export default function Composer({
   const commandCandidates = useMemo(
     () =>
       token?.type === "command"
-        ? COMMANDS.filter((c) => c.name.startsWith(token.partial)).slice(0, 9)
+        ? [...COMMANDS, ...guiCommandMenu()].filter((c) => c.name.startsWith(token.partial)).slice(0, 9)
         : [],
     [token]
   );

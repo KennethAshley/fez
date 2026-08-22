@@ -263,12 +263,23 @@ export function settingsPanelForSource(source: string): SettingsPanel | undefine
   return settingsPanels.find((panel) => panel.source === source);
 }
 
-const guiCommands = new Map<string, (args: string) => Promise<string> | string>();
-export function registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void {
-  guiCommands.set(name.toLowerCase(), run);
+type GuiCommand = { run: (args: string) => Promise<string> | string; ext?: string };
+const guiCommands = new Map<string, GuiCommand>();
+// `ext` is filled by the loader (below), never by the extension — it names
+// the package a command came from so the composer palette can show it.
+export function registerGuiCommand(name: string, run: (args: string) => Promise<string> | string, ext?: string): void {
+  guiCommands.set(name.toLowerCase(), { run, ext });
 }
 export function guiCommand(name: string): ((args: string) => Promise<string> | string) | undefined {
-  return guiCommands.get(name.toLowerCase());
+  return guiCommands.get(name.toLowerCase())?.run;
+}
+/** The registered extension commands, for the composer's "/" hints. */
+export function guiCommandMenu(): { name: string; args: string; description: string }[] {
+  return [...guiCommands].map(([name, { ext }]) => ({
+    name,
+    args: "",
+    description: ext ? `from ${ext}` : "extension command",
+  }));
 }
 
 // ── markdown extension registries (the doc-side seam) ──────────────
@@ -622,7 +633,9 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       registerBlockRenderer: may("ui") ? registerBlockRenderer : (refuse("ui", "render doc blocks") as never),
       registerPageView: may("ui") ? registerPageView : (refuse("ui", "add a page view") as never),
       registerMarkdownPlugin: may("ui") ? registerMarkdownPlugin : (refuse("ui", "extend markdown") as never),
-      registerGuiCommand: may("commands") ? registerGuiCommand : (refuse("commands", "add a slash command") as never),
+      registerGuiCommand: may("commands")
+        ? ((cmd: string, run: (args: string) => Promise<string> | string) => registerGuiCommand(cmd, run, name))
+        : (refuse("commands", "add a slash command") as never),
       // Keyed by the EXTENSION's name, not one it picks: two packages
       // must not be able to claim the same card, and a card should say
       // which extension it configures.
