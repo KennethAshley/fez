@@ -17,6 +17,8 @@ export interface NostrEvent {
 export interface NostrAccess {
   pubkey: string;
   publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<NostrEvent>;
+  /** Sign WITHOUT publishing — NIP-98 HTTP auth headers. The key stays behind the seam. */
+  signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): NostrEvent & { sig: string };
   query(filters: Record<string, unknown>[]): Promise<NostrEvent[]>;
   subscribe(filters: Record<string, unknown>[], onEvent: (event: NostrEvent) => void): () => void;
   encrypt(peerPubkey: string, plaintext: string): string;

@@ -112,4 +112,24 @@ function main(): void {
   );
 }
 
-main();
+// Run only when INVOKED, not when imported. This file gets copied next
+// to the workspace provider (the provider resolves it as a sibling), and
+// the provider loader imports every .js it finds — a bin that executes
+// at import time would run a credential exchange against an empty stdin
+// and exit the host process.
+import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+// realpath BOTH sides: node resolves the main module through symlinks,
+// so under `ln -s` or an npm bin shim import.meta.url is the real file
+// while argv[1] is the link — a naive compare made the helper silently
+// print nothing and every push die as an opaque 401 (review finding F9).
+const invoked = (() => {
+  try {
+    return process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : undefined;
+  } catch {
+    return process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
+  }
+})();
+if (invoked && import.meta.url === invoked) {
+  main();
+}

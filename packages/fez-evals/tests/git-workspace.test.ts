@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, rmSync, existsSync, writeFileSync, readdirSync } from "node:fs";
+import {mkdtempSync, rmSync, existsSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -199,6 +199,82 @@ describe("a fleet sharing one repo", () => {
   });
 });
 
+describe("an agent cut onto a line", () => {
+  it("starts from the line's tip, not the default branch", { timeout: 60_000 }, async () => {
+    // Build a line on the relay: main has one commit, feat-auth has a
+    // second. An agent based on feat-auth must see BOTH.
+    const seed = path.join(root, "line-seed");
+    mkdirSync(seed, { recursive: true });
+    const git = (args: string[], cwd = seed) =>
+      run("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", FEZ_SECRET_KEY: hex(alice) } });
+    await git(["init", "--quiet", "--initial-branch=main"]);
+    await git(["config", "user.email", "a@fez"]);
+    await git(["config", "user.name", "alice"]);
+    writeFileSync(path.join(seed, "base.txt"), "trunk\n");
+    await git(["add", "."]);
+    await git(["commit", "--quiet", "-m", "trunk"]);
+    await git(["remote", "add", "origin", `${ORIGIN}/git/lined.git`]);
+    await git(["-c", `credential.helper=${HELPER}`, "-c", "credential.useHttpPath=true", "push", "--quiet", "origin", "main"]);
+    await git(["checkout", "--quiet", "-b", "feat-auth"]);
+    writeFileSync(path.join(seed, "auth.txt"), "line work\n");
+    await git(["add", "."]);
+    await git(["commit", "--quiet", "-m", "line"]);
+    await git(["-c", `credential.helper=${HELPER}`, "-c", "credential.useHttpPath=true", "push", "--quiet", "origin", "feat-auth"]);
+
+    const ws = await prepareWorkspace({
+      ...spec(alice, path.join(root, "lined-agent"), "reviewer/feat-auth"),
+      repo: "lined",
+      base: "feat-auth",
+    });
+    expect(ws.branch).toBe("reviewer/feat-auth");
+    expect(existsSync(path.join(ws.dir, "auth.txt"))).toBe(true); // the line's commit is present
+  });
+
+  it("joins an unborn line that already has LANES — tail-match trap", { timeout: 60_000 }, async () => {
+    // The killer case: researcher pushed `researcher/feat-empty`, the
+    // line `feat-empty` itself has no ref, and NOW reviewer joins.
+    // `ls-remote origin feat-empty` tail-matches the sibling lane, so a
+    // sloppy existence check fetches a ghost and the spawn dies.
+    const first = await prepareWorkspace({
+      ...spec(alice, path.join(root, "lane-one"), "researcher/feat-empty"),
+      repo: "lined",
+      base: "feat-empty",
+    });
+    const git = (args: string[]) =>
+      run("git", args, { cwd: first.dir, encoding: "utf-8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", FEZ_SECRET_KEY: hex(alice) } });
+    await git(["config", "user.email", "a@fez"]);
+    await git(["config", "user.name", "alice"]);
+    writeFileSync(path.join(first.dir, "lane.txt"), "first lane\n");
+    await git(["add", "."]);
+    await git(["commit", "--quiet", "-m", "lane work"]);
+    await git(["push", "--quiet", "origin", "researcher/feat-empty"]);
+
+    // Second agent joins the same (still unborn) line: must fall back
+    // to trunk, and must NOT see the sibling's work.
+    const second = await prepareWorkspace({
+      ...spec(alice, path.join(root, "lane-two"), "reviewer/feat-empty"),
+      repo: "lined",
+      base: "feat-empty",
+    });
+    expect(second.branch).toBe("reviewer/feat-empty");
+    expect(existsSync(path.join(second.dir, "base.txt"))).toBe(true);
+    expect(existsSync(path.join(second.dir, "lane.txt"))).toBe(false);
+  });
+
+  it("falls back to the default branch when the line has no commits yet", { timeout: 60_000 }, async () => {
+    // /repo branch DECLARES a line; the ref appears on first push. An
+    // agent pointed at a declared-but-empty line starts from trunk.
+    const ws = await prepareWorkspace({
+      ...spec(alice, path.join(root, "lined-agent2"), "researcher/feat-empty"),
+      repo: "lined",
+      base: "feat-empty",
+    });
+    expect(ws.branch).toBe("researcher/feat-empty");
+    expect(existsSync(path.join(ws.dir, "base.txt"))).toBe(true);
+    expect(existsSync(path.join(ws.dir, "auth.txt"))).toBe(false); // NOT the other line's work
+  });
+});
+
 describe("a repo nobody has pushed to yet", () => {
   it("is a valid starting state, not an error", { timeout: 60_000 }, async () => {
     // `/repo new` opens the channel; the repo exists only after a push.
@@ -211,5 +287,33 @@ describe("a repo nobody has pushed to yet", () => {
     });
     expect(ws.empty).toBe(true);
     expect(ws.branch).toBe("alice/first");
+  });
+
+  it("handles a repo that does not even EXIST on the relay yet", { timeout: 60_000 }, async () => {
+    // The channel-first flow: /repo new opened #unborn, no push has
+    // created the bare repo, and the agent is the one meant to make the
+    // first commit. Clone 404s — the provider inits locally instead,
+    // and this agent's first push brings the repo into being.
+    const dir = path.join(root, "unborn");
+    const ws = await prepareWorkspace({
+      ...spec(alice, dir, "alice/first"),
+      repo: "unborn",
+    });
+    expect(ws.empty).toBe(true);
+
+    // The remote is wired: a commit + push must CREATE the repo.
+    const git = (args: string[]) =>
+      run("git", args, { cwd: dir, encoding: "utf-8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", FEZ_SECRET_KEY: hex(alice) } });
+    await git(["config", "user.email", "a@fez"]);
+    await git(["config", "user.name", "alice"]);
+    writeFileSync(path.join(dir, "README.md"), "born from an agent\n");
+    await git(["add", "."]);
+    await git(["commit", "--quiet", "-m", "first"]);
+    // A PLAIN push — no -c flags. The auth must live in the clone's own
+    // config, because the AGENT pushes from its shell, not through our
+    // wrapper. Passing flags here would test the wrapper and ship the
+    // spelunking-through-Bitwarden failure it papered over.
+    await git(["push", "--quiet", "origin", "alice/first"]);
+    expect(existsSync(path.join(gitRoot, "unborn.git"))).toBe(true);
   });
 });

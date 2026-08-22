@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { gitRepoPath } from "./auth.js";
+import { hookEnv, installHook, isPrivileged, removeHook, resolveProtect, roleOf, type RefPolicy } from "./protect.js";
+import { installJournalHook, journalPath, readJournalTail } from "./journal.js";
+import { serveDiff, serveMerge, serveSync } from "./ops.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 /**
  * Shapes borrowed from the relay, declared rather than imported.
@@ -81,6 +84,25 @@ export type GitAuthenticator = (
 export interface GitAccess {
   canRead(repo: string, who: GitIdentity): boolean | Promise<boolean>;
   canWrite(repo: string, who: GitIdentity): boolean | Promise<boolean>;
+  /**
+   * Which refs this pusher may not move, and whether they are exempt.
+   *
+   * Optional, and its absence means today's behaviour: canWrite decides
+   * everything and every ref is equal. Composed, never assumed — the
+   * same posture as `access` itself. An operator running a mirror with
+   * their own GitAccess keeps working without knowing this exists.
+   *
+   * Consulted per PUSH, not per ref: the refs are still inside the
+   * packfile when this is called. It answers "what is the rule for this
+   * person", and the pre-receive hook applies that rule to what arrives.
+   */
+  refPolicy?(repo: string, who: GitIdentity): RefPolicy | Promise<RefPolicy>;
+  /**
+   * Where this repo came from — the recorded upstream, when the access
+   * model knows one (fez reads it off the repo's channel meta). Absent
+   * method or undefined result both mean "no upstream": sync says so.
+   */
+  upstreamOf?(repo: string): string | undefined | Promise<string | undefined>;
 }
 
 export interface GitOptions {
@@ -99,6 +121,13 @@ export interface GitOptions {
   createOnPush?: boolean;
   /** Refuse a push body larger than this. Default 500MB, as Buzz uses. */
   maxBodyBytes?: number;
+  /**
+   * Publish credential for https upstreams (fez-sync). Operator
+   * config, never client-supplied — the webview cannot read secrets by
+   * design, so the mirror-push credential lives where the mirror-push
+   * runs.
+   */
+  syncToken?: string;
   log?: (line: string) => void;
 }
 
@@ -160,8 +189,28 @@ export function gitServer(options: GitOptions): GitServer {
       const route = parseGitPath(url.pathname);
       if (!route) return false; // not ours — the relay carries on
 
-      const write = isWrite(url.pathname, url.search);
+      const write = isWrite(url.pathname, url.search) || route.rest === "/fez-merge" || route.rest === "/fez-sync";
       const repoDir = path.join(options.root, `${route.repo}.git`);
+
+      // The fez-* endpoints are consumed by BROWSERS (the desktop webview's
+      // lane board), not just git — and a cross-origin fetch carrying an
+      // Authorization header preflights. Without these answers the browser
+      // blocks the request before it is ever made, which presents as "the
+      // board is empty" with the journal sitting right there (it did).
+      // Wildcard origin is correct: authorization is the NIP-98 header,
+      // never a cookie, so there is no ambient credential to protect.
+      if (route.rest.startsWith("/fez-")) {
+        res.setHeader("access-control-allow-origin", "*");
+        if (req.method === "OPTIONS") {
+          res.writeHead(204, {
+            "access-control-allow-methods": "GET, POST",
+            "access-control-allow-headers": "authorization",
+            "access-control-max-age": "600",
+          });
+          res.end();
+          return true;
+        }
+      }
 
       // Identity is scoped to the REPOSITORY, not this request: git signs
       // once per operation and reuses that token for the ref GET and the
@@ -182,6 +231,68 @@ export function gitServer(options: GitOptions): GitServer {
         if (!who.pubkey) return deny(res, 401, `authenticate with a nostr key (${who.reason ?? "no credentials"})`);
         log(`git: ${who.pubkey.slice(0, 8)} denied ${write ? "write" : "read"} on ${route.repo}`);
         return deny(res, 403, `not allowed to ${write ? "push to" : "read"} ${route.repo}`);
+      }
+
+      // The push journal — read-gated exactly like clone, because it
+      // reveals the same facts (who moved which ref). Served before the
+      // git-backend path since it is not a git protocol request.
+      if (route.rest === "/fez-push-journal") {
+        if (!existsSync(repoDir)) return deny(res, 404, `no such repository: ${route.repo}`);
+        res.writeHead(200, { "content-type": "text/tab-separated-values" });
+        res.end(readJournalTail(repoDir));
+        return true;
+      }
+
+      // Review diff — read-gated like clone; the refs come from the URL
+      // and are validated before they go anywhere near a subprocess.
+      if (route.rest === "/fez-diff") {
+        if (!existsSync(repoDir)) return deny(res, 404, `no such repository: ${route.repo}`);
+        await serveDiff(repoDir, url.searchParams, res);
+        return true;
+      }
+
+      // Publish a branch to the repo's upstream — the shop-window push.
+      if (route.rest === "/fez-sync") {
+        if (req.method !== "POST") return deny(res, 405, "fez-sync is POST");
+        if (!existsSync(repoDir)) return deny(res, 404, `no such repository: ${route.repo}`);
+        const policy = options.access.refPolicy ? await options.access.refPolicy(route.repo, who) : undefined;
+        await serveSync(
+          repoDir,
+          url.searchParams,
+          {
+            upstream: await options.access.upstreamOf?.(route.repo),
+            token: options.syncToken,
+            // No composed policy = no roles to read = every writer may.
+            privileged: policy ? policy.privileged : true,
+          },
+          res
+        );
+        return true;
+      }
+
+      // Fast-forward merge — a WRITE (gated above as one), with the
+      // hook's own protection question asked through the same refPolicy
+      // seam: one answer for pushes and merges, or the two drift.
+      if (route.rest === "/fez-merge") {
+        if (req.method !== "POST") return deny(res, 405, "fez-merge is POST");
+        if (!existsSync(repoDir)) return deny(res, 404, `no such repository: ${route.repo}`);
+        await serveMerge(
+          repoDir,
+          url.searchParams,
+          {
+            pusher: who.pubkey ?? "anonymous",
+            allowed: async (ref) => {
+              if (!options.access.refPolicy) return true; // no policy composed — every ref is equal
+              const policy = await options.access.refPolicy(route.repo, who);
+              const protectedRef = policy.protect.some((pattern) =>
+                new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(ref)
+              );
+              return !protectedRef || policy.privileged;
+            },
+          },
+          res
+        );
+        return true;
       }
 
       if (!existsSync(repoDir)) {
@@ -211,12 +322,53 @@ export function gitServer(options: GitOptions): GitServer {
         log(`git: created ${route.repo}.git`);
       }
 
+      // Branch protection is resolved HERE, before git runs, and handed
+      // to the hook in its environment. Doing it now is what keeps the
+      // hook a pure function of its inputs — it never calls back, so
+      // there is no window where the policy it enforces is not the
+      // policy the relay authorized.
+      //
+      // The hook is rewritten on every push rather than at creation:
+      // repos made before this existed have none, and a protection that
+      // silently skips your oldest repo is worse than no protection.
+      let extraEnv: NodeJS.ProcessEnv = {};
+      if (write) {
+        // Recording is unconditional — the journal is what lets the
+        // owner-key side post branch threads, and unlike protection it
+        // is not policy anyone composes away.
+        installJournalHook(repoDir);
+        extraEnv = { FEZ_GIT_JOURNAL: journalPath(repoDir), FEZ_GIT_PUSHER: who.pubkey ?? "anonymous" };
+        try {
+          if (options.access.refPolicy) {
+            const policy = await options.access.refPolicy(route.repo, who);
+            installHook(repoDir);
+            extraEnv = { ...extraEnv, ...hookEnv(who.pubkey, policy) };
+            if (policy.protect.length > 0) {
+              log(`git: ${route.repo} protects ${policy.protect.join(" ")}${policy.privileged ? "" : " (pusher may not)"}`);
+            }
+          } else {
+            // No policy means no hook — including one WE left behind. The
+            // hook fails closed on a missing policy, so an operator who
+            // swaps in their own GitAccess would otherwise find every
+            // push refused by a rule they never configured.
+            removeHook(repoDir);
+          }
+        } catch (err) {
+          // Could not install or resolve — refuse. An accepted push here
+          // would be one the relay never checked, and it would look
+          // exactly like a successful one.
+          log(`git: refusing push to ${route.repo}: ${err instanceof Error ? err.message : String(err)}`);
+          return deny(res, 500, "could not apply this repository's branch protection");
+        }
+      }
+
       await serveViaHttpBackend(req, res, {
         root: options.root,
         pathInfo: `/${route.repo}.git${route.rest}`,
         query: url.search.replace(/^\?/, ""),
         maxBodyBytes: maxBody,
         pubkey: who.pubkey,
+        env: extraEnv,
       });
       return true;
     },
@@ -237,6 +389,8 @@ interface BackendOptions {
   query: string;
   maxBodyBytes: number;
   pubkey?: string;
+  /** Handed through to receive-pack's hooks. See protect.ts. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -256,6 +410,10 @@ function serveViaHttpBackend(
     const child = spawn("git", ["http-backend"], {
       env: {
         ...process.env,
+        // Before GIT_PROJECT_ROOT and friends: http-backend execs
+        // receive-pack, which execs the hook, and the whole chain
+        // inherits this. Policy vars can never shadow the CGI ones.
+        ...opts.env,
         GIT_PROJECT_ROOT: opts.root,
         GIT_HTTP_EXPORT_ALL: "1", // authorization already happened, above
         PATH_INFO: opts.pathInfo,
@@ -327,15 +485,18 @@ function serveViaHttpBackend(
  * which is the whole reason a repo is a channel.
  */
 export function rosterAccess(query: (filter: Record<string, unknown>) => StoredEvent[], owner?: string): GitAccess {
+  const latest = (filter: Record<string, unknown>): StoredEvent | undefined =>
+    query(filter).sort((a, b) => b.created_at - a.created_at)[0];
+
+  const roster = (): StoredEvent | undefined =>
+    latest({ kinds: [47102], "#d": ["roster"], authors: owner ? [owner] : undefined });
+
   const members = (): { allowed: Set<string>; banned: Set<string> } => {
     const allowed = new Set<string>();
     const banned = new Set<string>();
     if (owner) allowed.add(owner);
-    const roster = query({ kinds: [47102], "#d": ["roster"], authors: owner ? [owner] : undefined })
-      .sort((a, b) => b.created_at - a.created_at)[0];
-    for (const tag of roster?.tags ?? []) if (tag[0] === "p" && tag[1]) allowed.add(tag[1]);
-    const bans = query({ kinds: [30047], "#d": ["bans"], authors: owner ? [owner] : undefined })
-      .sort((a, b) => b.created_at - a.created_at)[0];
+    for (const tag of roster()?.tags ?? []) if (tag[0] === "p" && tag[1]) allowed.add(tag[1]);
+    const bans = latest({ kinds: [30047], "#d": ["bans"], authors: owner ? [owner] : undefined });
     for (const tag of bans?.tags ?? []) if (tag[0] === "p" && tag[1]) banned.add(tag[1]);
     return { allowed, banned };
   };
@@ -347,8 +508,60 @@ export function rosterAccess(query: (filter: Record<string, unknown>) => StoredE
     return allowed.has(who.pubkey);
   };
 
-  // Read and write are the same rule today, deliberately: fez's roster is
-  // flat (on it = every channel), and inventing per-repo roles here would
+  /**
+   * The repo's channel, which is where its policy lives.
+   *
+   * Matched on `meta.repo` rather than the channel NAME: the name is
+   * lowercased for display and a repo may legitimately be `API`, so
+   * name-matching would quietly fail to find the policy for exactly the
+   * repos whose owner used a capital letter — and failing to FIND a
+   * policy would read as "unprotected".
+   */
+  const repoChannel = (repo: string): { protect?: string; upstream?: string } | undefined => {
+    // LATEST matching event, not first-found: channel edits are new
+    // events with the same d-tag, and taking whichever the store
+    // returned first served STALE policy — a protection change or a
+    // recorded upstream could be silently ignored (caught by the sync
+    // eval, which edits the channel and asserts the edit counts).
+    let best: { created_at: number; id: string; meta: Record<string, string> } | undefined;
+    for (const event of query({ kinds: [47101], authors: owner ? [owner] : undefined })) {
+      try {
+        const content = JSON.parse(event.content) as { source?: unknown; meta?: Record<string, string> };
+        if (content.source === "fez-git" && content.meta?.repo === repo) {
+          // Same resolution rule clients use for owner-signed events
+          // (src/kinds.ts): highest created_at wins, ties broken by
+          // lowest id — so relay and clients can never disagree about
+          // which policy is current.
+          const wins =
+            !best ||
+            event.created_at > best.created_at ||
+            (event.created_at === best.created_at && event.id < best.id);
+          if (wins) best = { created_at: event.created_at, id: event.id, meta: content.meta };
+        }
+      } catch {
+        // A channel whose content is not JSON is not one of ours.
+      }
+    }
+    return best?.meta;
+  };
+
+  // Read and write are the same rule, deliberately: fez's roster is flat
+  // (on it = every channel), and inventing per-repo membership here would
   // be a second permission model competing with the one that exists.
-  return { canRead: (_repo, who) => may(who), canWrite: (_repo, who) => may(who) };
+  //
+  // Ref policy is the one place the roster's ROLES start to matter, and
+  // they were already there — 47102 carries ["p", pubkey, role] and this
+  // code simply stopped throwing the third element away.
+  return {
+    canRead: (_repo, who) => may(who),
+    canWrite: (_repo, who) => may(who),
+    refPolicy: (repo, who) => ({
+      protect: resolveProtect(repoChannel(repo)?.protect),
+      privileged:
+        !!who.pubkey && (who.pubkey === owner || isPrivileged(roleOf(roster()?.tags ?? [], who.pubkey))),
+    }),
+    // The upstream is a fact adopt recorded on the channel — the same
+    // place protection lives, read the same way.
+    upstreamOf: (repo) => repoChannel(repo)?.upstream,
+  };
 }

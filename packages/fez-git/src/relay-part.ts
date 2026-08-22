@@ -48,6 +48,10 @@ export default function activate(api: RelayExtensionAPI): void {
   const server = gitServer({
     root,
     authenticate: nip98Authenticator({ origins: api.origins }),
+    // The mirror-push credential, from the operator's environment — the
+    // one party that can hold it. Absent = fez-sync answers 501 with
+    // the fix, instead of half-working.
+    syncToken: process.env.FEZ_GITHUB_TOKEN || process.env.FEZ_GIT_SYNC_TOKEN,
     // The workspace roster IS the repo's access control. Nothing new is
     // invented: the same 47102 that decides whether your messages are
     // delivered decides whether you may clone, and the same 30047 ban

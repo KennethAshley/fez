@@ -49,6 +49,17 @@ export interface WorkspaceSpec {
    * repos and for an agent whose job genuinely spans everything.
    */
   scope?: string[];
+  /**
+   * The LINE this work is cut from and merges back into. A new agent
+   * branch starts at `origin/<base>` instead of the default branch, so
+   * two sets of agents on two lines never see each other's work in
+   * progress. Ignored when the agent's branch already exists on the
+   * relay (resuming beats re-basing: an agent that died mid-task comes
+   * back to ITS work), and when the base doesn't exist yet (the line
+   * was declared but has no commits — the default branch is its
+   * starting content by definition).
+   */
+  base?: string;
   /** Agent's secret key, hex — its git credential (see credential.ts). */
   secretKeyHex: string;
   /** Path to git-credential-fez. */
@@ -87,6 +98,29 @@ function gitEnv(spec: WorkspaceSpec): NodeJS.ProcessEnv {
   };
 }
 
+/**
+ * Persist auth INTO the clone, so the agent's own `git push` works.
+ *
+ * prepareWorkspace passing `-c` flags per command authenticated the
+ * SETUP — and nothing after it. The agent then ran `git push` from its
+ * shell, found no helper, and went spelunking through Bitwarden and
+ * osxkeychain looking for credentials that were never going to be there
+ * (watched happen, painfully). The clone's local config is the right
+ * home: it travels with the checkout, and `git -C <dir> push` works for
+ * whoever holds the key in FEZ_SECRET_KEY.
+ *
+ * The leading EMPTY helper entry is load-bearing on macOS: the system
+ * gitconfig ships credential.helper=osxkeychain, git runs every helper
+ * in the list, and osxkeychain both prompts and fails to store authtype
+ * credentials. An empty entry resets the inherited list (git's own
+ * semantics), so ours is the only one that runs.
+ */
+async function persistAuth(dir: string, helper: string, git: (args: string[], cwd?: string) => Promise<unknown>): Promise<void> {
+  await git(["config", "--local", "credential.helper", ""], dir);
+  await git(["config", "--local", "--add", "credential.helper", helper], dir);
+  await git(["config", "--local", "credential.useHttpPath", "true"], dir);
+}
+
 /** `https://relay/git` + `demo` → `https://relay/git/demo.git`. */
 export const remoteFor = (cloneBase: string, repo: string): string =>
   `${cloneBase.replace(/\/+$/, "")}/${repo}.git`;
@@ -116,8 +150,26 @@ export async function prepareWorkspace(spec: WorkspaceSpec): Promise<Workspace> 
   try {
     await git(clone);
   } catch (err) {
-    throw new Error(`could not clone ${remote}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+    const message = err instanceof Error ? err.message : String(err);
+    // A repo whose CHANNEL exists but that nobody has pushed to yet is
+    // not clonable — on the relay the bare repository is created by the
+    // first authorized push (createOnPush), so "not found" here is the
+    // agent-first starting state, not an error: init locally, point at
+    // the remote, and this agent's first push brings it into being.
+    // Anything else (403, network, TLS) stays fatal and loud.
+    if (/not found|no such repository/i.test(message)) {
+      log(`${spec.repo}: not on the relay yet — this clone's first push creates it`);
+      mkdirSync(spec.dir, { recursive: true });
+      await git(["init", "--quiet", spec.dir]);
+      await git(["remote", "add", "origin", remote], spec.dir);
+      await persistAuth(spec.dir, spec.helper, git);
+      await git(["checkout", "--quiet", "-b", spec.branch], spec.dir);
+      return { dir: spec.dir, branch: spec.branch, empty: true, dispose: () => rmSync(spec.dir, { recursive: true, force: true }) };
+    }
+    throw new Error(`could not clone ${remote}: ${message}`, { cause: err });
   }
+
+  await persistAuth(spec.dir, spec.helper, git);
 
   // A repo created by `/repo new` and never pushed to has no commits, so
   // there is no branch to check out and no tree to scope. That is a
@@ -154,8 +206,30 @@ export async function prepareWorkspace(spec: WorkspaceSpec): Promise<Workspace> 
     });
     log(`${spec.repo}: resumed ${spec.branch}`);
   } else {
-    await git(["checkout", "--quiet", "-b", spec.branch], spec.dir);
-    log(`${spec.repo}: started ${spec.branch}`);
+    // Cut from the line when one is named and it exists; otherwise the
+    // default branch. Checked, not assumed — a declared-but-unpushed
+    // line legitimately has no ref yet.
+    // FULLY QUALIFIED pattern, non-negotiably: ls-remote patterns match
+    // the TAIL of a ref, so a bare "feature" matches a sibling agent's
+    // "researcher/feature" — which made an unborn line look born the
+    // moment the FIRST agent pushed to it, and killed the SECOND agent's
+    // spawn on a fetch of a ref that never existed. The exact scenario
+    // is a lane joining a line that already has lanes — i.e. the normal
+    // case, discovered the hard way.
+    const baseRef =
+      spec.base &&
+      (await git(["ls-remote", "--exit-code", "origin", `refs/heads/${spec.base}`], spec.dir).then(() => true).catch(() => false))
+        ? `origin/${spec.base}`
+        : undefined;
+    if (baseRef) {
+      // No extra fetch: the clone already fetched every head, so the
+      // remote-tracking ref for a base that truly exists is present.
+      await git(["checkout", "--quiet", "-b", spec.branch, baseRef], spec.dir);
+      log(`${spec.repo}: started ${spec.branch} from ${baseRef}`);
+    } else {
+      await git(["checkout", "--quiet", "-b", spec.branch], spec.dir);
+      log(`${spec.repo}: started ${spec.branch}${spec.base ? ` (line ${spec.base} has no commits yet — cut from the default branch)` : ""}`);
+    }
   }
 
   return {

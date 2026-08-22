@@ -51,8 +51,51 @@ describe("/repo on a relay that serves git", () => {
     expect(ensured.at(-1)).toEqual({
       name: "demo",
       source: "fez-git",
-      meta: { repo: "demo", clone: "https://relay.example/git/demo.git" },
+      // `protect` is written explicitly rather than left to the relay's
+      // default, so the repo describes its own rule and the two can
+      // never disagree about which one applied.
+      meta: { repo: "demo", clone: "https://relay.example/git/demo.git", protect: "main" },
     });
+    expect(out).toContain("`main` is protected");
+  });
+
+  it("changes what a repo protects", async () => {
+    const out = await drive({ info: ADVERTISING, channels }).run("protect existing release/*");
+    expect(ensured.at(-1)).toEqual({
+      name: "existing",
+      source: "fez-git",
+      meta: { repo: "existing", clone: "https://relay.example/git/existing.git", protect: "release/*" },
+    });
+    expect(out).toContain("release/*");
+  });
+
+  it("opens a line — a thread root the branch task will recognize", async () => {
+    const said: { channelId: string; text: string }[] = [];
+    const speaking: typeof channels = {
+      ...channels,
+      say: async (channelId, text) => {
+        said.push({ channelId, text });
+        return "msg-1";
+      },
+    };
+    const out = await drive({ info: ADVERTISING, channels: speaking }).run("branch existing feat-auth");
+    expect(out).toContain("line `feat-auth` opened");
+    expect(said).toHaveLength(1);
+    expect(said[0].channelId).toBe("id-1");
+    // The root marker is the contract with the thread task.
+    expect(said[0].text).toContain("⑂ `feat-auth`");
+  });
+
+  it("refuses a slashed line name — lines are top-level", async () => {
+    const out = await drive({ info: ADVERTISING, channels }).run("branch existing feat/auth");
+    expect(out).toContain("not a line name");
+  });
+
+  it("refuses to set protection on a repo that is not here", async () => {
+    const before = ensured.length;
+    const out = await drive({ info: ADVERTISING, channels }).run("protect ghost main");
+    expect(out).toContain("no repo called");
+    expect(ensured.length).toBe(before);
   });
 
   it("lists repos with the clone url the channel already carries", async () => {

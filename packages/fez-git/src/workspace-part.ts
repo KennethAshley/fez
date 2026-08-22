@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareWorkspace } from "./workspace.js";
@@ -28,6 +29,8 @@ export interface ProvideRequest {
   dir: string;
   /** Sparse cone; omit for the whole tree. */
   scope?: string[];
+  /** Line to cut the branch from (thread-scoped summons). */
+  base?: string;
   /** Relay websocket URL — the provider reads its NIP-11 for the git base. */
   relayUrl: string;
   /** The agent's own key. It pushes AS ITSELF; that is the whole point. */
@@ -51,13 +54,16 @@ export interface ProvidedWorkspace {
  * paths are checked rather than assumed.
  */
 function resolveHelper(): string {
+  const candidates: string[] = [];
   try {
     const here = path.dirname(fileURLToPath(import.meta.url));
-    for (const name of ["credential.js", "fez-git-credential.js"]) {
-      const candidate = path.join(here, name);
-      if (existsSync(candidate)) return candidate;
-    }
-  } catch { /* not file-backed — fall through to PATH */ }
+    candidates.push(path.join(here, "credential.js"), path.join(here, "fez-git-credential.js"));
+  } catch { /* not file-backed */ }
+  // ~/.fez/bin is where `fez install`/`fez link` put executables — the
+  // canonical home, so the helper no longer needs a copy beside the
+  // provider (which the provider LOADER would try to import as one).
+  candidates.push(path.join(os.homedir(), ".fez", "bin", "git-credential-fez"));
+  for (const candidate of candidates) if (existsSync(candidate)) return candidate;
   return "fez";
 }
 
@@ -93,6 +99,7 @@ export default async function provide(req: ProvideRequest): Promise<ProvidedWork
     branch: req.branch,
     dir: req.dir,
     scope: req.scope,
+    base: req.base,
     secretKeyHex: req.secretKeyHex,
     helper: resolveHelper(),
     log,
