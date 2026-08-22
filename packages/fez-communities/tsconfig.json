@@ -12,7 +12,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "paths": {
-      "@fez/client": [
+      "@fezchat/client": [
         "../fez-client/dist/index.d.ts"
       ]
     }

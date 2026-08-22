@@ -1,5 +1,5 @@
 {
-  "name": "@fez/live-blocks",
+  "name": "@fezchat/live-blocks",
   "version": "0.1.0",
   "private": true,
   "description": "Live blocks for fez docs \u2014 a markdown block an agent keeps up to date. Refresh is a doc comment, so every update is a signed edit with an audit trail.",

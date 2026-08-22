@@ -17,7 +17,7 @@
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
-      "@fez/protocol": [
+      "@fezchat/protocol": [
         "../../dist/index.d.ts"
       ]
     }

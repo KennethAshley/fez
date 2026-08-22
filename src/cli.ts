@@ -1415,12 +1415,12 @@ program
       const who = repoPersonas.map((p) => `@${p.id}`).join(", ");
       const providerDir = path.join(os.homedir(), ".fez", "workspace-providers");
       const providers = (await fs.readdir(providerDir).catch(() => [] as string[])).filter((f) => f.endsWith(".js"));
-      if (providers.length === 0) bad(`${who} name a repo: but no workspace provider is installed — their spawn dies`, "fez install @fez/git");
+      if (providers.length === 0) bad(`${who} name a repo: but no workspace provider is installed — their spawn dies`, "fez install @fezchat/git");
       else ok(`workspace provider present for ${who}`);
       const helper = path.join(os.homedir(), ".fez", "bin", "git-credential-fez");
       if (await fs.access(helper).then(() => true, () => false)) ok("git credential helper: ~/.fez/bin/git-credential-fez");
-      else bad("git credential helper missing — agent pushes fail as auth errors far from the cause", "fez install @fez/git (fills ~/.fez/bin)");
-      if (nip11 && !gitBase) bad(`${who} need git, but the relay advertises no git server`, "install @fez/git ON THE RELAY; start it with --extensions --origin <public url>");
+      else bad("git credential helper missing — agent pushes fail as auth errors far from the cause", "fez install @fezchat/git (fills ~/.fez/bin)");
+      if (nip11 && !gitBase) bad(`${who} need git, but the relay advertises no git server`, "install @fezchat/git ON THE RELAY; start it with --extensions --origin <public url>");
     }
 
     // ── sentinel: not just RUNNING — on the RIGHT relay ──────────
@@ -1663,7 +1663,7 @@ program
 
 program
   .command("create <name>")
-  .description("Scaffold a new fez extension package (headless + gui by default), typed against @fez/extension-api")
+  .description("Scaffold a new fez extension package (headless + gui by default), typed against @fezchat/extension-api")
   .option("--headless", "Include a headless part (slash commands, scheduled tasks — TUI + sentinel)")
   .option("--gui", "Include a gui part (settings panel, composer command — desktop)")
   .option("--relay", "Include a relay part (HTTP + NIP-11, loaded by a --extensions relay)")

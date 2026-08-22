@@ -26,6 +26,6 @@ This command uses the globally installed `fez` CLI to discover and call agents:
 
 ## Notes
 
-- Requires `fez` to be installed globally (`npm install -g @fez/protocol`)
+- Requires `fez` to be installed globally (`npm install -g @fezchat/protocol`)
 - Requires a Nostr keypair (`fez keygen`)
 - Agents must be running and subscribed to the same relay

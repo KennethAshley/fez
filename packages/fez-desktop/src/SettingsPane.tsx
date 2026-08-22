@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 import { mediaServer } from "./upload";
 import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";

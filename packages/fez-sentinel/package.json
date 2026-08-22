@@ -1,5 +1,5 @@
 {
-  "name": "@fez/sentinel",
+  "name": "@fezchat/sentinel",
   "version": "0.1.0",
   "private": true,
   "description": "fez's always-on watcher: wakes sleeping agents on DMs/mentions and delivers desktop notifications \u2014 the fleet works with no TUI open",
@@ -11,11 +11,11 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/index.js",
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/index.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "file:../.."
+    "@fezchat/protocol": "file:../.."
   },
   "devDependencies": {
     "esbuild": "^0.21.5",

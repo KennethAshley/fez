@@ -1,4 +1,4 @@
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 
 /**
  * Workflow runs — the GUI over fez-workflows' 47200 traces. The service

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
-import { buildDmWraps, buildGroupDmWraps, dmConvoKey, unwrapDm, KIND_GIFT_WRAP, KIND_DM } from "@fez/protocol";
+import { buildDmWraps, buildGroupDmWraps, dmConvoKey, unwrapDm, KIND_GIFT_WRAP, KIND_DM } from "@fezchat/protocol";
 
 /**
  * NIP-17 DM gate — the real wrap/unwrap helpers fez ships (src/dm.ts),

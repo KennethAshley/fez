@@ -1,4 +1,4 @@
-import { Agent } from "@fez/protocol";
+import { Agent } from "@fezchat/protocol";
 
 /**
  * Echo Agent — the simplest possible Fez agent.

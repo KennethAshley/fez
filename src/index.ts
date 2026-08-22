@@ -4,7 +4,7 @@
  * Build agents that can discover and call other agents over Nostr.
  *
  * ```typescript
- * import { Agent } from "@fez/protocol";
+ * import { Agent } from "@fezchat/protocol";
  *
  * const agent = await Agent.create({
  *   relay: "wss://relay.example.com",

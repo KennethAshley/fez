@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
-import { RelayConnection, getKey, resolveRelays } from "@fez/protocol";
+import { RelayConnection, getKey, resolveRelays } from "@fezchat/protocol";
 import { formatPoll, tallyPoll, OPTION_EMOJI } from "./format.js";
 
 /**

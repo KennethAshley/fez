@@ -3,7 +3,7 @@ import { WebSocket as WsSocket } from "ws";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { startRelay, type RelayHandle } from "../../fez-relay/dist/relay.js";
 import { membershipPolicy } from "../../fez-relay/dist/policies.js";
-import { RelayConnection } from "@fez/protocol";
+import { RelayConnection } from "@fezchat/protocol";
 
 /**
  * Read-side gate (GAPS.md §2.3, Buzz's "a registered subscription is never

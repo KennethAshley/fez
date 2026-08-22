@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { FezClient, WireEvent } from "@fez/client";
+import type { FezClient, WireEvent } from "@fezchat/client";
 
 /**
  * Channel docs — the 40100 surface: one living document per channel,

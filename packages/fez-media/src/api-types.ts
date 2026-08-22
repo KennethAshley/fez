@@ -48,7 +48,7 @@ export interface FezExtensionAPI {
   registerCommand(name: string, handler: (args: string, ctx: CommandContext) => void | Promise<void>): void;
   registerInputHandler(handler: (text: string) => Promise<boolean>): void;
   registerUrlHandler(prefix: string, handler: (url: string) => void): void;
-  /** The process's shared @fez/client instance — typed via a type-only import of @fez/client. */
+  /** The process's shared @fezchat/client instance — typed via a type-only import of @fezchat/client. */
   client?: unknown;
   ui: {
     setStatus(key: string, value: string): void;

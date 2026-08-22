@@ -1,8 +1,8 @@
 {
-  "name": "@fez/docs",
+  "name": "@fezchat/docs",
   "version": "0.1.0",
   "private": true,
-  "description": "Channel docs view for fez — /doc, DOCS sidebar, markdown disk mirror. A pure view over @fez/client.",
+  "description": "Channel docs view for fez — /doc, DOCS sidebar, markdown disk mirror. A pure view over @fezchat/client.",
   "type": "module",
   "fez": { "type": "extension", "extension": { "entry": "dist/index.js" } },
   "scripts": {

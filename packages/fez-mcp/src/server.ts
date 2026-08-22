@@ -15,7 +15,7 @@ import {
   isValidSlug,
   mentionTags,
   KIND_AGENT_ENGRAM,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 
 /**
  * fez-mcp — the agent's hands ON fez itself (GAPS §3 item 15; Buzz gives
@@ -409,7 +409,7 @@ server.registerTool(
 // Pages [[link]] to each other by name; the GUI docs view renders the
 // same events, so an agent's edit appears there live.
 
-/** Same slug rule as @fez/client wikiSlug — the two must agree or links break. */
+/** Same slug rule as @fezchat/client wikiSlug — the two must agree or links break. */
 const wikiSlug = (name: string) =>
   name.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
 

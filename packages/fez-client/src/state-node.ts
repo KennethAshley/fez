@@ -5,7 +5,7 @@ import { setStatePersistence, type StatePersistence } from "./workspace-state.js
 
 /**
  * File-backed state persistence for NODE hosts (TUI, CLI, tests) — kept
- * out of index.ts so browser bundles of @fez/client never see node:fs.
+ * out of index.ts so browser bundles of @fezchat/client never see node:fs.
  * Node hosts call installNodeStatePersistence() before constructing
  * FezClient; FEZ_STATE_FILE still overrides for tests/harnesses.
  */

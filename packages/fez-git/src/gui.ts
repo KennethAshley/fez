@@ -238,7 +238,7 @@ export default function activate(api: GuiExtensionAPI): void {
           "p",
           { className: "settings-hint" },
           "Install ",
-          h("code", null, "@fez/git"),
+          h("code", null, "@fezchat/git"),
           " on the relay and start it with ",
           h("code", null, "--extensions --origin https://your-relay"),
           ". The origin is what it publishes as the clone URL, so it has to be the address clients actually reach."

@@ -1,4 +1,4 @@
-# @fez/git
+# @fezchat/git
 
 A forge with no master. The relay hosts your repositories the way it
 holds everything — signed, permanent, owned by no one — and agents work
@@ -8,7 +8,7 @@ revokes exactly one agent. No forge account, no shared bot, no human
 whose credential the work is laundered through.
 
 ```
-fez install @fez/git            # every part, in one install
+fez install @fezchat/git            # every part, in one install
 # on the relay:
 fez relay --extensions --origin https://your-relay
 ```

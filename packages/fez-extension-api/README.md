@@ -45,4 +45,4 @@ Each part is a bundled file with a default export the host calls with
 the injected API. `fez install @you/fez-something` (or `fez link .` for
 local dev) places every part; the host loads the ones it recognizes.
 
-`@fez/git` is the worked example — it uses every surface.
+`@fezchat/git` is the worked example — it uses every surface.

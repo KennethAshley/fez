@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { buildNip98Header } from "@fez/protocol";
+import { buildNip98Header } from "@fezchat/protocol";
 import { gitAuthUrl } from "./auth.js";
 
 /**

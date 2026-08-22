@@ -15,7 +15,7 @@ import { startRelay, type RelayHandle } from "../../fez-relay/src/relay.js";
  * The seam between "an agent needs somewhere to work" and "git".
  *
  * fez-acp must not know what git is: `~/.fez/workspace-providers` is a
- * place, and `fez install @fez/git` drops a provider in it. This proves
+ * place, and `fez install @fezchat/git` drops a provider in it. This proves
  * both halves — the loader's contract, and that the REAL fez-git bundle
  * satisfies it against a live relay.
  */
@@ -141,7 +141,7 @@ describe("the provider contract", () => {
 
 describe("the real fez-git provider, installed", () => {
   it("clones from the relay the NIP-11 document points at", { timeout: 90_000 }, async () => {
-    // Exactly what `fez install @fez/git` does: the built bundle, plus
+    // Exactly what `fez install @fezchat/git` does: the built bundle, plus
     // the credential helper beside it.
     const dir = providerDir({});
     copyFileSync(path.join(DIST, "workspace-part.js"), path.join(dir, "fez-git.js"));

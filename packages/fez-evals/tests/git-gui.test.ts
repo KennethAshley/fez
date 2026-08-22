@@ -10,7 +10,7 @@ import type { PushEntry } from "../../fez-git/src/journal-format.js";
  * as an empty module WITHOUT throwing, so an extension that registers
  * nothing looks merely featureless rather than broken. Compiling is not
  * working. This one has a second failure mode of its own — the panel
- * reaches into `client` for three members that live in @fez/client, and
+ * reaches into `client` for three members that live in @fezchat/client, and
  * a bundle is loaded from a blob URL at boot with no build step between
  * it and the user.
  */

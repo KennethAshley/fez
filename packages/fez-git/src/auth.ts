@@ -1,4 +1,4 @@
-import { verifyNip98Header } from "@fez/protocol";
+import { verifyNip98Header } from "@fezchat/protocol";
 
 /**
  * The URL a git request is authenticated against.
@@ -44,7 +44,7 @@ export function gitAuthUrl(protocol: string, host: string, pathAndQuery: string)
  * The relay package deliberately knows nothing about nostr keys — it
  * takes a function. This is that function: NIP-98 in, a pubkey out.
  * Composed by whoever starts a relay with git enabled, which keeps
- * @fez/protocol out of a dumb event store's dependency list.
+ * @fezchat/protocol out of a dumb event store's dependency list.
  *
  * `checkMethod` is off because git signs once with GET and reuses the
  * token for the POST; the URL lock plus the 60-second window is what

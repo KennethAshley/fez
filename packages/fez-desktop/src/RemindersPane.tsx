@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 
 /**

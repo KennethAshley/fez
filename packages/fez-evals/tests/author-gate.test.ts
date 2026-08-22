@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authorAllowed, describeAuthorPolicy, parseRespondTo } from "@fez/protocol";
+import { authorAllowed, describeAuthorPolicy, parseRespondTo } from "@fezchat/protocol";
 
 /**
  * The gate between a stranger and a process running shell commands on

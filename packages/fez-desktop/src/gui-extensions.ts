@@ -1,7 +1,7 @@
 import React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 import { registerArtifactViewer } from "./artifact-viewers";
 import { invitePersona } from "./invite-persona";
 

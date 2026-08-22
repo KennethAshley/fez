@@ -19,7 +19,7 @@ import {
   KIND_GIFT_WRAP,
   KIND_OBSERVER,
   makeChannels,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 
 /**
  * fez-sentinel — the always-on half of fez, extracted from the TUI so
@@ -164,7 +164,7 @@ async function main() {
   // tool as "not installed" when it is sitting right there. Adopting the
   // login shell's PATH once fixes every extension at once, including
   // ones written by people who never hit this.
-  const { adoptUserPath } = await import("@fez/protocol");
+  const { adoptUserPath } = await import("@fezchat/protocol");
   adoptUserPath();
 
   const keyHex = getKey("default");
@@ -378,7 +378,7 @@ async function main() {
    */
   async function preInvite(persona: string): Promise<void> {
     try {
-      const { loadOrCreateKey } = await import("@fez/protocol");
+      const { loadOrCreateKey } = await import("@fezchat/protocol");
       const { getPublicKey } = await import("nostr-tools/pure");
       const hexKey = loadOrCreateKey(`agent:${persona}`);
       const pk = getPublicKey(Uint8Array.from(hexKey.match(/../g)!.map((b) => parseInt(b, 16))));
@@ -649,7 +649,7 @@ async function main() {
   await (async () => {
    try {
     const { loadExtensions, registeredScheduledTasks, setNostrBackend, setWorkspaceBackend, loadSettings, fetchRelayInfo } =
-      await import("@fez/protocol");
+      await import("@fezchat/protocol");
     setNostrBackend(buildTaskNostr() as never);
     // Which workspace this is, and who owns it. The sentinel has no
     // FezClient, so without this the extension API had nowhere to learn

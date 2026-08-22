@@ -4,9 +4,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fez/client";
+import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { BrowserWire } from "./wire";
-import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fez/client";
+import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
@@ -40,7 +40,7 @@ import "./App.css";
  * fez-desktop — the GUI over the same headless brain as the TUI (#30).
  * Buzz's visual skeleton (left rail, timeline, right pane), fez's
  * client: every trust rule, thread, presence dot, unread badge, DM, and
- * observer frame below comes from @fez/client — this file only renders.
+ * observer frame below comes from @fezchat/client — this file only renders.
  */
 
 /**
@@ -2296,7 +2296,7 @@ function renderMentions(text: string, tagged?: ReadonlySet<string>, onMention?: 
   // splitMentions, not a regex of our own: the surface that PAINTS a
   // mention and the surface that TAGS it must agree on what one is, or
   // the paint promises a reach the tag never made. A gate in fez-evals
-  // holds @fez/client's copy to src/mentions.ts.
+  // holds @fezchat/client's copy to src/mentions.ts.
   return splitMentions(text).map(({ text: part, name }, index) => {
     if (!name || (tagged && !tagged.has(name.toLowerCase()))) {
       return <span key={index}>{part}</span>;

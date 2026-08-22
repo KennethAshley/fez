@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 
 /**
  * What an empty channel says on someone's first day.

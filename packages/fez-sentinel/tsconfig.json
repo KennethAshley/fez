@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "paths": {
-      "@fez/protocol": ["../../dist/index.d.ts"]
+      "@fezchat/protocol": ["../../dist/index.d.ts"]
     }
   },
   "include": ["src/**/*"],

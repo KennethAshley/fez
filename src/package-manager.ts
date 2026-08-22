@@ -13,7 +13,7 @@ const REGISTRY_FILE = path.join(FEZ_DIR, "registry.json");
 export interface FezPackage {
   name: string;
   version: string;
-  source: string; // npm:@fez/claude-code or git:github.com/user/repo
+  source: string; // npm:@fezchat/claude-code or git:github.com/user/repo
   type: "integration" | "agent" | "extension" | "persona-pack";
   installedAt: string;
   config?: Record<string, unknown>;
@@ -95,7 +95,7 @@ export interface FezManifest {
  *
  * ```bash
  * fez install claude-code
- * fez install npm:@fez/ditto
+ * fez install npm:@fezchat/ditto
  * fez install git:github.com/user/my-agent
  * fez list
  * fez remove claude-code
@@ -115,9 +115,9 @@ export class PackageManager {
    * Install a package.
    *
    * Resolves shorthand names to npm packages automatically:
-   * - `claude-code` → `npm:@fez/claude-code`
-   * - `pi` → `npm:@fez/pi`
-   * - `ditto` → `npm:@fez/ditto`
+   * - `claude-code` → `npm:@fezchat/claude-code`
+   * - `pi` → `npm:@fezchat/pi`
+   * - `ditto` → `npm:@fezchat/ditto`
    * - `npm:@foo/bar` → exact npm package
    * - `git:github.com/user/repo` → git clone
    */
@@ -217,21 +217,21 @@ export class PackageManager {
 
     // Shorthand: resolve to @fez namespace
     const shorthandMap: Record<string, string> = {
-      "claude-code": "npm:@fez/claude-code",
-      "claude": "npm:@fez/claude-code",
-      "pi": "npm:@fez/pi",
-      "ditto": "npm:@fez/ditto",
-      "hindsight": "npm:@fez/hindsight",
-      "echo": "npm:@fez/echo",
+      "claude-code": "npm:@fezchat/claude-code",
+      "claude": "npm:@fezchat/claude-code",
+      "pi": "npm:@fezchat/pi",
+      "ditto": "npm:@fezchat/ditto",
+      "hindsight": "npm:@fezchat/hindsight",
+      "echo": "npm:@fezchat/echo",
     };
 
     if (shorthandMap[source]) {
       return shorthandMap[source];
     }
 
-    // An already-scoped name (@fez/git, @acme/thing) is a plain npm
-    // package — DON'T re-scope it. `fez install @fez/kanban` was
-    // becoming npm:@fez/@fez/kanban and 404ing; both the bare shorthand
+    // An already-scoped name (@fezchat/git, @acme/thing) is a plain npm
+    // package — DON'T re-scope it. `fez install @fezchat/kanban` was
+    // becoming npm:@fezchat/@fezchat/kanban and 404ing; both the bare shorthand
     // (`kanban`) and the full scoped name must resolve to the same
     // package.
     if (source.startsWith("@")) {
@@ -239,7 +239,7 @@ export class PackageManager {
     }
 
     // A bare name is fez-shorthand for the @fez scope.
-    return `npm:@fez/${source}`;
+    return `npm:@fezchat/${source}`;
   }
 
   private extractName(source: string): string {
@@ -257,7 +257,7 @@ export class PackageManager {
   private async installNpm(source: string, version?: string): Promise<void> {
     const pkgName = source.replace("npm:", "");
     const _target = version ? `${pkgName}@${version}` : pkgName;
-    const installPath = path.join(NPM_DIR, pkgName.replace("@fez/", ""));
+    const installPath = path.join(NPM_DIR, pkgName.replace("@fezchat/", ""));
 
     await fs.mkdir(installPath, { recursive: true });
 

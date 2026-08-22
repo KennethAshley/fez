@@ -1,5 +1,5 @@
 {
-  "name": "@fez/acp",
+  "name": "@fezchat/acp",
   "version": "0.1.0",
   "private": true,
   "description": "fez's standing agent runtime (buzz-acp's role): persona-backed channel agents with harness invocation, retries, circuit breaker, observer stream, steer/queue, budgets",
@@ -14,11 +14,11 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/agent.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/agent.js",
+    "build": "esbuild src/agent.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/agent.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "file:../.."
+    "@fezchat/protocol": "file:../.."
   },
   "devDependencies": {
     "esbuild": "^0.21.5",

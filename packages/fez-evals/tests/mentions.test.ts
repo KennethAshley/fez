@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mentionedNames, mentionTags } from "@fez/protocol";
+import { mentionedNames, mentionTags } from "@fezchat/protocol";
 
 /**
  * The one place a name becomes a tag. Everything downstream — the inbox,

@@ -1,7 +1,7 @@
 /**
  * Where a skill COMES FROM — the browser-safe mirror.
  *
- * The canonical implementation is src/skill-source.ts in @fez/protocol,
+ * The canonical implementation is src/skill-source.ts in @fezchat/protocol,
  * which is Node-only (it lives beside the persona loader and the
  * settings writer). The GUI needs the same parser to render a command
  * before consent, and the GUI cannot import Node. Same arrangement as
@@ -83,7 +83,7 @@ export function machineLocalPath(config: SkillSpec | undefined): string | undefi
 /** The one bare name that resolves, because fez owns the @fez npm scope. */
 export function wellKnownSource(name: string): string | undefined {
   const match = /^fez-([\w-]+)$/.exec(name);
-  return match ? `npm:@fez/${match[1]}` : undefined;
+  return match ? `npm:@fezchat/${match[1]}` : undefined;
 }
 
 /**

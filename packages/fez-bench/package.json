@@ -1,5 +1,5 @@
 {
-  "name": "@fez/bench",
+  "name": "@fezchat/bench",
   "version": "0.1.0",
   "private": true,
   "description": "Routing bench for the fez orchestrator \u2014 boundary-case battery, selection scoring with over-route penalties, latency, input hashing, scorecard history. DittoBench-inspired, fez-shaped.",

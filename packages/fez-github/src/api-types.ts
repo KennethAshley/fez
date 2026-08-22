@@ -88,7 +88,7 @@ export interface FezExtensionAPI {
   registerScheduledTask(name: string, everyMs: number, run: (ctx: ScheduledTaskContext) => void | Promise<void>): void;
   registerInputHandler(handler: (text: string) => Promise<boolean>): void;
   registerUrlHandler(prefix: string, handler: (url: string) => void): void;
-  /** The process's shared @fez/client instance — typed via a type-only import of @fez/client. */
+  /** The process's shared @fezchat/client instance — typed via a type-only import of @fezchat/client. */
   client?: unknown;
   /** Gated by permissions; undefined when the host offers none. */
   nostr?: NostrAccess;

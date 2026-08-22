@@ -1,5 +1,5 @@
 {
-  "name": "@fez/protocol",
+  "name": "@fezchat/protocol",
   "version": "0.1.0",
   "description": "Fez \u2014 a decentralized MCP for agents. Any agent can call any other agent by name over Nostr.",
   "type": "module",

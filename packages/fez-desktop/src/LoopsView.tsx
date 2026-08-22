@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { FezClient, WireEvent } from "@fez/client";
+import type { FezClient, WireEvent } from "@fezchat/client";
 import { foldLedger } from "./BenchProposals";
 
 /**

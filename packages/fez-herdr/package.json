@@ -1,5 +1,5 @@
 {
-  "name": "@fez/herdr",
+  "name": "@fezchat/herdr",
   "version": "0.1.0",
   "private": true,
   "description": "Register fez personas as herdr-managed tabs with a clickable sidebar section",

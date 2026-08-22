@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
-import { buildNip98Header, verifyNip98Header } from "@fez/protocol";
+import { buildNip98Header, verifyNip98Header } from "@fezchat/protocol";
 import { gitRepoPath, gitAuthUrl } from "../../fez-git/src/auth.js";
 import { parseGitPath, isWrite } from "../../fez-git/src/serve.js";
 

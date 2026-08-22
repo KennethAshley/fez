@@ -14,7 +14,7 @@ import {
   type MentionBindings,
   type MentionCandidate,
   type WireEvent,
-} from "@fez/client";
+} from "@fezchat/client";
 import MentionBox from "./MentionBox";
 import { FormatBar, markdownFormatOps } from "./format-bar";
 import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";

@@ -1,5 +1,5 @@
 /**
- * @fez/bittensor, gui part — loaded by fez-desktop from ~/.fez/gui-extensions.
+ * @fezchat/bittensor, gui part — loaded by fez-desktop from ~/.fez/gui-extensions.
  *
  * The webview has no process.env and no Docker: heavy lifting (miners,
  * repo inspection) stays with the headless part and the standalone agent.

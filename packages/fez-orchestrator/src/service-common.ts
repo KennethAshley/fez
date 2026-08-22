@@ -1,9 +1,9 @@
-import { RelayConnection, KIND_CHANNEL, loadOrCreateKey } from "@fez/protocol";
+import { RelayConnection, KIND_CHANNEL, loadOrCreateKey } from "@fezchat/protocol";
 
 /**
  * Shared plumbing for standing services (channel-agent, indexer): stable
  * per-service identity and channel-spec resolution. Both run via `fez run`
- * with @fez/protocol external — see channel-agent.ts's header for the
+ * with @fezchat/protocol external — see channel-agent.ts's header for the
  * custody rationale (a service must not inherit the user's key).
  */
 

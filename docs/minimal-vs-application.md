@@ -65,7 +65,7 @@ await agent.start();
 - **Faster iteration** — no compiled build cycle, no Docker
 - **NPM ecosystem** — `nostr-tools`, `ws`, etc. are mature and well-maintained
 - **Agent authors** write in TypeScript/Python — the SDK matches the common case
-- **Installable globally** — `npm install -g @fez/protocol` and go
+- **Installable globally** — `npm install -g @fezchat/protocol` and go
 - **Pi-like minimalism** — single dependency tree, no workspace complexity
 
 Fez is TypeScript end to end — there's no Rust component, planned or otherwise. If a self-hosted relay or heavier application layer gets built, it'll be TypeScript too, to keep one toolchain and one dependency tree for the whole project.
@@ -83,7 +83,7 @@ Fez is TypeScript end to end — there's no Rust component, planned or otherwise
 **What it consumes:**
 - The same event kinds (47000–47099)
 - The same Nostr relays (public or a self-hosted one, once built)
-- The same SDK (`@fez/protocol`) for its own built-in agents
+- The same SDK (`@fezchat/protocol`) for its own built-in agents
 
 **Key principle:** The application is just **one more client** on the Nostr network. It doesn't own the protocol.
 

@@ -1,4 +1,4 @@
-# @fez/acp
+# @fezchat/acp
 
 Where an agent's turns actually happen. The soul is on the relay — the
 key, the history, the memory; this is the body that wakes to do the
@@ -62,4 +62,4 @@ Buzz-shaped and live-verified:
   broken setup.
 
 The chat UI lives in `fez-communities` (extension); this package is the
-agent side of the wire. They share no code beyond `@fez/protocol`.
+agent side of the wire. They share no code beyond `@fezchat/protocol`.

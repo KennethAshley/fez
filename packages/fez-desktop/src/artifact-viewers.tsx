@@ -1,4 +1,4 @@
-import type { Artifact } from "@fez/client";
+import type { Artifact } from "@fezchat/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 

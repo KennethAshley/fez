@@ -1,5 +1,5 @@
 {
-  "name": "@fez/theme-fez",
+  "name": "@fezchat/theme-fez",
   "version": "0.1.0",
   "private": true,
   "description": "The fez theme — the landing page's palette, worn by the app. Black ground, one amber source, monospace throughout.",

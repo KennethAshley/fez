@@ -1,5 +1,5 @@
 import type { FezExtensionAPI } from "./api-types.js";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 
 /**
  * fez-moderation — the moderation verbs (#42), store-model:

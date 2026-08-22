@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { FezClient, ObserverEntry, WireEvent } from "@fez/client";
+import type { FezClient, ObserverEntry, WireEvent } from "@fezchat/client";
 import { invitePersona } from "./invite-persona";
 import type { BrowserWire } from "./wire";
 import ActivityFeed from "./ActivityFeed";

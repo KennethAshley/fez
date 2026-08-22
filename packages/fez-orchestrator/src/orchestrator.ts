@@ -11,7 +11,7 @@ import {
   ROSTER_D,
   KIND_REACTION,
   resolveRelays,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 import {
   isSmallTalk,
   agentTool,
@@ -115,7 +115,7 @@ async function main() {
   // Ship the concierge with the orchestrator: if the default guide has
   // no persona yet, seed the bundled one. Write-if-missing — a guide you
   // have edited (or a custom fallback: name you point at) is never
-  // touched. This is what makes `fez install @fez/orchestrator` enough
+  // touched. This is what makes `fez install @fezchat/orchestrator` enough
   // to get a helper about fez, with no extra setup.
   if (fallbackGuideName === GUIDE_PERSONA_NAME && !existsSync(guidePersonaPath)) {
     try {

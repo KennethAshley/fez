@@ -1,6 +1,6 @@
 import { guiCommand } from "./gui-extensions";
 import { invitePersona } from "./invite-persona";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 
 /**

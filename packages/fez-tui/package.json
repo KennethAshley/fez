@@ -1,5 +1,5 @@
 {
-  "name": "@fez/tui",
+  "name": "@fezchat/tui",
   "version": "0.1.0",
   "private": true,
   "description": "Fez's chat-TUI components, built on pi-tui's owned-terminal rendering engine",

@@ -1,9 +1,9 @@
 import type { FezExtensionAPI } from "./api-types.js";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 
 /**
  * fez-dms — the private-DM view, a standalone installable extension over
- * @fez/client (which owns DM conversations, unwrap, unread counts, and
+ * @fezchat/client (which owns DM conversations, unwrap, unread counts, and
  * presence). This file renders: the DMS sidebar box with presence dots
  * and unread counts, the /dm conversation view, and the input routing
  * that sends plain text over the encrypted pipe while a conversation is

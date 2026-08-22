@@ -10,7 +10,7 @@
  *   - Integration with the standalone agent via subprocess
  */
 
-import type { FezExtensionAPI, PanelHandle } from "@fez/protocol";
+import type { FezExtensionAPI, PanelHandle } from "@fezchat/protocol";
 
 // ─── Inline minimal dependencies (bundle script resolves these) ────────────
 

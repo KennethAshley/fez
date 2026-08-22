@@ -1,4 +1,4 @@
-# @fez/theme-fez
+# @fezchat/theme-fez
 
 The look, worn by the app. The landing page's own palette on every surface: black ground, one ember (`#FF6A00`), monospace throughout. Restraint as a design — one accent, everything else quiet.
 

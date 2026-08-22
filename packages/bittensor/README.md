@@ -1,4 +1,4 @@
-# @fez/bittensor
+# @fezchat/bittensor
 
 A bridge to the machine-money mines. Discovers Bittensor subnets by
 their dev activity, inspects the repos behind them, and orchestrates

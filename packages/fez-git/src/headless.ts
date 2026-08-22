@@ -64,7 +64,7 @@ export default function fezGit(api: FezExtensionAPI): void {
     if (!base) {
       return ctx.reply(
         "⑂ this relay does not advertise a git server.\n\n" +
-          "Install `@fez/git` on the relay and start it with `--extensions --origin https://your-relay`. " +
+          "Install `@fezchat/git` on the relay and start it with `--extensions --origin https://your-relay`. " +
           "The origin is what it publishes as the clone URL, so it has to be the address clients actually reach."
       );
     }

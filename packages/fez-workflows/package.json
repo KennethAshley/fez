@@ -1,5 +1,5 @@
 {
-  "name": "@fez/workflows",
+  "name": "@fezchat/workflows",
   "version": "0.1.0",
   "private": true,
   "description": "Deterministic channel automations for fez \u2014 reply-triggered handoffs and approval-by-reaction gates, Buzz's workflow engine decentralized",
@@ -14,11 +14,11 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/workflows.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/workflows.js && esbuild src/defs.ts --bundle --format=esm --platform=node --outfile=dist/defs.js",
+    "build": "esbuild src/workflows.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/workflows.js && esbuild src/defs.ts --bundle --format=esm --platform=node --outfile=dist/defs.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "file:../..",
+    "@fezchat/protocol": "file:../..",
     "croner": "^10.0.1",
     "js-yaml": "^4.1.0"
   },

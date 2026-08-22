@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PersonaEditor from "./PersonaEditor";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 import Avatar from "./Avatar";
 
 /**

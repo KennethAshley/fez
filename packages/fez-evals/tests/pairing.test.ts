@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { WebSocketServer, WebSocket as WsSocket } from "ws";
 import { verifyEvent, matchFilter, type Event, type Filter } from "nostr-tools";
-import { pairSend, pairReceive, deriveSas, buildPairingUri, parsePairingUri } from "@fez/protocol";
+import { pairSend, pairReceive, deriveSas, buildPairingUri, parsePairingUri } from "@fezchat/protocol";
 
 /**
  * Pairing gate (GAPS item 19): the whole NIP-AB-style handshake over a

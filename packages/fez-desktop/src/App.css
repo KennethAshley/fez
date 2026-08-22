@@ -1578,7 +1578,7 @@ button.author:hover { text-decoration: underline; }
 .format-bar .tray-sep { margin: 3px 5px; }
 .composer-box .format-bar { border-bottom-color: var(--bg2); }
 
-/* @fez/bittensor gui part: subnet dev-activity card */
+/* @fezchat/bittensor gui part: subnet dev-activity card */
 .bt-card {
   margin-top: 6px; border: 1px solid var(--hairline); border-radius: 8px;
   padding: 8px 10px; max-width: 560px; font-size: 12.5px;

@@ -10,7 +10,7 @@ import {
   selectHead,
   validateEngram,
   type ValidEngram,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 
 /**
  * NIP-AE conformance, anchored to the spec's PINNED TEST VECTORS

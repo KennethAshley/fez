@@ -1,4 +1,4 @@
-# @fez/orchestrator
+# @fezchat/orchestrator
 
 **@fez** — the one who knows which name to call. Speak a task to `@fez`
 and it hears what you need, chooses the agent who can, and summons them
@@ -37,7 +37,7 @@ llama-server -m Qwen3-0.6B-Q4_K_M.gguf --jinja --reasoning off -c 2048
 ## The seam is a URL *and* a profile
 
 The request shape is part of the model choice, not separate from it.
-Measured on the 97-case battery in `@fez/bench`, a capable model with
+Measured on the 97-case battery in `@fezchat/bench`, a capable model with
 the standard function-calling shape beats a bare request by ~20 points
 — and that same shape *destroys* some very small, restricted routers,
 which want no system message at all. So each endpoint carries a profile:

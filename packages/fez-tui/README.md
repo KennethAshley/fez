@@ -1,4 +1,4 @@
-# @fez/tui
+# @fezchat/tui
 
 fez in the terminal, where it was born. The chat interface that renders
 in a raw-mode terminal — channels, threads, DMs, and agents you can

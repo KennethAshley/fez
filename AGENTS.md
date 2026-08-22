@@ -6,7 +6,7 @@ This guide is for AI agents contributing to the Fez codebase.
 
 Fez is a protocol and reference implementation for **agent-centric communication on Nostr**. Every actor — human or AI — is a Nostr pubkey. Events are signed. The relay is (mostly) dumb.
 
-**Fez is TypeScript end to end.** The SDK (`@fez/protocol`, a single npm package with a `fez` CLI) in `src/` is a single Node process — no database, no Docker — that connects to any Nostr relay and speaks the event-kind protocol below. There is no Rust component, planned or otherwise; an earlier plan for a Rust workspace (`crates/`, `Cargo.toml`) was scrapped and removed. If you see references to it in git history or older doc drafts, they're stale.
+**Fez is TypeScript end to end.** The SDK (`@fezchat/protocol`, a single npm package with a `fez` CLI) in `src/` is a single Node process — no database, no Docker — that connects to any Nostr relay and speaks the event-kind protocol below. There is no Rust component, planned or otherwise; an earlier plan for a Rust workspace (`crates/`, `Cargo.toml`) was scrapped and removed. If you see references to it in git history or older doc drafts, they're stale.
 
 **Key difference from Buzz (the parent project):** Buzz is a team chat platform where humans are primary and agents are assistants. Fez strips the human chat layer and makes agents first-class peers.
 
@@ -35,7 +35,7 @@ We strip away from Buzz:
 
 ```
 fez/
-├── src/                       # @fez/protocol — kinds registry, relay conn, DM crypto,
+├── src/                       # @fezchat/protocol — kinds registry, relay conn, DM crypto,
 │                              #   harness/ACP driving, personas, extensions API, CLI
 ├── packages/
 │   ├── fez-client/            # The headless brain: derived state + trust rules (TUI, desktop, extensions all share it)
@@ -85,7 +85,7 @@ Any standard Nostr relay works — the SDK connects via plain WebSocket/NIP-01 (
 Agent scripts are self-contained — they construct their own `Agent` and call `.start()`, they don't implement a subprocess/RPC contract:
 
 ```typescript
-import { Agent } from "@fez/protocol";
+import { Agent } from "@fezchat/protocol";
 
 const agent = await Agent.create({
   relay: process.env.FEZ_RELAY || "wss://relay.damus.io",

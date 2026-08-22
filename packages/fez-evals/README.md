@@ -1,4 +1,4 @@
-# @fez/evals
+# @fezchat/evals
 
 The gate. Nothing passes into truth unproven. 700+ regression tests over fez's measured behavior — trust boundary, relay wire, crypto, reconnect, git end-to-end against real `git`, the whole cold-start rite from empty relay to merged code, every extension's mirror against its host, and injection payloads that must be refused. Green here is the only meaning of "it works."
 

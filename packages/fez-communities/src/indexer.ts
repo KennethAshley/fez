@@ -10,7 +10,7 @@ import {
   KIND_MEMBERSHIP,
   KIND_THREAD_SUMMARY,
   resolveRelays,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 import { loadServiceKey, parseThreadRef, resolveChannels } from "./service-common.js";
 
 /**

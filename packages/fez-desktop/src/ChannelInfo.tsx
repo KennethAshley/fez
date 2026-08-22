@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
 
 /**

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FezClient, MentionCandidate } from "@fez/client";
+import type { FezClient, MentionCandidate } from "@fezchat/client";
 import { MentionList, mentionToken, rosterMatches } from "./mentions";
 import { FormatBar, markdownFormatOps } from "./format-bar";
 

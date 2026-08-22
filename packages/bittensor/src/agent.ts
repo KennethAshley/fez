@@ -1,4 +1,4 @@
-import { Agent, type TaskPayload } from "@fez/protocol";
+import { Agent, type TaskPayload } from "@fezchat/protocol";
 import { TaostatsClient } from "./taostats.js";
 import { RepoInspector } from "./repo-inspector.js";
 import { DockerMiner, type MinerConfig } from "./docker-miner.js";

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FezClient, MentionCandidate } from "@fez/client";
+import type { FezClient, MentionCandidate } from "@fezchat/client";
 import { EMOJI, searchEmoji, type EmojiEntry } from "./emoji";
 import { COMMANDS, type CommandMeta } from "./commands";
 import { FormatBar, markdownFormatOps } from "./format-bar";

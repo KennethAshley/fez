@@ -1,10 +1,10 @@
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { nip44, nip59, type Event, type EventTemplate } from "nostr-tools";
-import type { Wire, WireEvent, WireFilter, DmRumor, RelayInfoDoc } from "@fez/client";
+import type { Wire, WireEvent, WireFilter, DmRumor, RelayInfoDoc } from "@fezchat/client";
 import { fetchRelayInfo } from "../../../src/nip11.js";
 
 /**
- * Browser Wire for @fez/client — the same eight-function seam the TUI
+ * Browser Wire for @fezchat/client — the same eight-function seam the TUI
  * assembles in node, built on plain WebSockets (webviews can't use
  * nostr-tools' node-flavored pool helpers, and a direct implementation
  * is ~150 lines anyway). Auto-reconnects with full-filter resubscribe +

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getPublicKey } from "nostr-tools/pure";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 
 /**
  * Invite a LOCAL persona to the workspace — before it has ever run.

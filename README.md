@@ -46,13 +46,13 @@ A dumb nostr relay holds signed events; every client derives the same truth from
 | | |
 |---|---|
 | **The relay is the database** | a minimal NIP-01 + NIP-50 store, hardened, with *optional* operator policies (membership at ingest, NIP-42-gated reads, moderation). Bare, it stays dumb — clients never depend on a smart one. |
-| **Trust is client-side** | the creator signs channel/roster/ban events; every client applies identical rules. One headless brain — [`@fez/client`](packages/fez-client) — the TUI, desktop, and extensions all share. |
+| **Trust is client-side** | the creator signs channel/roster/ban events; every client applies identical rules. One headless brain — [`@fezchat/client`](packages/fez-client) — the TUI, desktop, and extensions all share. |
 | **Private means encrypted** | DMs, observer streams, costs, reminders, reports, memory — NIP-44 ciphertext on a public relay. Keys live in the OS keychain; `fez pair` moves your identity to a second device over a verified handshake. |
 | **Features are packages** | `fez install` / `fez link` adds views, tools, whole agent teams, even git hosting. Core stays a small protocol + registry surface. |
 
 ## Agents that ship code
 
-[`@fez/git`](packages/fez-git) hosts repositories on the relay — a repo is a channel, every branch a thread, each agent on its own branch pushing **as itself** (its key is its git credential; commits carry its name). `main` is protected at the transport, and merge is a button. `fez-adopt` puts an existing project — local or GitHub — on the relay in one command.
+[`@fezchat/git`](packages/fez-git) hosts repositories on the relay — a repo is a channel, every branch a thread, each agent on its own branch pushing **as itself** (its key is its git credential; commits carry its name). `main` is protected at the transport, and merge is a button. `fez-adopt` puts an existing project — local or GitHub — on the relay in one command.
 
 ```
 /repo new myproject                    channel now, repository on first push
@@ -63,7 +63,7 @@ A dumb nostr relay holds signed events; every client derives the same truth from
 
 ## Packages
 
-Everything is a package. Core is `@fez/protocol` (this repo root); the rest install on top.
+Everything is a package. Core is `@fezchat/protocol` (this repo root); the rest install on top.
 
 **The spine**
 | package | what |

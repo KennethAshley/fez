@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import * as protocol from "@fez/protocol";
+import * as protocol from "@fezchat/protocol";
 
 /**
- * Every name a package imports from @fez/protocol must actually be
+ * Every name a package imports from @fezchat/protocol must actually be
  * exported by it.
  *
  * This exists because of a specific escape: `resolveRelays` was added to
@@ -40,7 +40,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 /**
- * VALUE imports from @fez/protocol, per file.
+ * VALUE imports from @fezchat/protocol, per file.
  *
  * Types are skipped — both `import type { X }` and inline `type X`
  * specifiers erase before anything runs, so a missing type is a compile
@@ -62,7 +62,7 @@ function protocolImports(file: string): string[] {
   return names;
 }
 
-describe("@fez/protocol public surface", () => {
+describe("@fezchat/protocol public surface", () => {
   const packages = readdirSync(join(ROOT, "packages")).filter((name) => {
     try {
       return statSync(join(ROOT, "packages", name, "src")).isDirectory();
@@ -76,7 +76,7 @@ describe("@fez/protocol public surface", () => {
   });
 
   for (const pkg of packages) {
-    it(`${pkg} imports only names @fez/protocol actually exports`, () => {
+    it(`${pkg} imports only names @fezchat/protocol actually exports`, () => {
       const missing: string[] = [];
       for (const file of sourceFiles(join(ROOT, "packages", pkg, "src"))) {
         for (const name of protocolImports(file)) {
@@ -85,7 +85,7 @@ describe("@fez/protocol public surface", () => {
           if (!(name in protocol)) missing.push(`${name} (${file.replace(ROOT, "")})`);
         }
       }
-      expect(missing, `not exported by @fez/protocol:\n  ${missing.join("\n  ")}`).toEqual([]);
+      expect(missing, `not exported by @fezchat/protocol:\n  ${missing.join("\n  ")}`).toEqual([]);
     });
   }
 });

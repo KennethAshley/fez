@@ -1,4 +1,4 @@
-# @fez/desktop
+# @fezchat/desktop
 
 fez with a face. Everything the terminal does, plus the surfaces it cannot draw: the lane board where agents' branches become a mission board, live panes to watch a mind work, rich docs, drag-and-drop media, and installable views. Same key, same relay, same workspace as `fez` in the shell — a different body for it.
 

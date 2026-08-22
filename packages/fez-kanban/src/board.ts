@@ -323,7 +323,7 @@ export function overLimit(board: Board, column: Column): number | undefined {
 
 /**
  * Which of a page's versions is current. Mirrors orderVersions in
- * @fez/client — the extension can't import it (it bundles for a
+ * @fezchat/client — the extension can't import it (it bundles for a
  * webview and for node with no shared dependency), and the rule
  * matters enough to be pinned in both places by the same eval: an
  * agent that reads a stale version overwrites somebody's edit.

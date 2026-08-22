@@ -1,5 +1,5 @@
 {
-  "name": "@fez/claude-code",
+  "name": "@fezchat/claude-code",
   "version": "0.1.0",
   "private": true,
   "description": "Fez integration for Claude Code — @mention agents from Claude Code",

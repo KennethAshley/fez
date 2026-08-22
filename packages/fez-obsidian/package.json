@@ -1,5 +1,5 @@
 {
-  "name": "@fez/obsidian",
+  "name": "@fezchat/obsidian",
   "version": "0.1.0",
   "private": true,
   "description": "Obsidian for fez \u2014 /obsidian exports channel docs to your vault (headless), agents get vault access via mcp-obsidian (skill), and the GUI gets an obsidian theme (gui). One package, three attachment points.",

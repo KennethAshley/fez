@@ -1,5 +1,5 @@
 {
-  "name": "@fez/communities",
+  "name": "@fezchat/communities",
   "version": "0.1.0",
   "private": true,
   "description": "Communities and channels for fez \u2014 Buzz-shaped chat over fez-native nostr kinds, with standing channel agents",
@@ -11,11 +11,11 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.js && esbuild src/indexer.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/indexer.js",
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.js && esbuild src/indexer.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/indexer.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "file:../.."
+    "@fezchat/protocol": "file:../.."
   },
   "devDependencies": {
     "esbuild": "^0.21.5",

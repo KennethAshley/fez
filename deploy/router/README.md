@@ -106,7 +106,7 @@ the tool call, and on the cases where it rambles it runs to 96 tokens
 instead of the usual 12-28. Lowering the cap shortens the tail directly
 (the cap *is* the worst case) but risks truncating the legitimately
 longer calls — `nobody` picks have been seen at 105 tokens. Re-run
-`@fez/bench` before changing it.
+`@fezchat/bench` before changing it.
 
 A resize is power-off → `doctl compute droplet-action resize <id> --size
 <slug> --resize-disk=false` → power-on. Keeping the disk out of it is

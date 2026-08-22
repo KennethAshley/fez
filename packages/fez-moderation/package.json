@@ -1,5 +1,5 @@
 {
-  "name": "@fez/moderation",
+  "name": "@fezchat/moderation",
   "version": "0.1.0",
   "private": true,
   "description": "Moderation for fez — /report (encrypted to the creator), /reports queue, /ban and /unban via creator-signed 30047 ban lists. Enforcement is client trust rules + the relay's moderation policy.",

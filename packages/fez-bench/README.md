@@ -1,4 +1,4 @@
-# @fez/bench
+# @fezchat/bench
 
 The proving ground for the router's judgment. A frozen battery grades `@fez`'s choice of who to summon — right pick, over-route penalty, latency — and keeps a scorecard history, so a change to routing is measured, never guessed. DittoBench-inspired, fez-shaped.
 

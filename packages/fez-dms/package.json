@@ -1,8 +1,8 @@
 {
-  "name": "@fez/dms",
+  "name": "@fezchat/dms",
   "version": "0.1.0",
   "private": true,
-  "description": "Private DM view for fez — /dm, DMS sidebar with presence. A pure view over @fez/client.",
+  "description": "Private DM view for fez — /dm, DMS sidebar with presence. A pure view over @fezchat/client.",
   "type": "module",
   "fez": { "type": "extension", "extension": { "entry": "dist/index.js" } },
   "scripts": {

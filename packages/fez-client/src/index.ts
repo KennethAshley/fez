@@ -3,7 +3,7 @@ import { WorkspaceState, cleanSource, setStatePersistence, type Role, type State
 export * from "./workspace-state.js";
 
 /**
- * @fez/client — the headless fez protocol brain: subscriptions, trust
+ * @fezchat/client — the headless fez protocol brain: subscriptions, trust
  * rules, derived state, and actions, with no UI anywhere. The TUI, a
  * future GUI, and extensions all consume ONE instance per process via
  * FezExtensionAPI.client; state is a materialized view of the relay
@@ -1122,7 +1122,7 @@ export class FezClient {
    * owner may sign one into being. It lives here as well because the
    * desktop bundle deliberately does not depend on the CLI package, and
    * the alternative was a second copy inside the GUI extension loader.
-   * @fez/client is the layer the TUI, the desktop and extensions all
+   * @fezchat/client is the layer the TUI, the desktop and extensions all
    * already share; a vocabulary that has to reach all three belongs at
    * the widest point they have in common, not copied to each.
    *

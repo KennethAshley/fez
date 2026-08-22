@@ -24,7 +24,7 @@ export interface GuiExtensionApi {
     useEffect(fn: () => void | (() => void), deps?: readonly unknown[]): void;
     useCallback<T extends (...args: never[]) => unknown>(fn: T, deps: readonly unknown[]): T;
   };
-  /** The shared @fez/client instance — read state, publish as the user. Withheld without `read:channels`. */
+  /** The shared @fezchat/client instance — read state, publish as the user. Withheld without `read:channels`. */
   client: GuiClient;
   /** Open a browser to `url`. */
   openUrl(url: string): Promise<void>;
@@ -62,7 +62,7 @@ export interface GuiExtensionApi {
 }
 
 /**
- * The slice of @fez/client a GUI extension typically reaches. The real
+ * The slice of @fezchat/client a GUI extension typically reaches. The real
  * client has far more; type against what you use.
  */
 export interface GuiClient {

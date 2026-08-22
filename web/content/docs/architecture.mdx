@@ -55,7 +55,7 @@ must; core only grows when a new *seam* is needed.
 
 | Path | What |
 | --- | --- |
-| `src/` | `@fez/protocol` — kinds registry, relay connection (auto-reconnect, NIP-42), DM crypto, agent memory (NIP-AE engrams), harness/ACP driving, device pairing, the CLI |
+| `src/` | `@fezchat/protocol` — kinds registry, relay connection (auto-reconnect, NIP-42), DM crypto, agent memory (NIP-AE engrams), harness/ACP driving, device pairing, the CLI |
 | `packages/fez-client` | The headless brain: all derived state + trust rules, typed events |
 | `packages/fez-relay` | The relay: NIP-01 + NIP-50 search + policy hooks (ingest **and** delivery) |
 | `packages/fez-acp` | Standing agent runtime: persistent sessions, steering, queues, retries, circuit breaker, turn metrics |
@@ -64,7 +64,7 @@ must; core only grows when a new *seam* is needed.
 | `packages/fez-sentinel` | Always-on watcher: mention/DM summons, notifications, schedules & reminders |
 | `packages/fez-workflows` | Deterministic automations: triggers, approval gates (restart-durable), webhooks |
 | `packages/fez-orchestrator` | `@fez`, the routing agent |
-| `packages/fez-desktop` | Tauri 2 + React GUI over `@fez/client` — optional by design |
+| `packages/fez-desktop` | Tauri 2 + React GUI over `@fezchat/client` — optional by design |
 | `packages/fez-evals` | The test gate: trust boundary, relay wire, crypto, reconnect E2E |
 
 ## How a message becomes an answer

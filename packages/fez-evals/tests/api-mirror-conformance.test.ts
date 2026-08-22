@@ -193,17 +193,17 @@ describe("extension api mirrors", () => {
 });
 
 /**
- * @fez/extension-api — the PUBLISHED contract, held to the real hosts.
+ * @fezchat/extension-api — the PUBLISHED contract, held to the real hosts.
  *
  * The mirror families above keep each extension's private copy honest.
  * This keeps the PUBLIC package honest: a third party builds against
- * @fez/extension-api, so if it ever promises a member a real host does
+ * @fezchat/extension-api, so if it ever promises a member a real host does
  * not provide, that stranger's extension breaks at runtime with nothing
  * to warn them. So we assign each REAL host API to the package's type —
  * same direction as a mirror probe: the package may describe only a
  * slice, never more than the host offers.
  */
-describe("@fez/extension-api is a faithful subset of the real hosts", () => {
+describe("@fezchat/extension-api is a faithful subset of the real hosts", () => {
   const PKG = path.join(REPO, "packages/fez-extension-api/src");
   const SURFACES = [
     { name: "FezExtensionAPI", real: REAL_API, pkgFile: "headless.ts", resolution: ["--module", "NodeNext", "--moduleResolution", "NodeNext"] },
@@ -245,7 +245,7 @@ describe("@fez/extension-api is a faithful subset of the real hosts", () => {
       }
       if (output.trim()) {
         expect.fail(
-          `@fez/extension-api no longer matches the real host(s):\n${output}\n\n` +
+          `@fezchat/extension-api no longer matches the real host(s):\n${output}\n\n` +
             `Fix packages/fez-extension-api/src/<surface>.ts to describe only what the host offers — ` +
             `the published contract must never promise a member a host lacks.`
         );

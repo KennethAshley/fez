@@ -1,5 +1,5 @@
 {
-  "name": "@fez/kanban",
+  "name": "@fezchat/kanban",
   "version": "0.1.0",
   "private": true,
   "description": "Kanban boards for fez docs \u2014 columns are headings, cards are checkboxes, moving a card moves a line. Agents move cards with fez_board_move; the board is just the markdown.",
@@ -28,7 +28,7 @@
   "devDependencies": {
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
-    "@fez/protocol": "file:../.."
+    "@fezchat/protocol": "file:../.."
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

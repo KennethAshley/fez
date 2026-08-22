@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import * as protocol from "@fez/protocol";
+import * as protocol from "@fezchat/protocol";
 import { K } from "../../fez-client/dist/index.js";
 
 /**

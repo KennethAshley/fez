@@ -12,7 +12,7 @@ import { pathToFileURL } from "node:url";
  *
  * So this is a lookup, not an implementation: `~/.fez/workspace-providers`
  * is a PLACE, the same way ~/.fez/extensions and ~/.fez/relay-extensions
- * are, and `fez install @fez/git` puts a provider in it. fez-acp asks for
+ * are, and `fez install @fezchat/git` puts a provider in it. fez-acp asks for
  * a directory and gets one. Nothing here mentions git, and nothing here
  * should — the day somebody wants an agent working out of an S3 prefix,
  * that is a package, not a patch to this file.

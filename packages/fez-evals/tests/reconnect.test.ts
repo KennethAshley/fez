@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { WebSocketServer, WebSocket as WsSocket } from "ws";
 import { finalizeEvent, generateSecretKey, verifyEvent } from "nostr-tools/pure";
 import { matchFilter, type Event, type Filter } from "nostr-tools";
-import { RelayConnection } from "@fez/protocol";
+import { RelayConnection } from "@fezchat/protocol";
 
 /**
  * Reconnect gate — the wire-level survival guarantees GAPS.md §2.1 demands:

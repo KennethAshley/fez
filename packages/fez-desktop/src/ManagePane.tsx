@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 
 /**
  * Channel/client.state.workspace management — Buzz's ChannelManagementSheet as a fez

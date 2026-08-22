@@ -2,10 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { FezExtensionAPI, MessageHandle, NostrEvent } from "./api-types.js";
-import type { FezClient, Msg, Job } from "@fez/client";
+import type { FezClient, Msg, Job } from "@fezchat/client";
 
 /**
- * Fez communities — the TUI VIEW over @fez/client. All protocol state,
+ * Fez communities — the TUI VIEW over @fezchat/client. All protocol state,
  * trust rules, and actions live in the client (api.client, one shared
  * instance per process); this file only renders and registers commands.
  * Docs and DMs are their OWN extensions (fez-docs, fez-dms) — this one

@@ -1,5 +1,5 @@
 {
-  "name": "@fez/desktop",
+  "name": "@fezchat/desktop",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,7 +11,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@fez/client": "file:../fez-client",
+    "@fezchat/client": "file:../fez-client",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.4",

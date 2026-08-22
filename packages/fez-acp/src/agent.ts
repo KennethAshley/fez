@@ -46,7 +46,7 @@ import {
   UNTRUSTED_CONTENT_NOTICE,
   registerSystemPromptSection,
   composeSystemPrompt,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -155,7 +155,7 @@ async function main() {
   // Headless skill resolution: agents don't run the TUI's extension
   // host, so declared skills resolve from settings.json's mcpServers.
   try {
-    const proto = (await import("@fez/protocol")) as unknown as {
+    const proto = (await import("@fezchat/protocol")) as unknown as {
       loadSettings: () => { mcpServers?: Record<string, Record<string, unknown>> };
       loadMcpServersFromSettings: (entries?: Record<string, Record<string, unknown>>) => void;
     };
@@ -266,7 +266,7 @@ async function main() {
     if (!ws) {
       throw new Error(
         `persona "${personaId}" needs repo "${repoName}" but no workspace provider claimed it. ` +
-          `Install one (\`fez install @fez/git\`) or remove \`repo:\` from the persona.`
+          `Install one (\`fez install @fezchat/git\`) or remove \`repo:\` from the persona.`
       );
     }
     workDir = ws.dir;
@@ -1762,7 +1762,7 @@ main().catch(async (err) => {
     const channelIds = (process.env.FEZ_AGENT_CHANNELS ?? "").split(",").map((c) => c.trim()).filter(Boolean);
     if (personaId && channelIds.length > 0) {
       const { loadServiceKey } = await import("./service-common.js");
-      const { RelayConnection, CapabilityClient, resolveRelays, KIND_CHANNEL_MESSAGE } = await import("@fez/protocol");
+      const { RelayConnection, CapabilityClient, resolveRelays, KIND_CHANNEL_MESSAGE } = await import("@fezchat/protocol");
       const relays = resolveRelays();
       const client = new CapabilityClient({ relay: relays, privateKey: loadServiceKey(personaId) });
       const relay = new RelayConnection({ urls: relays, authSigner: client.authSigner });

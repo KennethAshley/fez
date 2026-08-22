@@ -3,7 +3,7 @@
  * erased at bundle time. Declared locally so the built dist/index.js has
  * zero imports: an installed entry is a single file in ~/.fez/extensions/
  * with no reachable node_modules, so even a type-only dependency on
- * @fez/protocol would complicate the build for no runtime benefit.
+ * @fezchat/protocol would complicate the build for no runtime benefit.
  * TypeScript's structural typing keeps this honest against the real API.
  */
 

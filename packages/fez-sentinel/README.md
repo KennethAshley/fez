@@ -1,4 +1,4 @@
-# @fez/sentinel
+# @fezchat/sentinel
 
 The watcher that never sleeps. It keeps the fleet alive while you are gone — waking agents you are not there to summon, carrying word of a DM or a mention, running the rites that fire on a schedule, and speaking for the dead when a spawn fails silently. The smart inner service; the babysitter is whatever the operator has.
 

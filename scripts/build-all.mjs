@@ -14,7 +14,7 @@
  * someone adds a package. This walks packages/ instead, so a new package
  * is built the moment it has a build script — nobody has to add it here.
  *
- * Order: the root first (packages import @fez/protocol from its dist),
+ * Order: the root first (packages import @fezchat/protocol from its dist),
  * then packages alphabetically, which happens to put every dependency
  * ahead of its dependents today (fez-client before fez-desktop). If that
  * ever stops being true, the failure is a loud missing-types error, not

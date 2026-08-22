@@ -1,4 +1,4 @@
-import type { FezClient, MentionCandidate } from "@fez/client";
+import type { FezClient, MentionCandidate } from "@fezchat/client";
 
 /**
  * The @mention autocomplete, shared by every place you can type one.

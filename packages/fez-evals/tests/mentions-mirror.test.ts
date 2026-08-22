@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { mentionedNames as protocolNames } from "@fez/protocol";
+import { mentionedNames as protocolNames } from "@fezchat/protocol";
 import { mentionedNames as clientNames, splitMentions } from "../../fez-client/dist/index.js";
 
 /**
  * The mirror gate, same as kinds.ts ↔ K.
  *
- * @fez/client carries its own copy so it stays dependency-light and
+ * @fezchat/client carries its own copy so it stays dependency-light and
  * browser-safe. If the two ever disagree, the GUI paints a mention the
  * publisher won't tag (or the reverse) — which is the exact failure that
  * made a highlighted @name reach nobody.

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { finalizeEvent, generateSecretKey } from "nostr-tools/pure";
 import type { Event } from "nostr-tools";
-import { RelayConnection } from "@fez/protocol";
+import { RelayConnection } from "@fezchat/protocol";
 import { MiniRelay, waitFor } from "./mini-relay.js";
 
 /**

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 import Avatar from "./Avatar";
 
 /**

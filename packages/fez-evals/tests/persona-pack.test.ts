@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { validatePersonaFile, mergeDefaults, KNOWN_EXTRA_KEYS } from "@fez/protocol";
+import { validatePersonaFile, mergeDefaults, KNOWN_EXTRA_KEYS } from "@fezchat/protocol";
 
 /**
  * Persona validation + pack-defaults gate (GAPS item 18, Buzz's

@@ -1,4 +1,4 @@
-# @fez/workflows
+# @fezchat/workflows
 
 Rites that run themselves. Multi-agent follow-ups the model does not
 have to *remember* to perform — "when researcher replies here, summon

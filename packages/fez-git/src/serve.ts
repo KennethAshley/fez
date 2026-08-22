@@ -61,7 +61,7 @@ export interface GitIdentity {
  *
  * This package depends on nostr-tools and ws and nothing else — a bare
  * relay is a dumb store you can run anywhere, and reaching into
- * @fez/protocol for one verification would drag the whole CLI in behind
+ * @fezchat/protocol for one verification would drag the whole CLI in behind
  * it. So the transport does not know what a nostr key is: it knows how
  * to ask someone.
  *

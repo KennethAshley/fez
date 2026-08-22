@@ -8,7 +8,7 @@ import { cloneBase } from "./headless.js";
 /**
  * fez-git as an installed WORKSPACE PROVIDER.
  *
- * `fez install @fez/git` drops this in ~/.fez/workspace-providers, and
+ * `fez install @fezchat/git` drops this in ~/.fez/workspace-providers, and
  * an agent whose persona names a `repo:` finds it there. The agent
  * runtime never learns what git is — it asks for a working directory and
  * gets one, the same way the relay asks for an HTTP handler and the TUI
@@ -49,7 +49,7 @@ export interface ProvidedWorkspace {
  *
  * Bundled next to this file by the installer, so prefer the sibling;
  * fall back to the bare name, which git resolves on PATH via the
- * package's `bin` entry when @fez/git is installed globally. Guessing
+ * package's `bin` entry when @fezchat/git is installed globally. Guessing
  * wrong here surfaces as an auth failure far from the cause, so both
  * paths are checked rather than assumed.
  */
@@ -89,7 +89,7 @@ export default async function provide(req: ProvideRequest): Promise<ProvidedWork
   if (!base) {
     throw new Error(
       `${req.relayUrl} does not advertise a git server, so there is nowhere to clone "${req.repo}" from. ` +
-        `Install @fez/git on the relay and start it with --extensions --origin <public-url>.`
+        `Install @fezchat/git on the relay and start it with --extensions --origin <public-url>.`
     );
   }
 

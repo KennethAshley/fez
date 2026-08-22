@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
-import { RelayConnection, CapabilityClient } from "@fez/protocol";
+import { RelayConnection, CapabilityClient } from "@fezchat/protocol";
 import { BrowserWire } from "../../fez-desktop/src/wire.js";
 import { FezClient, setStatePersistence } from "../../fez-client/dist/index.js";
 import { fetchRelayInfo } from "../../../src/nip11.js";

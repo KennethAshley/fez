@@ -1,8 +1,8 @@
 import { Component, useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { FezClient, WireEvent } from "@fez/client";
-import { parseSkillEntries, parseSkillSource, describeSkillSpec, wellKnownSource, formatSkillEntries, machineLocalPath } from "@fez/client";
+import type { FezClient, WireEvent } from "@fezchat/client";
+import { parseSkillEntries, parseSkillSource, describeSkillSpec, wellKnownSource, formatSkillEntries, machineLocalPath } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
 import { EnvKeyStatus } from "./SkillSecrets";
@@ -218,7 +218,7 @@ export default function SkillsView({
           const entries = match ? match[1].split(",").map((skill) => skill.trim()).filter(Boolean) : [];
           // `web-search=npm:@brave/…` — the name the prompt sees, plus
           // where it comes from. parseSkillEntries is the same splitter
-          // the CLI uses, mirrored into @fez/client for exactly this.
+          // the CLI uses, mirrored into @fezchat/client for exactly this.
           const { names: skills, sources } = parseSkillEntries(entries);
           if (skills.length > 0) deps.push({ agent, skills, sources });
         }

@@ -2,11 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { FezExtensionAPI, NostrEvent } from "./api-types.js";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 
 /**
  * fez-docs — the channel-doc view, a standalone installable extension
- * over @fez/client (which owns all doc state and trust rules). This
+ * over @fezchat/client (which owns all doc state and trust rules). This
  * file renders: the DOCS sidebar box, the /doc view + commands, and
  * the two-way markdown disk mirror (~/.fez/docs/<community>/<channel>.md
  * — new versions write the file, saving the file publishes the next

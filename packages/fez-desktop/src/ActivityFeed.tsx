@@ -1,5 +1,5 @@
 import { Fragment, useMemo } from "react";
-import type { ObserverEntry } from "@fez/client";
+import type { ObserverEntry } from "@fezchat/client";
 
 /**
  * The agent transcript — Buzz's agentSession surface (tool classifier,

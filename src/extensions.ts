@@ -256,11 +256,11 @@ export interface FezExtensionAPI {
    */
   workspace?: WorkspaceAccess;
   /**
-   * The process's ONE shared @fez/client instance — protocol state,
+   * The process's ONE shared @fezchat/client instance — protocol state,
    * trust rules, and actions, headless. Extensions render views over it
    * instead of each re-deriving state from raw subscriptions. Undefined
    * outside the TUI. Extensions type it structurally (or via a type-only
-   * import of @fez/client, erased at bundle time).
+   * import of @fezchat/client, erased at bundle time).
    */
   client?: FezClient;
   ui: {

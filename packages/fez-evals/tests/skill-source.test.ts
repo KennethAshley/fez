@@ -8,7 +8,7 @@ import {
   parseSkillEntries,
   validatePersonaFile,
   SOURCE_SCHEMES,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 import * as mirror from "../../fez-client/dist/index.js";
 
 /**
@@ -146,10 +146,10 @@ describe("bare names stay unresolvable — the whole point", () => {
    * namespace and generalizes to no other prefix.
    */
   test("fez-* resolves, because fez owns the scope", () => {
-    expect(wellKnownSource("fez-kanban")).toBe("npm:@fez/kanban");
+    expect(wellKnownSource("fez-kanban")).toBe("npm:@fezchat/kanban");
     expect(parseSkillSource(wellKnownSource("fez-kanban")!)).toEqual({
       command: "npx",
-      args: ["-y", "@fez/kanban"],
+      args: ["-y", "@fezchat/kanban"],
     });
   });
 
@@ -218,15 +218,15 @@ describe("persona frontmatter carries the source", () => {
 });
 
 /**
- * The GUI cannot import @fez/protocol (Node-only — it sits beside the
- * persona loader and the settings writer), so @fez/client carries a
+ * The GUI cannot import @fezchat/protocol (Node-only — it sits beside the
+ * persona loader and the settings writer), so @fezchat/client carries a
  * mirror. Same arrangement as kinds.ts ↔ K, and the same hazard: a
  * scheme added to one side and not the other would mean the install
  * button accepts what the CLI refuses. This is the gate. It runs BOTH
  * implementations over one table rather than comparing source text,
  * because behaviour on hostile input is the property that matters.
  */
-describe("@fez/client mirror agrees with the canonical parser", () => {
+describe("@fezchat/client mirror agrees with the canonical parser", () => {
   const GOOD = [
     "npm:@brave/brave-search-mcp-server",
     "npm:duckduckgo-mcp-server",
@@ -275,9 +275,9 @@ describe("@fez/client mirror agrees with the canonical parser", () => {
    */
   test("formatSkillEntries round-trips through parseSkillEntries", () => {
     const names = ["web-search", "github", "fez-kanban"];
-    const sources = { "web-search": "npm:@brave/brave-search-mcp-server", "fez-kanban": "npm:@fez/kanban" };
+    const sources = { "web-search": "npm:@brave/brave-search-mcp-server", "fez-kanban": "npm:@fezchat/kanban" };
     const line = mirror.formatSkillEntries(names, sources);
-    expect(line).toBe("web-search=npm:@brave/brave-search-mcp-server, github, fez-kanban=npm:@fez/kanban");
+    expect(line).toBe("web-search=npm:@brave/brave-search-mcp-server, github, fez-kanban=npm:@fezchat/kanban");
     expect(parseSkillEntries(line.split(",").map((s) => s.trim()))).toEqual({ names, sources });
   });
 });

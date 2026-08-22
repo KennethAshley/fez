@@ -10,7 +10,7 @@ import {
   resolveRelays,
   makeChannels,
   type NostrAccess,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 import { REPO_NAME, cloneBase, cloneUrl, repoDoc } from "./repo-name.js";
 
 /**
@@ -69,7 +69,7 @@ function helperPath(): string {
     const candidate = path.join(here, name);
     if (existsSync(candidate)) return candidate;
   }
-  fail("credential helper not found beside fez-adopt — reinstall @fez/git");
+  fail("credential helper not found beside fez-adopt — reinstall @fezchat/git");
 }
 
 async function main(): Promise<void> {
@@ -127,7 +127,7 @@ async function main(): Promise<void> {
   if (!base) {
     fail(
       `${relays[0]} does not advertise a git server.\n` +
-        "  Install @fez/git on the relay and start it with --extensions --origin <public-url>."
+        "  Install @fezchat/git on the relay and start it with --extensions --origin <public-url>."
     );
   }
   const owner = typeof info.pubkey === "string" ? info.pubkey : undefined;

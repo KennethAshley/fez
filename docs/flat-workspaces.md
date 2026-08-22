@@ -167,7 +167,7 @@ already carry `h` and need nothing), but it is not built.
 1. **Relay + protocol.** NIP-11 `owner`, owner-signature verification in
    fez-relay's ingest policy, kinds registry updated. Evals for "an event
    signed by a non-owner claiming to create a channel is rejected".
-2. **Client core.** `@fez/client` drops `Community`; `Scope` becomes
+2. **Client core.** `@fezchat/client` drops `Community`; `Scope` becomes
    `channelId`. This is where most of the 530 live.
 3. **Migration script** with a dry run, then run it on both relays.
 4. **GUI.** Workspace rail in settings, per-relay profile, onboarding that adds

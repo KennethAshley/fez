@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { parseQuery, describeQuery, taskKey, type FezClient, type Query, type WireEvent } from "@fez/client";
+import { parseQuery, describeQuery, taskKey, type FezClient, type Query, type WireEvent } from "@fezchat/client";
 
 /**
  * ```fez:query``` — a question in a document, answered from the relay.

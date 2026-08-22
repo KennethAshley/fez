@@ -6,7 +6,7 @@ import { nip98Authenticator } from "./auth.js";
 /**
  * fez-git as an installed relay extension.
  *
- * `fez install @fez/git` drops this in ~/.fez/relay-extensions, and a
+ * `fez install @fezchat/git` drops this in ~/.fez/relay-extensions, and a
  * relay started with --extensions loads it. Nothing in fez-relay knows
  * what git is: it offers registerHttpHandler and this claims /git/*,
  * exactly as a GUI extension claims a settings panel.

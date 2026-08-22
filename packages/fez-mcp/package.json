@@ -1,15 +1,15 @@
 {
-  "name": "@fez/mcp",
+  "name": "@fezchat/mcp",
   "version": "0.1.0",
   "private": true,
   "description": "MCP server giving harness agents first-class fez tools \u2014 send/read channels, DMs, search, memory, docs \u2014 signed with the agent's own key. Auto-attached to every fez-acp session.",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/server.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/server.js",
+    "build": "esbuild src/server.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/server.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "file:../..",
+    "@fezchat/protocol": "file:../..",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.23.0"
   },

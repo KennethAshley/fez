@@ -1,5 +1,5 @@
 {
-  "name": "@fez/evals",
+  "name": "@fezchat/evals",
   "version": "0.1.0",
   "private": true,
   "description": "Regression gates for fez's measured behaviors \u2014 routing accuracy, addressing semantics, error classification. pi's evals idea, fez-shaped.",
@@ -9,7 +9,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "file:../.."
+    "@fezchat/protocol": "file:../.."
   },
   "devDependencies": {
     "typescript": "^5.6.0",

@@ -121,14 +121,14 @@ export function machineLocalPath(config: SkillSpec | undefined): string | undefi
 
 /**
  * The one case where a bare name DOES resolve: fez's own packages.
- * `fez-kanban` → `@fez/kanban` is safe not because the name looks
+ * `fez-kanban` → `@fezchat/kanban` is safe not because the name looks
  * official but because fez owns the @fez scope on npm — nobody else can
  * publish into it. That is a property of owning the namespace, and it
  * generalizes to no other prefix. Everything else stays unresolvable.
  */
 export function wellKnownSource(name: string): string | undefined {
   const match = /^fez-([\w-]+)$/.exec(name);
-  return match ? `npm:@fez/${match[1]}` : undefined;
+  return match ? `npm:@fezchat/${match[1]}` : undefined;
 }
 
 /**

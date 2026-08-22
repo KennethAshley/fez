@@ -6,7 +6,7 @@ import {
   clearSystemPromptSection,
   isPrivileged,
   UNTRUSTED_CONTENT_NOTICE,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 
 /**
  * An agent's standing instructions are assembled from parts nobody owns

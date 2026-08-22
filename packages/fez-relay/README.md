@@ -1,4 +1,4 @@
-# @fez/relay
+# @fezchat/relay
 
 The database that remembers everything and understands nothing. A dumb NIP-01 store: it keeps signed events, refuses none by default, and interprets none. Every meaning — who is in a room, what a thread is, who may speak — is decided elsewhere. That emptiness is the point; a relay you cannot trust to be smart is a relay that cannot betray you.
 

@@ -1,5 +1,5 @@
 {
-  "name": "@fez/orchestrator",
+  "name": "@fezchat/orchestrator",
   "version": "0.1.0",
   "private": true,
   "description": "@fez \u2014 a routing orchestrator agent for fez channels, backed by any OpenAI-compatible endpoint (a cloud model, ollama, llama.cpp, or a hosted router)",
@@ -14,11 +14,11 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/orchestrator.ts --bundle --format=esm --platform=node --external:@fez/protocol --outfile=dist/orchestrator.js",
+    "build": "esbuild src/orchestrator.ts --bundle --format=esm --platform=node --external:@fezchat/protocol --outfile=dist/orchestrator.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@fez/protocol": "file:../.."
+    "@fezchat/protocol": "file:../.."
   },
   "devDependencies": {
     "esbuild": "^0.21.5",

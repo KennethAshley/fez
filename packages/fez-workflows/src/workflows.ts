@@ -12,7 +12,7 @@ import {
   KIND_REACTION,
   KIND_WORKFLOW_RUN,
   resolveRelays,
-} from "@fez/protocol";
+} from "@fezchat/protocol";
 import { Cron } from "croner";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { loadDefs, isSay, isWait, isDelay, isDm, isReact, isWebhook, parseDuration, resolveTemplate, type WorkflowDef } from "./defs.js";

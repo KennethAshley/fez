@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { classifyTurnError } from "@fez/protocol";
+import { classifyTurnError } from "@fezchat/protocol";
 
 /**
  * Turn-error taxonomy (Buzz's precision rationale): auth must NEVER be

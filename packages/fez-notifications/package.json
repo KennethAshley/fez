@@ -1,5 +1,5 @@
 {
-  "name": "@fez/notifications",
+  "name": "@fezchat/notifications",
   "version": "0.1.0",
   "private": true,
   "description": "Desktop notifications for fez events — DMs, mentions, agent failures — with pluggable delivery (herdr, macOS)",

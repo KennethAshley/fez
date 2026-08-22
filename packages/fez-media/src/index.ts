@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { FezExtensionAPI } from "./api-types.js";
-import type { FezClient } from "@fez/client";
+import type { FezClient } from "@fezchat/client";
 import { mimeFor, uploadToBlossom } from "./blossom.js";
 
 /**
