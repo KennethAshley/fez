@@ -52,17 +52,17 @@ export default function FirstRun({
       {hasFez ? (
         <>
           <p>
-            <span className="fr-agent">@fez</span> is here. Mention it with anything you want done and it finds
-            whoever's best for the job — that's its whole purpose, so you never have to remember who does what.
+            <span className="fr-agent">@fez</span> is your guide. Ask it anything about fez — how git works, what an
+            extension does, how to set something up — and it answers. Hand it a task and it brings in the right agent.
           </p>
 
           <p className="fr-ok">
-            Mention it with anything — <span className="fr-try">@fez what can you do?</span> — and it routes to
-            whoever's best, or answers about fez itself.
+            Try <span className="fr-try">@fez what can you do?</span> — or ask it to set you up, like{' '}
+            <span className="fr-try">@fez install polls</span> (you confirm before anything installs).
           </p>
           <p className="fr-note">
-            @fez runs on any OpenAI-compatible endpoint — a hosted router, ollama, llama.cpp, or a cloud model.
-            Set <code>url:</code> in <code>~/.fez/personas/fez.md</code> and restart it.{' '}
+            @fez is a persona at <code>~/.fez/personas/fez.md</code> — swap its <code>harness:</code> to run it on any
+            model, or the hosted router for a cheap local option.{' '}
             <button className="fr-link" onClick={() => void copyHint()}>{copied ? '✓ copied' : 'copy the path'}</button>
           </p>
         </>

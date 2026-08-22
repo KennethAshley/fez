@@ -4,6 +4,7 @@ import path from "node:path";
 import chalk from "chalk";
 import { detectHarnesses, registerBuiltinHarnesses } from "./harness.js";
 import { listPersonas } from "./personas.js";
+import { CAPABLE_FEZ_PERSONA } from "./fez-persona.js";
 import { HOSTED_ROUTER, resolveRelay, saveSettings } from "./settings.js";
 
 /**
@@ -78,23 +79,33 @@ export async function firstRunWizard(): Promise<void> {
   // does nothing is worse than none at all. `fez router-install` swaps
   // this one line for a local endpoint — ~90ms instead of ~3s, and no
   // dependence on somebody else's box.
+  // Smart default: with a real harness, @fez IS the guide — one agent that
+  // answers about fez AND delegates. Without one, fall back to the tiny
+  // hosted router (install nothing) that only routes to a seeded guide.
+  const guideBrain = harnesses.find((h) => h.id === "claude-code")?.id ?? harnesses.find((h) => h.id === "pi")?.id;
   const fezFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
   if (!fs.existsSync(fezFile)) {
     fs.mkdirSync(path.dirname(fezFile), { recursive: true });
-    fs.writeFileSync(
-      fezFile,
-      "---\n" +
-        "routable: false\n" +
-        "harness: router\n" +
-        `url: ${HOSTED_ROUTER}\n` +
-        "aliases: [orchestrator]\n" +
-        "description: routes tasks to the right agent — mention @fez with anything\n" +
+    if (guideBrain) {
+      fs.writeFileSync(fezFile, CAPABLE_FEZ_PERSONA.replace("{{HARNESS}}", guideBrain), "utf-8");
+      console.log(`  ${chalk.green("✓")} @fez → ${fezFile} (your guide, on ${guideBrain})`);
+    } else {
+      fs.writeFileSync(
+        fezFile,
         "---\n" +
-        "🎩 fez here. Mention @fez with a task and I'll bring in whoever's best for it.\n",
-      "utf-8"
-    );
-    console.log(`  ${chalk.green("✓")} @fez → ${fezFile} (routes to the hosted router)`);
-    console.log(chalk.dim(`    faster and private: ${chalk.cyan("fez router-install")} runs the router on this machine`));
+          "routable: false\n" +
+          "harness: router\n" +
+          `url: ${HOSTED_ROUTER}\n` +
+          "aliases: [orchestrator]\n" +
+          "fallback: fez-guide\n" +
+          "description: routes tasks to the right agent — mention @fez with anything\n" +
+          "---\n" +
+          "🎩 fez here. Mention @fez with a task and I'll bring in whoever's best for it.\n",
+        "utf-8"
+      );
+      console.log(`  ${chalk.green("✓")} @fez → ${fezFile} (routes to the hosted router)`);
+      console.log(chalk.dim(`    install a harness (Claude Code / pi) and re-run to make @fez a full guide`));
+    }
   }
 
   saveSettings({ relay: relay.trim(), onboarded: true });
