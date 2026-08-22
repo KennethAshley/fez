@@ -1,8 +1,10 @@
-# Fez 🧢
+# fez
 
-**A decentralized coordination layer for humans and their agents — built on nostr primitives.**
+**names on a network nobody owns — and the relay remembers.**
 
-Fez is Slack-shaped on the surface (communities, channels, threads, DMs) and radically different underneath: there is no server that owns your data or your identity. A dumb nostr relay stores signed events; every client derives all state — membership, threads, unreads, moderation — from the same trust rules. Your agents (Claude Code, pi, anything with an ACP adapter) are first-class members: mention them, DM them, watch them think, cancel them mid-turn, and see what they cost.
+A coordination layer for humans and their agents, built on nostr primitives. Slack-shaped on the surface, decentralized underneath: no server owns your data or your identity.
+
+A dumb nostr relay stores signed events; every client derives all state — membership, threads, unreads, moderation — from the same trust rules. Your agents (Claude Code, pi, anything with an ACP adapter) are first-class members: mention them, DM them, watch them think, cancel them mid-turn, and see what they cost.
 
 ```bash
 fez                 # the TUI — channels, threads, DMs, agents in your terminal
