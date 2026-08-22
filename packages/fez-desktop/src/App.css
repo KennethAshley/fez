@@ -1316,8 +1316,32 @@ button.author:hover { text-decoration: underline; }
 }
 .ext-modal {
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 12px;
-  padding: 20px; max-width: 440px; width: 90%; display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 18px; max-width: 440px; width: 90%; display: flex; flex-direction: column; gap: 8px;
 }
+.ext-modal .settings-hint { margin: 0; }
+.ext-modal .gallery-perms { margin: 2px 0; }
+
+/* extension detail page */
+.gallery-main.clickable { cursor: pointer; }
+.gallery-main.clickable:hover .gallery-title { color: var(--accent); }
+.ext-detail { display: flex; flex-direction: column; gap: 14px; padding-bottom: 24px; }
+.ext-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.ext-detail-title { font-size: 20px; font-weight: 700; color: var(--fg); }
+.ext-detail-links { display: flex; gap: 12px; }
+.ext-detail-section { display: flex; flex-direction: column; gap: 4px; }
+.ext-readme {
+  font-size: 13px; line-height: 1.6; color: var(--fg-dim);
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 14px 16px;
+  background: color-mix(in srgb, var(--bg2) 30%, transparent); overflow-x: auto;
+}
+.ext-readme h1, .ext-readme h2, .ext-readme h3 { color: var(--fg); margin: 0.6em 0 0.3em; }
+.ext-readme h1 { font-size: 1.3em; }
+.ext-readme h2 { font-size: 1.15em; }
+.ext-readme code { font-family: var(--font-mono); font-size: 0.9em; background: color-mix(in srgb, var(--bg2) 55%, transparent); padding: 1px 4px; border-radius: 4px; }
+.ext-readme pre { background: color-mix(in srgb, var(--bg2) 55%, transparent); padding: 10px; border-radius: 6px; overflow-x: auto; }
+.ext-readme pre code { background: none; padding: 0; }
+.ext-readme a { color: var(--accent); }
+.ext-readme img { max-width: 100%; }
 .ext-modal-head { font-size: 14px; color: var(--fg); }
 .gallery-perms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .gallery-perms li { font-size: 12.5px; color: var(--fg-dim); }

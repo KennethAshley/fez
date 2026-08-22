@@ -468,6 +468,33 @@ fn read_extension_versions() -> Result<String, String> {
         .to_string())
 }
 
+/// Registry detail for an extension's page — version, description, README.
+#[tauri::command]
+fn package_info(name: String) -> Result<String, String> {
+    if name.is_empty()
+        || name.len() > 128
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '-' | '.' | '_'))
+    {
+        return Err("not a valid package name".to_string());
+    }
+    let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
+    let body = ureq::get(&url)
+        .call()
+        .map_err(|e| format!("couldn't reach npm: {e}"))?
+        .into_string()
+        .map_err(|e| e.to_string())?;
+    let meta: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let latest = meta.pointer("/dist-tags/latest").and_then(|v| v.as_str()).unwrap_or("");
+    let ver = meta.pointer(&format!("/versions/{latest}"));
+    let info = serde_json::json!({
+        "version": latest,
+        "description": ver.and_then(|v| v.get("description")).cloned().unwrap_or(serde_json::Value::Null),
+        // npm keeps the README at the packument top level, from the latest publish.
+        "readme": meta.get("readme").cloned().unwrap_or(serde_json::Value::Null),
+    });
+    Ok(info.to_string())
+}
+
 /// The latest published version of a package, from the npm registry.
 #[tauri::command]
 fn latest_version(name: String) -> Result<String, String> {
@@ -808,7 +835,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

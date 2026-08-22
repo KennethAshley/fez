@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { reloadGuiExtensions } from "./gui-extensions";
+
+const REPO = "https://github.com/KennethAshley/fez";
+const githubUrl = (name: string) => `${REPO}/tree/main/packages/fez-${name.replace(/^@fezchat\//, "")}`;
+const npmUrl = (name: string) => `https://www.npmjs.com/package/${name}`;
 
 /**
  * The install gallery — discover the official fez extensions and install
@@ -65,6 +72,26 @@ export function ExtensionGallery({
 }) {
   const [confirming, setConfirming] = useState<GalleryEntry>();
   const [installing, setInstalling] = useState<string>();
+  const [detail, setDetail] = useState<GalleryEntry>();
+  const [info, setInfo] = useState<{ version?: string; description?: string; readme?: string }>();
+
+  // Fetch the registry README when a detail page opens.
+  useEffect(() => {
+    if (!detail) return;
+    setInfo(undefined);
+    let live = true;
+    void (async () => {
+      try {
+        const raw = await invoke<string>("package_info", { name: detail.name });
+        if (live) setInfo(JSON.parse(raw));
+      } catch {
+        if (live) setInfo({});
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [detail]);
   // Recorded installed versions (keyed by base name) and npm's latest.
   const [installedVer, setInstalledVer] = useState<Record<string, string>>({});
   const [latest, setLatest] = useState<Record<string, string>>({});
@@ -154,6 +181,68 @@ export function ExtensionGallery({
     }
   };
 
+  if (detail) {
+    const done = isInstalled(detail);
+    const key = norm(detail.name);
+    const newer = latest[key] && installedVer[key] && latest[key] !== installedVer[key] ? latest[key] : undefined;
+    return (
+      <div className="ext-detail">
+        <button className="pane-back" onClick={() => setDetail(undefined)}>← extensions</button>
+        <div className="ext-detail-head">
+          <div>
+            <div className="ext-detail-title">{detail.title}</div>
+            <code className="gallery-name">{detail.name}{info?.version ? `@${info.version}` : ""}</code>
+          </div>
+          {done ? (
+            newer ? (
+              <button className="gallery-install update" onClick={() => void update(detail)}>update → {newer}</button>
+            ) : (
+              <button className="gallery-uninstall" onClick={() => void uninstall(detail)}>uninstall</button>
+            )
+          ) : (
+            <button className="gallery-install" onClick={() => setConfirming(detail)}>install</button>
+          )}
+        </div>
+
+        <div className="ext-detail-links">
+          <button className="skill-link" onClick={() => void openUrl(githubUrl(detail.name))}>GitHub ↗</button>
+          <button className="skill-link" onClick={() => void openUrl(npmUrl(detail.name))}>npm ↗</button>
+        </div>
+
+        <div className="ext-detail-section">
+          <div className="manage-section">what it adds</div>
+          <div className="settings-hint">{detail.blurb}</div>
+          <div className="gallery-where">{detail.where}</div>
+        </div>
+
+        <div className="ext-detail-section">
+          <div className="manage-section">permissions</div>
+          <ul className="gallery-perms">
+            {detail.permissions.map((p) => (
+              <li key={p} className={SENSITIVE.has(p) ? "sensitive" : ""}>
+                {SENSITIVE.has(p) ? "⚠ " : "· "}{PERM_LABEL[p] ?? p} <code>{p}</code>
+              </li>
+            ))}
+          </ul>
+          <div className="settings-hint">Installing fetches it from npm and grants these — no terminal needed.</div>
+        </div>
+
+        <div className="ext-detail-section">
+          <div className="manage-section">readme</div>
+          {info === undefined ? (
+            <div className="pane-empty">loading…</div>
+          ) : info.readme ? (
+            <div className="ext-readme">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{info.readme}</ReactMarkdown>
+            </div>
+          ) : (
+            <div className="pane-empty">no readme published</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="ext-gallery">
       <div className="settings-hint">
@@ -168,7 +257,7 @@ export function ExtensionGallery({
         const newer = latest[key] && cur && latest[key] !== cur ? latest[key] : undefined;
         return (
           <div key={entry.name} className="gallery-card">
-            <div className="gallery-main">
+            <div className="gallery-main clickable" onClick={() => setDetail(entry)} title="details">
               <div className="gallery-head">
                 <span className="gallery-title">{entry.title}</span>
                 <code className="gallery-name">{entry.name}</code>
