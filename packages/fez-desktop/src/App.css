@@ -1,6 +1,7 @@
 /* fez-desktop — gruvbox-dark skeleton (matches the TUI's palette). */
 :root {
   --bg0: #1d2021;
+  --field: #1d2021; /* input wells (= bg0): every input reads this one token */
   --bg1: #282828;
   --bg2: #3c3836;
   --bg-mine: #2d3a40;
@@ -408,7 +409,11 @@ body {
 .activity-chip {
   display: flex; align-items: center; gap: 6px; background: var(--bg1);
   border: 1px solid var(--bg2); border-radius: 14px; color: var(--fg); font: inherit;
-  font-size: 12px; padding: 3px 12px; cursor: pointer; max-width: 420px;
+  font-size: 12px; padding: 3px 12px; cursor: pointer;
+  /* Full row, one line: the preview is the most information-dense pixel
+     in the app while an agent works, and capping it at 420px threw most
+     of it away. Clicking opens the watch pane with the whole transcript. */
+  flex: 1 1 100%; min-width: 0; max-width: 100%; text-align: left;
 }
 .activity-chip:hover { border-color: var(--accent); }
 .activity-headline {
@@ -535,12 +540,17 @@ body {
 .manage-input {
   flex: 1; min-width: 0; border: 1px solid var(--bg2); border-radius: 6px;
   color: var(--fg); font: inherit; font-size: 13px; padding: 6px 10px; outline: none;
-  background: color-mix(in srgb, var(--tint) 6%, var(--bg0));
+  /* --field is the theme's input-well color — white in light themes,
+     a dark well in dark ones. A dedicated token, because two attempts
+     at deriving it (tint-mix, fg-mix) each looked wrong in some
+     palette: what a field looks like is a THEME decision, not a
+     formula. Falls back to --bg0 for themes that predate the token. */
+  background: var(--field, var(--bg0));
   border-color: color-mix(in srgb, var(--tint) 26%, var(--bg2));
 }
 .manage-input:focus { border-color: var(--accent); }
 .manage-select {
-  background: var(--bg0); border: 1px solid var(--bg2); border-radius: 6px;
+  background: var(--field, var(--bg0)); border: 1px solid var(--bg2); border-radius: 6px;
   color: var(--fg); font: inherit; font-size: 13px; padding: 6px; outline: none;
 }
 
@@ -1209,6 +1219,49 @@ button.author:hover { text-decoration: underline; }
 .settings-content { flex: 1; min-width: 0; }
 .settings-modal .settings-pane { min-height: 480px; }
 
+
+/* ── extension panels: bare `code` reads as code ──────────────
+   Panels are h()-built, not markdown, so the .md code chip never
+   applies. Same recipe, surface-relative so it lands on --bg1 modals
+   and --bg0 panes alike, in every theme. */
+.ext-modal code, .ext-settings code {
+  font-family: var(--font-mono); font-size: 0.92em;
+  background: color-mix(in srgb, var(--bg2) 55%, transparent);
+  border-radius: 4px; padding: 1px 5px;
+  word-break: break-all; /* clone URLs wrap instead of overflowing */
+}
+.ext-modal .skill-desc .skill-link, .ext-settings .skill-desc .skill-link { margin-left: 6px; }
+
+/* unspawned persona rows: the row body edits, the trailing action invites */
+.agent-row-static { display: flex; align-items: center; gap: 4px; }
+.agent-row-static .agent-row-main {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  background: none; border: 0; color: var(--fg); font: inherit; cursor: pointer;
+  text-align: left; padding: 0;
+}
+
+/* ── lane board (fez-git thread view) ─────────────────────────
+   Hosted above thread replies; rows are lanes, actions are links. */
+.thread-view { padding: 6px 18px 0; }
+.lane-board { border: 1px solid var(--hairline); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+.lane-board-head { display: flex; align-items: baseline; gap: 4px; margin-bottom: 4px; }
+.lane-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; flex-wrap: wrap; }
+.lane-actions { margin-left: auto; display: flex; gap: 4px; }
+.lane-diff {
+  flex-basis: 100%; max-height: 320px; overflow: auto; font-size: 11px;
+  font-family: var(--font-mono); background: var(--field, var(--bg0));
+  border: 1px solid var(--hairline); border-radius: 6px; padding: 8px; white-space: pre;
+}
+
+/* the agent's working branch, zsh-prompt style, beside its name */
+.branch-chip {
+  font-family: var(--font-mono); font-size: 10px; color: var(--fg-dim);
+  background: color-mix(in srgb, var(--bg2) 55%, transparent);
+  border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+}
+
+/* line chip under a ⑂ root in the channel — the walk into the board */
+.line-chip { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 
 /* resizable sidebars */
 /* 5px between two surfaces is a target you have to aim at, and missing
@@ -2275,7 +2328,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .env-input {
   width: 100%; box-sizing: border-box; font: inherit; font-size: 13px;
   padding: 8px 10px; border-radius: 7px;
-  border: 1px solid var(--bg2); background: var(--bg0); color: var(--fg);
+  border: 1px solid var(--bg2); background: var(--field, var(--bg0)); color: var(--fg);
 }
 .env-input:focus { outline: none; border-color: var(--accent); }
 .env-value-wrap { position: relative; display: flex; }

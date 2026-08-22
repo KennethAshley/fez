@@ -29,6 +29,8 @@ import { pathToFileURL } from "node:url";
 
 export interface WorkspaceRequest {
   repo: string;
+  /** Line to cut the branch from — thread-scoped summons name one. */
+  base?: string;
   branch: string;
   dir: string;
   scope?: string[];

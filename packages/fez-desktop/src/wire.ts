@@ -1,6 +1,6 @@
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { nip44, nip59, type Event, type EventTemplate } from "nostr-tools";
-import type { Wire, WireEvent, WireFilter, DmRumor } from "@fez/client";
+import type { Wire, WireEvent, WireFilter, DmRumor, RelayInfoDoc } from "@fez/client";
 import { fetchRelayInfo } from "../../../src/nip11.js";
 
 /**
@@ -363,6 +363,24 @@ export class BrowserWire implements Wire {
   }
 
   /** Sign WITHOUT publishing — for events that travel outside the relay (Blossom auth headers). */
+  /**
+   * NIP-98, browser-shaped: same event the CLI credential helper signs
+   * (src/nip98.ts builds it node-side), base64 via TextEncoder because
+   * a webview has no Buffer. Signed over the URL the caller will be
+   * verified against — for repo-scoped endpoints that is the PATH-ONLY
+   * url (the server's verifier strips queries; see gitRepoPath).
+   */
+  httpAuth(url: string, method: string): string {
+    const event = finalizeEvent(
+      { kind: 27235, created_at: Math.floor(Date.now() / 1000), tags: [["u", url], ["method", method.toUpperCase()]], content: "" },
+      this.secret
+    );
+    const bytes = new TextEncoder().encode(JSON.stringify(event));
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return `Nostr ${btoa(binary)}`;
+  }
+
   signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Event {
     return finalizeEvent(
       {
@@ -411,7 +429,7 @@ export class BrowserWire implements Wire {
     return this.urls;
   }
 
-  async relayInfo(relay?: string): Promise<{ name?: string; description?: string; pubkey?: string; icon?: string } | undefined> {
+  async relayInfo(relay?: string): Promise<RelayInfoDoc | undefined> {
     return fetchRelayInfo(relay || this.urls[0]);
   }
 

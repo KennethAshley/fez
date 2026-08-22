@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient, ObserverEntry, WireEvent } from "@fez/client";
+import { invitePersona } from "./invite-persona";
 import type { BrowserWire } from "./wire";
 import ActivityFeed from "./ActivityFeed";
 import Avatar from "./Avatar";
@@ -276,6 +277,7 @@ export default function AgentsPane({
   // Persona files on disk — includes agents that have never spawned
   // (no 47000 metadata yet), which would otherwise be invisible here.
   const [localPersonas, setLocalPersonas] = useState<string[]>([]);
+  const [invited, setInvited] = useState<string | undefined>(undefined);
   const [drafts, setDrafts] = useState<string[]>([]);
   const [reviewing, setReviewing] = useState<string>();
   const [personaNonce, setPersonaNonce] = useState(0);
@@ -389,11 +391,49 @@ export default function AgentsPane({
             <>
               <div className="manage-section">on this machine (never summoned)</div>
               {unspawned.map((name) => (
-                <button key={name} className="agent-row" title="edit persona" onClick={() => setEditingPersona(name)}>
-                  <span className="agent-ghost">◌</span>
-                  <span className="agent-name">@{name}</span>
-                  <span className="agent-sub">mention @{name} to summon · click to edit</span>
-                </button>
+                <div key={name} className="agent-row agent-row-static">
+                  <button className="agent-row-main" title="edit persona" onClick={() => setEditingPersona(name)}>
+                    <span className="agent-ghost">◌</span>
+                    <span className="agent-name">@{name}</span>
+                    <span className="agent-sub">
+                      {invited === name ? "✓ on the roster — mention to wake" : `mention @${name} to summon · click to edit`}
+                    </span>
+                  </button>
+                  {/* The stable-key invite: on the roster BEFORE first
+                      spawn, same path as /invite (invite-persona.ts). */}
+                  {invited !== name && (
+                    <button
+                      className="skill-link"
+                      title="add to the workspace roster now (as bot)"
+                      onClick={() => {
+                        void invitePersona(client, name).then((r) => {
+                          if (r.kind === "invited") setInvited(name);
+                        });
+                      }}
+                    >
+                      invite
+                    </button>
+                  )}
+                  <button
+                    className="skill-link"
+                    title="mint a twin: same persona text, its own name and key — true parallelism is more agents, not multiplexed ones"
+                    onClick={() => {
+                      void (async () => {
+                        const content = await invoke<string>("read_persona", { name });
+                        const existing = new Set((await invoke<string[]>("list_personas")).map((p) => p.toLowerCase()));
+                        let n = 2;
+                        while (existing.has(`${name.toLowerCase()}-${n}`)) n++;
+                        const twin = `${name}-${n}`;
+                        await invoke<string>("write_persona", { name: twin, content });
+                        await invitePersona(client, twin);
+                        setPersonaNonce((x) => x + 1);
+                        setInvited(twin);
+                      })();
+                    }}
+                  >
+                    twin
+                  </button>
+                </div>
               ))}
             </>
           )}

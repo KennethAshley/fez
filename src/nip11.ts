@@ -22,6 +22,18 @@ export interface RelayInfo {
   icon?: string;
   supported_nips?: number[];
   software?: string;
+  /**
+   * Whatever relay extensions advertised, namespaced by package
+   * (`fez_git`, not `git`).
+   *
+   * Open on purpose. `RelayExtensionAPI.advertise` exists so an
+   * extension serving something over HTTP can say WHERE it is, and a
+   * closed interface here deleted those fields at the type level while
+   * the bytes sat in the response — so every client reconstructed the
+   * URL from the websocket address instead, which is right on a laptop
+   * and silently wrong behind a proxy.
+   */
+  [advertised: string]: unknown;
 }
 
 /** ws:// → http://, wss:// → https:// — NIP-11 rides the same origin. */

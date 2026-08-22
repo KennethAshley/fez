@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient } from "@fez/client";
 import { registerArtifactViewer } from "./artifact-viewers";
+import { invitePersona } from "./invite-persona";
 
 /**
  * Mirrors src/extension-permissions.ts (the eval-pinned source of truth).
@@ -11,7 +12,11 @@ import { registerArtifactViewer } from "./artifact-viewers";
  * change there they change here — the eval gate covers the semantics.
  */
 const LEGACY_GRANT = ["read:channels", "read:agents", "commands", "ui"];
-function networkAllowed(hosts: readonly string[], url: string): boolean {
+function networkAllowed(hostsIn: readonly string[], url: string): boolean {
+  // "relay" resolves to this workspace's relay hosts at CALL time — the
+  // extension serving relay HTTP surfaces (git's lane board) cannot know
+  // the hostname at publish time, and the alternative was network:*.
+  const hosts = hostsIn.flatMap((entry) => (entry === "relay" ? relayHostnames() : [entry]));
   if (hosts.length === 0) return false;
   let host: string;
   try {
@@ -22,6 +27,21 @@ function networkAllowed(hosts: readonly string[], url: string): boolean {
   if (!host) return false;
   if (hosts.includes("*")) return true;
   return hosts.some((entry) => (entry.startsWith(".") ? host === entry.slice(1) || host.endsWith(entry) : host === entry));
+}
+
+/** The workspace's relay hostnames, from the same source the wire boots from. */
+function relayHostnames(): string[] {
+  const raw = localStorage.getItem("fez-relay") ?? "";
+  return raw
+    .split(",")
+    .map((u) => {
+      try {
+        return new URL(u.trim().replace(/^ws(s?):\/\//i, "http$1://")).hostname.toLowerCase();
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean);
 }
 
 /**
@@ -40,6 +60,33 @@ export interface GuiExtensionApi {
   React: typeof React;
   client: FezClient;
   registerArtifactViewer: typeof registerArtifactViewer;
+  /**
+   * Agent personas, as files — LIST/READ/UPDATE plus the stable-key
+   * invite. Gated behind the sensitive "personas" permission: a persona
+   * is an agent's programming, and write access here is the power to
+   * reprogram every agent on this machine. Exists so an extension can
+   * ASSIGN an agent (fez-git writing `repo:` into a persona) without
+   * core learning what a repo is.
+   */
+  personas?: {
+    list(): Promise<string[]>;
+    read(name: string): Promise<string>;
+    update(name: string, content: string): Promise<void>;
+    /** Create a NEW persona file — how a twin is minted. */
+    create(name: string, content: string): Promise<void>;
+    /** Roster the persona's stable key now, pre-spawn. */
+    invite(name: string, role?: "bot" | "member"): Promise<"invited" | "no-key" | "unknown">;
+  };
+  /** A lens on a whole thread, keyed off its root's content. */
+  registerThreadView: (
+    name: string,
+    match: (rootContent: string) => boolean,
+    render: (props: ThreadViewProps) => React.ReactNode
+  ) => void;
+  /** Open the live activity pane for an agent, by name. */
+  watchAgent: (name: string) => void;
+  /** Open a thread in the current channel view (no-op for other channels). */
+  openThread: (channelId: string, rootId: string) => void;
   /** A palette, or a { light, dark } pair that follows the OS. */
   registerTheme: (name: string, vars: ThemePack) => void;
   /** Decorate chat messages: when match(content) is true, render() is
@@ -256,6 +303,65 @@ export interface PageView {
   match: (content: string) => boolean | "default";
   render: (props: PageViewProps) => React.ReactNode;
 }
+/**
+ * Thread views — a lens on a whole THREAD, the way a page view is a
+ * lens on a document. `match` reads the thread ROOT's content (that is
+ * where structured threads carry their marker — fez-git's ⑂ roots);
+ * the winning view renders ABOVE the replies rather than replacing
+ * them: a board is an index of the conversation, not a substitute.
+ */
+export interface ThreadViewProps {
+  channelId: string;
+  rootId: string;
+  rootContent: string;
+}
+interface ThreadView {
+  name: string;
+  match: (rootContent: string) => boolean;
+  render: (props: ThreadViewProps) => React.ReactNode;
+}
+const threadViews: ThreadView[] = [];
+export function registerThreadView(name: string, match: ThreadView["match"], render: ThreadView["render"]): void {
+  threadViews.push({ name, match, render });
+}
+export function threadViewFor(rootContent: string): ThreadView | undefined {
+  return threadViews.find((view) => {
+    try {
+      return view.match(rootContent);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * The watch pane, as a capability. Extensions say "show me this agent
+ * working"; WHERE that appears stays the host's business — the pane is
+ * App state, so App parks its opener here at mount.
+ */
+let watchOpener: ((agent: string) => void) | undefined;
+export function setWatchOpener(open: ((agent: string) => void) | undefined): void {
+  watchOpener = open;
+}
+export function openWatch(agent: string): void {
+  watchOpener?.(agent);
+}
+
+/**
+ * Thread navigation, as a capability: extensions say "open this thread"
+ * (a lane from the board, a line from its channel chip) and the host's
+ * channel view — where the thread state lives — decides how. The opener
+ * is parked per open channel and checks the channelId, so a stale
+ * registration from a previous channel can never hijack navigation.
+ */
+let threadOpener: ((channelId: string, rootId: string) => void) | undefined;
+export function setThreadOpener(open: ((channelId: string, rootId: string) => void) | undefined): void {
+  threadOpener = open;
+}
+export function openThreadAt(channelId: string, rootId: string): void {
+  threadOpener?.(channelId, rootId);
+}
+
 const pageViews: PageView[] = [];
 export function registerPageView(name: string, match: PageView["match"], render: PageView["render"]): void {
   pageViews.push({ name, match, render });
@@ -531,6 +637,20 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
           may("ui") ? invoke<boolean>("has_skill_secret", { skill: name, key }) : Promise.resolve(false),
       },
       openUrl: (url: string) => (may("ui") ? openUrl(url) : Promise.resolve(refuse("ui", "open a link")() as void)),
+      personas: may("personas")
+        ? {
+            list: () => invoke<string[]>("list_personas"),
+            read: (p: string) => invoke<string>("read_persona", { name: p }),
+            update: (p: string, content: string) => invoke<void>("update_persona", { name: p, content }),
+            create: async (p: string, content: string) => {
+              await invoke<string>("write_persona", { name: p, content });
+            },
+            invite: async (p: string, role?: "bot" | "member") => (await invitePersona(client, p, role ?? "bot")).kind,
+          }
+        : undefined,
+      registerThreadView: may("ui") ? registerThreadView : (refuse("ui", "add a thread view") as never),
+      openThread: may("ui") ? openThreadAt : (refuse("ui", "navigate threads") as never),
+      watchAgent: may("read:agents") ? openWatch : (refuse("read:agents", "open the watch pane") as never),
       // The label is ignored on purpose — a panel is filed under the
       // extension's own name, so one cannot present itself as another.
       // `opts` is NOT ignored: it carries which channel source this

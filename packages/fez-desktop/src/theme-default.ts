@@ -20,6 +20,7 @@
 export const BUILT_IN_DEFAULT = {
   dark: {
     "--bg0": "#1d2021",
+    "--field": "#1d2021",
     "--bg1": "#282828",
     "--bg2": "#3c3836",
     "--bg-mine": "#2d3a40",
@@ -45,6 +46,7 @@ export const BUILT_IN_DEFAULT = {
   },
   light: {
     "--bg0": "#fbf1c7",
+    "--field": "#fbf1c7",
     "--bg1": "#f2e5bc",
     "--bg2": "#e0d5b0",
     // Your own messages: a cool tint, same role the dark side gives it.

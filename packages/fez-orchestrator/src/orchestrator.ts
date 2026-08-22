@@ -204,7 +204,13 @@ async function main() {
     if (event.tags.find((t) => t[0] === "d")?.[1] !== ROSTER_D) return;
     // Only the workspace owner's roster counts — anyone can sign a 47102
     // naming themselves, and absorbing it would be self-invitation.
-    if (owner && event.pubkey && event.pubkey !== owner) return;
+    // NO owner means NO roster can be valid: the old `owner &&` guard
+    // opened the gate completely on an owner-less start, letting any
+    // stranger's roster replace the member set of a running
+    // orchestrator (review finding F4). Fail closed, like the relay and
+    // client do for the same case.
+    if (!owner) return;
+    if (event.pubkey !== owner) return;
     if (event.created_at < membersAt) return;
     members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
     if (owner) members.add(owner); // invariant, on live updates too

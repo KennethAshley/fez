@@ -468,10 +468,17 @@ program
       console.error("launchd is macOS-only — on Linux, use a systemd user unit running `fez sentinel`.");
       process.exit(1);
     }
-    const { resolveRelay } = await import("./settings.js");
     const { execSync } = await import("node:child_process");
     const fsSync = await import("node:fs");
-    const relayUrl = resolveRelay(options.relay);
+    // The relay is NOT baked into the plist unless --relay was given.
+    // An env var in a launchd plist outlives every settings change —
+    // the sentinel kept watching localhost after the workspace moved,
+    // because install-time state had been promoted to a permanent
+    // override. Default: the service reads settings.json at start,
+    // exactly like running it by hand.
+    const relayPin = options.relay
+      ? `\n    <key>FEZ_RELAY</key><string>${options.relay}</string>`
+      : "";
     const logDir = path.join(os.homedir(), ".fez", "logs");
     fsSync.mkdirSync(logDir, { recursive: true });
     const label = "com.fez.sentinel";
@@ -493,8 +500,7 @@ program
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>${pathEnv}</string>
-    <key>FEZ_RELAY</key><string>${relayUrl}</string>
+    <key>PATH</key><string>${pathEnv}</string>${relayPin}
     <key>HOME</key><string>${os.homedir()}</string>
   </dict>
   <key>RunAtLoad</key><true/>
@@ -563,10 +569,17 @@ program
       console.error("launchd is macOS-only — on Linux, use a systemd user unit running `fez orchestrator`.");
       process.exit(1);
     }
-    const { resolveRelay } = await import("./settings.js");
     const { execSync } = await import("node:child_process");
     const fsSync = await import("node:fs");
-    const relayUrl = resolveRelay(options.relay);
+    // The relay is NOT baked into the plist unless --relay was given.
+    // An env var in a launchd plist outlives every settings change —
+    // the sentinel kept watching localhost after the workspace moved,
+    // because install-time state had been promoted to a permanent
+    // override. Default: the service reads settings.json at start,
+    // exactly like running it by hand.
+    const relayPin = options.relay
+      ? `\n    <key>FEZ_RELAY</key><string>${options.relay}</string>`
+      : "";
     const logDir = path.join(os.homedir(), ".fez", "logs");
     fsSync.mkdirSync(logDir, { recursive: true });
     const label = "com.fez.orchestrator";
@@ -586,8 +599,7 @@ program
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>${pathEnv}</string>
-    <key>FEZ_RELAY</key><string>${relayUrl}</string>
+    <key>PATH</key><string>${pathEnv}</string>${relayPin}
     <key>HOME</key><string>${os.homedir()}</string>
   </dict>
   <key>RunAtLoad</key><true/>
@@ -1340,6 +1352,75 @@ program
     if (personas.length > 0) ok(`personas: ${personas.map((p) => `@${p.id}`).join(", ")}`);
     else warn("no personas — @mentions have nobody to become", "create ~/.fez/personas/<name>.md (the first-run wizard offers a starter)");
 
+    // ── the workspace itself: reachable is not CLAIMED ───────────
+    // An unclaimed relay refuses every governed event while answering
+    // pings happily, so a doctor that only pinged called a broken
+    // workspace healthy. The NIP-11 document is also where relay
+    // extensions advertise what they serve — git, below, reads it.
+    let nip11: Record<string, unknown> | undefined;
+    try {
+      const http = relays[0].replace(/^ws(s?):\/\//i, "http$1://").replace(/\/+$/, "");
+      const res = await fetch(http, { headers: { Accept: "application/nostr+json" }, signal: AbortSignal.timeout(5000) });
+      if (res.ok) nip11 = (await res.json()) as Record<string, unknown>;
+    } catch { /* reported below */ }
+    if (!nip11) {
+      warn("primary relay serves no NIP-11 document — the workspace stays unclaimed", "the relay must answer Accept: application/nostr+json on its http origin");
+    } else if (typeof nip11.pubkey !== "string") {
+      bad("relay serves NIP-11 but names no owner — channel/roster events will all be refused", "restart the relay with --owner <your pubkey>");
+    } else if (key && getPublicKey(Uint8Array.from(Buffer.from(key, "hex"))) === nip11.pubkey) {
+      ok(`workspace "${nip11.name ?? "unnamed"}" — you are the owner`);
+    } else {
+      ok(`workspace "${nip11.name ?? "unnamed"}" · owner ${String(nip11.pubkey).slice(0, 12)}… (not you — you cannot open channels)`);
+    }
+    const gitBase = (nip11?.fez_git as { clone_base?: string } | undefined)?.clone_base;
+    if (gitBase) ok(`git server advertised: ${gitBase}`);
+
+    // ── repo: personas — the whole chain each one needs at spawn ─
+    // Every link here failed for real at least once: no provider (spawn
+    // dies), no helper in ~/.fez/bin (the agent goes spelunking through
+    // password managers for credentials that do not exist), no git
+    // server on the relay (clone fails far from the reason).
+    const repoPersonas = personas.filter((p) => p.extra.repo);
+    if (repoPersonas.length > 0) {
+      const who = repoPersonas.map((p) => `@${p.id}`).join(", ");
+      const providerDir = path.join(os.homedir(), ".fez", "workspace-providers");
+      const providers = (await fs.readdir(providerDir).catch(() => [] as string[])).filter((f) => f.endsWith(".js"));
+      if (providers.length === 0) bad(`${who} name a repo: but no workspace provider is installed — their spawn dies`, "fez install @fez/git");
+      else ok(`workspace provider present for ${who}`);
+      const helper = path.join(os.homedir(), ".fez", "bin", "git-credential-fez");
+      if (await fs.access(helper).then(() => true, () => false)) ok("git credential helper: ~/.fez/bin/git-credential-fez");
+      else bad("git credential helper missing — agent pushes fail as auth errors far from the cause", "fez install @fez/git (fills ~/.fez/bin)");
+      if (nip11 && !gitBase) bad(`${who} need git, but the relay advertises no git server`, "install @fez/git ON THE RELAY; start it with --extensions --origin <public url>");
+    }
+
+    // ── sentinel: not just RUNNING — on the RIGHT relay ──────────
+    // A launchd env pin held the sentinel to localhost for a day after
+    // the workspace moved; every existing check passed while mentions
+    // vanished. The log states which relay it bound; the pidfile only
+    // proves the process is alive, which was never the question.
+    try {
+      const pid = Number((await fs.readFile(path.join(os.homedir(), ".fez", "sentinel.pid"), "utf-8")).trim());
+      process.kill(pid, 0); // throws if dead
+      const log = await fs.readFile(path.join(os.homedir(), ".fez", "logs", "sentinel.log"), "utf-8").catch(() => "");
+      const bound = [...log.matchAll(/sentinel on (\S+)/g)].at(-1)?.[1];
+      if (bound && !relays.includes(bound)) {
+        bad(`sentinel is on ${bound}, but settings say ${relays[0]} — mentions there never reach it`, "launchctl kickstart -k gui/$(id -u)/com.fez.sentinel   (or restart fez sentinel)");
+      } else {
+        ok(`sentinel running${bound ? ` on ${bound}` : ""} (pid ${pid})`);
+      }
+    } catch {
+      warn("sentinel not running — nothing wakes sleeping agents on DMs/mentions", "fez sentinel   (or: fez sentinel-install)");
+    }
+    // Legacy relay pins: an env var in a plist outranks settings.json
+    // forever, and installers used to write one. Current installers do
+    // not — so finding one means it predates the fix and will bite.
+    for (const label of ["com.fez.sentinel", "com.fez.orchestrator"]) {
+      const plist = await fs.readFile(path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`), "utf-8").catch(() => "");
+      if (plist.includes("FEZ_RELAY")) {
+        warn(`${label}.plist pins FEZ_RELAY — it overrides settings.json on every start`, `re-run fez ${label.replace("com.fez.", "")}-install (current installers write no pin)`);
+      }
+    }
+
     // extensions + themes (informational)
     for (const [dir, label] of [["extensions", "extensions"], ["themes", "themes"], ["workflows", "workflows"]] as const) {
       try {
@@ -1562,6 +1643,8 @@ program
     let manifest: {
       name?: string;
       scripts?: Record<string, string>;
+      /** npm's bin map — honored like install: copied to ~/.fez/bin. */
+      bin?: Record<string, string>;
       fez?: {
         extension?: { entry?: string };
         /** What this package says it needs — see extension-permissions.ts. */
@@ -1571,6 +1654,10 @@ program
           skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
           headless?: string;
           gui?: string;
+          /** → ~/.fez/relay-extensions; loaded only by a relay started with --extensions */
+          relay?: string;
+          /** → ~/.fez/workspace-providers; gives a `repo:` persona a checkout to work in */
+          workspace?: string;
           /** opt in to running scheduled tasks inside the always-on sentinel */
           background?: boolean;
         };
@@ -1635,6 +1722,41 @@ program
       fsSync.mkdirSync(guiDir, { recursive: true });
       fsSync.copyFileSync(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
       console.log(chalk.green(`✓ gui part → ~/.fez/gui-extensions/${name}.js (loads on next fez-desktop launch)`));
+    }
+
+    // ── relay + workspace parts: link matches install exactly. It did
+    // not always — link predates multi-part packages, and a linked
+    // package that silently dropped its workspace provider meant a
+    // `repo:` persona failed loudly (fatal, by design) while the person
+    // who "installed" the package stared at a link that said ✓.
+    if (parts?.relay) {
+      const relayDir = path.join(os.homedir(), ".fez", "relay-extensions");
+      fsSync.mkdirSync(relayDir, { recursive: true });
+      fsSync.copyFileSync(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
+      console.log(chalk.green(`✓ relay part → ~/.fez/relay-extensions/${name}.js (a relay started with --extensions loads it)`));
+    }
+    if (parts?.workspace) {
+      const wsDir = path.join(os.homedir(), ".fez", "workspace-providers");
+      fsSync.mkdirSync(wsDir, { recursive: true });
+      fsSync.copyFileSync(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
+      console.log(chalk.green(`✓ workspace provider → ~/.fez/workspace-providers/${name}.js (personas with repo: use it)`));
+    }
+
+    // ── bins: same seam install honors, so a linked package's
+    // executables (credential helper, fez-adopt) exist in the one
+    // predictable place things resolve them from.
+    if (manifest.bin) {
+      const binDir = path.join(os.homedir(), ".fez", "bin");
+      fsSync.mkdirSync(binDir, { recursive: true });
+      for (const [cmd, rel] of Object.entries(manifest.bin)) {
+        const target = path.join(binDir, cmd);
+        fsSync.copyFileSync(path.join(pkgDir, rel), target);
+        fsSync.chmodSync(target, 0o755);
+        console.log(chalk.green(`✓ bin → ~/.fez/bin/${cmd}`));
+      }
+      if (!(process.env.PATH ?? "").split(":").includes(path.join(os.homedir(), ".fez", "bin"))) {
+        console.log(chalk.dim(`  (~/.fez/bin is not on your PATH — add it to call these by name)`));
+      }
     }
 
     // ── background part: the sentinel only loads extensions that ASKED

@@ -22,6 +22,12 @@ export interface FezPackage {
 }
 
 export interface FezManifest {
+  /**
+   * npm's own bin map. Honored on install: each entry is copied to
+   * ~/.fez/bin, so an extension can ship executables (a git credential
+   * helper, an adopt command) without being npm-installed globally.
+   */
+  bin?: Record<string, string>;
   fez: {
     type: "integration" | "agent" | "extension" | "persona-pack";
     /**
@@ -316,6 +322,9 @@ export class PackageManager {
     if (manifest.fez.parts) {
       await this.installParts(name, manifest.fez.parts);
     }
+    if (manifest.bin) {
+      await this.installBins(name, manifest.bin);
+    }
 
     // Persona pack — a team bundle of persona .md files
     if (manifest.fez.personas) {
@@ -480,6 +489,35 @@ export class PackageManager {
       const dest = path.join(extensionsDir, `${name}${ext}`);
       await fs.copyFile(src, dest);
       console.log(chalk.dim(`   Created ~/.fez/extensions/${name}${ext}`));
+    }
+  }
+
+  /**
+   * A package's executables, into ~/.fez/bin.
+   *
+   * npm's own vocabulary ("bin" in the manifest), not a fez invention —
+   * an extension that ships a credential helper or a CLI declares it
+   * exactly as it would for npm, and installing through fez puts it in
+   * one predictable place. ~/.fez/bin is not assumed to be on PATH;
+   * anything that NEEDS an executable resolves it absolutely (git
+   * helpers are configured by absolute path, siblings are found beside
+   * the caller), and the PATH hint is printed once rather than silently
+   * required.
+   */
+  private async installBins(name: string, bin: Record<string, string>): Promise<void> {
+    const pkg = this.packages.get(name);
+    if (!pkg) return;
+    const pkgDir = this.getContentDir(pkg);
+    const binDir = path.join(os.homedir(), ".fez", "bin");
+    await fs.mkdir(binDir, { recursive: true });
+    for (const [cmd, rel] of Object.entries(bin)) {
+      const target = path.join(binDir, cmd);
+      await fs.copyFile(path.join(pkgDir, rel), target);
+      await fs.chmod(target, 0o755);
+      console.log(chalk.dim(`   Installed ~/.fez/bin/${cmd}`));
+    }
+    if (!(process.env.PATH ?? "").split(":").includes(path.join(os.homedir(), ".fez", "bin"))) {
+      console.log(chalk.dim(`   (~/.fez/bin is not on your PATH — add it to call these by name)`));
     }
   }
 
