@@ -68,6 +68,7 @@ export default function activate(api: ThemeApi): void {
     /** NIGHT — the landing page itself. */
     dark: {
       "--bg0": "#000000",
+      "--field": "#000000",
       "--bg1": "#070707",
       "--bg2": "#17140f",
       // Your own words, lit from inside.
@@ -105,6 +106,7 @@ export default function activate(api: ThemeApi): void {
      */
     light: {
       "--bg0": "#f4efe6",
+      "--field": "#f4efe6",
       "--bg1": "#ece5d8",
       "--bg2": "#ddd3c2",
       "--bg-mine": "#fbe6d0",
