@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fez/client";
+import { SecretField } from "./SkillSecrets";
 
 /**
  * Persona editor — Buzz's AgentConfigPanel against fez's contract: the
@@ -153,14 +154,11 @@ export default function PersonaEditor({
             />
           </div>
           <div className="settings-field">
-            <label>bearer key (only if the endpoint wants one)</label>
-            <input
-              className="manage-input"
-              value={field("key")}
-              spellCheck={false}
-              placeholder="(none)"
-              onChange={(e) => update("key", e.target.value)}
-            />
+            <label>bearer key (only if the endpoint wants one — stored in the keychain, never in the persona file)</label>
+            <SecretField skill="orchestrator" envKey="FEZ_ORCHESTRATOR_KEY" onSaved={() => {}} />
+            <div className="settings-hint">
+              A managed secret: also settable in Settings → Skills &amp; Secrets, or as <code>FEZ_ORCHESTRATOR_KEY</code> in <code>~/.fez/.env</code> for the CLI.
+            </div>
           </div>
           <div className="settings-field">
             <label>request shape</label>

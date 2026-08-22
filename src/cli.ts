@@ -16,6 +16,35 @@ try {
 } catch (err) {
   if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
 }
+// The CANONICAL secret file: ~/.fez/.env. cwd-relative ./.env is fine
+// for a dev shell, but a launchd SERVICE (the orchestrator, the
+// sentinel) has no useful cwd — its secrets belong in a fixed home, so
+// `FEZ_ORCHESTRATOR_KEY=…` in ~/.fez/.env reaches every `fez`
+// invocation. Loaded second so a project-local ./.env can still
+// override for development. Existing process env always wins (path=…).
+try {
+  process.loadEnvFile(path.join(os.homedir(), ".fez", ".env"));
+} catch (err) {
+  if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+}
+// The GUI writes secrets to the keychain (service "fez-skill-env"), so a
+// managed secret set in Skills & Secrets reaches CLI services too: for
+// any FEZ_* var still unset, fall back to a same-named keychain entry.
+// One custody, two faces — .env for the terminal, keychain for the app.
+for (const { env: name, account } of [
+  // env var  ←  keychain account the GUI's SecretField writes (<skill>.<key>)
+  { env: "FEZ_ORCHESTRATOR_KEY", account: "orchestrator.FEZ_ORCHESTRATOR_KEY" },
+]) {
+  if (process.env[name]) continue;
+  try {
+    const out = (await import("node:child_process")).execFileSync(
+      "security",
+      ["find-generic-password", "-s", "fez-skill-env", "-a", account, "-w"],
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }
+    ).trim();
+    if (out) process.env[name] = out;
+  } catch { /* no keychain entry — the common case */ }
+}
 
 const program = new Command();
 
