@@ -6,6 +6,7 @@ import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";
 import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, resolvedScheme, guiExtensionStatus } from "./gui-extensions";
 import { SkillSecretsSection } from "./SkillSecrets";
+import { KeyboardSettings } from "./KeyboardSettings";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -31,6 +32,7 @@ const SETTINGS_TABS = {
   profile: "profile",
   servers: "servers",
   appearance: "appearance",
+  keyboard: "keyboard",
   skills: "skills & secrets",
   agents: "agent defaults",
   backup: "backup & identity",
@@ -199,6 +201,9 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           </div>
         )}
 
+        </>)}
+        {section === "keyboard" && (<>
+        <KeyboardSettings onNotice={flash} />
         </>)}
         {section === "skills" && (<>
         <div className="manage-section">skills &amp; secrets</div>

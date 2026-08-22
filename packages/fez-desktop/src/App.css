@@ -1265,6 +1265,20 @@ button.author:hover { text-decoration: underline; }
 
 .env-stored { color: var(--green); font-size: 11px; font-weight: 600; }
 
+/* keyboard shortcuts panel — a table of actions, click a key to rebind */
+.keymap-table { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.keymap-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.keymap-label { flex: 1; font-size: 13px; }
+.keymap-key {
+  min-width: 84px; text-align: center; font-size: 12px; font-weight: 600;
+  padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border, #333); background: var(--surface-2, #1a1a1a); color: inherit;
+}
+.keymap-key:hover { border-color: var(--accent, #FF6A00); }
+.keymap-key.recording { border-color: var(--accent, #FF6A00); color: var(--accent, #FF6A00); font-weight: 500; }
+.keymap-reset { background: none; border: none; cursor: pointer; opacity: 0.6; font-size: 14px; }
+.keymap-reset:hover { opacity: 1; }
+
 /* resizable sidebars */
 /* 5px between two surfaces is a target you have to aim at, and missing
    it reads as "this doesn't resize" rather than "you missed". The strip

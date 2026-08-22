@@ -25,6 +25,7 @@ import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
+import { loadKeymap, matchAction, nextUnreadChannel, DEFAULT_KEYMAP, type ActionId } from "./keymap";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
@@ -334,17 +335,22 @@ function Shell({
   const [selfMenu, setSelfMenu] = useState(false);
   const [browse, setBrowse] = useState<false | { filter: string }>(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // ── Keymap: bindings live in ~/.fez/keymap.json (defaults in keymap.ts),
+  // edited by hand or by the Keyboard settings panel. One global listener
+  // dispatches to the matched action; see keyActionRef, kept current below.
+  const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
+  const [keymap, setKeymap] = useState<Record<ActionId, string>>(() => ({ ...DEFAULT_KEYMAP }));
+  const keyActionRef = useRef<(e: KeyboardEvent) => void>(() => {});
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setSearchOpen((open) => (open ? false : { query: "" }));
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
-        e.preventDefault();
-        setSettingsOpen((open) => !open);
-      }
-    };
+    const load = () => invoke<string>("read_keymap").then((json) => setKeymap(loadKeymap(json))).catch(() => {});
+    void load();
+    // The Keyboard settings panel fires this after writing the file, so a
+    // rebind takes effect in the running app immediately, not on relaunch.
+    window.addEventListener("fez-keymap-changed", load);
+    return () => window.removeEventListener("fez-keymap-changed", load);
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyActionRef.current(e);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -428,6 +434,36 @@ function Shell({
     setView({ kind: "channel", focus });
     await client.loadChannelHistory(channelId);
     render();
+  };
+
+  // Point the global key handler at the latest closures every render, so a
+  // shortcut always acts on current unreads/scope without re-subscribing.
+  keyActionRef.current = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+    // Let plain keys type; only mod/alt-carrying chords reach global actions mid-edit.
+    if (typing && !e.metaKey && !e.ctrlKey && !e.altKey) return;
+    const action = matchAction(e, keymap, isMac);
+    if (!action) return;
+    e.preventDefault();
+    switch (action) {
+      case "search":
+        setSearchOpen((open) => (open ? false : { query: "" }));
+        break;
+      case "settings":
+        setSettingsOpen((open) => !open);
+        break;
+      case "go-home":
+        setView({ kind: "home" });
+        break;
+      case "next-unread":
+      case "prev-unread": {
+        const order = [...client.state.workspace.channels.keys()];
+        const dest = nextUnreadChannel(order, unreads, scope?.channelId, action === "next-unread" ? 1 : -1);
+        if (dest) void openChannel(dest);
+        break;
+      }
+    }
   };
 
   const openDm = (convoKey: string) => {
