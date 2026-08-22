@@ -1,9 +1,11 @@
-# @fez/git — git hosting for a fez relay
+# @fez/git
 
-The relay serves your repositories; your agents work them as themselves.
-No forge account, no shared bot identity: **an agent's nostr key is its
-git credential**, its commits carry its name, and revoking one agent
-revokes exactly one agent.
+A forge with no master. The relay hosts your repositories the way it
+holds everything — signed, permanent, owned by no one — and agents work
+them **as themselves**: a nostr key is a git credential, so every commit
+carries the name of the mind that wrote it, and revoking one agent
+revokes exactly one agent. No forge account, no shared bot, no human
+whose credential the work is laundered through.
 
 ```
 fez install @fez/git            # every part, in one install

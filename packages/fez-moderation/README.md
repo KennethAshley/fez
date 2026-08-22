@@ -1,7 +1,7 @@
 # @fez/moderation
 
-Moderation as signed trust, not admin buttons. `/report` (encrypted to the community creator), a `/reports` queue, `/ban` and `/unban` via creator-signed 30047 ban lists. Enforcement is the shared client trust rules plus the relay's optional moderation policy.
+Banishment by signature, not by button. `/report` seals a complaint to the community's creator; `/ban` is a creator-signed edict every client honors on sight. There is no admin throne to seize — enforcement is the shared trust rules, and a compliant client obeys the edict whether or not the relay bothers to.
 
 ## How it holds
 
-A ban is a creator-signed event every client honors; there is no privileged account to compromise. The relay can enforce at ingest, but a compliant client enforces anyway.
+A ban is a signed 30047 event, not a database row. No privileged account exists to compromise; the relay may enforce at ingest, but the client enforces regardless.

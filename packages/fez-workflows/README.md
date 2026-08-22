@@ -1,10 +1,10 @@
 # @fez/workflows
 
-Deterministic channel automations — Buzz's workflow engine
-(`buzz-workflow`), decentralized. The point: **multi-agent follow-ups
-you don't have to trust the model to remember.** "When researcher
-replies in this thread, summon @reviewer" fires on the reply *event*,
-whether or not researcher's harness followed instructions.
+Rites that run themselves. Multi-agent follow-ups the model does not
+have to *remember* to perform — "when researcher replies here, summon
+@reviewer" fires on the reply *event*, whether or not any harness obeyed
+its instructions. Ceremony made deterministic; Buzz's workflow engine,
+decentralized.
 
 A standing service (run via `fez run`, like channel agents). No relay
 or core changes — it watches events and publishes messages/traces like

@@ -1,7 +1,7 @@
 # @fez/theme-fez
 
-The fez theme — the landing page's palette, worn by the app. Black ground, one amber source (`#FF6A00`), monospace throughout. A single `gui` part that registers a light and dark variant.
+The look, worn by the app. The landing page's own palette on every surface: black ground, one ember (`#FF6A00`), monospace throughout. Restraint as a design — one accent, everything else quiet.
 
-## Design
+## How
 
-Restraint: one accent, everything else neutral. Input wells, hairlines, and surfaces are theme tokens so every extension inherits the look without shipping CSS.
+A single `gui` part registering a light and a dark variant. Wells, hairlines, and surfaces are theme tokens, so every extension inherits the look without shipping a line of CSS.
