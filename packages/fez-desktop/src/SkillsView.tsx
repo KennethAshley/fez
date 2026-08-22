@@ -124,7 +124,8 @@ export default function SkillsView({
   /** Undefined shows everything (the old standalone page). */
   only?: "skills" | "extensions";
 }) {
-  const [tab, setTab] = useState<"installed" | "browse">("installed");
+  // Extensions open on browse — discovery first; skills open on what you have.
+  const [tab, setTab] = useState<"installed" | "browse">(only === "extensions" ? "browse" : "installed");
   const [filter, setFilter] = useState<"all" | "agents" | "skills" | "packs">("all");
   const [installed, setInstalled] = useState<Record<string, SkillConfig>>({});
   const [listings, setListings] = useState<Listing[]>();
@@ -344,7 +345,7 @@ export default function SkillsView({
         <div className="topbar-row">
           {only === "skills" ? "🔧 skills" : "⊞ extensions"}
           {<span className="ext-tabs">
-            {(["installed", "browse"] as const).map((name) => (
+            {(["browse", "installed"] as const).map((name) => (
               <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} onClick={() => setTab(name)}>
                 {name}
                 {name === "installed" && <span className="ext-tab-count">{everything.length}</span>}
