@@ -248,10 +248,51 @@ fn read_extension_grants() -> Result<String, String> {
         .to_string())
 }
 
+/// The `.fez` home directory, created if missing.
+fn fez_home() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    Ok(std::path::Path::new(&home).join(".fez"))
+}
+
+/// Read ~/.fez/settings.json (or {}), apply `f`, write it back.
+fn update_settings(f: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
+    let path = fez_home()?.join("settings.json");
+    let mut json: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !json.is_object() {
+        json = serde_json::json!({});
+    }
+    f(&mut json);
+    std::fs::create_dir_all(fez_home()?).map_err(|e| e.to_string())?;
+    std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap_or_default())
+        .map_err(|e| format!("couldn't write settings.json: {e}"))
+}
+
+/// Read one file out of an in-memory npm tarball. Entries are prefixed
+/// with "package/"; `rel` is the path within the package ("package.json",
+/// "dist/gui.js").
+fn tar_read(tar_bytes: &[u8], rel: &str) -> Option<Vec<u8>> {
+    let mut archive = tar::Archive::new(tar_bytes);
+    for entry in archive.entries().ok()? {
+        let mut entry = entry.ok()?;
+        let path = entry.path().ok()?.into_owned();
+        if path.strip_prefix("package").ok() == Some(std::path::Path::new(rel)) {
+            let mut buf = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut buf).ok()?;
+            return Some(buf);
+        }
+    }
+    None
+}
+
+/// Install a fez extension WITHOUT any CLI: resolve the npm tarball,
+/// download it, gunzip + untar in memory, and copy the fez.parts into
+/// ~/.fez. Our gui/headless parts are self-contained esbuild bundles, so
+/// there are no npm dependencies to resolve — a plain copy is the install.
 #[tauri::command]
 fn install_package(name: String) -> Result<String, String> {
-    // A package name, not a command: npm-name characters only, so it can't
-    // carry shell metacharacters into the login-shell invocation below.
     if name.is_empty()
         || name.len() > 128
         || !name
@@ -260,26 +301,106 @@ fn install_package(name: String) -> Result<String, String> {
     {
         return Err("not a valid package name".to_string());
     }
-    // Run through a LOGIN shell so `fez` resolves from the user's PATH — a
-    // GUI app launched from /Applications has none of their shell profile.
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let output = Command::new(&shell)
-        .arg("-lc")
-        .arg(format!("fez install '{name}'"))
-        .output()
-        .map_err(|e| format!("couldn't start install: {e}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if output.status.success() {
-        Ok(stdout)
-    } else {
-        // "command not found" is the common first failure — say so plainly.
-        if stderr.contains("not found") || stderr.contains("No such file") {
-            Err(format!("couldn't find the `fez` CLI on your PATH. Install fez globally (npm i -g @fezchat/protocol) or run `fez install {name}` in a terminal.\n\n{stderr}"))
-        } else {
-            Err(format!("{stdout}{stderr}"))
-        }
+
+    // 1. Resolve the tarball URL from the registry (latest dist-tag).
+    let meta_url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
+    let meta_str = ureq::get(&meta_url)
+        .call()
+        .map_err(|e| format!("couldn't reach npm for {name}: {e}"))?
+        .into_string()
+        .map_err(|e| format!("bad registry response: {e}"))?;
+    let meta: serde_json::Value =
+        serde_json::from_str(&meta_str).map_err(|e| format!("bad registry json: {e}"))?;
+    let latest = meta
+        .pointer("/dist-tags/latest")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("{name} has no published version"))?;
+    let tarball = meta
+        .pointer(&format!("/versions/{latest}/dist/tarball"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("no tarball for {name}@{latest}"))?
+        .to_string();
+
+    // 2. Download and unpack (gzip → tar) into a Vec we can read twice.
+    let mut gz = Vec::new();
+    std::io::Read::read_to_end(
+        &mut ureq::get(&tarball)
+            .call()
+            .map_err(|e| format!("download failed: {e}"))?
+            .into_reader(),
+        &mut gz,
+    )
+    .map_err(|e| format!("download read failed: {e}"))?;
+    let mut tar_bytes = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&gz[..]), &mut tar_bytes)
+        .map_err(|e| format!("gunzip failed: {e}"))?;
+
+    // 3. Read package.json (npm tarballs prefix every path with "package/").
+    let pkg_bytes = tar_read(&tar_bytes, "package.json").ok_or("no package.json in tarball")?;
+    let pkg: serde_json::Value =
+        serde_json::from_slice(&pkg_bytes).map_err(|e| format!("bad package.json: {e}"))?;
+
+    // 4. De-scoped basename is the file/extension name: @fezchat/kanban → kanban.
+    let base = name.rsplit('/').next().unwrap_or(&name).trim_start_matches('@');
+    let parts = pkg.pointer("/fez/parts");
+    let home = fez_home()?;
+    let mut installed: Vec<String> = Vec::new();
+
+    // 5. Copy each code part to its directory (mirrors the CLI's installParts).
+    for (part_key, dir) in [
+        ("gui", "gui-extensions"),
+        ("headless", "extensions"),
+        ("relay", "relay-extensions"),
+        ("workspace", "workspace-providers"),
+    ] {
+        let rel = match parts.and_then(|p| p.get(part_key)).and_then(|v| v.as_str()) {
+            Some(r) => r,
+            None => continue,
+        };
+        let bytes =
+            tar_read(&tar_bytes, rel).ok_or_else(|| format!("{part_key} part {rel} missing from tarball"))?;
+        let dest_dir = home.join(dir);
+        std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+        std::fs::write(dest_dir.join(format!("{base}.js")), bytes).map_err(|e| e.to_string())?;
+        installed.push(format!("{part_key} → ~/.fez/{dir}/{base}.js"));
     }
+
+    // 6. Record granted permissions + background opt-in in settings.json.
+    let perms: Vec<String> = pkg
+        .pointer("/fez/permissions")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let wants_background = parts
+        .and_then(|p| p.get("background"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let base_owned = base.to_string();
+    update_settings(move |json| {
+        let obj = json.as_object_mut().unwrap();
+        obj.entry("extensionPermissions")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .unwrap()
+            .insert(base_owned.clone(), serde_json::json!(perms));
+        if wants_background {
+            let list = obj
+                .entry("backgroundExtensions")
+                .or_insert_with(|| serde_json::json!([]))
+                .as_array_mut()
+                .unwrap();
+            if !list.iter().any(|v| v.as_str() == Some(base_owned.as_str())) {
+                list.push(serde_json::json!(base_owned));
+            }
+        }
+    })?;
+
+    if installed.is_empty() {
+        return Err(format!(
+            "{name}@{latest} has no installable gui/headless/relay/workspace part"
+        ));
+    }
+    Ok(format!("installed {name}@{latest}: {}", installed.join(", ")))
 }
 
 #[tauri::command]
