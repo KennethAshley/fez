@@ -376,6 +376,7 @@ fn install_package(name: String) -> Result<String, String> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let base_owned = base.to_string();
+    let version = latest.to_string();
     update_settings(move |json| {
         let obj = json.as_object_mut().unwrap();
         obj.entry("extensionPermissions")
@@ -383,6 +384,12 @@ fn install_package(name: String) -> Result<String, String> {
             .as_object_mut()
             .unwrap()
             .insert(base_owned.clone(), serde_json::json!(perms));
+        // Record the version so the gallery can offer updates later.
+        obj.entry("extensionVersions")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .unwrap()
+            .insert(base_owned.clone(), serde_json::json!(version));
         if wants_background {
             let list = obj
                 .entry("backgroundExtensions")
@@ -401,6 +408,41 @@ fn install_package(name: String) -> Result<String, String> {
         ));
     }
     Ok(format!("installed {name}@{latest}: {}", installed.join(", ")))
+}
+
+/// The recorded installed version per extension (settings.json), as JSON.
+#[tauri::command]
+fn read_extension_versions() -> Result<String, String> {
+    let path = fez_home()?.join("settings.json");
+    let raw = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string());
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
+    Ok(parsed
+        .get("extensionVersions")
+        .cloned()
+        .unwrap_or(serde_json::json!({}))
+        .to_string())
+}
+
+/// The latest published version of a package, from the npm registry.
+#[tauri::command]
+fn latest_version(name: String) -> Result<String, String> {
+    if name.is_empty()
+        || name.len() > 128
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '-' | '.' | '_'))
+    {
+        return Err("not a valid package name".to_string());
+    }
+    let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
+    let body = ureq::get(&url)
+        .call()
+        .map_err(|e| format!("couldn't reach npm: {e}"))?
+        .into_string()
+        .map_err(|e| e.to_string())?;
+    let meta: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    meta.pointer("/dist-tags/latest")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| format!("{name} has no published version"))
 }
 
 /// Uninstall an extension: delete its part files from every ~/.fez dir and
@@ -431,6 +473,9 @@ fn remove_extension(name: String) -> Result<String, String> {
                 }
                 if let Some(bg) = obj.get_mut("backgroundExtensions").and_then(|v| v.as_array_mut()) {
                     bg.retain(|v| v.as_str() != Some(cand));
+                }
+                if let Some(vers) = obj.get_mut("extensionVersions").and_then(|v| v.as_object_mut()) {
+                    vers.remove(cand);
                 }
             }
         }
@@ -708,7 +753,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

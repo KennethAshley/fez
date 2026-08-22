@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
 import { loadGuiExtensions } from "./gui-extensions";
@@ -65,8 +65,47 @@ export function ExtensionGallery({
 }) {
   const [confirming, setConfirming] = useState<GalleryEntry>();
   const [installing, setInstalling] = useState<string>();
+  // Recorded installed versions (keyed by base name) and npm's latest.
+  const [installedVer, setInstalledVer] = useState<Record<string, string>>({});
+  const [latest, setLatest] = useState<Record<string, string>>({});
 
   const isInstalled = (entry: GalleryEntry) => [...installed].some((i) => norm(i) === norm(entry.name));
+
+  // On open / when the installed set changes: read recorded versions, then
+  // ask npm for latest on the ones we installed (a fez link-era install has
+  // no recorded version, so it's skipped — no update badge, no false alarm).
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      let iv: Record<string, string> = {};
+      try {
+        iv = JSON.parse(await invoke<string>("read_extension_versions"));
+      } catch { /* none recorded */ }
+      if (!live) return;
+      setInstalledVer(iv);
+      const lv: Record<string, string> = {};
+      await Promise.all(
+        GALLERY.filter(isInstalled).map(async (e) => {
+          const key = norm(e.name);
+          if (!iv[key]) return;
+          try {
+            lv[key] = await invoke<string>("latest_version", { name: e.name });
+          } catch { /* offline / cache */ }
+        })
+      );
+      if (live) setLatest(lv);
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [installed]);
+
+  const refreshVersions = async () => {
+    try {
+      setInstalledVer(JSON.parse(await invoke<string>("read_extension_versions")));
+    } catch { /* ignore */ }
+  };
 
   const uninstall = async (entry: GalleryEntry) => {
     try {
@@ -88,7 +127,23 @@ export function ExtensionGallery({
       // A gui part appears live; headless/relay parts need a restart.
       await loadGuiExtensions(client).catch(() => {});
       onInstalled();
+      await refreshVersions();
       onNotice(`✓ ${entry.title} installed — ${entry.where}`);
+    } catch (err) {
+      onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setInstalling(undefined);
+    }
+  };
+
+  const update = async (entry: GalleryEntry) => {
+    setInstalling(entry.name);
+    try {
+      await invoke<string>("install_package", { name: entry.name });
+      await loadGuiExtensions(client).catch(() => {});
+      onInstalled();
+      await refreshVersions();
+      onNotice(`✓ ${entry.title} updated to ${latest[norm(entry.name)] ?? "latest"} — relaunch to load the new version`);
     } catch (err) {
       onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -105,6 +160,9 @@ export function ExtensionGallery({
       {GALLERY.map((entry) => {
         const done = isInstalled(entry);
         const busy = installing === entry.name;
+        const key = norm(entry.name);
+        const cur = installedVer[key];
+        const newer = latest[key] && cur && latest[key] !== cur ? latest[key] : undefined;
         return (
           <div key={entry.name} className="gallery-card">
             <div className="gallery-main">
@@ -117,7 +175,13 @@ export function ExtensionGallery({
             </div>
             {done ? (
               <div className="gallery-actions">
-                <span className="gallery-install installed">installed</span>
+                {newer ? (
+                  <button className="gallery-install update" disabled={busy} onClick={() => void update(entry)}>
+                    {busy ? "updating…" : `update → ${newer}`}
+                  </button>
+                ) : (
+                  <span className="gallery-install installed">installed{cur ? ` · ${cur}` : ""}</span>
+                )}
                 <button className="gallery-uninstall" onClick={() => void uninstall(entry)}>uninstall</button>
               </div>
             ) : (
