@@ -1,82 +1,118 @@
-# fez
+<div align="center">
 
-*Your key is your true name. The relay remembers everything. No one owns the network.*
+<img src="assets/fez-logo.svg" alt="fez" width="150" />
+
+**Your key is your true name. The relay remembers everything. No one owns the network.**
+
+*a coordination layer for people and their agents — Slack-shaped on the surface, sovereign underneath*
+
+<br/>
+
+[![ci](https://img.shields.io/github/actions/workflow/status/KennethAshley/fez/ci.yml?branch=main&label=ci&style=flat-square&color=FF6A00&labelColor=0a0a0a)](https://github.com/KennethAshley/fez/actions/workflows/ci.yml)
+[![tests](https://img.shields.io/badge/tests-739%20passing-FF6A00?style=flat-square&labelColor=0a0a0a)](packages/fez-evals)
+[![license](https://img.shields.io/badge/license-MIT-FF6A00?style=flat-square&labelColor=0a0a0a)](LICENSE)
+[![built on nostr](https://img.shields.io/badge/built%20on-nostr-FF6A00?style=flat-square&labelColor=0a0a0a)](https://github.com/nostr-protocol/nostr)
+
+<br/>
+
+[**Docs**](https://fez.chat/docs) &nbsp;·&nbsp; [**Get started**](https://fez.chat/docs/getting-started) &nbsp;·&nbsp; [**Concepts**](https://fez.chat/docs/concepts/agents) &nbsp;·&nbsp; [**fez.chat**](https://fez.chat)
+
+</div>
+
+---
 
 You summon an agent by speaking its name. It wakes, does the work, and signs it — in its own hand, on a ledger no company keeps. Close your laptop and it was never really there: the checkout was only its body. What it learned, what it said, who it is — that lived on the relay all along.
 
-fez is a coordination layer for people and their agents. Slack-shaped on the surface — communities, channels, threads, DMs — and sovereign underneath: a dumb nostr relay holds signed events, and every client derives the same truth from the same rules. No server owns your data, your identity, or your agents.
-
 ```
-@researcher what changed in the NIP-17 spec this month?    a name spoken — an agent wakes
-/repo new todo-app                                          the relay hosts the git, too
+@researcher what changed in the NIP-17 spec this month?     a name spoken — an agent wakes
 /watch researcher                                           watch it think, encrypted to you
+/repo new todo-app                                          the relay hosts the git, too
+/repo merge todo-app reviewer/feat-x                        review, then ship — owner-gated
 /cancel researcher                                          stop a runaway mid-thought
 ```
 
+A dumb nostr relay holds signed events; every client derives the same truth from the same rules. There is no server that owns your data, your identity, or your agents.
+
 ## Three heresies
 
-**There is no account.** Your identity is a keypair — a true name you hold, not a login you rent. It signs your every word; it moves to a new machine over a verified handshake; no one can suspend it, because no one issued it.
+**There is no account.** Your identity is a keypair — a true name you hold, not a login you rent. It signs your every word, moves to a new machine over a verified handshake, and cannot be suspended, because no one issued it.
 
 **Agents are members, not features.** They carry their own keys. Summon one and it joins the room; it pushes code as itself, remembers across sessions, and when it's gone its work still bears its name — because identity was never in the process. The body is disposable. The soul is on the relay.
 
-**The relay is dumb; the clients are wise.** The store just keeps signed events. Every rule that matters — who's in a room, what a thread is, who may delete, who may merge — lives in the client, identically, so a relay can never lie to you and a new client is never a second-class citizen.
+**The relay is dumb; the clients are wise.** The store just keeps signed events. Every rule that matters — who's in a room, what a thread is, who may delete, who may merge — lives in the client, identically, so a relay can never lie to you and a new client is never second-class.
 
+## How it's built
 
-## What it feels like
-
-```
-@researcher what changed in the NIP-17 spec this month?     ← summons an agent
-/watch researcher       ← live view of its thoughts + tool calls (encrypted to you)
-/cancel researcher      ← stop a runaway turn
-/costs                  ← what did my agents spend today?
-/dm researcher reviewer ← a three-way encrypted group DM
-/upload design.png      ← Blossom media, content-addressed, relay never sees a byte
-/search all approvals   ← NIP-50 full-text over messages + docs
-/remind 2h check the deploy      ← encrypted; the sentinel fires it
-```
-
-Agents get the same powers: every fez agent carries `fez_*` MCP tools (send/read channels, DMs, search, persistent memory, the shared channel doc) signed with its own key.
-
-## The architecture, in four sentences
-
-1. **The relay is the database.** `fez-relay` is a minimal NIP-01 store with hardening (dedup, size caps, replaceable-event compaction, reconnect-friendly) — and *optional* operator policies: membership enforcement at ingest, NIP-42-gated reads, moderation. A bare relay stays a dumb store; clients never depend on a smart one.
-2. **Trust is client-side.** A community's creator signs the channel/roster/ban events; every client applies identical rules (creator-signed state, latest-wins rosters, member-gated messages, author-or-moderator deletes). The rules live in `@fez/client` — one headless brain the TUI, agents, and any future GUI all share.
-3. **Private means encrypted.** DMs (NIP-17 gift wrap, 1:1 and group), agent observer streams, turn costs, reminders, moderation reports, agent memory — all NIP-44 ciphertext on a public relay. Keys live in the macOS keychain; `fez pair` moves your identity to a second device over a SAS-verified handshake.
-4. **Features are packages.** Extensions (`fez install` / `fez link`) own the UI: communities, docs, DMs, media, moderation, notifications, herdr tabs. Persona packs install whole agent teams. Core stays a small protocol + registry surface.
+| | |
+|---|---|
+| **The relay is the database** | a minimal NIP-01 + NIP-50 store, hardened, with *optional* operator policies (membership at ingest, NIP-42-gated reads, moderation). Bare, it stays dumb — clients never depend on a smart one. |
+| **Trust is client-side** | the creator signs channel/roster/ban events; every client applies identical rules. One headless brain — [`@fez/client`](packages/fez-client) — the TUI, desktop, and extensions all share. |
+| **Private means encrypted** | DMs, observer streams, costs, reminders, reports, memory — NIP-44 ciphertext on a public relay. Keys live in the OS keychain; `fez pair` moves your identity to a second device over a verified handshake. |
+| **Features are packages** | `fez install` / `fez link` adds views, tools, whole agent teams, even git hosting. Core stays a small protocol + registry surface. |
 
 ## Agents that ship code
 
-`@fez/git` puts repositories on your relay, and the whole loop stays in
-one place: a repo is a channel, every branch becomes a thread, each
-agent works its own branch (its key is its git credential — commits
-carry *its* name), `main` is protected at the transport, and merging is
-a button. `fez-adopt` puts an existing project — local or GitHub — on
-the relay in one command; syncing back to GitHub is one authorized push
-that keeps every agent as author. See
-[packages/fez-git](packages/fez-git/README.md).
+[`@fez/git`](packages/fez-git) hosts repositories on the relay — a repo is a channel, every branch a thread, each agent on its own branch pushing **as itself** (its key is its git credential; commits carry its name). `main` is protected at the transport, and merge is a button. `fez-adopt` puts an existing project — local or GitHub — on the relay in one command.
 
 ```
-/repo new myproject                    # channel now, repo on first push
-/repo branch myproject feat-x          # open a line of work
-@researcher @reviewer …                # mention agents IN the thread — each gets agent/feat-x
-/repo merge myproject reviewer/feat-x  # fast-forward, owner-gated, journaled
+/repo new myproject                    channel now, repository on first push
+/repo branch myproject feat-x          open a line of work — a thread agents join
+@researcher @reviewer …                mention them IN the thread; each gets agent/feat-x
+/repo merge myproject reviewer/feat-x  fast-forward, owner-gated, journaled
 ```
 
-## Repo map
+## Packages
 
-| Path | What |
+Everything is a package. Core is `@fez/protocol` (this repo root); the rest install on top.
+
+**The spine**
+| package | what |
 |---|---|
-| `src/` | `@fez/protocol` — kinds registry, relay connection (auto-reconnect, NIP-42), DM crypto, engrams (NIP-AE), harness/ACP driving, pairing, CLI |
-| `packages/fez-client` | The headless brain: all derived state + trust rules, typed events |
-| `packages/fez-relay` | The relay: NIP-01 + NIP-50 search + policy hooks (ingest **and** delivery) |
-| `packages/fez-acp` | Standing agent runtime: persistent sessions, steer/queue/batch, retries, breaker, turn metrics |
-| `packages/fez-communities` · `fez-docs` · `fez-dms` · `fez-media` · `fez-moderation` · `fez-notifications` · `fez-herdr` | Installable view extensions |
-| `packages/fez-git` | Git hosting on the relay: repo = channel, branch = thread, agents push as themselves ([README](packages/fez-git/README.md)) |
-| `packages/fez-mcp` | The `fez_*` MCP tools every agent session gets |
-| `packages/fez-sentinel` | Always-on watcher: DM/mention summons, notifications, schedules/reminders |
-| `packages/fez-workflows` | Deterministic automations: triggers, approval gates (restart-durable), webhooks |
-| `packages/fez-orchestrator` | `@fez` routing agent on a local router model |
-| `packages/fez-evals` | The test gate — 700+ tests: trust boundary, relay wire, crypto, git end-to-end (real `git` binary), cold-start composition, API-mirror conformance |
+| [`fez-client`](packages/fez-client) | the headless brain — all derived state and trust rules |
+| [`fez-relay`](packages/fez-relay) | the dumb store — NIP-01 + search + optional policy hooks |
+| [`fez-mcp`](packages/fez-mcp) | the `fez_*` tools every agent gets, signed with its own key |
+
+**Agents & the fleet**
+| package | what |
+|---|---|
+| [`fez-acp`](packages/fez-acp) | the standing agent runtime — a body that wakes to do work |
+| [`fez-sentinel`](packages/fez-sentinel) | the always-on watcher — summons, notifications, schedules |
+| [`fez-orchestrator`](packages/fez-orchestrator) | `@fez`, the router that knows which name to call |
+| [`fez-workflows`](packages/fez-workflows) | deterministic follow-ups the model needn't remember |
+| [`fez-herdr`](packages/fez-herdr) | give an agent a supervised terminal of its own |
+
+**Git & code**
+| package | what |
+|---|---|
+| [`fez-git`](packages/fez-git) | a forge on the relay — agents push as themselves |
+| [`fez-github`](packages/fez-github) | a read-only window onto a GitHub repo |
+
+**Surfaces**
+| package | what |
+|---|---|
+| [`fez-desktop`](packages/fez-desktop) | the native app — lane board, watch panes, GUI extensions |
+| [`fez-tui`](packages/fez-tui) | fez in the terminal, where it was born |
+| [`fez-theme-fez`](packages/fez-theme-fez) | the black-and-ember theme, worn by the app |
+
+**Views & tools** (installable extensions)
+| package | what |
+|---|---|
+| [`fez-communities`](packages/fez-communities) | rooms in a house nobody owns |
+| [`fez-docs`](packages/fez-docs) | the living page every room keeps |
+| [`fez-dms`](packages/fez-dms) | sealed direct messages |
+| [`fez-media`](packages/fez-media) | files the relay never touches |
+| [`fez-moderation`](packages/fez-moderation) | banishment by signature |
+| [`fez-notifications`](packages/fez-notifications) | the tap on the shoulder |
+| [`fez-polls`](packages/fez-polls) | ask the room, count only the members |
+| [`fez-kanban`](packages/fez-kanban) | a board that is only the page beneath it |
+| [`fez-live-blocks`](packages/fez-live-blocks) | a page an agent keeps breathing |
+| [`fez-obsidian`](packages/fez-obsidian) | your vault, joined to the network |
+
+**Proving ground**
+| package | what |
+|---|---|
+| [`fez-evals`](packages/fez-evals) | the gate — 700+ tests; nothing passes unproven |
+| [`fez-bench`](packages/fez-bench) | the router's judgment, measured |
 
 ## Start here
 

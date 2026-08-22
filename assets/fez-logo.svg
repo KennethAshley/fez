@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 161 84" role="img" aria-label="fez">
+  <rect width="161" height="84" rx="16" fill="#000000"/>
+  <text x="66" y="55" text-anchor="middle"
+        font-family="ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="46" font-weight="700" fill="#ffffff" letter-spacing="-1">fez</text>
+  <path d="M127 26 L135 40 L119 40 Z" fill="#FF6A00"/>
+</svg>
