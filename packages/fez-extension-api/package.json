@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/extension-api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The contract you build a fez extension against — headless, gui, relay, and workspace surfaces, as types. Erases at bundle time; your part carries no dependency on fez.",
   "type": "module",
   "types": "dist/index.d.ts",

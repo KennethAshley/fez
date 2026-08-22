@@ -39,7 +39,7 @@ async function resolveChannel(spec: string): Promise<{ channelId: string; name: 
   const channels = await relay.query([{ kinds: [47101], limit: 200 }]);
   for (const event of channels) {
     const d = event.tags.find((t) => t[0] === "d")?.[1];
-    if (!d || !c) continue;
+    if (!d) continue;
     let name = d;
     try {
       name = (JSON.parse(event.content).name as string) ?? d;

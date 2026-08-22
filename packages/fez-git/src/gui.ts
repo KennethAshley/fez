@@ -1,7 +1,7 @@
 import { cloneBase, cloneUrl, repoDoc, REPO_NAME } from "./repo-name.js";
 import { resolveProtect } from "./policy.js";
 import { lineOfRoot, makeLaneBoard } from "./board.js";
-import type { El, GuiExtensionAPI, RepoChannel } from "./gui-types.js";
+import type { El, GuiExtensionApi, RepoChannelLike } from "@fezchat/extension-api/gui";
 
 /**
  * fez-git, GUI part — the repos a workspace hosts, without a terminal.
@@ -35,7 +35,7 @@ interface Repo {
   meta?: Record<string, string>;
 }
 
-function readRepo(channel: RepoChannel, base: string | undefined): Repo {
+function readRepo(channel: RepoChannelLike, base: string | undefined): Repo {
   const repo = channel.meta?.repo ?? channel.name;
   return {
     channelId: channel.id,
@@ -50,7 +50,7 @@ function readRepo(channel: RepoChannel, base: string | undefined): Repo {
   };
 }
 
-export default function activate(api: GuiExtensionAPI): void {
+export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
   const { useState, useEffect, useCallback } = api.React;
   const { client } = api;

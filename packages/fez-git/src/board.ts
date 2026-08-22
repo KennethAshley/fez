@@ -1,7 +1,7 @@
 import { cloneBase } from "./repo-name.js";
 import { parseJournal, type PushEntry } from "./journal-format.js";
 import { lineOf, rootMarker } from "./threads.js";
-import type { El, GuiExtensionAPI } from "./gui-types.js";
+import type { El, GuiExtensionApi } from "@fezchat/extension-api/gui";
 
 /**
  * The lane board — a ⑂ thread rendered as what it IS: a line of work
@@ -55,7 +55,7 @@ export function lanesFor(entries: PushEntry[], line: string): Lane[] {
 export const lineOfRoot = (rootContent: string): string | undefined =>
   rootContent.match(/^⑂ `([^`]+)`/)?.[1];
 
-export function makeLaneBoard(api: GuiExtensionAPI) {
+export function makeLaneBoard(api: GuiExtensionApi) {
   const h = api.React.createElement;
   const { useState, useEffect, useCallback } = api.React;
   const { client } = api;

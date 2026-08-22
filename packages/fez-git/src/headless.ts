@@ -1,8 +1,8 @@
-import type { ChannelsAccess, CommandContext, FezExtensionAPI } from "./api-types.js";
+import type { ChannelsAccess, CommandContext, FezExtensionAPI } from "@fezchat/extension-api/headless";
 import { REPO_NAME, cloneBase, cloneUrl, repoDoc } from "./repo-name.js";
 import { parseJournal } from "./journal.js";
 import { planThreadPosts, type ChannelMsg } from "./threads.js";
-import type { NostrAccess } from "./api-types.js";
+import type { NostrAccess } from "@fezchat/extension-api/headless";
 
 // Re-exported: workspace-part.ts and the evals already import
 // cloneBase from here, and moving the definition should not move

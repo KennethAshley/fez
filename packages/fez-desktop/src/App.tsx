@@ -13,7 +13,6 @@ import AgentsPane from "./AgentsPane";
 import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
 import PulseView from "./PulseView";
-import WorkflowsView from "./WorkflowsView";
 import SkillsView from "./SkillsView";
 import { ExtensionPanel } from "./SkillsView";
 import ProfilePane from "./ProfilePane";
@@ -80,7 +79,6 @@ type MainView =
   | { kind: "home" }
   | { kind: "pulse" }
   | { kind: "wiki" }
-  | { kind: "workflows" }
   | { kind: "skills" };
 type SidePane =
   | { kind: "watch"; agent: string }
@@ -294,7 +292,7 @@ function Shell({
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
       "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
-      "dmMessage", "jobsChanged", "notice", "workflowRunsChanged", "artifact",
+      "dmMessage", "jobsChanged", "notice", "artifact",
     ] as const;
     for (const name of events) client.on(name, render as never);
     client.on("draft", ((channelId: string, authorPk: string, content: string, rootId?: string) => {
@@ -412,7 +410,6 @@ function Shell({
 
   const openLoopCount =
     (loopScan?.msgs.filter((m) => !loopScan.answered.has(m.id)).length ?? 0) +
-    [...client.workflowRuns().values()].filter((r) => r.status === "waiting_approval").length +
     benchPending;
   const working = client.workingAgents();
 
@@ -670,9 +667,6 @@ function Shell({
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
           ▤ docs
         </button>
-        <button className={view.kind === "workflows" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "workflows" })}>
-          » workflows
-        </button>
         <div className="community">
           <div className="community-name">
             channels
@@ -900,7 +894,6 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
-      {view.kind === "workflows" && <WorkflowsView client={client} />}
       {view.kind === "skills" && <SkillsView client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
       {ctxMenu && (

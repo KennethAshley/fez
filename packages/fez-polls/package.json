@@ -2,7 +2,7 @@
   "name": "@fezchat/polls",
   "version": "0.1.0",
   "private": true,
-  "description": "Polls for fez \u2014 /poll in any client, vote-by-reaction with member-roll tallying, agents get fez_poll to act on outcomes. One package, three parts.",
+  "description": "Polls for fez — /poll in any client, vote-by-reaction with member-roll tallying, agents get fez_poll to act on outcomes. One package, three parts.",
   "type": "module",
   "fez": {
     "type": "extension",
@@ -30,7 +30,8 @@
   "devDependencies": {
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
-    "@fezchat/protocol": "file:../.."
+    "@fezchat/protocol": "file:../..",
+    "@fezchat/extension-api": "file:../fez-extension-api"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

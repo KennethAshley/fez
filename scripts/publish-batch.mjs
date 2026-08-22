@@ -44,7 +44,6 @@ const EXTENSIONS = [
   "packages/fez-notifications",
   "packages/fez-live-blocks",
   "packages/fez-obsidian",
-  "packages/fez-workflows",
   "packages/fez-mcp",
   "packages/claude-code",
   "packages/bittensor",

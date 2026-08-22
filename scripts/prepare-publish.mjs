@@ -23,11 +23,20 @@ for (const field of ["dependencies", "devDependencies"]) {
   const deps = d[field];
   if (!deps) continue;
   for (const [name, spec] of Object.entries(deps)) {
-    if (name.startsWith("@fezchat/") && String(spec).startsWith("file:")) {
-      deps[name] = `^${protoVer}`;
-      changed++;
-    }
+    const s = String(spec);
+    if (!name.startsWith("@fezchat/") || !s.startsWith("file:")) continue;
+    // Resolve the range from the TARGET package's own version, not the root's
+    // — @fezchat/extension-api is versioned independently of @fezchat/protocol.
+    // `file:../..` (protocol, repo root) falls back to protoVer.
+    const rel = s.slice("file:".length);
+    let ver = protoVer;
+    try {
+      ver = JSON.parse(readFileSync(path.join(pkgDir, rel, "package.json"), "utf-8")).version;
+    } catch { /* unresolved path — fall back to root version */ }
+    deps[name] = `^${ver}`;
+    changed++;
+    console.log(`  ${name}: file: → ^${ver}`);
   }
 }
 writeFileSync(p, JSON.stringify(d, null, 2) + "\n");
-console.log(`${pkgDir}: rewrote ${changed} @fezchat/* file: dep(s) → ^${protoVer}`);
+console.log(`${pkgDir}: rewrote ${changed} @fezchat/* file: dep(s)`);

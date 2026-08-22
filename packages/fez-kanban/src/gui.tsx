@@ -30,40 +30,13 @@ import {
   type Column,
 } from "./board.js";
 
-interface PageViewProps {
-  content: string;
-  save: (next: string) => Promise<void>;
-  comment: (text: string, anchor: string, mentions: string[]) => Promise<void>;
-  title: string;
-  channelId: string;
-  slug?: string;
-  editable: boolean;
-}
-
-interface BlockProps {
-  info: string;
-  body: string;
-  raw: string;
-}
-
-interface GuiApi {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  React: any;
-  client: { displayName(pk: string): string; pkByName(name: string): string | undefined };
-  registerPageView(
-    name: string,
-    match: (content: string) => boolean | "default",
-    render: (props: PageViewProps) => unknown
-  ): void;
-  registerBlockRenderer(lang: string, render: (props: BlockProps) => unknown, menu?: object): void;
-  registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
-}
+import type { GuiExtensionApi, PageViewProps, BlockProps } from "@fezchat/extension-api/gui";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let h: (...args: any[]) => unknown;
 let useState: <T>(initial: T | (() => T)) => [T, (next: T | ((previous: T) => T)) => void];
 
-export default function activate(api: GuiApi): void {
+export default function activate(api: GuiExtensionApi): void {
   h = api.React.createElement;
   useState = api.React.useState;
   knownAgent = (name) => !!api.client.pkByName(name);

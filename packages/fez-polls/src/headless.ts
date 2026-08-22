@@ -1,4 +1,4 @@
-import type { FezExtensionAPI } from "./api-types.js";
+import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
 import { formatPoll, parsePollCommand } from "./format.js";
 
 /**
