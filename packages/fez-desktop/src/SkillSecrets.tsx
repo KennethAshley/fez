@@ -207,13 +207,15 @@ function EnvEditor({
             />
           </div>
           <div className="env-field">
-            <label>Value</label>
+            <label>
+              Value{statuses[row.key] && <span className="env-stored" title="a value is saved in the keychain — write-only, so it can't be shown"> 🔒 stored</span>}
+            </label>
             <div className="env-value-wrap">
               <input
                 className="env-input"
                 type={shown[index] ? "text" : "password"}
                 value={row.value}
-                placeholder={statuses[row.key] ? "•••••• stored — type to replace" : ""}
+                placeholder={statuses[row.key] ? "saved (hidden) — type to replace" : ""}
                 onChange={(e) => setRow(index, { value: e.target.value })}
                 onPaste={(e) => handlePaste(index, e)}
                 onKeyDown={(e) => e.stopPropagation()}

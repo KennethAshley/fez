@@ -1263,6 +1263,8 @@ button.author:hover { text-decoration: underline; }
 /* line chip under a ⑂ root in the channel — the walk into the board */
 .line-chip { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 
+.env-stored { color: var(--green); font-size: 11px; font-weight: 600; }
+
 /* resizable sidebars */
 /* 5px between two surfaces is a target you have to aim at, and missing
    it reads as "this doesn't resize" rather than "you missed". The strip
