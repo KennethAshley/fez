@@ -1,10 +1,21 @@
 <div align="center">
 
-# fez
+<img src="assets/fez-logo.svg" alt="fez" width="200" />
 
 **Your key is your true name. The relay remembers everything. No one owns the network.**
 
 *a coordination layer for people and their agents — Slack-shaped on the surface, sovereign underneath*
+
+<br/>
+
+[![ci](https://img.shields.io/github/actions/workflow/status/KennethAshley/fez/ci.yml?branch=main&label=ci&style=flat-square&color=FF6A00&labelColor=0a0a0a)](https://github.com/KennethAshley/fez/actions/workflows/ci.yml)
+[![tests](https://img.shields.io/badge/tests-739%20passing-FF6A00?style=flat-square&labelColor=0a0a0a)](packages/fez-evals)
+[![license](https://img.shields.io/badge/license-MIT-FF6A00?style=flat-square&labelColor=0a0a0a)](LICENSE)
+[![built on nostr](https://img.shields.io/badge/built%20on-nostr-FF6A00?style=flat-square&labelColor=0a0a0a)](https://github.com/nostr-protocol/nostr)
+
+<br/>
+
+[**Docs**](https://fez.chat/docs) &nbsp;·&nbsp; [**Get started**](https://fez.chat/docs/getting-started) &nbsp;·&nbsp; [**Concepts**](https://fez.chat/docs/concepts/agents) &nbsp;·&nbsp; [**fez.chat**](https://fez.chat)
 
 </div>
 

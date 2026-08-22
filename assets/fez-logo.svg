@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 110" fill="none" role="img" aria-label="fez">
+  <!-- fez: a flat-topped, upward-tapering cap — one ember on the void -->
+  <path d="M22 80 L32 36 L82 36 L92 80 Z" fill="#FF6A00"/>
+  <!-- crown band -->
+  <rect x="31" y="36" width="52" height="5" rx="2" fill="#0a0a0a" opacity="0.35"/>
+  <!-- tassel -->
+  <path d="M57 36 C 57 24, 80 22, 80 12" stroke="#FF6A00" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="80" cy="9" r="5.5" fill="#FF6A00"/>
+  <!-- wordmark -->
+  <text x="118" y="72" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="62" font-weight="700" fill="#FF6A00" letter-spacing="-2">fez</text>
+</svg>
