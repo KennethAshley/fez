@@ -28,6 +28,7 @@ import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers } from "./InstallOffer";
+import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
@@ -88,6 +89,7 @@ type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
   | { kind: "agents" }
+  | { kind: "memory" }
   | { kind: "manage" }
   | { kind: "profile"; pk: string }
   | { kind: "reminders" }
@@ -833,6 +835,7 @@ function Shell({
                     ["⊙", "profile", () => setPane({ kind: "profile", pk: client.pubkey })],
                     ["⌕", "search", () => setSearchOpen({ query: "" }), "⌘K"],
                     ["@", "agents", () => setPane({ kind: "agents" })],
+                    ["🧠", "memory", () => setPane({ kind: "memory" })],
                     ["$", "costs", () => setPane({ kind: "costs" })],
                     ["◷", "reminders", () => setPane({ kind: "reminders" })],
                     ["⊞", "extensions", () => setView({ kind: "extensions" })],
@@ -967,6 +970,15 @@ function Shell({
         />
       )}
       {pane?.kind === "costs" && <CostsPane client={client} wire={wire} onClose={() => setPane(undefined)} />}
+      {pane?.kind === "memory" && (
+        <MemoryView
+          client={client}
+          wire={wire}
+          channelId={scope?.channelId}
+          channelName={scope ? client.state.workspace.channels.get(scope.channelId)?.name : undefined}
+          onClose={() => setPane(undefined)}
+        />
+      )}
       {browse !== false && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setBrowse(false)}>
           <div className="search-box browse-box">

@@ -78,6 +78,42 @@ async function names(): Promise<Map<string, string>> {
   return map;
 }
 
+// Optional semantic recall. If FEZ_EMBED_URL (an OpenAI-compatible
+// embeddings endpoint) is set, memories are embedded on write and the
+// vector is stored IN the event (an `emb` tag) — so the index lives on
+// the shared relay too, no vector DB. Recall then ranks by cosine
+// similarity, falling back to keyword for memories with no vector.
+const EMBED_URL = process.env.FEZ_EMBED_URL;
+const EMBED_MODEL = process.env.FEZ_EMBED_MODEL || "text-embedding-3-small";
+const EMBED_KEY = process.env.FEZ_EMBED_KEY;
+
+async function embed(input: string): Promise<number[] | undefined> {
+  if (!EMBED_URL) return undefined;
+  try {
+    const res = await fetch(`${EMBED_URL.replace(/\/$/, "")}/embeddings`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(EMBED_KEY ? { authorization: `Bearer ${EMBED_KEY}` } : {}) },
+      body: JSON.stringify({ model: EMBED_MODEL, input }),
+    });
+    if (!res.ok) return undefined;
+    const json = (await res.json()) as { data?: { embedding?: number[] }[] };
+    return json.data?.[0]?.embedding;
+  } catch {
+    return undefined;
+  }
+}
+
+function cosine(a: number[], b: number[]): number {
+  let dot = 0, na = 0, nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
 const server = new McpServer({ name: "fez-memory", version: "0.1.0" });
 
 server.registerTool(
@@ -93,8 +129,11 @@ server.registerTool(
   async ({ channel, text: memory }) => {
     const channelId = await resolveChannel(channel);
     if (!channelId) return text(`no channel "${channel}" on this relay.`);
+    const vec = await embed(memory.trim());
+    const tags: string[][] = [["h", channelId]];
+    if (vec) tags.push(["emb", JSON.stringify(vec)]);
     const event = finalizeEvent(
-      { kind: KIND_MEMORY, created_at: Math.floor(Date.now() / 1000), tags: [["h", channelId]], content: memory.trim() },
+      { kind: KIND_MEMORY, created_at: Math.floor(Date.now() / 1000), tags, content: memory.trim() },
       secret
     );
     await relay.publish(event);
@@ -119,10 +158,36 @@ server.registerTool(
     const events = await relay.query([{ kinds: [KIND_MEMORY], "#h": [channelId], limit: 500 }]).catch(() => []);
     const nameMap = await names();
     const q = query?.toLowerCase();
-    const rows = events
-      .filter((e) => (q ? e.content.toLowerCase().includes(q) : true))
-      .sort((a, b) => b.created_at - a.created_at)
-      .slice(0, limit && limit > 0 ? limit : 20)
+    const cap = limit && limit > 0 ? limit : 20;
+
+    // Semantic when a query + an embeddings endpoint are both present;
+    // keyword + recency otherwise.
+    const qvec = query && EMBED_URL ? await embed(query) : undefined;
+    let ranked = events;
+    if (qvec) {
+      ranked = events
+        .map((e) => {
+          const embTag = e.tags.find((t) => t[0] === "emb")?.[1];
+          let score = 0;
+          if (embTag) {
+            try {
+              score = cosine(qvec, JSON.parse(embTag) as number[]);
+            } catch { /* bad vector */ }
+          } else if (q && e.content.toLowerCase().includes(q)) {
+            score = 0.25; // no vector on this memory — keyword fallback
+          }
+          return { e, score };
+        })
+        .filter((r) => r.score > 0.1)
+        .sort((a, b) => b.score - a.score)
+        .map((r) => r.e);
+    } else {
+      ranked = events
+        .filter((e) => (q ? e.content.toLowerCase().includes(q) : true))
+        .sort((a, b) => b.created_at - a.created_at);
+    }
+    const rows = ranked
+      .slice(0, cap)
       .map((e) => {
         const who = nameMap.get(e.pubkey) ?? `${e.pubkey.slice(0, 8)}…`;
         const when = new Date(e.created_at * 1000).toISOString().slice(0, 10);
