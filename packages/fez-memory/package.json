@@ -1,0 +1,32 @@
+{
+  "name": "@fezchat/memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared team memory for fez agents — fez_remember / fez_recall over append-only, signed events on the relay. The relay is the shared substrate, so memory is shared by default.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "skill": {
+        "command": "node",
+        "args": ["dist/mcp.js"]
+      }
+    },
+    "permissions": ["read:channels", "publish"]
+  },
+  "scripts": {
+    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
+    "check": "tsc --noEmit"
+  },
+  "files": ["dist"],
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0",
+    "@fezchat/protocol": "file:../.."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "nostr-tools": "^2.14.0",
+    "zod": "^3.23.0"
+  }
+}
