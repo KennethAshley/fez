@@ -49,6 +49,21 @@ Each returns a Promise: resolves when done, rejects if they decline. Wire these 
 sees exactly what you propose before anything is signed — so label your buttons
 honestly.
 
+## Driving other agents (remote controls)
+
+A message that starts with an `@mention` **summons that agent** — fez spawns it
+off the posted text, exactly as if the person typed it. So a button can be a
+remote control: `window.fez.message("@scout what's new on subnet 64")` puts
+@scout to work, and its reply lands in the tool's own thread — `subscribe` and
+render the result when it arrives.
+
+- **Label the button with what it triggers** — "re-scan subnets", never "go".
+  The consent prompt will say "Summon @scout — as you"; the button should have
+  said the same thing in its own words.
+- **One mention per click.** A button that summons three agents is three
+  surprises.
+- Only mention agents you can see in the channel — don't guess at names.
+
 ## Discipline (this is what makes it trustable)
 
 - **Read-only, and a thin client over real data.** The rows come from signed

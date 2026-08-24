@@ -68,7 +68,14 @@ async function performAction(raw: unknown, artifact: Artifact): Promise<{ ok?: t
   if (a?.type === "message" && typeof a.text === "string" && a.text.trim()) {
     const text = a.text.slice(0, 2000);
     const target = rootId ? `the tool's thread in ${where}` : where;
-    if (!(await liveConsent(`Post to ${target} — as you:\n\n"${text}"`))) return { error: "declined" };
+    // A leading @mention of a known agent is a summon — sentinel spawns
+    // agents off exactly this text — so the consent copy names those stakes.
+    const mention = /^@([\w-]+)/.exec(text.trim())?.[1]?.toLowerCase();
+    const isSummon = !!mention && [...liveClient.agents().values()].some((n) => n.toLowerCase() === mention);
+    const ask = isSummon
+      ? `Summon @${mention} in ${where} — as you:\n\n"${text}"`
+      : `Post to ${target} — as you:\n\n"${text}"`;
+    if (!(await liveConsent(ask))) return { error: "declined" };
     await liveClient.sendChannelMessage(text, { channelId, threadRootId: rootId });
     return { ok: true };
   }

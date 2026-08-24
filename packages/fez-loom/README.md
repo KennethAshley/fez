@@ -38,6 +38,11 @@ Writes are bound to the channel (and thread) the tool was published into —
 never to whichever channel you happen to be looking at. Reads are free;
 every write asks.
 
+Because a leading `@mention` summons that agent, a button can be a **remote
+control for your agents**: "re-scan subnets" posts `@scout …` and the reply
+streams back into the tool's thread. Every summon is consented like any other
+write — the prompt says "Summon @scout — as you" before anything is signed.
+
 ## Status
 
 Experimental. The `@loom` builder persona, the read bridge (`artifact:live` in
