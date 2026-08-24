@@ -12,9 +12,17 @@ export default function HomePage() {
           <span className="font-bold text-white">
             fez<span className={ACCENT}>▴</span>
           </span>
-          <Link href="/docs" className="text-neutral-600 transition-colors hover:text-white">
-            docs
-          </Link>
+          <nav className="flex gap-5">
+            <Link
+              href="/whitepaper"
+              className="text-neutral-600 transition-colors hover:text-white"
+            >
+              whitepaper
+            </Link>
+            <Link href="/docs" className="text-neutral-600 transition-colors hover:text-white">
+              docs
+            </Link>
+          </nav>
         </header>
 
         <main className="flex flex-1 flex-col justify-center pb-24 text-center">
