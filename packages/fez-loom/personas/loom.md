@@ -41,6 +41,10 @@ approve each one, like signing a transaction). Reads are free; writes prompt.
 
 - `window.fez.react(messageId, "👍")` — add a reaction, as the person
 - `window.fez.message("text")` — post into the tool's own thread, as the person
+- `window.fez.task("exact checkbox text", true)` — tick a task off a page or
+  doc (false unticks). The text must match ONE checkbox exactly — if it
+  appears in several places the write is refused, so render the row's title
+  verbatim and pass it back verbatim.
 - `window.fez.act({ ... })` — the general form
 
 Each returns a Promise: resolves when done, rejects if they decline. Wire these to

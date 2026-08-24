@@ -25,7 +25,7 @@ import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
 import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
-import { keepTool, unkeepTool, keptTools, isKept, toolArtifact } from "./tools";
+import { keepTool, unkeepTool, keptTools, isKept, toolArtifact, type KeptTool } from "./tools";
 import { exportTool } from "./export-tool";
 import { toast } from "./toast";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
@@ -1050,7 +1050,7 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
-      {view.kind === "tools" && <ToolsView onOpen={(artifact) => setPane({ kind: "tool", artifact })} />}
+      {view.kind === "tools" && <ToolsView client={client} onOpen={(artifact) => setPane({ kind: "tool", artifact })} />}
       {view.kind === "extensions" && <SkillsView only="extensions" client={client} wire={wire} />}
       {view.kind === "skills" && <SkillsView only="skills" client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
@@ -2162,13 +2162,31 @@ function ToolPane({ artifact, building, onClose }: { artifact: Artifact; buildin
 
 /** The ▣ tools gallery — kept tools, lifted out of scrollback into a
  * durable home. Click one to open it in the pane; ✕ to forget it. */
-function ToolsView({ onOpen }: { onOpen: (artifact: Artifact) => void }) {
+function ToolsView({ client, onOpen }: { client: FezClient; onOpen: (artifact: Artifact) => void }) {
   const [tools, setTools] = useState(() => keptTools());
   useEffect(() => {
     const update = () => setTools(keptTools());
     window.addEventListener("fez-tools-changed", update);
     return () => window.removeEventListener("fez-tools-changed", update);
   }, []);
+  // Crystallize, rung 2: publish the kept tool back into its home channel
+  // (fallback: the one in scope) as a user-signed artifact — it lands as a
+  // normal tool handle anyone there can open and ★ keep.
+  const share = async (t: KeptTool) => {
+    const channelId = t.channelId ?? client.state.scope?.channelId;
+    if (!channelId) {
+      toast.error("no channel to share into — open a channel first");
+      return;
+    }
+    const name = client.state.workspace.channels.get(channelId)?.name ?? "the channel";
+    if (!confirm(`Share "${t.title}" into #${name}? Everyone there can open and keep it.`)) return;
+    try {
+      await client.publishArtifact(channelId, { type: t.type, title: t.title, content: t.content });
+      toast.success(`Shared to #${name}`);
+    } catch (e) {
+      toast.error(`Share failed: ${String((e as Error)?.message ?? e)}`);
+    }
+  };
   return (
     <main className="main">
       <div className="tools-scroll">
@@ -2186,6 +2204,9 @@ function ToolsView({ onOpen }: { onOpen: (artifact: Artifact) => void }) {
                   <span className="tool-tile-icon">▣</span>
                   <span className="tool-tile-title">{t.title}</span>
                   <span className="tool-tile-date">{new Date(t.ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                </button>
+                <button className="tool-tile-forget" style={{ right: 48 }} title="share into its channel" onClick={() => void share(t)}>
+                  ⇪
                 </button>
                 <button
                   className="tool-tile-forget"
