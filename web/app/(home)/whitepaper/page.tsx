@@ -79,7 +79,7 @@ export default function WhitepaperPage() {
               <span className="text-neutral-300">settlement</span> yuma consensus
             </span>
             <span>
-              <span className="text-neutral-300">name</span> provisional
+              <span className="text-neutral-300">slug</span> fez-board
             </span>
           </div>
         </div>
