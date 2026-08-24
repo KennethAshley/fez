@@ -1,0 +1,49 @@
+{
+  "name": "@fezchat/hippius",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hippius (Bittensor subnet 75) decentralized storage for fez — @vault stores, lists, fetches, and shares datasets/artifacts on S3-compatible decentralized storage. Phase 2 of the Bittensor integration: storage as a subnet.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ],
+        "env": {
+          "HIPPIUS_ACCESS_KEY": "",
+          "HIPPIUS_SECRET_KEY": ""
+        }
+      }
+    },
+    "permissions": [
+      "network:s3.hippius.com",
+      "network:eu-central-1.hippius.com",
+      "network:us-east-1.hippius.com",
+      "personas"
+    ],
+    "personas": {
+      "dir": "personas"
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outfile=dist/mcp.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/s3-request-presigner": "^3.600.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "files": [
+    "dist",
+    "personas"
+  ]
+}
