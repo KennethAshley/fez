@@ -1073,6 +1073,20 @@ export class FezClient {
     });
   }
 
+  /** Publish an artifact into a channel AS THE USER — the same 40300 shape
+   * agents emit, so it lands as a normal tool handle others can open and
+   * keep. No root tag: a shared tool is channel-level, not thread-scoped. */
+  async publishArtifact(channelId: string, artifact: { type: string; title?: string; content: string }): Promise<void> {
+    await this.wire.publish({
+      kind: K.ARTIFACT,
+      tags: [
+        ["h", channelId],
+        ["type", artifact.type],
+      ],
+      content: JSON.stringify(artifact),
+    });
+  }
+
   /** Named wiki pages in joined communities, keyed `${communityId}:${slug}`. */
   wikiDocs(): ReadonlyMap<string, WikiDoc> {
     return this.wikiMap;

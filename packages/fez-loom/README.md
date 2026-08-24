@@ -33,6 +33,7 @@ and publishes only on your explicit per-write consent. It never holds a key.
 
 - `window.fez.react(messageId, emoji)` — add a reaction, as you
 - `window.fez.message(text)` — post into the tool's own thread, as you
+- `window.fez.task(text, done)` — tick/untick a checkbox on a page or doc, as you
 
 Writes are bound to the channel (and thread) the tool was published into —
 never to whichever channel you happen to be looking at. Reads are free;
