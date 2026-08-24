@@ -37,8 +37,8 @@ export function listMcpServers(): string[] {
  * headless registry. Extensions can still register programmatically in
  * the TUI, but agents spawned by the sentinel/herdr load their skills
  * from here: a persona's `mcpServers: [web-search]` only means
- * something if settings define what "web-search" IS. Shapes pass
- * through to the ACP SDK untouched:
+ * something if settings define what "web-search" IS. Authored in
+ * convenient JSON (env as an object), normalized into the ACP shape here:
  *   "web-search": { "command": "npx", "args": ["-y", "some-mcp"], "env": {"KEY": "..."} }
  *   "hosted":     { "type": "http", "url": "https://...", "headers": [] }
  */
@@ -50,17 +50,40 @@ export function loadMcpServersFromSettings(
   settingsLoaded = true;
   for (const [name, config] of Object.entries(entries)) {
     if (!config || typeof config !== "object") continue;
-    const resolved = {
-      ...config,
-      env: resolveEnv(name, config.env as Record<string, string> | undefined),
-      headers: resolveHeaders(name, config.headers as { name: string; value: string }[] | undefined),
-    };
-    if (!resolved.env) delete (resolved as { env?: unknown }).env;
-    if (!resolved.headers) delete (resolved as { headers?: unknown }).headers;
-    const server = { name, ...(config.command && !config.type ? { type: undefined } : {}), ...resolved } as unknown as McpServer;
     if (registry.has(name)) continue;
-    registry.set(name, server);
+    registry.set(name, normalizeSettingsServer(name, config));
   }
+}
+
+/**
+ * A settings entry is authored in convenient JSON, but the ACP SDK's
+ * McpServer union is strict: a stdio server MUST carry `command`,
+ * `args: string[]` and `env: EnvVariable[]` (name/value pairs) — env as an
+ * object silently loses the stdio branch, and the union error then blames
+ * the http branch's missing `url`/`headers` (the confusing symptom this
+ * fixes). An http/sse server needs `headers: HttpHeader[]`. Both arrays are
+ * required, so they default to [] rather than being dropped.
+ */
+function normalizeSettingsServer(name: string, config: Record<string, unknown>): McpServer {
+  const type = typeof config.type === "string" ? config.type : undefined;
+  if (config.command) {
+    return {
+      name,
+      command: String(config.command),
+      args: Array.isArray(config.args) ? (config.args as string[]) : [],
+      env: resolveEnv(name, config.env as Record<string, string> | undefined) ?? [],
+    } as unknown as McpServer;
+  }
+  if ((type === "http" || type === "sse") && config.url) {
+    return {
+      name,
+      type,
+      url: String(config.url),
+      headers: resolveHeaders(name, config.headers as { name: string; value: string }[] | undefined) ?? [],
+    } as unknown as McpServer;
+  }
+  // Unknown shape (e.g. an "acp" server): pass through best-effort.
+  return { name, ...config } as unknown as McpServer;
 }
 
 /**
@@ -70,13 +93,17 @@ export function loadMcpServersFromSettings(
  * only the NAMES (empty values); a filled plaintext value still works
  * but the keychain wins. Resolved once, at spawn time.
  */
-function resolveEnv(skill: string, env: Record<string, string> | undefined): Record<string, string> | undefined {
-  if (!env || Object.keys(env).length === 0) return env;
-  const out: Record<string, string> = {};
-  for (const [key, plaintext] of Object.entries(env)) {
-    out[key] = keychainSecret(skill, key) ?? plaintext;
-  }
-  return out;
+function resolveEnv(
+  skill: string,
+  env: Record<string, string> | { name: string; value: string }[] | undefined
+): { name: string; value: string }[] | undefined {
+  if (!env) return undefined;
+  // Authored form is an object; tolerate an already-ACP array too.
+  const pairs = Array.isArray(env)
+    ? env.map((e) => [e.name, e.value] as const)
+    : Object.entries(env);
+  if (pairs.length === 0) return undefined;
+  return pairs.map(([key, plaintext]) => ({ name: key, value: keychainSecret(skill, key) ?? plaintext }));
 }
 
 /**
