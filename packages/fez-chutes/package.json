@@ -1,0 +1,45 @@
+{
+  "name": "@fezchat/chutes",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chutes (Bittensor subnet 64) inference for fez — agents run models on decentralized serverless compute via an OpenAI-compatible API. Discovery's phase 2: from map to inference.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ],
+        "env": {
+          "CHUTES_API_KEY": ""
+        }
+      }
+    },
+    "permissions": [
+      "network:llm.chutes.ai",
+      "network:api.chutes.ai",
+      "personas"
+    ],
+    "personas": {
+      "dir": "personas"
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "files": [
+    "dist",
+    "personas"
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "name": "@fezchat/bittensor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bittensor discovery for fez — agents find subnets (chain-direct via @polkadot/api, Taostats fallback), read their repos, and reason about capabilities. Discovery only; no spend.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ]
+      }
+    },
+    "permissions": [
+      "network:entrypoint-finney.opentensor.ai",
+      "network:api.taostats.io",
+      "personas"
+    ],
+    "personas": {
+      "dir": "personas"
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outfile=dist/mcp.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@polkadot/api": "^16.5.6",
+    "zod": "^3.23.0"
+  },
+  "files": [
+    "dist",
+    "personas"
+  ]
+}
