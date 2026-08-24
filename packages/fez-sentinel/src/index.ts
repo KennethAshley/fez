@@ -321,8 +321,44 @@ async function main() {
   let dmWatchLive = false;
   setTimeout(() => { dmWatchLive = true; }, 5000).unref?.();
 
+  // Each persona's own pubkey (derived from its service key), cached. Used
+  // to reject SELF-SUMMONS: an agent's own channel post must never summon
+  // it. A persona that dies on spawn posts a "failed to start" message; if
+  // that post mentions the agent, the sentinel would re-summon it, which
+  // dies and posts again — the researcher flood. This is the reliable
+  // guard even before the agent has announced (agentPkToName is empty then).
+  const personaPkCache = new Map<string, string>();
+  async function personaPubkey(persona: string): Promise<string | undefined> {
+    const hit = personaPkCache.get(persona);
+    if (hit) return hit;
+    try {
+      const { loadOrCreateKey } = await import("@fezchat/protocol");
+      const { getPublicKey } = await import("nostr-tools/pure");
+      const hexKey = loadOrCreateKey(`agent:${persona}`);
+      const pk = getPublicKey(Uint8Array.from(hexKey.match(/../g)!.map((b) => parseInt(b, 16))));
+      personaPkCache.set(persona, pk);
+      return pk;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Flood backstop: the same persona can't be summoned more than once per
+  // window, whatever the trigger. The self-summon guard breaks the known
+  // loop; this caps any other runaway (a mention storm, a future bug) so a
+  // spawn that keeps dying can't hammer the channel. A human re-mentioning
+  // after the window still summons normally.
+  const lastSummonAt = new Map<string, number>();
+  const SUMMON_COOLDOWN_MS = 15_000;
+
   function summon(persona: string, channels: string[], why: string, work?: { repo: string; line?: string }): void {
     if (spawning.has(persona) || !personaExists(persona) || agentProcessAlive(persona)) return;
+    const last = lastSummonAt.get(persona);
+    if (last !== undefined && Date.now() - last < SUMMON_COOLDOWN_MS) {
+      console.log(`⏳ summon for @${persona} suppressed — ${Math.ceil((SUMMON_COOLDOWN_MS - (Date.now() - last)) / 1000)}s cooldown (${why})`);
+      return;
+    }
+    lastSummonAt.set(persona, Date.now());
     spawning.add(persona);
     console.log(`✨ ${why} → summoning @${persona}${work ? ` onto ${work.repo}:${work.line}` : ""}`);
     void preInvite(persona)
@@ -357,7 +393,7 @@ async function main() {
           client.signEvent({
             kind: KIND_CHANNEL_MESSAGE,
             tags: [["h", channelId]],
-            content: `⚠️ @${persona} failed to start — its process died before announcing (check its herdr tab or ~/.fez/logs/${persona}.log)`,
+            content: `⚠️ \`${persona}\` failed to start — its process died before announcing (check its herdr tab or ~/.fez/logs/${persona}.log)`,
           })
         )
         .catch(() => {});
@@ -452,10 +488,17 @@ async function main() {
   }
 
   async function handleChannelMentions(event: { pubkey: string; content: string; tags: string[][] }, channelId: string): Promise<void> {
+    // The sentinel's own posts (e.g. the spawn watchdog's "failed to start"
+    // note) name agents but must never summon them — otherwise the status
+    // message re-triggers the very spawn it reported dead.
+    if (event.pubkey === myPubkey) return;
     const work = await workContextOf(event, channelId);
     for (const match of event.content.matchAll(/@([\w-]+)/g)) {
       const persona = match[1].toLowerCase();
       if (spawning.has(persona) || !personaExists(persona)) continue;
+      // An agent mentioning ITSELF (its dying "failed to start" words, or
+      // any self-reference) is not a summon — else a spawn-death loops.
+      if ((await personaPubkey(persona)) === event.pubkey) continue;
       if (agentProcessAlive(persona)) {
         // Running, but summoned into a channel it doesn't serve — or
         // onto a DIFFERENT line: one process per persona, one body per
