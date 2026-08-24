@@ -59,6 +59,23 @@ export function isSafeWork(value: string | undefined): boolean {
   return !!value && /^[\w][\w./-]{0,200}$/.test(value) && !value.includes("..");
 }
 
+/**
+ * Mention ≠ summon. An @name in PROSE is a call; one inside a code fence,
+ * inline backticks, or quotes is speech ABOUT an agent (example text, tool
+ * source, a quoted message) and must not spawn it. Unbalanced delimiters
+ * fail open — a spare summon is harmless (the agent reads the thread and
+ * stands down), a silently dropped one is a no-show. Exported so the two
+ * scan sites (channel messages, doc comments) share ONE definition.
+ */
+export function summonMentions(content: string): string[] {
+  const prose = content
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]*`/g, " ")
+    .replace(/"[^"\n]*"/g, " ")
+    .replace(/“[^”\n]*”/g, " ");
+  return [...new Set([...prose.matchAll(/@([\w-]+)/g)].map((m) => m[1].toLowerCase()))];
+}
+
 const HERDR_SOCKET = path.join(os.homedir(), ".config", "herdr", "herdr.sock");
 const REGISTRY = path.join(os.homedir(), ".fez", "herdr-tabs.json");
 const PIDFILE = path.join(os.homedir(), ".fez", "sentinel.pid");
@@ -497,8 +514,7 @@ async function main() {
     // self-summon guard (an agent's own key, per-persona) is the real
     // loop-breaker, applied inside the loop.
     const work = await workContextOf(event, channelId);
-    for (const match of event.content.matchAll(/@([\w-]+)/g)) {
-      const persona = match[1].toLowerCase();
+    for (const persona of summonMentions(event.content)) {
       if (spawning.has(persona) || !personaExists(persona)) continue;
       // An agent mentioning ITSELF (its dying "failed to start" words, or
       // any self-reference) is not a summon — else a spawn-death loops.
@@ -565,8 +581,7 @@ async function main() {
         if (event.pubkey !== myPubkey && !attestedSiblings.has(event.pubkey)) return;
         const channelId = event.tags.find((t) => t[0] === "h")?.[1];
         if (!channelId) return;
-        for (const match of event.content.matchAll(/@([\w-]+)/g)) {
-          const persona = match[1].toLowerCase();
+        for (const persona of summonMentions(event.content)) {
           if (spawning.has(persona) || !personaExists(persona) || agentProcessAlive(persona)) continue;
           pendingInvites.set(persona, { channelId });
           summon(persona, [channelId], `doc comment by ${nameOf(event.pubkey)}`);
