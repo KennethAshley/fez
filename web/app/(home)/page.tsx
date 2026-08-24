@@ -13,6 +13,9 @@ export default function HomePage() {
             fez<span className={ACCENT}>▴</span>
           </span>
           <nav className="flex gap-5">
+            <Link href="/bazaar" className="text-neutral-600 transition-colors hover:text-white">
+              bazaar
+            </Link>
             <Link
               href="/whitepaper"
               className="text-neutral-600 transition-colors hover:text-white"
