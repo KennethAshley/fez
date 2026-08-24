@@ -287,6 +287,156 @@ fn tar_read(tar_bytes: &[u8], rel: &str) -> Option<Vec<u8>> {
     None
 }
 
+/// List `<dir>/*.md` files in an npm tarball (which prefixes paths with
+/// "package/"), as (id, content) where id is the lowercased basename —
+/// for persona packs.
+fn tar_list_md(tar_bytes: &[u8], dir: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut archive = tar::Archive::new(tar_bytes);
+    let entries = match archive.entries() {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    let prefix = format!("{dir}/");
+    for entry in entries {
+        let mut entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let rel = match entry
+            .path()
+            .ok()
+            .and_then(|p| p.strip_prefix("package").ok().map(|r| r.to_path_buf()))
+        {
+            Some(r) => r,
+            None => continue,
+        };
+        let rel_str = rel.to_string_lossy().to_string();
+        let name = match rel.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if rel_str.starts_with(&prefix) && name.ends_with(".md") {
+            let mut buf = String::new();
+            if std::io::Read::read_to_string(&mut entry, &mut buf).is_ok() {
+                out.push((name.trim_end_matches(".md").to_lowercase(), buf));
+            }
+        }
+    }
+    out
+}
+
+/// Which agent harnesses are actually installed — the ACP bridges each one
+/// speaks through (claude-code → claude-agent-acp, pi → pi-acp). A GUI app
+/// gets a stripped PATH, so we look in the real install dirs (homebrew,
+/// /usr/local, every nvm node version, plus whatever PATH we do have)
+/// rather than trusting `which`. Returns {"claude-code": bool, "pi": bool}
+/// so the UI can show what's ready and what needs installing.
+fn harness_installed(cmd: &str) -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut dirs: Vec<String> = vec![
+        "/opt/homebrew/bin".into(),
+        "/usr/local/bin".into(),
+        "/usr/bin".into(),
+        format!("{home}/.local/bin"),
+    ];
+    // nvm installs globals per node version: ~/.nvm/versions/node/*/bin
+    if let Ok(entries) = std::fs::read_dir(format!("{home}/.nvm/versions/node")) {
+        for e in entries.flatten() {
+            dirs.push(e.path().join("bin").to_string_lossy().to_string());
+        }
+    }
+    if let Ok(path) = std::env::var("PATH") {
+        dirs.extend(path.split(':').map(String::from));
+    }
+    dirs.iter().any(|d| std::path::Path::new(d).join(cmd).exists())
+}
+
+#[tauri::command]
+fn detect_harnesses() -> Result<String, String> {
+    let map = serde_json::json!({
+        "claude-code": harness_installed("claude-agent-acp"),
+        "pi": harness_installed("pi-acp"),
+    });
+    Ok(map.to_string())
+}
+
+/// Wire Chutes into pi as a provider and return the models — the backend
+/// for the agent editor's "runs on: Chutes" option. Reads the Chutes key
+/// from the keychain (set in Settings → secrets), registers the endpoint
+/// in ~/.pi/agent/local-models.json (pi's local-models extension turns it
+/// into provider `local-56105ece7a`), and returns {provider, models}. The
+/// editor sets the persona's provider/model itself, so this creates no
+/// persona. Provider id is sha256("https://llm.chutes.ai/v1")[:10], fixed
+/// because the base url is fixed.
+#[tauri::command]
+fn wire_chutes_pi() -> Result<String, String> {
+    const BASE_URL: &str = "https://llm.chutes.ai/v1";
+    const PROVIDER: &str = "local-56105ece7a";
+    const ID: &str = "56105ece7a";
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+
+    let key = Command::new("security")
+        .args(["find-generic-password", "-s", "fez-skill-env", "-a", "chutes.CHUTES_API_KEY", "-w"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "Set the Chutes key first: Settings → secrets → chutes → CHUTES_API_KEY.".to_string())?;
+
+    let cfg = std::path::Path::new(&home).join(".pi").join("agent").join("local-models.json");
+    let mut endpoints: Vec<serde_json::Value> = std::fs::read_to_string(&cfg)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    endpoints.retain(|e| e.get("id").and_then(|v| v.as_str()) != Some(ID));
+    endpoints.push(serde_json::json!({ "id": ID, "name": "Chutes", "baseUrl": BASE_URL, "apiKey": key, "status": "checking" }));
+    if let Some(parent) = cfg.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&cfg, serde_json::to_string_pretty(&endpoints).unwrap_or_default() + "\n")
+        .map_err(|e| format!("couldn't write pi local-models.json: {e}"))?;
+
+    let models_body = ureq::get(&format!("{BASE_URL}/models"))
+        .set("authorization", &format!("Bearer {key}"))
+        .call()
+        .map_err(|e| format!("Chutes wired, but couldn't list models: {e}"))?
+        .into_string()
+        .map_err(|e| e.to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(&models_body).map_err(|e| e.to_string())?;
+    let models: Vec<String> = parsed
+        .pointer("/data")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from)).collect())
+        .unwrap_or_default();
+    if models.is_empty() {
+        return Err("Chutes returned no models".to_string());
+    }
+    Ok(serde_json::json!({ "provider": PROVIDER, "models": models }).to_string())
+}
+
+/// Export a kept tool as a real, publishable @fezchat extension: write a
+/// self-contained package (package.json + dist/gui.js + README) to
+/// ~/fez-tools/<slug>. The gui part is plain JS that uses api.React and
+/// api.client.runQuery, so there's nothing to build — publish it, and the
+/// desktop's normal install flow places it (and grants its permissions).
+/// Returns the package directory.
+#[tauri::command]
+fn export_tool(slug: String, gui_js: String, pkg_json: String, readme: String) -> Result<String, String> {
+    if slug.is_empty() || slug.len() > 64 || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("bad tool slug".to_string());
+    }
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    let pkg_dir = std::path::Path::new(&home).join("fez-tools").join(&slug);
+    let dist = pkg_dir.join("dist");
+    std::fs::create_dir_all(&dist).map_err(|e| format!("mkdir failed: {e}"))?;
+    std::fs::write(pkg_dir.join("package.json"), &pkg_json).map_err(|e| e.to_string())?;
+    std::fs::write(pkg_dir.join("README.md"), &readme).map_err(|e| e.to_string())?;
+    std::fs::write(dist.join("gui.js"), &gui_js).map_err(|e| e.to_string())?;
+    Ok(pkg_dir.to_string_lossy().to_string())
+}
+
 /// Install a fez extension WITHOUT any CLI: resolve the npm tarball,
 /// download it, gunzip + untar in memory, and copy the fez.parts into
 /// ~/.fez. Our gui/headless parts are self-contained esbuild bundles, so
@@ -447,9 +597,36 @@ fn install_package(name: String) -> Result<String, String> {
         }
     })?;
 
+    // 7. Persona pack — mirror the CLI's installPersonaPack: copy each
+    // <dir>/*.md into ~/.fez/personas so an extension can ship its agents
+    // (an @loom, @scout, @chip) the same way it ships skills. Skip a
+    // persona that already exists (never clobber one the user may have
+    // edited); a minimal `harness:` check keeps a broken file out. Owner
+    // isn't stamped — the sentinel resolves it from the workspace.
+    if pkg.pointer("/fez/personas").is_some() {
+        let dir = pkg
+            .pointer("/fez/personas/dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or("personas");
+        let personas_dir = home.join("personas");
+        std::fs::create_dir_all(&personas_dir).ok();
+        for (id, content) in tar_list_md(&tar_bytes, dir) {
+            if !content.contains("harness:") {
+                continue; // not a valid persona — skip quietly
+            }
+            let dest = personas_dir.join(format!("{id}.md"));
+            if dest.exists() {
+                continue; // keep the user's copy
+            }
+            if std::fs::write(&dest, &content).is_ok() {
+                installed.push(format!("persona @{id} → ~/.fez/personas/{id}.md"));
+            }
+        }
+    }
+
     if installed.is_empty() {
         return Err(format!(
-            "{name}@{latest} has no installable gui/headless/relay/workspace part"
+            "{name}@{latest} has no installable gui/headless/relay/workspace/persona part"
         ));
     }
     Ok(format!("installed {name}@{latest}: {}", installed.join(", ")))
@@ -517,6 +694,55 @@ fn latest_version(name: String) -> Result<String, String> {
         .ok_or_else(|| format!("{name} has no published version"))
 }
 
+/// Which installed agents still depend on what an uninstall just removed.
+/// A persona is a plain .md with frontmatter; `repo:` needs a workspace
+/// provider, `mcpServers: [..]` names skills. Returned as human lines so
+/// the uninstall can WARN before a capability silently vanishes from an
+/// agent's next turn — the counterpart to the runtime's degrade-and-
+/// disclose (a dependent agent won't crash, but it will lose the power).
+fn dependent_agents(home: &std::path::Path, workspace_removed: bool, skills: &[String]) -> Vec<String> {
+    let dir = home.join("personas");
+    let mut out: Vec<String> = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let agent = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        // Frontmatter only: everything before the closing `---`.
+        let front = content.split("\n---").next().unwrap_or(&content);
+        let mut reasons: Vec<String> = Vec::new();
+        for line in front.lines() {
+            let t = line.trim();
+            if workspace_removed && t.starts_with("repo:") {
+                reasons.push("loses repo access".to_string());
+            }
+            if let Some(rest) = t.strip_prefix("mcpServers:") {
+                let list = rest.trim().trim_start_matches('[').trim_end_matches(']');
+                let items: Vec<&str> = list.split(',').map(|s| s.trim()).collect();
+                for skill in skills {
+                    if items.iter().any(|it| it == skill) {
+                        reasons.push(format!("loses skill: {skill}"));
+                    }
+                }
+            }
+        }
+        if !reasons.is_empty() {
+            reasons.dedup();
+            out.push(format!("@{agent} ({})", reasons.join(", ")));
+        }
+    }
+    out
+}
+
 /// Uninstall an extension: delete its part files from every ~/.fez dir and
 /// drop it from settings.json. `name` is the de-scoped base (git, kanban) —
 /// tolerate a `fez-` prefix so a `fez link`-era file (fez-git.js) also goes.
@@ -565,7 +791,22 @@ fn remove_extension(name: String) -> Result<String, String> {
     if removed.is_empty() {
         return Err(format!("nothing installed named \"{name}\""));
     }
-    Ok(format!("removed {}", removed.join(", ")))
+    // Warn about agents that still depend on what we just pulled — they
+    // won't crash (the runtime degrades + discloses), but their next spawn
+    // loses the capability, and silent loss is how a stale `repo:` turned
+    // into a spawn flood. workspace-providers/* backs `repo:`; skills back
+    // `mcpServers:`.
+    let workspace_removed = removed.iter().any(|r| r.starts_with("workspace-providers/"));
+    let deps = dependent_agents(&home, workspace_removed, &candidates);
+    let mut msg = format!("removed {}", removed.join(", "));
+    if !deps.is_empty() {
+        msg.push_str(&format!(
+            "\n\n⚠️ {} agent(s) depend on this — they'll keep running but lose the capability on next spawn:\n  {}\n(edit or remove them if they no longer need it)",
+            deps.len(),
+            deps.join("\n  ")
+        ));
+    }
+    Ok(msg)
 }
 
 #[tauri::command]
@@ -835,7 +1076,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -2,6 +2,7 @@ import React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient } from "@fezchat/client";
+import { parseQuery } from "@fezchat/client";
 import { registerArtifactViewer } from "./artifact-viewers";
 import { invitePersona } from "./invite-persona";
 
@@ -58,6 +59,7 @@ function relayHostnames(): string[] {
 
 export interface GuiExtensionApi {
   React: typeof React;
+  parseQuery: typeof parseQuery;
   client: FezClient;
   registerArtifactViewer: typeof registerArtifactViewer;
   /**
@@ -680,6 +682,9 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       console.warn(`⚠️  extension "${name}" tried to ${what} without "${permission}" — ignored`);
     const api: GuiExtensionApi = {
       React,
+      // Parse a natural-language query into the shape client.runQuery wants
+      // — the seam an exported tool needs to answer its own data.
+      parseQuery,
       // The client is the whole protocol surface (read AND publish), so
       // it is withheld entirely without read:channels; publish-less
       // extensions still get it, since narrowing every method is a bigger

@@ -8,6 +8,7 @@ import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import PersonaEditor from "./PersonaEditor";
 import BenchProposals from "./BenchProposals";
+import { ModelPicker } from "./ModelPicker";
 
 /**
  * The agents surface — Buzz's biggest pane, fez-shaped. Roster of every
@@ -285,12 +286,18 @@ export default function AgentsPane({
     void invoke<string[]>("list_personas").then(setLocalPersonas).catch(() => setLocalPersonas([]));
     void invoke<string[]>("list_persona_drafts").then(setDrafts).catch(() => setDrafts([]));
   }, [personaNonce]);
+  // An agent that announces (kind-47000) mid-session — like a freshly
+  // summoned @loom — must appear without a remount. presenceChanged fires
+  // when a new agent name lands, so the roster recomputes live.
+  const [rosterNonce, setRosterNonce] = useState(0);
+  useEffect(() => client.on("presenceChanged", () => setRosterNonce((n) => n + 1)), [client]);
   const roster = useMemo(
     () =>
       [...client.agents().entries()]
         .map(([pk, name]) => ({ pk, name, online: client.isOnline(pk) }))
         .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name)),
-    [client]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [client, rosterNonce]
   );
   const current = selected ? roster.find((agent) => agent.pk === selected) : undefined;
   const knownNames = new Set(roster.map((agent) => agent.name.toLowerCase()));
@@ -306,10 +313,12 @@ export default function AgentsPane({
         ) : (
           <span>@ agents</span>
         )}
-        {!current && !creating && !editingPersona && !reviewing && (
-          <button className="agent-action" onClick={() => setCreating(true)}>+ new agent</button>
-        )}
-        <button className="pane-close" onClick={onClose}>✕</button>
+        <span className="pane-actions">
+          {!current && !creating && !editingPersona && !reviewing && (
+            <button className="agent-action" onClick={() => setCreating(true)}>+ new agent</button>
+          )}
+          <button className="pane-close" onClick={onClose}>✕</button>
+        </span>
       </header>
       {reviewing && (
         <DraftReview
@@ -680,7 +689,7 @@ conversation. Summarize, attribute your uncertainty, stop.`;
 
 function CreateAgentForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
-  const [harness, setHarness] = useState(localStorage.getItem("fez-default-harness") ?? "claude-code");
+  const [brain, setBrain] = useState({ harness: "pi", provider: "", model: "" });
   const [description, setDescription] = useState("");
   const [prompt, setPrompt] = useState("");
   const [state, setState] = useState<"idle" | "saving" | "done" | string>("idle");
@@ -702,7 +711,9 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
     setState("saving");
     const front = [
       "---",
-      `harness: ${harness}`,
+      `harness: ${brain.harness}`,
+      ...(brain.provider ? [`provider: ${brain.provider}`] : []),
+      ...(brain.model ? [`model: ${brain.model}`] : []),
       ...(description.trim() ? [`description: ${description.trim().replace(/\n/g, " ")}`] : []),
       ...(template === "bridge"
         ? [
@@ -786,13 +797,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
           </div>
         </>
       )}
-      <div className="settings-field">
-        <label>harness</label>
-        <select className="manage-select" value={harness} onChange={(e) => setHarness(e.target.value)}>
-          <option value="claude-code">claude-code</option>
-          <option value="pi">pi</option>
-        </select>
-      </div>
+      <ModelPicker value={brain} onChange={setBrain} />
       <div className="settings-field">
         <label>description (helps @fez route to it)</label>
         <input

@@ -1,6 +1,7 @@
 import type { Artifact } from "@fezchat/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { LiveArtifact } from "./live-artifact";
 
 /**
  * The artifact viewer REGISTRY — fez is extensible first, so even the
@@ -41,6 +42,11 @@ registerArtifactViewer("html", ({ artifact }) =>
     <iframe className="artifact-frame" sandbox="allow-scripts" src={artifact.url} title={artifact.title ?? "artifact"} />
   ) : null
 );
+
+/** Like "html", but wired to the read bridge: the sandboxed tool can ask
+ * the relay read-only questions (window.fez.query/subscribe) and stream
+ * the answers, with no network egress. See live-artifact.tsx. */
+registerArtifactViewer("live", ({ artifact }) => <LiveArtifact artifact={artifact} />);
 
 registerArtifactViewer("image", ({ artifact }) => {
   const src = artifact.url ?? (artifact.content?.startsWith("data:") ? artifact.content : undefined);

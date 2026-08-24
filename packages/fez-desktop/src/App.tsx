@@ -2,6 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
@@ -23,11 +24,15 @@ import ChannelInfo from "./ChannelInfo";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
+import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
+import { keepTool, unkeepTool, keptTools, isKept, toolArtifact } from "./tools";
+import { exportTool } from "./export-tool";
+import { toast } from "./toast";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
-import { InstallOffer, installOffers, stripInstallMarkers } from "./InstallOffer";
+import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers } from "./InstallOffer";
 import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
@@ -83,6 +88,7 @@ type MainView =
   | { kind: "home" }
   | { kind: "pulse" }
   | { kind: "wiki" }
+  | { kind: "tools" }
   | { kind: "extensions" }
   | { kind: "skills" };
 type SidePane =
@@ -94,6 +100,7 @@ type SidePane =
   | { kind: "profile"; pk: string }
   | { kind: "reminders" }
   | { kind: "docs"; channelId: string }
+  | { kind: "tool"; artifact: Artifact }
   | undefined;
 
 function useForceRender(): () => void {
@@ -169,6 +176,7 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     // one-shot read at boot would leave the app dark after the Mac
     // flips at sunset.
     startAppearanceWatch();
+    configureLiveBridge(client); // let "live" artifacts read the relay (read-only)
     void loadGuiExtensions(client); // gui parts of installed packages — non-blocking
     return { client, wire };
   })();
@@ -263,6 +271,44 @@ function Shell({
     localStorage.setItem("fez-muted", JSON.stringify([...next]));
     setMuted(next);
   };
+  // Hiding is the local, this-machine cousin of archiving: a muted channel
+  // still shows, a hidden one drops out of YOUR sidebar without touching
+  // the relay. Archiving (owner-signed) removes it for everyone; hiding
+  // removes it for you. Both are reversible.
+  const [hidden, setHidden] = useState<Set<string>>(
+    () => new Set<string>(JSON.parse(localStorage.getItem("fez-hidden") ?? "[]") as string[])
+  );
+  const toggleHide = (channelId: string) => {
+    const next = new Set(hidden);
+    if (!next.delete(channelId)) next.add(channelId);
+    localStorage.setItem("fez-hidden", JSON.stringify([...next]));
+    setHidden(next);
+  };
+  const [showStowed, setShowStowed] = useState(false);
+  // A live tool's proposed write, awaiting the human's yes/no — the wallet
+  // prompt. The tool never signs; this dialog is the only path to publish.
+  const [toolConsent, setToolConsent] = useState<{ desc: string; resolve: (ok: boolean) => void }>();
+  useEffect(() => {
+    configureLiveConsent((desc: string) => new Promise<boolean>((resolve) => setToolConsent({ desc, resolve })));
+  }, []);
+  // Agents that exist as persona files on THIS machine — the sentinel can
+  // spawn them on a mention even before they've announced (kind 47000) or
+  // joined the roster. So @-mentioning one for the first time is NOT a
+  // mention that reached nobody, and must not raise the red warning.
+  const [localAgents, setLocalAgents] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const load = () =>
+      void invoke<string[]>("list_personas")
+        .then((names) => setLocalAgents(new Set(names.map((n) => n.toLowerCase()))))
+        .catch(() => {});
+    load();
+    window.addEventListener("fez-extensions-changed", load);
+    window.addEventListener("focus", load);
+    return () => {
+      window.removeEventListener("fez-extensions-changed", load);
+      window.removeEventListener("focus", load);
+    };
+  }, []);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; channelId: string }>();
   useEffect(() => {
     if (!ctxMenu) return;
@@ -317,6 +363,19 @@ function Shell({
         });
       }
       render();
+    }) as never);
+    // A freshly-built live tool opens itself in the pane — you watch it
+    // appear and stream, no click. Each refinement republishes a new
+    // artifact, so this also auto-SWAPS the pane to the latest version:
+    // "add a count" and you see it rebuild in place. Guarded so it never
+    // pops on history load (recency) or hijacks a pane you're using
+    // (only claims an empty pane or one already showing a tool), and only
+    // for the channel you're actually looking at.
+    client.on("artifact", ((channelId: string, artifact: Artifact) => {
+      if (artifact.type !== "live") return;
+      if (artifact.ts < Math.floor(Date.now() / 1000) - 90) return;
+      if (client.state.scope?.channelId !== channelId) return;
+      setPane((cur) => (cur === undefined || cur.kind === "tool" ? { kind: "tool", artifact } : cur));
     }) as never);
     // Native notifications when the window isn't focused: @you in a
     // channel, or any live DM. Backfill/history never notifies.
@@ -640,17 +699,35 @@ function Shell({
   // installed bridge shows nothing at all, and the only way to set it
   // up is to already know it lives in settings — the extension would be
   // invisible until after the thing you needed it for.
+  //
+  // The flip side: once the extension is UNINSTALLED, no panel claims
+  // its source, so its channels are just channels now. They fall back
+  // into the plain list rather than sitting under a heading named after
+  // an app you removed — uninstalling the forge never deletes your
+  // repos, but it shouldn't keep branding them either.
+  const claimedSources = new Set<string>();
   for (const panel of extensionSettingsPanels()) {
-    if (panel.source) bridged.set(panel.source, []);
+    if (panel.source) {
+      claimedSources.add(panel.source);
+      bridged.set(panel.source, []);
+    }
   }
+  // Stowed = out of the main list: archived (owner-signed, gone for
+  // everyone) or hidden (this machine only). Kept aside so they can be
+  // restored, never silently dropped.
+  const stowed: { id: string; name: string; archived: boolean }[] = [];
   for (const channel of client.state.workspace.channels.values()) {
-    if (!channel.source) {
-      ownChannels.push(channel);
+    if (channel.archived || hidden.has(channel.id)) {
+      stowed.push({ id: channel.id, name: channel.name, archived: !!channel.archived });
       continue;
     }
-    const group = bridged.get(channel.source) ?? [];
-    group.push(channel);
-    bridged.set(channel.source, group);
+    if (channel.source && claimedSources.has(channel.source)) {
+      const group = bridged.get(channel.source) ?? [];
+      group.push(channel);
+      bridged.set(channel.source, group);
+    } else {
+      ownChannels.push(channel);
+    }
   }
 
   // Which extension's settings modal is open, by panel name.
@@ -703,7 +780,10 @@ function Shell({
           {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
         </button>
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
-          ▤ docs
+          ≡ docs
+        </button>
+        <button className={view.kind === "tools" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "tools" })}>
+          ▣ tools
         </button>
         <div className="community">
           <div className="community-name">
@@ -731,6 +811,40 @@ function Shell({
           {client.state.workspace.channels.size === 0 && (
             <div className="community-id" style={{ padding: "4px 10px" }}>
               {client.state.workspace.owner ? "no channels yet" : "unclaimed — claim it to start"}
+            </div>
+          )}
+          {stowed.length > 0 && (
+            <div style={{ marginTop: 2 }}>
+              <button
+                onClick={() => setShowStowed((v) => !v)}
+                style={{ background: "none", border: "none", color: "inherit", opacity: 0.55, font: "inherit", fontSize: "0.82em", cursor: "pointer", padding: "3px 10px", width: "100%", textAlign: "left" }}
+              >
+                {showStowed ? "▾" : "▸"} {stowed.length} hidden
+              </button>
+              {showStowed &&
+                stowed.map((c) => (
+                  <div
+                    key={c.id}
+                    title={c.archived ? "archived for everyone" : "hidden on this machine"}
+                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 10px 2px 18px", opacity: 0.6, fontSize: "0.86em" }}
+                  >
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <span className="hash">#</span> {c.name}
+                    </span>
+                    <span style={{ fontSize: "0.78em", opacity: 0.7 }}>{c.archived ? "archived" : "hidden"}</span>
+                    <button
+                      title={c.archived ? "unarchive — bring it back for everyone" : "unhide"}
+                      onClick={() =>
+                        c.archived
+                          ? void client.archiveChannel(c.id, false).catch(() => {})
+                          : toggleHide(c.id)
+                      }
+                      style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", opacity: 0.8, padding: 0 }}
+                    >
+                      ↩
+                    </button>
+                  </div>
+                ))}
             </div>
           )}
         </div>
@@ -835,12 +949,12 @@ function Shell({
                     ["⊙", "profile", () => setPane({ kind: "profile", pk: client.pubkey })],
                     ["⌕", "search", () => setSearchOpen({ query: "" }), "⌘K"],
                     ["@", "agents", () => setPane({ kind: "agents" })],
-                    ["🧠", "memory", () => setPane({ kind: "memory" })],
+                    [<MenuIcon key="m" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />, "memory", () => setPane({ kind: "memory" })],
                     ["$", "costs", () => setPane({ kind: "costs" })],
                     ["◷", "reminders", () => setPane({ kind: "reminders" })],
                     ["⊞", "extensions", () => setView({ kind: "extensions" })],
-                    ["🔧", "skills", () => setView({ kind: "skills" })],
-                  ] as [string, string, () => void, string?][]
+                    [<MenuIcon key="s" d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />, "skills", () => setView({ kind: "skills" })],
+                  ] as [React.ReactNode, string, () => void, string?][]
                 ).map(([glyph, label, action, key]) => (
                   <button
                     key={label}
@@ -904,6 +1018,8 @@ function Shell({
             )
           }
           onCommand={runSlash}
+          onOpenTool={(artifact) => setPane({ kind: "tool", artifact })}
+          localAgents={localAgents}
         />
       )}
       {view.kind === "dm" && (
@@ -934,6 +1050,7 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
+      {view.kind === "tools" && <ToolsView onOpen={(artifact) => setPane({ kind: "tool", artifact })} />}
       {view.kind === "extensions" && <SkillsView only="extensions" client={client} wire={wire} />}
       {view.kind === "skills" && <SkillsView only="skills" client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
@@ -956,6 +1073,26 @@ function Shell({
           >
             {muted.has(ctxMenu.channelId) ? "🔔︎ unmute" : "✕ mute"}
           </button>
+          <button
+            onClick={() => {
+              toggleHide(ctxMenu.channelId);
+              setCtxMenu(undefined);
+            }}
+            title="drop it from your sidebar on this machine only"
+          >
+            {hidden.has(ctxMenu.channelId) ? "▣ unhide" : "⊘ hide (just me)"}
+          </button>
+          {client.state.isOwner(client.pubkey) && (
+            <button
+              onClick={() => {
+                void client.archiveChannel(ctxMenu.channelId, true).catch(() => {});
+                setCtxMenu(undefined);
+              }}
+              title="archive for everyone — reversible, history is kept"
+            >
+              🗄 archive for everyone
+            </button>
+          )}
         </div>
       )}
 
@@ -1101,6 +1238,26 @@ function Shell({
           onClose={() => setPane(undefined)}
         />
       )}
+      {pane?.kind === "tool" && (
+        <ToolPane
+          artifact={pane.artifact}
+          building={working.has(pane.artifact.authorName)}
+          onClose={() => setPane(undefined)}
+        />
+      )}
+      {toolConsent && (
+        <div className="consent-backdrop" onClick={() => { toolConsent.resolve(false); setToolConsent(undefined); }}>
+          <div className="consent-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="consent-title">A tool wants to act as you</div>
+            <div className="consent-desc">{toolConsent.desc}</div>
+            <div className="consent-hint">The tool proposes; only you can approve. This publishes with your key.</div>
+            <div className="consent-actions">
+              <button className="consent-deny" onClick={() => { toolConsent.resolve(false); setToolConsent(undefined); }}>Deny</button>
+              <button className="consent-allow" onClick={() => { toolConsent.resolve(true); setToolConsent(undefined); }}>Allow once</button>
+            </div>
+          </div>
+        </div>
+      )}
       {pane?.kind === "profile" && (
         <ProfilePane
           client={client}
@@ -1193,6 +1350,8 @@ function ChannelView({
   onSearch,
   onCommand,
   onNotice,
+  onOpenTool,
+  localAgents,
   focusId,
 }: {
   client: FezClient;
@@ -1210,6 +1369,11 @@ function ChannelView({
   onCommand: (text: string) => Promise<string>;
   /** Surfaced to the sender — a mention that reached nobody must not be silent. */
   onNotice: (text: string) => void;
+  /** Open a live tool artifact in the side pane (its handle sits in the thread). */
+  onOpenTool: (artifact: Artifact) => void;
+  /** Persona names on this machine — the sentinel can spawn these on a
+   * mention, so mentioning one is never "reached nobody". */
+  localAgents: ReadonlySet<string>;
 }) {
   // Drafts persist per channel (Buzz's DraftsPanel decision, minimal
   // form): switching channels no longer eats half-typed messages.
@@ -1260,11 +1424,41 @@ function ChannelView({
   }, [channelId]);
 
   const shown = threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages.filter((m) => !m.parentId);
-  // Typed artifacts interleave by time (channel view only — they don't thread).
+  // Typed artifacts interleave by time. In the channel view, all of them;
+  // in a thread, only LIVE tools — their handles are small and worth
+  // having beside the conversation that built them, without dragging every
+  // html/table artifact into the thread.
   type TimelineRow = { ts: number; msg?: Msg; artifact?: Artifact };
+  const allArtifacts = client.artifacts(channelId);
+  // A refined tool is ONE tool, not a stack. Every rebuild republishes a
+  // fresh `live` artifact tagged with its thread root, so collapse them to
+  // the latest per (thread, author, title) — one handle, one view. Keying
+  // on the root keeps two threads' same-titled tools distinct. Non-live
+  // artifacts (a distinct html/table/image each time) are left as-is.
+  const latestLive = new Map<string, Artifact>();
+  for (const a of allArtifacts) {
+    if (a.type !== "live") continue;
+    const key = [a.rootId ?? "top", a.authorName, a.title ?? ""].join(" | ");
+    const prev = latestLive.get(key);
+    if (!prev || a.ts > prev.ts) latestLive.set(key, a);
+  }
+  // One thread, one button, one pane: a tool lives in the thread that built
+  // it. Inside that thread it shows its handle; the channel view shows only
+  // top-level tools (no thread root) — a threaded tool is reached by opening
+  // its thread, not by a handle floating loose in the channel.
+  const liveTools = threadRoot
+    ? [...latestLive.values()].filter((a) => a.rootId === threadRoot)
+    : [...latestLive.values()].filter((a) => !a.rootId);
+  // Non-live artifacts (html/image/table) render inline, but scope to their
+  // thread the SAME way as tools: a thread shows its own, the channel shows
+  // only top-level ones. An artifact built inside a thread stays there —
+  // any agent can emit one, so this can't be loom's job alone.
+  const nonLive = allArtifacts.filter((a) => a.type !== "live");
+  const scopedNonLive = threadRoot ? nonLive.filter((a) => a.rootId === threadRoot) : nonLive.filter((a) => !a.rootId);
+  const artifactRows = [...scopedNonLive, ...liveTools];
   const rows: TimelineRow[] = [
     ...shown.map((m) => ({ ts: m.ts, msg: m })),
-    ...(threadRoot ? [] : client.artifacts(channelId).map((a) => ({ ts: a.ts, artifact: a }))),
+    ...artifactRows.map((a) => ({ ts: a.ts, artifact: a })),
   ].sort((a, b) => a.ts - b.ts);
   const now = Date.now();
   const liveDrafts = [...(drafts?.entries() ?? [])].filter(([, d]) => now - d.ts < 15_000);
@@ -1346,7 +1540,13 @@ function ChannelView({
     // seen — and a mention that reached nobody is said out loud, because
     // it otherwise looks exactly like one that worked.
     const resolution = client.resolveMentionsIn(text, channelId, bindings);
-    const problem = describeMentionProblems(resolution);
+    // A name that matches a local persona isn't "unresolved" — the sentinel
+    // will spawn it even though it hasn't announced yet. Only warn about
+    // names that are neither members nor spawnable agents (real typos).
+    const problem = describeMentionProblems({
+      ...resolution,
+      unresolved: resolution.unresolved.filter((n) => !localAgents.has(n.toLowerCase())),
+    });
     await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks: resolution.pubkeys });
     if (problem) onNotice(problem);
   };
@@ -1509,7 +1709,7 @@ function ChannelView({
                 {(index === 0 || !sameDay(rows[index - 1].ts, row.ts)) && (
                   <div className="day-divider"><span>{dayLabel(row.ts)}</span></div>
                 )}
-                <ArtifactCard artifact={row.artifact} onAuthor={() => onProfile(row.artifact!.authorPk)} />
+                <ArtifactCard artifact={row.artifact} onAuthor={() => onProfile(row.artifact!.authorPk)} onOpen={onOpenTool} />
               </div>
             );
           }
@@ -1742,7 +1942,7 @@ function DmView({
                 </HoverCard>
                 <span className="time">{new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
-              <div className="bubble-body md"><MdBody text={msg.text} /></div>
+              <div className="bubble-body md"><MdBody text={stripArtifactMarkers(msg.text)} /></div>
               </div>
             </div>
           );
@@ -1869,7 +2069,22 @@ function CostsPane({ client, wire, onClose }: { client: FezClient; wire: Browser
  * registered viewer renders the payload; no viewer for the type (or a
  * bare payload) degrades to exactly what the TUI shows — title + link.
  */
-function ArtifactCard({ artifact, onAuthor }: { artifact: Artifact; onAuthor: () => void }) {
+function ArtifactCard({ artifact, onAuthor, onOpen }: { artifact: Artifact; onAuthor: () => void; onOpen?: (artifact: Artifact) => void }) {
+  // A live tool is interactive and wants room — it renders in the side
+  // pane, not squeezed into the message column. The thread keeps only a
+  // handle: the conversation that built it, plus a button to open it.
+  if (artifact.type === "live") {
+    return (
+      <div className="artifact-card artifact-handle">
+        <button className="tool-handle" onClick={() => onOpen?.(artifact)} title="open this tool in the side pane">
+          <span className="tool-handle-icon">▣</span>
+          <span className="tool-handle-title">{artifact.title ?? "live tool"}</span>
+          <span className="tool-handle-by">· {artifact.authorName}</span>
+          <span className="tool-handle-open">open →</span>
+        </button>
+      </div>
+    );
+  }
   const Viewer = viewerFor(artifact.type);
   const body = Viewer ? <Viewer artifact={artifact} /> : null;
   return (
@@ -1890,6 +2105,107 @@ function ArtifactCard({ artifact, onAuthor }: { artifact: Artifact; onAuthor: ()
         </div>
       )}
     </div>
+  );
+}
+
+/** A small monochrome line-icon for menu/rail glyphs that have no clean
+ * unicode (brain, wrench) — inherits currentColor so it matches the text
+ * glyphs beside it instead of a full-color emoji. */
+function MenuIcon({ d }: { d: string }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "middle" }}>
+      <path d={d} />
+    </svg>
+  );
+}
+
+/** The workbench: a live tool given room, in the side pane. The tool
+ * itself is whatever artifact viewer claims its type (for "live", the
+ * sandboxed read-bridge frame). Swap semantics — the newest tool opened
+ * wins the pane; the thread keeps the handles to reopen the others. */
+function ToolPane({ artifact, building, onClose }: { artifact: Artifact; building?: boolean; onClose: () => void }) {
+  const Viewer = viewerFor(artifact.type);
+  // Keeping crystallizes a throwaway tool into the durable ▣ tools list.
+  const [kept, setKept] = useState(() => isKept(artifact));
+  useEffect(() => {
+    const update = () => setKept(isKept(artifact));
+    update();
+    window.addEventListener("fez-tools-changed", update);
+    return () => window.removeEventListener("fez-tools-changed", update);
+  }, [artifact]);
+  const toggleKeep = () => {
+    const existing = keptTools().find((t) => t.content === artifact.content);
+    if (existing) unkeepTool(existing.id);
+    else keepTool(artifact);
+  };
+  return (
+    <aside className="pane tool-pane">
+      <header className="pane-head">
+        <span>▣ {artifact.title ?? "tool"}{building && <span className="tool-building"> · building…</span>}</span>
+        <span className="pane-actions">
+          <button
+            className="pane-close"
+            title={kept ? "kept — click to remove from ▣ tools" : "keep this tool (adds it to ▣ tools)"}
+            onClick={toggleKeep}
+          >
+            {kept ? "★" : "☆"}
+          </button>
+          <button className="pane-close" onClick={onClose}>✕</button>
+        </span>
+      </header>
+      <div className="pane-body tool-pane-body">
+        {Viewer ? <Viewer artifact={artifact} /> : <div className="pane-empty">no viewer for "{artifact.type}"</div>}
+      </div>
+    </aside>
+  );
+}
+
+/** The ▣ tools gallery — kept tools, lifted out of scrollback into a
+ * durable home. Click one to open it in the pane; ✕ to forget it. */
+function ToolsView({ onOpen }: { onOpen: (artifact: Artifact) => void }) {
+  const [tools, setTools] = useState(() => keptTools());
+  useEffect(() => {
+    const update = () => setTools(keptTools());
+    window.addEventListener("fez-tools-changed", update);
+    return () => window.removeEventListener("fez-tools-changed", update);
+  }, []);
+  return (
+    <main className="main">
+      <div className="tools-scroll">
+        <div className="tools-head">
+          <h2>▣ tools</h2>
+          <p className="settings-hint">Tools you kept — reopen any in the pane. Ask @loom to build one, then ★ it.</p>
+        </div>
+        {tools.length === 0 ? (
+          <div className="pane-empty">no kept tools yet — build one with @loom, open it, and hit ★</div>
+        ) : (
+          <div className="tools-grid">
+            {tools.map((t) => (
+              <div key={t.id} className="tool-tile">
+                <button className="tool-tile-open" onClick={() => onOpen(toolArtifact(t))} title="open in the pane">
+                  <span className="tool-tile-icon">▣</span>
+                  <span className="tool-tile-title">{t.title}</span>
+                  <span className="tool-tile-date">{new Date(t.ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                </button>
+                <button
+                  className="tool-tile-forget"
+                  style={{ right: 26 }}
+                  title="export as a publishable fez extension"
+                  onClick={() =>
+                    void exportTool(t)
+                      .then((path) => toast.success(`Exported to ${path} — build & publish to share`))
+                      .catch((e) => toast.error(`Export failed: ${String((e as Error)?.message ?? e)}`))
+                  }
+                >
+                  ⤓
+                </button>
+                <button className="tool-tile-forget" title="forget this tool" onClick={() => unkeepTool(t.id)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
 
@@ -2316,7 +2632,7 @@ function Bubble({
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
         <div className="bubble-body md">
-          <MdBody text={stripInstallMarkers(msg.content)} tagged={mentionNames} onMention={openMention} />
+          <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} />
         </div>
       )}
       {proposalIdsIn(msg.content).map((id) => (
@@ -2405,7 +2721,7 @@ function MdBody({ text, tagged, onMention }: { text: string; tagged?: ReadonlySe
   return (
     <>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{
           a: ({ href, children }) => (
             <a

@@ -24,6 +24,17 @@ export function stripInstallMarkers(content: string): string {
     .trim();
 }
 
+/** The `📦 … (artifact)` placeholder the agent runtime leaves where an
+ * artifact fence was — a text stand-in for bare clients. The desktop
+ * renders the artifact card itself, so the placeholder is a redundant
+ * second copy; strip it so a tool never shows up twice. */
+export function stripArtifactMarkers(content: string): string {
+  return content
+    .replace(/^[ \t]*📦 .+? \(artifact\)[ \t]*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /**
  * Renders under a message that offers an install. Crucially LOCAL: the
  * button installs onto THIS machine, gated by this user's click and the

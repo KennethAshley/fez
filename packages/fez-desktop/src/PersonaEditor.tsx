@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
+import { ModelPicker } from "./ModelPicker";
 
 /**
  * Persona editor — Buzz's AgentConfigPanel against fez's contract: the
@@ -105,6 +106,11 @@ export default function PersonaEditor({
 
   const field = (key: string) => getField(front, key);
   const update = (key: string, value: string) => setFront(setField(front, key, value));
+  // The brain is one control (model). It writes harness/provider/model at
+  // once — pi is invisible plumbing, so it's set here without ever being
+  // named in the UI.
+  const setBrain = (s: { harness: string; provider: string; model: string }) =>
+    setFront(setField(setField(setField(front, "harness", s.harness), "provider", s.provider), "model", s.model));
 
   return (
     <div className="pane-body">
@@ -125,20 +131,12 @@ export default function PersonaEditor({
           onChange={(e) => update("channels", textToList(e.target.value))}
         />
       </div>
-      <div className="settings-field">
-        <label>harness</label>
-        <select className="manage-select" value={field("harness") || "claude-code"} onChange={(e) => update("harness", e.target.value)}>
-          {["claude-code", "pi", "router", ...(field("harness") && !["claude-code", "pi", "router"].includes(field("harness")) ? [field("harness")] : [])].map(
-            (option) => (
-              <option key={option} value={option}>{option}</option>
-            )
-          )}
-        </select>
-      </div>
-      <div className="settings-field">
-        <label>model (pi reads this; claude-code uses its own default)</label>
-        <input className="manage-input" value={field("model")} spellCheck={false} placeholder="(harness default)" onChange={(e) => update("model", e.target.value)} />
-      </div>
+      {field("harness") !== "router" && (
+        <ModelPicker
+          value={{ harness: field("harness"), provider: field("provider"), model: field("model") }}
+          onChange={setBrain}
+        />
+      )}
       {field("harness") === "router" && (
         <>
           <div className="manage-section">router — @fez's brain</div>

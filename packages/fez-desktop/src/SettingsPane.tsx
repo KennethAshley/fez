@@ -34,7 +34,7 @@ const SETTINGS_TABS = {
   servers: "servers",
   appearance: "appearance",
   keyboard: "keyboard",
-  skills: "skills & secrets",
+  skills: "secrets",
   agents: "agent defaults",
   backup: "backup & identity",
 } as const;
@@ -200,22 +200,15 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         <KeyboardSettings onNotice={flash} />
         </>)}
         {section === "skills" && (<>
-        <div className="manage-section">skills &amp; secrets</div>
+        <div className="manage-section">secrets</div>
         <SkillSecretsSection onNotice={flash} />
 
         </>)}
         {section === "agents" && (<>
         <div className="manage-section">agent defaults</div>
-        <div className="settings-field">
-          <label>default harness for new agents</label>
-          <select
-            className="manage-select"
-            defaultValue={localStorage.getItem("fez-default-harness") ?? "claude-code"}
-            onChange={(e) => localStorage.setItem("fez-default-harness", e.target.value)}
-          >
-            <option value="claude-code">claude-code</option>
-            <option value="pi">pi</option>
-          </select>
+        <div className="settings-hint">
+          Each agent picks its own model when you create or edit it — Claude Code if you have it installed, or
+          any model from your Chutes account (add a key in <b>secrets → chutes</b>). Nothing to set globally.
         </div>
 
         </>)}

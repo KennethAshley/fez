@@ -118,7 +118,12 @@ export function FormatBar({ ops, className = "format-bar" }: { ops: FormatOps; c
       <button title="code (⌘E)" onMouseDown={hold(() => ops.wrapSelection("`"))}>{"</>"}</button>
       <button title="strikethrough" onMouseDown={hold(() => ops.wrapSelection("~~"))}><s>S</s></button>
       <span className="tray-sep" />
-      <button title="link" className="emoji-glyph" onMouseDown={hold(() => ops.makeLink())}>🔗</button>
+      <button title="link" onMouseDown={hold(() => ops.makeLink())}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "middle" }}>
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+      </button>
       <button title="bulleted list" onMouseDown={hold(() => ops.prefixLines("- "))}>≔</button>
       <button title="numbered list" onMouseDown={hold(() => ops.prefixLines((index) => `${index + 1}. `))}>⒈</button>
       <button title="quote" onMouseDown={hold(() => ops.prefixLines("> "))}>❝</button>
