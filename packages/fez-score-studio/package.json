@@ -1,0 +1,19 @@
+{
+  "name": "@fezchat/score-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Score Studio for fez — @score is an evidence-gated computer-vision architect: plan, integrate, compose, and release-check Score Studio vision systems using the project's own SDK/OpenAPI. Adapted from Score Technologies' Apache-2.0 Cursor plugin.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "personas": {
+      "dir": "personas"
+    },
+    "permissions": [
+      "personas"
+    ]
+  },
+  "files": [
+    "personas"
+  ]
+}
