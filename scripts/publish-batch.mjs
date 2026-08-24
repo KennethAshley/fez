@@ -46,7 +46,14 @@ const EXTENSIONS = [
   "packages/fez-obsidian",
   "packages/fez-mcp",
   "packages/claude-code",
-  "packages/bittensor",
+  // fez-bittensor (the chain-direct discovery skill) superseded the old
+  // packages/bittensor miner extension on npm as of 0.2.0.
+  "packages/fez-bittensor",
+  "packages/fez-chutes",
+  "packages/fez-hippius",
+  "packages/fez-score-studio",
+  "packages/fez-workflows",
+  "packages/fez-memory",
 ];
 
 function run(cmd, args, cwd) {
