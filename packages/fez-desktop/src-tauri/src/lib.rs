@@ -335,6 +335,9 @@ fn tar_list_md(tar_bytes: &[u8], dir: &str) -> Vec<(String, String)> {
 fn harness_installed(cmd: &str) -> bool {
     let home = std::env::var("HOME").unwrap_or_default();
     let mut dirs: Vec<String> = vec![
+        // fez's own bundled binaries first — the Built-in agent (pi/pi-acp)
+        // ships here, so a machine with nothing on PATH still detects it.
+        format!("{home}/.fez/bin"),
         "/opt/homebrew/bin".into(),
         "/usr/local/bin".into(),
         "/usr/bin".into(),
@@ -1072,10 +1075,68 @@ fn remove_skill(name: String) -> Result<(), String> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Copy the bundled Built-in agent (pi + pi-acp + assets) out of the app
+/// bundle into ~/.fez/bin on launch. Buzz ships buzz-agent as an in-app
+/// sidecar; fez bundles the same way but copies to its OWNED bin dir,
+/// because the SENTINEL (a launchd process outside this app) spawns agents
+/// and resolves ~/.fez/bin — a sidecar buried in the .app is unreachable to
+/// it. Version-gated: a no-op on every launch after the bundled version is
+/// already installed, so it's cheap. Best-effort — a copy failure just
+/// means the user falls back to a system pi if they have one.
+fn install_bundled_agent(app: &tauri::App) {
+    use std::os::unix::fs::PermissionsExt;
+    use tauri::Manager;
+    let src = match app.path().resource_dir() {
+        Ok(d) => d.join("pi-agent"),
+        Err(_) => return,
+    };
+    // A build made without bun ships a marker but no binary (see
+    // prepare-pi-agent.mjs) — nothing to install, fall back to system pi.
+    if !src.join("pi").exists() {
+        return;
+    }
+    let version = std::fs::read_to_string(src.join("VERSION")).unwrap_or_default();
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let bin = std::path::Path::new(&home).join(".fez").join("bin");
+    let marker = bin.join(".pi-agent-version");
+    if !version.is_empty() && std::fs::read_to_string(&marker).unwrap_or_default() == version {
+        return; // already current
+    }
+    if std::fs::create_dir_all(&bin).is_err() {
+        return;
+    }
+    let copy_exec = |name: &str| {
+        if std::fs::copy(src.join(name), bin.join(name)).is_ok() {
+            let _ = std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755));
+        }
+    };
+    copy_exec("pi");
+    copy_exec("pi-acp");
+    // Runtime side-assets pi resolves next to its binary (theme is required
+    // even in --mode rpc; the wasm backs image tools).
+    let theme_dst = bin.join("theme");
+    let _ = std::fs::create_dir_all(&theme_dst);
+    if let Ok(entries) = std::fs::read_dir(src.join("theme")) {
+        for e in entries.flatten() {
+            let _ = std::fs::copy(e.path(), theme_dst.join(e.file_name()));
+        }
+    }
+    let _ = std::fs::copy(src.join("photon_rs_bg.wasm"), bin.join("photon_rs_bg.wasm"));
+    let _ = std::fs::write(&marker, &version);
+    eprintln!("✓ installed bundled agent {version} → {}", bin.display());
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            install_bundled_agent(app);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

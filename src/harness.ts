@@ -761,6 +761,19 @@ export async function invokeWithRetry(
 }
 
 let builtinsRegistered = false;
+/**
+ * Prefer a fez-OWNED binary in ~/.fez/bin over the system PATH. This is
+ * where fez already keeps its bundled executables (llama-server, the git
+ * credential helper) and where the bundled agent lands: a fresh machine
+ * with no `pi`/`pi-acp` on PATH still runs the Built-in agent because fez
+ * ships its own. Falls back to the bare name (PATH) when nothing's bundled,
+ * so a dev with pi installed globally is unaffected.
+ */
+function fezBin(name: string): string {
+  const owned = path.join(os.homedir(), ".fez", "bin", name);
+  return fs.existsSync(owned) ? owned : name;
+}
+
 export function registerBuiltinHarnesses(): void {
   // Idempotent — the wizard, doctor, TUI, and services may each call it.
   if (builtinsRegistered) return;
@@ -770,7 +783,21 @@ export function registerBuiltinHarnesses(): void {
   // subscription OAuth, API keys, or fully local models; its config is its
   // own (~/.pi/agent), so the environment passes through untouched.
   registerHarness(acpHarness({ id: "claude-code", aliases: ["claude"], command: "claude-agent-acp", env: isolatedClaudeEnv }));
-  registerHarness(acpHarness({ id: "pi", aliases: [], command: "pi-acp", env: () => process.env }));
+  // pi speaks ACP via the pi-acp bridge, which shells to `pi --mode rpc`.
+  // Both prefer fez's bundled copies so the Built-in agent works with zero
+  // install; PI_ACP_PI_COMMAND points the bundled bridge at the bundled pi
+  // (else it would look for `pi` on a PATH that may not have one).
+  registerHarness(
+    acpHarness({
+      id: "pi",
+      aliases: [],
+      command: fezBin("pi-acp"),
+      env: () => {
+        const ownedPi = path.join(os.homedir(), ".fez", "bin", "pi");
+        return fs.existsSync(ownedPi) ? { ...process.env, PI_ACP_PI_COMMAND: ownedPi } : process.env;
+      },
+    })
+  );
 }
 
 export function findHarness(name: string): HarnessAdapter | undefined {
