@@ -488,10 +488,14 @@ async function main() {
   }
 
   async function handleChannelMentions(event: { pubkey: string; content: string; tags: string[][] }, channelId: string): Promise<void> {
-    // The sentinel's own posts (e.g. the spawn watchdog's "failed to start"
-    // note) name agents but must never summon them — otherwise the status
-    // message re-triggers the very spawn it reported dead.
-    if (event.pubkey === myPubkey) return;
+    // NOTE: do NOT drop owner-authored messages here. The sentinel runs AS
+    // the owner, so myPubkey is ALSO the key the human owner posts mentions
+    // with — dropping them silently breaks every owner-initiated summon
+    // (which is most of them). The sentinel's own status posts (the spawn
+    // watchdog's "failed to start") are kept safe by carrying the persona
+    // name in `backticks`, not an @mention, so they never match below. The
+    // self-summon guard (an agent's own key, per-persona) is the real
+    // loop-breaker, applied inside the loop.
     const work = await workContextOf(event, channelId);
     for (const match of event.content.matchAll(/@([\w-]+)/g)) {
       const persona = match[1].toLowerCase();
