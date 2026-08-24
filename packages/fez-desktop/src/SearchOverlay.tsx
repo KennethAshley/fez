@@ -102,29 +102,39 @@ export default function SearchOverlay({
   return (
     <div className="overlay" onMouseDown={onClose}>
       <div className="search-box" onMouseDown={(e) => e.stopPropagation()}>
-        <input
-          ref={inputRef}
-          className="search-input"
-          value={query}
-          placeholder="search messages and docs across your channels…"
-          spellCheck={false}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") onClose();
-            else if (e.key === "ArrowDown" && rows?.length) {
-              e.preventDefault();
-              setSelected((i) => (i + 1) % rows.length);
-            } else if (e.key === "ArrowUp" && rows?.length) {
-              e.preventDefault();
-              setSelected((i) => (i - 1 + rows.length) % rows.length);
-            } else if (e.key === "Enter" && rows?.[selected]) {
-              jump(rows[selected]);
-            }
-          }}
-        />
+        <div className="search-head">
+          <svg className="search-glyph" width="15" height="15" viewBox="0 0 15 15" aria-hidden>
+            <circle cx="6.5" cy="6.5" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <line x1="10.2" y1="10.2" x2="13.5" y2="13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <input
+            ref={inputRef}
+            className="search-input"
+            value={query}
+            placeholder="search messages and docs across your channels…"
+            spellCheck={false}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") onClose();
+              else if (e.key === "ArrowDown" && rows?.length) {
+                e.preventDefault();
+                setSelected((i) => (i + 1) % rows.length);
+              } else if (e.key === "ArrowUp" && rows?.length) {
+                e.preventDefault();
+                setSelected((i) => (i - 1 + rows.length) % rows.length);
+              } else if (e.key === "Enter" && rows?.[selected]) {
+                jump(rows[selected]);
+              }
+            }}
+          />
+          {query.length > 0 && (
+            <button className="search-clear" onClick={() => setQuery("")} title="clear">
+              ×
+            </button>
+          )}
+        </div>
         <div className="search-results" ref={listRef}>
-          {query.trim().length < 2 && <div className="pane-empty">type to search — enter jumps to the channel</div>}
-          {rows?.length === 0 && <div className="pane-empty">nothing matching "{query.trim()}"</div>}
+          {rows?.length === 0 && <div className="search-empty">nothing matching "{query.trim()}"</div>}
           {rows?.map((row, index) => (
             <button
               key={row.id}
@@ -133,12 +143,21 @@ export default function SearchOverlay({
               onClick={() => jump(row)}
             >
               <span className="search-meta">
-                {row.kind === KIND_DOC ? "≡" : "#"} {row.channelName} · {row.author} ·{" "}
+                <span className="search-chan">
+                  {row.kind === KIND_DOC ? "≡" : "#"} {row.channelName}
+                </span>
+                <span className="search-sep">·</span> {row.author} <span className="search-sep">·</span>{" "}
                 {new Date(row.ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}
               </span>
               <span className="search-snippet">{row.snippet}</span>
             </button>
           ))}
+        </div>
+        <div className="search-foot">
+          <span>{rows ? `${rows.length} ${rows.length === 1 ? "hit" : "hits"}` : "messages + docs, every joined channel"}</span>
+          <span className="search-keys">
+            <kbd>↑↓</kbd> move <kbd>↵</kbd> jump <kbd>esc</kbd> close
+          </span>
         </div>
       </div>
     </div>
