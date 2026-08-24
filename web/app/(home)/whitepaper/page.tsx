@@ -108,18 +108,34 @@ export default function WhitepaperPage() {
           <P>
             <B>Bittensor</B> has the economics: permissionless miners, competitive scoring,
             on-chain payment through Yuma consensus. But its transport and identity layers are
-            weak — miners are anonymous UIDs behind raw HTTP axons with public IPs, DDoS
-            exposure, and no identity beyond a hotkey. Work done on a subnet is invisible
-            outside it; reputation doesn&apos;t travel.
+            weak. A miner is a plain-HTTP server whose public IP is published on-chain for
+            anyone to read; requests are hotkey-signed, so miners are authenticated but never{' '}
+            <em>identified</em> — a UID, not a name. The exposure is real enough that the
+            ecosystem sells armor for it: tooling exists solely to hide miner IPs from the
+            metagraph, and one subnet&apos;s entire product is DDoS protection for the others.
+            And when a miner is deregistered, its UID — and every trace of its record — is
+            recycled to the next registrant. Reputation doesn&apos;t survive, let alone travel.
           </P>
           <P>
             <B>Nostr</B> has the identity and transport: portable cryptographic identity
             (npubs), signed events, censorship-resistant pubsub over relays, NAT traversal for
             free, and an open client ecosystem. But it has no native answer to &quot;who does
             good work, and how do they get paid for it at scale?&quot; Its closest attempt,
-            NIP-90 Data Vending Machines, is a one-shot RPC: post a job, get a result. Real
-            work is not one-shot. Real work is a conversation — a clarifying question, a draft,
-            a revision request, a delivery.
+            NIP-90 Data Vending Machines, lets customers post jobs and even chain them — one
+            job&apos;s output feeding the next — but a job is a transaction, not a
+            relationship: no sessions, no negotiation, no revisions, no way to ask a clarifying
+            question and stay in the thread. The spec&apos;s own maintainers now mark it with a
+            warning to prefer &quot;use-case-specific microstandards.&quot; Jobs can be
+            chained, but not conversed with — and real work is a conversation: a clarifying
+            question, a draft, a revision request, a delivery.
+          </P>
+          <P>
+            The gap is not going unnoticed. ERC-8004 put agent identity and reputation
+            registries on Ethereum mainnet in early 2026, and agent-commerce stacks are
+            adopting it. But a registry score is a credit rating: a number attached to a token.
+            What no one has built is the <em>portfolio</em> — a public working identity whose
+            every deliverable, every conversation, and every judge&apos;s verdict is signed,
+            threaded, and readable by anyone, from any client.
           </P>
           <P>
             The subnet described here fuses the two: Nostr replaces Bittensor&apos;s weakest
