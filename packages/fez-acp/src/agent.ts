@@ -227,6 +227,8 @@ async function main() {
   const baseLine = process.env.FEZ_AGENT_BASE_BRANCH?.trim() || undefined;
   /** What the 47000 announces — set once the checkout exists (zsh-prompt truth: the branch you can see is the branch it is on). */
   let announcedWork: { repo: string; branch: string } | undefined;
+  /** Set when a repo: was declared but no provider claimed it — the agent runs WITHOUT a checkout and discloses the gap (see the prompt's "No repository" line). */
+  let repoUnavailable: string | undefined;
 
   if (repoName) {
     // Loaded here rather than at first publish because the checkout is
@@ -249,10 +251,6 @@ async function main() {
       ? persona.extra.scope.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean)
       : undefined;
     const checkout = path.join(os.homedir(), ".fez", "agents", "repos", personaId);
-    // Failure is FATAL on purpose. An agent told to work on a repo that
-    // silently got an empty scratch directory instead would run a full
-    // turn, touch nothing that matters, and report success — the most
-    // expensive way possible to do nothing.
     const ws = await resolveWorkspace({
       repo: repoName,
       branch,
@@ -264,14 +262,25 @@ async function main() {
       log: (line) => console.log(`   ⑂ ${line}`),
     });
     if (!ws) {
-      throw new Error(
-        `persona "${personaId}" needs repo "${repoName}" but no workspace provider claimed it. ` +
-          `Install one (\`fez install @fezchat/git\`) or remove \`repo:\` from the persona.`
+      // Degrade, don't die. A missing workspace provider used to be FATAL —
+      // the worry being an agent that silently works an empty scratch dir
+      // and reports success. But throwing turned a missing/uninstalled
+      // extension into a crash loop (the researcher flood). The right answer
+      // is the skills answer: keep running, WITHOUT a checkout, and DISCLOSE
+      // it (the prompt's "No repository" line) so the agent says it can't
+      // touch files instead of faking it. workDir stays the default folder;
+      // announcedWork stays unset, so nothing claims a branch it doesn't have.
+      repoUnavailable = repoName;
+      console.warn(
+        `⚠️  persona "${personaId}" declares repo "${repoName}" but no workspace provider claimed it — ` +
+          `starting WITHOUT a checkout. Install one (\`fez install @fezchat/git\`) or remove \`repo:\`. ` +
+          `The agent will disclose that it has no repo access.`
       );
+    } else {
+      workDir = ws.dir;
+      announcedWork = { repo: repoName, branch: ws.branch };
+      console.log(`   ⑂ ${repoName} @ ${ws.branch}${ws.empty ? " (new repo)" : ""}${baseLine ? ` (line ${baseLine})` : ""} → ${ws.dir}`);
     }
-    workDir = ws.dir;
-    announcedWork = { repo: repoName, branch: ws.branch };
-    console.log(`   ⑂ ${repoName} @ ${ws.branch}${ws.empty ? " (new repo)" : ""}${baseLine ? ` (line ${baseLine})` : ""} → ${ws.dir}`);
   }
   fs.mkdirSync(workDir, { recursive: true });
 
@@ -1264,6 +1273,7 @@ async function main() {
             ...(memorySection ? [memorySection] : []),
             `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
             `- Artifacts: to ship rich output (a web page, a data table, a report), put it in a fenced block starting \`\`\`artifact:html title="My page" (types: html, markdown, table = JSON array of objects, image = data: URI) — capable clients render it inline; keep it under ~30KB. Plain prose never needs this.`,
+            `- Live tools: for a UI that reads and KEEPS reading relay data (a board, a dashboard, a tally), use \`\`\`artifact:live — body-level HTML with a script that calls window.fez.query(q) (Promise of rows) or window.fez.subscribe(q, cb) (re-fires on change, returns an unsubscribe). q is the fez query language, e.g. "open approvals", "pages this week", "open tasks". It's READ-ONLY and NO network is allowed — data comes only through window.fez. Never invent data: an empty result means show "nothing yet", not a made-up row.`,
             `- Failure handling: if an agent you delegated to reports it couldn't finish, don't wait or re-ask identically — retry once with clearer instructions, do the piece yourself, or report the blocker up to whoever asked you. A dead hop must never silently end the chain.`,
             `- Callbacks: when you FINISH work that another agent or person handed you, @mention them in the message that reports the result, deliverable, or blocker — a completed handoff that never calls back stalls the whole chain. Completed work only: never @ to acknowledge, accept, or thank.`,
             `- Proposing teammates: if a task keeps needing a specialist that doesn't exist, you may propose one: run the shell command fez persona draft <name> --description "<what it's for>" --prompt "<system prompt>". The owner reviews and approves; NEVER claim the new agent exists until it answers a mention.`,
@@ -1298,6 +1308,11 @@ async function main() {
               : [
                   `- Capability honesty: if the task needs a tool or data source you don't have access to, say so plainly instead of improvising the result.`,
                 ]),
+            ...(repoUnavailable
+              ? [
+                  `- No repository: your persona declares repo "${repoUnavailable}", but no workspace provider is installed here — you have NO checkout and NO files to edit. If the task needs the repo, say plainly that the repo isn't available in this session and stop; never pretend to read, edit, or commit files.`,
+                ]
+              : []),
             ...(memorySection
               ? [
                   `- Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" (identity/rules/goals — a rewrite, not an append), fez mem set mem/<topic> "<note>" for individual facts, fez mem get <slug> / fez mem list to recall.`,
@@ -1358,12 +1373,18 @@ async function main() {
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
         await relay.publish(replyEvent);
+        // Tag the artifact with the conversation's thread root, so a
+        // client can scope it to the thread that built it (triggerRoot in
+        // an existing thread; the message we're replying to when a
+        // top-level mention starts one). Without this a tool leaks into
+        // every thread in the channel.
+        const artifactRoot = triggerRoot ?? event.id;
         for (const artifact of artifacts) {
           await relay
             .publish(
               client.signEvent({
                 kind: KIND_ARTIFACT,
-                tags: [["h", channelId], ["type", artifact.type]],
+                tags: [["h", channelId], ["type", artifact.type], ["e", artifactRoot, "", "root"]],
                 content: JSON.stringify(artifact),
               })
             )
@@ -1775,7 +1796,7 @@ main().catch(async (err) => {
               client.signEvent({
                 kind: KIND_CHANNEL_MESSAGE,
                 tags: [["h", channelId]],
-                content: `⚠️ @${personaId} failed to start: ${reason}`,
+                content: `⚠️ \`${personaId}\` failed to start: ${reason}`,
               })
             );
           }
