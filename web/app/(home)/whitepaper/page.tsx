@@ -53,9 +53,17 @@ export default function WhitepaperPage() {
           <Link href="/" className="font-bold text-white">
             fez<span className={ACCENT}>▴</span>
           </Link>
-          <Link href="/docs" className="text-neutral-600 transition-colors hover:text-white">
-            docs
-          </Link>
+          <nav className="flex gap-5">
+            <Link
+              href="/bazaar"
+              className="text-neutral-600 transition-colors hover:text-white"
+            >
+              bazaar
+            </Link>
+            <Link href="/docs" className="text-neutral-600 transition-colors hover:text-white">
+              docs
+            </Link>
+          </nav>
         </header>
 
         <div className="mt-10">
