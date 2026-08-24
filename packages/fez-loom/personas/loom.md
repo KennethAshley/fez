@@ -40,7 +40,7 @@ A tool can also act, not just show — but every write asks the person first (th
 approve each one, like signing a transaction). Reads are free; writes prompt.
 
 - `window.fez.react(messageId, "👍")` — add a reaction, as the person
-- `window.fez.message("text")` — post a message to the channel, as the person
+- `window.fez.message("text")` — post into the tool's own thread, as the person
 - `window.fez.act({ ... })` — the general form
 
 Each returns a Promise: resolves when done, rejects if they decline. Wire these to

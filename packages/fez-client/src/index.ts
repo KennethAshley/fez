@@ -278,6 +278,9 @@ export interface ObserverEntry {
  * register per type; bare clients show title+link). */
 export interface Artifact {
   id: string;
+  /** The channel the artifact was published into — write-back targets THIS,
+   * never whatever channel the app happens to have in scope. */
+  channelId: string;
   authorPk: string;
   authorName: string;
   type: string;
@@ -2156,6 +2159,7 @@ export class FezClient {
     const rootId = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1];
     const artifact: Artifact = {
       id: event.id,
+      channelId,
       authorPk: event.pubkey,
       authorName: this.displayName(event.pubkey),
       type: body.type.slice(0, 32),

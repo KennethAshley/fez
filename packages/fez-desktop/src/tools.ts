@@ -17,6 +17,11 @@ export interface KeptTool {
   type: string;
   content: string;
   ts: number;
+  /** Home channel/thread, so a kept tool's write-back still targets where
+   * it was born. Absent on tools kept before this field existed — those
+   * fail closed on writes (reads are unaffected). */
+  channelId?: string;
+  rootId?: string;
 }
 
 const KEY = "fez-tools";
@@ -49,6 +54,8 @@ export function keepTool(artifact: Artifact): void {
     type: artifact.type,
     content: artifact.content,
     ts: Math.floor(Date.now() / 1000),
+    channelId: artifact.channelId,
+    rootId: artifact.rootId,
   };
   write([tool, ...keptTools()]);
 }
@@ -61,11 +68,13 @@ export function unkeepTool(id: string): void {
 export function toolArtifact(tool: KeptTool): Artifact {
   return {
     id: tool.id,
+    channelId: tool.channelId ?? "",
     authorPk: "",
     authorName: "kept",
     type: tool.type,
     title: tool.title,
     content: tool.content,
     ts: tool.ts,
+    rootId: tool.rootId,
   };
 }

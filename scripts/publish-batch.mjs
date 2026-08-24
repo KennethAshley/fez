@@ -52,6 +52,7 @@ const EXTENSIONS = [
   "packages/fez-chutes",
   "packages/fez-hippius",
   "packages/fez-score-studio",
+  "packages/fez-loom",
   "packages/fez-workflows",
   "packages/fez-memory",
 ];

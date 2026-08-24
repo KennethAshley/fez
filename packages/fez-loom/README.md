@@ -27,12 +27,19 @@ network egress** (CSP `connect-src 'none'`). The only data it can touch is what 
 **bounded, validated query** returns. It can render anything and read what you
 let it; it can do nothing else.
 
-Write-back — a tool that publishes *as you* — is deliberately not here. That needs
-a separate, consented, scoped capability (the wallet-approves-a-bounded-transaction
-shape). This is the read-only half.
+Write-back — a tool that publishes *as you* — is the wallet shape: the tool can
+only **propose** a bounded, allowlisted action, and the host describes it to you
+and publishes only on your explicit per-write consent. It never holds a key.
+
+- `window.fez.react(messageId, emoji)` — add a reaction, as you
+- `window.fez.message(text)` — post into the tool's own thread, as you
+
+Writes are bound to the channel (and thread) the tool was published into —
+never to whichever channel you happen to be looking at. Reads are free;
+every write asks.
 
 ## Status
 
-Experimental. v0 ships the `@loom` builder persona; the read bridge (`artifact:live`)
-lives in fez core. Next: a dedicated tool pane + thread handle, and a "keep this"
+Experimental. The `@loom` builder persona, the read bridge (`artifact:live` in
+fez core), the tool pane, and consented write-back all ship. Next: a "keep this"
 gesture that crystallizes a tool into its own extension.

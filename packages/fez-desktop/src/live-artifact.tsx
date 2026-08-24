@@ -47,24 +47,29 @@ export function configureLiveConsent(fn: (description: string) => Promise<boolea
   liveConsent = fn;
 }
 
-/** Validate + describe + (on consent) perform a proposed write. Read-only
- * data never comes near this path. */
-async function performAction(raw: unknown): Promise<{ ok?: true; error?: string }> {
+/** Validate + describe + (on consent) perform a proposed write. Writes are
+ * bound to the ARTIFACT's channel (and its thread, when it has one) — never
+ * to whatever channel the app currently has in scope, which can differ when
+ * a tool pane stays open across a channel switch. Read-only data never
+ * comes near this path. */
+async function performAction(raw: unknown, artifact: Artifact): Promise<{ ok?: true; error?: string }> {
   if (!liveClient) return { error: "the fez bridge isn't ready" };
   if (!liveConsent) return { error: "writing isn't available here" };
-  const channelId = liveClient.state.scope?.channelId;
-  if (!channelId) return { error: "no channel in scope to act in" };
+  const { channelId, rootId } = artifact;
+  if (!channelId) return { error: "this tool has no home channel to act in" };
+  const where = `#${liveClient.state.workspace.channels.get(channelId)?.name ?? channelId.slice(0, 8)}`;
   const a = raw as Partial<ToolAction> & { type?: string };
   if (a?.type === "react" && typeof a.target === "string" && typeof a.emoji === "string") {
     const emoji = a.emoji.slice(0, 8);
-    if (!(await liveConsent(`React ${emoji} — as you`))) return { error: "declined" };
+    if (!(await liveConsent(`React ${emoji} in ${where} — as you`))) return { error: "declined" };
     await liveClient.toggleReaction(channelId, a.target, emoji);
     return { ok: true };
   }
   if (a?.type === "message" && typeof a.text === "string" && a.text.trim()) {
     const text = a.text.slice(0, 2000);
-    if (!(await liveConsent(`Post this to the channel — as you:\n\n"${text}"`))) return { error: "declined" };
-    await liveClient.sendChannelMessage(text, { channelId });
+    const target = rootId ? `the tool's thread in ${where}` : where;
+    if (!(await liveConsent(`Post to ${target} — as you:\n\n"${text}"`))) return { error: "declined" };
+    await liveClient.sendChannelMessage(text, { channelId, threadRootId: rootId });
     return { ok: true };
   }
   return { error: "unsupported action" };
@@ -131,7 +136,7 @@ export function LiveArtifact({ artifact }: { artifact: Artifact }): React.ReactN
       if (m.type === "query") {
         void run(m.q ?? "").then((r) => post({ type: "result", id: m.id, ...r }));
       } else if (m.type === "act") {
-        void performAction(m.action).then((r) => post({ type: "result", id: m.id, ...r }));
+        void performAction(m.action, artifact).then((r) => post({ type: "result", id: m.id, ...r }));
       } else if (m.type === "subscribe") {
         const id = m.id;
         const qs = m.q ?? "";

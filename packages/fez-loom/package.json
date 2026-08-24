@@ -2,7 +2,7 @@
   "name": "@fezchat/loom",
   "version": "0.1.0",
   "private": true,
-  "description": "Loom for fez — describe a tool over your channel data and @loom weaves a live, streaming UI that reads the relay (read-only, sandboxed). The good ones crystallize into extensions.",
+  "description": "Loom for fez — describe a tool over your channel data and @loom weaves a live, streaming UI (sandboxed; reads the relay freely, every write asks you first). The good ones crystallize into extensions.",
   "type": "module",
   "fez": {
     "type": "extension",
