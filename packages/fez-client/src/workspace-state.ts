@@ -61,6 +61,14 @@ export interface Channel {
    * Strings only, and never a secret: this rides in a public event.
    */
   meta?: Record<string, string>;
+  /**
+   * Owner-signed archive flag. A channel is created but never destroyed —
+   * its events are real history — so "remove it" is the owner republishing
+   * the same 47101 with `archived: true`. Latest-wins does the rest, and
+   * every client hides an archived channel. The owner can unarchive by
+   * republishing with it false, so nothing is actually lost.
+   */
+  archived?: boolean;
 }
 
 export interface Workspace {
@@ -256,9 +264,11 @@ export class WorkspaceState {
       let name = channelId;
       let source: string | undefined;
       let meta: Record<string, string> | undefined;
+      let archived: boolean | undefined;
       try {
-        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown; meta?: unknown };
+        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown; meta?: unknown; archived?: unknown };
         if (typeof content.name === "string" && content.name) name = content.name;
+        if (content.archived === true) archived = true;
         // Constrained before it reaches a UI: this becomes a section
         // heading in the rail, and a "source" of a thousand newlines
         // would be a channel deciding how the sidebar looks.
@@ -277,7 +287,7 @@ export class WorkspaceState {
       const existing = ws.channels.get(channelId);
       // A later owner event renames; an older one replayed must not undo it.
       if (existing && event.created_at < existing.createdAt) return false;
-      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source, meta });
+      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source, meta, archived });
       return true;
     }
 

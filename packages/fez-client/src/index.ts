@@ -1,4 +1,18 @@
 export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
+import type { Query } from "./query-lang.js";
+
+/** One row of a `runQuery` result — a task, approval, page, mention or run,
+ * normalized so any surface (doc-block, live tool, exported extension)
+ * renders the same shape. */
+export interface QueryRow {
+  id: string;
+  title: string;
+  group: string;
+  done?: boolean;
+  who?: string;
+  ts: number;
+  meta?: string;
+}
 import { WorkspaceState, cleanSource, setStatePersistence, type Role, type StatePersistence } from "./workspace-state.js";
 export * from "./workspace-state.js";
 
@@ -271,6 +285,9 @@ export interface Artifact {
   url?: string;
   content?: string;
   ts: number;
+  /** The thread root this artifact belongs to (root `e` tag), when it was
+   * produced inside a thread — lets a client scope it to that thread. */
+  rootId?: string;
 }
 
 export interface DmMessage {
@@ -523,6 +540,100 @@ export class FezClient {
   /** Agents we know of (kind-47000 metadata authors): pk → persona name. */
   agents(): Map<string, string> {
     return new Map(this.names);
+  }
+
+  /**
+   * Run a parsed query against the relay — the one runner behind every
+   * surface that answers a `parseQuery` sentence: the ```fez:query``` doc
+   * block, loom's live-tool read bridge, and exported tool extensions.
+   * Read-only; nothing is created. Each source is a couple of filters.
+   */
+  async runQuery(query: Query): Promise<QueryRow[]> {
+    const since = query.sinceDays ? Math.floor(Date.now() / 1000) - query.sinceDays * 86400 : undefined;
+    const applyLimits = (rows: QueryRow[]): QueryRow[] => rows.sort((a, b) => b.ts - a.ts).slice(0, query.limit);
+
+    if (query.source === "tasks") {
+      const pages = [...this.wikiDocs().values()];
+      const channelDocs = [...this.docsByChannel().entries()].map(([channelId, info]) => ({
+        channelId,
+        info,
+        ref: this.channelRef(channelId),
+      }));
+      const states = new Map<string, { done: boolean; byPk: string }>();
+      for (const page of pages) {
+        for (const [key, state] of await this.docTasks({ slug: page.slug })) states.set(key, state);
+      }
+      for (const doc of channelDocs) {
+        for (const [key, state] of await this.docTasks({ channelId: doc.channelId })) states.set(key, state);
+      }
+      const rows: QueryRow[] = [];
+      const collect = (content: string, where: string, ts: number) => {
+        for (const line of content.split("\n")) {
+          const match = /^\s*[-*+]\s+\[([ xX])\]\s+(.+)$/.exec(line);
+          if (!match) continue;
+          const text = match[2].trim();
+          const state = states.get(taskKey(text));
+          const done = state?.done ?? match[1].toLowerCase() === "x";
+          if (query.open === true && done) continue;
+          if (query.open === false && !done) continue;
+          rows.push({ id: `${where}:${text}`, title: text, group: where, done, who: state ? this.displayName(state.byPk) : undefined, ts });
+        }
+      };
+      for (const page of pages) collect(page.latestContent, page.title, page.latestTs * 1000);
+      for (const doc of channelDocs) collect(doc.info.latestContent, `#${doc.ref!.name}`, doc.info.latestTs * 1000);
+      return applyLimits(rows);
+    }
+
+    if (query.source === "approvals" || query.source === "mentions") {
+      const channelIds = [...this.state.workspace.channels.values()].map((c) => c.id);
+      const events = await this.wire.query([{ kinds: [47103], "#h": channelIds, limit: 500, ...(since ? { since } : {}) }]);
+      const wanted =
+        query.source === "approvals"
+          ? events.filter((e) => e.content.startsWith("⛔ approval needed:") || e.content.startsWith("❓ choose:"))
+          : events.filter((e) => e.tags.some((t) => t[0] === "p" && t[1] === this.pubkey));
+      const answered = new Set<string>();
+      if (wanted.length > 0 && query.source === "approvals") {
+        for (const reaction of await this.wire.query([{ kinds: [7], "#e": wanted.map((e) => e.id) }])) {
+          const target = reaction.tags.find((t) => t[0] === "e")?.[1];
+          if (target) answered.add(target);
+        }
+      }
+      const rows = wanted
+        .filter((e) => (query.open === true ? !answered.has(e.id) : query.open === false ? answered.has(e.id) : true))
+        .filter((e) => !query.who || this.displayName(e.pubkey).toLowerCase() === query.who)
+        .map((event) => ({
+          id: event.id,
+          title: event.content.split("\n")[0].replace(/^(⛔ approval needed:|❓ choose:)\s*/, ""),
+          group: this.channelRef(event.tags.find((t) => t[0] === "h")?.[1] ?? "")?.name ?? "",
+          who: this.displayName(event.pubkey),
+          ts: event.created_at * 1000,
+          meta: answered.has(event.id) ? "answered" : "waiting",
+        }));
+      return applyLimits(rows);
+    }
+
+    if (query.source === "pages") {
+      const rows = [...this.wikiDocs().values()]
+        .filter((page) => !since || page.latestTs >= since)
+        .map((page) => ({
+          id: page.slug,
+          title: page.title,
+          group: this.displayName(page.latestAuthor),
+          who: this.displayName(page.latestAuthor),
+          ts: page.latestTs * 1000,
+          meta: `${page.count} version${page.count === 1 ? "" : "s"}`,
+        }));
+      return applyLimits(rows);
+    }
+
+    if (query.source === "runs") {
+      const rows = [...this.workflowRuns().entries()]
+        .filter(([, run]) => !since || run.ts / 1000 >= since)
+        .map(([id, run]) => ({ id, title: run.workflow, group: run.status, ts: run.ts, meta: run.status.replace(/_/g, " ") }));
+      return applyLimits(rows);
+    }
+
+    throw new Error(`"${query.source}" isn't wired up yet — tasks, approvals, pages, mentions and runs are`);
   }
   private agentMeta = new Map<string, { about?: string; skills?: string[]; repo?: string; branch?: string }>();
   /** What an agent announced about itself (47000 about/skills/repo/branch) — undefined for humans. */
@@ -1112,6 +1223,38 @@ export class FezClient {
     this.resubscribe();
     this.emit("channelsChanged");
     return channelId;
+  }
+
+  /**
+   * Archive (or unarchive) a channel — the only "remove" a channel gets.
+   * A channel's events are real history, so we never delete it; the owner
+   * republishes its 47101 with `archived` set, latest-wins carries it, and
+   * every client hides an archived channel. Reversible: pass false to
+   * bring it back. Only the owner may sign a channel, so only the owner
+   * may archive one — the same rule as creating it.
+   */
+  async archiveChannel(channelId: string, archived = true): Promise<void> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can archive a channel");
+    const channel = this.state.workspace.channels.get(channelId);
+    if (!channel) throw new Error("no such channel");
+    // Republish the whole channel: latest-wins REPLACES it, so name,
+    // source and meta must ride along or they'd be dropped.
+    const content: Record<string, unknown> = { name: channel.name };
+    if (channel.source) content.source = channel.source;
+    if (channel.meta) content.meta = channel.meta;
+    if (archived) content.archived = true;
+    const event = await this.wire.publish({
+      kind: K.CHANNEL,
+      tags: [["d", channelId]],
+      content: JSON.stringify(content),
+      created_at: Math.max(Math.floor(Date.now() / 1000), channel.createdAt + 1),
+    });
+    this.state.absorb(event);
+    // Don't sit in a channel you just archived.
+    if (archived && this.state.scope?.channelId === channelId) this.state.scope = null;
+    this.state.save();
+    this.resubscribe();
+    this.emit("channelsChanged");
   }
 
   /**
@@ -2010,6 +2153,7 @@ export class FezClient {
     }
     if (!body.type || typeof body.type !== "string") return;
     this.seenArtifactIds.add(event.id);
+    const rootId = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1];
     const artifact: Artifact = {
       id: event.id,
       authorPk: event.pubkey,
@@ -2019,6 +2163,7 @@ export class FezClient {
       url: typeof body.url === "string" ? body.url : undefined,
       content: typeof body.content === "string" ? body.content : undefined,
       ts: event.created_at,
+      rootId,
     };
     const list = this.artifactsByChannel.get(channelId) ?? [];
     list.push(artifact);
