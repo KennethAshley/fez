@@ -101,6 +101,22 @@ export interface FezManifest {
  * fez remove claude-code
  * ```
  */
+/**
+ * The ONE name an npm package goes by everywhere: registry key, install
+ * dir under ~/.fez/packages/npm, extension filename. Store-scope packages
+ * lose the scope (`@fezchat/loom` → `loom`, matching the `fez install
+ * loom` shorthand); foreign scopes keep theirs as a prefix so `@acme/x`
+ * can't collide with `@fezchat/x`. Never contains a path separator.
+ * Exported so tests can pin it — three sites deriving this independently
+ * is exactly the bug that made scoped installs silently skip every hook.
+ */
+export function npmPackageName(source: string): string {
+  const pkg = source.replace(/^npm:/, "");
+  if (pkg.startsWith("@fezchat/")) return pkg.slice("@fezchat/".length);
+  if (pkg.startsWith("@")) return pkg.slice(1).replace("/", "-");
+  return pkg;
+}
+
 export class PackageManager {
   private packages: Map<string, FezPackage> = new Map();
 
@@ -244,8 +260,7 @@ export class PackageManager {
 
   private extractName(source: string): string {
     if (source.startsWith("npm:")) {
-      const pkg = source.replace("npm:", "");
-      return pkg.split("@").filter(Boolean).pop() || pkg;
+      return npmPackageName(source);
     }
     if (source.startsWith("git:")) {
       const url = source.replace("git:", "");
@@ -257,7 +272,7 @@ export class PackageManager {
   private async installNpm(source: string, version?: string): Promise<void> {
     const pkgName = source.replace("npm:", "");
     const _target = version ? `${pkgName}@${version}` : pkgName;
-    const installPath = path.join(NPM_DIR, pkgName.replace("@fezchat/", ""));
+    const installPath = path.join(NPM_DIR, npmPackageName(source));
 
     await fs.mkdir(installPath, { recursive: true });
 
@@ -636,7 +651,7 @@ export class PackageManager {
    */
   private getContentDir(pkg: FezPackage): string {
     if (pkg.source.startsWith("npm:")) {
-      return path.join(NPM_DIR, pkg.name, "node_modules", pkg.source.replace("npm:", ""));
+      return path.join(NPM_DIR, npmPackageName(pkg.source), "node_modules", pkg.source.replace("npm:", ""));
     }
     return path.join(GIT_DIR, pkg.name);
   }
