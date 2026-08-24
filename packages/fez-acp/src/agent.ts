@@ -37,6 +37,7 @@ import {
   type DmRumor,
   type HarnessSession,
   type HarnessUpdate,
+  type PromptImage,
   type TimeoutOptions,
   resolveRelays,
   parseRespondTo,
@@ -104,6 +105,52 @@ function extractArtifacts(reply: string): { text: string; artifacts: { type: str
   if (artifacts.length === 0) return { text: reply, artifacts };
   const text = reply.replace(ARTIFACT_FENCE, (_all, type, title) => `📦 ${title || type} (artifact)`).trim();
   return { text, artifacts };
+}
+
+/** Media hosts the agent will fetch images from. Only the fez media server —
+ * a message is UNTRUSTED text (anyone in the channel wrote it), so fetching
+ * an arbitrary URL from it would be an SSRF hole (e.g. a link-local metadata
+ * endpoint). Default matches the desktop uploader; FEZ_MEDIA_SERVER overrides. */
+function allowedMediaHosts(): Set<string> {
+  const hosts = new Set(["blossom.primal.net"]);
+  const env = process.env.FEZ_MEDIA_SERVER;
+  if (env) {
+    try {
+      hosts.add(new URL(env.includes("://") ? env : `https://${env}`).host);
+    } catch { /* malformed override — ignore */ }
+  }
+  return hosts;
+}
+
+/**
+ * Pull images a person attached to a message and hand them to the model as
+ * vision. fez uploads land as a Blossom share line ("📎 name (size) URL");
+ * we take the http(s) URLs, fetch ONLY from an allowed media host, keep only
+ * `image/*` responses under the size cap, and cap the count. Base64 + mime =
+ * an ACP image block. Best-effort: an unreachable or oversized image is
+ * simply skipped, never fatal to the turn.
+ */
+async function fetchMessageImages(content: string): Promise<PromptImage[]> {
+  const MAX_IMAGES = 3;
+  const MAX_BYTES = 8 * 1024 * 1024;
+  const hosts = allowedMediaHosts();
+  const urls = [...content.matchAll(/https?:\/\/[^\s)]+/g)].map((m) => m[0]);
+  const images: PromptImage[] = [];
+  for (const url of urls) {
+    if (images.length >= MAX_IMAGES) break;
+    try {
+      if (!hosts.has(new URL(url).host)) continue;
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      const mime = (res.headers.get("content-type") ?? "").split(";")[0].trim();
+      if (!res.ok || !mime.startsWith("image/")) continue;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length === 0 || buf.length > MAX_BYTES) continue;
+      images.push({ data: buf.toString("base64"), mimeType: mime });
+    } catch {
+      /* unreachable, timed out, or too big — skip it */
+    }
+  }
+  return images;
 }
 
 async function main() {
@@ -908,15 +955,20 @@ async function main() {
     buildPrompt: (fresh: boolean) => Promise<string>,
     onProgress: ((text: string) => void) | undefined,
     onUpdate: (update: HarnessUpdate) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    images?: PromptImage[]
   ): Promise<string> {
+    // Images ride WITH the text as an ACP content-block array; a model
+    // without vision just ignores them. Text-only stays a bare string.
+    const withImages = (text: string): string | { text: string; images: PromptImage[] } =>
+      images && images.length > 0 ? { text, images } : text;
     if (!harness!.openSession) {
       return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal);
     }
     let pooled = await getSession(scope);
     try {
       const instruction = withHandoff(scope, await buildPrompt(!pooled.primed), !pooled.primed);
-      const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
+      const reply = await pooled.session.prompt(withImages(instruction), onProgress, onUpdate, signal);
       // An empty reply is a FAILED turn, not a publishable one (seen
       // live: pi provider flaked, harness emitted only retry noise, the
       // scrubbed remainder was "" — and an empty message still breaks
@@ -934,7 +986,7 @@ async function main() {
       console.log(`↻ transient harness error — recycling session, replaying once: ${err instanceof Error ? err.message : err}`);
       pooled = await getSession(scope);
       const reply = await pooled.session.prompt(
-        withHandoff(scope, await buildPrompt(true), true),
+        withImages(withHandoff(scope, await buildPrompt(true), true)),
         onProgress,
         onUpdate,
         signal
@@ -1355,7 +1407,11 @@ async function main() {
 
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = makeOnUpdate();
-        const rawReply = await promptSession(`ch:${channelId}`, buildPrompt, publishDraft, onUpdate, turnController.signal);
+        // Any image the person attached to this message goes to the model as
+        // vision (on top of the text, which still names the attachment).
+        const turnImages = await fetchMessageImages(event.content);
+        if (turnImages.length > 0) console.log(`🖼  ${turnImages.length} image(s) attached to this turn`);
+        const rawReply = await promptSession(`ch:${channelId}`, buildPrompt, publishDraft, onUpdate, turnController.signal, turnImages);
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
@@ -1596,7 +1652,8 @@ async function main() {
       console.log(`✉️  DM from ${dm.senderPk.slice(0, 8)}… — invoking ${persona.harness}`);
       publishObserver({ type: "turn", status: "started" });
       const onUpdate = makeOnUpdate();
-      const reply = await promptSession(`dm:${convoKey}`, buildPrompt, undefined, onUpdate, turnController.signal);
+      const dmImages = await fetchMessageImages(dm.text);
+      const reply = await promptSession(`dm:${convoKey}`, buildPrompt, undefined, onUpdate, turnController.signal, dmImages);
       if (!reply.trim()) throw new Error("harness returned an empty reply");
 
       await sendDmReply(replyTargets, reply, dm.depth + 1);

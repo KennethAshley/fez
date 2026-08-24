@@ -90,12 +90,23 @@ export interface HarnessAdapter {
   ): Promise<HarnessSession>;
 }
 
+/** An image to hand the model this turn — base64 bytes + its mime type.
+ * Sent as an ACP `image` content block; models without vision ignore it. */
+export interface PromptImage {
+  data: string;
+  mimeType: string;
+}
+
+/** A turn's input: bare text (the common case) or text plus images. A string
+ * stays valid everywhere it was before — the object form is opt-in. */
+export type PromptInput = string | { text: string; images?: PromptImage[] };
+
 /** A live harness conversation. prompt() calls MUST be sequential (no overlap). */
 export interface HarnessSession {
   /** False once the underlying process died or close() was called. */
   readonly alive: boolean;
   prompt(
-    instruction: string,
+    instruction: PromptInput,
     onProgress?: (textSoFar: string) => void,
     onUpdate?: (update: HarnessUpdate) => void,
     signal?: AbortSignal
@@ -301,17 +312,29 @@ const DRAIN_BUDGET_MS = 30_000;
 
 async function drivePrompt(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ACP session updates are whatever the adapter sent; narrowing happens below.
-  session: { prompt(text: string): Promise<unknown>; nextUpdate(): Promise<any> },
+  session: { prompt(input: unknown): Promise<unknown>; nextUpdate(): Promise<any> },
   command: string,
   instruction: string,
   onProgress?: (textSoFar: string) => void,
   onUpdate?: (update: HarnessUpdate) => void,
   signal?: AbortSignal,
-  timeouts: TimeoutOptions = ONE_SHOT_TIMEOUTS
+  timeouts: TimeoutOptions = ONE_SHOT_TIMEOUTS,
+  images?: PromptImage[]
 ): Promise<string> {
+  // With images, send an ACP content-block array (text first, then each
+  // image block); the SDK passes it straight through. Without, a bare
+  // string is the exact prior behavior. A model with no vision just ignores
+  // the image blocks.
+  const promptInput =
+    images && images.length > 0
+      ? [
+          { type: "text", text: instruction },
+          ...images.map((img) => ({ type: "image", data: img.data, mimeType: img.mimeType })),
+        ]
+      : instruction;
   // Fire the prompt; drive completion through nextUpdate() rather than
   // awaiting prompt() directly so each update can reset the idle timer.
-  session.prompt(instruction).catch(() => {});
+  session.prompt(promptInput).catch(() => {});
 
   const abortPromise = new Promise<never>((_, reject) => {
     const onAbort = () => {
@@ -567,19 +590,21 @@ function openAcpSession(
           async prompt(instruction, onProgress, onUpdate, signal) {
             if (!alive) throw new Error(`${command} session is closed`);
             try {
+              const text = typeof instruction === "string" ? instruction : instruction.text;
+              const images = typeof instruction === "string" ? undefined : instruction.images;
               // Prefix once, on the first turn only: the session is
               // persistent, so re-sending it every turn would be paying
               // for the same tokens forever to say the same thing.
               const framed = pendingSystemPrompt
-                ? `${pendingSystemPrompt}\n\n---\n\n${instruction}`
-                : instruction;
+                ? `${pendingSystemPrompt}\n\n---\n\n${text}`
+                : text;
               pendingSystemPrompt = undefined;
               if (dirty) {
                 dirty = false;
                 await drainAbandonedTurn(session);
               }
               try {
-                return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts);
+                return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts, images);
               } catch (err) {
                 // Steer, timeout, deadline: the prompt is still running.
                 dirty = true;
