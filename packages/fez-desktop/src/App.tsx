@@ -25,6 +25,7 @@ import ChannelInfo from "./ChannelInfo";
 import SettingsPane from "./SettingsPane";
 import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
+import { shareArtifact } from "./share-artifact";
 import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
 import { keepTool, unkeepTool, keptTools, isKept, toolArtifact, type KeptTool } from "./tools";
 import { exportTool } from "./export-tool";
@@ -1851,7 +1852,12 @@ function ChannelView({
                 {(index === 0 || !sameDay(rows[index - 1].ts, row.ts)) && (
                   <div className="day-divider"><span>{dayLabel(row.ts)}</span></div>
                 )}
-                <ArtifactCard artifact={row.artifact} onAuthor={() => onProfile(row.artifact!.authorPk)} onOpen={onOpenTool} />
+                <ArtifactCard
+                  artifact={row.artifact}
+                  onAuthor={() => onProfile(row.artifact!.authorPk)}
+                  onOpen={onOpenTool}
+                  onShare={() => void shareArtifact(client, row.artifact!)}
+                />
               </div>
             );
           }
@@ -2243,7 +2249,7 @@ function CostsPane({ client, wire, onClose }: { client: FezClient; wire: Browser
  * registered viewer renders the payload; no viewer for the type (or a
  * bare payload) degrades to exactly what the TUI shows — title + link.
  */
-function ArtifactCard({ artifact, onAuthor, onOpen }: { artifact: Artifact; onAuthor: () => void; onOpen?: (artifact: Artifact) => void }) {
+function ArtifactCard({ artifact, onAuthor, onOpen, onShare }: { artifact: Artifact; onAuthor: () => void; onOpen?: (artifact: Artifact) => void; onShare?: () => void }) {
   // A live tool is interactive and wants room — it renders in the side
   // pane, not squeezed into the message column. The thread keeps only a
   // handle: the conversation that built it, plus a button to open it.
@@ -2268,6 +2274,11 @@ function ArtifactCard({ artifact, onAuthor, onOpen }: { artifact: Artifact; onAu
         {artifact.title && <span className="artifact-title">{artifact.title}</span>}
         <button className="author artifact-author" onClick={onAuthor}>{artifact.authorName}</button>
         <span className="time">{new Date(artifact.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+        {onShare && artifact.type !== "live" && (
+          <button className="artifact-share" onClick={onShare} title="share publicly at fez.chat — anyone with the link can view">
+            ⇗ share
+          </button>
+        )}
       </div>
       {body ?? (
         <div className="artifact-fallback">

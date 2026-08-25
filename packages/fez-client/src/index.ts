@@ -819,6 +819,17 @@ export class FezClient {
       : undefined;
   }
 
+  /**
+   * Fetch one signed event back by id, verbatim. The share path needs
+   * this: re-publication means republishing the SIGNATURE — fez.chat's
+   * shared-artifacts endpoint verifies schnorr, and a reconstructed
+   * event (new tag order, trimmed field) would 401 at the door.
+   */
+  async fetchEvent(id: string): Promise<WireEvent | undefined> {
+    const events = await this.wire.query([{ ids: [id], limit: 1 }]);
+    return events.find((e) => e.id === id);
+  }
+
   // ── Actions ─────────────────────────────────────────────────────────────
 
   /** Publish into the scoped channel. Thread tags follow Buzz's NIP-10 shape when replying. */

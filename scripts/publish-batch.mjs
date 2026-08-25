@@ -22,6 +22,7 @@ const ROOT = process.cwd();
 // the installable extensions + agents.
 const INFRA = [
   "packages/fez-client",
+  "packages/fez-artifact-viewers",
   "packages/fez-relay",
   "packages/fez-tui",
   "packages/fez-theme-fez",

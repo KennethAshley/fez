@@ -1,38 +1,23 @@
 import type { Artifact } from "@fezchat/client";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { registerArtifactViewer } from "@fezchat/artifact-viewers";
 import { LiveArtifact } from "./live-artifact";
 import { useArtifactDoc } from "./artifact-url";
 
 /**
- * The artifact viewer REGISTRY — fez is extensible first, so even the
- * built-ins enter through the same door an npm-shipped viewer package
- * will use: registerArtifactViewer(type, component). A GUI extension
- * (future ~/.fez/gui-extensions loader) claims new types — "canvas",
- * "map", "chart" — without touching core. Unknown types fall back to
- * title + link, which is also exactly what bare clients (TUI/CLI)
- * render: the wire never depends on any viewer existing.
+ * The registry and portable viewers (html, image, pdf, markdown, table)
+ * live in @fezchat/artifact-viewers — shared with the fez.chat share
+ * pages so a shared artifact renders with the same code the app uses.
+ * This module keeps only what needs the desktop: the artifact://-staged
+ * html frame (the webview's CSP would govern srcDoc scripts) and the
+ * live read-bridge viewer. Re-registering a type overrides the built-in.
  */
 
-export type ArtifactViewer = (props: { artifact: Artifact }) => React.ReactNode;
+export { registerArtifactViewer, viewerFor } from "@fezchat/artifact-viewers";
+export type { ArtifactViewer } from "@fezchat/artifact-viewers";
 
-const registry = new Map<string, ArtifactViewer>();
-
-export function registerArtifactViewer(type: string, viewer: ArtifactViewer): void {
-  registry.set(type, viewer);
-}
-
-export function viewerFor(type: string): ArtifactViewer | undefined {
-  return registry.get(type);
-}
-
-// ── built-ins ──────────────────────────────────────────────────────────
-
-/** Sandboxed page: scripts allowed, origin isolated (no cookies, no
- * parent access, no same-origin) — a website/canvas agent gets a real
- * runtime without touching the app. Inline content goes through the
- * artifact:// stage (useArtifactDoc) rather than srcDoc, so the app's
- * CSP doesn't govern the artifact's own scripts. */
+/** Sandboxed page: scripts allowed, origin isolated. Inline content goes
+ * through the artifact:// stage (useArtifactDoc) rather than srcDoc, so
+ * the app's CSP doesn't govern the artifact's own scripts. */
 function HtmlArtifact({ artifact }: { artifact: Artifact }) {
   const stagedUrl = useArtifactDoc(artifact.content ?? undefined);
   if (artifact.content) {
@@ -51,52 +36,9 @@ function HtmlArtifact({ artifact }: { artifact: Artifact }) {
   }
   return null;
 }
-registerArtifactViewer("html", HtmlArtifact);
+registerArtifactViewer("html", ({ artifact }) => <HtmlArtifact artifact={artifact as Artifact} />);
 
 /** Like "html", but wired to the read bridge: the sandboxed tool can ask
  * the relay read-only questions (window.fez.query/subscribe) and stream
  * the answers, with no network egress. See live-artifact.tsx. */
-registerArtifactViewer("live", ({ artifact }) => <LiveArtifact artifact={artifact} />);
-
-registerArtifactViewer("image", ({ artifact }) => {
-  const src = artifact.url ?? (artifact.content?.startsWith("data:") ? artifact.content : undefined);
-  return src ? <img className="md-img" src={src} alt={artifact.title ?? ""} /> : null;
-});
-
-registerArtifactViewer("pdf", ({ artifact }) => {
-  const src = artifact.url ?? (artifact.content?.startsWith("data:application/pdf") ? artifact.content : undefined);
-  return src ? <embed className="artifact-frame artifact-pdf" src={src} type="application/pdf" /> : null;
-});
-
-registerArtifactViewer("markdown", ({ artifact }) =>
-  artifact.content ? (
-    <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifact.content}</ReactMarkdown>
-    </div>
-  ) : null
-);
-
-/** JSON array of flat objects → table. The agent-friendliest data shape. */
-registerArtifactViewer("table", ({ artifact }) => {
-  try {
-    const rows = JSON.parse(artifact.content ?? "[]") as Record<string, unknown>[];
-    if (!Array.isArray(rows) || rows.length === 0) return null;
-    const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))].slice(0, 12);
-    return (
-      <div className="artifact-table-wrap">
-        <table className="artifact-table">
-          <thead>
-            <tr>{columns.map((col) => <th key={col}>{col}</th>)}</tr>
-          </thead>
-          <tbody>
-            {rows.slice(0, 100).map((row, index) => (
-              <tr key={index}>{columns.map((col) => <td key={col}>{String(row[col] ?? "")}</td>)}</tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  } catch {
-    return null;
-  }
-});
+registerArtifactViewer("live", ({ artifact }) => <LiveArtifact artifact={artifact as Artifact} />);
