@@ -66,13 +66,13 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
 
 ## Tier 3 — trust and polish
 
-- [ ] **Rename bundle identifier** `com.ken.fez-desktop` → `com.fezchat.*` (or product domain)
-  before any public build (`tauri.conf.json:5`; also `Cargo.toml` scaffold
-  `description = "A Tauri App"`, `authors = ["you"]`).
-- [ ] **Replace scaffold branding.** PARTIAL: page title → "fez", window title → "fez",
-  vite/tauri scaffold svgs deleted, Cargo.toml description/authors fixed. Still open: the
-  stock Tauri icons (`src-tauri/icons/*` — Dock/Finder face of the app, needs artwork) and
-  the `productName`/bundle-name decision (couples to the identifier rename).
+- [x] **Rename bundle identifier.** DONE: `com.fez.desktop`, and `productName` → "fez" (the
+  Dock/Finder label; the bundle is now fez.app). Landed before any public build, so no
+  keychain-ACL/TCC reset for real users.
+- [x] **Replace scaffold branding.** DONE: page/window titles → "fez", vite/tauri scaffold
+  svgs deleted, Cargo.toml description/authors fixed, and the stock Tauri icons replaced —
+  `scripts/make-icon.mjs` renders the site wordmark (white mono "fez" + ember ▴ on black)
+  to app-icon.png; the full set regenerates with `npx tauri icon app-icon.png`.
 - [x] **Find-and-replace damage in visible copy.** DONE: all "client.state.workspace" strings
   in ManagePane restored to "workspace".
 - [ ] **CSP + raw key exposure.** `"csp": null` (`tauri.conf.json:21-23`) while `get_identity`
