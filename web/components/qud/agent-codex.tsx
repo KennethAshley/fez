@@ -105,7 +105,7 @@ export function AgentCodex() {
             {i === selected ? (
               <AnimatedSprite sprite={SPRITES[a.id]} scale={4} />
             ) : (
-              <span>
+              <span className="block">
                 <span className="sprite-mono">
                   <PixelSprite sprite={SPRITES[a.id]} scale={4} mono="#5d564c" />
                 </span>

@@ -18,6 +18,25 @@ html > body[data-scroll-locked] {
 .sprite-anim {
   position: relative;
 }
+/* Every sprite render is a block box: an inline SVG carries baseline
+   space that a block one doesn't, so a hover that swaps between them
+   would change the parent's height and shove the whole row. */
+.sprite-anim svg,
+.sprite-mono svg,
+.sprite-lit svg {
+  display: block;
+}
+/* No text baselines anywhere inside a sprite box — an inline-block on a
+   line box carries descender space, and any child that has it while its
+   hover-twin doesn't makes the parent breathe by a few pixels. */
+.sprite-anim,
+.sprite-mono,
+.sprite-lit {
+  line-height: 0;
+}
+.sprite-hover .sprite-mono {
+  display: block;
+}
 .sprite-anim .spr-b {
   position: absolute;
   inset: 0;
