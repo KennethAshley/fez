@@ -35,3 +35,24 @@ export function relaySet(): string[] {
   const urls = relayRaw().split(",").map((u) => u.trim()).filter(Boolean);
   return urls.length ? urls : [DEFAULT_RELAY];
 }
+
+/**
+ * The ONE way to change the relay set. localStorage is this webview's
+ * fast cache; ~/.fez/settings.json (via the Rust bridge) is the custody
+ * the rest of the system reads — the sentinel watches it and re-aims
+ * live, the CLI and doctor resolve it. A GUI that wrote only its own
+ * cache left the sentinel faithfully guarding a workspace the user had
+ * moved out of.
+ */
+export function setRelays(urls: string | string[]): void {
+  const list = (Array.isArray(urls) ? urls : urls.split(","))
+    .map((u) => u.trim())
+    .filter(Boolean);
+  if (list.length === 0) return;
+  localStorage.setItem("fez-relay", list.join(","));
+  void import("@tauri-apps/api/core")
+    .then(({ invoke }) => invoke("write_relays", { relays: list }))
+    .catch(() => {
+      /* outside tauri (tests) the cache is all there is */
+    });
+}

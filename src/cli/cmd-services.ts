@@ -57,8 +57,15 @@ program
   .description("Run the always-on watcher: wakes sleeping agents on DMs/mentions, delivers desktop notifications — no TUI needed")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelays } = await import("../shared/settings.js");
-    process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
+    // An explicit -r (or an inherited FEZ_RELAY) is a PIN — bake it so
+    // the runtime and its children hold still. A bare `fez sentinel`
+    // must NOT export one: the runtime resolves settings itself, and a
+    // self-baked env read as a pin that disabled the settings watcher —
+    // the sentinel could never follow a relay change without a restart.
+    if (options.relay) {
+      const { resolveRelays } = await import("../shared/settings.js");
+      process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
+    }
     const { fileURLToPath, pathToFileURL } = await import("node:url");
     const { existsSync } = await import("node:fs");
     const candidates = [

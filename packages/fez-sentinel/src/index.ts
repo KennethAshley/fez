@@ -9,6 +9,7 @@ import {
   RelayConnection,
   getKey,
   resolveRelays,
+  watchRelaySet,
   DM_FUZZ_WINDOW_S,
   KIND_AGENT_METADATA,
   KIND_AGENT_ATTESTATION,
@@ -205,6 +206,22 @@ async function main() {
   process.on("SIGINT", () => { cleanup(); relay.disconnect(); console.log("\n🔴 sentinel stopped."); process.exit(0); });
   process.on("SIGTERM", () => { cleanup(); process.exit(0); });
   process.on("exit", cleanup);
+
+  // Follow the user, not the boot-time snapshot: when the relay set in
+  // settings.json changes (the GUI moving into a workspace, `fez relay
+  // add`), swap the live connections — "my sentinel is down" was a
+  // sentinel faithfully watching a relay the user had left.
+  watchRelaySet((next) => {
+    try {
+      relay.setRelays(next);
+      client.setRelays(next);
+      relayUrls.length = 0;
+      relayUrls.push(...next); // same array — spawn env strings read it live
+      console.log(`🔁 relay set changed → ${next.join(", ")}`);
+    } catch (err) {
+      console.error(`⚠️  relay set change refused: ${err instanceof Error ? err.message : err}`);
+    }
+  });
 
   console.log(`🛡  fez sentinel on ${relayUrls.join(", ")} (owner ${myPubkey.slice(0, 12)}…)`);
   console.log(`   herdr: ${(await herdrAlive()) ? "connected — agents spawn as tabs" : "absent — agents spawn as detached processes"}`);

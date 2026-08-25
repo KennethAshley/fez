@@ -6,7 +6,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
-import { DEFAULT_RELAY, PAIRING_RELAY } from "./relay";
+import { DEFAULT_RELAY, PAIRING_RELAY, setRelays } from "./relay";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -72,7 +72,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         });
         setRelayUrl(activeRelay);
       }
-      localStorage.setItem("fez-relay", activeRelay);
+      setRelays(activeRelay);
       localStorage.setItem("fez-name", name.trim()); // the welcome opener greets by name
       if (name.trim()) {
         // Best-effort: a profile that didn't publish is a display name to
@@ -105,7 +105,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
     const set = relayUrl.split(",").map((r) => r.trim()).filter(Boolean);
     if (!set.includes(relay)) set.unshift(relay);
     setRelayUrl(set.join(","));
-    localStorage.setItem("fez-relay", set.join(","));
+    setRelays(set);
     // Joined after the identity exists — you cannot be a member before
     // you are anybody.
     localStorage.setItem("fez-pending-invite", communityId);
@@ -176,7 +176,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
                 owner: getPublicKey(Uint8Array.from(hex.match(/.{2}/g)!.map((b) => parseInt(b, 16)))),
                 name: "your workspace",
               })
-                .then((url) => localStorage.setItem("fez-relay", url))
+                .then((url) => setRelays(url))
                 .catch(() => {});
               setStep("done");
             }}
@@ -198,7 +198,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
                 owner: getPublicKey(Uint8Array.from(hex.match(/.{2}/g)!.map((b) => parseInt(b, 16)))),
                 name: "your workspace",
               })
-                .then((url) => localStorage.setItem("fez-relay", url))
+                .then((url) => setRelays(url))
                 .catch(() => {});
               setStep("done");
             }}

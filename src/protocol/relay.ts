@@ -315,6 +315,20 @@ export class RelayConnection {
     void this.checkLiveness();
   }
 
+  /**
+   * Replace the whole set at runtime — the live-reload seam. Diffs
+   * against the current set so an unchanged relay keeps its sockets;
+   * an empty next set is refused (a service with no relay is deaf, and
+   * deaf-by-config-error must fail loudly, not quietly).
+   */
+  setRelays(urls: string[]): void {
+    const next = normalizeUrls(urls);
+    if (next.length === 0) throw new Error("refusing an empty relay set");
+    this.addRelays(next.filter((url) => !this.urls.includes(url)));
+    const doomed = this.urls.filter((url) => !next.includes(url));
+    if (doomed.length > 0) this.removeRelays(doomed);
+  }
+
   /** Drop relays at runtime. Removing the last one is refused. */
   removeRelays(urls: string[]): void {
     const doomed = normalizeUrls(urls).filter((url) => this.urls.includes(url));

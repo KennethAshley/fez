@@ -88,6 +88,11 @@ export class CapabilityClient {
     this.pubkey = getPublicKey(this.privateKey);
   }
 
+  /** Live-swap the relay set — delegates to the connection's diff. */
+  setRelays(urls: string[]): void {
+    this.relay.setRelays(urls);
+  }
+
   getPubkey(): string {
     return this.pubkey;
   }

@@ -1489,6 +1489,28 @@ fn pid_alive_named(pidfile: &std::path::Path, name: &str) -> Option<u32> {
     (comm == name || comm.ends_with(&format!("/{name}"))).then_some(pid)
 }
 
+/// The GUI's write-through for the relay set. localStorage is only the
+/// webview's cache; ~/.fez/settings.json is the custody every other
+/// surface reads (sentinel watch, CLI, doctor) — a GUI that wrote only
+/// its own cache left the sentinel guarding an abandoned workspace.
+#[tauri::command]
+fn write_relays(relays: Vec<String>) -> Result<(), String> {
+    if relays.is_empty() || relays.len() > 16 {
+        return Err("relay set must have 1–16 entries".to_string());
+    }
+    for r in &relays {
+        if !(r.starts_with("ws://") || r.starts_with("wss://")) || r.len() > 200 {
+            return Err(format!("not a relay url: {r}"));
+        }
+    }
+    update_settings(move |json| {
+        let obj = json.as_object_mut().unwrap();
+        obj.insert("relays".to_string(), serde_json::json!(relays));
+        // drop the legacy singular key so the two can never disagree
+        obj.remove("relay");
+    })
+}
+
 /// Is the local workspace relay running? Pidfile + kill -0, the same
 /// convention as the CLI sentinel's pidfile.
 #[tauri::command]
@@ -1753,7 +1775,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, runner_status, ensure_agent_runner])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

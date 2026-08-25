@@ -148,3 +148,48 @@ export function resolveSkillCountsUrl(): string {
   const settings = loadSettings() as { skillCountsUrl?: string };
   return settings.skillCountsUrl ?? DEFAULT_SKILL_COUNTS_URL;
 }
+
+/**
+ * Watch the settings file and fire when the RELAY SET changes — the seam
+ * that lets a standing service (the sentinel) follow the user instead of
+ * the set it booted with. Rules: fire only on a real change (a save that
+ * touches other keys is silence), collapse write bursts, and never fire
+ * under a FEZ_RELAY env pin — the env outranks the file everywhere else,
+ * so a file edit must not yank a pinned service. Watches the directory,
+ * not the file: atomic saves replace the inode and a file watch goes
+ * deaf after the first one.
+ */
+export function watchRelaySet(
+  onChange: (urls: string[]) => void,
+  opts: { file?: string; resolve?: () => string[]; envRelay?: string; debounceMs?: number } = {}
+): () => void {
+  const file = opts.file ?? SETTINGS_FILE;
+  const resolve = opts.resolve ?? (() => resolveRelays());
+  const envRelay = opts.envRelay ?? process.env.FEZ_RELAY;
+  const debounceMs = opts.debounceMs ?? 500;
+  if (envRelay) return () => {};
+
+  let last = resolve().join(",");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let watcher: fs.FSWatcher | undefined;
+  try {
+    watcher = fs.watch(path.dirname(file), (_event, name) => {
+      if (name && name !== path.basename(file)) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const next = resolve();
+        const key = next.join(",");
+        if (key === last || next.length === 0) return;
+        last = key;
+        onChange(next);
+      }, debounceMs);
+      timer.unref?.();
+    });
+  } catch {
+    // no settings dir yet — nothing to watch, nothing to follow
+  }
+  return () => {
+    clearTimeout(timer);
+    watcher?.close();
+  };
+}

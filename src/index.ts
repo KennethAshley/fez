@@ -54,7 +54,7 @@ export { findMcpServer, registerMcpServer, loadMcpServersFromSettings } from "./
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./identity/keys.js";
 /** A background process needs the PATH a person has, not the one launchd gives it. */
 export { adoptUserPath, whichBinary } from "./shared/user-path.js";
-export { loadSettings, saveSettings, resolveRelay, resolveRelays, DEFAULT_RELAY } from "./shared/settings.js";
+export { loadSettings, saveSettings, resolveRelay, resolveRelays, watchRelaySet, DEFAULT_RELAY } from "./shared/settings.js";
 export { parseRespondTo, authorAllowed, describeAuthorPolicy, type AuthorPolicy, type AuthorMode } from "./identity/author-gate.js";
 export { untrustedValue, UNTRUSTED_CONTENT_NOTICE } from "./shared/prompt-values.js";
 export {

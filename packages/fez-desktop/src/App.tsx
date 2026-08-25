@@ -7,7 +7,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { BrowserWire, rustSigner } from "./wire";
-import { relaySet } from "./relay";
+import { relaySet, setRelays } from "./relay";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -146,7 +146,7 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
           owner: pubkey,
           name: savedName ? `${savedName}'s workspace` : "your workspace",
         });
-        localStorage.setItem("fez-relay", url);
+        setRelays(url);
       } catch (err) {
         console.warn("local relay self-heal failed:", err);
       }
@@ -313,7 +313,7 @@ export default function App() {
     return (
       <Onboarding
         onComplete={(relayUrl) => {
-          localStorage.setItem("fez-relay", relayUrl);
+          setRelays(relayUrl);
           setBoot({ phase: "loading" });
           setBootNonce((n) => n + 1); // re-run the boot effect with the new identity
         }}

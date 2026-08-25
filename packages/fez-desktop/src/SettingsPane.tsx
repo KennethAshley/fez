@@ -8,7 +8,7 @@ import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFoll
 import { SkillSecretsSection } from "./SkillSecrets";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { flash } from "./toast";
-import { relayRaw } from "./relay";
+import { relayRaw, setRelays } from "./relay";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -60,7 +60,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   };
 
   const saveServers = () => {
-    localStorage.setItem("fez-relay", relay.trim());
+    setRelays(relay);
     localStorage.setItem("fez-media-server", media.trim());
     flash("✓ saved");
   };
