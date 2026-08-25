@@ -65,7 +65,7 @@ for (let y = 0; y < SIZE; y++)
 // with breathing room.
 const cols = ROWS[0].length;
 const rows = ROWS.length;
-const scale = Math.floor((CARD * 0.82) / Math.max(cols, rows));
+const scale = Math.floor((CARD * 0.72) / Math.max(cols, rows));
 const ox = Math.round((SIZE - cols * scale) / 2);
 const oy = Math.round((SIZE - rows * scale) / 2);
 for (let ry = 0; ry < rows; ry++)
