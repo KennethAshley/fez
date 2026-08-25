@@ -1,18 +1,20 @@
 /**
- * The ONE home of the relay default. Four files used to carry their own
- * literal, and they disagreed: onboarding handed new users the hosted
- * relay while boot's fallback was `ws://localhost:7777` — so any path
- * that reached boot without localStorage (identity from the CLI, cleared
- * webview data) connected to a relay that exists only on a developer's
- * machine and sat on "reconnecting…" forever.
- *
- * The default is the hosted relay — mirrors src/settings.ts; the desktop
- * bundle deliberately doesn't depend on the CLI package. A generic public
- * relay carries the events but enforces none of fez's membership gating,
- * so channel content there is unlisted rather than private. Developers
- * point at a local relay with VITE_FEZ_RELAY=ws://localhost:7777.
+ * The ONE home of the relay default (see git history for the
+ * four-disagreeing-literals era). The default is now the LOCAL workspace
+ * relay the app spawns and claims for a fresh identity
+ * (ensure_local_relay, Rust side) — a cold downloader lands in a
+ * workspace they own, not on someone's hosted box where they aren't on
+ * the roster and @fez ignores them. Existing installs are unaffected:
+ * onboarding always wrote localStorage["fez-relay"], which outranks
+ * this. Developers override with VITE_FEZ_RELAY.
  */
-export const DEFAULT_RELAY = "wss://67-205-188-204.sslip.io";
+export const DEFAULT_RELAY = "ws://127.0.0.1:7777";
+
+/**
+ * Device pairing needs a relay BOTH machines can reach — a loopback
+ * default cannot rendezvous. Pairing-only; never a workspace default.
+ */
+export const PAIRING_RELAY = "wss://67-205-188-204.sslip.io";
 
 /**
  * The relay set as its raw comma-separated string — env override, then
