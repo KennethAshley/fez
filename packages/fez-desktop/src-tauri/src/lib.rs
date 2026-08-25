@@ -280,8 +280,24 @@ fn update_settings(f: impl FnOnce(&mut serde_json::Value)) -> Result<(), String>
     }
     f(&mut json);
     std::fs::create_dir_all(fez_home()?).map_err(|e| e.to_string())?;
-    std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap_or_default())
-        .map_err(|e| format!("couldn't write settings.json: {e}"))
+    // Propagate a serialize failure — the old unwrap_or_default() wrote an
+    // EMPTY STRING over settings.json, losing every skill and grant.
+    let text = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| format!("couldn't write settings.json: {e}"))
+}
+
+/// A settings.json member as a mutable object, resetting a wrong-typed
+/// value in place — a hand-edited (or other-version) file must never
+/// panic an install. The unwrap after the reset cannot fail.
+fn obj_entry<'a>(
+    obj: &'a mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> &'a mut serde_json::Map<String, serde_json::Value> {
+    let v = obj.entry(key.to_string()).or_insert_with(|| serde_json::json!({}));
+    if !v.is_object() {
+        *v = serde_json::json!({});
+    }
+    v.as_object_mut().unwrap()
 }
 
 /// Read one file out of an in-memory npm tarball. Entries are prefixed
@@ -356,7 +372,18 @@ fn harness_installed(cmd: &str) -> bool {
         "/usr/local/bin".into(),
         "/usr/bin".into(),
         format!("{home}/.local/bin"),
+        // The other node-adjacent installers people actually use — a user
+        // who got claude-agent-acp through bun/volta/deno/asdf/pnpm saw
+        // "not installed" despite having it.
+        format!("{home}/.bun/bin"),
+        format!("{home}/.volta/bin"),
+        format!("{home}/.deno/bin"),
+        format!("{home}/.asdf/shims"),
+        format!("{home}/Library/pnpm"),
     ];
+    if let Ok(pnpm_home) = std::env::var("PNPM_HOME") {
+        dirs.push(pnpm_home);
+    }
     // nvm installs globals per node version: ~/.nvm/versions/node/*/bin
     if let Ok(entries) = std::fs::read_dir(format!("{home}/.nvm/versions/node")) {
         for e in entries.flatten() {
@@ -366,7 +393,14 @@ fn harness_installed(cmd: &str) -> bool {
     if let Ok(path) = std::env::var("PATH") {
         dirs.extend(path.split(':').map(String::from));
     }
-    dirs.iter().any(|d| std::path::Path::new(d).join(cmd).exists())
+    // Executable, not merely present — a copy that landed without its exec
+    // bit (or a directory of the same name) must not report as installed.
+    dirs.iter().any(|d| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(std::path::Path::new(d).join(cmd))
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    })
 }
 
 #[tauri::command]
@@ -403,20 +437,28 @@ fn wire_chutes_pi() -> Result<String, String> {
         .ok_or_else(|| "Set the Chutes key first: Settings → secrets → chutes → CHUTES_API_KEY.".to_string())?;
 
     let cfg = std::path::Path::new(&home).join(".pi").join("agent").join("local-models.json");
-    let mut endpoints: Vec<serde_json::Value> = std::fs::read_to_string(&cfg)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    // This file belongs to pi, not fez — a malformed or unexpected shape
+    // is a reason to STOP, not to overwrite it with just our entry
+    // (the old unwrap_or_default() silently destroyed every other local
+    // model endpoint the user had configured).
+    let mut endpoints: Vec<serde_json::Value> = match std::fs::read_to_string(&cfg) {
+        Ok(s) => serde_json::from_str(&s).map_err(|e| {
+            format!("~/.pi/agent/local-models.json exists but isn't the JSON array pi expects — fix or remove it, then retry ({e})")
+        })?,
+        Err(_) => Vec::new(),
+    };
     endpoints.retain(|e| e.get("id").and_then(|v| v.as_str()) != Some(ID));
     endpoints.push(serde_json::json!({ "id": ID, "name": "Chutes", "baseUrl": BASE_URL, "apiKey": key, "status": "checking" }));
     if let Some(parent) = cfg.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&cfg, serde_json::to_string_pretty(&endpoints).unwrap_or_default() + "\n")
+    let text = serde_json::to_string_pretty(&endpoints).map_err(|e| e.to_string())?;
+    std::fs::write(&cfg, text + "\n")
         .map_err(|e| format!("couldn't write pi local-models.json: {e}"))?;
 
     let models_body = ureq::get(&format!("{BASE_URL}/models"))
         .set("authorization", &format!("Bearer {key}"))
+        .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| format!("Chutes wired, but couldn't list models: {e}"))?
         .into_string()
@@ -472,6 +514,7 @@ fn install_package(name: String) -> Result<String, String> {
     // 1. Resolve the tarball URL from the registry (latest dist-tag).
     let meta_url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
     let meta_str = ureq::get(&meta_url)
+        .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| format!("couldn't reach npm for {name}: {e}"))?
         .into_string()
@@ -487,20 +530,42 @@ fn install_package(name: String) -> Result<String, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("no tarball for {name}@{latest}"))?
         .to_string();
+    // The URL comes from the registry response — never follow it off TLS.
+    if !tarball.starts_with("https://") {
+        return Err(format!("refusing non-https tarball url for {name}: {tarball}"));
+    }
 
     // 2. Download and unpack (gzip → tar) into a Vec we can read twice.
+    // Extension parts are self-contained esbuild bundles — tens of KB, a
+    // few MB with assets — so the caps are generous, not tight; their job
+    // is bounding a hostile or broken response, not sizing real packages.
+    const MAX_TGZ: u64 = 30 * 1024 * 1024;
+    const MAX_TAR: u64 = 120 * 1024 * 1024;
     let mut gz = Vec::new();
     std::io::Read::read_to_end(
-        &mut ureq::get(&tarball)
-            .call()
-            .map_err(|e| format!("download failed: {e}"))?
-            .into_reader(),
+        &mut std::io::Read::take(
+            ureq::get(&tarball)
+                .timeout(std::time::Duration::from_secs(120))
+                .call()
+                .map_err(|e| format!("download failed: {e}"))?
+                .into_reader(),
+            MAX_TGZ + 1,
+        ),
         &mut gz,
     )
     .map_err(|e| format!("download read failed: {e}"))?;
+    if gz.len() as u64 > MAX_TGZ {
+        return Err(format!("{name} tarball exceeds {}MB — refusing", MAX_TGZ / (1024 * 1024)));
+    }
     let mut tar_bytes = Vec::new();
-    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&gz[..]), &mut tar_bytes)
-        .map_err(|e| format!("gunzip failed: {e}"))?;
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(flate2::read::GzDecoder::new(&gz[..]), MAX_TAR + 1),
+        &mut tar_bytes,
+    )
+    .map_err(|e| format!("gunzip failed: {e}"))?;
+    if tar_bytes.len() as u64 > MAX_TAR {
+        return Err(format!("{name} expands past {}MB — refusing", MAX_TAR / (1024 * 1024)));
+    }
 
     // 3. Read package.json (npm tarballs prefix every path with "package/").
     let pkg_bytes = tar_read(&tar_bytes, "package.json").ok_or("no package.json in tarball")?;
@@ -583,31 +648,24 @@ fn install_package(name: String) -> Result<String, String> {
     let base_owned = base.to_string();
     let version = latest.to_string();
     update_settings(move |json| {
+        // update_settings guarantees an object; the members do NOT come
+        // with that guarantee (hand-edited files) — obj_entry resets a
+        // wrong-typed value instead of panicking mid-install.
         let obj = json.as_object_mut().unwrap();
         if let Some(entry) = skill_entry {
-            obj.entry("mcpServers")
-                .or_insert_with(|| serde_json::json!({}))
-                .as_object_mut()
-                .unwrap()
-                .insert(base_owned.clone(), entry);
+            obj_entry(obj, "mcpServers").insert(base_owned.clone(), entry);
         }
-        obj.entry("extensionPermissions")
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .unwrap()
-            .insert(base_owned.clone(), serde_json::json!(perms));
+        obj_entry(obj, "extensionPermissions").insert(base_owned.clone(), serde_json::json!(perms));
         // Record the version so the gallery can offer updates later.
-        obj.entry("extensionVersions")
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .unwrap()
-            .insert(base_owned.clone(), serde_json::json!(version));
+        obj_entry(obj, "extensionVersions").insert(base_owned.clone(), serde_json::json!(version));
         if wants_background {
             let list = obj
                 .entry("backgroundExtensions")
-                .or_insert_with(|| serde_json::json!([]))
-                .as_array_mut()
-                .unwrap();
+                .or_insert_with(|| serde_json::json!([]));
+            if !list.is_array() {
+                *list = serde_json::json!([]);
+            }
+            let list = list.as_array_mut().unwrap();
             if !list.iter().any(|v| v.as_str() == Some(base_owned.as_str())) {
                 list.push(serde_json::json!(base_owned));
             }
@@ -673,6 +731,7 @@ fn package_info(name: String) -> Result<String, String> {
     }
     let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
     let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| format!("couldn't reach npm: {e}"))?
         .into_string()
@@ -700,6 +759,7 @@ fn latest_version(name: String) -> Result<String, String> {
     }
     let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
     let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| format!("couldn't reach npm: {e}"))?
         .into_string()
@@ -1058,6 +1118,11 @@ fn write_skill(name: String, config_json: String) -> Result<(), String> {
     }
     let config: serde_json::Value = serde_json::from_str(&config_json).map_err(|e| format!("bad config: {e}"))?;
     let path = settings_path()?;
+    // ~/.fez may not exist yet on a machine where nothing else created it
+    // — every other settings writer mkdirs first; this one forgot.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
     let mut settings: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("settings.json unreadable: {e}"))?;
     if !settings.is_object() {
@@ -1079,6 +1144,9 @@ fn write_skill(name: String, config_json: String) -> Result<(), String> {
 #[tauri::command]
 fn remove_skill(name: String) -> Result<(), String> {
     let path = settings_path()?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
     let mut settings: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("settings.json unreadable: {e}"))?;
     if let Some(servers) = settings.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
@@ -1088,7 +1156,6 @@ fn remove_skill(name: String) -> Result<(), String> {
         .map_err(|e| format!("write failed: {e}"))
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Copy the bundled Built-in agent (pi + pi-acp + assets) out of the app
 /// bundle into ~/.fez/bin on launch. Buzz ships buzz-agent as an in-app
 /// sidecar; fez bundles the same way but copies to its OWNED bin dir,
@@ -1101,12 +1168,7 @@ fn remove_skill(name: String) -> Result<(), String> {
 /// every launch forever, and the only cure was hand-deleting the marker.
 /// Now a failed install simply retries next launch; until one succeeds the
 /// user falls back to a system pi if they have one.
-fn install_bundled_agent(app: &tauri::App) {
-    use tauri::Manager;
-    let src = match app.path().resource_dir() {
-        Ok(d) => d.join("pi-agent"),
-        Err(_) => return,
-    };
+fn install_bundled_agent(src: std::path::PathBuf) {
     // A build made without bun ships a marker but no binary (see
     // prepare-pi-agent.mjs) — nothing to install, fall back to system pi.
     if !src.join("pi").exists() {
@@ -1144,12 +1206,29 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
     for name in ["pi", "pi-acp"] {
+        // Stage next to the destination, then rename: the rename is atomic,
+        // so the sentinel can never spawn a half-copied executable, and
+        // replacing a RUNNING pi swaps the directory entry instead of
+        // writing into a busy inode.
+        let staged = bin.join(format!(".{name}.staging"));
         let dst = bin.join(name);
-        std::fs::copy(src.join(name), &dst).map_err(|e| format!("copy {name}: {e}"))?;
-        std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755))
+        std::fs::copy(src.join(name), &staged).map_err(|e| format!("copy {name}: {e}"))?;
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("chmod {name}: {e}"))?;
+        // fs::copy preserves xattrs on macOS — including com.apple.quarantine
+        // when the app itself was downloaded, which makes Gatekeeper kill the
+        // copied binary the moment the sentinel spawns it. Strip it; "no such
+        // xattr" (a dev build) is the normal case and not an error.
+        let _ = Command::new("/usr/bin/xattr")
+            .args(["-d", "com.apple.quarantine"])
+            .arg(&staged)
+            .output();
+        std::fs::rename(&staged, &dst).map_err(|e| format!("rename {name}: {e}"))?;
     }
+    // Replace the theme dir wholesale — additive copies left stale files
+    // from older agent versions behind forever.
     let theme_dst = bin.join("theme");
+    let _ = std::fs::remove_dir_all(&theme_dst);
     std::fs::create_dir_all(&theme_dst).map_err(|e| format!("mkdir theme: {e}"))?;
     let entries = std::fs::read_dir(src.join("theme")).map_err(|e| format!("read theme: {e}"))?;
     for e in entries {
@@ -1162,12 +1241,19 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
     Ok(())
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            install_bundled_agent(app);
+            // Off the main thread: the copy moves ~140MB on a version bump,
+            // and running it synchronously here held the window back —
+            // first launch looked hung with no window and no progress.
+            use tauri::Manager;
+            if let Ok(dir) = app.path().resource_dir() {
+                std::thread::spawn(move || install_bundled_agent(dir.join("pi-agent")));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses])

@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "fez-desktop",
+        "title": "fez",
         "width": 800,
         "height": 600,
         "dragDropEnabled": false
@@ -34,6 +34,9 @@
     ],
     "resources": {
       "pi-agent": "pi-agent"
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0"
     }
   }
 }

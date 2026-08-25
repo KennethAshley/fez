@@ -27,9 +27,10 @@ import { fileURLToPath } from "node:url";
 const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 const PI_REPO = "https://github.com/earendil-works/pi.git";
-// Pin a tag or commit SHA for reproducibility. Empty clones the default
-// branch, which currently ships PI_VERSION but WILL drift — set in CI.
-const PI_REF = process.env.PI_REF || "";
+// Pin a tag or commit SHA for reproducibility. Defaults to the release
+// tag matching PI_VERSION (the version check below still guards a tag
+// that lies); override with PI_REF for a branch/SHA build.
+const PI_REF = process.env.PI_REF || `v${PI_VERSION}`;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.resolve(HERE, "..", "src-tauri", "pi-agent");
