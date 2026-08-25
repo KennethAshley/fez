@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyCommand, classifyToolCall } from "../../../src/command-risk.js";
+import { classifyCommand, classifyToolCall } from "../../../src/agent/command-risk.js";
 
 /**
  * The approval gate is only as good as this classifier: whatever it calls

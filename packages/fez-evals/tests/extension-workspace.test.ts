@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadExtensions, setNostrBackend, setWorkspaceBackend, type FezExtensionAPI } from "../../../src/extensions.js";
+import { loadExtensions, setNostrBackend, setWorkspaceBackend, type FezExtensionAPI } from "../../../src/extensions/extensions.js";
 
 /**
  * An extension is BUILT before the client connects, and must still see

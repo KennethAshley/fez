@@ -1,3 +1,5 @@
+import { unixNow } from "../shared/time.js";
+import { bytesToHex, hexToBytes } from "../shared/codec.js";
 import {
   type Event,
   type UnsignedEvent,
@@ -6,14 +8,14 @@ import {
   finalizeEvent,
   generateSecretKey,
 } from "nostr-tools";
-import { RelayConnection } from "./relay.js";
+import { RelayConnection } from "../protocol/relay.js";
 import {
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,
   KIND_AGENT_PROGRESS,
   KIND_AGENT_RESULT,
   KIND_AGENT_CANCEL,
-} from "./kinds.js";
+} from "../protocol/kinds.js";
 
 export interface AgentConfig {
   /** Nostr private key (hex). Auto-generated if not provided. */
@@ -137,12 +139,12 @@ export class Agent {
       {
         kinds: [KIND_AGENT_TASK],
         "#p": [this.pubkey],
-        since: Math.floor(Date.now() / 1000),
+        since: unixNow(),
       },
       {
         kinds: [KIND_AGENT_CANCEL],
         "#p": [this.pubkey],
-        since: Math.floor(Date.now() / 1000),
+        since: unixNow(),
       },
     ];
 
@@ -172,7 +174,7 @@ export class Agent {
     const event: UnsignedEvent = {
       kind: KIND_AGENT_METADATA,
       pubkey: this.pubkey,
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: unixNow(),
       tags: [],
       content: JSON.stringify({
         name: this.config.name,
@@ -221,7 +223,7 @@ export class Agent {
       const resultEvent: UnsignedEvent = {
         kind: KIND_AGENT_RESULT,
         pubkey: this.pubkey,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: unixNow(),
         tags: [
           ["e", taskId],
           ["p", callerPubkey],
@@ -236,7 +238,7 @@ export class Agent {
       const progressEvent: UnsignedEvent = {
         kind: KIND_AGENT_PROGRESS,
         pubkey: this.pubkey,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: unixNow(),
         tags: [
           ["e", taskId],
           ["p", callerPubkey],
@@ -256,12 +258,4 @@ export class Agent {
 }
 
 // Helpers
-function hexToBytes(hex: string): Uint8Array {
-  return new Uint8Array(hex.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16)));
-}
 
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}

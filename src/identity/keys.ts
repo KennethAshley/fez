@@ -1,6 +1,6 @@
+import { fezHome } from "../shared/fez-home.js";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { bytesToHex, hexToBytes } from "nostr-tools/utils";
@@ -40,12 +40,12 @@ function useKeychain(): boolean {
 /** Legacy/fallback file path for a key name. */
 function keyFile(name: string): string {
   return name === "default"
-    ? path.join(os.homedir(), ".fez", "default.key")
-    : path.join(os.homedir(), ".fez", "agents", `${name.replace(/^agent:/, "")}.key`);
+    ? fezHome("default.key")
+    : fezHome("agents", `${name.replace(/^agent:/, "")}.key`);
 }
 
 /** Names index — key NAMES only (never material); lets `fez keys list` enumerate without dumping the keychain. */
-const INDEX_FILE = path.join(os.homedir(), ".fez", "keys.json");
+const INDEX_FILE = fezHome("keys.json");
 function readIndex(): string[] {
   try {
     const parsed = JSON.parse(fs.readFileSync(INDEX_FILE, "utf-8"));
@@ -149,7 +149,7 @@ export function listKeys(): { name: string; pubkey: string; backend: "keychain" 
   const names = new Set(readIndex());
   try {
     if (fs.existsSync(keyFile("default"))) names.add("default");
-    for (const f of fs.readdirSync(path.join(os.homedir(), ".fez", "agents"))) {
+    for (const f of fs.readdirSync(fezHome("agents"))) {
       if (f.endsWith(".key")) names.add(`agent:${f.slice(0, -4)}`);
     }
   } catch { /* no agents dir yet */ }

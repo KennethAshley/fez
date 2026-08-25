@@ -1,8 +1,8 @@
+import { fezHome, fezHomeAt } from "../shared/fez-home.js";
 import fs from "fs/promises";
 import path from "path";
-import os from "os";
-import { notice } from "./notices.js";
-import { parseSkillSource, SOURCE_SCHEMES } from "./skill-source.js";
+import { notice } from "../cli/notices.js";
+import { parseSkillSource, SOURCE_SCHEMES } from "../extensions/skill-source.js";
 
 /**
  * A named agent identity a user has configured — references a harness
@@ -69,10 +69,11 @@ export interface Persona {
   createdAt: string;
 }
 
-const PERSONAS_DIR = path.join(os.homedir(), ".fez", "personas");
+const PERSONAS_DIR = fezHome("personas");
 
-function personaPath(id: string): string {
-  return path.join(PERSONAS_DIR, `${id}.md`);
+/** ~/.fez/personas/<id>.md — `base` overrides the home root for tests. */
+export function personaPath(id: string, base?: string): string {
+  return fezHomeAt(base, "personas", `${id}.md`);
 }
 
 /** Shared by both bracket-list frontmatter fields (aliases, mcpServers) — `[a, b]` -> ["a", "b"]. */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { npmPackageName } from "../../../src/package-manager.js";
+import { npmPackageName } from "../../../src/extensions/package-manager.js";
 
 /**
  * The install-path contract. Three sites (registry name, npm install dir,

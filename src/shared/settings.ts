@@ -1,5 +1,5 @@
+import { fezHome } from "./fez-home.js";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 /**
@@ -45,7 +45,7 @@ export interface FezSettings {
   extensionPermissions?: Record<string, string[]>;
 }
 
-const SETTINGS_FILE = path.join(os.homedir(), ".fez", "settings.json");
+const SETTINGS_FILE = fezHome("settings.json");
 
 export function loadSettings(): FezSettings {
   try {

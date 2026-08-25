@@ -1,3 +1,4 @@
+import { fezHome } from "../shared/fez-home.js";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -5,7 +6,7 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
 import type { SystemPromptMode } from "./system-prompt.js";
-import { notice } from "./notices.js";
+import { notice } from "../cli/notices.js";
 import { classifyToolCall, type RiskVerdict } from "./command-risk.js";
 
 /**
@@ -211,7 +212,7 @@ function isolatedClaudeEnv(): NodeJS.ProcessEnv {
   if (process.env.FEZ_HARNESS_ISOLATE !== "1") {
     return { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "false" };
   }
-  const dir = path.join(os.homedir(), ".fez", "harness", "claude", "shared");
+  const dir = fezHome("harness", "claude", "shared");
   try {
     fs.mkdirSync(dir, { recursive: true });
     const configFile = path.join(dir, ".claude.json");
@@ -795,7 +796,7 @@ let builtinsRegistered = false;
  * so a dev with pi installed globally is unaffected.
  */
 function fezBin(name: string): string {
-  const owned = path.join(os.homedir(), ".fez", "bin", name);
+  const owned = fezHome("bin", name);
   return fs.existsSync(owned) ? owned : name;
 }
 
@@ -818,7 +819,7 @@ export function registerBuiltinHarnesses(): void {
       aliases: [],
       command: fezBin("pi-acp"),
       env: () => {
-        const ownedPi = path.join(os.homedir(), ".fez", "bin", "pi");
+        const ownedPi = fezHome("bin", "pi");
         return fs.existsSync(ownedPi) ? { ...process.env, PI_ACP_PI_COMMAND: ownedPi } : process.env;
       },
     })

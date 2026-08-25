@@ -1,11 +1,11 @@
+import { fezHome } from "../shared/fez-home.js";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import chalk from "chalk";
-import { detectHarnesses, registerBuiltinHarnesses } from "./harness.js";
-import { listPersonas } from "./personas.js";
-import { CAPABLE_FEZ_PERSONA } from "./fez-persona.js";
-import { HOSTED_ROUTER, resolveRelay, saveSettings } from "./settings.js";
+import { detectHarnesses, registerBuiltinHarnesses } from "../agent/harness.js";
+import { listPersonas } from "../identity/personas.js";
+import { CAPABLE_FEZ_PERSONA } from "../identity/fez-persona.js";
+import { HOSTED_ROUTER, resolveRelay, saveSettings } from "../shared/settings.js";
 
 /**
  * First-run wizard — the entire required surface of fez is deliberately
@@ -52,7 +52,7 @@ export async function firstRunWizard(): Promise<void> {
       { type: "confirm", name: "starter", message: "Create a starter persona (@researcher)?", default: true },
     ]);
     if (starter) {
-      const file = path.join(os.homedir(), ".fez", "personas", "researcher.md");
+      const file = fezHome("personas", "researcher.md");
       fs.mkdirSync(path.dirname(file), { recursive: true });
       // Written directly (not createPersona) to include the description
       // frontmatter — verb phrases are what orchestrators route on.
@@ -83,7 +83,7 @@ export async function firstRunWizard(): Promise<void> {
   // answers about fez AND delegates. Without one, fall back to the tiny
   // hosted router (install nothing) that only routes to a seeded guide.
   const guideBrain = harnesses.find((h) => h.id === "claude-code")?.id ?? harnesses.find((h) => h.id === "pi")?.id;
-  const fezFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
+  const fezFile = fezHome("personas", "fez.md");
   if (!fs.existsSync(fezFile)) {
     fs.mkdirSync(path.dirname(fezFile), { recursive: true });
     if (guideBrain) {

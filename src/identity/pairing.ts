@@ -1,8 +1,9 @@
+import { unixNow } from "../shared/time.js";
 import { createHash } from "node:crypto";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools/pure";
 import { nip44, type Event } from "nostr-tools";
-import { RelayConnection } from "./relay.js";
-import { KIND_PAIRING } from "./kinds.js";
+import { RelayConnection } from "../protocol/relay.js";
+import { KIND_PAIRING } from "../protocol/kinds.js";
 
 /**
  * Device pairing — NIP-AB's decisions (Buzz's pairing-cli), fez-shaped:
@@ -94,7 +95,7 @@ function openSession(relay: RelayConnection, secret: Uint8Array, peerPk: string)
     [{ kinds: [KIND_PAIRING], "#p": [session.myPk] }],
     (event: Event) => {
       if (event.pubkey !== peerPk) return; // only our counterparty's ephemeral
-      if (Math.abs(Math.floor(Date.now() / 1000) - event.created_at) > FRESHNESS_S) return;
+      if (Math.abs(unixNow() - event.created_at) > FRESHNESS_S) return;
       try {
         const payload = JSON.parse(
           nip44.decrypt(event.content, nip44.getConversationKey(secret, event.pubkey))
@@ -112,7 +113,7 @@ async function send(session: Session, payload: Payload): Promise<void> {
   const event = finalizeEvent(
     {
       kind: KIND_PAIRING,
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: unixNow(),
       tags: [["p", session.peerPk]],
       content: nip44.encrypt(JSON.stringify(payload), nip44.getConversationKey(session.secret, session.peerPk)),
     },
@@ -180,7 +181,7 @@ export async function pairReceive(
     const timer = setTimeout(() => reject(new Error("pairing timed out — no device sent a hello")), timeoutMs);
     const unsub = relay.subscribe([{ kinds: [KIND_PAIRING], "#p": [myPk] }], (event: Event) => {
       if (session) return;
-      if (Math.abs(Math.floor(Date.now() / 1000) - event.created_at) > FRESHNESS_S) return;
+      if (Math.abs(unixNow() - event.created_at) > FRESHNESS_S) return;
       try {
         const payload = JSON.parse(
           nip44.decrypt(event.content, nip44.getConversationKey(secret, event.pubkey))

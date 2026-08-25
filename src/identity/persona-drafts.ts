@@ -1,7 +1,7 @@
+import { fezHomeAt } from "../shared/fez-home.js";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { validatePersonaFile } from "./personas.js";
+import { personaPath, validatePersonaFile } from "./personas.js";
 
 /**
  * Persona drafts — Buzz's draft-create decision, fez-shaped: an agent
@@ -15,11 +15,7 @@ import { validatePersonaFile } from "./personas.js";
 const DRAFT_META_KEYS = new Set(["proposedBy", "proposedAt"]);
 
 function draftsDir(base?: string): string {
-  return path.join(base ?? os.homedir(), ".fez", "personas", "drafts");
-}
-
-function personaPath(id: string, base?: string): string {
-  return path.join(base ?? os.homedir(), ".fez", "personas", `${id}.md`);
+  return fezHomeAt(base, "personas", "drafts");
 }
 
 export function validDraftName(name: string): boolean {

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { unixNow } from "../shared/time.js";
+import { fezHome } from "../shared/fez-home.js";
 import chalk from "chalk";
 import {
 
@@ -26,7 +28,7 @@ import {
   type Component,
   type FezTheme,
   type ThemeJson,
-} from "../packages/fez-tui/dist/index.js";
+} from "../../packages/fez-tui/dist/index.js";
 
 /**
  * Per-line prefix wrapper (reddix's comment-tree recipe): the child
@@ -87,17 +89,17 @@ class LinePrefix implements Component {
     return this.child.render(Math.max(1, width - this.prefixWidth)).map((line) => this.prefix + line);
   }
 }
-import { CapabilityClient } from "./client.js";
-import { FezClient } from "../packages/fez-client/dist/index.js";
-import { installNodeStatePersistence } from "../packages/fez-client/dist/state-node.js";
-import { RelayConnection } from "./relay.js";
-import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "./kinds.js";
-import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "./harness.js";
+import { CapabilityClient } from "../protocol/client.js";
+import { FezClient } from "../../packages/fez-client/dist/index.js";
+import { installNodeStatePersistence } from "../../packages/fez-client/dist/state-node.js";
+import { RelayConnection } from "../protocol/relay.js";
+import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "../protocol/kinds.js";
+import { findHarness, detectHarnesses, listHarnesses, registerBuiltinHarnesses } from "../agent/harness.js";
 import { spawn } from "node:child_process";
-import { loadExtensions, setNostrBackend, setUiBackend, setClientBackend, setWorkspaceBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, registerTheme as registerThemePack, type MessageHandle } from "./extensions.js";
+import { loadExtensions, setNostrBackend, setUiBackend, setClientBackend, setWorkspaceBackend, getInputHandlers, findUrlHandler, getRegisteredThemes, findTheme, registerTheme as registerThemePack, type MessageHandle } from "../extensions/extensions.js";
 import { footer } from "./status.js";
-import { findPersona } from "./personas.js";
-import { findMcpServer } from "./mcp-servers.js";
+import { findPersona } from "../identity/personas.js";
+import { findMcpServer } from "../extensions/mcp-servers.js";
 import { findCommand, registerCommand } from "./commands.js";
 import fsSync from "node:fs";
 import { setNoticeSink } from "./notices.js";
@@ -105,10 +107,9 @@ import type { Event } from "nostr-tools";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import fs from "fs/promises";
 import path from "path";
-import os from "os";
-import { fetchRelayInfo } from "./nip11.js";
+import { fetchRelayInfo } from "../protocol/nip11.js";
 
-const FEZ_DIR = path.join(os.homedir(), ".fez");
+const FEZ_DIR = fezHome();
 
 interface Message {
   id: string;
@@ -882,11 +883,11 @@ export class FezTUI {
         {
           kinds: [KIND_AGENT_RESULT, KIND_AGENT_PROGRESS],
           "#p": [this.myPubkey],
-          since: Math.floor(Date.now() / 1000),
+          since: unixNow(),
         },
         {
           kinds: [KIND_AGENT_METADATA],
-          since: Math.floor(Date.now() / 1000),
+          since: unixNow(),
         },
       ],
       (event) => {
@@ -1111,7 +1112,7 @@ export class FezTUI {
    * Hot reload: editing the ACTIVE theme's file reapplies it on save.
    */
   private loadJsonThemes(): void {
-    const dir = path.join(os.homedir(), ".fez", "themes");
+    const dir = fezHome("themes");
     const register = (file: string): string | undefined => {
       try {
         const spec = JSON.parse(fsSync.readFileSync(path.join(dir, file), "utf-8")) as ThemeJson;
@@ -1158,7 +1159,7 @@ export class FezTUI {
    * with.
    */
   private initThemes(): void {
-    const prefFile = path.join(os.homedir(), ".fez", "theme.json");
+    const prefFile = fezHome("theme.json");
     const apply = (name: string): boolean => {
       if (name === "fez" || name === "default") {
         setActiveTheme({ name: "fez" });

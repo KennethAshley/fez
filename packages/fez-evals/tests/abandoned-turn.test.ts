@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { drainAbandonedTurn } from "../../../src/harness.js";
+import { drainAbandonedTurn } from "../../../src/agent/harness.js";
 
 /**
  * A turn that exits without its "stop" — steered, timed out, past its
