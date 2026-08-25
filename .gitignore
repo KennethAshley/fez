@@ -50,3 +50,4 @@ dev/relay-events.jsonl
 
 # built relay bundle — deploy/deploy.sh rebuilds it every time
 deploy/fez-relay.mjs
+.worktrees/
