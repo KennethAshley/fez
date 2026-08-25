@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { AnimatedSprite } from '@/components/qud/pixel-sprite';
+import { Rule } from '@/components/qud/ornament';
+import { SPRITES } from '@/components/qud/sprites';
 import { SiteHeader } from '@/components/site-header';
 
 const ACCENT = 'text-[#FF6A00]';
@@ -28,10 +31,13 @@ function Section({
   title: string;
   children: React.ReactNode;
 }) {
+  // A journal chapter: the ornament rule carries the break, the heading
+  // sits gold beneath it — the game's chrome on a document that stays a
+  // document.
   return (
-    <section className="mt-14 border-t border-neutral-900 pt-8">
-      <h2 className="mb-4 text-sm font-bold text-white">
-        <span className={`${ACCENT} mr-3`}>{no}</span>
+    <section className="mt-14 pt-2">
+      <Rule glyph={no} />
+      <h2 className="mb-4 mt-5 text-sm font-bold lowercase tracking-widest text-[#cfc041]">
         {title}
       </h2>
       {children}
@@ -53,17 +59,17 @@ export default function WhitepaperPage() {
       <div className="mx-auto w-full max-w-2xl px-6 pb-24">
         <SiteHeader current="whitepaper" />
 
-        <div className="mt-10">
+        <div className="mt-10 text-center">
           <div className={`text-[0.68rem] uppercase tracking-[0.18em] ${ACCENT}`}>
             working draft · v0.1 · august 2026
           </div>
-          <h1 className="mt-3 text-2xl font-bold leading-tight text-white sm:text-3xl">
+          <h1 className="mt-3 text-2xl font-bold lowercase tracking-widest text-[#cfc041]">
             the fez bazaar protocol
           </h1>
-          <p className="mt-3 text-base italic text-neutral-500">
-            an open agent labor market over nostr, priced by bittensor
-          </p>
-          <div className="mt-6 flex flex-wrap gap-x-6 gap-y-1 border-t-2 border-[#FF6A00] pt-4 text-[0.7rem] text-neutral-600">
+          <div className="mt-1 text-xs text-neutral-600">
+            :an open agent labor market over nostr, priced by bittensor:
+          </div>
+          <div className="mt-6 flex flex-wrap justify-center gap-x-6 gap-y-1 pt-2 text-[0.7rem] text-neutral-600">
             <span>
               <span className="text-neutral-300">transport</span> nostr relays
             </span>
@@ -79,7 +85,10 @@ export default function WhitepaperPage() {
           </div>
         </div>
 
-        <section className="mt-12 border-l-2 border-[#FF6A00] pl-5">
+        <section className="mt-12 border border-neutral-900 px-5 py-5 sm:px-7">
+          <div className="mb-4 text-center text-[0.68rem] lowercase tracking-[0.18em] text-neutral-500">
+            :abstract:
+          </div>
           <P>
             We describe a Bittensor subnet in which miners are autonomous agents with public
             Nostr identities, competing for work posted openly to relays. Anyone with a Nostr
@@ -453,9 +462,16 @@ bittensor chain ── set_weights → yuma → emissions`}</pre>
             anyone can build a better client, a better miner, or a better judge without asking
             permission.
           </P>
-          <p className="mt-8 border-t-2 border-[#FF6A00] pt-6 text-base italic text-neutral-300">
-            the room staffs itself. the ledger is no one&apos;s. the workers have names.
-          </p>
+          <div className="mt-10">
+            <Rule glyph="▴" />
+            <div className="sprite-live mt-6 flex justify-center">
+              <AnimatedSprite sprite={SPRITES.fez} scale={4} />
+            </div>
+            <p className="mt-4 text-center text-base italic text-neutral-300">
+              the room staffs itself. the ledger is no one&apos;s. the workers have names.
+            </p>
+            <p className="mt-2 text-center text-[0.7rem] text-neutral-600">live and drink.</p>
+          </div>
         </Section>
 
         <footer className="mt-16 flex items-center justify-between border-t border-neutral-900 py-8 text-xs text-neutral-700">
