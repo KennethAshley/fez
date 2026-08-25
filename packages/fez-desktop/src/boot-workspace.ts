@@ -16,5 +16,16 @@ export async function ensureOwnerBootstrap(client: FezClient): Promise<boolean> 
     // wins, duplicates cannot exist by construction (review finding F6).
     await client.ensureChannel({ name: "general", id: "bootstrap-general" }).catch(() => {});
   }
-  return client.state.workspace.channels.size > 0;
+  const ok = client.state.workspace.channels.size > 0;
+  if (ok && !client.state.scope) {
+    // Land IN the room, not beside it. The client's own "land somewhere"
+    // runs during start(), when a cold boot still has zero channels —
+    // so the first channel this bootstrap just made needs an explicit
+    // landing or the owner boots into "no channel — pick one".
+    const channelId = client.state.workspace.channels.has("bootstrap-general")
+      ? "bootstrap-general"
+      : [...client.state.workspace.channels.keys()][0];
+    client.setScope(channelId);
+  }
+  return ok;
 }

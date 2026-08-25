@@ -87,6 +87,9 @@ describe("cold start — claimed workspace, a room, and a guide that speaks", ()
     expect(client.state.isOwner(client.pubkey)).toBe(true);
     const general = client.state.workspace.channels.get("bootstrap-general");
     expect(general?.name).toBe("general");
+    // Land IN the room, not beside it: a fresh owner staring at
+    // "no channel — pick one from the rail" is the bug, not a state.
+    expect(client.state.scope?.channelId).toBe("bootstrap-general");
 
     // The welcome layer over the same relay: the agent key posts the
     // scripted opener into the room the bootstrap just made.
