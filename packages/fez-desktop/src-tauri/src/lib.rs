@@ -19,8 +19,22 @@ fn get_identity(account: Option<String>) -> Result<String, String> {
         .output()
         .map_err(|e| format!("couldn't run security: {e}"))?;
     if !output.status.success() {
+        // Two very different failures share a non-zero exit, and the app
+        // routes on which one it was: "no such item" is a FRESH MACHINE
+        // (the frontend matches "no fez identity" and shows onboarding),
+        // while a denied prompt / locked keychain is an access failure
+        // that must NOT create a second identity — it gets a retry
+        // screen instead. `security` exits 44 (errSecItemNotFound) when
+        // the item is absent; the stderr match is the belt to that
+        // suspender.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let not_found = output.status.code() == Some(44) || stderr.contains("could not be found");
+        if not_found {
+            return Err(format!("no fez identity in the keychain for account \"{account}\""));
+        }
         return Err(format!(
-            "no fez identity in the keychain for account \"{account}\" — run `fez keygen` (or `fez pair receive` on a new machine)"
+            "keychain access failed for account \"{account}\": {}",
+            stderr.trim()
         ));
     }
     let hex = String::from_utf8_lossy(&output.stdout).trim().to_string();

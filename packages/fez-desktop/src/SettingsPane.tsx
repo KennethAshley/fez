@@ -8,6 +8,7 @@ import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFoll
 import { SkillSecretsSection } from "./SkillSecrets";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { flash } from "./toast";
+import { relayRaw } from "./relay";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -18,7 +19,7 @@ const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_
  * "saved but not yet applied" is a computable fact rather than a hint in
  * a flash message the user already dismissed.
  */
-const BOOT_RELAY = localStorage.getItem("fez-relay") ?? "ws://localhost:7777";
+const BOOT_RELAY = relayRaw();
 const BOOT_MEDIA = localStorage.getItem("fez-media-server") ?? "";
 
 /**
@@ -43,7 +44,7 @@ type SettingsSection = keyof typeof SETTINGS_TABS;
 export default function SettingsPane({ client, wire, onClose }: { client: FezClient; wire: BrowserWire; onClose: () => void }) {
   const [name, setName] = useState(client.knownNames().get(client.pubkey) ?? "");
   const [status, setStatus] = useState(client.statusOf(client.pubkey) ?? "");
-  const [relay, setRelay] = useState(localStorage.getItem("fez-relay") ?? "ws://localhost:7777");
+  const [relay, setRelay] = useState(relayRaw());
   const [media, setMedia] = useState(mediaServer());
   const [keyHex, setKeyHex] = useState<string>();
   const [section, setSection] = useState<SettingsSection>("profile");

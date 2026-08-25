@@ -6,14 +6,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { BrowserWire } from "./wire";
 import { openBackup } from "./backup";
-
-/**
- * Where a fresh install lands. Mirrors src/settings.ts — the desktop
- * bundle deliberately doesn't depend on the CLI package. A generic
- * public relay carries the events but enforces none of fez's membership
- * gating, so channel content there is unlisted rather than private.
- */
-const DEFAULT_RELAY = "wss://67-205-188-204.sslip.io";
+import { DEFAULT_RELAY } from "./relay";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 

@@ -7,6 +7,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { BrowserWire } from "./wire";
+import { relaySet } from "./relay";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -54,19 +55,6 @@ import "./App.css";
  * observer frame below comes from @fezchat/client — this file only renders.
  */
 
-/**
- * The relay SET. Stored comma-separated under the same key the single
- * relay used, so an existing install keeps working and adding a second
- * relay is editing one string rather than a migration.
- */
-function relaySet(): string[] {
-  const raw =
-    (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_RELAY ??
-    localStorage.getItem("fez-relay") ??
-    "ws://localhost:7777";
-  const urls = raw.split(",").map((u) => u.trim()).filter(Boolean);
-  return urls.length ? urls : ["ws://localhost:7777"];
-}
 /** Keychain account — override with VITE_FEZ_ACCOUNT=demo to walk onboarding as a fresh user without touching your real identity. */
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 const KIND_TURN_METRIC = 47030;
@@ -232,6 +220,32 @@ function BootSplash({ loading }: { loading: boolean }) {
   );
 }
 
+/**
+ * A failed boot is a door, not a wall. The old screen was the raw error
+ * string with no way forward — reachable on FIRST LAUNCH by denying the
+ * macOS keychain prompt, which told a brand-new user to go run a CLI they
+ * don't have. Every boot failure is retryable (a denied prompt re-asks,
+ * a dead relay may come back), so the button is unconditional; the
+ * keychain hint appears only when the message implicates the keychain.
+ */
+function BootError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const keychain = /keychain/i.test(message);
+  return (
+    <div className="boot error">
+      <div>
+        <p>{message}</p>
+        {keychain && (
+          <p className="boot-error-hint">
+            fez keeps your identity in the macOS keychain. If a permission dialog appeared, choose
+            “Always Allow” and try again.
+          </p>
+        )}
+        <button className="agent-action" onClick={onRetry}>try again</button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [connected, setConnected] = useState(true);
@@ -272,7 +286,17 @@ export default function App() {
       />
     );
   }
-  if (boot.phase === "error") return <div className="boot error">{boot.message}</div>;
+  if (boot.phase === "error") {
+    return (
+      <BootError
+        message={boot.message}
+        onRetry={() => {
+          setBoot({ phase: "loading" });
+          setBootNonce((n) => n + 1); // bootOnce un-caches a failed boot, so this re-runs it
+        }}
+      />
+    );
+  }
   return <Shell client={boot.client} wire={boot.wire} connected={connected} relayHealth={relayHealth} />;
 }
 

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FezClient } from "@fezchat/client";
 import { flash } from "./toast";
+import { relaySet } from "./relay";
 
 /**
  * Channel/client.state.workspace management — Buzz's ChannelManagementSheet as a fez
@@ -163,10 +164,7 @@ function isLoopback(url: string): boolean {
  */
 function InviteCode({ communityName }: { communityName: string }) {
   const [copied, setCopied] = useState(false);
-  const relays = (localStorage.getItem("fez-relay") ?? "ws://localhost:7777")
-    .split(",")
-    .map((r) => r.trim())
-    .filter(Boolean);
+  const relays = relaySet();
   const reachable = relays.find((r) => !isLoopback(r));
 
   if (!reachable) {
