@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-import { PixelSprite } from './pixel-sprite';
+import { AnimatedSprite, PixelSprite } from './pixel-sprite';
 import { BracketFrame, Rule } from './ornament';
 import { SPRITES } from './sprites';
 
@@ -103,16 +103,14 @@ export function AgentCodex() {
             }`}
           >
             {i === selected ? (
-              <span className="sprite-px">
-                <PixelSprite sprite={SPRITES[a.id]} scale={4} />
-              </span>
+              <AnimatedSprite sprite={SPRITES[a.id]} scale={4} />
             ) : (
-              <span className="sprite-px">
+              <span>
                 <span className="sprite-mono">
                   <PixelSprite sprite={SPRITES[a.id]} scale={4} mono="#5d564c" />
                 </span>
                 <span className="sprite-lit">
-                  <PixelSprite sprite={SPRITES[a.id]} scale={4} />
+                  <AnimatedSprite sprite={SPRITES[a.id]} scale={4} />
                 </span>
               </span>
             )}
@@ -130,9 +128,7 @@ export function AgentCodex() {
         <div className="my-5 flex flex-col items-center gap-2 text-center">
           <span className="sprite-hover">
             <BracketFrame>
-              <span className="sprite-px inline-block">
-                <PixelSprite sprite={SPRITES[agent.id]} scale={6} />
-              </span>
+              <AnimatedSprite sprite={SPRITES[agent.id]} scale={6} />
             </BracketFrame>
           </span>
           <div className="mt-2 text-sm text-[#cfc041]">

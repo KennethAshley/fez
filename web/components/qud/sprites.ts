@@ -9,6 +9,10 @@
 
 export interface Sprite {
   rows: string[];
+  /** Second idle frame, same dimensions — each character moves its OWN
+   * way (a tassel swings, a shuttle travels, an eye looks around).
+   * Absent = the sprite holds still. */
+  alt?: string[];
   palette: Record<string, string>;
 }
 
@@ -33,6 +37,19 @@ export const SPRITES: Record<string, Sprite> = {
       '...dd..dd...',
       '...dd..dd...',
     ],
+    alt: [
+      '....rrrr....',
+      '....rrrr....',
+      '...ffffff.r.',
+      '...f.ff.f.r.',
+      '...ffffff...',
+      '..dddddddd..',
+      '..dddddddd..',
+      '..ddrrrrdd..',
+      '..dddddddd..',
+      '..dd....dd..',
+      '..dd....dd..',
+    ],
   },
   // Subnet cartographer: wide-brim hat, an ember spyglass to the eye.
   scout: {
@@ -49,6 +66,18 @@ export const SPRITES: Record<string, Sprite> = {
       '....t..t....',
       '....t..t....',
     ],
+    alt: [
+      '..tttttttt..',
+      '....tttt....',
+      '....ffff....',
+      '....f.ffrr..',
+      '....ffff....',
+      '...tttttt...',
+      '...tttttt...',
+      '...tttttt...',
+      '...t....t...',
+      '...t....t...',
+    ],
   },
   // The weaver is its loom: violet frame, one ember shuttle.
   loom: {
@@ -60,6 +89,17 @@ export const SPRITES: Record<string, Sprite> = {
       '..v.v.v.vv..',
       '..vrrrrrrv..',
       '..vv..v..v..',
+      '..vv.vv.vv..',
+      '..vvvvvvvv..',
+      '..v......v..',
+    ],
+    alt: [
+      '..v......v..',
+      '..vvvvvvvv..',
+      '..v.v.v..v..',
+      '..v.v.v.vv..',
+      '..v.v.v..v..',
+      '..vrrrrrrv..',
       '..vv.vv.vv..',
       '..vvvvvvvv..',
       '..v......v..',
@@ -79,6 +119,17 @@ export const SPRITES: Record<string, Sprite> = {
       '..gggggggg..',
       '...g....g...',
     ],
+    alt: [
+      '...gggggg...',
+      '..gggggggg..',
+      '............',
+      '..gggggggg..',
+      '..ggg..ggg..',
+      '..gggg.ggg..',
+      '............',
+      '..gggggggg..',
+      '...g....g...',
+    ],
   },
   // Inference familiar: a small green machine, ember antenna, always on.
   chip: {
@@ -94,6 +145,17 @@ export const SPRITES: Record<string, Sprite> = {
       '....c..c....',
       '...cc..cc...',
     ],
+    alt: [
+      '............',
+      '.....rr.....',
+      '...cccccc...',
+      '...c.cc.c...',
+      '...cccccc...',
+      '..c.cccc.c..',
+      '..cccccccc..',
+      '....c..c....',
+      '..cc....cc..',
+    ],
   },
   // The appraising eye: gold sclera, ember iris, a punched pupil.
   score: {
@@ -105,6 +167,16 @@ export const SPRITES: Record<string, Sprite> = {
       '.oooorroooo.',
       '.ooor..rooo.',
       '..oorrrroo..',
+      '...oooooo...',
+      '..o......o..',
+    ],
+    alt: [
+      '..o......o..',
+      '...oooooo...',
+      '..oooooooo..',
+      '.ooorrooooo.',
+      '.oor..roooo.',
+      '..orrrrooo..',
       '...oooooo...',
       '..o......o..',
     ],

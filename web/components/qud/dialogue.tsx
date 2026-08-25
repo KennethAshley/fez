@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-import { PixelSprite } from './pixel-sprite';
+import { AnimatedSprite } from './pixel-sprite';
 import { Rule } from './ornament';
 import { SPRITES } from './sprites';
 
@@ -40,9 +40,7 @@ export function Dialogue() {
       <div className="border border-neutral-900 px-5 py-6 sm:px-8">
         <div className="mb-4 flex flex-col items-center gap-2 text-center">
           <span className="sprite-hover">
-            <span className="sprite-px inline-block">
-              <PixelSprite sprite={SPRITES.fez} scale={5} />
-            </span>
+            <AnimatedSprite sprite={SPRITES.fez} scale={5} />
           </span>
           <div className="text-sm text-[#cfc041]">the guide</div>
         </div>
