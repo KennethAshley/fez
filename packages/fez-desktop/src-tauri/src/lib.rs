@@ -733,6 +733,17 @@ fn install_package(name: String) -> Result<String, String> {
     let pkg: serde_json::Value =
         serde_json::from_slice(&pkg_bytes).map_err(|e| format!("bad package.json: {e}"))?;
 
+    // 3b. Compat gate — BEFORE anything is copied, same as the CLI's
+    // install and link. The gallery used to bypass this entirely: a
+    // package built against a newer FezExtensionAPI installed fine and
+    // hit an undefined method three layers into someone's afternoon.
+    if let Some(err) = min_fez_version_error(
+        pkg.pointer("/fez/minFezVersion").and_then(|v| v.as_str()),
+        FEZ_VERSION,
+    ) {
+        return Err(format!("{name} {err}"));
+    }
+
     // 4. De-scoped basename is the file/extension name: @fezchat/kanban → kanban.
     let base = name.rsplit('/').next().unwrap_or(&name).trim_start_matches('@');
     let parts = pkg.pointer("/fez/parts");
@@ -1622,7 +1633,29 @@ pub fn run() {
                     .unwrap_or_default(),
             }
         })
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "fez-check-updates" {
+                use tauri::Emitter;
+                // The webview owns the updater flow (plugin JS API + toasts);
+                // the native menu just rings the bell.
+                let _ = app.emit("fez-check-updates", ());
+            }
+        })
         .setup(|app| {
+            // macOS gets the standard "Check for Updates…" in the app menu,
+            // right under About — the default menu with one item inserted.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{Menu, MenuItem, MenuItemKind};
+                let handle = app.handle();
+                let menu = Menu::default(handle)?;
+                let check =
+                    MenuItem::with_id(handle, "fez-check-updates", "Check for Updates…", true, None::<&str>)?;
+                if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
+                    app_menu.insert(&check, 1)?;
+                }
+                app.set_menu(menu)?;
+            }
             // Off the main thread: the copy moves ~140MB on a version bump,
             // and running it synchronously here held the window back —
             // first launch looked hung with no window and no progress.
@@ -1645,4 +1678,78 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, runner_status, ensure_agent_runner])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// The fez host version `fez.minFezVersion` is enforced against — a
+/// mirror of FEZ_VERSION in src/extensions/host-compat.ts. The
+/// host-compat eval in fez-evals keeps the two equal; bump them together.
+const FEZ_VERSION: &str = "0.2.0";
+
+/// Mirrors minFezVersionError in host-compat.ts: None = allow. Absent
+/// field means no claim; an unparseable requirement refuses too — a
+/// package declaring garbage is asking for a check we cannot perform.
+fn min_fez_version_error(required: Option<&str>, host: &str) -> Option<String> {
+    let required = required?;
+    let parts: Vec<&str> = required.split('.').collect();
+    let well_formed = (1..=3).contains(&parts.len())
+        && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    if !well_formed {
+        return Some(format!(
+            "declares minFezVersion \"{required}\", which is not an x.y.z version — refusing to guess"
+        ));
+    }
+    let nums = |v: &str| -> [u64; 3] {
+        let mut out = [0u64; 3];
+        for (i, p) in v.split('.').take(3).enumerate() {
+            out[i] = p.parse().unwrap_or(0);
+        }
+        out
+    };
+    if nums(host) < nums(required) {
+        return Some(format!("needs fez ≥ {required}, you have {host} — update fez and retry"));
+    }
+    None
+}
+
+#[cfg(test)]
+mod host_compat_tests {
+    use super::min_fez_version_error;
+
+    #[test]
+    fn absent_field_means_no_claim() {
+        assert_eq!(min_fez_version_error(None, "0.2.0"), None);
+    }
+
+    #[test]
+    fn older_host_refuses_naming_both_versions() {
+        let err = min_fez_version_error(Some("0.3.0"), "0.2.0").expect("must refuse");
+        assert!(err.contains("0.3.0") && err.contains("0.2.0"), "{err}");
+        assert!(err.contains("update fez"), "{err}");
+    }
+
+    #[test]
+    fn equal_and_newer_hosts_allow() {
+        assert_eq!(min_fez_version_error(Some("0.2.0"), "0.2.0"), None);
+        assert_eq!(min_fez_version_error(Some("0.2.0"), "0.10.1"), None);
+    }
+
+    #[test]
+    fn missing_parts_are_zero() {
+        assert_eq!(min_fez_version_error(Some("0.2"), "0.2.0"), None);
+        assert!(min_fez_version_error(Some("1"), "0.9.9").is_some());
+    }
+
+    #[test]
+    fn numeric_not_lexicographic() {
+        // "0.10.0" > "0.9.0" numerically; a string compare gets this wrong
+        assert_eq!(min_fez_version_error(Some("0.9.0"), "0.10.0"), None);
+    }
+
+    #[test]
+    fn garbage_requirement_refuses_to_guess() {
+        for bad in ["^0.2.0", "0.2.x", "two", "0..2", "", "1.2.3.4"] {
+            let err = min_fez_version_error(Some(bad), "0.2.0").expect("must refuse");
+            assert!(err.contains("refusing to guess"), "{bad}: {err}");
+        }
+    }
 }
