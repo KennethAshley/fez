@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * The app icon, generated from a pixel map in the sprites.ts spirit.
- * The subject is the wordmark the website header wears — white mono
- * "fez" with the ember ▴ on black — so the Dock and the site read as
- * one thing.
+ * The app icon: the guide sprite from src/sprites.ts on the site's
+ * black — the same little fez-wearer who fronts the boot splash, so
+ * the Dock, the app, and the site read as one thing.
  *
  * Emits app-icon.png (1024², Big-Sur squircle on transparent ground);
  * regenerate the full set with:  npx tauri icon app-icon.png
@@ -14,20 +13,26 @@ import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const EMBER = "#FF6A00";
-const WHITE = "#ffffff";
+const BONE = "#e8e2d9";
+const DUST = "#6d645a";
 const BG = "#000000"; // the site's bg-black
 
-// The wordmark the website header wears: white mono "fez", ember ▴.
-// Pixel letters, 17×7 — w/e/z are the white glyphs, t the triangle.
-const PALETTE = { w: WHITE, e: WHITE, z: WHITE, t: EMBER };
+// The guide — the fez sprite from src/sprites.ts, the one who wears
+// the hat the network is named for. KEEP IN SYNC with that file's
+// `fez` entry (rows + palette) if the cast art ever changes.
+const PALETTE = { r: EMBER, f: BONE, d: DUST };
 const ROWS = [
-  ".ww..............",
-  "w................",
-  "www..ee..zzzz....",
-  "w...e..e...z.....",
-  "w...eeee..z......",
-  "w...e....z.....t.",
-  "w....eee.zzzz.ttt",
+  "....rrrr....",
+  "....rrrr.r..",
+  "...ffffff.r.",
+  "...f.ff.f...",
+  "...ffffff...",
+  "..dddddddd..",
+  "..dddddddd..",
+  "..ddrrrrdd..",
+  "..dddddddd..",
+  "...dd..dd...",
+  "...dd..dd...",
 ];
 
 const SIZE = 1024;
