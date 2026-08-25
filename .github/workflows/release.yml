@@ -1,0 +1,84 @@
+# Release: push a tag `v*` and this produces the same artifact set
+# scripts/release.sh makes locally — signed, notarized, stapled DMG +
+# updater archive + latest.json — published as the GitHub release.
+#
+# Secrets (gh secret set …):
+#   APPLE_CERT_P12        base64 of the Developer ID Application .p12
+#   APPLE_CERT_PASSWORD   the .p12's password
+#   APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+#   TAURI_SIGNING_PRIVATE_KEY   the updater minisign key
+#
+# The bundled agent (pi/pi-acp/fez-relay) is SEEDED from the
+# pi-agent-v<ver> prerelease, not built from source: upstream pi ships
+# no bun lockfile, so fresh-cache source builds drift and fail
+# (found the hard way). Refresh the seed from a dev machine via
+# prepare-pi-agent.mjs + re-upload.
+name: release
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+jobs:
+  release-macos:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Build workspace (core + packages)
+        run: npm ci && npm run build
+
+      - name: Desktop deps
+        run: npm ci
+        working-directory: packages/fez-desktop
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN=build.keychain
+          KEYCHAIN_PW=$(uuidgen)
+          echo "$APPLE_CERT_P12" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -t 3600 "$KEYCHAIN"
+          security import /tmp/cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN"
+          rm /tmp/cert.p12
+
+      - name: Seed bundled agent from cache release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PI_VER=$(grep -m1 'const PI_VERSION' packages/fez-desktop/scripts/prepare-pi-agent.mjs | sed 's/.*"\(.*\)".*/\1/')
+          gh release download "pi-agent-v${PI_VER}" --pattern 'pi-agent-macos-arm64.tar.gz' --output /tmp/pi-agent.tar.gz
+          tar -xzf /tmp/pi-agent.tar.gz -C packages/fez-desktop/src-tauri
+          test -x packages/fez-desktop/src-tauri/pi-agent/pi
+          test -x packages/fez-desktop/src-tauri/pi-agent/fez-relay
+          echo "seeded pi-agent $(cat packages/fez-desktop/src-tauri/pi-agent/VERSION)"
+
+      - name: Tag must match the version being built
+        run: |
+          VERSION=$(node -p "require('./packages/fez-desktop/src-tauri/tauri.conf.json').version")
+          [ "${GITHUB_REF_NAME}" = "v${VERSION}" ] || { echo "tag ${GITHUB_REF_NAME} != v${VERSION}"; exit 1; }
+
+      - name: Build, sign, notarize, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          REQUIRE_PI_AGENT: "1"
+        run: bash packages/fez-desktop/scripts/release.sh

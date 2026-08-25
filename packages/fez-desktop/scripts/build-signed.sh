@@ -19,14 +19,17 @@ PKG="$(dirname "$HERE")"
 export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$PATH"
 export REQUIRE_PI_AGENT=1
 
-kc() { security find-generic-password -s fez-notary -a "$1" -w; }
-export APPLE_SIGNING_IDENTITY="$(kc identity)"
-export APPLE_ID="$(kc apple-id)"
-export APPLE_PASSWORD="$(kc password)"
-export APPLE_TEAM_ID="$(kc team-id)"
-# Updater artifact signing (minisign) — key lives in the keychain too.
-export TAURI_SIGNING_PRIVATE_KEY="$(kc updater-key)"
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+# Credentials: environment first (CI provides secrets), keychain second
+# (Ken's machine, service fez-notary from setup-signing.sh).
+kc() { security find-generic-password -s fez-notary -a "$1" -w 2>/dev/null || true; }
+export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-$(kc identity)}"
+export APPLE_ID="${APPLE_ID:-$(kc apple-id)}"
+export APPLE_PASSWORD="${APPLE_PASSWORD:-$(kc password)}"
+export APPLE_TEAM_ID="${APPLE_TEAM_ID:-$(kc team-id)}"
+# Updater artifact signing (minisign).
+export TAURI_SIGNING_PRIVATE_KEY="${TAURI_SIGNING_PRIVATE_KEY:-$(kc updater-key)}"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+[[ -n "$APPLE_SIGNING_IDENTITY" ]] || { echo "✗ no signing identity (env or keychain)"; exit 1; }
 echo "▸ signing as: $APPLE_SIGNING_IDENTITY"
 
 echo "▸ preparing bundled agent (bun: $(bun --version))"
