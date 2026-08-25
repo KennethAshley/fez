@@ -6,14 +6,14 @@ import {
   finalizeEvent,
   generateSecretKey,
 } from "nostr-tools";
-import { RelayConnection } from "./relay.js";
+import { RelayConnection } from "../protocol/relay.js";
 import {
   KIND_AGENT_METADATA,
   KIND_AGENT_TASK,
   KIND_AGENT_PROGRESS,
   KIND_AGENT_RESULT,
   KIND_AGENT_CANCEL,
-} from "./kinds.js";
+} from "../protocol/kinds.js";
 
 export interface AgentConfig {
   /** Nostr private key (hex). Auto-generated if not provided. */

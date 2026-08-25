@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import chalk from "chalk";
-import { CapabilityClient } from "./client.js";
+import { CapabilityClient } from "./protocol/client.js";
 import { generateSecretKey, getPublicKey } from "nostr-tools";
 import fs from "fs/promises";
 import path from "path";
@@ -60,7 +60,7 @@ if (process.argv.length <= 2) {
   // once and persist there.
   let privateKey = process.env.FEZ_PRIVATE_KEY;
   if (!privateKey) {
-    const { loadOrCreateKey } = await import("./keys.js");
+    const { loadOrCreateKey } = await import("./identity/keys.js");
     privateKey = loadOrCreateKey("default"); // keychain custody; migrates a legacy plaintext file
   }
 
@@ -70,13 +70,13 @@ if (process.argv.length <= 2) {
   // gets actionable guidance, a starter persona covers the empty case,
   // and the communities extension bootstraps a Home community on its
   // side. Everything lands in ~/.fez/settings.json.
-  const { loadSettings, resolveRelays } = await import("./settings.js");
+  const { loadSettings, resolveRelays } = await import("./shared/settings.js");
   if (!loadSettings().onboarded && process.stdin.isTTY && process.stdout.isTTY) {
-    const { firstRunWizard } = await import("./onboarding.js");
+    const { firstRunWizard } = await import("./cli/onboarding.js");
     await firstRunWizard();
   }
 
-  const { FezTUI } = await import("./tui.js");
+  const { FezTUI } = await import("./cli/tui.js");
   const tui = new FezTUI(resolveRelays(), privateKey);
   await tui.start();
   // TUI blocks until /quit, then exits cleanly
@@ -112,7 +112,7 @@ keys
   .command("list")
   .description("List known keys with pubkeys and storage backend")
   .action(async () => {
-    const { listKeys } = await import("./keys.js");
+    const { listKeys } = await import("./identity/keys.js");
     const entries = listKeys();
     if (entries.length === 0) return console.log("No keys yet — the TUI or an agent creates one on first run.");
     for (const entry of entries) {
@@ -128,7 +128,7 @@ keys
   .command("export <name>")
   .description("Export a key as passphrase-encrypted ncryptsec (NIP-49)")
   .action(async (name: string) => {
-    const { exportKey } = await import("./keys.js");
+    const { exportKey } = await import("./identity/keys.js");
     const inquirer = (await import("inquirer")).default;
     const { passphrase } = await inquirer.prompt([
       { type: "password", name: "passphrase", message: `Passphrase to encrypt "${name}":`, mask: "*" },
@@ -141,7 +141,7 @@ keys
   .command("import <name> <ncryptsec>")
   .description("Import a NIP-49 ncryptsec under the given key name")
   .action(async (name: string, ncryptsec: string) => {
-    const { getKey, importKey } = await import("./keys.js");
+    const { getKey, importKey } = await import("./identity/keys.js");
     const inquirer = (await import("inquirer")).default;
     if (getKey(name)) {
       const { overwrite } = await inquirer.prompt([
@@ -172,7 +172,7 @@ program
       process.exitCode = 1;
       return;
     }
-    const { firstRunWizard } = await import("./onboarding.js");
+    const { firstRunWizard } = await import("./cli/onboarding.js");
     await firstRunWizard();
   });
 
@@ -194,8 +194,8 @@ interface MemContext {
 }
 
 async function memContext(personaFlag?: string): Promise<MemContext> {
-  const { getKey } = await import("./keys.js");
-  const { resolveRelay } = await import("./settings.js");
+  const { getKey } = await import("./identity/keys.js");
+  const { resolveRelay } = await import("./shared/settings.js");
   const { getPublicKey: pk } = await import("nostr-tools/pure");
   const persona = personaFlag ?? process.env.FEZ_AGENT_PERSONA;
   if (!persona) {
@@ -223,8 +223,8 @@ async function memContext(personaFlag?: string): Promise<MemContext> {
 
 /** Query all engram candidates for the pair; returns heads map. */
 async function memHeads(ctx: MemContext) {
-  const { RelayConnection } = await import("./relay.js");
-  const { conversationKey, engramHeads, KIND_AGENT_ENGRAM } = await import("./engram.js");
+  const { RelayConnection } = await import("./protocol/relay.js");
+  const { conversationKey, engramHeads, KIND_AGENT_ENGRAM } = await import("./agent/engram.js");
   const relay = new RelayConnection({ url: ctx.relayUrl });
   await relay.connect();
   const events = await relay.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [ctx.agentPubkey], "#p": [ctx.ownerPubkey] }]);
@@ -237,7 +237,7 @@ mem
   .description('Write a memory record ("core" or "mem/...") — as the agent in scope')
   .option("--persona <name>", "agent persona (default: FEZ_AGENT_PERSONA)")
   .action(async (slug: string, text: string, options) => {
-    const { isValidSlug, buildEngramEvent } = await import("./engram.js");
+    const { isValidSlug, buildEngramEvent } = await import("./agent/engram.js");
     const { finalizeEvent } = await import("nostr-tools/pure");
     if (!isValidSlug(slug)) {
       console.error(`Bad slug "${slug}" — use "core" or mem/<lowercase-alnum-_->[/...]`);
@@ -281,7 +281,7 @@ mem
       console.error('core cannot be tombstoned — rewrite it with `fez mem set core "..."`.');
       process.exit(1);
     }
-    const { buildEngramEvent } = await import("./engram.js");
+    const { buildEngramEvent } = await import("./agent/engram.js");
     const { finalizeEvent } = await import("nostr-tools/pure");
     const ctx = await memContext(options.persona);
     const { relay, convKey, heads } = await memHeads(ctx);
@@ -322,16 +322,16 @@ const doc = program.command("doc").description("Channel doc (shared markdown, ki
 interface DocCliContext {
   secret: Uint8Array;
   pubkey: string;
-  relay: import("./relay.js").RelayConnection;
+  relay: import("./protocol/relay.js").RelayConnection;
   channelId: string;
   latest?: { id: string; created_at: number; content: string };
 }
 
 async function docContext(channelFlag: string | undefined, personaFlag: string | undefined): Promise<DocCliContext> {
-  const { getKey } = await import("./keys.js");
-  const { resolveRelays } = await import("./settings.js");
+  const { getKey } = await import("./identity/keys.js");
+  const { resolveRelays } = await import("./shared/settings.js");
   const { getPublicKey: pk } = await import("nostr-tools/pure");
-  const { RelayConnection } = await import("./relay.js");
+  const { RelayConnection } = await import("./protocol/relay.js");
   const persona = personaFlag ?? process.env.FEZ_AGENT_PERSONA;
   const hex = persona ? getKey(`agent:${persona}`) : getKey("default");
   if (!hex) {
@@ -432,7 +432,7 @@ program
   .option("--owner <pubkey>", "owner pubkey (default: your fez identity)")
   .option("--on-busy <mode>", "steer | queue", "steer")
   .action(async (personaId: string, options) => {
-    const { resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./shared/settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     process.env.FEZ_AGENT_PERSONA = personaId;
     process.env.FEZ_AGENT_CHANNELS = options.channels === "none" ? "" : options.channels;
@@ -445,7 +445,7 @@ program
       const owner =
         options.owner ??
         (await (async () => {
-          const { getKey } = await import("./keys.js");
+          const { getKey } = await import("./identity/keys.js");
           const hex = getKey("default");
           return hex ? getPublicKey(Uint8Array.from(Buffer.from(hex, "hex"))) : undefined;
         })());
@@ -472,7 +472,7 @@ program
   .description("Run the always-on watcher: wakes sleeping agents on DMs/mentions, delivers desktop notifications — no TUI needed")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./shared/settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     const { fileURLToPath, pathToFileURL } = await import("node:url");
     const { existsSync } = await import("node:fs");
@@ -573,7 +573,7 @@ program
   .description("Run @fez, the routing agent: mentions of @fez get routed to the best agent for the task")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./shared/settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
     const { fileURLToPath, pathToFileURL } = await import("node:url");
     const { existsSync } = await import("node:fs");
@@ -674,12 +674,12 @@ program
       console.error(`✗ role must be one of: ${ROLES.join(", ")}`);
       process.exit(1);
     }
-    const { getKey } = await import("./keys.js");
-    const { resolveRelays } = await import("./settings.js");
-    const { CapabilityClient } = await import("./client.js");
-    const { RelayConnection } = await import("./relay.js");
-    const { KIND_MEMBERSHIP, ROSTER_D } = await import("./kinds.js");
-    const { fetchRelayInfo } = await import("./nip11.js");
+    const { getKey } = await import("./identity/keys.js");
+    const { resolveRelays } = await import("./shared/settings.js");
+    const { CapabilityClient } = await import("./protocol/client.js");
+    const { RelayConnection } = await import("./protocol/relay.js");
+    const { KIND_MEMBERSHIP, ROSTER_D } = await import("./protocol/kinds.js");
+    const { fetchRelayInfo } = await import("./protocol/nip11.js");
 
     const keyHex = getKey("default");
     if (!keyHex) {
@@ -737,8 +737,8 @@ router
   .command("show")
   .description("Which endpoint @fez uses, and whether it answers")
   .action(async () => {
-    const { findPersona } = await import("./personas.js");
-    const { HOSTED_ROUTER } = await import("./settings.js");
+    const { findPersona } = await import("./identity/personas.js");
+    const { HOSTED_ROUTER } = await import("./shared/settings.js");
     const persona = await findPersona("fez");
     if (!persona) {
       console.log("No @fez persona — run `fez setup` to create one.");
@@ -887,7 +887,7 @@ program
   .action(async () => {
     const { execSync } = await import("node:child_process");
     const fsSync = await import("node:fs");
-    const { HOSTED_ROUTER } = await import("./settings.js");
+    const { HOSTED_ROUTER } = await import("./shared/settings.js");
     const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "com.fez.router.plist");
     try { execSync(`launchctl bootout gui/$(id -u) ${plistPath} 2>/dev/null`); } catch { /* not loaded */ }
     fsSync.rmSync(plistPath, { force: true });
@@ -921,8 +921,8 @@ skill
   .option("--url <url>", "HTTP MCP server URL instead of a command")
   .option("--env <pairs...>", "KEY=value pairs (stored locally, never published)")
   .action(async (name: string, options) => {
-    const { loadSettings, saveSettings } = await import("./settings.js");
-    const { parseSkillSource, describeSkillSpec, SOURCE_SCHEMES } = await import("./skill-source.js");
+    const { loadSettings, saveSettings } = await import("./shared/settings.js");
+    const { parseSkillSource, describeSkillSpec, SOURCE_SCHEMES } = await import("./extensions/skill-source.js");
     // --from is the shorthand a persona's `name=spec` declares; it
     // expands to exactly the same command/args a hand-written --command
     // would, and we echo that expansion so nothing installs unseen.
@@ -961,8 +961,8 @@ skill
   .command("list")
   .description("List defined skills and which personas declare them")
   .action(async () => {
-    const { loadSettings } = await import("./settings.js");
-    const { listPersonas } = await import("./personas.js");
+    const { loadSettings } = await import("./shared/settings.js");
+    const { listPersonas } = await import("./identity/personas.js");
     const settings = loadSettings() as { mcpServers?: Record<string, { command?: string; url?: string; env?: Record<string, string> }> };
     const skills = settings.mcpServers ?? {};
     const personas = await listPersonas();
@@ -977,7 +977,7 @@ skill
     // Declared-but-undefined is the actionable gap, so print the fix
     // rather than only the complaint — a persona that declared a source
     // has already answered "which package?", which is the hard part.
-    const { installHint, wellKnownSource } = await import("./skill-source.js");
+    const { installHint, wellKnownSource } = await import("./extensions/skill-source.js");
     const declaredSource = new Map<string, string>();
     for (const persona of personas) {
       for (const [name, source] of Object.entries(persona.mcpSources ?? {})) declaredSource.set(name, source);
@@ -996,7 +996,7 @@ skill
   .command("remove <name>")
   .description("Remove a skill definition (personas declaring it fall back to disclosure)")
   .action(async (name: string) => {
-    const { loadSettings, saveSettings } = await import("./settings.js");
+    const { loadSettings, saveSettings } = await import("./shared/settings.js");
     const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
     if (!settings.mcpServers?.[name]) return console.log(`No skill named "${name}".`);
     const { [name]: _removed, ...rest } = settings.mcpServers;
@@ -1014,9 +1014,9 @@ skill
   .option("--npm <name>", "npm package name")
   .option("--artifact <type>", "mcp (default) | extension (fez install) | pi-package (persona packages:)")
   .action(async (name: string, options) => {
-    const { loadSettings, resolveRelays } = await import("./settings.js");
-    const { loadOrCreateKey } = await import("./keys.js");
-    const { KIND_SKILL_LISTING } = await import("./kinds.js");
+    const { loadSettings, resolveRelays } = await import("./shared/settings.js");
+    const { loadOrCreateKey } = await import("./identity/keys.js");
+    const { KIND_SKILL_LISTING } = await import("./protocol/kinds.js");
     const settings = loadSettings() as { mcpServers?: Record<string, { command?: string; args?: string[]; url?: string; type?: string; env?: Record<string, string> }> };
     const artifact = (options.artifact as string | undefined) ?? "mcp";
     const config = settings.mcpServers?.[name];
@@ -1034,7 +1034,7 @@ skill
     // something the installer can reach. A path on this disk fails
     // silently on theirs: the MCP server won't start, and a server that
     // won't start is indistinguishable from a skill nobody declared.
-    const { machineLocalPath } = await import("./skill-source.js");
+    const { machineLocalPath } = await import("./extensions/skill-source.js");
     const localPath = artifact === "mcp" ? machineLocalPath(config) : undefined;
     if (localPath) {
       console.error(
@@ -1045,7 +1045,7 @@ skill
       process.exitCode = 1;
       return;
     }
-    const { RelayConnection } = await import("./relay.js");
+    const { RelayConnection } = await import("./protocol/relay.js");
     const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
     const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
@@ -1083,10 +1083,10 @@ skill
   .option("--from <pubkey>", "listing author (default: most-installed listing of that name)")
   .option("--env <pairs...>", "KEY=value for each env key the listing requires (stored locally)")
   .action(async (name: string, options) => {
-    const { loadSettings, saveSettings, resolveRelays } = await import("./settings.js");
-    const { loadOrCreateKey } = await import("./keys.js");
-    const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./kinds.js");
-    const { RelayConnection } = await import("./relay.js");
+    const { loadSettings, saveSettings, resolveRelays } = await import("./shared/settings.js");
+    const { loadOrCreateKey } = await import("./identity/keys.js");
+    const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./protocol/kinds.js");
+    const { RelayConnection } = await import("./protocol/relay.js");
     const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
     const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
@@ -1130,7 +1130,7 @@ skill
     await relay.publish(receipt);
     // Global counter (best-effort): the receipt is already on the wire;
     // the index just makes the number universal across relays.
-    const { resolveSkillCountsUrl } = await import("./settings.js");
+    const { resolveSkillCountsUrl } = await import("./shared/settings.js");
     const countsUrl = resolveSkillCountsUrl();
     if (countsUrl) {
       await fetch(countsUrl, {
@@ -1149,14 +1149,14 @@ skill
   .description("Browse marketplace listings on the relay")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .action(async (options) => {
-    const { resolveRelays } = await import("./settings.js");
-    const { loadOrCreateKey } = await import("./keys.js");
-    const { KIND_SKILL_LISTING } = await import("./kinds.js");
-    const { RelayConnection } = await import("./relay.js");
+    const { resolveRelays } = await import("./shared/settings.js");
+    const { loadOrCreateKey } = await import("./identity/keys.js");
+    const { KIND_SKILL_LISTING } = await import("./protocol/kinds.js");
+    const { RelayConnection } = await import("./protocol/relay.js");
     const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
     const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
-    const { KIND_SKILL_INSTALL } = await import("./kinds.js");
+    const { KIND_SKILL_INSTALL } = await import("./protocol/kinds.js");
     const events = (await relay.query([{ kinds: [KIND_SKILL_LISTING], limit: 100 }])) as { pubkey: string; content: string; created_at: number; tags: string[][] }[];
     const receipts = (await relay.query([{ kinds: [KIND_SKILL_INSTALL], limit: 500 }])) as { pubkey: string; tags: string[][] }[];
     const installCounts = new Map<string, Set<string>>();
@@ -1170,7 +1170,7 @@ skill
     }
     // Global counts (cross-relay index) override this relay's local view.
     const globalCounts = new Map<string, number>();
-    const { resolveSkillCountsUrl } = await import("./settings.js");
+    const { resolveSkillCountsUrl } = await import("./shared/settings.js");
     const countsUrl = resolveSkillCountsUrl();
     if (countsUrl) {
       try {
@@ -1213,7 +1213,7 @@ relayCmd
   .command("list", { isDefault: true })
   .description("Show the relay set and where it came from")
   .action(async () => {
-    const { loadSettings, resolveRelays, DEFAULT_RELAY } = await import("./settings.js");
+    const { loadSettings, resolveRelays, DEFAULT_RELAY } = await import("./shared/settings.js");
     const settings = loadSettings();
     const urls = resolveRelays();
     const source = process.env.FEZ_RELAY
@@ -1239,7 +1239,7 @@ relayCmd
   .command("add <url>")
   .description("Add a relay to the set")
   .action(async (url: string) => {
-    const { loadSettings, saveSettings, resolveRelays } = await import("./settings.js");
+    const { loadSettings, saveSettings, resolveRelays } = await import("./shared/settings.js");
     if (!/^wss?:\/\//.test(url)) {
       console.error(chalk.red(`"${url}" is not a relay URL — expected ws:// or wss://`));
       process.exit(1);
@@ -1263,7 +1263,7 @@ relayCmd
   .command("remove <url>")
   .description("Remove a relay from the set")
   .action(async (url: string) => {
-    const { loadSettings, saveSettings, resolveRelays } = await import("./settings.js");
+    const { loadSettings, saveSettings, resolveRelays } = await import("./shared/settings.js");
     const settings = loadSettings();
     const current = settings.relays?.length ? settings.relays : resolveRelays();
     const next = current.filter((entry) => entry !== url);
@@ -1284,11 +1284,11 @@ program
   .command("doctor")
   .description("Check identity, relay, harness, personas — with fixes for whatever's missing")
   .action(async () => {
-    const { getKey, listKeys } = await import("./keys.js");
-    const { detectHarnesses, listHarnesses, registerBuiltinHarnesses } = await import("./harness.js");
+    const { getKey, listKeys } = await import("./identity/keys.js");
+    const { detectHarnesses, listHarnesses, registerBuiltinHarnesses } = await import("./agent/harness.js");
     registerBuiltinHarnesses();
-    const { listPersonas } = await import("./personas.js");
-    const { loadSettings, resolveRelays, DEFAULT_RELAY } = await import("./settings.js");
+    const { listPersonas } = await import("./identity/personas.js");
+    const { loadSettings, resolveRelays, DEFAULT_RELAY } = await import("./shared/settings.js");
     const ok = (s: string) => console.log(`  ${chalk.green("✓")} ${s}`);
     const warn = (s: string, fix?: string) => {
       console.log(`  ${chalk.yellow("!")} ${s}`);
@@ -1460,7 +1460,7 @@ program
     }
 
     // orchestrator endpoint, only if configured
-    const { findPersona } = await import("./personas.js");
+    const { findPersona } = await import("./identity/personas.js");
     const fezPersona = await findPersona("fez");
     const routerUrl = process.env.FEZ_ORCHESTRATOR_URL || fezPersona?.extra.url;
     if (routerUrl) {
@@ -1490,7 +1490,7 @@ program
     // That failure only ever appeared as a warning in a log nobody
     // reads, so it belongs here, where someone is already looking.
     {
-      const { adoptUserPath, whichBinary } = await import("./user-path.js");
+      const { adoptUserPath, whichBinary } = await import("./shared/user-path.js");
       adoptUserPath();
       const extDir = path.join(os.homedir(), ".fez", "extensions");
       const requirements = new Map<string, string[]>(); // binary → extensions wanting it
@@ -1541,13 +1541,13 @@ program
     // supervisor like herdr sets it on the launched process — a baked-in
     // commander default silently clobbered it), then the user's saved
     // settings, then the public default.
-    const { resolveRelays } = await import("./settings.js");
+    const { resolveRelays } = await import("./shared/settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
 
     if (options.key) {
       process.env.FEZ_PRIVATE_KEY = (await fs.readFile(options.key, "utf-8")).trim();
     } else if (!process.env.FEZ_PRIVATE_KEY) {
-      const { getKey } = await import("./keys.js");
+      const { getKey } = await import("./identity/keys.js");
       const stored = getKey("default"); // keychain custody; migrates a legacy plaintext file
       if (stored) process.env.FEZ_PRIVATE_KEY = stored;
       // else: script will auto-generate a key if FEZ_PRIVATE_KEY is unset
@@ -1647,7 +1647,7 @@ program
     client.disconnect();
   });
 
-import { PackageManager } from "./package-manager.js";
+import { PackageManager } from "./extensions/package-manager.js";
 
 // ─── install / list / remove ───────────────────────────────────────────────
 
@@ -1670,7 +1670,7 @@ program
   .option("--workspace", "Include a workspace provider (gives a repo: persona a checkout)")
   .option("-d, --dir <path>", "Output directory (default ./<name>)")
   .action(async (name: string, options) => {
-    const { scaffold, baseName } = await import("./scaffold.js");
+    const { scaffold, baseName } = await import("./extensions/scaffold.js");
     const picked = (["headless", "gui", "relay", "workspace"] as const).filter((s) => options[s]);
     const surfaces = picked.length ? picked : (["headless", "gui"] as const);
     const dir = options.dir ?? path.join(process.cwd(), baseName(name));
@@ -1729,7 +1729,7 @@ program
       process.exit(1);
     }
     // ── permissions: shown BEFORE anything is copied, recorded on grant.
-    const { consentLines, parsePermissions } = await import("./extension-permissions.js");
+    const { consentLines, parsePermissions } = await import("./extensions/extension-permissions.js");
     const declared = manifest.fez?.permissions;
     const lines = consentLines(declared);
     if (lines.length > 0) {
@@ -1761,7 +1761,7 @@ program
     // Existing env VALUES the user filled in are kept; the package only
     // supplies names/defaults.
     if (parts?.skill) {
-      const { loadSettings, saveSettings } = await import("./settings.js");
+      const { loadSettings, saveSettings } = await import("./shared/settings.js");
       const settings = loadSettings() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
       const existing = settings.mcpServers?.[name];
       const mergedEnv = { ...(parts.skill.env ?? {}), ...(existing?.env ?? {}) };
@@ -1822,14 +1822,14 @@ program
     // for background life, so a TUI extension never starts doing its
     // foreground job a second time inside the always-on process.
     {
-      const { loadSettings, saveSettings } = await import("./settings.js");
+      const { loadSettings, saveSettings } = await import("./shared/settings.js");
       const { granted } = parsePermissions(declared);
       const settings = loadSettings() as { extensionPermissions?: Record<string, string[]> };
       saveSettings({ extensionPermissions: { ...settings.extensionPermissions, [name]: granted } } as never);
     }
 
     if (parts?.background) {
-      const { loadSettings, saveSettings } = await import("./settings.js");
+      const { loadSettings, saveSettings } = await import("./shared/settings.js");
       const settings = loadSettings() as { backgroundExtensions?: string[] };
       const list = new Set(settings.backgroundExtensions ?? []);
       list.add(name);
@@ -1898,9 +1898,9 @@ program
 
 // ─── persona ────────────────────────────────────────────────────────────────
 
-import { createPersona, listPersonas, removePersona } from "./personas.js";
-import { registerBuiltinHarnesses, listHarnesses } from "./harness.js";
-import { loadExtensions } from "./extensions.js";
+import { createPersona, listPersonas, removePersona } from "./identity/personas.js";
+import { registerBuiltinHarnesses, listHarnesses } from "./agent/harness.js";
+import { loadExtensions } from "./extensions/extensions.js";
 
 // ─── pair — move the keychain identity to a second device ─────────────────
 
@@ -1920,9 +1920,9 @@ pair
   .option("--as <account>", "keychain account to store the identity under", "default")
   .option("--relay <url>", "relay to pair over (default: configured relay)")
   .action(async (options: { as: string; relay?: string }) => {
-    const { pairReceive } = await import("./pairing.js");
-    const { getKey, setKey } = await import("./keys.js");
-    const { resolveRelay } = await import("./settings.js");
+    const { pairReceive } = await import("./identity/pairing.js");
+    const { getKey, setKey } = await import("./identity/keys.js");
+    const { resolveRelay } = await import("./shared/settings.js");
     if (getKey(options.as)) {
       console.error(`Account "${options.as}" already holds a key — pairing will not overwrite it. Use --as <other-name> or remove it first.`);
       process.exit(1);
@@ -1947,8 +1947,8 @@ pair
   .description("Run this on your EXISTING device with the code from `fez pair receive`")
   .option("--from <account>", "keychain account to send", "default")
   .action(async (uri: string, options: { from: string }) => {
-    const { pairSend } = await import("./pairing.js");
-    const { getKey } = await import("./keys.js");
+    const { pairSend } = await import("./identity/pairing.js");
+    const { getKey } = await import("./identity/keys.js");
     const key = getKey(options.from);
     if (!key) {
       console.error(`No key under account "${options.from}" (fez keygen first).`);
@@ -1975,7 +1975,7 @@ persona
   .option("--skills <list>", "comma-separated mcpServers")
   .option("--file <path>", "read the complete persona md from a file instead of flags")
   .action(async (name: string, options) => {
-    const { writeDraft } = await import("./persona-drafts.js");
+    const { writeDraft } = await import("./identity/persona-drafts.js");
     const proposedBy = process.env.FEZ_AGENT_PERSONA ?? "owner";
     let content: string;
     if (options.file) {
@@ -2015,10 +2015,10 @@ persona
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--github <url>", "source/docs link")
   .action(async (name: string, options) => {
-    const { resolveRelays } = await import("./settings.js");
-    const { loadOrCreateKey } = await import("./keys.js");
-    const { KIND_SKILL_LISTING } = await import("./kinds.js");
-    const { RelayConnection } = await import("./relay.js");
+    const { resolveRelays } = await import("./shared/settings.js");
+    const { loadOrCreateKey } = await import("./identity/keys.js");
+    const { KIND_SKILL_LISTING } = await import("./protocol/kinds.js");
+    const { RelayConnection } = await import("./protocol/relay.js");
     const raw = await fs.readFile(path.join(os.homedir(), ".fez", "personas", `${name}.md`), "utf-8").catch(() => undefined);
     if (!raw) {
       console.error(`No persona named "${name}".`);
@@ -2055,11 +2055,11 @@ persona
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--from <pubkey>", "listing author")
   .action(async (name: string, options) => {
-    const { resolveRelays } = await import("./settings.js");
-    const { loadOrCreateKey } = await import("./keys.js");
-    const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./kinds.js");
-    const { RelayConnection } = await import("./relay.js");
-    const { writeDraft } = await import("./persona-drafts.js");
+    const { resolveRelays } = await import("./shared/settings.js");
+    const { loadOrCreateKey } = await import("./identity/keys.js");
+    const { KIND_SKILL_LISTING, KIND_SKILL_INSTALL } = await import("./protocol/kinds.js");
+    const { RelayConnection } = await import("./protocol/relay.js");
+    const { writeDraft } = await import("./identity/persona-drafts.js");
     const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey: loadOrCreateKey("default") });
     const relay = new RelayConnection({ urls: resolveRelays(options.relay), authSigner: client.authSigner });
     await relay.connect();
@@ -2102,7 +2102,7 @@ persona
   .command("drafts")
   .description("List proposed personas awaiting review")
   .action(async () => {
-    const { listDrafts } = await import("./persona-drafts.js");
+    const { listDrafts } = await import("./identity/persona-drafts.js");
     const drafts = listDrafts();
     if (drafts.length === 0) return console.log("No drafts — agents propose with `fez persona draft <name> ...`.");
     for (const draft of drafts) {
@@ -2115,8 +2115,8 @@ persona
   .command("approve <name>")
   .description("Approve a draft — validates, installs it as a live persona (@mention then summons it)")
   .action(async (name: string) => {
-    const { approveDraft } = await import("./persona-drafts.js");
-    const { registerBuiltinHarnesses, listHarnesses } = await import("./harness.js");
+    const { approveDraft } = await import("./identity/persona-drafts.js");
+    const { registerBuiltinHarnesses, listHarnesses } = await import("./agent/harness.js");
     try {
       registerBuiltinHarnesses();
       const { warnings } = approveDraft(name, listHarnesses().map((h) => h.id));
@@ -2132,7 +2132,7 @@ persona
   .command("reject <name>")
   .description("Reject and delete a draft")
   .action(async (name: string) => {
-    const { rejectDraft } = await import("./persona-drafts.js");
+    const { rejectDraft } = await import("./identity/persona-drafts.js");
     try {
       rejectDraft(name);
       console.log(`🗑  draft "${name}" rejected.`);
@@ -2147,8 +2147,8 @@ persona
   .description("Lint persona files: errors fail, unknown keys / missing description warn (Buzz's pack-validate split)")
   .option("--all", "validate every persona in ~/.fez/personas")
   .action(async (name: string | undefined, options: { all?: boolean }) => {
-    const { validatePersonaFile } = await import("./personas.js");
-    const { registerBuiltinHarnesses, listHarnesses } = await import("./harness.js");
+    const { validatePersonaFile } = await import("./identity/personas.js");
+    const { registerBuiltinHarnesses, listHarnesses } = await import("./agent/harness.js");
     const fsSync = await import("node:fs");
     const os = await import("node:os");
     const pathMod = await import("node:path");

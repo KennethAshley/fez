@@ -1,7 +1,7 @@
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { nip44, nip59, type Event, type EventTemplate } from "nostr-tools";
 import type { Wire, WireEvent, WireFilter, DmRumor, RelayInfoDoc } from "@fezchat/client";
-import { fetchRelayInfo } from "../../../src/nip11.js";
+import { fetchRelayInfo } from "../../../src/protocol/nip11.js";
 
 /**
  * Browser Wire for @fezchat/client — the same eight-function seam the TUI

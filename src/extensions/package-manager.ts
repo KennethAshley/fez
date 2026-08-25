@@ -394,8 +394,8 @@ export class PackageManager {
    * pack contents). Installed ids are tracked for clean uninstall.
    */
   private async installPersonaPack(name: string, config: { dir?: string; defaults?: Record<string, string> }): Promise<void> {
-    const { validatePersonaFile, mergeDefaults } = await import("./personas.js");
-    const { listHarnesses } = await import("./harness.js");
+    const { validatePersonaFile, mergeDefaults } = await import("../identity/personas.js");
+    const { listHarnesses } = await import("../agent/harness.js");
     const pkgDir = this.getContentDir(this.packages.get(name)!);
     const sourceDir = path.resolve(pkgDir, config.dir ?? "personas");
     if (!sourceDir.startsWith(path.resolve(pkgDir))) {
@@ -596,7 +596,7 @@ export class PackageManager {
       console.log(chalk.dim("   Personas can now set `repo:` to work from a checkout."));
     }
     if (parts.background) {
-      const { loadSettings, saveSettings } = await import("./settings.js");
+      const { loadSettings, saveSettings } = await import("../shared/settings.js");
       const settings = loadSettings() as { backgroundExtensions?: string[] };
       const list = new Set(settings.backgroundExtensions ?? []);
       list.add(name);
@@ -604,7 +604,7 @@ export class PackageManager {
       console.log(chalk.dim(`   Background tasks enabled (restart the sentinel to run them)`));
     }
     if (parts.skill) {
-      const { loadSettings, saveSettings } = await import("./settings.js");
+      const { loadSettings, saveSettings } = await import("../shared/settings.js");
       const settings = loadSettings() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
       // keep env VALUES the user already filled in; the package supplies names
       const mergedEnv = { ...(parts.skill.env ?? {}), ...(settings.mcpServers?.[name]?.env ?? {}) };
@@ -620,7 +620,7 @@ export class PackageManager {
 
   private async removeParts(name: string): Promise<void> {
     await fs.rm(path.join(os.homedir(), ".fez", "gui-extensions", `${name}.js`), { force: true });
-    const { loadSettings, saveSettings } = await import("./settings.js");
+    const { loadSettings, saveSettings } = await import("../shared/settings.js");
     const settings = loadSettings() as { backgroundExtensions?: string[] };
     if (settings.backgroundExtensions?.includes(name)) {
       saveSettings({ backgroundExtensions: settings.backgroundExtensions.filter((n) => n !== name) } as never);

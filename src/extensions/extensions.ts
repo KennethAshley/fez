@@ -3,15 +3,15 @@ import path from "path";
 import os from "os";
 import { pathToFileURL } from "url";
 import type { McpServer } from "@agentclientprotocol/sdk";
-import { makeChannels, type ChannelsAccess } from "./channels.js";
+import { makeChannels, type ChannelsAccess } from "../protocol/channels.js";
 import type { Event, Filter } from "nostr-tools";
-import { registerHarness, type HarnessAdapter } from "./harness.js";
-import type { DmRumor } from "./dm.js";
-import type { FezClient } from "../packages/fez-client/dist/index.js";
+import { registerHarness, type HarnessAdapter } from "../agent/harness.js";
+import type { DmRumor } from "../protocol/dm.js";
+import type { FezClient } from "../../packages/fez-client/dist/index.js";
 import { registerMcpServer } from "./mcp-servers.js";
-import { registerCommand, type CommandHandler } from "./commands.js";
-import { setStatus } from "./status.js";
-import { registerSystemPromptSection } from "./system-prompt.js";
+import { registerCommand, type CommandHandler } from "../cli/commands.js";
+import { setStatus } from "../cli/status.js";
+import { registerSystemPromptSection } from "../agent/system-prompt.js";
 import { LEGACY_GRANT } from "./extension-permissions.js";
 
 /**
@@ -516,7 +516,7 @@ export async function loadExtensions(
     await fs.writeFile(marker, JSON.stringify({ type: "module" }, null, 1), "utf-8").catch(() => {});
   }
 
-  const { loadSettings } = await import("./settings.js");
+  const { loadSettings } = await import("../shared/settings.js");
   const grants = (loadSettings() as { extensionPermissions?: Record<string, string[]> }).extensionPermissions ?? {};
 
   for (const entry of entries) {

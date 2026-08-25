@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { verifyEvent, type Event } from "nostr-tools";
 import * as nip44 from "nostr-tools/nip44";
-import { KIND_AGENT_ENGRAM } from "./kinds.js";
+import { KIND_AGENT_ENGRAM } from "../protocol/kinds.js";
 
 /**
  * NIP-AE Agent Engrams — persistent agent memory as nostr events

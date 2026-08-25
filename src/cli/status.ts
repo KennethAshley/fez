@@ -1,4 +1,4 @@
-import { Footer } from "../packages/fez-tui/dist/index.js";
+import { Footer } from "../../packages/fez-tui/dist/index.js";
 
 /**
  * Module-level singleton, same pattern as harness.ts's registry — one

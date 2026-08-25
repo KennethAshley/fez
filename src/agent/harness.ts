@@ -5,7 +5,7 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
 import type { SystemPromptMode } from "./system-prompt.js";
-import { notice } from "./notices.js";
+import { notice } from "../cli/notices.js";
 import { classifyToolCall, type RiskVerdict } from "./command-risk.js";
 
 /**

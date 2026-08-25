@@ -30,7 +30,7 @@ import { describe, expect, it } from "vitest";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "../../..");
-const REAL_API = path.join(REPO, "src/extensions.ts");
+const REAL_API = path.join(REPO, "src/extensions/extensions.ts");
 const REAL_GUI_API = path.join(REPO, "packages/fez-desktop/src/gui-extensions.ts");
 const WORK = path.join(REPO, "node_modules/.cache/fez-api-conformance");
 

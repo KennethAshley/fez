@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools/pure";
 import { nip44, type Event } from "nostr-tools";
-import { RelayConnection } from "./relay.js";
-import { KIND_PAIRING } from "./kinds.js";
+import { RelayConnection } from "../protocol/relay.js";
+import { KIND_PAIRING } from "../protocol/kinds.js";
 
 /**
  * Device pairing — NIP-AB's decisions (Buzz's pairing-cli), fez-shaped:

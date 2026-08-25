@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { consentLines, networkAllowed, parsePermissions, describePermission, has } from "../../../src/extension-permissions.js";
+import { consentLines, networkAllowed, parsePermissions, describePermission, has } from "../../../src/extensions/extension-permissions.js";
 
 /**
  * Consent is only meaningful if the parse is predictable: whatever ends

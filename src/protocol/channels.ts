@@ -1,5 +1,5 @@
 import { KIND_CHANNEL, KIND_CHANNEL_MESSAGE } from "./kinds.js";
-import type { NostrAccess } from "./extensions.js";
+import type { NostrAccess } from "../extensions/extensions.js";
 
 /**
  * Channels, for the things that are not people.

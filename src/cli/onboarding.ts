@@ -2,10 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import chalk from "chalk";
-import { detectHarnesses, registerBuiltinHarnesses } from "./harness.js";
-import { listPersonas } from "./personas.js";
-import { CAPABLE_FEZ_PERSONA } from "./fez-persona.js";
-import { HOSTED_ROUTER, resolveRelay, saveSettings } from "./settings.js";
+import { detectHarnesses, registerBuiltinHarnesses } from "../agent/harness.js";
+import { listPersonas } from "../identity/personas.js";
+import { CAPABLE_FEZ_PERSONA } from "../identity/fez-persona.js";
+import { HOSTED_ROUTER, resolveRelay, saveSettings } from "../shared/settings.js";
 
 /**
  * First-run wizard — the entire required surface of fez is deliberately

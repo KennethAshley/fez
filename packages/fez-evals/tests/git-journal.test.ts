@@ -9,7 +9,7 @@ import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { nip98Authenticator } from "../../fez-git/src/auth.js";
 import { gitServer } from "../../fez-git/src/serve.js";
 import { parseJournal } from "../../fez-git/src/journal.js";
-import { buildNip98Header } from "../../../src/nip98.js";
+import { buildNip98Header } from "../../../src/protocol/nip98.js";
 import { startRelay, type RelayHandle } from "../../fez-relay/src/relay.js";
 
 /**

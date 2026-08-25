@@ -5,7 +5,7 @@ import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { RelayConnection, CapabilityClient } from "@fezchat/protocol";
 import { BrowserWire } from "../../fez-desktop/src/wire.js";
 import { FezClient, setStatePersistence } from "../../fez-client/dist/index.js";
-import { fetchRelayInfo } from "../../../src/nip11.js";
+import { fetchRelayInfo } from "../../../src/protocol/nip11.js";
 import { waitForPort } from "./mini-relay.js";
 
 /**
