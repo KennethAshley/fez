@@ -27,6 +27,12 @@ export interface FezManifest {
     };
     /** What this package asks for — the install dialog shows these. See the permissions reference. */
     permissions?: string[];
+    /**
+     * Oldest fez this package works on (x.y.z). `fez install` and
+     * `fez link` refuse on an older host, naming both versions. Absent
+     * means no claim — the package installs anywhere.
+     */
+    minFezVersion?: string;
   };
 }
 

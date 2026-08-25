@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fezHome } from "./shared/fez-home.js";
 import { Command } from "commander";
+import { FEZ_VERSION } from "./extensions/host-compat.js";
 
 // Loads ./.env (secrets like GITHUB_TOKEN for extension-registered MCP
 // servers, see mcp-servers.ts) before anything reads process.env. Node's
@@ -43,7 +44,7 @@ for (const { env: name, account } of [
 
 const program = new Command();
 
-program.name("fez").description("Fez — decentralized MCP for agents").version("0.1.0");
+program.name("fez").description("Fez — decentralized MCP for agents").version(FEZ_VERSION);
 
 // ─── Default: Open TUI when no command given ───────────────────────────────
 

@@ -13,6 +13,7 @@ import { registerCommand, type CommandHandler } from "../cli/commands.js";
 import { setStatus } from "../cli/status.js";
 import { registerSystemPromptSection } from "../agent/system-prompt.js";
 import { LEGACY_GRANT } from "./extension-permissions.js";
+import { makeStorage, type StorageAccess } from "./extension-storage.js";
 
 /**
  * API surface handed to extension files. Deliberately small — grows as
@@ -229,6 +230,15 @@ export interface FezExtensionAPI {
    * the same id replaces it, so a reload cannot duplicate a rule.
    */
   registerSystemPromptSection(section: { id: string; text: string | (() => string | undefined); order?: number }): void;
+  /**
+   * Durable state for THIS extension — a namespaced key-value file under
+   * ~/.fez/extension-data/, dropped by `fez remove`. Always present, no
+   * permission: the grant list is consent to things done TO the user,
+   * and an extension keeping its own notes isn't one (a Node module
+   * could write files regardless — see extension-permissions.ts on why
+   * we don't imply a sandbox that doesn't exist).
+   */
+  storage: StorageAccess;
   nostr?: NostrAccess;
   /**
    * Open channels and post in them, without knowing the wire.
@@ -442,6 +452,7 @@ function buildApi(granted: readonly string[], extensionName = "extension"): FezE
     registerSystemPromptSection: may("system-prompt")
       ? (section) => registerSystemPromptSection({ ...section, id: `${extensionName}:${section.id}` })
       : () => console.warn(`⚠️  extension "${extensionName}" tried to add system-prompt rules without the "system-prompt" permission — ignored`),
+    storage: makeStorage(extensionName),
     nostr: gatedNostr,
     // Getters, for the reason on workspaceOwner: an extension is built
     // before the client connects, so anything resolved here and now is

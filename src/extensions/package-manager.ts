@@ -32,6 +32,12 @@ export interface FezManifest {
   fez: {
     type: "integration" | "agent" | "extension" | "persona-pack";
     /**
+     * Oldest fez this package works on (x.y.z) — checked at install and
+     * link against FEZ_VERSION, refused loudly on an older host. Absent
+     * means no claim: packages predating the field keep installing.
+     */
+    minFezVersion?: string;
+    /**
      * External binaries this package shells out to — `["gh"]`, `["uvx"]`.
      *
      * Declared rather than discovered, so "needs gh" is data that can be
@@ -174,6 +180,12 @@ export class PackageManager {
     pkg.type = manifest?.fez?.type || "extension";
     pkg.config = manifest?.fez;
     try {
+      // Compat gate BEFORE any hook copies a part into ~/.fez — a
+      // package built for a newer fez must fail here, naming versions,
+      // not load and die on a missing API method mid-task.
+      const { minFezVersionError } = await import("./host-compat.js");
+      const compatError = minFezVersionError(manifest?.fez?.minFezVersion);
+      if (compatError) throw new Error(`${name} ${compatError}`);
       await this.runInstallHook(name, manifest);
     } catch (err) {
       this.packages.delete(name); // failed install leaves no registry ghost
@@ -203,6 +215,11 @@ export class PackageManager {
     // Remove files
     const installDir = this.getInstallDir(pkg);
     await fs.rm(installDir, { recursive: true, force: true });
+
+    // The storage seam's cleanup promise: the extension's state
+    // namespace dies with the package.
+    const { removeStorage } = await import("./extension-storage.js");
+    await removeStorage(name);
 
     this.packages.delete(name);
     await this.saveRegistry();

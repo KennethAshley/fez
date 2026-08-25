@@ -158,7 +158,7 @@ program
     const surfaces = picked.length ? picked : (["headless", "gui"] as const);
     const dir = options.dir ?? path.join(process.cwd(), baseName(name));
     try {
-      const result = scaffold({ name, dir, surfaces: [...surfaces], apiVersion: "^0.1.0" });
+      const result = scaffold({ name, dir, surfaces: [...surfaces], apiVersion: "^0.2.0" });
       console.log(chalk.green(`✅ ${result.pkgName} — ${result.surfaces.join(" + ")}`));
       console.log(chalk.dim(`   ${path.relative(process.cwd(), result.dir) || "."}/`));
       for (const f of result.files) console.log(chalk.dim(`     ${f}`));
@@ -177,6 +177,7 @@ program
   .command("link <dir>")
   .description("Dev-install a local extension package: build, copy its entry to ~/.fez/extensions, smoke-import the result")
   .option("--no-build", "Skip the package's npm build script")
+  .option("-w, --watch", "Stay resident: rebuild and re-link when src/ changes")
   .action(async (dir: string, options) => {
     const { execSync } = await import("node:child_process");
     const { pathToFileURL } = await import("node:url");
@@ -191,6 +192,8 @@ program
         extension?: { entry?: string };
         /** What this package says it needs — see extension-permissions.ts. */
         permissions?: string[];
+        /** Oldest fez this package works on — see host-compat.ts. */
+        minFezVersion?: string;
         /** Multi-part packages: one install, three attachment points. */
         parts?: {
           skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
@@ -210,6 +213,16 @@ program
     } catch {
       console.error(chalk.red(`No readable package.json in ${pkgDir}`));
       process.exit(1);
+    }
+    // ── compat gate: same check `fez install` runs, before anything is
+    // built or copied — a package built for a newer fez refuses here.
+    {
+      const { minFezVersionError } = await import("../extensions/host-compat.js");
+      const compatError = minFezVersionError(manifest.fez?.minFezVersion);
+      if (compatError) {
+        console.error(chalk.red(`✗ ${manifest.name ?? path.basename(pkgDir)} ${compatError}`));
+        process.exit(1);
+      }
     }
     // ── permissions: shown BEFORE anything is copied, recorded on grant.
     const { consentLines, parsePermissions } = await import("../extensions/extension-permissions.js");
@@ -257,50 +270,6 @@ program
       console.log(chalk.green(`✓ skill "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn`));
     }
 
-    // ── gui part: copied to ~/.fez/gui-extensions for fez-desktop's
-    // loader (webview code — no node smoke-import possible here).
-    if (parts?.gui) {
-      const guiDir = fezHome("gui-extensions");
-      fsSync.mkdirSync(guiDir, { recursive: true });
-      fsSync.copyFileSync(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
-      console.log(chalk.green(`✓ gui part → ~/.fez/gui-extensions/${name}.js (loads on next fez-desktop launch)`));
-    }
-
-    // ── relay + workspace parts: link matches install exactly. It did
-    // not always — link predates multi-part packages, and a linked
-    // package that silently dropped its workspace provider meant a
-    // `repo:` persona failed loudly (fatal, by design) while the person
-    // who "installed" the package stared at a link that said ✓.
-    if (parts?.relay) {
-      const relayDir = fezHome("relay-extensions");
-      fsSync.mkdirSync(relayDir, { recursive: true });
-      fsSync.copyFileSync(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
-      console.log(chalk.green(`✓ relay part → ~/.fez/relay-extensions/${name}.js (a relay started with --extensions loads it)`));
-    }
-    if (parts?.workspace) {
-      const wsDir = fezHome("workspace-providers");
-      fsSync.mkdirSync(wsDir, { recursive: true });
-      fsSync.copyFileSync(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
-      console.log(chalk.green(`✓ workspace provider → ~/.fez/workspace-providers/${name}.js (personas with repo: use it)`));
-    }
-
-    // ── bins: same seam install honors, so a linked package's
-    // executables (credential helper, fez-adopt) exist in the one
-    // predictable place things resolve them from.
-    if (manifest.bin) {
-      const binDir = fezHome("bin");
-      fsSync.mkdirSync(binDir, { recursive: true });
-      for (const [cmd, rel] of Object.entries(manifest.bin)) {
-        const target = path.join(binDir, cmd);
-        fsSync.copyFileSync(path.join(pkgDir, rel), target);
-        fsSync.chmodSync(target, 0o755);
-        console.log(chalk.green(`✓ bin → ~/.fez/bin/${cmd}`));
-      }
-      if (!(process.env.PATH ?? "").split(":").includes(fezHome("bin"))) {
-        console.log(chalk.dim(`  (~/.fez/bin is not on your PATH — add it to call these by name)`));
-      }
-    }
-
     // ── background part: the sentinel only loads extensions that ASKED
     // for background life, so a TUI extension never starts doing its
     // foreground job a second time inside the always-on process.
@@ -320,30 +289,115 @@ program
       console.log(chalk.green(`✓ background tasks enabled — restart the sentinel to run them`));
     }
 
-    if (!entry) {
-      console.log(chalk.green(`✓ linked ${name} (no headless part)`));
-      return;
-    }
-    const ext = path.extname(entry) || ".js";
-    const extensionsDir = fezHome("extensions");
-    fsSync.mkdirSync(extensionsDir, { recursive: true });
-    // Stage next to the destination (same dir, so the {"type":"module"}
-    // marker applies), smoke-import, and only then replace the installed
-    // bundle — a broken build must never clobber a working extension.
-    const staged = path.join(extensionsDir, `.staged-${name}${ext}`);
-    fsSync.copyFileSync(path.join(pkgDir, entry), staged);
-    if (ext === ".js" || ext === ".mjs") {
-      try {
-        await import(pathToFileURL(staged).href);
-      } catch (err) {
-        fsSync.rmSync(staged, { force: true });
-        console.error(chalk.red(`✗ built bundle fails to import — not installed: ${err instanceof Error ? err.message : err}`));
-        process.exit(1);
+    // ── the built file parts, extracted so --watch can re-run exactly
+    // what a one-shot link does. `fatal` is the difference between the
+    // two callers: a first link that can't import its bundle should
+    // stop the command; a watch rebuild should report and keep watching.
+    const copyBuiltParts = async (fatal: boolean): Promise<void> => {
+      // gui: copied for fez-desktop's loader (webview code — no node
+      // smoke-import possible here).
+      if (parts?.gui) {
+        const guiDir = fezHome("gui-extensions");
+        fsSync.mkdirSync(guiDir, { recursive: true });
+        fsSync.copyFileSync(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
+        console.log(chalk.green(`✓ gui part → ~/.fez/gui-extensions/${name}.js (loads on next fez-desktop launch)`));
       }
+
+      // relay + workspace: link matches install exactly. It did not
+      // always — link predates multi-part packages, and a linked
+      // package that silently dropped its workspace provider meant a
+      // `repo:` persona failed loudly (fatal, by design) while the
+      // person who "installed" the package stared at a link that said ✓.
+      if (parts?.relay) {
+        const relayDir = fezHome("relay-extensions");
+        fsSync.mkdirSync(relayDir, { recursive: true });
+        fsSync.copyFileSync(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
+        console.log(chalk.green(`✓ relay part → ~/.fez/relay-extensions/${name}.js (a relay started with --extensions loads it)`));
+      }
+      if (parts?.workspace) {
+        const wsDir = fezHome("workspace-providers");
+        fsSync.mkdirSync(wsDir, { recursive: true });
+        fsSync.copyFileSync(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
+        console.log(chalk.green(`✓ workspace provider → ~/.fez/workspace-providers/${name}.js (personas with repo: use it)`));
+      }
+
+      // bins: same seam install honors, so a linked package's
+      // executables (credential helper, fez-adopt) exist in the one
+      // predictable place things resolve them from.
+      if (manifest.bin) {
+        const binDir = fezHome("bin");
+        fsSync.mkdirSync(binDir, { recursive: true });
+        for (const [cmd, rel] of Object.entries(manifest.bin)) {
+          const target = path.join(binDir, cmd);
+          fsSync.copyFileSync(path.join(pkgDir, rel), target);
+          fsSync.chmodSync(target, 0o755);
+          console.log(chalk.green(`✓ bin → ~/.fez/bin/${cmd}`));
+        }
+        if (!(process.env.PATH ?? "").split(":").includes(fezHome("bin"))) {
+          console.log(chalk.dim(`  (~/.fez/bin is not on your PATH — add it to call these by name)`));
+        }
+      }
+
+      if (!entry) {
+        console.log(chalk.green(`✓ linked ${name} (no headless part)`));
+        return;
+      }
+      const ext = path.extname(entry) || ".js";
+      const extensionsDir = fezHome("extensions");
+      fsSync.mkdirSync(extensionsDir, { recursive: true });
+      // Stage next to the destination (same dir, so the {"type":"module"}
+      // marker applies), smoke-import, and only then replace the installed
+      // bundle — a broken build must never clobber a working extension.
+      const staged = path.join(extensionsDir, `.staged-${name}${ext}`);
+      fsSync.copyFileSync(path.join(pkgDir, entry), staged);
+      if (ext === ".js" || ext === ".mjs") {
+        try {
+          // Cache-buster: node caches modules by URL, so a watch rebuild
+          // re-importing the same staged path would get the FIRST build
+          // back and pass its smoke test on stale code.
+          await import(`${pathToFileURL(staged).href}?t=${Date.now()}`);
+        } catch (err) {
+          fsSync.rmSync(staged, { force: true });
+          console.error(chalk.red(`✗ built bundle fails to import — not installed: ${err instanceof Error ? err.message : err}`));
+          if (fatal) process.exit(1);
+          return;
+        }
+      }
+      const dest = path.join(extensionsDir, `${name}${ext}`);
+      fsSync.renameSync(staged, dest);
+      console.log(chalk.green(`✓ linked ${name}${ext} (${(fsSync.statSync(dest).size / 1024).toFixed(1)}kb) → ~/.fez/extensions/`));
+    };
+
+    await copyBuiltParts(true);
+
+    // ── --watch: stay resident, rebuild + re-copy on source changes.
+    // The dev loop becomes save → restart the surface; without this it
+    // was save → npm run build → fez link . → restart. No hot reload —
+    // the running TUI/sentinel still loads extensions once at startup.
+    if (options.watch) {
+      const srcDir = fsSync.existsSync(path.join(pkgDir, "src")) ? path.join(pkgDir, "src") : pkgDir;
+      console.log(chalk.dim(`\n👀 watching ${path.relative(process.cwd(), srcDir) || "."}/ — Ctrl-C to stop; restart the TUI/sentinel to pick changes up`));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let running = false;
+      fsSync.watch(srcDir, { recursive: true }, () => {
+        clearTimeout(timer);
+        timer = setTimeout(async () => {
+          if (running) return; // a save mid-rebuild is covered by the next event
+          running = true;
+          try {
+            if (options.build !== false && manifest.scripts?.build) {
+              execSync("npm run build", { cwd: pkgDir, stdio: "inherit" });
+            }
+            await copyBuiltParts(false);
+          } catch (err) {
+            console.error(chalk.red(`✗ rebuild failed: ${err instanceof Error ? err.message : err}`));
+          } finally {
+            running = false;
+          }
+        }, 300);
+      });
+      await new Promise(() => {}); // resident until Ctrl-C
     }
-    const dest = path.join(extensionsDir, `${name}${ext}`);
-    fsSync.renameSync(staged, dest);
-    console.log(chalk.green(`✓ linked ${name}${ext} (${(fsSync.statSync(dest).size / 1024).toFixed(1)}kb) → ~/.fez/extensions/`));
   });
 
 program

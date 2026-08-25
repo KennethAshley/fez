@@ -31,6 +31,18 @@ export type InputHandler = (text: string) => Promise<boolean>;
 /** Claim clicks on OSC-8 links whose URL starts with a prefix. */
 export type UrlHandler = (url: string) => void;
 
+/**
+ * Durable state for this extension — a namespaced store the host keeps
+ * under ~/.fez/extension-data/ and drops on `fez remove`. Always
+ * present, no permission required. Values are JSON.
+ */
+export interface StorageAccess {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  set(key: string, value: unknown): Promise<void>;
+  delete(key: string): Promise<void>;
+  keys(): Promise<string[]>;
+}
+
 /** A side panel an extension owns in the TUI — set its text, it renders. */
 export interface PanelHandle {
   setText(text: string): void;
@@ -82,6 +94,8 @@ export interface FezExtensionAPI {
    * of the extension must never depend on this having run.
    */
   registerScheduledTask(name: string, everyMs: number, run: (ctx: ScheduledTaskContext) => void | Promise<void>): void;
+  /** Durable per-extension state — always present, dropped on `fez remove`. */
+  storage: StorageAccess;
   /** Present only where a key is (TUI, sentinel). */
   nostr?: NostrAccess;
   /** Present only where the workspace owner is known. */

@@ -11,6 +11,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { FEZ_VERSION } from "./host-compat.js";
 
 /** Which host surfaces the new package attaches to. */
 export type Surface = "headless" | "gui" | "relay" | "workspace";
@@ -82,6 +83,10 @@ function packageJson(o: ScaffoldOptions, base: string): string {
       type: "extension",
       parts,
       permissions: permissionsFor(o.surfaces),
+      // The fez that generated this package is the oldest it promises to
+      // work on — install/link refuse on older hosts instead of loading
+      // against an API surface that predates the types compiled in.
+      minFezVersion: FEZ_VERSION,
     },
     scripts: {
       build: o.surfaces.map(buildStep).join(" && "),
