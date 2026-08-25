@@ -93,6 +93,9 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
   `v<PI_VERSION>` tag (verified it exists) instead of an unpinned default-branch clone.
   Still open: the bun-absent path exits 0 by design for dev builds — a release CI job must
   set `REQUIRE_PI_AGENT=1` (the hard-fail already exists), and that CI job doesn't exist yet.
+  CI trap (found by the cold-start session): pi ships no bun lockfile, so a fresh-cache
+  `bun install` drifts deps and v0.84.2 fails to compile (TS errors in pi's packages/ai) —
+  the release job needs a seeded artifact cache or a vendored lockfile.
 
 ## Papercuts
 
