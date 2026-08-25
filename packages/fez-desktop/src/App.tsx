@@ -1848,6 +1848,7 @@ function ChannelView({
             You're the only member here so far — invite people from manage (+), or mention an agent by name to bring one in.
           </div>
         )}
+        {channelId === "bootstrap-general" && (client.state.workspace.members.size ?? 0) > 1 && <MentionHint />}
         {threadRoot && (() => {
           const root = messages.find((m) => m.id === threadRoot);
           const view = root ? threadViewFor(root.content) : undefined;
@@ -2999,4 +3000,30 @@ function accentMentions(children: React.ReactNode, tagged?: ReadonlySet<string>,
     return node;
   };
   return walk(children);
+}
+
+/**
+ * Buzz's composer nudge, one line and dismissible: the room now has
+ * teammates, and the thing a new user doesn't yet know is that MENTIONING
+ * is how everything happens. Dismissal is remembered — a hint that keeps
+ * coming back is a nag.
+ */
+function MentionHint() {
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem("fez-mention-hint-dismissed") === "1");
+  if (dismissed) return null;
+  return (
+    <div className="mention-hint">
+      <span>🎩 Mention @fez or a teammate whenever you want their help.</span>
+      <button
+        className="mention-hint-x"
+        title="dismiss"
+        onClick={() => {
+          localStorage.setItem("fez-mention-hint-dismissed", "1");
+          setDismissed(true);
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
 }

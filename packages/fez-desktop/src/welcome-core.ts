@@ -11,6 +11,8 @@
 export const HELLO_MARKER = "fez-welcome.hello.v1";
 export const OPENER_MARKER = "fez-welcome.opener.v1";
 export const AWAKE_MARKER = "fez-welcome.awake.v1";
+export const TEAM_MARKER = "fez-welcome.team.v1";
+export const KICKOFF_MARKER = "fez-welcome.kickoff.v1";
 
 /** Message kind — mirrors K.MESSAGE in @fezchat/client (source of truth). */
 export const KIND_MESSAGE = 47103;
@@ -25,6 +27,8 @@ export interface Readiness {
 export interface ChannelEvent {
   tags: string[][];
   content: string;
+  /** Author pubkey — the team choreography counts intros by who spoke. */
+  pubkey?: string;
 }
 
 export interface MarkerWire {
@@ -80,6 +84,75 @@ export function buildFezPersonaMd(harness: string, model?: string, provider?: st
 
 export function awakeText(): string {
   return "🎩 I'm awake — a model is connected. Try: @fez what can you do?";
+}
+
+// ── the starter team (Buzz's Fizz/Honey/Pollen, fez-cast) ─────────────
+
+export interface StarterPersona {
+  id: string;
+  /** The routing signal — verb phrases route better on small models. */
+  description: string;
+  prompt: string;
+}
+
+export const STARTER_TEAM: StarterPersona[] = [
+  {
+    id: "researcher",
+    description: "search the web, find papers and specs, look up facts, verify claims",
+    prompt:
+      "You are a careful researcher. Dig into questions, compare options, check assumptions, and come back with clear, sourced answers. When a task belongs to a different agent, hand it off with an @mention and say why.",
+  },
+  {
+    id: "scribe",
+    description: "write and edit — drafts, summaries, docs, tricky wording",
+    prompt:
+      "You are a precise, warm writer. Help with drafts, edits, summaries, and making hard things land clearly and kindly. When a task belongs to a different agent, hand it off with an @mention and say why.",
+  },
+];
+
+/** A starter teammate's persona — inherits the brain @fez was given. */
+export function buildStarterPersonaMd(p: StarterPersona, harness: string, model?: string, provider?: string): string {
+  const brainLines = model && provider ? `provider: ${provider}\nmodel: ${model}\n` : "";
+  return `---\nharness: ${harness}\n${brainLines}description: ${p.description}\n---\n${p.prompt}\n`;
+}
+
+/**
+ * Read the brain back out of a persona file — the team inherits whatever
+ * @fez was given, and parsing the file (rather than threading state
+ * through the app) keeps fez.md the single source of that choice.
+ */
+export function parsePersonaBrain(md: string): { harness: string; model?: string; provider?: string } {
+  const grab = (key: string) => md.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim();
+  return { harness: grab("harness") ?? "pi", model: grab("model"), provider: grab("provider") };
+}
+
+/**
+ * The team summons, from @fez's own mouth — real turns, not scripted
+ * intros: the sentinel wakes each mentioned teammate and their model
+ * answers as itself (Buzz's decision, and the honest one — a scripted
+ * "I'm helpful!" from an agent that can't think is a lie).
+ */
+export function teamOpenerText(names: string[]): string {
+  const mentions = names.map((n) => `@${n}`).join(" and ");
+  return `${mentions}, introduce yourselves in a sentence or two — what you're good at, and when to bring you in. Don't start any work yet.`;
+}
+
+export function kickoffText(): string {
+  return "What can we help you build? Bring us something you're working on, or give us a quick challenge to see how we work together.";
+}
+
+/**
+ * Have the teammates spoken? Counts distinct authors in the channel that
+ * are neither the guide nor the owner — the kickoff waits for intros (or
+ * a timeout) so it lands as a conversation's next beat, not noise over it.
+ */
+export function introCount(events: ChannelEvent[], guidePk: string, ownerPk: string): number {
+  const speakers = new Set(
+    events
+      .filter((e) => e.pubkey && e.pubkey !== guidePk && e.pubkey !== ownerPk && e.content.trim().length > 0)
+      .map((e) => e.pubkey!)
+  );
+  return speakers.size;
 }
 
 /**

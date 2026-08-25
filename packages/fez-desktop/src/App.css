@@ -2783,3 +2783,15 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .ob-brain-hint a { color: var(--accent); }
 .ob-brain-auth { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .ob-brain-auth .ob-input { flex: 1; min-width: 200px; margin: 0; }
+
+/* ── the mention nudge (Buzz's composer hint, dismissible) ─────────── */
+.mention-hint {
+  display: flex; align-items: center; gap: 8px; margin: 4px 42px 8px;
+  padding: 6px 12px; border: 1px solid var(--hairline); border-radius: 8px;
+  background: var(--bg1); color: var(--fg-dim); font-size: 12px;
+}
+.mention-hint-x {
+  margin-left: auto; background: none; border: 0; cursor: pointer;
+  color: var(--fg-dim); font-size: 14px; line-height: 1;
+}
+.mention-hint-x:hover { color: var(--fg); }

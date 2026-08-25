@@ -190,6 +190,8 @@ export function splitMentions(content: string): MentionPart[] {
 
 export const K = {
   AGENT_METADATA: 47000,
+  /** Owner-signed "this is my agent" — summon authority for siblings. */
+  AGENT_ATTESTATION: 47006,
   /** Retired with the flat model — the number stays burned. */
   COMMUNITY_RETIRED: 47100,
   CHANNEL: 47101,
@@ -1491,6 +1493,17 @@ export class FezClient {
     if (!members.has(pubkey)) members.set(pubkey, role);
     await this.publishRoster(members);
     return this.displayName(pubkey);
+  }
+
+  /**
+   * Owner-signed attestation (47006): "this is my agent." The sentinel
+   * honors summons from the owner OR attested siblings, so a guide that
+   * brings teammates in by mention needs this on its key — an unattested
+   * agent's mentions die in silence.
+   */
+  async attestAgent(agentPk: string): Promise<void> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can attest an agent");
+    await this.wire.publish({ kind: K.AGENT_ATTESTATION, tags: [["p", agentPk]], content: "" });
   }
 
   /** Owner republishes the roster without the pubkey. Their history stays. */

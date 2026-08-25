@@ -16,11 +16,19 @@ import {
   HELLO_MARKER,
   OPENER_MARKER,
   AWAKE_MARKER,
+  TEAM_MARKER,
+  KICKOFF_MARKER,
   KIND_MESSAGE,
   NOT_READY_CUE,
+  STARTER_TEAM,
   helloText,
   openerText,
   awakeText,
+  teamOpenerText,
+  kickoffText,
+  buildStarterPersonaMd,
+  parsePersonaBrain,
+  introCount,
   ensureMarkedMessage,
   findMarked,
   type Readiness,
@@ -67,11 +75,65 @@ function markerWire(hex: string): MarkerWire & { close(): void } {
   return {
     async existing(channelId) {
       const events = await wire.query([{ kinds: [KIND_MESSAGE], "#h": [channelId], limit: 500 }]);
-      return (events as { tags: string[][]; content: string }[]).map((e) => ({ tags: e.tags, content: e.content }));
+      return (events as { tags: string[][]; content: string; pubkey: string }[]).map((e) => ({
+        tags: e.tags,
+        content: e.content,
+        pubkey: e.pubkey,
+      }));
     },
     publish: (tmpl) => wire.publish(tmpl),
     close: () => wire.close(),
   };
+}
+
+/**
+ * The welcome becomes a team (Buzz's kickoff, fez-cast): create the
+ * starter personas with the brain @fez was given, have @fez summon them
+ * by mention — REAL turns, woken by the sentinel — then, once they've
+ * introduced themselves (or the backstop passes), ask the question the
+ * whole room exists for. Idempotent at every step: personas are never
+ * overwritten, both messages are relay-marked.
+ */
+async function ensureStarterTeam(
+  client: FezClient,
+  w: MarkerWire,
+  channelId: string,
+  guidePk: string
+): Promise<void> {
+  const fezMd = await invoke<string>("read_persona", { name: "fez" }).catch(() => "");
+  const brain = parsePersonaBrain(fezMd);
+  for (const p of STARTER_TEAM) {
+    try {
+      await invoke("read_persona", { name: p.id });
+    } catch {
+      await invoke("write_persona", {
+        name: p.id,
+        content: buildStarterPersonaMd(p, brain.harness, brain.model, brain.provider),
+      });
+    }
+  }
+
+  const teamPosted = await ensureMarkedMessage(
+    w,
+    channelId,
+    client.pubkey,
+    TEAM_MARKER,
+    teamOpenerText(STARTER_TEAM.map((p) => p.id))
+  );
+  if (teamPosted) await new Promise((r) => setTimeout(r, 2000));
+
+  // The kickoff lands as the conversation's next beat: wait for both
+  // intros, but never forever — a teammate that failed to wake already
+  // reported loudly in-channel (fez-acp's rule), and the question still
+  // deserves asking.
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const events = await w.existing(channelId);
+    if (findMarked(events, KICKOFF_MARKER)) return; // another device got there
+    if (introCount(events, guidePk, client.pubkey) >= STARTER_TEAM.length) break;
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  await ensureMarkedMessage(w, channelId, client.pubkey, KICKOFF_MARKER, kickoffText());
 }
 
 /** The one call App.tsx makes after the owner bootstrap. */
@@ -94,6 +156,9 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
   const agentPk = getPublicKey(hexToBytes(hex));
   if (!client.state.isMember(agentPk)) {
     await client.invite(agentPk, "bot").catch(() => {});
+    // Attested = summon authority: the sentinel honors mentions from the
+    // owner or attested siblings, and the team opener is @fez speaking.
+    await client.attestAgent(agentPk).catch(() => {});
   }
 
   const r = await readiness();
@@ -113,6 +178,11 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
       await ensureMarkedMessage(w, channel.id, client.pubkey, HELLO_MARKER, helloText(userName));
       await sleep(900);
       await ensureMarkedMessage(w, channel.id, client.pubkey, OPENER_MARKER, openerText(r, userName));
+      // A ready guide brings its team: real teammates, real turns.
+      if (r.authed && r.runner) {
+        await sleep(1200);
+        await ensureStarterTeam(client, w, channel.id, agentPk);
+      }
     } else {
       // The opener already exists — an install from before the roster
       // fix. Now that the agent is a member, one history reload makes
@@ -126,6 +196,10 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
         if (opener?.content.includes(NOT_READY_CUE)) {
           await ensureMarkedMessage(w, channel.id, client.pubkey, AWAKE_MARKER, awakeText());
         }
+        // The team arrives whenever readiness does — day one, or the day
+        // the model got connected. Marker-idempotent, and this branch
+        // also resumes a kickoff the last session quit before posting.
+        await ensureStarterTeam(client, w, channel.id, agentPk);
       }
     }
   } finally {

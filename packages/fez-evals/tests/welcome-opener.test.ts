@@ -15,6 +15,7 @@ import {
   type MarkerWire,
   type ChannelEvent,
 } from "../../fez-desktop/src/welcome-core.js";
+import * as core from "../../fez-desktop/src/welcome-core.js";
 
 describe("welcome opener", () => {
   it("copy matrix: every readiness state says something true, actionable, and chat-sized", () => {
@@ -54,6 +55,34 @@ describe("welcome opener", () => {
       expect(md).toContain("aliases: [orchestrator]");
       expect(md).toContain("You are @fez");
     }
+  });
+
+  it("starter team: summons by mention, inherits the brain, waits for real intros", () => {
+    const { STARTER_TEAM, teamOpenerText, kickoffText, buildStarterPersonaMd, parsePersonaBrain, introCount } =
+      core;
+    // the opener must actually summon both — mentions are the mechanism
+    const opener = teamOpenerText(STARTER_TEAM.map((p) => p.id));
+    for (const p of STARTER_TEAM) expect(opener).toContain(`@${p.id}`);
+    expect(opener).toContain("Don't start any work yet");
+    expect(opener.length).toBeLessThan(260);
+    expect(kickoffText()).toContain("What can we help you build?");
+
+    // teammates inherit exactly the brain @fez was given — parse⇄build round-trips
+    const fezMd = buildFezPersonaMd("pi", "deepseek-v3", "local-56105ece7a");
+    const brain = parsePersonaBrain(fezMd);
+    expect(brain).toEqual({ harness: "pi", model: "deepseek-v3", provider: "local-56105ece7a" });
+    const teammate = buildStarterPersonaMd(STARTER_TEAM[0], brain.harness, brain.model, brain.provider);
+    expect(teammate).toContain("harness: pi");
+    expect(teammate).toContain("model: deepseek-v3");
+    expect(teammate).toContain(`description: ${STARTER_TEAM[0].description}`);
+
+    // the kickoff waits for DISTINCT teammate voices — the guide and the
+    // owner don't count, and one teammate speaking twice is still one
+    const guide = "aa".repeat(32), owner = "bb".repeat(32), t1 = "cc".repeat(32), t2 = "dd".repeat(32);
+    const msg = (pubkey: string, content = "hi, I'm me") => ({ pubkey, content, tags: [] });
+    expect(introCount([msg(guide), msg(owner)], guide, owner)).toBe(0);
+    expect(introCount([msg(t1), msg(t1)], guide, owner)).toBe(1);
+    expect(introCount([msg(t1), msg(t2), msg(guide)], guide, owner)).toBe(2);
   });
 
   it("marker idempotency: second ensure publishes nothing", async () => {
