@@ -50,9 +50,12 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
 - [x] **Relay notices are thrown away.** DONE: `"notice"` now has a real handler — sticky,
   deduped toast (`toast.info(text, 0)`), so "claim this workspace" / "ask the owner for an
   invite; your key: …" actually reach the user.
-- [ ] **@fez never answers, nothing says why.** CLAIMED by the cold-start-onboarding session —
-  see docs/superpowers/specs/2026-08-24-cold-start-onboarding-design.md (readiness probe +
-  scripted opener). Do not start independently.
+- [x] **@fez never answers, nothing says why.** DONE (cold-start work): `runner_status` /
+  `ensure_agent_runner` detect the sentinel pidfile and best-effort spawn `fez sentinel` when
+  the CLI exists; a mention of @fez with no reply in 60s raises a sticky toast; FirstRun is
+  readiness-aware (points at Settings → Agents instead of suggesting a mention that will
+  hang); the scripted @fez opener states the gap in-channel. Bundling the full runner chain
+  (sentinel → fez agent → fez-acp) into the DMG is the standalone follow-up.
 - [x] **Extension install can panic.** DONE: the settings closure uses a shape-normalizing
   `obj_entry` helper (resets wrong-typed members) instead of `.unwrap()` chains.
 - [x] **settings.json truncation risk.** DONE: serialize failures now propagate as errors at
