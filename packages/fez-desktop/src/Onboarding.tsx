@@ -188,6 +188,18 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           <RestoreStep
             onRestored={(hex) => {
               setKeyHex(hex);
+              // A restored identity gets a local workspace too — restore
+              // moves the KEY, not a relay set, and this path used to set
+              // neither: the app booted against the loopback default with
+              // nothing behind it and sat at "reconnecting…" forever.
+              // Best-effort, same shape as pairing; the boot self-heal in
+              // App.tsx catches a failure here.
+              void invoke<string>("ensure_local_relay", {
+                owner: getPublicKey(Uint8Array.from(hex.match(/.{2}/g)!.map((b) => parseInt(b, 16)))),
+                name: "your workspace",
+              })
+                .then((url) => localStorage.setItem("fez-relay", url))
+                .catch(() => {});
               setStep("done");
             }}
             onBack={() => setStep("welcome")}

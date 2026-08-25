@@ -134,6 +134,23 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     // The Rust side still surfaces "no fez identity" for onboarding and
     // "keychain access failed" for retry — same routing as before.
     const pubkey = await invoke<string>("get_pubkey", { account: ACCOUNT });
+    // Self-heal the local workspace: a loopback-only relay set with
+    // nothing behind it strands the app at "reconnecting…" (a restored
+    // identity landed exactly there — no path had spawned the relay).
+    // ensure_local_relay is idempotent: pidfile verified by process
+    // name, spawn skipped when it's genuinely running.
+    if (relaySet().every((u) => u.includes("127.0.0.1") || u.includes("localhost"))) {
+      try {
+        const savedName = localStorage.getItem("fez-name")?.trim();
+        const url = await invoke<string>("ensure_local_relay", {
+          owner: pubkey,
+          name: savedName ? `${savedName}'s workspace` : "your workspace",
+        });
+        localStorage.setItem("fez-relay", url);
+      } catch (err) {
+        console.warn("local relay self-heal failed:", err);
+      }
+    }
     const wire = new BrowserWire(relaySet(), rustSigner(pubkey));
     const client = new FezClient(wire);
     await client.start();

@@ -1447,11 +1447,26 @@ fn pid_alive(pidfile: &std::path::Path) -> Option<u32> {
     ok.then_some(pid)
 }
 
+/// pid_alive, but the process must actually BE the named program. A bare
+/// kill -0 believes any process wearing the pid — macOS reuses low pids
+/// after a reboot, so a stale relay.pid matched some unrelated process,
+/// the respawn was skipped, and the app sat at "reconnecting…" forever.
+fn pid_alive_named(pidfile: &std::path::Path, name: &str) -> Option<u32> {
+    let pid = pid_alive(pidfile)?;
+    let out = Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
+    let comm = String::from_utf8_lossy(&out.stdout);
+    let comm = comm.trim();
+    (comm == name || comm.ends_with(&format!("/{name}"))).then_some(pid)
+}
+
 /// Is the local workspace relay running? Pidfile + kill -0, the same
 /// convention as the CLI sentinel's pidfile.
 #[tauri::command]
 fn local_relay_status() -> bool {
-    pid_alive(&fez_relay_dir().join("relay.pid")).is_some()
+    pid_alive_named(&fez_relay_dir().join("relay.pid"), "fez-relay").is_some()
 }
 
 /// Spawn (or adopt) the user-owned local relay and wait until its NIP-11
@@ -1485,7 +1500,7 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
         return Err("local relay needs a 64-hex owner pubkey".to_string());
     }
     let pidfile = dir.join("relay.pid");
-    if pid_alive(&pidfile).is_none() {
+    if pid_alive_named(&pidfile, "fez-relay").is_none() {
         let home = std::env::var("HOME").unwrap_or_default();
         let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-relay");
         if !bin.exists() {
@@ -1494,6 +1509,14 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
                     .to_string(),
             );
         }
+        // The relay's own words survive it — a crash with /dev/null for
+        // stderr left "why is the workspace dead" unanswerable.
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("relay.log"))
+            .map_err(|e| format!("relay.log: {e}"))?;
+        let log_err = log.try_clone().map_err(|e| format!("relay.log: {e}"))?;
         let child = Command::new(&bin)
             .args([
                 "--port",
@@ -1505,8 +1528,8 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
                 "--name",
                 if name.is_empty() { "your workspace" } else { &name },
             ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(log)
+            .stderr(log_err)
             .spawn()
             .map_err(|e| format!("spawn fez-relay: {e}"))?;
         std::fs::write(&pidfile, child.id().to_string()).map_err(|e| format!("pidfile: {e}"))?;
@@ -1709,6 +1732,39 @@ fn min_fez_version_error(required: Option<&str>, host: &str) -> Option<String> {
         return Some(format!("needs fez ≥ {required}, you have {host} — update fez and retry"));
     }
     None
+}
+
+#[cfg(test)]
+mod pid_tests {
+    use super::pid_alive_named;
+    use std::io::Write;
+
+    #[test]
+    fn matching_name_counts_as_alive() {
+        let mut child = std::process::Command::new("/bin/sleep").arg("5").spawn().unwrap();
+        let dir = std::env::temp_dir().join(format!("fez-pid-test-{}", child.id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("relay.pid");
+        write!(std::fs::File::create(&pidfile).unwrap(), "{}", child.id()).unwrap();
+        assert_eq!(pid_alive_named(&pidfile, "sleep"), Some(child.id()));
+        // A reused PID belonging to some OTHER program must not count —
+        // this is the stale-pidfile-after-reboot bug.
+        assert_eq!(pid_alive_named(&pidfile, "fez-relay"), None);
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dead_pid_and_missing_file_are_not_alive() {
+        let dir = std::env::temp_dir().join("fez-pid-test-static");
+        std::fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("relay.pid");
+        std::fs::write(&pidfile, "99999999").unwrap();
+        assert_eq!(pid_alive_named(&pidfile, "fez-relay"), None);
+        assert_eq!(pid_alive_named(&dir.join("nope.pid"), "fez-relay"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
