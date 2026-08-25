@@ -113,6 +113,29 @@ describe("cold start — claimed workspace, a room, and a guide that speaks", ()
     expect(posted).toBe(true);
     const seen = await agentWire.query([{ kinds: [47103], "#h": [general!.id] }]);
     expect(seen.some((e) => e.content.includes("Welcome, Ken."))).toBe(true);
+
+    // On the WIRE is not on the SCREEN. The opener above was signed by
+    // an unrostered agent key, and the client's trust rule (messages
+    // render only from members) rightly refuses it — which was exactly
+    // the fresh-install bug: @fez DID speak, invisibly. Raw wire
+    // queries bypass that rule; client.messages() is what renders.
+    await client.loadChannelHistory(general!.id);
+    const visible = () => client.messages(general!.id).some((m) => m.content.includes("Welcome, Ken."));
+    expect(visible()).toBe(false);
+
+    // Roster the guide as a bot — the welcome flow's required step —
+    // and the SAME stored event renders on the next history load
+    // (which is also how an already-broken install heals on relaunch).
+    const agentPk = getPublicKey(agentSk);
+    await client.invite(agentPk, "bot");
+    // the roster lands via the subscription echo — wait for membership
+    for (let i = 0; i < 20 && !client.state.isMember(agentPk); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(client.state.isMember(agentPk)).toBe(true);
+    await client.loadChannelHistory(general!.id);
+    expect(visible()).toBe(true);
+
     agentWire.close();
     wire.close();
   }, 30_000);

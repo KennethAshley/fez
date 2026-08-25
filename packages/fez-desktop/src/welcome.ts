@@ -7,8 +7,8 @@
  * the source of truth) — the bundle deliberately doesn't import the CLI.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { generateSecretKey } from "nostr-tools/pure";
-import { bytesToHex } from "@noble/hashes/utils.js";
+import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import type { FezClient } from "@fezchat/client";
 import { BrowserWire } from "./wire";
 import { relaySet } from "./relay";
@@ -84,11 +84,28 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
   const harnesses = await invoke<Record<string, boolean>>("detect_harnesses").catch(() => ({}) as Record<string, boolean>);
   await ensureFezPersona(harnesses["claude-code"] ? "claude-code" : "pi");
   const hex = await agentKeyHex();
+
+  // Roster the guide BEFORE it speaks. The opener is signed by the
+  // agent's own key, and the client renders only members — an
+  // unrostered @fez posted a perfect welcome that every client rightly
+  // refused to show (found live: three events on the relay, a silent
+  // screen). Idempotent; owner-signed.
+  const agentPk = getPublicKey(hexToBytes(hex));
+  if (!client.state.isMember(agentPk)) {
+    await client.invite(agentPk, "bot").catch(() => {});
+  }
+
   const r = await readiness();
   const userName = localStorage.getItem("fez-name") ?? "";
   const w = markerWire(hex);
   try {
     const posted = await ensureMarkedMessage(w, channel.id, client.pubkey, OPENER_MARKER, openerText(r, userName));
+    if (!posted) {
+      // The opener already exists on the relay — an install from before
+      // the roster fix. Now that the agent is a member, one history
+      // reload makes the stored opener render in THIS session.
+      await client.loadChannelHistory(channel.id).catch(() => {});
+    }
     // The awake line only ever follows a NOT-ready opener whose gap has
     // since been filled — cued by the opener's own text, so a ready-day-one
     // opener never grows a spurious "I'm awake" on a later launch.

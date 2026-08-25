@@ -1977,12 +1977,18 @@ export class FezClient {
 
   private handleIncomingMessage(event: WireEvent): void {
     if (this.seenMessages.has(event.id)) return;
-    this.seenMessages.add(event.id);
     for (const key of this.typing.keys()) if (key.startsWith(`${event.pubkey}:`)) this.typing.delete(key);
     this.emit("typingChanged");
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     if (!channelId) return;
     if (!this.state.isMember(event.pubkey)) return;
+
+    // Seen means ACCEPTED, and only accepted. Marking before the
+    // membership gate made rejection permanent for the session: a
+    // message from a not-yet-rostered author (the @fez opener, posted a
+    // beat before its key landed on the roster) could never render
+    // until a full restart, however many times history replayed it.
+    this.seenMessages.add(event.id);
 
     const msg = this.cacheMessage(channelId, event);
 
