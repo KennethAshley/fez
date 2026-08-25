@@ -151,6 +151,16 @@ program
   });
 
 program
+  .command("update <name>")
+  .description("Update an installed fez package: refetch the source and re-run the install hooks")
+  .option("-v, --version <version>", "Pin to a specific version")
+  .action(async (name: string, options) => {
+    const pm = new PackageManager();
+    await pm.init();
+    await pm.update(name, { version: options.version });
+  });
+
+program
   .command("create <name>")
   .description("Scaffold a new fez extension package (headless + gui by default), typed against @fezchat/extension-api")
   .option("--headless", "Include a headless part (slash commands, scheduled tasks — TUI + sentinel)")

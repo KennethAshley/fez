@@ -1,15 +1,21 @@
-import { fezHome } from "../shared/fez-home.js";
+import { fezHomeAt } from "../shared/fez-home.js";
+import { loadSettings, saveSettings } from "../shared/settings.js";
 import { execSync } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import chalk from "chalk";
 
-const FEZ_DIR = fezHome();
-const PACKAGES_DIR = path.join(FEZ_DIR, "packages");
-const NPM_DIR = path.join(PACKAGES_DIR, "npm");
-const GIT_DIR = path.join(PACKAGES_DIR, "git");
-const REGISTRY_FILE = path.join(FEZ_DIR, "registry.json");
+/**
+ * Where settings reads/writes go. Injectable so the install/remove/update
+ * lifecycle is testable against an in-memory store instead of the real
+ * ~/.fez/settings.json (which the module-level SETTINGS_FILE pins to the
+ * real home).
+ */
+export interface SettingsStore {
+  load(): Record<string, unknown>;
+  save(patch: Record<string, unknown>): unknown;
+}
 
 export interface FezPackage {
   name: string;
@@ -31,6 +37,8 @@ export interface FezManifest {
   bin?: Record<string, string>;
   fez: {
     type: "integration" | "agent" | "extension" | "persona-pack";
+    /** What this package says it needs — see extension-permissions.ts. Recorded at install. */
+    permissions?: string[];
     /**
      * Oldest fez this package works on (x.y.z) — checked at install and
      * link against FEZ_VERSION, refused loudly on an older host. Absent
@@ -126,11 +134,29 @@ export function npmPackageName(source: string): string {
 
 export class PackageManager {
   private packages: Map<string, FezPackage> = new Map();
+  /** Undefined = the real home; tests inject a temp dir (fezHomeAt seam). */
+  private readonly base?: string;
+  private readonly settings: SettingsStore;
+  private readonly npmDir: string;
+  private readonly gitDir: string;
+  private readonly registryFile: string;
+
+  constructor(opts: { base?: string; settings?: SettingsStore } = {}) {
+    this.base = opts.base;
+    this.settings = opts.settings ?? { load: () => loadSettings() as Record<string, unknown>, save: (p) => saveSettings(p as never) };
+    this.npmDir = this.home("packages", "npm");
+    this.gitDir = this.home("packages", "git");
+    this.registryFile = this.home("registry.json");
+  }
+
+  /** ~/.fez/<segments> under the (possibly injected) home. */
+  private home(...segments: string[]): string {
+    return fezHomeAt(this.base, ...segments);
+  }
 
   async init(): Promise<void> {
-    await fs.mkdir(FEZ_DIR, { recursive: true });
-    await fs.mkdir(NPM_DIR, { recursive: true });
-    await fs.mkdir(GIT_DIR, { recursive: true });
+    await fs.mkdir(this.npmDir, { recursive: true });
+    await fs.mkdir(this.gitDir, { recursive: true });
     await this.loadRegistry();
   }
 
@@ -191,10 +217,59 @@ export class PackageManager {
       this.packages.delete(name); // failed install leaves no registry ghost
       throw err;
     }
+    await this.recordPermissions(name, manifest);
     await this.saveRegistry();
 
     console.log(chalk.green(`✅ Installed ${name}`));
     return pkg;
+  }
+
+  /**
+   * Update an installed package in place: refetch the source, re-run the
+   * install hooks (part copies overwrite), re-record permissions. npm
+   * installs get a clean fetch — the shim dir's lockfile would otherwise
+   * pin the old version forever.
+   */
+  async update(name: string, options: { version?: string } = {}): Promise<FezPackage | undefined> {
+    const pkg = this.packages.get(name);
+    if (!pkg) {
+      console.log(chalk.yellow(`⚠️  ${name} is not installed. Use 'fez install ${name}' first.`));
+      return undefined;
+    }
+
+    console.log(chalk.blue(`🔄 Updating ${name} from ${pkg.source}...`));
+
+    if (pkg.source.startsWith("npm:")) {
+      await fs.rm(this.getInstallDir(pkg), { recursive: true, force: true });
+      await this.installNpm(pkg.source, options.version);
+    } else {
+      await this.installGit(pkg.source);
+    }
+
+    const manifest = await this.readManifest(name);
+    pkg.version = options.version || "latest";
+    pkg.type = manifest?.fez?.type || "extension";
+    pkg.config = manifest?.fez;
+    await this.runInstallHook(name, manifest);
+    await this.recordPermissions(name, manifest);
+    await this.saveRegistry();
+
+    console.log(chalk.green(`✅ Updated ${name}`));
+    return pkg;
+  }
+
+  /**
+   * Record the declared grant — parity with `fez link`, which has always
+   * done this. Before, a CLI-installed package fell back to the legacy
+   * read-only grant regardless of what it declared, so the same package
+   * got MORE capability linked than installed.
+   */
+  private async recordPermissions(name: string, manifest: FezManifest | null): Promise<void> {
+    if (!manifest?.fez) return;
+    const { parsePermissions } = await import("./extension-permissions.js");
+    const { granted } = parsePermissions(manifest.fez.permissions);
+    const settings = this.settings.load() as { extensionPermissions?: Record<string, string[]> };
+    this.settings.save({ extensionPermissions: { ...settings.extensionPermissions, [name]: granted } });
   }
 
   /**
@@ -290,7 +365,7 @@ export class PackageManager {
   private async installNpm(source: string, version?: string): Promise<void> {
     const pkgName = source.replace("npm:", "");
     const _target = version ? `${pkgName}@${version}` : pkgName;
-    const installPath = path.join(NPM_DIR, npmPackageName(source));
+    const installPath = path.join(this.npmDir, npmPackageName(source));
 
     await fs.mkdir(installPath, { recursive: true });
 
@@ -307,9 +382,9 @@ export class PackageManager {
   private async installGit(source: string): Promise<void> {
     const url = source.replace("git:", "");
     const name = this.extractName(source);
-    const installPath = path.join(GIT_DIR, name);
+    const installPath = path.join(this.gitDir, name);
 
-    await fs.mkdir(GIT_DIR, { recursive: true });
+    await fs.mkdir(this.gitDir, { recursive: true });
 
     if (await this.pathExists(installPath)) {
       // Pull latest
@@ -382,9 +457,8 @@ export class PackageManager {
 
   private async runUninstallHook(pkg: FezPackage): Promise<void> {
     const manifest = await this.readManifest(pkg.name);
-    if (!manifest?.fez) return;
 
-    const integrations = manifest.fez.integrations;
+    const integrations = manifest?.fez?.integrations;
 
     if (integrations?.claudeCode) {
       await this.removeClaudeCodeIntegration(pkg.name);
@@ -392,11 +466,12 @@ export class PackageManager {
     if (integrations?.pi) {
       await this.removePiIntegration(pkg.name);
     }
-    if (manifest.fez.extension) {
-      await this.removeFezExtension(pkg.name);
-    }
+    // Unconditional: every part removal is force:true, so a package that
+    // never had a given part is a no-op — and a package whose manifest is
+    // unreadable at uninstall time still gets its known locations cleaned.
+    await this.removeParts(pkg.name, manifest);
     if (pkg.installedPersonas?.length) {
-      const personasDir = fezHome("personas");
+      const personasDir = this.home("personas");
       for (const id of pkg.installedPersonas) {
         await fs.rm(path.join(personasDir, `${id}.md`), { force: true });
         console.log(chalk.dim(`   Removed persona ${id}`));
@@ -444,7 +519,7 @@ export class PackageManager {
     }
     if (anyErrors) throw new Error(`persona pack "${name}" failed validation — nothing installed`);
 
-    const personasDir = fezHome("personas");
+    const personasDir = this.home("personas");
     await fs.mkdir(personasDir, { recursive: true });
     const installed: string[] = [];
     for (const { id, content } of prepared) {
@@ -457,7 +532,10 @@ export class PackageManager {
       installed.push(id);
       console.log(chalk.dim(`   Installed persona ${id}`));
     }
-    this.packages.get(name)!.installedPersonas = installed;
+    // Union with any prior install (update re-runs this hook and skips
+    // existing files — forgetting the originals would orphan them at uninstall).
+    const prior = this.packages.get(name)!.installedPersonas ?? [];
+    this.packages.get(name)!.installedPersonas = [...new Set([...prior, ...installed])];
     console.log(chalk.green(`   👥 ${installed.length} persona(s) from pack "${name}" — fez agent <name> to run one`));
   }
 
@@ -516,8 +594,7 @@ export class PackageManager {
   }
 
   private async installFezExtension(name: string, config: { entry?: string }): Promise<void> {
-    const home = os.homedir();
-    const extensionsDir = path.join(home, ".fez", "extensions");
+    const extensionsDir = this.home("extensions");
     await fs.mkdir(extensionsDir, { recursive: true });
 
     const pkgDir = this.getContentDir(this.packages.get(name)!);
@@ -550,7 +627,7 @@ export class PackageManager {
     const pkg = this.packages.get(name);
     if (!pkg) return;
     const pkgDir = this.getContentDir(pkg);
-    const binDir = fezHome("bin");
+    const binDir = this.home("bin");
     await fs.mkdir(binDir, { recursive: true });
     for (const [cmd, rel] of Object.entries(bin)) {
       const target = path.join(binDir, cmd);
@@ -558,7 +635,7 @@ export class PackageManager {
       await fs.chmod(target, 0o755);
       console.log(chalk.dim(`   Installed ~/.fez/bin/${cmd}`));
     }
-    if (!(process.env.PATH ?? "").split(":").includes(fezHome("bin"))) {
+    if (!(process.env.PATH ?? "").split(":").includes(binDir)) {
       console.log(chalk.dim(`   (~/.fez/bin is not on your PATH — add it to call these by name)`));
     }
   }
@@ -580,7 +657,7 @@ export class PackageManager {
       await this.installFezExtension(name, { entry: parts.headless });
     }
     if (parts.gui) {
-      const guiDir = fezHome("gui-extensions");
+      const guiDir = this.home("gui-extensions");
       await fs.mkdir(guiDir, { recursive: true });
       await fs.copyFile(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/gui-extensions/${name}.js`));
@@ -591,7 +668,7 @@ export class PackageManager {
       // started with --extensions: this is code inside the process
       // holding everyone's events, so installing it and enabling it are
       // deliberately two acts.
-      const relayDir = fezHome("relay-extensions");
+      const relayDir = this.home("relay-extensions");
       await fs.mkdir(relayDir, { recursive: true });
       await fs.copyFile(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/relay-extensions/${name}.js`));
@@ -607,58 +684,74 @@ export class PackageManager {
       // the sentinel, and only the sentinel loads extensions. A provider
       // that worked for a fleet and silently not for a person running
       // one agent would be the worst kind of half-working.
-      const wsDir = fezHome("workspace-providers");
+      const wsDir = this.home("workspace-providers");
       await fs.mkdir(wsDir, { recursive: true });
       await fs.copyFile(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/workspace-providers/${name}.js`));
       console.log(chalk.dim("   Personas can now set `repo:` to work from a checkout."));
     }
     if (parts.background) {
-      const { loadSettings, saveSettings } = await import("../shared/settings.js");
-      const settings = loadSettings() as { backgroundExtensions?: string[] };
+      const settings = this.settings.load() as { backgroundExtensions?: string[] };
       const list = new Set(settings.backgroundExtensions ?? []);
       list.add(name);
-      saveSettings({ backgroundExtensions: [...list] } as never);
+      this.settings.save({ backgroundExtensions: [...list] });
       console.log(chalk.dim(`   Background tasks enabled (restart the sentinel to run them)`));
     }
     if (parts.skill) {
-      const { loadSettings, saveSettings } = await import("../shared/settings.js");
-      const settings = loadSettings() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
+      const settings = this.settings.load() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
       // keep env VALUES the user already filled in; the package supplies names
       const mergedEnv = { ...(parts.skill.env ?? {}), ...(settings.mcpServers?.[name]?.env ?? {}) };
-      saveSettings({
+      this.settings.save({
         mcpServers: {
           ...settings.mcpServers,
           [name]: { ...parts.skill, ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
         },
-      } as never);
+      });
       console.log(chalk.dim(`   Defined skill "${name}" in ~/.fez/settings.json`));
     }
   }
 
-  private async removeParts(name: string): Promise<void> {
-    await fs.rm(fezHome("gui-extensions", `${name}.js`), { force: true });
-    const { loadSettings, saveSettings } = await import("../shared/settings.js");
-    const settings = loadSettings() as { backgroundExtensions?: string[] };
+  /**
+   * Remove everything an install placed — the mirror of installParts +
+   * installBins + installFezExtension. This was dead code once (defined,
+   * called from nowhere), which meant `fez remove` left gui/relay/
+   * workspace parts and bins behind while the desktop's uninstall cleaned
+   * them; the two paths must stay equivalent.
+   */
+  private async removeParts(name: string, manifest: FezManifest | null): Promise<void> {
+    await this.removeFezExtension(name); // headless part / legacy extension entry
+    await fs.rm(this.home("gui-extensions", `${name}.js`), { force: true });
+    await fs.rm(this.home("relay-extensions", `${name}.js`), { force: true });
+    await fs.rm(this.home("workspace-providers", `${name}.js`), { force: true });
+    for (const cmd of Object.keys(manifest?.bin ?? {})) {
+      await fs.rm(this.home("bin", cmd), { force: true });
+    }
+    const settings = this.settings.load() as {
+      backgroundExtensions?: string[];
+      extensionPermissions?: Record<string, string[]>;
+    };
     if (settings.backgroundExtensions?.includes(name)) {
-      saveSettings({ backgroundExtensions: settings.backgroundExtensions.filter((n) => n !== name) } as never);
+      this.settings.save({ backgroundExtensions: settings.backgroundExtensions.filter((n) => n !== name) });
+    }
+    if (settings.extensionPermissions && name in settings.extensionPermissions) {
+      const { [name]: _dropped, ...rest } = settings.extensionPermissions;
+      this.settings.save({ extensionPermissions: rest });
     }
     // the skill definition stays: the user may have filled env values and
     // personas may still declare it — removing it silently would break them
   }
 
   private async removeFezExtension(name: string): Promise<void> {
-    const home = os.homedir();
     for (const ext of [".ts", ".js", ".mjs"]) {
-      await fs.rm(path.join(home, ".fez", "extensions", `${name}${ext}`), { force: true });
+      await fs.rm(this.home("extensions", `${name}${ext}`), { force: true });
     }
   }
 
   private getInstallDir(pkg: FezPackage): string {
     if (pkg.source.startsWith("npm:")) {
-      return path.join(NPM_DIR, pkg.name);
+      return path.join(this.npmDir, pkg.name);
     }
-    return path.join(GIT_DIR, pkg.name);
+    return path.join(this.gitDir, pkg.name);
   }
 
   /**
@@ -669,14 +762,14 @@ export class PackageManager {
    */
   private getContentDir(pkg: FezPackage): string {
     if (pkg.source.startsWith("npm:")) {
-      return path.join(NPM_DIR, npmPackageName(pkg.source), "node_modules", pkg.source.replace("npm:", ""));
+      return path.join(this.npmDir, npmPackageName(pkg.source), "node_modules", pkg.source.replace("npm:", ""));
     }
-    return path.join(GIT_DIR, pkg.name);
+    return path.join(this.gitDir, pkg.name);
   }
 
   private async loadRegistry(): Promise<void> {
     try {
-      const content = await fs.readFile(REGISTRY_FILE, "utf-8");
+      const content = await fs.readFile(this.registryFile, "utf-8");
       const data = JSON.parse(content);
       this.packages = new Map(Object.entries(data.packages || {}));
     } catch {
@@ -686,7 +779,7 @@ export class PackageManager {
 
   private async saveRegistry(): Promise<void> {
     const data = { packages: Object.fromEntries(this.packages) };
-    await fs.writeFile(REGISTRY_FILE, JSON.stringify(data, null, 2), "utf-8");
+    await fs.writeFile(this.registryFile, JSON.stringify(data, null, 2), "utf-8");
   }
 
   private async pathExists(p: string): Promise<boolean> {

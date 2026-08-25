@@ -796,6 +796,40 @@ fn install_package(name: String) -> Result<String, String> {
         skill_entry = Some(entry);
     }
 
+    // 5c. npm's own bin map → ~/.fez/bin, chmod 0755 (mirrors the CLI's
+    // installBins). This was CLI-only once: a gallery-installed
+    // @fezchat/git arrived without its credential helper or fez-adopt,
+    // and everything resolving ~/.fez/bin by absolute path found nothing.
+    // Installed names are recorded in settings so uninstall can remove
+    // exactly these files (the desktop has no package dir to re-read).
+    let mut installed_bins: Vec<String> = Vec::new();
+    if let Some(bins) = pkg.get("bin").and_then(|v| v.as_object()) {
+        let bin_dir = home.join("bin");
+        std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+        for (cmd, rel) in bins {
+            // the command name becomes a filename in ~/.fez/bin — refuse
+            // anything that could escape it
+            if cmd.is_empty() || cmd.contains('/') || cmd.contains("..") {
+                continue;
+            }
+            let rel = match rel.as_str() {
+                Some(r) => r,
+                None => continue,
+            };
+            let bytes =
+                tar_read(&tar_bytes, rel).ok_or_else(|| format!("bin {rel} missing from tarball"))?;
+            let dest = bin_dir.join(cmd);
+            std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
+            }
+            installed.push(format!("bin → ~/.fez/bin/{cmd}"));
+            installed_bins.push(cmd.clone());
+        }
+    }
+
     // 6. Record granted permissions + background opt-in in settings.json.
     let perms: Vec<String> = pkg
         .pointer("/fez/permissions")
@@ -819,6 +853,9 @@ fn install_package(name: String) -> Result<String, String> {
         obj_entry(obj, "extensionPermissions").insert(base_owned.clone(), serde_json::json!(perms));
         // Record the version so the gallery can offer updates later.
         obj_entry(obj, "extensionVersions").insert(base_owned.clone(), serde_json::json!(version));
+        if !installed_bins.is_empty() {
+            obj_entry(obj, "extensionBins").insert(base_owned.clone(), serde_json::json!(installed_bins));
+        }
         if wants_background {
             let list = obj
                 .entry("backgroundExtensions")
@@ -1007,7 +1044,9 @@ fn remove_extension(name: String) -> Result<String, String> {
             removed.push(format!("skills/{cand}"));
         }
     }
-    // Drop the recorded permission grant + background opt-in.
+    // Drop the recorded permission grant + background opt-in, and collect
+    // the bins this package installed so their files go too.
+    let mut bins_to_remove: Vec<String> = Vec::new();
     update_settings(|json| {
         if let Some(obj) = json.as_object_mut() {
             for cand in [name.as_str(), name.trim_start_matches("fez-")] {
@@ -1023,9 +1062,27 @@ fn remove_extension(name: String) -> Result<String, String> {
                 if let Some(mcp) = obj.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
                     mcp.remove(cand);
                 }
+                if let Some(bins) = obj.get_mut("extensionBins").and_then(|v| v.as_object_mut()) {
+                    if let Some(list) = bins.remove(cand) {
+                        if let Some(list) = list.as_array() {
+                            bins_to_remove
+                                .extend(list.iter().filter_map(|v| v.as_str().map(String::from)));
+                        }
+                    }
+                }
             }
         }
     })?;
+    for cmd in &bins_to_remove {
+        // same filename rule as install: never a path, only a name
+        if cmd.is_empty() || cmd.contains('/') || cmd.contains("..") {
+            continue;
+        }
+        let file = home.join("bin").join(cmd);
+        if file.exists() && std::fs::remove_file(&file).is_ok() {
+            removed.push(format!("bin/{cmd}"));
+        }
+    }
     if removed.is_empty() {
         return Err(format!("nothing installed named \"{name}\""));
     }
