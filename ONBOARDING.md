@@ -79,12 +79,13 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
   to app-icon.png; the full set regenerates with `npx tauri icon app-icon.png`.
 - [x] **Find-and-replace damage in visible copy.** DONE: all "client.state.workspace" strings
   in ManagePane restored to "workspace".
-- [ ] **CSP + raw key exposure.** PARTIAL: a real CSP now ships (script-src 'self'
-  'unsafe-eval', broad connect-src for user-configured relays, artifact: frames) — made
-  possible by the artifact:// staging protocol that replaced srcDoc (srcdoc docs inherit the
-  parent CSP). Still open: key custody — `get_identity` hands the webview the raw private
-  key; moving signing + nip44/nip59 into Rust is its own design. Also open: extensions still
-  need 'unsafe-eval' (own-origin extension loading would retire it).
+- [x] **CSP + raw key exposure.** DONE: a real CSP ships (script-src 'self' 'unsafe-eval',
+  broad connect-src for user-configured relays, artifact: frames via the artifact:// staging
+  protocol), AND key custody moved into Rust — the webview never receives the secret; it asks
+  for sign/nip44/gift-wrap over the bridge (Buzz's model; `get_identity` survives as the
+  explicit backup/reveal). Follow-ups: republish @fezchat/extension-api + @fezchat/git
+  (httpAuthHeader went async — breaking), and 'unsafe-eval' could retire if extensions ever
+  load from their own origin.
 - [ ] **Undisclosed default endpoints.** Skill installs POST a signed (pubkey-bearing) receipt to
   `fez-web-kohl.vercel.app/api/counts` with no consent/toggle (`SkillsView.tsx:35-36,307,757`);
   drag-drop uploads go to `blossom.primal.net` in the clear with no disclosure at the drop
