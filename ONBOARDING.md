@@ -50,9 +50,9 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
 - [x] **Relay notices are thrown away.** DONE: `"notice"` now has a real handler — sticky,
   deduped toast (`toast.info(text, 0)`), so "claim this workspace" / "ask the owner for an
   invite; your key: …" actually reach the user.
-- [ ] **@fez never answers, nothing says why.** Desktop never starts the agent runner (launchd
-  sentinel is CLI-installed); the exact message FirstRun suggests gets no reply, no timeout,
-  no error. Detect the runner's absence locally and surface it.
+- [ ] **@fez never answers, nothing says why.** CLAIMED by the cold-start-onboarding session —
+  see docs/superpowers/specs/2026-08-24-cold-start-onboarding-design.md (readiness probe +
+  scripted opener). Do not start independently.
 - [x] **Extension install can panic.** DONE: the settings closure uses a shape-normalizing
   `obj_entry` helper (resets wrong-typed members) instead of `.unwrap()` chains.
 - [x] **settings.json truncation risk.** DONE: serialize failures now propagate as errors at
