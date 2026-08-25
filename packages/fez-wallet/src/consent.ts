@@ -49,15 +49,20 @@ export function awaitDecision(
   relay: ConsentRelay,
   requestId: string,
   ownerPk: string,
-  timeoutMs: number
-): Promise<"approved" | "declined" | "timeout"> {
+  timeoutMs: number,
+  /** Finding #6: an in-flight consent wait must not outlive the MCP call
+   * that started it. When the caller aborts, the wait ends right away —
+   * a reaction that arrives after that point cannot flip the outcome. */
+  signal?: AbortSignal
+): Promise<"approved" | "declined" | "timeout" | "aborted"> {
   return new Promise((resolve) => {
     let done = false;
-    const finish = (v: "approved" | "declined" | "timeout") => {
+    const finish = (v: "approved" | "declined" | "timeout" | "aborted") => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       unsub();
+      signal?.removeEventListener("abort", onAbort);
       resolve(v);
     };
     const filter: Filter = {
@@ -73,15 +78,33 @@ export function awaitDecision(
       else if (DECLINE.has(ev.content.trim())) finish("declined");
     });
     const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    const onAbort = () => finish("aborted");
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
   });
 }
 
 /** Production ConsentRelay over nostr-tools SimplePool. Untested by unit
- * tests (the seam above is what's tested); exercised in the e2e pass. */
+ * tests (the seam above is what's tested); exercised in the e2e pass.
+ *
+ * Memoized per sorted relay-URL set (finding #4): mcp.ts's deps() builds
+ * fresh ToolDeps on every tool call, and a new SimplePool per consent
+ * round-trip meant a new set of relay sockets every time. The pool
+ * itself — the thing worth reusing — now persists across calls; only
+ * the subscription made against it (unsub, returned per call) stays
+ * scoped to that one request. */
+const relayPools = new Map<string, ConsentRelay>();
+
 export async function poolRelay(relayUrls: string[]): Promise<ConsentRelay> {
+  const key = [...relayUrls].sort().join(",");
+  const cached = relayPools.get(key);
+  if (cached) return cached;
+
   const { SimplePool } = await import("nostr-tools/pool");
   const pool = new SimplePool();
-  return {
+  const relay: ConsentRelay = {
     async publish(event) {
       await Promise.any(pool.publish(relayUrls, event));
     },
@@ -90,4 +113,6 @@ export async function poolRelay(relayUrls: string[]): Promise<ConsentRelay> {
       return () => sub.close();
     },
   };
+  relayPools.set(key, relay);
+  return relay;
 }

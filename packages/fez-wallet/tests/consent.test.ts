@@ -67,4 +67,21 @@ describe("consent", () => {
     emit(reaction("🎉", ownerPk, "req1"));                  // wrong emoji
     await expect(p).resolves.toBe("timeout");
   });
+
+  it("resolves aborted immediately when the signal is already aborted", async () => {
+    const { relay } = fakeRelay();
+    const controller = new AbortController();
+    controller.abort();
+    const p = awaitDecision(relay, "req1", ownerPk, 5000, controller.signal);
+    await expect(p).resolves.toBe("aborted");
+  });
+
+  it("abort before approval wins — a late reaction cannot flip an already-aborted wait", async () => {
+    const { relay, emit } = fakeRelay();
+    const controller = new AbortController();
+    const p = awaitDecision(relay, "req1", ownerPk, 5000, controller.signal);
+    controller.abort();
+    emit(reaction("✅", ownerPk, "req1")); // arrives too late — must not resolve "approved"
+    await expect(p).resolves.toBe("aborted");
+  });
 });

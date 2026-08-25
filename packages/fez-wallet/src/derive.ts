@@ -53,8 +53,17 @@ export function deriveAgentPair(mnemonic: string, persona: string): WalletPair {
 }
 
 export function pairFromStored(json: string): WalletPair {
-  const p = JSON.parse(json) as WalletPair;
-  if (!p.publicKeyHex || !p.secretKeyHex) throw new Error("malformed stored pair");
-  // Recompute the address from the public key — storage carries no authority.
-  return toPair(hexToU8a(`0x${p.publicKeyHex}`), hexToU8a(`0x${p.secretKeyHex}`));
+  // Wrapped whole: a SyntaxError from JSON.parse (or a hex decode error
+  // below) can otherwise quote the offending input back — and when the
+  // input is a mnemonic read off the reserved entry by mistake, that
+  // input IS the secret. Every failure path here collapses to one
+  // generic message that never echoes what it was given (finding #1b).
+  try {
+    const p = JSON.parse(json) as WalletPair;
+    if (!p.publicKeyHex || !p.secretKeyHex) throw new Error("malformed stored pair");
+    // Recompute the address from the public key — storage carries no authority.
+    return toPair(hexToU8a(`0x${p.publicKeyHex}`), hexToU8a(`0x${p.secretKeyHex}`));
+  } catch {
+    throw new Error("malformed stored pair");
+  }
 }

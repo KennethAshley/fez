@@ -119,6 +119,33 @@ describe("tools", () => {
     expect(transfers).toHaveLength(0);
   });
 
+  it("wallet_send to the reserved root name never reads or resolves the mnemonic", async () => {
+    const { walletSend } = await import("../src/tools.js");
+    process.env.FEZ_WALLET_STORE = "file";
+    const { writeRootEntry } = await import("../src/store.js");
+    const mnemonic = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
+    writeRootEntry(mnemonic); // a root entry exists — the vulnerable path would read it
+    const { d, transfers } = deps();
+    const out = await walletSend(d, { to: "root", amount: "0.005", asset: "TAO" });
+    // none of the mnemonic's words appear anywhere in the response...
+    for (const word of mnemonic.split(" ")) expect(out.toLowerCase()).not.toContain(word);
+    // ...and "root" was never resolved through the store — it went out
+    // as the literal string, proving readEntry("root") was never called.
+    expect(transfers).toHaveLength(1);
+    expect(transfers[0].to).toBe("root");
+  });
+
+  it("a pre-aborted signal blocks the transfer even when the relay auto-approves", async () => {
+    const { walletSend } = await import("../src/tools.js");
+    const { relay } = autoRelay(() => "✅");
+    const controller = new AbortController();
+    controller.abort();
+    const { d, transfers } = deps({ relay: async () => relay, signal: controller.signal });
+    const out = await walletSend(d, { to: "5Dest", amount: "0.5", asset: "TAO" });
+    expect(out.toLowerCase()).toContain("aborted");
+    expect(transfers).toHaveLength(0);
+  });
+
   it("resolves a persona name to its derived address", async () => {
     const { walletSend } = await import("../src/tools.js");
     const { d, transfers } = deps();

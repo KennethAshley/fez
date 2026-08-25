@@ -1,30 +1,42 @@
 import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored } from "./derive.js";
-import { readEntry, writeEntry } from "./store.js";
+import { readEntry, writeEntry, readRootEntry, writeRootEntry } from "./store.js";
+import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex } from "./config.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 
 /**
  * The ceremony. This module is the ONLY place the "root" entry (the
  * mnemonic) is ever read or written — mcp.ts and tools.ts see derived
- * pairs and nothing else (spec invariant 1).
+ * pairs and nothing else (spec invariant 1). It reaches the mnemonic
+ * through store.ts's readRootEntry/writeRootEntry, which no other
+ * module imports.
  */
-
-const ROOT = "root";
 
 export interface CliIo {
   print(line: string): void;
 }
 
 function requireRoot(): string {
-  const mnemonic = readEntry(ROOT);
+  const mnemonic = readRootEntry();
   if (!mnemonic) throw new Error("no wallet yet — run: fez-wallet init");
   return mnemonic;
 }
 
+/** A persona name doubles as a store entry name — same rules apply, plus
+ * it can never collide with the reserved mnemonic entry (finding #1d). */
+function requireUsablePersonaName(persona: string): void {
+  if (!isValidEntryName(persona)) {
+    throw new Error(`invalid persona name "${persona}" (letters, digits, "._-" only, no leading dot or slash)`);
+  }
+  if (isReservedEntryName(persona)) {
+    throw new Error(`"${persona}" is a reserved name and cannot be used as a persona`);
+  }
+}
+
 export function cmdInit(io: CliIo): void {
-  if (readEntry(ROOT)) throw new Error("a wallet root already exists — refusing to overwrite it");
+  if (readRootEntry()) throw new Error("a wallet root already exists — refusing to overwrite it");
   const mnemonic = generateWalletMnemonic();
-  writeEntry(ROOT, mnemonic);
+  writeRootEntry(mnemonic);
   io.print("wallet created. WRITE THESE 24 WORDS DOWN — they are shown exactly once:");
   io.print("");
   io.print(`  ${mnemonic}`);
@@ -34,6 +46,7 @@ export function cmdInit(io: CliIo): void {
 }
 
 export function cmdDerive(io: CliIo, persona: string): void {
+  requireUsablePersonaName(persona);
   const mnemonic = requireRoot();
   const existing = readEntry(persona);
   const pair = existing ? pairFromStored(existing) : deriveAgentPair(mnemonic, persona);
@@ -45,6 +58,7 @@ export function cmdDerive(io: CliIo, persona: string): void {
 }
 
 export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string, amount: string): Promise<void> {
+  requireUsablePersonaName(persona);
   const mnemonic = requireRoot();
   const stored = readEntry(persona);
   if (!stored) throw new Error(`no wallet for "${persona}" — run: fez-wallet derive ${persona}`);

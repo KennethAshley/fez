@@ -43,4 +43,19 @@ describe("derivation", () => {
   it("rejects a bad mnemonic", () => {
     expect(() => deriveAgentPair("not a mnemonic at all", "scout")).toThrow();
   });
+
+  it("rejects malformed stored JSON with a generic error that never echoes the input", () => {
+    const secret = "correct horse battery staple this-is-not-json";
+    try {
+      pairFromStored(secret);
+      throw new Error("expected pairFromStored to throw");
+    } catch (e) {
+      expect((e as Error).message).toBe("malformed stored pair");
+      expect((e as Error).message).not.toContain("correct horse");
+    }
+  });
+
+  it("rejects a stored pair missing required fields, generically", () => {
+    expect(() => pairFromStored(JSON.stringify({ publicKeyHex: "aa" }))).toThrow("malformed stored pair");
+  });
 });

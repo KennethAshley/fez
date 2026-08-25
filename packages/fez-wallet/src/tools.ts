@@ -1,6 +1,7 @@
 import type { WalletPair } from "./derive.js";
 import { pairFromStored } from "./derive.js";
 import { readEntry } from "./store.js";
+import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { type WalletConfig, thresholdFor } from "./config.js";
 import { appendLog, readLog } from "./log.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
@@ -17,6 +18,10 @@ export interface ToolDeps {
   relay?: () => Promise<ConsentRelay>;
   agentNostrKey?: string;
   now?: () => string; // test seam; defaults to wall clock
+  /** Cancellation from the MCP request (finding #6) — checked before the
+   * transfer actually fires so a harness timeout can't leave a spend
+   * in flight after the caller has given up on the call. */
+  signal?: AbortSignal;
 }
 
 function adapterFor(deps: ToolDeps, chain?: string, asset?: string): ChainAdapter {
@@ -29,8 +34,17 @@ function adapterFor(deps: ToolDeps, chain?: string, asset?: string): ChainAdapte
 
 /** A `to` that names a local persona (store entry exists) resolves to that
  * persona's address; anything else passes through as a raw address — the
- * chain is the validator of address shape. */
+ * chain is the validator of address shape.
+ *
+ * `to` is agent-controlled, so it is checked against the entry-name rules
+ * BEFORE ever touching the store (finding #1a): a name that isn't a legal
+ * entry name, or that names the reserved mnemonic entry, is never looked
+ * up — it just falls through untouched as a literal raw address, same as
+ * any other string the store doesn't recognize as a persona. This is the
+ * only way a `wallet_send` call naming the reserved entry is kept from
+ * ever reading the mnemonic. */
 function resolveTo(to: string): string {
+  if (!isValidEntryName(to) || isReservedEntryName(to)) return to;
   const stored = readEntry(to);
   return stored ? pairFromStored(stored).address : to;
 }
@@ -78,13 +92,26 @@ export async function walletSend(
       text: `💸 ${deps.persona} requests ${formatAmount(amount)} → ${to}${args.memo ? ` (${args.memo})` : ""} — react ✅ to approve, ❌ to decline`,
     });
     // Subscribe BEFORE publishing so a fast reaction can't slip past.
-    const decision = awaitDecision(relay, request.id, deps.ownerPk, CONSENT_TIMEOUT_MS);
+    const decision = awaitDecision(relay, request.id, deps.ownerPk, CONSENT_TIMEOUT_MS, deps.signal);
     await relay.publish(request);
     const verdict = await decision;
     if (verdict !== "approved") {
-      return `send ${verdict === "timeout" ? "declined (consent timed out after 10 minutes)" : "declined by owner"} — nothing was transferred`;
+      const reason =
+        verdict === "timeout"
+          ? "declined (consent timed out after 10 minutes)"
+          : verdict === "aborted"
+            ? "declined (request was aborted)"
+            : "declined by owner";
+      return `send ${reason} — nothing was transferred`;
     }
     consent = "approved";
+  }
+
+  // Re-checked right before the transfer fires (finding #6): a caller that
+  // aborted while waiting on consent — or even one that never needed
+  // consent at all — must not have money move on their way out the door.
+  if (deps.signal?.aborted) {
+    return "send declined (request was aborted) — nothing was transferred";
   }
 
   const { txHash } = await a.transfer(deps.pair, to, amount);

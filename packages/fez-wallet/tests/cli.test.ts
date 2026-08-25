@@ -34,10 +34,10 @@ function fakeAdapter() {
 describe("cli ceremony", () => {
   it("init generates and stores a mnemonic, printing it exactly once", async () => {
     const { cmdInit } = await import("../src/cli-commands.js");
-    const { readEntry } = await import("../src/store.js");
+    const { readRootEntry } = await import("../src/store.js");
     const { io, lines } = collect();
     cmdInit(io);
-    const root = readEntry("root");
+    const root = readRootEntry();
     expect(root!.split(" ")).toHaveLength(24);
     expect(lines.join("\n")).toContain(root!); // shown for paper backup
     expect(() => cmdInit(io)).toThrow(/already/i); // refuses a second init
@@ -88,5 +88,20 @@ describe("cli ceremony", () => {
     const { cmdDerive } = await import("../src/cli-commands.js");
     const { io } = collect();
     expect(() => cmdDerive(io, "scout")).toThrow(/fez-wallet init/);
+  });
+
+  it("derive refuses the reserved root name — clearly, before touching the mnemonic", async () => {
+    const { cmdInit, cmdDerive } = await import("../src/cli-commands.js");
+    const { io } = collect();
+    cmdInit(io);
+    expect(() => cmdDerive(io, "root")).toThrow(/reserved/i);
+  });
+
+  it("derive refuses traversal-shaped persona names", async () => {
+    const { cmdInit, cmdDerive } = await import("../src/cli-commands.js");
+    const { io } = collect();
+    cmdInit(io);
+    expect(() => cmdDerive(io, "../x")).toThrow(/invalid persona name/i);
+    expect(() => cmdDerive(io, "a/b")).toThrow(/invalid persona name/i);
   });
 });

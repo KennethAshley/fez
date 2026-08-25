@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseAmount, formatAmount } from "../src/chains/adapter.js";
-import { substrateAdapter, TAO_DECIMALS } from "../src/chains/substrate.js";
+import { substrateAdapter, TAO_DECIMALS, raceConnect } from "../src/chains/substrate.js";
 
 describe("amounts", () => {
   it("parses TAO to rao", () => {
@@ -20,23 +20,38 @@ describe("amounts", () => {
 
 describe("substrate adapter (mocked api)", () => {
   const sent: unknown[] = [];
-  const fakeApi = {
-    query: {
-      system: {
-        account: async (_addr: string) => ({ data: { free: { toBigInt: () => 2_000_000_000n } } }),
+  // Callback-shaped signAndSend (finding #5) — a real ISubmittableResult
+  // stream: one or more status callbacks, settling only on inBlock (with
+  // no dispatchError) or on a dispatchError showing up first.
+  function fakeApiWithResults(results: Array<{ isInBlock: boolean; dispatchError?: unknown }>) {
+    return {
+      registry: {
+        findMetaError: (_e: unknown) => ({ section: "balances", name: "ExistentialDeposit", docs: ["balance too low"] }),
       },
-    },
-    tx: {
-      balances: {
-        transferKeepAlive: (to: string, amount: bigint) => ({
-          signAndSend: async (_pair: unknown) => {
-            sent.push({ to, amount });
-            return { toHex: () => "0xdeadbeef" };
-          },
-        }),
+      query: {
+        system: {
+          account: async (_addr: string) => ({ data: { free: { toBigInt: () => 2_000_000_000n } } }),
+        },
       },
-    },
-  };
+      tx: {
+        balances: {
+          transferKeepAlive: (to: string, amount: bigint) => ({
+            signAndSend: async (
+              _pair: unknown,
+              cb: (r: { status: { isInBlock: boolean }; dispatchError?: unknown; txHash: { toHex(): string } }) => void
+            ) => {
+              sent.push({ to, amount });
+              for (const r of results) {
+                cb({ status: { isInBlock: r.isInBlock }, dispatchError: r.dispatchError, txHash: { toHex: () => "0xdeadbeef" } });
+              }
+              return () => {};
+            },
+          }),
+        },
+      },
+    };
+  }
+  const fakeApi = fakeApiWithResults([{ isInBlock: true }]);
   const adapter = substrateAdapter({
     endpoint: "wss://unused.example",
     apiFactory: async () => fakeApi as never,
@@ -48,7 +63,7 @@ describe("substrate adapter (mocked api)", () => {
     expect(b.symbol).toBe("TAO");
   });
 
-  it("transfers via transferKeepAlive", async () => {
+  it("transfers via transferKeepAlive, resolving only once truly in-block", async () => {
     const pair = { publicKeyHex: "aa", secretKeyHex: "bb", address: "5Fake" };
     const r = await adapter.transfer(pair, "5Dest", { raw: 100n, decimals: 9, symbol: "TAO" });
     expect(r.txHash).toBe("0xdeadbeef");
@@ -57,6 +72,46 @@ describe("substrate adapter (mocked api)", () => {
 
   it("rejects unknown assets", async () => {
     await expect(adapter.balance("5Fake", "DOGE")).rejects.toThrow(/asset/i);
+  });
+
+  it("a dispatch error rejects the transfer — no false 'sent' hash", async () => {
+    const dispatchAdapter = substrateAdapter({
+      endpoint: "wss://unused.example",
+      apiFactory: async () => fakeApiWithResults([{ isInBlock: true, dispatchError: { isModule: true, asModule: {}, toString: () => "boom" } }]) as never,
+    });
+    const pair = { publicKeyHex: "aa", secretKeyHex: "bb", address: "5Fake" };
+    await expect(
+      dispatchAdapter.transfer(pair, "5Dest", { raw: 100n, decimals: 9, symbol: "TAO" })
+    ).rejects.toThrow(/ExistentialDeposit|balances\./);
+  });
+
+  it("clears the connection memo on a failed connect so the next call retries", async () => {
+    let calls = 0;
+    const retryAdapter = substrateAdapter({
+      endpoint: "wss://unused.example",
+      apiFactory: async () => {
+        calls++;
+        if (calls === 1) throw new Error("connect boom");
+        return fakeApi as never;
+      },
+    });
+    await expect(retryAdapter.balance("5Fake", "TAO")).rejects.toThrow("connect boom");
+    const b = await retryAdapter.balance("5Fake", "TAO");
+    expect(b.raw).toBe(2_000_000_000n);
+    expect(calls).toBe(2);
+  });
+});
+
+describe("raceConnect (finding #3 — unreachable endpoint must not hang forever)", () => {
+  it("throws a clean, endpoint-naming error when readiness never resolves", async () => {
+    const neverReady = new Promise<never>(() => {}); // simulates a dead endpoint
+    await expect(raceConnect(neverReady, "wss://dead.example", 20)).rejects.toThrow(
+      /chain unreachable at wss:\/\/dead\.example/
+    );
+  });
+
+  it("resolves normally when readiness wins the race", async () => {
+    await expect(raceConnect(Promise.resolve("ready"), "wss://fine.example", 20)).resolves.toBe("ready");
   });
 });
 
