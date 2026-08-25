@@ -68,7 +68,8 @@ export default function HoverCard({
           }}
         >
           <span className="hovercard-head">
-            <Avatar pk={pk} size={26} title={name} />
+            {/* The card is already this face speaking — no quip on top. */}
+            <Avatar pk={pk} size={26} title={name} quip={false} />
             <span className="hovercard-id">
               <span className="hovercard-name">
                 {info ? "@" : ""}
