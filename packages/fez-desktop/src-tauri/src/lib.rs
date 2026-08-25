@@ -1297,6 +1297,46 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
     Err("local relay didn't come up within 5s — check ~/.fez/relay".to_string())
 }
 
+/// Something is watching mentions: the CLI sentinel's pidfile is alive.
+#[tauri::command]
+fn runner_status() -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    pid_alive(&std::path::PathBuf::from(home).join(".fez").join("sentinel.pid")).is_some()
+}
+
+/// Best effort: if the fez CLI exists on this machine, start its sentinel
+/// detached. Ok(false) means "no CLI here" — the UI says so honestly
+/// instead of promising a reply that cannot come. Bundling the full
+/// runner chain (sentinel → fez agent → fez-acp) is the standalone-DMG
+/// follow-up, out of scope for the cold-start work.
+#[tauri::command]
+fn ensure_agent_runner() -> Result<bool, String> {
+    if runner_status() {
+        return Ok(true);
+    }
+    // Same real-install-dirs idea harness_installed uses: a GUI app's
+    // PATH is stripped, so look where installers actually put things.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("{home}/.fez/bin/fez"),
+        "/opt/homebrew/bin/fez".to_string(),
+        "/usr/local/bin/fez".to_string(),
+        format!("{home}/.local/bin/fez"),
+        format!("{home}/.bun/bin/fez"),
+        format!("{home}/.volta/bin/fez"),
+    ];
+    let Some(fez) = candidates.iter().find(|p| std::path::Path::new(p.as_str()).exists()) else {
+        return Ok(false);
+    };
+    Command::new(fez)
+        .arg("sentinel")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("spawn fez sentinel: {e}"))?;
+    Ok(true)
+}
+
 fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
@@ -1366,7 +1406,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status])
+        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, runner_status, ensure_agent_runner])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
