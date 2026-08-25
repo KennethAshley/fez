@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { unixNow } from "../shared/time.js";
+import { fezHome } from "../shared/fez-home.js";
 import chalk from "chalk";
 import {
 
@@ -105,10 +107,9 @@ import type { Event } from "nostr-tools";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import fs from "fs/promises";
 import path from "path";
-import os from "os";
 import { fetchRelayInfo } from "../protocol/nip11.js";
 
-const FEZ_DIR = path.join(os.homedir(), ".fez");
+const FEZ_DIR = fezHome();
 
 interface Message {
   id: string;
@@ -882,11 +883,11 @@ export class FezTUI {
         {
           kinds: [KIND_AGENT_RESULT, KIND_AGENT_PROGRESS],
           "#p": [this.myPubkey],
-          since: Math.floor(Date.now() / 1000),
+          since: unixNow(),
         },
         {
           kinds: [KIND_AGENT_METADATA],
-          since: Math.floor(Date.now() / 1000),
+          since: unixNow(),
         },
       ],
       (event) => {
@@ -1111,7 +1112,7 @@ export class FezTUI {
    * Hot reload: editing the ACTIVE theme's file reapplies it on save.
    */
   private loadJsonThemes(): void {
-    const dir = path.join(os.homedir(), ".fez", "themes");
+    const dir = fezHome("themes");
     const register = (file: string): string | undefined => {
       try {
         const spec = JSON.parse(fsSync.readFileSync(path.join(dir, file), "utf-8")) as ThemeJson;
@@ -1158,7 +1159,7 @@ export class FezTUI {
    * with.
    */
   private initThemes(): void {
-    const prefFile = path.join(os.homedir(), ".fez", "theme.json");
+    const prefFile = fezHome("theme.json");
     const apply = (name: string): boolean => {
       if (name === "fez" || name === "default") {
         setActiveTheme({ name: "fez" });

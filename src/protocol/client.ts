@@ -1,3 +1,5 @@
+import { unixNow } from "../shared/time.js";
+import { hexToBytes } from "../shared/codec.js";
 import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey, nip44 } from "nostr-tools";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
@@ -107,7 +109,7 @@ export class CapabilityClient {
       // created_at override exists for monotonic bumps (roster updates
       // must strictly advance past the previous winning 47102 even
       // within the same second), not for backdating.
-      created_at: tmpl.created_at ?? Math.floor(Date.now() / 1000),
+      created_at: tmpl.created_at ?? unixNow(),
       tags: tmpl.tags,
       content: tmpl.content,
     };
@@ -243,7 +245,7 @@ export class CapabilityClient {
     const event: UnsignedEvent = {
       kind: KIND_AGENT_TASK,
       pubkey: this.pubkey,
-      created_at: Math.floor(Date.now() / 1000),
+      created_at: unixNow(),
       tags: [
         ["p", options.to],
         ["task_type", options.taskType],
@@ -297,6 +299,3 @@ export class CapabilityClient {
   }
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  return new Uint8Array(hex.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16)));
-}

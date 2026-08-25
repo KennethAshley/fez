@@ -1,6 +1,6 @@
+import { fezHome } from "../shared/fez-home.js";
 import fs from "fs/promises";
 import path from "path";
-import os from "os";
 import { pathToFileURL } from "url";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { makeChannels, type ChannelsAccess } from "../protocol/channels.js";
@@ -474,7 +474,7 @@ function buildApi(granted: readonly string[], extensionName = "extension"): FezE
   };
 }
 
-const EXTENSIONS_DIR = path.join(os.homedir(), ".fez", "extensions");
+const EXTENSIONS_DIR = fezHome("extensions");
 
 /**
  * Loads every extension in `dir` (default `~/.fez/extensions/`), the same

@@ -1,10 +1,11 @@
+import { fezHome } from "../shared/fez-home.js";
 import { execSync } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import chalk from "chalk";
 
-const FEZ_DIR = path.join(os.homedir(), ".fez");
+const FEZ_DIR = fezHome();
 const PACKAGES_DIR = path.join(FEZ_DIR, "packages");
 const NPM_DIR = path.join(PACKAGES_DIR, "npm");
 const GIT_DIR = path.join(PACKAGES_DIR, "git");
@@ -378,7 +379,7 @@ export class PackageManager {
       await this.removeFezExtension(pkg.name);
     }
     if (pkg.installedPersonas?.length) {
-      const personasDir = path.join(os.homedir(), ".fez", "personas");
+      const personasDir = fezHome("personas");
       for (const id of pkg.installedPersonas) {
         await fs.rm(path.join(personasDir, `${id}.md`), { force: true });
         console.log(chalk.dim(`   Removed persona ${id}`));
@@ -426,7 +427,7 @@ export class PackageManager {
     }
     if (anyErrors) throw new Error(`persona pack "${name}" failed validation — nothing installed`);
 
-    const personasDir = path.join(os.homedir(), ".fez", "personas");
+    const personasDir = fezHome("personas");
     await fs.mkdir(personasDir, { recursive: true });
     const installed: string[] = [];
     for (const { id, content } of prepared) {
@@ -532,7 +533,7 @@ export class PackageManager {
     const pkg = this.packages.get(name);
     if (!pkg) return;
     const pkgDir = this.getContentDir(pkg);
-    const binDir = path.join(os.homedir(), ".fez", "bin");
+    const binDir = fezHome("bin");
     await fs.mkdir(binDir, { recursive: true });
     for (const [cmd, rel] of Object.entries(bin)) {
       const target = path.join(binDir, cmd);
@@ -540,7 +541,7 @@ export class PackageManager {
       await fs.chmod(target, 0o755);
       console.log(chalk.dim(`   Installed ~/.fez/bin/${cmd}`));
     }
-    if (!(process.env.PATH ?? "").split(":").includes(path.join(os.homedir(), ".fez", "bin"))) {
+    if (!(process.env.PATH ?? "").split(":").includes(fezHome("bin"))) {
       console.log(chalk.dim(`   (~/.fez/bin is not on your PATH — add it to call these by name)`));
     }
   }
@@ -562,7 +563,7 @@ export class PackageManager {
       await this.installFezExtension(name, { entry: parts.headless });
     }
     if (parts.gui) {
-      const guiDir = path.join(os.homedir(), ".fez", "gui-extensions");
+      const guiDir = fezHome("gui-extensions");
       await fs.mkdir(guiDir, { recursive: true });
       await fs.copyFile(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/gui-extensions/${name}.js`));
@@ -573,7 +574,7 @@ export class PackageManager {
       // started with --extensions: this is code inside the process
       // holding everyone's events, so installing it and enabling it are
       // deliberately two acts.
-      const relayDir = path.join(os.homedir(), ".fez", "relay-extensions");
+      const relayDir = fezHome("relay-extensions");
       await fs.mkdir(relayDir, { recursive: true });
       await fs.copyFile(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/relay-extensions/${name}.js`));
@@ -589,7 +590,7 @@ export class PackageManager {
       // the sentinel, and only the sentinel loads extensions. A provider
       // that worked for a fleet and silently not for a person running
       // one agent would be the worst kind of half-working.
-      const wsDir = path.join(os.homedir(), ".fez", "workspace-providers");
+      const wsDir = fezHome("workspace-providers");
       await fs.mkdir(wsDir, { recursive: true });
       await fs.copyFile(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/workspace-providers/${name}.js`));
@@ -619,7 +620,7 @@ export class PackageManager {
   }
 
   private async removeParts(name: string): Promise<void> {
-    await fs.rm(path.join(os.homedir(), ".fez", "gui-extensions", `${name}.js`), { force: true });
+    await fs.rm(fezHome("gui-extensions", `${name}.js`), { force: true });
     const { loadSettings, saveSettings } = await import("../shared/settings.js");
     const settings = loadSettings() as { backgroundExtensions?: string[] };
     if (settings.backgroundExtensions?.includes(name)) {

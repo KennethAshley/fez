@@ -1,3 +1,4 @@
+import { unixNow } from "../shared/time.js";
 import { createHash } from "node:crypto";
 import { finalizeEvent, verifyEvent, type Event } from "nostr-tools";
 
@@ -51,7 +52,7 @@ export function buildNip98Header(
   ];
   if (body && body.length > 0) tags.push(["payload", sha256Hex(body)]);
   const event = finalizeEvent(
-    { kind: KIND_HTTP_AUTH, created_at: Math.floor(Date.now() / 1000), tags, content: "" },
+    { kind: KIND_HTTP_AUTH, created_at: unixNow(), tags, content: "" },
     secretKey
   );
   // base64 of the JSON event, per the NIP. Buffer is fine here: this
@@ -129,7 +130,7 @@ export function verifyNip98Header(header: string | undefined, opts: VerifyOption
   if (event.kind !== KIND_HTTP_AUTH) return { ok: false, reason: `wrong kind ${event.kind}, want ${KIND_HTTP_AUTH}` };
   if (!verifyEvent(event)) return { ok: false, reason: "bad signature" };
 
-  const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const now = opts.now ?? unixNow();
   const tolerance = opts.toleranceSeconds ?? DEFAULT_TOLERANCE_S;
   if (Math.abs(now - event.created_at) > tolerance) {
     // Both directions: a future timestamp is as suspicious as an old one,

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { unixNow } from "./shared/time.js";
+import { bytesToHex } from "./shared/codec.js";
+import { fezHome } from "./shared/fez-home.js";
 import { Command } from "commander";
 import chalk from "chalk";
 import { CapabilityClient } from "./protocol/client.js";
@@ -23,7 +26,7 @@ try {
 // invocation. Loaded second so a project-local ./.env can still
 // override for development. Existing process env always wins (path=…).
 try {
-  process.loadEnvFile(path.join(os.homedir(), ".fez", ".env"));
+  process.loadEnvFile(fezHome(".env"));
 } catch (err) {
   if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
 }
@@ -247,7 +250,7 @@ mem
     const { relay, convKey, heads } = await memHeads(ctx);
     const prior = heads.get(slug);
     // Monotonic created_at defeats the same-second tiebreak (spec: Writing step 2).
-    const createdAt = Math.max(Math.floor(Date.now() / 1000), (prior?.event.created_at ?? 0) + 1);
+    const createdAt = Math.max(unixNow(), (prior?.event.created_at ?? 0) + 1);
     const body = slug === "core" ? { slug, profile: text } : { slug, value: text };
     const template = buildEngramEvent(convKey, ctx.ownerPubkey, body, createdAt);
     await relay.publish(finalizeEvent({ ...template, pubkey: ctx.agentPubkey } as never, ctx.agentSecret));
@@ -285,7 +288,7 @@ mem
     const { finalizeEvent } = await import("nostr-tools/pure");
     const ctx = await memContext(options.persona);
     const { relay, convKey, heads } = await memHeads(ctx);
-    const createdAt = Math.max(Math.floor(Date.now() / 1000), (heads.get(slug)?.event.created_at ?? 0) + 1);
+    const createdAt = Math.max(unixNow(), (heads.get(slug)?.event.created_at ?? 0) + 1);
     const template = buildEngramEvent(convKey, ctx.ownerPubkey, { slug, value: null }, createdAt);
     await relay.publish(finalizeEvent({ ...template, pubkey: ctx.agentPubkey } as never, ctx.agentSecret));
     console.log(`🪦 ${slug} tombstoned`);
@@ -372,7 +375,7 @@ async function docPublish(ctx: DocCliContext, content: string): Promise<void> {
   const { finalizeEvent } = await import("nostr-tools/pure");
   // Monotonic vs the latest version — same-second ties resolve by lowest
   // id, which would make concurrent-edit outcomes arbitrary.
-  const createdAt = Math.max(Math.floor(Date.now() / 1000), (ctx.latest?.created_at ?? 0) + 1);
+  const createdAt = Math.max(unixNow(), (ctx.latest?.created_at ?? 0) + 1);
   await ctx.relay.publish(
     finalizeEvent(
       {
@@ -508,7 +511,7 @@ program
     const relayPin = options.relay
       ? `\n    <key>FEZ_RELAY</key><string>${options.relay}</string>`
       : "";
-    const logDir = path.join(os.homedir(), ".fez", "logs");
+    const logDir = fezHome("logs");
     fsSync.mkdirSync(logDir, { recursive: true });
     const label = "com.fez.sentinel";
     const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
@@ -609,7 +612,7 @@ program
     const relayPin = options.relay
       ? `\n    <key>FEZ_RELAY</key><string>${options.relay}</string>`
       : "";
-    const logDir = path.join(os.homedir(), ".fez", "logs");
+    const logDir = fezHome("logs");
     fsSync.mkdirSync(logDir, { recursive: true });
     const label = "com.fez.orchestrator";
     const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
@@ -718,7 +721,7 @@ program
     members.set(pubkey, role);
 
     // created_at must beat the event being replaced, or relays keep the old one.
-    const createdAt = Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1);
+    const createdAt = Math.max(unixNow(), (latest?.created_at ?? 0) + 1);
     await relay.publish(
       client.signEvent({
         kind: KIND_MEMBERSHIP,
@@ -769,7 +772,7 @@ router
       console.error(`✗ "${url}" is not an http(s) URL`);
       process.exit(1);
     }
-    const personaFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
+    const personaFile = fezHome("personas", "fez.md");
     if (!fsSync.existsSync(personaFile)) {
       console.error("No ~/.fez/personas/fez.md — run `fez setup` first.");
       process.exit(1);
@@ -791,7 +794,7 @@ program
   .command("router-install")
   .description("Run @fez's routing model on this machine (launchd) and point fez.md at it")
   .requiredOption("-m, --model <path>", "GGUF model file (Qwen3-0.6B q4 is what the bench is tuned against)")
-  .option("-s, --server <path>", "llama-server binary", path.join(os.homedir(), ".fez", "bin", "llama-server"))
+  .option("-s, --server <path>", "llama-server binary", fezHome("bin", "llama-server"))
   .option("-p, --port <port>", "Port to serve on", "8080")
   .action(async (options) => {
     if (process.platform !== "darwin") {
@@ -809,7 +812,7 @@ program
         process.exit(1);
       }
     }
-    const logDir = path.join(os.homedir(), ".fez", "logs");
+    const logDir = fezHome("logs");
     fsSync.mkdirSync(logDir, { recursive: true });
     const label = "com.fez.router";
     const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
@@ -859,7 +862,7 @@ ${args.map(arg).join("\n")}
     // the persona already points somewhere local — someone who chose a
     // port or a second machine should keep it.
     const url = `http://127.0.0.1:${options.port}/v1`;
-    const personaFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
+    const personaFile = fezHome("personas", "fez.md");
     if (fsSync.existsSync(personaFile)) {
       const before = fsSync.readFileSync(personaFile, "utf-8");
       const after = /^url:.*$/m.test(before)
@@ -891,7 +894,7 @@ program
     const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "com.fez.router.plist");
     try { execSync(`launchctl bootout gui/$(id -u) ${plistPath} 2>/dev/null`); } catch { /* not loaded */ }
     fsSync.rmSync(plistPath, { force: true });
-    const personaFile = path.join(os.homedir(), ".fez", "personas", "fez.md");
+    const personaFile = fezHome("personas", "fez.md");
     if (fsSync.existsSync(personaFile)) {
       const before = fsSync.readFileSync(personaFile, "utf-8");
       // Only reclaim a LOCAL url — a deliberate third-party endpoint is
@@ -1363,7 +1366,7 @@ program
       if (process.env.ANTHROPIC_API_KEY) {
         ok("harness auth: ANTHROPIC_API_KEY set");
       } else if (process.env.FEZ_HARNESS_ISOLATE === "1") {
-        const cleanDir = path.join(os.homedir(), ".fez", "harness", "claude", "shared");
+        const cleanDir = fezHome("harness", "claude", "shared");
         const { createHash } = await import("node:crypto");
         const { spawnSync } = await import("node:child_process");
         const authed =
@@ -1413,11 +1416,11 @@ program
     const repoPersonas = personas.filter((p) => p.extra.repo);
     if (repoPersonas.length > 0) {
       const who = repoPersonas.map((p) => `@${p.id}`).join(", ");
-      const providerDir = path.join(os.homedir(), ".fez", "workspace-providers");
+      const providerDir = fezHome("workspace-providers");
       const providers = (await fs.readdir(providerDir).catch(() => [] as string[])).filter((f) => f.endsWith(".js"));
       if (providers.length === 0) bad(`${who} name a repo: but no workspace provider is installed — their spawn dies`, "fez install @fezchat/git");
       else ok(`workspace provider present for ${who}`);
-      const helper = path.join(os.homedir(), ".fez", "bin", "git-credential-fez");
+      const helper = fezHome("bin", "git-credential-fez");
       if (await fs.access(helper).then(() => true, () => false)) ok("git credential helper: ~/.fez/bin/git-credential-fez");
       else bad("git credential helper missing — agent pushes fail as auth errors far from the cause", "fez install @fezchat/git (fills ~/.fez/bin)");
       if (nip11 && !gitBase) bad(`${who} need git, but the relay advertises no git server`, "install @fezchat/git ON THE RELAY; start it with --extensions --origin <public url>");
@@ -1429,9 +1432,9 @@ program
     // vanished. The log states which relay it bound; the pidfile only
     // proves the process is alive, which was never the question.
     try {
-      const pid = Number((await fs.readFile(path.join(os.homedir(), ".fez", "sentinel.pid"), "utf-8")).trim());
+      const pid = Number((await fs.readFile(fezHome("sentinel.pid"), "utf-8")).trim());
       process.kill(pid, 0); // throws if dead
-      const log = await fs.readFile(path.join(os.homedir(), ".fez", "logs", "sentinel.log"), "utf-8").catch(() => "");
+      const log = await fs.readFile(fezHome("logs", "sentinel.log"), "utf-8").catch(() => "");
       const bound = [...log.matchAll(/sentinel on (\S+)/g)].at(-1)?.[1];
       if (bound && !relays.includes(bound)) {
         bad(`sentinel is on ${bound}, but settings say ${relays[0]} — mentions there never reach it`, "launchctl kickstart -k gui/$(id -u)/com.fez.sentinel   (or restart fez sentinel)");
@@ -1454,7 +1457,7 @@ program
     // extensions + themes (informational)
     for (const [dir, label] of [["extensions", "extensions"], ["themes", "themes"], ["workflows", "workflows"]] as const) {
       try {
-        const count = (await fs.readdir(path.join(os.homedir(), ".fez", dir))).filter((f) => !f.startsWith(".")).length;
+        const count = (await fs.readdir(fezHome(dir))).filter((f) => !f.startsWith(".")).length;
         if (count > 0) ok(`${label}: ${count} installed`);
       } catch { /* none — fine */ }
     }
@@ -1492,7 +1495,7 @@ program
     {
       const { adoptUserPath, whichBinary } = await import("./shared/user-path.js");
       adoptUserPath();
-      const extDir = path.join(os.homedir(), ".fez", "extensions");
+      const extDir = fezHome("extensions");
       const requirements = new Map<string, string[]>(); // binary → extensions wanting it
       let scanned = 0;
       for (const dir of [path.join(process.cwd(), "packages"), extDir]) {
@@ -1777,7 +1780,7 @@ program
     // ── gui part: copied to ~/.fez/gui-extensions for fez-desktop's
     // loader (webview code — no node smoke-import possible here).
     if (parts?.gui) {
-      const guiDir = path.join(os.homedir(), ".fez", "gui-extensions");
+      const guiDir = fezHome("gui-extensions");
       fsSync.mkdirSync(guiDir, { recursive: true });
       fsSync.copyFileSync(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
       console.log(chalk.green(`✓ gui part → ~/.fez/gui-extensions/${name}.js (loads on next fez-desktop launch)`));
@@ -1789,13 +1792,13 @@ program
     // `repo:` persona failed loudly (fatal, by design) while the person
     // who "installed" the package stared at a link that said ✓.
     if (parts?.relay) {
-      const relayDir = path.join(os.homedir(), ".fez", "relay-extensions");
+      const relayDir = fezHome("relay-extensions");
       fsSync.mkdirSync(relayDir, { recursive: true });
       fsSync.copyFileSync(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
       console.log(chalk.green(`✓ relay part → ~/.fez/relay-extensions/${name}.js (a relay started with --extensions loads it)`));
     }
     if (parts?.workspace) {
-      const wsDir = path.join(os.homedir(), ".fez", "workspace-providers");
+      const wsDir = fezHome("workspace-providers");
       fsSync.mkdirSync(wsDir, { recursive: true });
       fsSync.copyFileSync(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
       console.log(chalk.green(`✓ workspace provider → ~/.fez/workspace-providers/${name}.js (personas with repo: use it)`));
@@ -1805,7 +1808,7 @@ program
     // executables (credential helper, fez-adopt) exist in the one
     // predictable place things resolve them from.
     if (manifest.bin) {
-      const binDir = path.join(os.homedir(), ".fez", "bin");
+      const binDir = fezHome("bin");
       fsSync.mkdirSync(binDir, { recursive: true });
       for (const [cmd, rel] of Object.entries(manifest.bin)) {
         const target = path.join(binDir, cmd);
@@ -1813,7 +1816,7 @@ program
         fsSync.chmodSync(target, 0o755);
         console.log(chalk.green(`✓ bin → ~/.fez/bin/${cmd}`));
       }
-      if (!(process.env.PATH ?? "").split(":").includes(path.join(os.homedir(), ".fez", "bin"))) {
+      if (!(process.env.PATH ?? "").split(":").includes(fezHome("bin"))) {
         console.log(chalk.dim(`  (~/.fez/bin is not on your PATH — add it to call these by name)`));
       }
     }
@@ -1842,7 +1845,7 @@ program
       return;
     }
     const ext = path.extname(entry) || ".js";
-    const extensionsDir = path.join(os.homedir(), ".fez", "extensions");
+    const extensionsDir = fezHome("extensions");
     fsSync.mkdirSync(extensionsDir, { recursive: true });
     // Stage next to the destination (same dir, so the {"type":"module"}
     // marker applies), smoke-import, and only then replace the installed
@@ -2019,7 +2022,7 @@ persona
     const { loadOrCreateKey } = await import("./identity/keys.js");
     const { KIND_SKILL_LISTING } = await import("./protocol/kinds.js");
     const { RelayConnection } = await import("./protocol/relay.js");
-    const raw = await fs.readFile(path.join(os.homedir(), ".fez", "personas", `${name}.md`), "utf-8").catch(() => undefined);
+    const raw = await fs.readFile(fezHome("personas", `${name}.md`), "utf-8").catch(() => undefined);
     if (!raw) {
       console.error(`No persona named "${name}".`);
       process.exitCode = 1;
@@ -2243,10 +2246,5 @@ persona
   });
 
 // Helpers
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 program.parse();
