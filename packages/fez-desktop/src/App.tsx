@@ -175,24 +175,25 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     // the CLI and tests keep the claim flow's choice of first channel;
     // this is the app's own promise that a fresh workspace has somewhere
     // to talk.
-    if (client.state.isOwner(client.pubkey) && client.state.workspace.channels.size === 0) {
-      // FIXED id: a cold relay answering the boot query empty made
-      // "channels.size === 0" true for an established workspace, and a
-      // random-UUID create then minted a second permanent #general
-      // (review finding F6). With one well-known id, racing creates
-      // converge — latest event for the d-tag wins, duplicates cannot
-      // exist by construction.
-      await client.ensureChannel({ name: "general", id: "bootstrap-general" }).catch(() => {});
+    // Owner bootstrap, SEQUENCED: owner known → #general exists → the
+    // scripted @fez welcome. These used to be three independent boot
+    // gates, each silently skipping when the previous fact hadn't landed
+    // — a lost race left a fresh install with no rooms and a guide that
+    // never spoke. ensureOwnerBootstrap is the eval-covered core
+    // (cold-start-bootstrap.test.ts boots it against a real relay); the
+    // welcome only runs once the room verifiably exists.
+    const { ensureOwnerBootstrap } = await import("./boot-workspace");
+    const bootstrapped = await ensureOwnerBootstrap(client);
+    if (bootstrapped) {
+      // Idempotent (relay-side markers) and non-blocking: a slow harness
+      // detection must not hold boot.
+      void import("./welcome")
+        .then(async ({ ensureWelcome }) => {
+          await invoke("ensure_agent_runner").catch(() => {});
+          await ensureWelcome(client);
+        })
+        .catch(() => {});
     }
-    // Local-workspace owners get the scripted @fez greeting (idempotent —
-    // relay-side markers) and a best-effort runner start. Non-blocking:
-    // a slow relay must not hold boot.
-    void import("./welcome")
-      .then(async ({ ensureWelcome }) => {
-        await invoke("ensure_agent_runner").catch(() => {});
-        await ensureWelcome(client);
-      })
-      .catch(() => {});
     const scope = client.state.scope;
     if (scope) await client.loadChannelHistory(scope.channelId);
     // Paint before anything renders, and keep following the OS: a

@@ -1447,6 +1447,33 @@ fn pid_alive(pidfile: &std::path::Path) -> Option<u32> {
     ok.then_some(pid)
 }
 
+/// What answered a NIP-11 probe on a loopback port.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum PortState {
+    /// Nothing listening — ours to bind.
+    Free,
+    /// A fez relay whose NIP-11 owner is OUR key — adopt, don't respawn.
+    Ours,
+    /// Something else — another user's relay, another service. Never adopt:
+    /// localhost ports are machine-global, and health-checking blindly
+    /// walked a fresh account into another session's workspace.
+    Foreign,
+}
+
+/// Pick the port the local relay lives on: the desired port first, then a
+/// short scan past foreign squatters. Returns (port, already_ours) — None
+/// when every candidate is foreign (guessing further helps nobody).
+fn choose_relay_port(desired: u16, probe: impl Fn(u16) -> PortState) -> Option<(u16, bool)> {
+    for port in desired..desired.saturating_add(10) {
+        match probe(port) {
+            PortState::Ours => return Some((port, true)),
+            PortState::Free => return Some((port, false)),
+            PortState::Foreign => continue,
+        }
+    }
+    None
+}
+
 /// pid_alive, but the process must actually BE the named program. A bare
 /// kill -0 believes any process wearing the pid — macOS reuses low pids
 /// after a reboot, so a stale relay.pid matched some unrelated process,
@@ -1482,25 +1509,57 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
     let dir = fez_relay_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let args_file = dir.join("args.json");
+    let mut desired_port: u16 = 7777;
     let (owner, name) = if owner.is_empty() {
         let raw = std::fs::read_to_string(&args_file)
             .map_err(|_| "no local workspace to respawn (missing args.json)".to_string())?;
         let v: serde_json::Value =
             serde_json::from_str(&raw).map_err(|e| format!("args.json: {e}"))?;
+        desired_port = v["port"].as_u64().unwrap_or(7777) as u16;
         (
             v["owner"].as_str().unwrap_or_default().to_string(),
             v["name"].as_str().unwrap_or_default().to_string(),
         )
     } else {
-        let v = serde_json::json!({ "owner": owner, "name": name });
-        std::fs::write(&args_file, v.to_string()).map_err(|e| format!("args.json: {e}"))?;
         (owner, name)
     };
     if owner.len() != 64 || !owner.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("local relay needs a 64-hex owner pubkey".to_string());
     }
+
+    // Who is on the port? NIP-11 names the owner; only OUR relay counts.
+    let probe = |port: u16| -> PortState {
+        match ureq::get(&format!("http://127.0.0.1:{port}"))
+            .set("Accept", "application/nostr+json")
+            .timeout(std::time::Duration::from_millis(500))
+            .call()
+        {
+            Ok(res) => {
+                let doc: serde_json::Value = res
+                    .into_string()
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                if doc.get("pubkey").and_then(|v| v.as_str()) == Some(owner.as_str()) {
+                    PortState::Ours
+                } else {
+                    PortState::Foreign
+                }
+            }
+            Err(_) => PortState::Free,
+        }
+    };
+
+    let (port, already_ours) = choose_relay_port(desired_port, probe)
+        .ok_or("no loopback port near 7777 is free — every candidate hosts a foreign relay")?;
+
+    // Persist the CHOSEN port with the identity — a respawn must come back
+    // on the same port the client remembers.
+    let v = serde_json::json!({ "owner": owner, "name": name, "port": port });
+    std::fs::write(&args_file, v.to_string()).map_err(|e| format!("args.json: {e}"))?;
+
     let pidfile = dir.join("relay.pid");
-    if pid_alive_named(&pidfile, "fez-relay").is_none() {
+    if !already_ours && pid_alive_named(&pidfile, "fez-relay").is_none() {
         let home = std::env::var("HOME").unwrap_or_default();
         let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-relay");
         if !bin.exists() {
@@ -1520,7 +1579,7 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
         let child = Command::new(&bin)
             .args([
                 "--port",
-                "7777",
+                &port.to_string(),
                 "--store",
                 &dir.join("events.jsonl").to_string_lossy(),
                 "--owner",
@@ -1534,19 +1593,15 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
             .map_err(|e| format!("spawn fez-relay: {e}"))?;
         std::fs::write(&pidfile, child.id().to_string()).map_err(|e| format!("pidfile: {e}"))?;
     }
-    // Health: NIP-11 on the http origin, up to 5s.
+    // Health: NIP-11 must answer AND name our owner — "something is
+    // listening" was how another session's relay got adopted.
     for _ in 0..10 {
-        if ureq::get("http://127.0.0.1:7777")
-            .set("Accept", "application/nostr+json")
-            .timeout(std::time::Duration::from_millis(500))
-            .call()
-            .is_ok()
-        {
-            return Ok("ws://127.0.0.1:7777".to_string());
+        if probe(port) == PortState::Ours {
+            return Ok(format!("ws://127.0.0.1:{port}"));
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    Err("local relay didn't come up within 5s — check ~/.fez/relay".to_string())
+    Err(format!("local relay didn't come up on port {port} within 5s — check ~/.fez/relay/relay.log"))
 }
 
 /// Something is watching mentions: the CLI sentinel's pidfile is alive.
@@ -1732,6 +1787,37 @@ fn min_fez_version_error(required: Option<&str>, host: &str) -> Option<String> {
         return Some(format!("needs fez ≥ {required}, you have {host} — update fez and retry"));
     }
     None
+}
+
+#[cfg(test)]
+mod relay_port_tests {
+    use super::{choose_relay_port, PortState};
+
+    #[test]
+    fn free_desired_port_is_spawned_on() {
+        let got = choose_relay_port(7777, |_| PortState::Free);
+        assert_eq!(got, Some((7777, false)));
+    }
+
+    #[test]
+    fn our_relay_already_answering_is_adopted_not_respawned() {
+        let got = choose_relay_port(7777, |p| if p == 7777 { PortState::Ours } else { PortState::Free });
+        assert_eq!(got, Some((7777, true)));
+    }
+
+    #[test]
+    fn foreign_relay_on_the_port_is_never_adopted() {
+        // Another macOS user's session already has THEIR fez relay on
+        // 7777 — localhost ports are machine-global, and adopting it
+        // walked a fresh test account straight into their workspace.
+        let got = choose_relay_port(7777, |p| if p == 7777 { PortState::Foreign } else { PortState::Free });
+        assert_eq!(got, Some((7778, false)));
+    }
+
+    #[test]
+    fn scan_gives_up_rather_than_guessing() {
+        assert_eq!(choose_relay_port(7777, |_| PortState::Foreign), None);
+    }
 }
 
 #[cfg(test)]
