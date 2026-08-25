@@ -33,9 +33,11 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
 
 ## Tier 2 — silent brickers and inverted onboarding
 
-- [ ] **Failed agent copy bricks forever.** `install_bundled_agent` (`lib.rs:1086-1130`) discards
-  every copy error but stamps `.pi-agent-version` unconditionally → transient failure never
-  retries. Only stamp on verified success.
+- [x] **Failed agent copy bricks forever.** DONE: copies extracted into a fallible
+  `copy_agent_files` (pi, pi-acp + chmod, theme, wasm all required); the version marker is
+  stamped only after every copy succeeded, so a transient failure retries next launch. An
+  unreadable `VERSION` now stamps/compares as `""` instead of forcing a ~140MB re-copy
+  every launch.
 - [ ] **First launch blocks on ~140MB copy.** Copy runs synchronously in `.setup()` before the
   window appears — app looks hung. Move async / show progress.
 - [ ] **Onboarding UI is inverted.** `FirstRun.tsx` panel only renders when `members.size > 1`
@@ -116,5 +118,5 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
   (`lib.rs:471-489`).
 - [ ] `ModelPicker.tsx:14` duplicates the hash-derived Chutes provider id from `lib.rs:378` with
   no shared source.
-- [ ] Stale theme files never cleaned up on agent upgrade (`lib.rs:1121-1126`); VERSION read
-  failure re-copies 140MB every launch (`lib.rs:1105`).
+- [ ] Stale theme files never cleaned up on agent upgrade (the re-copy-every-launch half of
+  this is fixed with the version-marker fix).

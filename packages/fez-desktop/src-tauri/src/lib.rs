@@ -1095,10 +1095,13 @@ fn remove_skill(name: String) -> Result<(), String> {
 /// because the SENTINEL (a launchd process outside this app) spawns agents
 /// and resolves ~/.fez/bin — a sidecar buried in the .app is unreachable to
 /// it. Version-gated: a no-op on every launch after the bundled version is
-/// already installed, so it's cheap. Best-effort — a copy failure just
-/// means the user falls back to a system pi if they have one.
+/// already installed, so it's cheap. The marker is stamped ONLY after every
+/// copy succeeded — the first version stamped it unconditionally, so one
+/// transient failure (disk full, quarantined dest) skipped the copy on
+/// every launch forever, and the only cure was hand-deleting the marker.
+/// Now a failed install simply retries next launch; until one succeeds the
+/// user falls back to a system pi if they have one.
 fn install_bundled_agent(app: &tauri::App) {
-    use std::os::unix::fs::PermissionsExt;
     use tauri::Manager;
     let src = match app.path().resource_dir() {
         Ok(d) => d.join("pi-agent"),
@@ -1109,6 +1112,9 @@ fn install_bundled_agent(app: &tauri::App) {
     if !src.join("pi").exists() {
         return;
     }
+    // An unreadable VERSION becomes "" — still stamped and still compared,
+    // so it gates like any other version instead of forcing a ~140MB
+    // re-copy on every launch.
     let version = std::fs::read_to_string(src.join("VERSION")).unwrap_or_default();
     let home = match std::env::var("HOME") {
         Ok(h) => h,
@@ -1116,31 +1122,44 @@ fn install_bundled_agent(app: &tauri::App) {
     };
     let bin = std::path::Path::new(&home).join(".fez").join("bin");
     let marker = bin.join(".pi-agent-version");
-    if !version.is_empty() && std::fs::read_to_string(&marker).unwrap_or_default() == version {
+    if std::fs::read_to_string(&marker).ok().as_deref() == Some(&version) {
         return; // already current
     }
-    if std::fs::create_dir_all(&bin).is_err() {
-        return;
-    }
-    let copy_exec = |name: &str| {
-        if std::fs::copy(src.join(name), bin.join(name)).is_ok() {
-            let _ = std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755));
+    match copy_agent_files(&src, &bin) {
+        Ok(()) => {
+            // A failed stamp is not an error: the files are in place and
+            // next launch just re-copies before stamping again.
+            let _ = std::fs::write(&marker, &version);
+            eprintln!("✓ installed bundled agent {version} → {}", bin.display());
         }
-    };
-    copy_exec("pi");
-    copy_exec("pi-acp");
-    // Runtime side-assets pi resolves next to its binary (theme is required
-    // even in --mode rpc; the wasm backs image tools).
+        Err(e) => eprintln!("bundled agent install failed ({e}) — will retry next launch"),
+    }
+}
+
+/// Every file the bundle ships is required for a successful install —
+/// pi + pi-acp executable, theme (pi needs it even in --mode rpc), and
+/// the wasm behind the image tools. Any failure aborts before the
+/// version marker is stamped.
+fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
+    for name in ["pi", "pi-acp"] {
+        let dst = bin.join(name);
+        std::fs::copy(src.join(name), &dst).map_err(|e| format!("copy {name}: {e}"))?;
+        std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("chmod {name}: {e}"))?;
+    }
     let theme_dst = bin.join("theme");
-    let _ = std::fs::create_dir_all(&theme_dst);
-    if let Ok(entries) = std::fs::read_dir(src.join("theme")) {
-        for e in entries.flatten() {
-            let _ = std::fs::copy(e.path(), theme_dst.join(e.file_name()));
-        }
+    std::fs::create_dir_all(&theme_dst).map_err(|e| format!("mkdir theme: {e}"))?;
+    let entries = std::fs::read_dir(src.join("theme")).map_err(|e| format!("read theme: {e}"))?;
+    for e in entries {
+        let e = e.map_err(|e| format!("read theme: {e}"))?;
+        std::fs::copy(e.path(), theme_dst.join(e.file_name()))
+            .map_err(|err| format!("copy theme/{}: {err}", e.file_name().to_string_lossy()))?;
     }
-    let _ = std::fs::copy(src.join("photon_rs_bg.wasm"), bin.join("photon_rs_bg.wasm"));
-    let _ = std::fs::write(&marker, &version);
-    eprintln!("✓ installed bundled agent {version} → {}", bin.display());
+    std::fs::copy(src.join("photon_rs_bg.wasm"), bin.join("photon_rs_bg.wasm"))
+        .map_err(|e| format!("copy photon_rs_bg.wasm: {e}"))?;
+    Ok(())
 }
 
 pub fn run() {
