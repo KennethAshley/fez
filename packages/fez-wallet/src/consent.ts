@@ -86,7 +86,7 @@ export async function poolRelay(relayUrls: string[]): Promise<ConsentRelay> {
       await Promise.any(pool.publish(relayUrls, event));
     },
     subscribe(filter: Filter, onEvent) {
-      const sub = pool.subscribeMany(relayUrls, [filter] as any, { onevent: onEvent });
+      const sub = pool.subscribeMany(relayUrls, filter, { onevent: onEvent });
       return () => sub.close();
     },
   };
