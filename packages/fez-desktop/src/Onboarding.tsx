@@ -32,7 +32,7 @@ export function deriveSas(a: string, b: string): string {
   return String(n % 1_000_000).padStart(6, "0");
 }
 
-type Step = "welcome" | "invite" | "pairing" | "restore" | "brain" | "done";
+type Step = "welcome" | "invite" | "pairing" | "restore" | "reconnect" | "brain" | "done";
 
 export default function Onboarding({ onComplete }: { onComplete: (relayUrl: string) => void }) {
   const [step, setStep] = useState<Step>("welcome");
@@ -99,21 +99,29 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
     }
   };
 
-  /** An invite names the relay its community lives on — add it to the set. */
+  /**
+   * An invite names the relay its community lives on — add it to the
+   * set. Two shapes (Buzz's join page accepts both): a fez-join code, or
+   * a bare community URL (wss://…) for "I already have a community" —
+   * Builder Lab, the team relay, wherever your key is already known.
+   */
   const acceptInvite = (code: string): boolean => {
-    const match = /^fez-join:(.+)#([0-9a-f-]+)$/i.exec(code.trim());
-    if (!match) {
-      setError("that doesn't look like an invite — expected fez-join:<relay>#<community>");
+    const trimmed = code.trim();
+    const bare = /^wss?:\/\/.+/i.test(trimmed) ? trimmed : undefined;
+    const match = /^fez-join:(.+)#([0-9a-f-]+)$/i.exec(trimmed);
+    if (!bare && !match) {
+      setError("that doesn't look like an invite — paste a fez-join:… code or the community's wss:// URL");
       return false;
     }
-    const [, relay, communityId] = match;
+    const relay = bare ?? match![1];
     const set = relayUrl.split(",").map((r) => r.trim()).filter(Boolean);
     if (!set.includes(relay)) set.unshift(relay);
     setRelayUrl(set.join(","));
     setRelays(set);
     // Joined after the identity exists — you cannot be a member before
-    // you are anybody.
-    localStorage.setItem("fez-pending-invite", communityId);
+    // you are anybody. The stored value is the RELAY: the workspace IS
+    // the relay, and boot opens exactly this URL.
+    localStorage.setItem("fez-pending-invite", relay);
     setError(undefined);
     return true;
   };
@@ -147,7 +155,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               {busy ? "setting up…" : name.trim() ? `continue as ${name.trim()}` : "get started"}
             </button>
             <div className="ob-alts">
-              <button className="ob-link" onClick={() => setStep("invite")}>I have an invite</button>
+              <button className="ob-link" onClick={() => setStep("invite")}>I have an invite or a community</button>
               <button className="ob-link" onClick={() => setStep("pairing")}>I use fez on another device</button>
               <button className="ob-link" onClick={() => setStep("restore")}>restore from backup</button>
             </div>
@@ -183,7 +191,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               })
                 .then((url) => setRelays(url))
                 .catch(() => {});
-              setStep("done");
+              setStep("reconnect");
             }}
             onBack={() => setStep("welcome")}
           />
@@ -205,11 +213,13 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               })
                 .then((url) => setRelays(url))
                 .catch(() => {});
-              setStep("done");
+              setStep("reconnect");
             }}
             onBack={() => setStep("welcome")}
           />
         )}
+
+        {step === "reconnect" && <ReconnectStep onNext={() => setStep("brain")} />}
 
         {step === "brain" && <BrainStep onNext={() => setStep("done")} />}
 
@@ -425,14 +435,17 @@ function InviteStep({
   const [code, setCode] = useState("");
   return (
     <>
-      <h2>Your invite</h2>
-      <p className="ob-lede">Paste the code someone sent you. You'll join their community once your identity exists.</p>
+      <h2>Join a community</h2>
+      <p className="ob-lede">
+        Paste an invite code, or the community's relay URL if you already know it. You'll join once your identity
+        exists.
+      </p>
       <input
         className="ob-input"
         value={code}
         autoFocus
         spellCheck={false}
-        placeholder="fez-join:wss://…#…"
+        placeholder="fez-join:… or wss://…"
         onChange={(e) => setCode(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && code.trim()) onAccept(code);
@@ -583,4 +596,62 @@ function BrainStep({ onNext }: { onNext: () => void }) {
 async function openBrainInstall(): Promise<void> {
   const { openUrl } = await import("@tauri-apps/plugin-opener");
   await openUrl("https://claude.com/claude-code");
+}
+
+/**
+ * The reconnect page (Buzz's "I already have a community", fez-shaped):
+ * pairing and restore move your KEY, not the old machine's workspace
+ * list — so a second device knows who you are but not where you live.
+ * Enter the relay URLs of communities you're already part of; your key
+ * is your membership, nothing to re-apply for. Added relays go FIRST so
+ * you land in the community you came back for, with the local workspace
+ * still in the set behind it.
+ */
+function ReconnectStep({ onNext }: { onNext: () => void }) {
+  const [url, setUrl] = useState("");
+  const [added, setAdded] = useState<string[]>([]);
+  const [error, setError] = useState<string>();
+
+  const add = () => {
+    const trimmed = url.trim();
+    if (!/^wss?:\/\/.+/i.test(trimmed)) {
+      setError("a community URL starts with wss:// (or ws:// for local)");
+      return;
+    }
+    setError(undefined);
+    const current = localStorage.getItem("fez-relay")?.split(",").map((r) => r.trim()).filter(Boolean) ?? [];
+    const next = [...new Set([...added, trimmed, ...current])];
+    setRelays(next);
+    setAdded([...new Set([...added, trimmed])]);
+    setUrl("");
+  };
+
+  return (
+    <>
+      <h2>Reconnect your communities</h2>
+      <p className="ob-lede">
+        Your identity travelled; your community list didn't. Enter the relay URL of a community you're already in —
+        your key is your membership.
+      </p>
+      <div className="ob-brain-auth">
+        <input
+          className="ob-input"
+          value={url}
+          autoFocus
+          spellCheck={false}
+          placeholder="wss://relay.example"
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && url.trim()) add();
+          }}
+        />
+        <button className="ob-secondary" disabled={!url.trim()} onClick={add}>add</button>
+      </div>
+      {added.map((a) => (
+        <p key={a} className="ob-brain-hint">✓ {a}</p>
+      ))}
+      {error && <p className="ob-error">{error}</p>}
+      <button className="ob-primary" onClick={onNext}>{added.length > 0 ? "continue" : "skip — just this machine"}</button>
+    </>
+  );
 }

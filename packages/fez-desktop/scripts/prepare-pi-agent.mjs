@@ -30,7 +30,7 @@ const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 const CLAUDE_ACP_VERSION = "0.70.0"; // @agentclientprotocol/claude-agent-acp (the ACP↔claude-cli bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+claude-acp${CLAUDE_ACP_VERSION}`;
+const BUNDLE_VERSION = `${PI_VERSION}+claude-acp${CLAUDE_ACP_VERSION}+svc1`;
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
@@ -66,6 +66,8 @@ if (
   fs.existsSync(path.join(OUT, `pi${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-relay${EXE}`)) &&
   fs.existsSync(path.join(OUT, `claude-agent-acp${EXE}`)) &&
+  fs.existsSync(path.join(OUT, `fez-sentinel${EXE}`)) &&
+  fs.existsSync(path.join(OUT, `fez-agent${EXE}`)) &&
   fs.readFileSync(marker, "utf8").trim() === BUNDLE_VERSION
 ) {
   console.log(`pi-agent already at ${BUNDLE_VERSION} — skipping (FORCE=1 to rebuild)`);
@@ -154,6 +156,31 @@ if (!reuse("fez-relay")) {
   console.log("  (reusing existing binary)");
 }
 
+// 3b. fez-sentinel + fez-agent — the always-on watcher and the standing
+// agent runtime, compiled from the monorepo. THE cold-start knot: the
+// sentinel is what hears "@researcher" and the agent runtime is what
+// answers, and a desktop-only machine has neither unless fez ships them
+// — Buzz's buzz-agent sidecar decision, fez-shaped.
+console.log(`\n▶ compiling fez-sentinel + fez-agent…`);
+if (!reuse("fez-sentinel")) {
+  const sentinelPkg = path.resolve(HERE, "..", "..", "fez-sentinel");
+  run(
+    `bun build --compile ${JSON.stringify(path.join(sentinelPkg, "src", "index.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-sentinel${EXE}`))}`,
+    sentinelPkg
+  );
+} else {
+  console.log("  (fez-sentinel: reusing existing binary)");
+}
+if (!reuse("fez-agent")) {
+  const acpRuntimePkg = path.resolve(HERE, "..", "..", "fez-acp");
+  run(
+    `bun build --compile ${JSON.stringify(path.join(acpRuntimePkg, "src", "agent.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-agent${EXE}`))}`,
+    acpRuntimePkg
+  );
+} else {
+  console.log("  (fez-agent: reusing existing binary)");
+}
+
 // 4. Assemble pi-agent/ — binaries + required assets + VERSION.
 console.log(`\n▶ assembling ${path.relative(path.resolve(HERE, "..", ".."), OUT)}…`);
 const stage = path.join(WORK, "stage");
@@ -164,6 +191,8 @@ copyExec(from("pi") ?? path.join(codingAgent, "dist", `pi${EXE}`), path.join(sta
 copyExec(from("pi-acp") ?? path.join(WORK, `pi-acp${EXE}`), path.join(stage, `pi-acp${EXE}`));
 copyExec(from("fez-relay") ?? path.join(WORK, `fez-relay${EXE}`), path.join(stage, `fez-relay${EXE}`));
 copyExec(from("claude-agent-acp") ?? path.join(WORK, `claude-agent-acp${EXE}`), path.join(stage, `claude-agent-acp${EXE}`));
+copyExec(from("fez-sentinel") ?? path.join(WORK, `fez-sentinel${EXE}`), path.join(stage, `fez-sentinel${EXE}`));
+copyExec(from("fez-agent") ?? path.join(WORK, `fez-agent${EXE}`), path.join(stage, `fez-agent${EXE}`));
 const themeSrc = codingAgent ? path.join(codingAgent, "dist", "theme") : path.join(OUT, "theme");
 for (const f of fs.readdirSync(themeSrc)) fs.copyFileSync(path.join(themeSrc, f), path.join(stage, "theme", f));
 const wasmSrc = codingAgent ? path.join(codingAgent, "dist", "photon_rs_bg.wasm") : path.join(OUT, "photon_rs_bg.wasm");

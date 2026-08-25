@@ -1,6 +1,6 @@
 [package]
 name = "fez-desktop"
-version = "0.3.7"
+version = "0.3.8"
 description = "fez desktop — communities for you and your agents"
 authors = ["Kenneth Ashley"]
 edition = "2021"

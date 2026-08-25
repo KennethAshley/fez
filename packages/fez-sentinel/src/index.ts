@@ -236,11 +236,17 @@ async function main() {
     // the caller, so throw rather than silently drop.
     if (work && !isSafeWork(work.repo)) throw new Error(`unsafe repo name refused: ${work.repo}`);
     if (work?.line && !isSafeWork(work.line)) throw new Error(`unsafe line name refused: ${work.line}`);
-    return (
+    const env =
       `FEZ_AGENT_OWNER=${myPubkey} FEZ_RELAY=${relayUrls.join(",")}` +
-      (work ? ` FEZ_AGENT_REPO=${work.repo}${work.line ? ` FEZ_AGENT_BASE_BRANCH=${work.line}` : ""}` : "") +
-      ` fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"}`
-    );
+      (work ? ` FEZ_AGENT_REPO=${work.repo}${work.line ? ` FEZ_AGENT_BASE_BRANCH=${work.line}` : ""}` : "");
+    // The bundled runtime first: a desktop-only machine has no `fez` on
+    // PATH, and the whole point of shipping fez-agent is that summons
+    // work there. The runtime reads the same env vars `fez agent` sets.
+    const bundled = path.join(os.homedir(), ".fez", "bin", "fez-agent");
+    if (fs.existsSync(bundled)) {
+      return `${env} FEZ_AGENT_PERSONA=${persona} FEZ_AGENT_CHANNELS=${channels.join(",")} ${bundled}`;
+    }
+    return `${env} fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"}`;
   };
 
   async function spawnAgent(persona: string, channels: string[], work?: { repo: string; line?: string }): Promise<void> {
@@ -257,16 +263,24 @@ async function main() {
     } else {
       fs.mkdirSync(LOG_DIR, { recursive: true });
       const log = fs.openSync(path.join(LOG_DIR, `${persona}.log`), "a");
-      const child = spawn("fez", ["agent", persona, "-c", channels.length > 0 ? channels.join(",") : "none"], {
-        env: {
-          ...process.env,
-          FEZ_AGENT_OWNER: myPubkey,
-          FEZ_RELAY: relayUrls.join(","),
-          ...(work ? { FEZ_AGENT_REPO: work.repo, ...(work.line ? { FEZ_AGENT_BASE_BRANCH: work.line } : {}) } : {}),
-        },
-        detached: true,
-        stdio: ["ignore", log, log],
-      });
+      const env = {
+        ...process.env,
+        FEZ_AGENT_OWNER: myPubkey,
+        FEZ_RELAY: relayUrls.join(","),
+        ...(work ? { FEZ_AGENT_REPO: work.repo, ...(work.line ? { FEZ_AGENT_BASE_BRANCH: work.line } : {}) } : {}),
+      };
+      const bundled = path.join(os.homedir(), ".fez", "bin", "fez-agent");
+      const child = fs.existsSync(bundled)
+        ? spawn(bundled, [], {
+            env: { ...env, FEZ_AGENT_PERSONA: persona, FEZ_AGENT_CHANNELS: channels.join(",") },
+            detached: true,
+            stdio: ["ignore", log, log],
+          })
+        : spawn("fez", ["agent", persona, "-c", channels.length > 0 ? channels.join(",") : "none"], {
+            env,
+            detached: true,
+            stdio: ["ignore", log, log],
+          });
       child.unref();
       console.log(`🧬 spawned @${persona} detached (pid ${child.pid}, log ~/.fez/logs/${persona}.log)`);
     }

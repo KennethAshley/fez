@@ -1657,9 +1657,30 @@ fn ensure_agent_runner() -> Result<bool, String> {
     if runner_status() {
         return Ok(true);
     }
+    let home = std::env::var("HOME").unwrap_or_default();
+    // The bundled sentinel first — it ships with the app precisely so a
+    // desktop-only machine has something listening for mentions. Its
+    // words go to a log, not /dev/null: "the team never spoke" was
+    // undiagnosable when the listener died silently.
+    let bundled = format!("{home}/.fez/bin/fez-sentinel");
+    if std::path::Path::new(&bundled).exists() {
+        let log_dir = std::path::Path::new(&home).join(".fez").join("logs");
+        std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_dir.join("sentinel.log"))
+            .map_err(|e| format!("sentinel.log: {e}"))?;
+        let log_err = log.try_clone().map_err(|e| format!("sentinel.log: {e}"))?;
+        Command::new(&bundled)
+            .stdout(log)
+            .stderr(log_err)
+            .spawn()
+            .map_err(|e| format!("spawn fez-sentinel: {e}"))?;
+        return Ok(true);
+    }
     // Same real-install-dirs idea harness_installed uses: a GUI app's
     // PATH is stripped, so look where installers actually put things.
-    let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
         format!("{home}/.fez/bin/fez"),
         "/opt/homebrew/bin/fez".to_string(),
@@ -1686,7 +1707,14 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
     // fez-relay and claude-agent-acp are optional: dev builds without bun
     // don't produce them, and the app degrades (invite-only workspaces;
     // claude via a PATH-installed adapter). pi/pi-acp stay required.
-    for (name, required) in [("pi", true), ("pi-acp", true), ("fez-relay", false), ("claude-agent-acp", false)] {
+    for (name, required) in [
+        ("pi", true),
+        ("pi-acp", true),
+        ("fez-relay", false),
+        ("claude-agent-acp", false),
+        ("fez-sentinel", false),
+        ("fez-agent", false),
+    ] {
         if !required && !src.join(name).exists() {
             continue;
         }
