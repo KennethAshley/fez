@@ -75,10 +75,12 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
   to app-icon.png; the full set regenerates with `npx tauri icon app-icon.png`.
 - [x] **Find-and-replace damage in visible copy.** DONE: all "client.state.workspace" strings
   in ManagePane restored to "workspace".
-- [ ] **CSP + raw key exposure.** `"csp": null` (`tauri.conf.json:21-23`) while `get_identity`
-  returns the 64-hex private key over the invoke bridge (`lib.rs:7-31`) and the webview evals
-  third-party GUI extension bundles (`gui-extensions.ts:594-602`). Set a real CSP; consider
-  keeping the key out of the webview entirely (sign in Rust).
+- [ ] **CSP + raw key exposure.** PARTIAL: a real CSP now ships (script-src 'self'
+  'unsafe-eval', broad connect-src for user-configured relays, artifact: frames) — made
+  possible by the artifact:// staging protocol that replaced srcDoc (srcdoc docs inherit the
+  parent CSP). Still open: key custody — `get_identity` hands the webview the raw private
+  key; moving signing + nip44/nip59 into Rust is its own design. Also open: extensions still
+  need 'unsafe-eval' (own-origin extension loading would retire it).
 - [ ] **Undisclosed default endpoints.** Skill installs POST a signed (pubkey-bearing) receipt to
   `fez-web-kohl.vercel.app/api/counts` with no consent/toggle (`SkillsView.tsx:35-36,307,757`);
   drag-drop uploads go to `blossom.primal.net` in the clear with no disclosure at the drop
