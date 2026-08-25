@@ -1,9 +1,10 @@
 /**
- * The roster's pixel sprites, drawn as character maps — the Caves of Qud
- * grammar (a tiny creature on a dark ground, three or four colors, a
- * little asymmetry for charm) worn by fez's agents. Each char indexes
- * the sprite's own palette; '.' is transparent. Editing a sprite is
- * editing text, which is the point: the art stays reviewable in a diff.
+ * The roster's pixel sprites, drawn as character maps — Qud's sultan-
+ * statue grammar: at rest a sprite is a single muted slate, and only
+ * the chosen one lights up in color. Lit palettes are 2-3 colors, ember
+ * always among them; eyes and seams are punched holes (the black ground
+ * does that work for free). '.' is transparent; editing a sprite is
+ * editing text, so the art stays reviewable in a diff.
  */
 
 export interface Sprite {
@@ -12,20 +13,18 @@ export interface Sprite {
 }
 
 const BONE = '#e8e2d9';
-const DUST = '#6d645a';
 const EMBER = '#FF6A00';
-const GOLD = '#cfc041';
-const INK = '#141210';
+const DUST = '#6d645a';
 
 export const SPRITES: Record<string, Sprite> = {
   // The guide wears the hat the network is named for.
   fez: {
-    palette: { r: EMBER, y: GOLD, f: BONE, e: INK, d: DUST },
+    palette: { r: EMBER, f: BONE, d: DUST },
     rows: [
       '....rrrr....',
-      '....rrrr.y..',
-      '...ffffff.y.',
-      '...feffef...',
+      '....rrrr.r..',
+      '...ffffff.r.',
+      '...f.ff.f...',
       '...ffffff...',
       '..dddddddd..',
       '..dddddddd..',
@@ -35,15 +34,15 @@ export const SPRITES: Record<string, Sprite> = {
       '...dd..dd...',
     ],
   },
-  // Subnet cartographer: wide-brim hat, spyglass to the eye.
+  // Subnet cartographer: wide-brim hat, an ember spyglass to the eye.
   scout: {
-    palette: { t: '#6fb3b8', h: '#3c7f84', f: BONE, e: INK, g: '#9aa0a6', d: DUST },
+    palette: { t: '#6fb3b8', f: BONE, r: EMBER },
     rows: [
-      '..hhhhhhhh..',
+      '..tttttttt..',
       '....tttt....',
       '....ffff....',
-      '....feffgggg',
-      '....ffff.g..',
+      '....f.ffrrrr',
+      '....ffff.r..',
       '...tttttt...',
       '...tttttt...',
       '...tttttt...',
@@ -51,63 +50,63 @@ export const SPRITES: Record<string, Sprite> = {
       '....t..t....',
     ],
   },
-  // The weaver is its loom: two posts, warp threads, a gold shuttle.
+  // The weaver is its loom: violet frame, one ember shuttle.
   loom: {
-    palette: { v: '#9d6fcf', m: '#c64ead', y: GOLD },
+    palette: { v: '#9d6fcf', r: EMBER },
     rows: [
       '..v......v..',
       '..vvvvvvvv..',
-      '..v.m.m..v..',
-      '..v.m.m.mv..',
-      '..vyyyyyyv..',
-      '..vm..m..v..',
-      '..vm.mm.mv..',
+      '..v.v.v..v..',
+      '..v.v.v.vv..',
+      '..vrrrrrrv..',
+      '..vv..v..v..',
+      '..vv.vv.vv..',
       '..vvvvvvvv..',
       '..v......v..',
     ],
   },
-  // Keeper of the deep: a strongbox with a keyhole.
+  // Keeper of the deep: a strongbox, ember light in the keyhole.
   vault: {
-    palette: { g: GOLD, k: '#4a3f1e', e: INK, d: DUST },
+    palette: { g: '#cfc041', r: EMBER },
     rows: [
       '...gggggg...',
       '..gggggggg..',
-      '..kkkkkkkk..',
+      '............',
       '..gggggggg..',
-      '..gggeeggg..',
-      '..ggggeggg..',
-      '..kkkkkkkk..',
+      '..gggrrggg..',
+      '..ggggrggg..',
+      '............',
       '..gggggggg..',
-      '...d....d...',
+      '...g....g...',
     ],
   },
-  // Inference familiar: a small green machine, always listening.
+  // Inference familiar: a small green machine, ember antenna, always on.
   chip: {
-    palette: { c: '#58c470', a: '#2e7d44', e: INK, p: DUST },
+    palette: { c: '#58c470', r: EMBER },
     rows: [
-      '.....aa.....',
-      '.....aa.....',
+      '.....rr.....',
+      '.....rr.....',
       '...cccccc...',
-      '...ceccec...',
+      '...c.cc.c...',
       '...cccccc...',
-      '..p.cccc.p..',
-      '..pccccccp..',
+      '..c.cccc.c..',
+      '..cccccccc..',
       '....c..c....',
-      '...pp..pp...',
+      '...cc..cc...',
     ],
   },
-  // The appraising eye: it will not praise what it cannot measure.
+  // The appraising eye: gold sclera, ember iris, a punched pupil.
   score: {
-    palette: { o: GOLD, i: EMBER, e: INK, d: DUST },
+    palette: { o: '#cfc041', r: EMBER },
     rows: [
-      '..d......d..',
+      '..o......o..',
       '...oooooo...',
       '..oooooooo..',
-      '.ooooiioooo.',
-      '.oooiieiioo.',
-      '..ooiiiioo..',
+      '.oooorroooo.',
+      '.ooor..rooo.',
+      '..oorrrroo..',
       '...oooooo...',
-      '..d......d..',
+      '..o......o..',
     ],
   },
 };

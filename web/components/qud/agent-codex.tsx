@@ -102,8 +102,8 @@ export function AgentCodex() {
                 : 'border-transparent text-neutral-600 hover:border-neutral-800 hover:text-neutral-400'
             }`}
           >
-            <PixelSprite sprite={SPRITES[a.id]} scale={4} />
-            <span className="text-[10px]">
+            <PixelSprite sprite={SPRITES[a.id]} scale={4} mono={i === selected ? undefined : '#5d564c'} />
+            <span className={`text-[10px] ${i === selected ? 'text-[#cfc041]' : ''}`}>
               {i === selected && <span className="text-[#FF6A00]">&gt;</span>}
               {a.name}
             </span>
