@@ -4,16 +4,9 @@ import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools/pure
 import { nip44 } from "nostr-tools";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { BrowserWire } from "./wire";
+import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
-
-/**
- * Where a fresh install lands. Mirrors src/settings.ts — the desktop
- * bundle deliberately doesn't depend on the CLI package. A generic
- * public relay carries the events but enforces none of fez's membership
- * gating, so channel content there is unlisted rather than private.
- */
-const DEFAULT_RELAY = "wss://67-205-188-204.sslip.io";
+import { DEFAULT_RELAY, PAIRING_RELAY } from "./relay";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -68,12 +61,26 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
       const hex = bytesToHex(secret);
       await invoke("set_identity", { hex, account: ACCOUNT });
       setKeyHex(hex);
-      localStorage.setItem("fez-relay", relayUrl);
+      // Cold path (no invite): this machine becomes the workspace — the
+      // app spawns a local relay claimed by the new identity. An invite
+      // instead means joining THEIR relay; no local spawn.
+      let activeRelay = relayUrl;
+      if (!localStorage.getItem("fez-pending-invite")) {
+        activeRelay = await invoke<string>("ensure_local_relay", {
+          owner: getPublicKey(secret),
+          name: name.trim() ? `${name.trim()}'s workspace` : "your workspace",
+        });
+        setRelayUrl(activeRelay);
+      }
+      localStorage.setItem("fez-relay", activeRelay);
+      localStorage.setItem("fez-name", name.trim()); // the welcome opener greets by name
       if (name.trim()) {
         // Best-effort: a profile that didn't publish is a display name to
         // fix later, not a reason to hold someone at the door.
         try {
-          const wire = new BrowserWire(relayUrl.split(","), hex);
+          // Identity was just stored — the wire signs via Rust custody,
+          // so it gets the pubkey-bearing signer, never the secret.
+          const wire = new BrowserWire(activeRelay.split(","), rustSigner(getPublicKey(secret)));
           await new Promise((r) => setTimeout(r, 600));
           await wire.publish({ kind: 0, tags: [], content: JSON.stringify({ name: name.trim() }) });
           wire.close();
@@ -157,9 +164,20 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
 
         {step === "pairing" && (
           <PairingStep
-            relayUrl={relayUrl.split(",")[0]}
+            relayUrl={PAIRING_RELAY /* rendezvous: both devices must reach it — loopback can't */}
             onPaired={(hex) => {
               setKeyHex(hex);
+              // The paired identity gets a local workspace here too — the
+              // pairing protocol moves the KEY, not the old device's
+              // workspace set, and a stored loopback default with no relay
+              // behind it would boot dead. Best-effort: on failure the
+              // manage (+) doors still let them join a workspace.
+              void invoke<string>("ensure_local_relay", {
+                owner: getPublicKey(Uint8Array.from(hex.match(/.{2}/g)!.map((b) => parseInt(b, 16)))),
+                name: "your workspace",
+              })
+                .then((url) => localStorage.setItem("fez-relay", url))
+                .catch(() => {});
               setStep("done");
             }}
             onBack={() => setStep("welcome")}

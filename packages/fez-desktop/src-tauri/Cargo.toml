@@ -1,8 +1,8 @@
 [package]
 name = "fez-desktop"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.2.0"
+description = "fez desktop — communities for you and your agents"
+authors = ["Kenneth Ashley"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -21,6 +21,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
+# Key custody: the identity key stays in Rust — the webview asks for
+# signatures and DM crypto, never the secret (Buzz's model, same crate).
+nostr = { version = "0.44", features = ["nip44", "nip59"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Self-sufficient extension install: fetch the npm tarball, gunzip, untar,

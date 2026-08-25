@@ -38,7 +38,7 @@ export default function RemindersPane({
       const mapped: ReminderRow[] = [];
       for (const event of events) {
         try {
-          const body = JSON.parse(wire.decrypt(client.pubkey, event.content)) as {
+          const body = JSON.parse(await wire.decrypt(client.pubkey, event.content)) as {
             note?: string;
             remind_at?: number;
             about?: string;
@@ -87,7 +87,7 @@ export default function RemindersPane({
       <div className="pane-body">
         {!rows && <div className="pane-empty">decrypting…</div>}
         {rows && upcoming.length === 0 && (
-          <div className="pane-empty">nothing scheduled — hover a message and hit ◷, or /remind from the TUI. The sentinel delivers them.</div>
+          <div className="pane-empty">nothing scheduled — hover a message and hit ◷. The sentinel delivers them.</div>
         )}
         {upcoming.map((reminder) => row(reminder, false))}
         {past.length > 0 && (

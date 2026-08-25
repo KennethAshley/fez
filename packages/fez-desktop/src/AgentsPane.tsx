@@ -96,7 +96,7 @@ function FleetSummary({
         const records: TurnRec[] = [];
         for (const event of events) {
           try {
-            const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as TurnRec;
+            const metric = JSON.parse(await wire.decrypt(event.pubkey, event.content)) as TurnRec;
             if (metric.agent && metric.ts) records.push(metric);
           } catch { /* not ours to read */ }
         }
@@ -515,7 +515,7 @@ function AgentDetail({
         const bySlug = new Map<string, EngramView>();
         for (const event of events as WireEvent[]) {
           try {
-            const body = JSON.parse(client.decryptFrom(pk, event.content)) as {
+            const body = JSON.parse(await client.decryptFrom(pk, event.content)) as {
               slug?: string;
               value?: string | null;
               profile?: string;
@@ -551,7 +551,7 @@ function AgentDetail({
       const summary: CostSummary = { turns: 0, done: 0, failed: 0, cancelled: 0, ms: 0 };
       for (const event of events) {
         try {
-          const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as {
+          const metric = JSON.parse(await wire.decrypt(event.pubkey, event.content)) as {
             agent?: string;
             status?: string;
             durationMs?: number;

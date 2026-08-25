@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
+import { readiness } from "./welcome";
 
 /**
  * What an empty channel says on someone's first day.
@@ -27,6 +29,22 @@ export default function FirstRun({
   onOpenAgents: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  // Whether a mention of @fez can actually produce a reply on this
+  // machine (model + watcher). undefined while probing, so the panel
+  // never flashes a promise the probe hasn't backed yet.
+  const [ready, setReady] = useState<boolean>();
+  // In a fresh LOCAL workspace @fez exists as a persona before it has
+  // ever announced on the roster — the sentinel spawns it on mention,
+  // so "is a persona" is as real as "has announced".
+  const [localFez, setLocalFez] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void readiness().then((r) => { if (alive) setReady(r.authed && r.runner); }).catch(() => {});
+    void invoke<string[]>("list_personas")
+      .then((names) => { if (alive) setLocalFez(names.some((n) => n.toLowerCase() === "fez")); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   // @fez's brain is a seam — any OpenAI-compatible endpoint, local or
   // hosted — so the app cannot (and should not) probe it: a remote
@@ -39,7 +57,7 @@ export default function FirstRun({
     setTimeout(() => setCopied(false), 2000);
   };
   const agents = [...client.agents().values()].filter(Boolean);
-  const hasFez = agents.some((name) => name.toLowerCase() === "fez");
+  const hasFez = localFez || agents.some((name) => name.toLowerCase() === "fez");
   const others = agents.filter((name) => name.toLowerCase() !== "fez");
 
   return (
@@ -56,10 +74,18 @@ export default function FirstRun({
             extension does, how to set something up — and it answers. Hand it a task and it brings in the right agent.
           </p>
 
-          <p className="fr-ok">
-            Try <span className="fr-try">@fez what can you do?</span> — or ask it to set you up, like{' '}
-            <span className="fr-try">@fez install polls</span> (you confirm before anything installs).
-          </p>
+          {ready === false ? (
+            <p className="fr-ok">
+              @fez needs a model to think with — connect one in{' '}
+              <button className="fr-link" onClick={onOpenAgents}>Settings → Agents</button>, then mention{' '}
+              <span className="fr-try">@fez</span> here.
+            </p>
+          ) : (
+            <p className="fr-ok">
+              Try <span className="fr-try">@fez what can you do?</span> — or ask it to set you up, like{' '}
+              <span className="fr-try">@fez install polls</span> (you confirm before anything installs).
+            </p>
+          )}
           <p className="fr-note">
             @fez is a persona at <code>~/.fez/personas/fez.md</code> — swap its <code>harness:</code> to run it on any
             model, or the hosted router for a cheap local option.{' '}

@@ -81,12 +81,19 @@ export interface Wire {
   publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent>;
   subscribe(filters: WireFilter[], onEvent: (event: WireEvent) => void): () => void;
   query(filters: WireFilter[]): Promise<WireEvent[]>;
-  encrypt(peerPubkey: string, plaintext: string): string;
-  decrypt(peerPubkey: string, ciphertext: string): string;
+  /**
+   * Crypto may be SYNC OR ASYNC: a wire that holds the key in-process
+   * returns plain values; a wire whose key lives behind a custody seam
+   * (the desktop signs in Rust — the webview never sees the secret)
+   * returns promises. Callers always `await`, which is a no-op on plain
+   * values, so sync backends pay nothing.
+   */
+  encrypt(peerPubkey: string, plaintext: string): string | Promise<string>;
+  decrypt(peerPubkey: string, ciphertext: string): string | Promise<string>;
   sendDm(recipientPubkey: string, text: string): Promise<string>;
   /** Group DM (one rumor, one wrap per recipient + self-copy). Optional — older backends are 1:1 only. */
   sendGroupDm?(recipientPubkeys: string[], text: string): Promise<string>;
-  unwrapDm(event: WireEvent): DmRumor | undefined;
+  unwrapDm(event: WireEvent): DmRumor | undefined | Promise<DmRumor | undefined>;
   /**
    * Which relays this wire talks to. The FIRST is the workspace — a
    * relay IS the workspace, so a client with nothing stored learns
@@ -106,7 +113,7 @@ export interface Wire {
    * how a GUI surface reads the relay's gated HTTP endpoints (push
    * journal, review diff) and knocks on gated writes (merge).
    */
-  httpAuth?(url: string, method: string): string;
+  httpAuth?(url: string, method: string): string | Promise<string>;
 }
 
 /**
@@ -494,6 +501,9 @@ export class FezClient {
   // DMs
   private dmConvos = new Map<string, { msgs: DmMessage[]; unread: number; participants?: string[] }>();
   private seenDmIds = new Set<string>();
+  /** Serial chain for handlers that decrypt — an async custody seam
+   * (desktop signs in Rust) must not reorder a feed. */
+  private cryptoIngest: Promise<void> = Promise.resolve();
 
   // docs
   private docsByChannelMap = new Map<string, DocInfo>();
@@ -812,7 +822,18 @@ export class FezClient {
   // ── Actions ─────────────────────────────────────────────────────────────
 
   /** Publish into the scoped channel. Thread tags follow Buzz's NIP-10 shape when replying. */
-  async sendChannelMessage(text: string, opts?: { threadRootId?: string; mentionPks?: string[]; channelId?: string }): Promise<Msg> {
+  async sendChannelMessage(
+    text: string,
+    opts?: {
+      threadRootId?: string;
+      mentionPks?: string[];
+      channelId?: string;
+      /** NIP-92 media metadata, one entry per attachment (["imeta",
+       * "url <u>", "m <mime>", "size <n>"]) — structured so the agent
+       * runner can hand vision models the pixels instead of a URL. */
+      imeta?: string[][];
+    }
+  ): Promise<Msg> {
     // channelId overrides the scope — for surfaces that address a
     // channel by NAME rather than by standing in it (a /repo command run
     // from anywhere posting a line root into the repo's channel).
@@ -833,6 +854,7 @@ export class FezClient {
         ["h", current.id],
         ...threadTags,
         ...(opts?.mentionPks ?? []).map((pk) => ["p", pk]),
+        ...(opts?.imeta ?? []),
       ],
       content: text,
     });
@@ -958,7 +980,7 @@ export class FezClient {
     await this.wire.publish({
       kind: K.REMINDER,
       tags: [["p", this.pubkey]],
-      content: this.wire.encrypt(
+      content: await this.wire.encrypt(
         this.pubkey,
         JSON.stringify({ note, remind_at: remindAt, ...(aboutEventId ? { about: aboutEventId } : {}) })
       ),
@@ -1006,13 +1028,12 @@ export class FezClient {
     this.readPublishTimers.set(
       channelId,
       setTimeout(() => {
-        void this.wire
-          .publish({
+        void (async () =>
+          this.wire.publish({
             kind: K.READ_STATE,
             tags: [["d", channelId]],
-            content: this.wire.encrypt(this.pubkey, JSON.stringify({ last_read: this.lastReadByChannel.get(channelId) })),
-          })
-          .catch(() => {});
+            content: await this.wire.encrypt(this.pubkey, JSON.stringify({ last_read: this.lastReadByChannel.get(channelId) })),
+          }))().catch(() => {});
       }, 5000)
     );
   }
@@ -1358,7 +1379,7 @@ export class FezClient {
    * Callers treat undefined as "this surface is unavailable", the same
    * honest degradation as a missing relayInfo.
    */
-  httpAuthHeader(url: string, method: string): string | undefined {
+  async httpAuthHeader(url: string, method: string): Promise<string | undefined> {
     return this.wire.httpAuth?.(url, method);
   }
 
@@ -1533,7 +1554,7 @@ export class FezClient {
     const newest = [...events].sort((a, b) => b.created_at - a.created_at)[0];
     if (!newest) return undefined;
     try {
-      return JSON.parse(this.wire.decrypt(this.pubkey, newest.content)) as T;
+      return JSON.parse(await this.wire.decrypt(this.pubkey, newest.content)) as T;
     } catch {
       return undefined; // not ours to read, or malformed
     }
@@ -1543,14 +1564,14 @@ export class FezClient {
     await this.wire.publish({
       kind: K.APP_DATA,
       tags: [["d", `ext:${extension}`]],
-      content: this.wire.encrypt(this.pubkey, JSON.stringify(config)),
+      content: await this.wire.encrypt(this.pubkey, JSON.stringify(config)),
     });
   }
 
   async queryEngrams(agentPk: string): Promise<WireEvent[]> {
     return this.wire.query([{ kinds: [30174], authors: [agentPk], "#p": [this.pubkey] }]);
   }
-  decryptFrom(peerPk: string, ciphertext: string): string {
+  async decryptFrom(peerPk: string, ciphertext: string): Promise<string> {
     return this.wire.decrypt(peerPk, ciphertext);
   }
 
@@ -1627,10 +1648,16 @@ export class FezClient {
     this.state.load();
 
     // Always-on, channel-orthogonal subscriptions.
-    this.wire.subscribe([{ kinds: [K.OBSERVER], "#p": [this.pubkey] }], (e) => this.handleObserverFrame(e));
+    // Decrypting handlers may be async (custody seam) — one shared chain
+    // keeps arrival order, so a slow decrypt can't reorder a feed.
+    this.wire.subscribe([{ kinds: [K.OBSERVER], "#p": [this.pubkey] }], (e) => {
+      this.cryptoIngest = this.cryptoIngest.then(() => this.handleObserverFrame(e)).catch(() => {});
+    });
     this.wire.subscribe(
       [{ kinds: [K.GIFT_WRAP], "#p": [this.pubkey], since: this.sessionStartS - DM_FUZZ_WINDOW_S }],
-      (e) => this.handleGiftWrap(e)
+      (e) => {
+        this.cryptoIngest = this.cryptoIngest.then(() => this.handleGiftWrap(e)).catch(() => {});
+      }
     );
     this.wire.subscribe([{ kinds: [K.PRESENCE] }], (e) => {
       this.lastSeenByPk.set(e.pubkey, Date.now());
@@ -1675,7 +1702,7 @@ export class FezClient {
       }
       for (const [d, event] of latestByD) {
         try {
-          this.lastReadByChannel.set(d, Number(JSON.parse(this.wire.decrypt(this.pubkey, event.content)).last_read) || 0);
+          this.lastReadByChannel.set(d, Number(JSON.parse(await this.wire.decrypt(this.pubkey, event.content)).last_read) || 0);
         } catch { /* not ours / old format */ }
       }
     } catch { /* badges start from zero */ }
@@ -2191,12 +2218,12 @@ export class FezClient {
     this.emit("artifact", channelId, artifact);
   }
 
-  private handleObserverFrame(event: WireEvent): void {
+  private async handleObserverFrame(event: WireEvent): Promise<void> {
     const agent = event.tags.find((t) => t[0] === "agent")?.[1];
     if (!agent) return;
     let frame: ObserverEntry;
     try {
-      frame = JSON.parse(this.wire.decrypt(event.pubkey, event.content));
+      frame = JSON.parse(await this.wire.decrypt(event.pubkey, event.content));
     } catch {
       return; // not for us — ignorable by design
     }
@@ -2235,8 +2262,8 @@ export class FezClient {
     this.emit("observerFrame", agent, frame);
   }
 
-  private handleGiftWrap(event: WireEvent): void {
-    const dm = this.wire.unwrapDm(event);
+  private async handleGiftWrap(event: WireEvent): Promise<void> {
+    const dm = await this.wire.unwrapDm(event);
     if (!dm || this.seenDmIds.has(dm.id)) return;
     this.seenDmIds.add(dm.id);
     // Conversation = the participant SET, so every member of a group DM

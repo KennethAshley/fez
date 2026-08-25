@@ -31,6 +31,8 @@ body {
 }
 .boot { height: 100%; display: grid; place-items: center; color: var(--fg-dim); }
 .boot.error { color: var(--red); padding: 2rem; text-align: center; }
+.boot.error > div { max-width: 34rem; display: grid; gap: 0.75rem; justify-items: center; }
+.boot-error-hint { color: var(--fg-dim); font-size: 13px; }
 
 /* ── cold-boot splash ──────────────────────────────────────────
    The roster idles while the relay answers — Buzz's held-splash
@@ -1296,6 +1298,49 @@ button.author:hover { text-decoration: underline; }
 
 /* agent hover card — what can this name do, without clicking */
 .hovercard-wrap { position: relative; display: inline-flex; min-width: 0; }
+/* ── pending attachments (composer chips) ───────────────────────
+   Uploaded, not yet sent — the words and the file leave together. */
+.attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px; }
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg2); border: 1px solid var(--bg-mine);
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg);
+  padding: 3px 8px; border-radius: 6px; max-width: 320px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.attach-x {
+  background: none; border: none; cursor: pointer; color: var(--fg-dim);
+  font: inherit; padding: 0 2px;
+}
+.attach-x:hover { color: var(--red); }
+
+/* ── avatar quip bubble ─────────────────────────────────────────
+   The creature's one line, above the sprite. Fixed-position for the
+   same reason the hovercard is; below the hovercard's 60 so a card
+   always wins when both would show. */
+.quip-bubble {
+  position: fixed; z-index: 55; transform: translate(-50%, -100%);
+  background: var(--bg2); color: var(--fg);
+  border: 1px solid var(--bg-mine);
+  font-family: var(--font-mono); font-size: 11px; line-height: 1;
+  padding: 4px 8px; white-space: nowrap; pointer-events: none;
+  animation: quip-in 0.12s ease-out;
+}
+.quip-bubble::after {
+  content: ""; position: absolute; left: 50%; top: 100%;
+  transform: translateX(-50%);
+  border: 4px solid transparent; border-top-color: var(--bg2);
+}
+.quip-bubble.below { transform: translate(-50%, 0); }
+.quip-bubble.below::after {
+  top: auto; bottom: 100%;
+  border-top-color: transparent; border-bottom-color: var(--bg2);
+}
+@keyframes quip-in {
+  from { opacity: 0; margin-top: 3px; }
+  to { opacity: 1; margin-top: 0; }
+}
+
 .hovercard {
   position: fixed; z-index: 60; width: 250px;
   display: flex; flex-direction: column; gap: 8px;

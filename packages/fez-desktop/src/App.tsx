@@ -6,7 +6,8 @@ import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
-import { BrowserWire } from "./wire";
+import { BrowserWire, rustSigner } from "./wire";
+import { relaySet } from "./relay";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -38,8 +39,9 @@ import Avatar from "./Avatar";
 import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
 import HoverCard from "./HoverCard";
-import { uploadFile, shareLine } from "./upload";
+import { uploadFile, shareLine, imetaTag, type Uploaded } from "./upload";
 import { runCommand } from "./commands";
+import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
 import FirstRun from "./FirstRun";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
@@ -54,19 +56,6 @@ import "./App.css";
  * observer frame below comes from @fezchat/client — this file only renders.
  */
 
-/**
- * The relay SET. Stored comma-separated under the same key the single
- * relay used, so an existing install keeps working and adding a second
- * relay is editing one string rather than a migration.
- */
-function relaySet(): string[] {
-  const raw =
-    (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_RELAY ??
-    localStorage.getItem("fez-relay") ??
-    "ws://localhost:7777";
-  const urls = raw.split(",").map((u) => u.trim()).filter(Boolean);
-  return urls.length ? urls : ["ws://localhost:7777"];
-}
 /** Keychain account — override with VITE_FEZ_ACCOUNT=demo to walk onboarding as a fresh user without touching your real identity. */
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 const KIND_TURN_METRIC = 47030;
@@ -138,8 +127,13 @@ let bootPromise: Promise<{ client: FezClient; wire: BrowserWire }> | undefined;
 
 function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
   bootPromise ??= (async () => {
-    const keyHex = await invoke<string>("get_identity", { account: ACCOUNT });
-    const wire = new BrowserWire(relaySet(), keyHex);
+    // The custody boundary: boot learns WHO you are, never the secret —
+    // the wire signs through rustSigner (a bare hex here would read as a
+    // SECRET, and a pubkey is also 64 hex chars — always the object).
+    // The Rust side still surfaces "no fez identity" for onboarding and
+    // "keychain access failed" for retry — same routing as before.
+    const pubkey = await invoke<string>("get_pubkey", { account: ACCOUNT });
+    const wire = new BrowserWire(relaySet(), rustSigner(pubkey));
     const client = new FezClient(wire);
     await client.start();
 
@@ -172,6 +166,15 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
       // exist by construction.
       await client.ensureChannel({ name: "general", id: "bootstrap-general" }).catch(() => {});
     }
+    // Local-workspace owners get the scripted @fez greeting (idempotent —
+    // relay-side markers) and a best-effort runner start. Non-blocking:
+    // a slow relay must not hold boot.
+    void import("./welcome")
+      .then(async ({ ensureWelcome }) => {
+        await invoke("ensure_agent_runner").catch(() => {});
+        await ensureWelcome(client);
+      })
+      .catch(() => {});
     const scope = client.state.scope;
     if (scope) await client.loadChannelHistory(scope.channelId);
     // Paint before anything renders, and keep following the OS: a
@@ -232,6 +235,32 @@ function BootSplash({ loading }: { loading: boolean }) {
   );
 }
 
+/**
+ * A failed boot is a door, not a wall. The old screen was the raw error
+ * string with no way forward — reachable on FIRST LAUNCH by denying the
+ * macOS keychain prompt, which told a brand-new user to go run a CLI they
+ * don't have. Every boot failure is retryable (a denied prompt re-asks,
+ * a dead relay may come back), so the button is unconditional; the
+ * keychain hint appears only when the message implicates the keychain.
+ */
+function BootError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const keychain = /keychain/i.test(message);
+  return (
+    <div className="boot error">
+      <div>
+        <p>{message}</p>
+        {keychain && (
+          <p className="boot-error-hint">
+            fez keeps your identity in the macOS keychain. If a permission dialog appeared, choose
+            “Always Allow” and try again.
+          </p>
+        )}
+        <button className="agent-action" onClick={onRetry}>try again</button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [connected, setConnected] = useState(true);
@@ -272,7 +301,17 @@ export default function App() {
       />
     );
   }
-  if (boot.phase === "error") return <div className="boot error">{boot.message}</div>;
+  if (boot.phase === "error") {
+    return (
+      <BootError
+        message={boot.message}
+        onRetry={() => {
+          setBoot({ phase: "loading" });
+          setBootNonce((n) => n + 1); // bootOnce un-caches a failed boot, so this re-runs it
+        }}
+      />
+    );
+  }
   return <Shell client={boot.client} wire={boot.wire} connected={connected} relayHealth={relayHealth} />;
 }
 
@@ -297,6 +336,9 @@ function Shell({
     setWatchOpener((agent) => setPane({ kind: "watch", agent }));
     return () => setWatchOpener(undefined);
   }, []);
+  // One update check per app run, once the shell is actually up — a user
+  // mid-onboarding shouldn't meet an update toast before a channel.
+  useEffect(() => startUpdateCheck(), []);
   const [banner, setBanner] = useState<string>();
   useEffect(() => {
     wire.onError = (message) => {
@@ -380,9 +422,16 @@ function Shell({
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
       "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
-      "dmMessage", "jobsChanged", "notice", "artifact",
+      "dmMessage", "jobsChanged", "artifact",
     ] as const;
     for (const name of events) client.on(name, render as never);
+    // Notices carry the relay's own words — "claim this workspace", "ask
+    // the owner for an invite, your key is …" — the only first-run
+    // explanations the stack produces. They used to be wired to the
+    // force-render above, which drops its arguments: shown to nobody.
+    // Sticky (ms=0) because they are one-time instructions, and deduped
+    // by the toast store so reconnects don't stack repeats.
+    client.on("notice", ((text: string) => toast.info(text, 0)) as never);
     client.on("draft", ((channelId: string, authorPk: string, content: string, rootId?: string) => {
       let byAuthor = draftsRef.current.get(channelId);
       if (!byAuthor) draftsRef.current.set(channelId, (byAuthor = new Map()));
@@ -634,7 +683,7 @@ function Shell({
     await wire.publish({
       kind: KIND_OBSERVER_CONTROL,
       tags: [["p", pk]],
-      content: wire.encrypt(pk, JSON.stringify({ cmd: "cancel", ts: Date.now() })),
+      content: await wire.encrypt(pk, JSON.stringify({ cmd: "cancel", ts: Date.now() })),
     });
   };
 
@@ -845,15 +894,16 @@ function Shell({
             >
               ☰
             </button>
-            {client.state.isOwner(client.pubkey) && (
-              <button
-                className="community-add"
-                title="manage — create channels, invite members, roles"
-                onClick={() => setPane({ kind: "manage" })}
-              >
-                +
-              </button>
-            )}
+            {/* Everyone gets manage — it holds "join a workspace" and
+                "claim/create", the only doors a fresh non-owner has; the
+                owner-only levers inside are gated by the pane itself. */}
+            <button
+              className="community-add"
+              title="manage — channels, members, join or create a workspace"
+              onClick={() => setPane({ kind: "manage" })}
+            >
+              +
+            </button>
           </div>
           {ownChannels.map(channelRow)}
           {client.state.workspace.channels.size === 0 && (
@@ -1224,7 +1274,7 @@ function Shell({
             </div>
             <div className="settings-hint browse-hint">
               Every channel here is yours already — one roster covers the whole workspace, so there is
-              nothing to join. {client.state.isOwner(client.pubkey) ? "Use manage (+) to add one." : ""}
+              nothing to join. Use manage (+) to create one, or to join another workspace.
             </div>
           </div>
         </div>
@@ -1452,6 +1502,8 @@ function ChannelView({
     else localStorage.removeItem(bindingsKey);
   };
   const [uploading, setUploading] = useState<string>();
+  /** Uploaded but not yet sent — chips on the composer, consumed by send(). */
+  const [pending, setPending] = useState<Uploaded[]>([]);
   // A focused thread reply opens inside its thread (the channel view
   // only shows roots); the component remounts per focus so lazy init is enough.
   const [membersOpen, setMembersOpen] = useState(false);
@@ -1567,36 +1619,69 @@ function ChannelView({
 
   const send = async () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && pending.length === 0) return;
+    if (editing && !text) return;
+    // Cleared optimistically for a snappy composer — but a throw before
+    // the wire (not a member, bad scope) used to eat the typed message
+    // with no trace; the catch puts the words back and says why.
+    // Attachments are only consumed by a real message — a slash command
+    // or an edit leaves them staged.
     setDraft("");
+    const savedBindings = bindings;
+    const attachments = pending;
     setBindings(new Map());
-    if (!editing && text.startsWith("/")) {
-      const feedback = await onCommand(text);
-      if (feedback) {
-        setCmdNotice(feedback);
-        setTimeout(() => setCmdNotice(undefined), 8000);
+    try {
+      if (!editing && text.startsWith("/")) {
+        const feedback = await onCommand(text);
+        if (feedback) {
+          setCmdNotice(feedback);
+          setTimeout(() => setCmdNotice(undefined), 8000);
+        }
+        return;
       }
-      return;
+      if (editing) {
+        const target = editing;
+        setEditing(undefined);
+        if (text !== target.original) await client.editMessage(channelId, target.id, text);
+        return;
+      }
+      // Against THIS channel's roster, not every name the client has ever
+      // seen — and a mention that reached nobody is said out loud, because
+      // it otherwise looks exactly like one that worked.
+      const resolution = client.resolveMentionsIn(text, channelId, savedBindings);
+      // A name that matches a local persona isn't "unresolved" — the sentinel
+      // will spawn it even though it hasn't announced yet. Only warn about
+      // names that are neither members nor spawnable agents (real typos).
+      const problem = describeMentionProblems({
+        ...resolution,
+        unresolved: resolution.unresolved.filter((n) => !localAgents.has(n.toLowerCase())),
+      });
+      setPending([]);
+      const body = [text, ...attachments.map(shareLine)].filter(Boolean).join("\n");
+      await client.sendChannelMessage(body, {
+        threadRootId: threadRoot,
+        mentionPks: resolution.pubkeys,
+        imeta: attachments.map(imetaTag),
+      });
+      if (problem) onNotice(problem);
+      // A mention of @fez that nothing answers must say why: 60s, then a
+      // sticky note — never a fabricated message (cold-start spec).
+      if (/@fez\b/i.test(text)) {
+        const before = client.messages(channelId).length;
+        setTimeout(() => {
+          const later = client.messages(channelId).slice(before);
+          const replied = later.some((m) => client.displayName(m.authorPk).toLowerCase() === "fez");
+          if (!replied) {
+            toast.info("@fez didn't answer in 60s — check Agents: is a model connected, and is the watcher (fez sentinel) running?", 0);
+          }
+        }, 60_000);
+      }
+    } catch (err) {
+      setDraft(text);
+      setBindings(savedBindings);
+      setPending(attachments);
+      toast.error(`couldn't send: ${err instanceof Error ? err.message : String(err)}`);
     }
-    if (editing) {
-      const target = editing;
-      setEditing(undefined);
-      if (text !== target.original) await client.editMessage(channelId, target.id, text);
-      return;
-    }
-    // Against THIS channel's roster, not every name the client has ever
-    // seen — and a mention that reached nobody is said out loud, because
-    // it otherwise looks exactly like one that worked.
-    const resolution = client.resolveMentionsIn(text, channelId, bindings);
-    // A name that matches a local persona isn't "unresolved" — the sentinel
-    // will spawn it even though it hasn't announced yet. Only warn about
-    // names that are neither members nor spawnable agents (real typos).
-    const problem = describeMentionProblems({
-      ...resolution,
-      unresolved: resolution.unresolved.filter((n) => !localAgents.has(n.toLowerCase())),
-    });
-    await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks: resolution.pubkeys });
-    if (problem) onNotice(problem);
   };
 
   /** Discord's up-arrow: empty composer + ↑ edits your latest message in view. */
@@ -1617,13 +1702,17 @@ function ChannelView({
     setBindings(new Map());
   };
 
-  /** Drop/paste → Blossom → fez-media's share line into the channel (or thread). */
+  /** Drop/paste → Blossom → a PENDING chip on the composer. Uploads used
+   * to auto-send their share line, which made "@fez look at this image"
+   * impossible — the image was gone before you could address anyone.
+   * Now the words and the file travel as one message (Buzz's queued-
+   * attachment decision), and send() rides the metadata as imeta tags. */
   const handleFiles = async (files: File[]) => {
     for (const file of files) {
       setUploading(`${file.name} · 0%`);
       try {
         const uploaded = await uploadFile(wire, file, (percent) => setUploading(`${file.name} · ${percent}%`));
-        await client.sendChannelMessage(shareLine(uploaded), { threadRootId: threadRoot });
+        setPending((prev) => [...prev, uploaded]);
       } catch (err) {
         wire.onError?.(err instanceof Error ? err.message : String(err));
       }
@@ -1723,17 +1812,22 @@ function ChannelView({
         )}
       </header>
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
-        {(client.state.workspace.members.size ?? 0) <= 1 && (
-          <div className="empty-room">
-            Nobody else is in this channel — agents can't hear you here. Pick a channel without the ∅ mark, or /invite members from the TUI.
-          </div>
-        )}
-        {messages.length === 0 && (client.state.workspace.members.size ?? 0) > 1 && (
+        {/* The two empty-state panels used to be inverted: FirstRun (the
+            helpful one) required members > 1 — impossible for a fresh solo
+            user — while the solo case always got a warning that pointed at
+            the TUI. FirstRun now owns every empty channel; the solo note
+            only accompanies channels that already have history. */}
+        {messages.length === 0 && (
           <FirstRun
             client={client}
             channelName={channelName}
             onOpenAgents={onAgents}
           />
+        )}
+        {messages.length > 0 && (client.state.workspace.members.size ?? 0) <= 1 && (
+          <div className="empty-room">
+            You're the only member here so far — invite people from manage (+), or mention an agent by name to bring one in.
+          </div>
         )}
         {threadRoot && (() => {
           const root = messages.find((m) => m.id === threadRoot);
@@ -1803,6 +1897,16 @@ function ChannelView({
         </div>
       )}
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
+      {pending.length > 0 && (
+        <div className="attach-row">
+          {pending.map((u, i) => (
+            <span key={`${u.url}:${i}`} className="attach-chip" title={u.url}>
+              📎 {u.name}
+              <button className="attach-x" title="remove before sending" onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
       {cmdNotice && <div className="edit-banner cmd-notice">{cmdNotice}</div>}
       {mentionWarnings.map((warning) => (
         <div key={warning.name} className={warning.kind === "summon" ? "mention-warn summon" : "mention-warn"}>
@@ -1916,6 +2020,8 @@ function DmView({
     else localStorage.removeItem(`fez-draft-dm-${convoKey}`);
   };
   const [uploading, setUploading] = useState<string>();
+  /** Uploaded but not yet sent — chips on the composer, consumed by send(). */
+  const [pending, setPending] = useState<Uploaded[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
@@ -1930,10 +2036,22 @@ function DmView({
 
   const send = async () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && pending.length === 0) return;
     setDraft("");
-    if (group) await client.sendGroupDm(peers, text);
-    else await client.sendDm(convoKey, text);
+    const attachments = pending;
+    setPending([]);
+    // Text + share lines as ONE message — same staging as the channel
+    // composer (no imeta here: gift wraps carry the line, not tags).
+    const body = [text, ...attachments.map(shareLine)].filter(Boolean).join("\n");
+    try {
+      if (group) await client.sendGroupDm(peers, body);
+      else await client.sendDm(convoKey, body);
+    } catch (err) {
+      // Put the words (and attachments) back — a failed DM must not eat them.
+      setDraft(text);
+      setPending(attachments);
+      toast.error(`couldn't send: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   // NOTE: the blob itself lands on the media server in the clear — only
@@ -1944,9 +2062,7 @@ function DmView({
       setUploading(`${file.name} · 0%`);
       try {
         const uploaded = await uploadFile(wire, file, (percent) => setUploading(`${file.name} · ${percent}%`));
-        const line = shareLine(uploaded);
-        if (group) await client.sendGroupDm(peers, line);
-        else await client.sendDm(convoKey, line);
+        setPending((prev) => [...prev, uploaded]);
       } catch (err) {
         wire.onError?.(err instanceof Error ? err.message : String(err));
       }
@@ -1998,6 +2114,16 @@ function DmView({
         <div ref={bottomRef} />
       </div>
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
+      {pending.length > 0 && (
+        <div className="attach-row">
+          {pending.map((u, i) => (
+            <span key={`${u.url}:${i}`} className="attach-chip" title={u.url}>
+              📎 {u.name}
+              <button className="attach-x" title="remove before sending" onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
       <Composer
         client={client}
         // A DM's "room" is its participants; delivery is by recipient,
@@ -2070,7 +2196,7 @@ function CostsPane({ client, wire, onClose }: { client: FezClient; wire: Browser
       const dayAgo = Date.now() - 24 * 3600_000;
       for (const event of events) {
         try {
-          const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as {
+          const metric = JSON.parse(await wire.decrypt(event.pubkey, event.content)) as {
             agent?: string;
             status?: string;
             durationMs?: number;
@@ -2506,7 +2632,7 @@ function Bubble({
     await wire.publish({
       kind: 1984,
       tags: [["p", creator]],
-      content: wire.encrypt(creator, JSON.stringify({ targetPk: msg.authorPk, reason: `${reason} (msg: ${msg.content.slice(0, 60)})`, ts: Date.now() })),
+      content: await wire.encrypt(creator, JSON.stringify({ targetPk: msg.authorPk, reason: `${reason} (msg: ${msg.content.slice(0, 60)})`, ts: Date.now() })),
     });
     setReported(true);
     setTimeout(() => setReported(false), 2500);

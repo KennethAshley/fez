@@ -1,8 +1,16 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "fez-desktop",
-  "version": "0.1.0",
-  "identifier": "com.ken.fez-desktop",
+  "productName": "fez",
+  "version": "0.2.0",
+  "identifier": "com.fez.desktop",
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2QTNFMkNERDdGQkFGMzgKUldRNHIvdlh6ZUtqUnZIWWU3OXp2L1dNMTc5dGQ3Zlh1a0JuWkh5VmR2WFhvcjllQWc4YXlXOGwK",
+      "endpoints": [
+        "https://github.com/KennethAshley/fez/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,19 +20,33 @@
   "app": {
     "windows": [
       {
-        "title": "fez-desktop",
+        "title": "fez",
         "width": 800,
         "height": 600,
         "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "connect-src": "'self' ipc: http://ipc.localhost ws: wss: https:",
+        "img-src": "'self' asset: http://asset.localhost data: blob: https:",
+        "frame-src": "'self' artifact: http://artifact.localhost https:",
+        "media-src": "'self' data: blob: https:",
+        "object-src": "'self' data: https:",
+        "font-src": "'self' data:",
+        "base-uri": "'self'",
+        "form-action": "'self'"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,6 +56,9 @@
     ],
     "resources": {
       "pi-agent": "pi-agent"
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0"
     }
   }
 }

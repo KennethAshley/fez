@@ -200,7 +200,7 @@ export default function FindSource({
         {error && <div className="ob-error">{error}</div>}
         {hits && !busy && hits.length === 0 && (
           <div className="pane-empty">
-            nothing on npm for that. Try different words, or define it by hand: <code>fez skill add {skill} --command …</code>
+            nothing on npm for that — try different words.
           </div>
         )}
 

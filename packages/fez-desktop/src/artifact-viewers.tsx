@@ -2,6 +2,7 @@ import type { Artifact } from "@fezchat/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { LiveArtifact } from "./live-artifact";
+import { useArtifactDoc } from "./artifact-url";
 
 /**
  * The artifact viewer REGISTRY — fez is extensible first, so even the
@@ -29,19 +30,28 @@ export function viewerFor(type: string): ArtifactViewer | undefined {
 
 /** Sandboxed page: scripts allowed, origin isolated (no cookies, no
  * parent access, no same-origin) — a website/canvas agent gets a real
- * runtime without touching the app. */
-registerArtifactViewer("html", ({ artifact }) =>
-  artifact.content ? (
-    <iframe
-      className="artifact-frame"
-      sandbox="allow-scripts"
-      srcDoc={artifact.content}
-      title={artifact.title ?? "artifact"}
-    />
-  ) : artifact.url ? (
-    <iframe className="artifact-frame" sandbox="allow-scripts" src={artifact.url} title={artifact.title ?? "artifact"} />
-  ) : null
-);
+ * runtime without touching the app. Inline content goes through the
+ * artifact:// stage (useArtifactDoc) rather than srcDoc, so the app's
+ * CSP doesn't govern the artifact's own scripts. */
+function HtmlArtifact({ artifact }: { artifact: Artifact }) {
+  const stagedUrl = useArtifactDoc(artifact.content ?? undefined);
+  if (artifact.content) {
+    if (!stagedUrl) return null; // staging — a frame flash later beats a dead one
+    return (
+      <iframe
+        className="artifact-frame"
+        sandbox="allow-scripts"
+        src={stagedUrl}
+        title={artifact.title ?? "artifact"}
+      />
+    );
+  }
+  if (artifact.url) {
+    return <iframe className="artifact-frame" sandbox="allow-scripts" src={artifact.url} title={artifact.title ?? "artifact"} />;
+  }
+  return null;
+}
+registerArtifactViewer("html", HtmlArtifact);
 
 /** Like "html", but wired to the read bridge: the sandboxed tool can ask
  * the relay read-only questions (window.fez.query/subscribe) and stream

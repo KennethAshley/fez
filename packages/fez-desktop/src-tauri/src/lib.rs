@@ -1,4 +1,50 @@
+use nostr::JsonUtil as _;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+
+/// Staged artifact documents, served over the `artifact://` custom
+/// protocol. Artifacts used to render as `srcDoc` iframes, but srcdoc
+/// documents INHERIT the parent page's CSP — so any real app CSP would
+/// blank every artifact and live tool. Served from their own scheme
+/// they are their own origin with their own (permissive) policy, while
+/// the iframe's sandbox attribute keeps doing the actual containment.
+/// BTreeMap because ids ascend: the first key is always the oldest,
+/// which makes the size cap a one-liner.
+static ARTIFACT_DOCS: Mutex<Option<std::collections::BTreeMap<u64, String>>> = Mutex::new(None);
+static ARTIFACT_NEXT: AtomicU64 = AtomicU64::new(1);
+/// More staged docs than this and the oldest fall off — a leaked stage
+/// (webview reloaded mid-flight) must not grow the map forever.
+const ARTIFACT_CAP: usize = 64;
+
+/// Park an artifact document; the webview turns the id into an
+/// artifact:// URL (convertFileSrc) and points the iframe's src at it.
+#[tauri::command]
+fn stage_artifact(html: String) -> u64 {
+    let id = ARTIFACT_NEXT.fetch_add(1, Ordering::Relaxed);
+    let mut guard = ARTIFACT_DOCS.lock().unwrap_or_else(|p| p.into_inner());
+    let docs = guard.get_or_insert_with(Default::default);
+    docs.insert(id, html);
+    while docs.len() > ARTIFACT_CAP {
+        let oldest = *docs.keys().next().unwrap();
+        docs.remove(&oldest);
+    }
+    id
+}
+
+/// The unmount half — a rendered artifact releases its doc.
+#[tauri::command]
+fn release_artifact(id: u64) {
+    let mut guard = ARTIFACT_DOCS.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(docs) = guard.as_mut() {
+        docs.remove(&id);
+    }
+}
+
+fn artifact_doc(id: u64) -> Option<String> {
+    let guard = ARTIFACT_DOCS.lock().unwrap_or_else(|p| p.into_inner());
+    guard.as_ref().and_then(|docs| docs.get(&id).cloned())
+}
 
 /// The user's fez identity from the macOS keychain — the same key every
 /// other fez surface uses (service "fez-keys"). The webview receives the
@@ -19,8 +65,22 @@ fn get_identity(account: Option<String>) -> Result<String, String> {
         .output()
         .map_err(|e| format!("couldn't run security: {e}"))?;
     if !output.status.success() {
+        // Two very different failures share a non-zero exit, and the app
+        // routes on which one it was: "no such item" is a FRESH MACHINE
+        // (the frontend matches "no fez identity" and shows onboarding),
+        // while a denied prompt / locked keychain is an access failure
+        // that must NOT create a second identity — it gets a retry
+        // screen instead. `security` exits 44 (errSecItemNotFound) when
+        // the item is absent; the stderr match is the belt to that
+        // suspender.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let not_found = output.status.code() == Some(44) || stderr.contains("could not be found");
+        if not_found {
+            return Err(format!("no fez identity in the keychain for account \"{account}\""));
+        }
         return Err(format!(
-            "no fez identity in the keychain for account \"{account}\" — run `fez keygen` (or `fez pair receive` on a new machine)"
+            "keychain access failed for account \"{account}\": {}",
+            stderr.trim()
         ));
     }
     let hex = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -28,6 +88,121 @@ fn get_identity(account: Option<String>) -> Result<String, String> {
         return Err("keychain entry is not a 64-hex key".to_string());
     }
     Ok(hex)
+}
+
+// ── key custody ─────────────────────────────────────────────────────
+// The identity key stays HERE. The webview asks for a pubkey, for
+// signatures, and for DM crypto — never the secret (Buzz's custody
+// model). get_identity survives above as the EXPLICIT reveal used by
+// backup/settings; nothing on the boot or messaging path calls it.
+
+/// Keys per account, loaded from the keychain once per launch — DM
+/// history decrypt would otherwise spawn `security` per event.
+static IDENTITY_KEYS: Mutex<Option<std::collections::HashMap<String, nostr::Keys>>> =
+    Mutex::new(None);
+
+fn load_keys(account: Option<String>) -> Result<nostr::Keys, String> {
+    let name = account.clone().unwrap_or_else(|| "default".to_string());
+    {
+        let guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(keys) = guard.as_ref().and_then(|m| m.get(&name)) {
+            return Ok(keys.clone());
+        }
+    }
+    let hex = get_identity(account)?;
+    let keys = nostr::Keys::parse(&hex).map_err(|e| format!("bad identity key: {e}"))?;
+    let mut guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+    guard.get_or_insert_with(Default::default).insert(name, keys.clone());
+    Ok(keys)
+}
+
+/// The boot call: who am I — and nothing else crosses the bridge.
+#[tauri::command]
+fn get_pubkey(account: Option<String>) -> Result<String, String> {
+    Ok(load_keys(account)?.public_key().to_hex())
+}
+
+fn parse_tags(tags: Vec<Vec<String>>) -> Result<Vec<nostr::Tag>, String> {
+    tags.into_iter()
+        .map(|t| nostr::Tag::parse(t).map_err(|e| format!("bad tag: {e}")))
+        .collect()
+}
+
+/// Sign one event template — the webview's finalizeEvent, minus the key.
+#[tauri::command]
+async fn sign_event(
+    kind: u16,
+    content: String,
+    tags: Vec<Vec<String>>,
+    created_at: Option<u64>,
+    account: Option<String>,
+) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let mut builder = nostr::EventBuilder::new(nostr::Kind::from(kind), content).tags(parse_tags(tags)?);
+    if let Some(ts) = created_at {
+        builder = builder.custom_created_at(nostr::Timestamp::from(ts));
+    }
+    let event = builder.sign(&keys).await.map_err(|e| format!("sign failed: {e}"))?;
+    Ok(event.as_json())
+}
+
+#[tauri::command]
+fn nip44_encrypt(peer: String, plaintext: String, account: Option<String>) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let peer = nostr::PublicKey::from_hex(&peer).map_err(|e| format!("bad peer pubkey: {e}"))?;
+    nostr::nips::nip44::encrypt(keys.secret_key(), &peer, plaintext, nostr::nips::nip44::Version::V2)
+        .map_err(|e| format!("encrypt failed: {e}"))
+}
+
+#[tauri::command]
+fn nip44_decrypt(peer: String, ciphertext: String, account: Option<String>) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let peer = nostr::PublicKey::from_hex(&peer).map_err(|e| format!("bad peer pubkey: {e}"))?;
+    nostr::nips::nip44::decrypt(keys.secret_key(), &peer, ciphertext)
+        .map_err(|e| format!("decrypt failed: {e}"))
+}
+
+/// Gift-wrap ONE DM rumor for every recipient (NIP-59: seal, then wrap
+/// per key). One command for the whole set because the rumor's identity
+/// must be shared — per-recipient rumors would give every member of a
+/// group DM a different message id. Returns {"rumorId", "wraps": [json]}.
+#[tauri::command]
+async fn dm_wrap_all(
+    kind: u16,
+    content: String,
+    tags: Vec<Vec<String>>,
+    recipients: Vec<String>,
+    account: Option<String>,
+) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let mut rumor = nostr::EventBuilder::new(nostr::Kind::from(kind), content)
+        .tags(parse_tags(tags)?)
+        .build(keys.public_key());
+    let rumor_id = rumor.id().to_hex();
+    let mut wraps: Vec<serde_json::Value> = Vec::new();
+    for recipient in recipients {
+        let pk = nostr::PublicKey::from_hex(&recipient).map_err(|e| format!("bad recipient: {e}"))?;
+        let wrap = nostr::EventBuilder::gift_wrap(&keys, &pk, rumor.clone(), [])
+            .await
+            .map_err(|e| format!("wrap failed: {e}"))?;
+        wraps.push(serde_json::from_str(&wrap.as_json()).map_err(|e| e.to_string())?);
+    }
+    Ok(serde_json::json!({ "rumorId": rumor_id, "wraps": wraps }).to_string())
+}
+
+/// Unwrap an incoming gift wrap to its rumor (JSON), or error.
+#[tauri::command]
+async fn dm_unwrap(event: String, account: Option<String>) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let wrap = nostr::Event::from_json(&event).map_err(|e| format!("bad event: {e}"))?;
+    let gift = nostr::nips::nip59::UnwrappedGift::from_gift_wrap(&keys, &wrap)
+        .await
+        .map_err(|e| format!("unwrap failed: {e}"))?;
+    let mut rumor = gift.rumor;
+    // The rumor id is the DM's identity (dedup, threading) — make sure
+    // the JSON carries it even when the sender left it uncomputed.
+    rumor.ensure_id();
+    Ok(rumor.as_json())
 }
 
 /// Store a newly generated (or paired-in) identity in the keychain —
@@ -266,8 +441,24 @@ fn update_settings(f: impl FnOnce(&mut serde_json::Value)) -> Result<(), String>
     }
     f(&mut json);
     std::fs::create_dir_all(fez_home()?).map_err(|e| e.to_string())?;
-    std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap_or_default())
-        .map_err(|e| format!("couldn't write settings.json: {e}"))
+    // Propagate a serialize failure — the old unwrap_or_default() wrote an
+    // EMPTY STRING over settings.json, losing every skill and grant.
+    let text = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| format!("couldn't write settings.json: {e}"))
+}
+
+/// A settings.json member as a mutable object, resetting a wrong-typed
+/// value in place — a hand-edited (or other-version) file must never
+/// panic an install. The unwrap after the reset cannot fail.
+fn obj_entry<'a>(
+    obj: &'a mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> &'a mut serde_json::Map<String, serde_json::Value> {
+    let v = obj.entry(key.to_string()).or_insert_with(|| serde_json::json!({}));
+    if !v.is_object() {
+        *v = serde_json::json!({});
+    }
+    v.as_object_mut().unwrap()
 }
 
 /// Read one file out of an in-memory npm tarball. Entries are prefixed
@@ -342,7 +533,18 @@ fn harness_installed(cmd: &str) -> bool {
         "/usr/local/bin".into(),
         "/usr/bin".into(),
         format!("{home}/.local/bin"),
+        // The other node-adjacent installers people actually use — a user
+        // who got claude-agent-acp through bun/volta/deno/asdf/pnpm saw
+        // "not installed" despite having it.
+        format!("{home}/.bun/bin"),
+        format!("{home}/.volta/bin"),
+        format!("{home}/.deno/bin"),
+        format!("{home}/.asdf/shims"),
+        format!("{home}/Library/pnpm"),
     ];
+    if let Ok(pnpm_home) = std::env::var("PNPM_HOME") {
+        dirs.push(pnpm_home);
+    }
     // nvm installs globals per node version: ~/.nvm/versions/node/*/bin
     if let Ok(entries) = std::fs::read_dir(format!("{home}/.nvm/versions/node")) {
         for e in entries.flatten() {
@@ -352,7 +554,14 @@ fn harness_installed(cmd: &str) -> bool {
     if let Ok(path) = std::env::var("PATH") {
         dirs.extend(path.split(':').map(String::from));
     }
-    dirs.iter().any(|d| std::path::Path::new(d).join(cmd).exists())
+    // Executable, not merely present — a copy that landed without its exec
+    // bit (or a directory of the same name) must not report as installed.
+    dirs.iter().any(|d| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(std::path::Path::new(d).join(cmd))
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    })
 }
 
 #[tauri::command]
@@ -389,20 +598,28 @@ fn wire_chutes_pi() -> Result<String, String> {
         .ok_or_else(|| "Set the Chutes key first: Settings → secrets → chutes → CHUTES_API_KEY.".to_string())?;
 
     let cfg = std::path::Path::new(&home).join(".pi").join("agent").join("local-models.json");
-    let mut endpoints: Vec<serde_json::Value> = std::fs::read_to_string(&cfg)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    // This file belongs to pi, not fez — a malformed or unexpected shape
+    // is a reason to STOP, not to overwrite it with just our entry
+    // (the old unwrap_or_default() silently destroyed every other local
+    // model endpoint the user had configured).
+    let mut endpoints: Vec<serde_json::Value> = match std::fs::read_to_string(&cfg) {
+        Ok(s) => serde_json::from_str(&s).map_err(|e| {
+            format!("~/.pi/agent/local-models.json exists but isn't the JSON array pi expects — fix or remove it, then retry ({e})")
+        })?,
+        Err(_) => Vec::new(),
+    };
     endpoints.retain(|e| e.get("id").and_then(|v| v.as_str()) != Some(ID));
     endpoints.push(serde_json::json!({ "id": ID, "name": "Chutes", "baseUrl": BASE_URL, "apiKey": key, "status": "checking" }));
     if let Some(parent) = cfg.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&cfg, serde_json::to_string_pretty(&endpoints).unwrap_or_default() + "\n")
+    let text = serde_json::to_string_pretty(&endpoints).map_err(|e| e.to_string())?;
+    std::fs::write(&cfg, text + "\n")
         .map_err(|e| format!("couldn't write pi local-models.json: {e}"))?;
 
     let models_body = ureq::get(&format!("{BASE_URL}/models"))
         .set("authorization", &format!("Bearer {key}"))
+        .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| format!("Chutes wired, but couldn't list models: {e}"))?
         .into_string()
@@ -458,6 +675,7 @@ fn install_package(name: String) -> Result<String, String> {
     // 1. Resolve the tarball URL from the registry (latest dist-tag).
     let meta_url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
     let meta_str = ureq::get(&meta_url)
+        .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| format!("couldn't reach npm for {name}: {e}"))?
         .into_string()
@@ -473,20 +691,42 @@ fn install_package(name: String) -> Result<String, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("no tarball for {name}@{latest}"))?
         .to_string();
+    // The URL comes from the registry response — never follow it off TLS.
+    if !tarball.starts_with("https://") {
+        return Err(format!("refusing non-https tarball url for {name}: {tarball}"));
+    }
 
     // 2. Download and unpack (gzip → tar) into a Vec we can read twice.
+    // Extension parts are self-contained esbuild bundles — tens of KB, a
+    // few MB with assets — so the caps are generous, not tight; their job
+    // is bounding a hostile or broken response, not sizing real packages.
+    const MAX_TGZ: u64 = 30 * 1024 * 1024;
+    const MAX_TAR: u64 = 120 * 1024 * 1024;
     let mut gz = Vec::new();
     std::io::Read::read_to_end(
-        &mut ureq::get(&tarball)
-            .call()
-            .map_err(|e| format!("download failed: {e}"))?
-            .into_reader(),
+        &mut std::io::Read::take(
+            ureq::get(&tarball)
+                .timeout(std::time::Duration::from_secs(120))
+                .call()
+                .map_err(|e| format!("download failed: {e}"))?
+                .into_reader(),
+            MAX_TGZ + 1,
+        ),
         &mut gz,
     )
     .map_err(|e| format!("download read failed: {e}"))?;
+    if gz.len() as u64 > MAX_TGZ {
+        return Err(format!("{name} tarball exceeds {}MB — refusing", MAX_TGZ / (1024 * 1024)));
+    }
     let mut tar_bytes = Vec::new();
-    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&gz[..]), &mut tar_bytes)
-        .map_err(|e| format!("gunzip failed: {e}"))?;
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(flate2::read::GzDecoder::new(&gz[..]), MAX_TAR + 1),
+        &mut tar_bytes,
+    )
+    .map_err(|e| format!("gunzip failed: {e}"))?;
+    if tar_bytes.len() as u64 > MAX_TAR {
+        return Err(format!("{name} expands past {}MB — refusing", MAX_TAR / (1024 * 1024)));
+    }
 
     // 3. Read package.json (npm tarballs prefix every path with "package/").
     let pkg_bytes = tar_read(&tar_bytes, "package.json").ok_or("no package.json in tarball")?;
@@ -569,31 +809,24 @@ fn install_package(name: String) -> Result<String, String> {
     let base_owned = base.to_string();
     let version = latest.to_string();
     update_settings(move |json| {
+        // update_settings guarantees an object; the members do NOT come
+        // with that guarantee (hand-edited files) — obj_entry resets a
+        // wrong-typed value instead of panicking mid-install.
         let obj = json.as_object_mut().unwrap();
         if let Some(entry) = skill_entry {
-            obj.entry("mcpServers")
-                .or_insert_with(|| serde_json::json!({}))
-                .as_object_mut()
-                .unwrap()
-                .insert(base_owned.clone(), entry);
+            obj_entry(obj, "mcpServers").insert(base_owned.clone(), entry);
         }
-        obj.entry("extensionPermissions")
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .unwrap()
-            .insert(base_owned.clone(), serde_json::json!(perms));
+        obj_entry(obj, "extensionPermissions").insert(base_owned.clone(), serde_json::json!(perms));
         // Record the version so the gallery can offer updates later.
-        obj.entry("extensionVersions")
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .unwrap()
-            .insert(base_owned.clone(), serde_json::json!(version));
+        obj_entry(obj, "extensionVersions").insert(base_owned.clone(), serde_json::json!(version));
         if wants_background {
             let list = obj
                 .entry("backgroundExtensions")
-                .or_insert_with(|| serde_json::json!([]))
-                .as_array_mut()
-                .unwrap();
+                .or_insert_with(|| serde_json::json!([]));
+            if !list.is_array() {
+                *list = serde_json::json!([]);
+            }
+            let list = list.as_array_mut().unwrap();
             if !list.iter().any(|v| v.as_str() == Some(base_owned.as_str())) {
                 list.push(serde_json::json!(base_owned));
             }
@@ -659,6 +892,7 @@ fn package_info(name: String) -> Result<String, String> {
     }
     let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
     let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| format!("couldn't reach npm: {e}"))?
         .into_string()
@@ -686,6 +920,7 @@ fn latest_version(name: String) -> Result<String, String> {
     }
     let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
     let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(30))
         .call()
         .map_err(|e| format!("couldn't reach npm: {e}"))?
         .into_string()
@@ -1044,6 +1279,11 @@ fn write_skill(name: String, config_json: String) -> Result<(), String> {
     }
     let config: serde_json::Value = serde_json::from_str(&config_json).map_err(|e| format!("bad config: {e}"))?;
     let path = settings_path()?;
+    // ~/.fez may not exist yet on a machine where nothing else created it
+    // — every other settings writer mkdirs first; this one forgot.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
     let mut settings: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("settings.json unreadable: {e}"))?;
     if !settings.is_object() {
@@ -1065,6 +1305,9 @@ fn write_skill(name: String, config_json: String) -> Result<(), String> {
 #[tauri::command]
 fn remove_skill(name: String) -> Result<(), String> {
     let path = settings_path()?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
     let mut settings: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("settings.json unreadable: {e}"))?;
     if let Some(servers) = settings.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
@@ -1074,27 +1317,27 @@ fn remove_skill(name: String) -> Result<(), String> {
         .map_err(|e| format!("write failed: {e}"))
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Copy the bundled Built-in agent (pi + pi-acp + assets) out of the app
 /// bundle into ~/.fez/bin on launch. Buzz ships buzz-agent as an in-app
 /// sidecar; fez bundles the same way but copies to its OWNED bin dir,
 /// because the SENTINEL (a launchd process outside this app) spawns agents
 /// and resolves ~/.fez/bin — a sidecar buried in the .app is unreachable to
 /// it. Version-gated: a no-op on every launch after the bundled version is
-/// already installed, so it's cheap. Best-effort — a copy failure just
-/// means the user falls back to a system pi if they have one.
-fn install_bundled_agent(app: &tauri::App) {
-    use std::os::unix::fs::PermissionsExt;
-    use tauri::Manager;
-    let src = match app.path().resource_dir() {
-        Ok(d) => d.join("pi-agent"),
-        Err(_) => return,
-    };
+/// already installed, so it's cheap. The marker is stamped ONLY after every
+/// copy succeeded — the first version stamped it unconditionally, so one
+/// transient failure (disk full, quarantined dest) skipped the copy on
+/// every launch forever, and the only cure was hand-deleting the marker.
+/// Now a failed install simply retries next launch; until one succeeds the
+/// user falls back to a system pi if they have one.
+fn install_bundled_agent(src: std::path::PathBuf) {
     // A build made without bun ships a marker but no binary (see
     // prepare-pi-agent.mjs) — nothing to install, fall back to system pi.
     if !src.join("pi").exists() {
         return;
     }
+    // An unreadable VERSION becomes "" — still stamped and still compared,
+    // so it gates like any other version instead of forcing a ~140MB
+    // re-copy on every launch.
     let version = std::fs::read_to_string(src.join("VERSION")).unwrap_or_default();
     let home = match std::env::var("HOME") {
         Ok(h) => h,
@@ -1102,42 +1345,247 @@ fn install_bundled_agent(app: &tauri::App) {
     };
     let bin = std::path::Path::new(&home).join(".fez").join("bin");
     let marker = bin.join(".pi-agent-version");
-    if !version.is_empty() && std::fs::read_to_string(&marker).unwrap_or_default() == version {
+    if std::fs::read_to_string(&marker).ok().as_deref() == Some(&version) {
         return; // already current
     }
-    if std::fs::create_dir_all(&bin).is_err() {
-        return;
-    }
-    let copy_exec = |name: &str| {
-        if std::fs::copy(src.join(name), bin.join(name)).is_ok() {
-            let _ = std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755));
+    match copy_agent_files(&src, &bin) {
+        Ok(()) => {
+            // A failed stamp is not an error: the files are in place and
+            // next launch just re-copies before stamping again.
+            let _ = std::fs::write(&marker, &version);
+            eprintln!("✓ installed bundled agent {version} → {}", bin.display());
         }
-    };
-    copy_exec("pi");
-    copy_exec("pi-acp");
-    // Runtime side-assets pi resolves next to its binary (theme is required
-    // even in --mode rpc; the wasm backs image tools).
-    let theme_dst = bin.join("theme");
-    let _ = std::fs::create_dir_all(&theme_dst);
-    if let Ok(entries) = std::fs::read_dir(src.join("theme")) {
-        for e in entries.flatten() {
-            let _ = std::fs::copy(e.path(), theme_dst.join(e.file_name()));
-        }
+        Err(e) => eprintln!("bundled agent install failed ({e}) — will retry next launch"),
     }
-    let _ = std::fs::copy(src.join("photon_rs_bg.wasm"), bin.join("photon_rs_bg.wasm"));
-    let _ = std::fs::write(&marker, &version);
-    eprintln!("✓ installed bundled agent {version} → {}", bin.display());
 }
 
+/// Every file the bundle ships is required for a successful install —
+/// pi + pi-acp executable, theme (pi needs it even in --mode rpc), and
+/// the wasm behind the image tools. Any failure aborts before the
+/// version marker is stamped.
+fn fez_relay_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    std::path::PathBuf::from(home).join(".fez").join("relay")
+}
+
+fn pid_alive(pidfile: &std::path::Path) -> Option<u32> {
+    let pid: u32 = std::fs::read_to_string(pidfile).ok()?.trim().parse().ok()?;
+    // kill -0: alive. /bin/kill keeps this file's no-extra-crates rule.
+    let ok = Command::new("/bin/kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    ok.then_some(pid)
+}
+
+/// Is the local workspace relay running? Pidfile + kill -0, the same
+/// convention as the CLI sentinel's pidfile.
+#[tauri::command]
+fn local_relay_status() -> bool {
+    pid_alive(&fez_relay_dir().join("relay.pid")).is_some()
+}
+
+/// Spawn (or adopt) the user-owned local relay and wait until its NIP-11
+/// answers. Creating ~/.fez/relay is the durable "this machine chose a
+/// local workspace" marker — .setup() respawns on it every launch.
+///
+/// The relay reads its identity from FLAGS, not its store — a restart
+/// without --owner would serve an UNCLAIMED workspace (fez-relay/src/
+/// cli.ts). So the first spawn persists its args to args.json and every
+/// respawn replays them; a restart can never change owner or name.
+#[tauri::command]
+fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
+    let dir = fez_relay_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let args_file = dir.join("args.json");
+    let (owner, name) = if owner.is_empty() {
+        let raw = std::fs::read_to_string(&args_file)
+            .map_err(|_| "no local workspace to respawn (missing args.json)".to_string())?;
+        let v: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| format!("args.json: {e}"))?;
+        (
+            v["owner"].as_str().unwrap_or_default().to_string(),
+            v["name"].as_str().unwrap_or_default().to_string(),
+        )
+    } else {
+        let v = serde_json::json!({ "owner": owner, "name": name });
+        std::fs::write(&args_file, v.to_string()).map_err(|e| format!("args.json: {e}"))?;
+        (owner, name)
+    };
+    if owner.len() != 64 || !owner.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("local relay needs a 64-hex owner pubkey".to_string());
+    }
+    let pidfile = dir.join("relay.pid");
+    if pid_alive(&pidfile).is_none() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-relay");
+        if !bin.exists() {
+            return Err(
+                "fez-relay isn't bundled in this build — join a workspace by invite instead"
+                    .to_string(),
+            );
+        }
+        let child = Command::new(&bin)
+            .args([
+                "--port",
+                "7777",
+                "--store",
+                &dir.join("events.jsonl").to_string_lossy(),
+                "--owner",
+                &owner,
+                "--name",
+                if name.is_empty() { "your workspace" } else { &name },
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("spawn fez-relay: {e}"))?;
+        std::fs::write(&pidfile, child.id().to_string()).map_err(|e| format!("pidfile: {e}"))?;
+    }
+    // Health: NIP-11 on the http origin, up to 5s.
+    for _ in 0..10 {
+        if ureq::get("http://127.0.0.1:7777")
+            .set("Accept", "application/nostr+json")
+            .timeout(std::time::Duration::from_millis(500))
+            .call()
+            .is_ok()
+        {
+            return Ok("ws://127.0.0.1:7777".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    Err("local relay didn't come up within 5s — check ~/.fez/relay".to_string())
+}
+
+/// Something is watching mentions: the CLI sentinel's pidfile is alive.
+#[tauri::command]
+fn runner_status() -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    pid_alive(&std::path::PathBuf::from(home).join(".fez").join("sentinel.pid")).is_some()
+}
+
+/// Best effort: if the fez CLI exists on this machine, start its sentinel
+/// detached. Ok(false) means "no CLI here" — the UI says so honestly
+/// instead of promising a reply that cannot come. Bundling the full
+/// runner chain (sentinel → fez agent → fez-acp) is the standalone-DMG
+/// follow-up, out of scope for the cold-start work.
+#[tauri::command]
+fn ensure_agent_runner() -> Result<bool, String> {
+    if runner_status() {
+        return Ok(true);
+    }
+    // Same real-install-dirs idea harness_installed uses: a GUI app's
+    // PATH is stripped, so look where installers actually put things.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("{home}/.fez/bin/fez"),
+        "/opt/homebrew/bin/fez".to_string(),
+        "/usr/local/bin/fez".to_string(),
+        format!("{home}/.local/bin/fez"),
+        format!("{home}/.bun/bin/fez"),
+        format!("{home}/.volta/bin/fez"),
+    ];
+    let Some(fez) = candidates.iter().find(|p| std::path::Path::new(p.as_str()).exists()) else {
+        return Ok(false);
+    };
+    Command::new(fez)
+        .arg("sentinel")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("spawn fez sentinel: {e}"))?;
+    Ok(true)
+}
+
+fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
+    // fez-relay is optional: dev builds without bun don't produce it, and
+    // the app degrades to invite-only workspaces. pi/pi-acp stay required.
+    for (name, required) in [("pi", true), ("pi-acp", true), ("fez-relay", false)] {
+        if !required && !src.join(name).exists() {
+            continue;
+        }
+        // Stage next to the destination, then rename: the rename is atomic,
+        // so the sentinel can never spawn a half-copied executable, and
+        // replacing a RUNNING pi swaps the directory entry instead of
+        // writing into a busy inode.
+        let staged = bin.join(format!(".{name}.staging"));
+        let dst = bin.join(name);
+        std::fs::copy(src.join(name), &staged).map_err(|e| format!("copy {name}: {e}"))?;
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("chmod {name}: {e}"))?;
+        // fs::copy preserves xattrs on macOS — including com.apple.quarantine
+        // when the app itself was downloaded, which makes Gatekeeper kill the
+        // copied binary the moment the sentinel spawns it. Strip it; "no such
+        // xattr" (a dev build) is the normal case and not an error.
+        let _ = Command::new("/usr/bin/xattr")
+            .args(["-d", "com.apple.quarantine"])
+            .arg(&staged)
+            .output();
+        std::fs::rename(&staged, &dst).map_err(|e| format!("rename {name}: {e}"))?;
+    }
+    // Replace the theme dir wholesale — additive copies left stale files
+    // from older agent versions behind forever.
+    let theme_dst = bin.join("theme");
+    let _ = std::fs::remove_dir_all(&theme_dst);
+    std::fs::create_dir_all(&theme_dst).map_err(|e| format!("mkdir theme: {e}"))?;
+    let entries = std::fs::read_dir(src.join("theme")).map_err(|e| format!("read theme: {e}"))?;
+    for e in entries {
+        let e = e.map_err(|e| format!("read theme: {e}"))?;
+        std::fs::copy(e.path(), theme_dst.join(e.file_name()))
+            .map_err(|err| format!("copy theme/{}: {err}", e.file_name().to_string_lossy()))?;
+    }
+    std::fs::copy(src.join("photon_rs_bg.wasm"), bin.join("photon_rs_bg.wasm"))
+        .map_err(|e| format!("copy photon_rs_bg.wasm: {e}"))?;
+    Ok(())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // artifact://localhost/<id> — the staged-doc server. Not found is
+        // a real 404: a released or evicted doc renders an empty frame,
+        // never someone else's content.
+        .register_uri_scheme_protocol("artifact", |_ctx, request| {
+            let id = request.uri().path().trim_start_matches('/').parse::<u64>().ok();
+            match id.and_then(artifact_doc) {
+                Some(doc) => tauri::http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/html; charset=utf-8")
+                    .body(doc.into_bytes())
+                    .unwrap_or_default(),
+                None => tauri::http::Response::builder()
+                    .status(404)
+                    .body(Vec::new())
+                    .unwrap_or_default(),
+            }
+        })
         .setup(|app| {
-            install_bundled_agent(app);
+            // Off the main thread: the copy moves ~140MB on a version bump,
+            // and running it synchronously here held the window back —
+            // first launch looked hung with no window and no progress.
+            use tauri::Manager;
+            if let Ok(dir) = app.path().resource_dir() {
+                std::thread::spawn(move || install_bundled_agent(dir.join("pi-agent")));
+            }
+            // A machine that chose a local workspace gets its relay back on
+            // every launch — args.json replays the original owner/name, so
+            // a restart can never change the workspace's identity.
+            if fez_relay_dir().join("args.json").exists() {
+                std::thread::spawn(|| {
+                    if let Err(e) = ensure_local_relay(String::new(), String::new()) {
+                        eprintln!("local relay respawn: {e}");
+                    }
+                });
+            }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, runner_status, ensure_agent_runner])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

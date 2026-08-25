@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { nip44, nip59, type Event, type EventTemplate } from "nostr-tools";
 import type { Wire, WireEvent, WireFilter, DmRumor, RelayInfoDoc } from "@fezchat/client";
@@ -17,12 +18,92 @@ import { fetchRelayInfo } from "../../../src/protocol/nip11.js";
  * only the last one standing. The GUI having its own wire is exactly how
  * a desktop app ends up quietly single-relay while the CLI isn't.
  *
- * Custody: the key hex arrives from the Tauri shell (macOS keychain) and
- * lives in webview memory for the session — identical trust model to the
- * TUI process holding it.
+ * Custody: crypto goes through a SIGNER seam. The app passes rustSigner
+ * — the key stays in Rust (macOS keychain → in-process cache), the
+ * webview asks for signatures and DM crypto over the invoke bridge, and
+ * a fully compromised webview could misuse those operations while the
+ * app is open but cannot exfiltrate the identity (Buzz's model). Tests
+ * and node hosts pass a 64-hex secret instead, which builds the
+ * in-process localSigner — same seam, keys where the host wants them.
  */
 
 const KIND_DM = 14;
+
+/** A rumor as the signer hands it back — pre-signature event shape. */
+interface Rumor {
+  kind: number;
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  tags: string[][];
+}
+
+export interface WireSigner {
+  pubkey: string;
+  sign(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent> | WireEvent;
+  encrypt(peerPubkey: string, plaintext: string): Promise<string> | string;
+  decrypt(peerPubkey: string, ciphertext: string): Promise<string> | string;
+  /** ONE rumor wrapped for every recipient — a shared rumor id is what
+   * makes a group DM one message instead of N. */
+  wrapDm(kind: number, content: string, tags: string[][], recipients: string[]): Promise<{ rumorId: string; wraps: WireEvent[] }>;
+  unwrap(event: WireEvent): Promise<Rumor | undefined> | (Rumor | undefined);
+}
+
+/** The app's signer: Rust holds the key; this side never sees it. */
+export function rustSigner(pubkey: string): WireSigner {
+  return {
+    pubkey,
+    async sign(tmpl) {
+      return JSON.parse(
+        await invoke<string>("sign_event", { kind: tmpl.kind, content: tmpl.content, tags: tmpl.tags, createdAt: tmpl.created_at })
+      ) as WireEvent;
+    },
+    encrypt: (peer, plaintext) => invoke<string>("nip44_encrypt", { peer, plaintext }),
+    decrypt: (peer, ciphertext) => invoke<string>("nip44_decrypt", { peer, ciphertext }),
+    async wrapDm(kind, content, tags, recipients) {
+      return JSON.parse(await invoke<string>("dm_wrap_all", { kind, content, tags, recipients })) as {
+        rumorId: string;
+        wraps: WireEvent[];
+      };
+    },
+    async unwrap(event) {
+      try {
+        return JSON.parse(await invoke<string>("dm_unwrap", { event: JSON.stringify(event) })) as Rumor;
+      } catch {
+        return undefined; // not for us — same silence as the local path
+      }
+    },
+  };
+}
+
+/** In-process signer for hosts that hold the key themselves (tests, node). */
+export function localSigner(keyHex: string): WireSigner {
+  const secret = Uint8Array.from(keyHex.match(/.{2}/g)!.map((b) => parseInt(b, 16)));
+  const pubkey = getPublicKey(secret);
+  return {
+    pubkey,
+    sign: (tmpl) =>
+      finalizeEvent(
+        { kind: tmpl.kind, created_at: tmpl.created_at ?? Math.floor(Date.now() / 1000), tags: tmpl.tags, content: tmpl.content },
+        secret
+      ) as WireEvent,
+    encrypt: (peer, plaintext) => nip44.encrypt(plaintext, nip44.getConversationKey(secret, peer)),
+    decrypt: (peer, ciphertext) => nip44.decrypt(ciphertext, nip44.getConversationKey(secret, peer)),
+    async wrapDm(kind, content, tags, recipients) {
+      const rumor = nip59.createRumor({ kind, tags, content } as EventTemplate, secret);
+      const wraps = recipients.map((pk) => nip59.createWrap(nip59.createSeal(rumor, secret, pk), pk) as unknown as WireEvent);
+      return { rumorId: (rumor as { id: string }).id, wraps };
+    },
+    unwrap(event) {
+      try {
+        return nip59.unwrapEvent(event as unknown as Event, secret) as unknown as Rumor;
+      } catch {
+        return undefined;
+      }
+    },
+  };
+}
 
 interface Sub {
   id: string;
@@ -52,7 +133,7 @@ interface PendingOk {
 
 export class BrowserWire implements Wire {
   readonly pubkey: string;
-  private secret: Uint8Array;
+  private signer: WireSigner;
   private urls: string[];
 
   private sockets = new Map<string, WebSocket>();
@@ -67,12 +148,16 @@ export class BrowserWire implements Wire {
   onRelayHealth?: (health: { url: string; connected: boolean }[]) => void;
 
   private watchdog?: ReturnType<typeof setInterval>;
+  /** Consecutive failed connects per relay — drives the backoff below. */
+  private attempts = new Map<string, number>();
+  /** Earliest next reconnect per relay; the watchdog respects it too. */
+  private nextTry = new Map<string, number>();
 
-  constructor(urls: string | string[], keyHex: string) {
+  constructor(urls: string | string[], keyOrSigner: string | WireSigner) {
     this.urls = [...new Set((Array.isArray(urls) ? urls : [urls]).map((u) => u.trim()).filter(Boolean))];
     if (this.urls.length === 0) throw new Error("BrowserWire: no relay URLs given");
-    this.secret = Uint8Array.from(keyHex.match(/.{2}/g)!.map((b) => parseInt(b, 16)));
-    this.pubkey = getPublicKey(this.secret);
+    this.signer = typeof keyOrSigner === "string" ? localSigner(keyOrSigner) : keyOrSigner;
+    this.pubkey = this.signer.pubkey;
     for (const url of this.urls) this.connect(url);
     // Belt-and-braces recovery: whatever state an old socket wedges in
     // (HMR remounts, sleep/wake, orphaned handlers), a socket that isn't
@@ -84,6 +169,10 @@ export class BrowserWire implements Wire {
       if (this.closed) return;
       for (const url of this.urls) {
         const state = this.sockets.get(url)?.readyState;
+        // Respect the backoff window — without this check the watchdog
+        // defeated it, hammering an unreachable relay every 5s forever
+        // (a fully-offline machine ran a permanent reconnect storm).
+        if (Date.now() < (this.nextTry.get(url) ?? 0)) continue;
         if (state !== WebSocket.OPEN && state !== WebSocket.CONNECTING) this.connect(url);
       }
     }, 5000);
@@ -111,6 +200,8 @@ export class BrowserWire implements Wire {
     const ws = new WebSocket(url);
     this.sockets.set(url, ws);
     ws.onopen = () => {
+      this.attempts.delete(url);
+      this.nextTry.delete(url);
       this.reportStatus();
       // A relay that just arrived has no subscriptions of its own.
       for (const sub of this.subs.values()) this.fireTo(url, sub);
@@ -121,7 +212,15 @@ export class BrowserWire implements Wire {
       // hangs for its full timeout every time one relay is down.
       for (const bucket of this.queryBuckets.values()) this.dropFromBucket(bucket, url);
       for (const [id, pending] of this.pendingOks) this.dropFromOk(id, pending, url, "relay disconnected");
-      if (!this.closed) setTimeout(() => this.connect(url), 2000);
+      if (!this.closed) {
+        // 2s → 4s → 8s … capped at 30s, reset by a successful open — a
+        // down relay gets patience, not a fixed-rate hammer.
+        const failures = (this.attempts.get(url) ?? 0) + 1;
+        this.attempts.set(url, failures);
+        const delay = Math.min(30_000, 2000 * 2 ** (failures - 1));
+        this.nextTry.set(url, Date.now() + delay);
+        setTimeout(() => this.connect(url), delay);
+      }
     };
     ws.onmessage = (raw) => {
       let msg: unknown[];
@@ -170,16 +269,9 @@ export class BrowserWire implements Wire {
         // NIP-42 challenge: sign and answer with the user's key. The
         // relay tag names THIS relay — a challenge answered with another
         // relay's url is a valid signature over the wrong statement.
-        const auth = finalizeEvent(
-          {
-            kind: 22242,
-            created_at: Math.floor(Date.now() / 1000),
-            tags: [["relay", url], ["challenge", a]],
-            content: "",
-          },
-          this.secret
-        );
-        this.sendTo(url, ["AUTH", auth]);
+        void this.sign({ kind: 22242, tags: [["relay", url], ["challenge", a]], content: "" })
+          .then((auth) => this.sendTo(url, ["AUTH", auth]))
+          .catch(() => {});
       }
     };
   }
@@ -304,17 +396,14 @@ export class BrowserWire implements Wire {
     return [...byId.values()];
   }
 
+  /** The custody seam — whoever the signer is, the wire never holds a key. */
+  private async sign(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent> {
+    return this.signer.sign(tmpl);
+  }
+
   async publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent> {
-    const event = finalizeEvent(
-      {
-        kind: tmpl.kind,
-        created_at: tmpl.created_at ?? Math.floor(Date.now() / 1000),
-        tags: tmpl.tags,
-        content: tmpl.content,
-      },
-      this.secret
-    ) as WireEvent;
-    await this.publishSigned(event as unknown as Event);
+    const event = await this.sign(tmpl);
+    await this.publishSigned(event);
     return event;
   }
 
@@ -324,7 +413,7 @@ export class BrowserWire implements Wire {
    * publish — the event exists, and telling the user otherwise would be
    * false. Only a rejection by all of them is a failure.
    */
-  private async publishSigned(event: Event): Promise<void> {
+  private async publishSigned(event: WireEvent): Promise<void> {
     // Same reason as query: a publish fired during boot is milliseconds
     // ahead of the socket, not offline.
     await this.whenConnected();
@@ -370,54 +459,43 @@ export class BrowserWire implements Wire {
    * verified against — for repo-scoped endpoints that is the PATH-ONLY
    * url (the server's verifier strips queries; see gitRepoPath).
    */
-  httpAuth(url: string, method: string): string {
-    const event = finalizeEvent(
-      { kind: 27235, created_at: Math.floor(Date.now() / 1000), tags: [["u", url], ["method", method.toUpperCase()]], content: "" },
-      this.secret
-    );
+  async httpAuth(url: string, method: string): Promise<string> {
+    const event = await this.sign({ kind: 27235, tags: [["u", url], ["method", method.toUpperCase()]], content: "" });
     const bytes = new TextEncoder().encode(JSON.stringify(event));
     let binary = "";
     for (const b of bytes) binary += String.fromCharCode(b);
     return `Nostr ${btoa(binary)}`;
   }
 
-  signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Event {
-    return finalizeEvent(
-      {
-        kind: tmpl.kind,
-        created_at: tmpl.created_at ?? Math.floor(Date.now() / 1000),
-        tags: tmpl.tags,
-        content: tmpl.content,
-      },
-      this.secret
-    );
+  async signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent> {
+    return this.sign(tmpl);
   }
 
-  encrypt(peerPubkey: string, plaintext: string): string {
-    return nip44.encrypt(plaintext, nip44.getConversationKey(this.secret, peerPubkey));
+  encrypt(peerPubkey: string, plaintext: string): string | Promise<string> {
+    return this.signer.encrypt(peerPubkey, plaintext);
   }
 
-  decrypt(peerPubkey: string, ciphertext: string): string {
-    return nip44.decrypt(ciphertext, nip44.getConversationKey(this.secret, peerPubkey));
+  decrypt(peerPubkey: string, ciphertext: string): string | Promise<string> {
+    return this.signer.decrypt(peerPubkey, ciphertext);
   }
 
   // NIP-17 — same wrap shape as src/dm.ts (kind-14 rumor, seal, gift
-  // wrap to peer + self-copy; depth rides inside the rumor).
+  // wrap to peer + self-copy; depth rides inside the rumor). ONE Rust
+  // call wraps for every recipient so the rumor id is shared.
   async sendDm(recipientPubkey: string, text: string): Promise<string> {
     return this.sendGroupDm([recipientPubkey], text);
   }
 
   async sendGroupDm(recipientPubkeys: string[], text: string): Promise<string> {
     const others = [...new Set(recipientPubkeys)].filter((pk) => pk !== this.pubkey);
-    const rumor = nip59.createRumor(
-      { kind: KIND_DM, tags: others.map((pk) => ["p", pk]), content: text } as EventTemplate,
-      this.secret
+    const { rumorId, wraps } = await this.signer.wrapDm(
+      KIND_DM,
+      text,
+      others.map((pk) => ["p", pk]),
+      [...others, this.pubkey]
     );
-    for (const pk of [...others, this.pubkey]) {
-      const wrap = nip59.createWrap(nip59.createSeal(rumor, this.secret, pk), pk);
-      await this.publishSigned(wrap as Event);
-    }
-    return (rumor as { id: string }).id;
+    for (const wrap of wraps) await this.publishSigned(wrap);
+    return rumorId;
   }
 
   /**
@@ -433,18 +511,11 @@ export class BrowserWire implements Wire {
     return fetchRelayInfo(relay || this.urls[0]);
   }
 
-  unwrapDm(event: WireEvent): DmRumor | undefined {
+  async unwrapDm(event: WireEvent): Promise<DmRumor | undefined> {
     if (event.kind !== 1059) return undefined;
     try {
-      const rumor = nip59.unwrapEvent(event as unknown as Event, this.secret) as {
-        kind: number;
-        id: string;
-        pubkey: string;
-        content: string;
-        created_at: number;
-        tags: string[][];
-      };
-      if (rumor.kind !== KIND_DM || typeof rumor.content !== "string") return undefined;
+      const rumor = await this.signer.unwrap(event);
+      if (!rumor || rumor.kind !== KIND_DM || typeof rumor.content !== "string") return undefined;
       const recipients = rumor.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]);
       const peerPk = rumor.pubkey === this.pubkey ? recipients[0] : rumor.pubkey;
       if (!peerPk) return undefined;
