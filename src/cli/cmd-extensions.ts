@@ -14,7 +14,7 @@ program
   .command("run")
   .description("Run an agent from a file")
   .argument("<file>", "Path to agent script (.ts or .js)")
-  .option("-r, --relay <url>", "Relay URL (default: FEZ_RELAY env, else wss://relay.damus.io)")
+  .option("-r, --relay <url>", "Relay URL (default: FEZ_RELAY env, else your saved relays, else the fez default)")
   .option("-k, --key <file>", "Private key file (hex)")
   .action(async (file, options) => {
     // Agent scripts are self-contained: they call Agent.create() and
@@ -45,14 +45,19 @@ program
 program
   .command("discover")
   .description("Discover agents on the network")
-  .option("-r, --relay <url>", "Relay URL", "wss://relay.damus.io")
+  .option("-r, --relay <url>", "Relay URL (default: your configured relay set)")
   .option("-t, --type <type>", "Filter by capability type")
   .option("-n, --name <name>", "Filter by agent name")
   .action(async (options) => {
-    const client = new CapabilityClient({ relay: options.relay });
+    // No baked-in default: this used to hardcode wss://relay.damus.io and
+    // ignore FEZ_RELAY and settings.json entirely — the one command where
+    // "the relay set" story was false.
+    const { resolveRelays } = await import("../shared/settings.js");
+    const relays = resolveRelays(options.relay);
+    const client = new CapabilityClient({ relay: relays });
     await client.connect();
 
-    console.log(chalk.blue(`🔍 Discovering agents on ${options.relay}...\n`));
+    console.log(chalk.blue(`🔍 Discovering agents on ${relays.join(", ")}...\n`));
 
     let agents: Array<{ pubkey: string; name: string; supportedTasks: string[] }> = [];
 
@@ -99,7 +104,7 @@ program
   .requiredOption("-t, --to <pubkey>", "Target agent pubkey")
   .requiredOption("--type <type>", "Task type")
   .option("-i, --instruction <text>", "Instruction text", "Do something")
-  .option("-r, --relay <url>", "Relay URL", "wss://relay.damus.io")
+  .option("-r, --relay <url>", "Relay URL (default: your configured relay set)")
   .option("-k, --key <file>", "Private key file")
   .option("-p, --params <json>", "JSON params", "{}")
   .action(async (options) => {
@@ -108,7 +113,8 @@ program
       privateKey = (await fs.readFile(options.key, "utf-8")).trim();
     }
 
-    const client = new CapabilityClient({ relay: options.relay, privateKey });
+    const { resolveRelays } = await import("../shared/settings.js");
+    const client = new CapabilityClient({ relay: resolveRelays(options.relay), privateKey });
     await client.connect();
 
     console.log(chalk.blue(`📤 Sending task to ${options.to}...`));
