@@ -1298,6 +1298,22 @@ button.author:hover { text-decoration: underline; }
 
 /* agent hover card — what can this name do, without clicking */
 .hovercard-wrap { position: relative; display: inline-flex; min-width: 0; }
+/* ── pending attachments (composer chips) ───────────────────────
+   Uploaded, not yet sent — the words and the file leave together. */
+.attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px; }
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg2); border: 1px solid var(--bg-mine);
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg);
+  padding: 3px 8px; border-radius: 6px; max-width: 320px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.attach-x {
+  background: none; border: none; cursor: pointer; color: var(--fg-dim);
+  font: inherit; padding: 0 2px;
+}
+.attach-x:hover { color: var(--red); }
+
 /* ── avatar quip bubble ─────────────────────────────────────────
    The creature's one line, above the sprite. Fixed-position for the
    same reason the hovercard is; below the hovercard's 60 so a card

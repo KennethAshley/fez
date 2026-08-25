@@ -822,7 +822,18 @@ export class FezClient {
   // ── Actions ─────────────────────────────────────────────────────────────
 
   /** Publish into the scoped channel. Thread tags follow Buzz's NIP-10 shape when replying. */
-  async sendChannelMessage(text: string, opts?: { threadRootId?: string; mentionPks?: string[]; channelId?: string }): Promise<Msg> {
+  async sendChannelMessage(
+    text: string,
+    opts?: {
+      threadRootId?: string;
+      mentionPks?: string[];
+      channelId?: string;
+      /** NIP-92 media metadata, one entry per attachment (["imeta",
+       * "url <u>", "m <mime>", "size <n>"]) — structured so the agent
+       * runner can hand vision models the pixels instead of a URL. */
+      imeta?: string[][];
+    }
+  ): Promise<Msg> {
     // channelId overrides the scope — for surfaces that address a
     // channel by NAME rather than by standing in it (a /repo command run
     // from anywhere posting a line root into the repo's channel).
@@ -843,6 +854,7 @@ export class FezClient {
         ["h", current.id],
         ...threadTags,
         ...(opts?.mentionPks ?? []).map((pk) => ["p", pk]),
+        ...(opts?.imeta ?? []),
       ],
       content: text,
     });

@@ -20,6 +20,9 @@ export interface Uploaded {
   url: string;
   name: string;
   size: number;
+  /** MIME type, when the browser knew it — what lets an agent runner
+   * decide an attachment is an image worth fetching for vision. */
+  type?: string;
 }
 
 export async function uploadFile(
@@ -62,7 +65,12 @@ export async function uploadFile(
     xhr.onerror = () => reject(new Error("upload failed — network error"));
     xhr.send(bytes);
   });
-  return { url: body.url ?? `${base}/${hash}`, name: file.name, size: bytes.length };
+  return { url: body.url ?? `${base}/${hash}`, name: file.name, size: bytes.length, type: file.type || undefined };
+}
+
+/** NIP-92 media tag — structured twin of the share line, for machines. */
+export function imetaTag(upload: Uploaded): string[] {
+  return ["imeta", `url ${upload.url}`, ...(upload.type ? [`m ${upload.type}`] : []), `size ${upload.size}`];
 }
 
 export function humanSize(bytes: number): string {

@@ -39,7 +39,7 @@ import Avatar from "./Avatar";
 import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
 import HoverCard from "./HoverCard";
-import { uploadFile, shareLine } from "./upload";
+import { uploadFile, shareLine, imetaTag, type Uploaded } from "./upload";
 import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
@@ -1502,6 +1502,8 @@ function ChannelView({
     else localStorage.removeItem(bindingsKey);
   };
   const [uploading, setUploading] = useState<string>();
+  /** Uploaded but not yet sent — chips on the composer, consumed by send(). */
+  const [pending, setPending] = useState<Uploaded[]>([]);
   // A focused thread reply opens inside its thread (the channel view
   // only shows roots); the component remounts per focus so lazy init is enough.
   const [membersOpen, setMembersOpen] = useState(false);
@@ -1617,12 +1619,16 @@ function ChannelView({
 
   const send = async () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && pending.length === 0) return;
+    if (editing && !text) return;
     // Cleared optimistically for a snappy composer — but a throw before
     // the wire (not a member, bad scope) used to eat the typed message
     // with no trace; the catch puts the words back and says why.
+    // Attachments are only consumed by a real message — a slash command
+    // or an edit leaves them staged.
     setDraft("");
     const savedBindings = bindings;
+    const attachments = pending;
     setBindings(new Map());
     try {
       if (!editing && text.startsWith("/")) {
@@ -1650,7 +1656,13 @@ function ChannelView({
         ...resolution,
         unresolved: resolution.unresolved.filter((n) => !localAgents.has(n.toLowerCase())),
       });
-      await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks: resolution.pubkeys });
+      setPending([]);
+      const body = [text, ...attachments.map(shareLine)].filter(Boolean).join("\n");
+      await client.sendChannelMessage(body, {
+        threadRootId: threadRoot,
+        mentionPks: resolution.pubkeys,
+        imeta: attachments.map(imetaTag),
+      });
       if (problem) onNotice(problem);
       // A mention of @fez that nothing answers must say why: 60s, then a
       // sticky note — never a fabricated message (cold-start spec).
@@ -1667,6 +1679,7 @@ function ChannelView({
     } catch (err) {
       setDraft(text);
       setBindings(savedBindings);
+      setPending(attachments);
       toast.error(`couldn't send: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
@@ -1689,13 +1702,17 @@ function ChannelView({
     setBindings(new Map());
   };
 
-  /** Drop/paste → Blossom → fez-media's share line into the channel (or thread). */
+  /** Drop/paste → Blossom → a PENDING chip on the composer. Uploads used
+   * to auto-send their share line, which made "@fez look at this image"
+   * impossible — the image was gone before you could address anyone.
+   * Now the words and the file travel as one message (Buzz's queued-
+   * attachment decision), and send() rides the metadata as imeta tags. */
   const handleFiles = async (files: File[]) => {
     for (const file of files) {
       setUploading(`${file.name} · 0%`);
       try {
         const uploaded = await uploadFile(wire, file, (percent) => setUploading(`${file.name} · ${percent}%`));
-        await client.sendChannelMessage(shareLine(uploaded), { threadRootId: threadRoot });
+        setPending((prev) => [...prev, uploaded]);
       } catch (err) {
         wire.onError?.(err instanceof Error ? err.message : String(err));
       }
@@ -1880,6 +1897,16 @@ function ChannelView({
         </div>
       )}
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
+      {pending.length > 0 && (
+        <div className="attach-row">
+          {pending.map((u, i) => (
+            <span key={`${u.url}:${i}`} className="attach-chip" title={u.url}>
+              📎 {u.name}
+              <button className="attach-x" title="remove before sending" onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
       {cmdNotice && <div className="edit-banner cmd-notice">{cmdNotice}</div>}
       {mentionWarnings.map((warning) => (
         <div key={warning.name} className={warning.kind === "summon" ? "mention-warn summon" : "mention-warn"}>
@@ -1993,6 +2020,8 @@ function DmView({
     else localStorage.removeItem(`fez-draft-dm-${convoKey}`);
   };
   const [uploading, setUploading] = useState<string>();
+  /** Uploaded but not yet sent — chips on the composer, consumed by send(). */
+  const [pending, setPending] = useState<Uploaded[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
@@ -2007,14 +2036,20 @@ function DmView({
 
   const send = async () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && pending.length === 0) return;
     setDraft("");
+    const attachments = pending;
+    setPending([]);
+    // Text + share lines as ONE message — same staging as the channel
+    // composer (no imeta here: gift wraps carry the line, not tags).
+    const body = [text, ...attachments.map(shareLine)].filter(Boolean).join("\n");
     try {
-      if (group) await client.sendGroupDm(peers, text);
-      else await client.sendDm(convoKey, text);
+      if (group) await client.sendGroupDm(peers, body);
+      else await client.sendDm(convoKey, body);
     } catch (err) {
-      // Put the words back — a failed DM must not eat the draft.
+      // Put the words (and attachments) back — a failed DM must not eat them.
       setDraft(text);
+      setPending(attachments);
       toast.error(`couldn't send: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
@@ -2027,9 +2062,7 @@ function DmView({
       setUploading(`${file.name} · 0%`);
       try {
         const uploaded = await uploadFile(wire, file, (percent) => setUploading(`${file.name} · ${percent}%`));
-        const line = shareLine(uploaded);
-        if (group) await client.sendGroupDm(peers, line);
-        else await client.sendDm(convoKey, line);
+        setPending((prev) => [...prev, uploaded]);
       } catch (err) {
         wire.onError?.(err instanceof Error ? err.message : String(err));
       }
@@ -2081,6 +2114,16 @@ function DmView({
         <div ref={bottomRef} />
       </div>
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
+      {pending.length > 0 && (
+        <div className="attach-row">
+          {pending.map((u, i) => (
+            <span key={`${u.url}:${i}`} className="attach-chip" title={u.url}>
+              📎 {u.name}
+              <button className="attach-x" title="remove before sending" onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
       <Composer
         client={client}
         // A DM's "room" is its participants; delivery is by recipient,
