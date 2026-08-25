@@ -44,10 +44,25 @@ function run(label, command, cwd) {
 }
 
 console.log("\nbuilding fez\n");
-run("core", "tsc && chmod +x dist/cli.js", ROOT);
 
+// Bootstrap order, the part alphabetical discovery can't know: the root
+// tsc type-checks src that imports these packages' dists (src/cli/tui.ts
+// → fez-client, fez-tui; the relay wiring → fez-relay), so on a fresh
+// clone "core first" deadlocks — core needs dists that only exist after
+// the packages build. This trio used to live only in ci.yml's Build
+// step, which meant GitHub's runners could build from nothing and a
+// fresh local checkout could not. One recipe, both places: ci.yml now
+// just runs this script.
+const BOOTSTRAP = ["fez-tui", "fez-relay", "fez-client"];
 const built = [];
+for (const name of BOOTSTRAP) {
+  run(name, "npm run build", join(PACKAGES, name));
+  built.push(name);
+}
+
+run("core", "tsc && chmod +x dist/cli.js", ROOT);
 for (const name of readdirSync(PACKAGES).sort()) {
+  if (BOOTSTRAP.includes(name)) continue; // built above, ahead of core
   const manifest = join(PACKAGES, name, "package.json");
   if (!existsSync(manifest)) continue;
   let build;

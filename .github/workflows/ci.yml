@@ -10,7 +10,14 @@ on:
 
 jobs:
   test:
-    runs-on: macos-latest # node:sqlite + keychain-adjacent paths match the dev platform
+    # ubuntu, deliberately: macOS runners bill at 10x and burned the whole
+    # free tier in under a month, while nothing in the suite is actually
+    # darwin-only — node:sqlite is cross-platform on node 24, and the one
+    # keychain-adjacent test (command-risk) classifies a command STRING
+    # without running it. Anything genuinely darwin-only that arrives
+    # later gets a process.platform guard, not a 10x runner. Release
+    # stays on macOS (release.yml) — signing and notarization need it.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -37,19 +44,13 @@ jobs:
       - name: Lint gate
         run: npm run lint
 
-      # The first four are ordered by hand because they must be: the root
-      # tsc type-checks src/tui.ts, which imports fez-client's dist, so
-      # fez-client builds FIRST; fez-tui precedes it (its d.ts feeds the
-      # root); build:core is the root alone. Then `npm run build` walks
-      # packages/ for everything else, so a new package is covered the
-      # day it has a build script.
+      # One recipe for CI and fresh clones alike: build-all.mjs owns the
+      # bootstrap order (fez-tui/relay/client before core — the root tsc
+      # imports their dists), which used to live only in this file. When
+      # the order was YAML-only, GitHub could build from nothing and a
+      # fresh local checkout could not.
       - name: Build
-        run: |
-          npm run build --prefix packages/fez-tui
-          npm run build --prefix packages/fez-relay
-          npm run build --prefix packages/fez-client
-          npm run build:core
-          npm run build
+        run: npm run build
 
       - name: Test gate
         run: npx vitest --run
