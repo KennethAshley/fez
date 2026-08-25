@@ -112,7 +112,7 @@ describe("cold start — claimed workspace, a room, and a guide that speaks", ()
     );
     expect(posted).toBe(true);
     const seen = await agentWire.query([{ kinds: [47103], "#h": [general!.id] }]);
-    expect(seen.some((e) => e.content.includes("Welcome, Ken."))).toBe(true);
+    expect(seen.some((e) => e.content.includes("I'm @fez, your guide"))).toBe(true);
 
     // On the WIRE is not on the SCREEN. The opener above was signed by
     // an unrostered agent key, and the client's trust rule (messages
@@ -120,7 +120,7 @@ describe("cold start — claimed workspace, a room, and a guide that speaks", ()
     // the fresh-install bug: @fez DID speak, invisibly. Raw wire
     // queries bypass that rule; client.messages() is what renders.
     await client.loadChannelHistory(general!.id);
-    const visible = () => client.messages(general!.id).some((m) => m.content.includes("Welcome, Ken."));
+    const visible = () => client.messages(general!.id).some((m) => m.content.includes("I'm @fez, your guide"));
     expect(visible()).toBe(false);
 
     // Roster the guide as a bot — the welcome flow's required step —

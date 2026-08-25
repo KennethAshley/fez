@@ -13,10 +13,12 @@ import type { FezClient } from "@fezchat/client";
 import { BrowserWire } from "./wire";
 import { relaySet } from "./relay";
 import {
+  HELLO_MARKER,
   OPENER_MARKER,
   AWAKE_MARKER,
   KIND_MESSAGE,
   NOT_READY_CUE,
+  helloText,
   openerText,
   awakeText,
   ensureMarkedMessage,
@@ -24,6 +26,10 @@ import {
   type Readiness,
   type MarkerWire,
 } from "./welcome-core";
+
+/** Typing kind — mirrors K.TYPING in @fezchat/client. Ephemeral. */
+const KIND_TYPING = 20002;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const AGENT_ACCOUNT = "agent:fez";
 
@@ -99,20 +105,32 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
   const userName = localStorage.getItem("fez-name") ?? "";
   const w = markerWire(hex);
   try {
-    const posted = await ensureMarkedMessage(w, channel.id, client.pubkey, OPENER_MARKER, openerText(r, userName));
-    if (!posted) {
-      // The opener already exists on the relay — an install from before
-      // the roster fix. Now that the agent is a member, one history
-      // reload makes the stored opener render in THIS session.
+    // The author line reads "fez", not a pubkey prefix — kind 0 is
+    // replaceable, so republishing the same profile every run is a no-op.
+    await w.publish({ kind: 0, tags: [], content: JSON.stringify({ name: "fez" }) }).catch(() => {});
+
+    const existing = await w.existing(channel.id);
+    if (!findMarked(existing, OPENER_MARKER)) {
+      // A RECEIVED message, not furniture: a typing beat, a short hello,
+      // a breath, then the intro — the same rhythm a person would have.
+      await w.publish({ kind: KIND_TYPING, tags: [["h", channel.id]], content: "" }).catch(() => {});
+      await sleep(1400);
+      await ensureMarkedMessage(w, channel.id, client.pubkey, HELLO_MARKER, helloText(userName));
+      await sleep(900);
+      await ensureMarkedMessage(w, channel.id, client.pubkey, OPENER_MARKER, openerText(r, userName));
+    } else {
+      // The opener already exists — an install from before the roster
+      // fix. Now that the agent is a member, one history reload makes
+      // the stored opener render in THIS session.
       await client.loadChannelHistory(channel.id).catch(() => {});
-    }
-    // The awake line only ever follows a NOT-ready opener whose gap has
-    // since been filled — cued by the opener's own text, so a ready-day-one
-    // opener never grows a spurious "I'm awake" on a later launch.
-    if (!posted && r.authed && r.runner) {
-      const opener = findMarked(await w.existing(channel.id), OPENER_MARKER);
-      if (opener?.content.includes(NOT_READY_CUE)) {
-        await ensureMarkedMessage(w, channel.id, client.pubkey, AWAKE_MARKER, awakeText());
+      // The awake line only ever follows a NOT-ready opener whose gap
+      // has since been filled — cued by the opener's own text, so a
+      // ready-day-one opener never grows a spurious "I'm awake" later.
+      if (r.authed && r.runner) {
+        const opener = findMarked(existing, OPENER_MARKER);
+        if (opener?.content.includes(NOT_READY_CUE)) {
+          await ensureMarkedMessage(w, channel.id, client.pubkey, AWAKE_MARKER, awakeText());
+        }
       }
     }
   } finally {

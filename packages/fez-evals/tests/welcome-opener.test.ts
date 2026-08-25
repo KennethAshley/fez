@@ -6,6 +6,7 @@ import fs from "node:fs";
 import {
   OPENER_MARKER,
   NOT_READY_CUE,
+  helloText,
   openerText,
   awakeText,
   ensureMarkedMessage,
@@ -15,10 +16,9 @@ import {
 } from "../../fez-desktop/src/welcome-core.js";
 
 describe("welcome opener", () => {
-  it("copy matrix: every readiness state says something true and actionable", () => {
+  it("copy matrix: every readiness state says something true, actionable, and chat-sized", () => {
     const live = openerText({ authed: true, runner: true }, "Ken");
     expect(live).toContain("@fez what can you do?");
-    expect(live).toContain("Welcome, Ken.");
     expect(live).not.toContain(NOT_READY_CUE); // a live opener never grows an awake line
     const noRunner = openerText({ authed: true, runner: false }, "Ken");
     expect(noRunner).toContain("fez sentinel");
@@ -27,7 +27,13 @@ describe("welcome opener", () => {
     const noAuth = openerText({ authed: false, runner: false }, "");
     expect(noAuth).toContain("Settings → Agents");
     expect(noAuth).toContain(NOT_READY_CUE);
-    expect(noAuth).toContain("Welcome."); // empty name degrades cleanly
+    // the hello bubble carries the name; empty name degrades cleanly
+    expect(helloText("Ken")).toContain("Ken");
+    expect(helloText("")).toBe("🎩 hey — welcome in.");
+    // a received message, not a memo: every bubble stays chat-sized
+    for (const text of [helloText("Ken"), live, noRunner, noAuth, awakeText()]) {
+      expect(text.length).toBeLessThan(260);
+    }
     expect(awakeText()).toContain("@fez");
   });
 

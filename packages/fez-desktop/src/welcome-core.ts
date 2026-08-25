@@ -8,6 +8,7 @@
  * when any message in the channel already carries it. Reinstalls,
  * paired second devices, and re-runs all converge on one greeting.
  */
+export const HELLO_MARKER = "fez-welcome.hello.v1";
 export const OPENER_MARKER = "fez-welcome.opener.v1";
 export const AWAKE_MARKER = "fez-welcome.awake.v1";
 
@@ -39,28 +40,24 @@ export function findMarked(events: ChannelEvent[], marker: string): ChannelEvent
   return events.find((e) => e.tags.some((t) => t[0] === "client" && t[1] === marker));
 }
 
-export function openerText(r: Readiness, userName: string): string {
-  const hello = userName ? `Welcome, ${userName}.` : "Welcome.";
-  const base =
-    `🎩 ${hello} This is your workspace — it runs on this machine, and your ` +
-    `identity is a key in your keychain, not an account on a server. ` +
-    `I'm @fez, your guide: ask me anything about fez, or hand me a task ` +
-    `and I'll bring in the right agent.`;
+/**
+ * Two short bubbles, not one memo. The welcome reads as a MESSAGE
+ * someone sent, so it's sized like one — the workspace/keychain lore
+ * moved to the docs; a first hello is not the place for architecture.
+ */
+export function helloText(userName: string): string {
+  return userName ? `🎩 hey ${userName} — welcome in.` : "🎩 hey — welcome in.";
+}
+
+export function openerText(r: Readiness, _userName: string): string {
+  const intro = "I'm @fez, your guide — ask me anything, or hand me a task and I'll bring in the right agent.";
   if (r.authed && r.runner) {
-    return `${base}\n\nTry it: mention @fez what can you do?`;
+    return `${intro} Try: @fez what can you do?`;
   }
   if (r.authed && !r.runner) {
-    return (
-      `${base}\n\nOne thing first: nothing is listening for mentions yet. ` +
-      `Start the watcher with \`fez sentinel\` in a terminal (or install the ` +
-      `fez CLI), then mention me.`
-    );
+    return `${intro}\n\nOne thing first: nothing's listening for mentions yet — run \`fez sentinel\` in a terminal, then mention me.`;
   }
-  return (
-    `${base}\n\nOne thing first: I need a model to think with. ` +
-    `Connect one in Settings → Agents (Claude Code login or an API key), ` +
-    `then come back and mention me.`
-  );
+  return `${intro}\n\nOne thing first: I need a model to think with — connect one in Settings → Agents, then mention me.`;
 }
 
 export function awakeText(): string {
