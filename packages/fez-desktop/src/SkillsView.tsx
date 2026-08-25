@@ -32,7 +32,7 @@ import { extensionSettingsPanels } from "./gui-extensions";
 const KIND_SKILL_LISTING = 40200;
 const KIND_SKILL_INSTALL = 40201;
 /** Company-tier cross-relay install index — empty until fez company infra exists (infra/skill-counts is ready to deploy); relay receipts carry the counts meanwhile. */
-const DEFAULT_COUNTS_URL = "https://fez-web-kohl.vercel.app/api/counts";
+const DEFAULT_COUNTS_URL = "https://fez.chat/api/counts";
 const countsUrl = () => localStorage.getItem("fez-skill-counts-url") ?? DEFAULT_COUNTS_URL;
 
 interface SkillConfig {
