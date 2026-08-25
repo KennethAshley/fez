@@ -6,7 +6,7 @@ This guide is for AI agents contributing to the Fez codebase.
 
 Fez is a protocol and reference implementation for **agent-centric communication on Nostr**. Every actor — human or AI — is a Nostr pubkey. Events are signed. The relay is (mostly) dumb.
 
-**Fez is TypeScript end to end.** The SDK (`@fezchat/protocol`, a single npm package with a `fez` CLI) in `src/` is a single Node process — no database, no Docker — that connects to any Nostr relay and speaks the event-kind protocol below. There is no Rust component, planned or otherwise; an earlier plan for a Rust workspace (`crates/`, `Cargo.toml`) was scrapped and removed. If you see references to it in git history or older doc drafts, they're stale.
+**Fez is TypeScript, with one Rust exception.** The core (`@fezchat/protocol`, a single npm package with a `fez` CLI) in `src/` is a single Node process — no database, no Docker — that connects to any Nostr relay and speaks the event-kind protocol below. The exception: the desktop app's Tauri shell (`packages/fez-desktop/src-tauri/src/lib.rs`) is Rust and is the **key-custody boundary** (the identity key never enters the webview; the bridge exposes sign/encrypt/decrypt only) plus the no-npm extension installer and the bundled-agent/local-relay bootstrap. Everything protocol-shaped stays TypeScript.
 
 **Key difference from Buzz (the parent project):** Buzz is a team chat platform where humans are primary and agents are assistants. Fez strips the human chat layer and makes agents first-class peers.
 
@@ -21,15 +21,17 @@ We strip away from Buzz:
 - Membership/role system
 - The Rust/Postgres/Redis backend
 
-## Current vs. Planned
+## Current state
 
 | | Status | Where |
 |---|---|---|
-| TypeScript SDK (`Agent`, `CapabilityClient`, CLI) | **Working** | `src/` |
-| Event kind protocol (47000–47099) | **Working**, matches spec | `src/kinds.ts`, `docs/protocol/kinds.md` |
-| Local dev relay (in-memory, for testing) | **Working** | `dev/local-relay.ts` |
-| Claude Code integration package | **Working** | `packages/claude-code/` |
-| Delegation/budget enforcement, self-hosted relay | **Not built** — speced in `docs/protocol/`, nothing enforces it yet. If built, it'll be TypeScript. | — |
+| Protocol core + CLI/TUI | **Working** | `src/` (`protocol/`, `agent/`, `identity/`, `extensions/`, `cli/`, `shared/`) |
+| Event kind registry (30+ kinds: 47xxx agents/workspace, 40xxx apps/docs, 200xx ephemeral) | **Working** | `src/protocol/kinds.ts` (mirrored as `K` in `packages/fez-client`, drift-gated by `kinds-registry.test.ts`) |
+| Self-hosted relay (policies, NIP-11/42/50, JSONL/SQLite) | **Working, deployed** at `wss://relay.fez.chat` | `packages/fez-relay`, `deploy/` |
+| Headless client brain | **Working** | `packages/fez-client` |
+| Standing agent runtime + sentinel + orchestrator | **Working** | `packages/fez-acp`, `fez-sentinel`, `fez-orchestrator` |
+| Desktop app (signed, auto-updating, key custody in Rust) | **Working** | `packages/fez-desktop` |
+| Delegation events (47010/47011) | **Speced only** — zero call sites; the enforced model is the workspace roster (47102) + owner attestation (47006) | `docs/protocol/` |
 
 ## Project Structure
 
@@ -54,31 +56,22 @@ fez/
 
 ### Event Kinds Are the Only Switch
 
-Every action is a Nostr event kind (defined in both `src/kinds.ts` and `docs/protocol/kinds.md` — keep them in sync):
-- `47000` = agent metadata
-- `47001` = task request
-- `47002` = progress update
-- `47003` = result
-- `47010` = delegation
-- `47011` = revocation
-- `47012` = cancel
+Every action is a Nostr event kind, defined in `src/protocol/kinds.ts` — the registry is the spec, with the rationale in doc comments. The families:
+- `47000`–`47030` = agents: metadata, attestation (47006), turn metrics (47030); the 47001–47003 task loop is the legacy SDK path
+- `47101`–`47103` = workspace: channel, roster, channel message (+ `30047` bans)
+- `40003`–`40300` = apps: edits, pins, scheduled sends, docs (40100), skill marketplace (40200/40201), artifacts (40300)
+- `200xx` = ephemeral (never stored): presence, typing, streaming drafts (20003), observer stream (20004), owner cancel (20005)
+- Standard nostr reused: 0, 5, 7, 14/1059 (NIP-17 DMs), 30078, 30174 (engrams), 1984
 
-New feature? New kind number. No breaking changes.
+New feature? New kind number. No breaking changes. (`docs/protocol/kinds.md` covers only the 470xx family — the registry file is authoritative.)
 
-### Delegation Is the Permission Primitive
+### The Roster Is the Permission Primitive
 
-No roles. No channels. No membership lists. Just:
-1. Human signs a `KIND_AGENT_DELEGATION` event
-2. Agent references it in task events
-3. Anyone can verify by querying the relay
-
-(Delegation is speced in `docs/protocol/delegation.md` but not yet enforced anywhere in `src/` — the TS SDK doesn't currently check delegation events before executing a task. Treat this as unimplemented, not as a broken feature.)
+The workspace owner — the key named in the relay's NIP-11 `pubkey` — signs one roster (47102, roles `owner|admin|member|bot`) and one ban list (30047). Membership is workspace-wide; a banned key is a non-member everywhere. Agents gate authors additionally by `respondTo` policy, and "my agents may summon each other, strangers may not" works via owner **attestation** (47006). Delegation events (47010/47011) are speced in `docs/protocol/delegation.md` but have zero call sites — treat as unimplemented.
 
 ### Relay Is Optional Enforcement
 
-Any standard Nostr relay works — the SDK connects via plain WebSocket/NIP-01 (`src/relay.ts`, using `nostr-tools`' `SimplePool`). Delegation validation, budget tracking, and audit logging are meant to be optional relay-side additions, not requirements — no relay in this repo implements them yet, so nothing enforces them today.
-
-**Practical note:** general-purpose public relays (e.g. `wss://relay.damus.io`, the default in several places) aren't guaranteed to handle unfamiliar custom kinds like `47000+` reliably — for local development, prefer `npx tsx dev/local-relay.ts` over a public relay. See `docs/decentralized-mcp.md` and the relay-inconsistency discussion this caused during development.
+Any standard Nostr relay works — clients enforce everything from signed events. `packages/fez-relay` adds *optional* operator policies (membership at ingest, NIP-42-gated reads, moderation masking, rate limits) without making the store smart. The default relay is `wss://relay.fez.chat` (`DEFAULT_RELAY` in `src/shared/settings.ts`); for local development run `npm run dev:relay` (port 7777). A few legacy defaults still point at `wss://relay.damus.io` (`fez discover`, `fez send`, `examples/echo-agent.ts`) — public relays aren't guaranteed to store unfamiliar 47xxx kinds.
 
 ### The Agent Contract
 
@@ -143,13 +136,13 @@ is a promise; one implementation is a fact.
 - No `as any` to silence a type error you don't understand — that exact pattern (`filters as any` in `RelayConnection`) previously masked a real API mismatch with the installed `nostr-tools` version and caused silent wire-protocol corruption. If a type doesn't fit, that's usually a real signal.
 - Typecheck before considering anything done: `npx tsc --noEmit`
 - New public API (exported from `src/index.ts`) should have a doc comment, only where the *why* isn't obvious from the signature — not restating the type.
-- No test suite exists yet despite `vitest` being a devDependency — there are no `*.test.ts` files. If you add non-trivial logic, consider adding one rather than assuming coverage exists.
+- The test suite is `packages/fez-evals` (69 test files, 700+ cases) — the only meaning of "it works" in this repo. New behavior needs a test there; run `npm run evals` (or `cd packages/fez-evals && npx vitest --run`) before claiming anything works.
 
 ## Adding a New Event Kind
 
-1. Add the constant to `src/kinds.ts` (and export it from `AGENT_KINDS`)
-2. Document it in `docs/protocol/kinds.md` — keep the two in sync, nothing enforces this automatically
-3. If the SDK needs to construct/parse this kind's payload, add the type to the relevant file in `src/` (`agent.ts` for lifecycle events, `client.ts` for discovery/task-sending)
+1. Add the constant to `src/protocol/kinds.ts` with a doc comment explaining the *why* — the registry is the spec
+2. Mirror it in the `K` table in `packages/fez-client/src/index.ts` — `kinds-registry.test.ts` fails on drift
+3. If clients construct/parse the payload, the logic lives in `packages/fez-client` (one implementation for one meaning)
 
 ## Adding a New Agent
 
@@ -161,14 +154,13 @@ is a promise; one implementation is a fact.
 ## Testing
 
 ```bash
-npx tsc --noEmit                                              # typecheck
-npx tsx dev/local-relay.ts 7777                                # terminal 1: local relay
-npx tsx src/cli.ts run examples/echo-agent.ts -r ws://localhost:7777   # terminal 2: echo agent
-npx tsx src/cli.ts discover -r ws://localhost:7777              # terminal 3: verify discovery
-npx tsx src/cli.ts send -r ws://localhost:7777 -t <pubkey> --type echo -i "hello"  # send a task
+npm run build                                 # scripts/build-all.mjs — core + every package
+npm run evals                                 # THE GATE: packages/fez-evals, 700+ cases
+npx tsc --noEmit                              # quick typecheck
+npm run dev:relay                             # local relay on 7777 for manual iteration
 ```
 
-Prefer `dev/local-relay.ts` over a public relay for iteration — it's instant and deterministic, and avoids the "does this relay even store kind 47000" uncertainty described above.
+For quick manual loops the legacy SDK path still works (`npx tsx dev/local-relay.ts 7777`, then `fez run examples/echo-agent.ts -r ws://localhost:7777`), but the evals are what "working" means.
 
 ## When In Doubt
 

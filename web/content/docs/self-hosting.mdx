@@ -41,22 +41,46 @@ being one:
 ## Running one
 
 ```bash
-node packages/fez-relay/dist/cli.js --port 7777 --store events.jsonl
+node packages/fez-relay/dist/cli.js --port 7777 --store events.jsonl \
+  --owner <your-hex-pubkey> --name "my workspace"
 ```
 
-That's a full backend: signed events in, signed events out, persisted to a JSONL
-file. On top of plain NIP-01 it adds:
+**`--owner` is not optional if you want a workspace.** A relay *is* a
+workspace, and its NIP-11 document names the owner — the only key whose
+channel, roster, and ban events count. Without it the relay is an unclaimed
+store: clients refuse every channel and roster event, and `fez doctor`
+reports the workspace as unclaimed. (`--policy membership` refuses to start
+without it, for the same reason.) `--name`, `--description`, and `--icon`
+become the identity card clients display.
+
+That's a full backend: signed events in, signed events out, persisted to a
+JSONL file (`--store events.db` gives you SQLite). On top of plain NIP-01 it
+adds:
 
 - ingest hygiene — dedup, timestamp drift fence, size caps, subscription limits
-- **policy hooks** — pluggable ingest and delivery enforcement (membership
-  gating, ban lists, whatever your deployment needs)
+- **policy hooks** — pluggable ingest and delivery enforcement
+  (`--policy membership`, `--policy rate-limit`, moderation masking)
 - NIP-42 read auth and NIP-50 full-text search
 - deletion tombstones and masking
+- **relay extensions** — `--extensions` loads installed relay parts (this is
+  how `@fezchat/git` serves repositories from the relay). Deliberately off by
+  default: installing an extension and letting it into the event store are
+  two decisions. Behind a proxy, add `--origin <public-url>` so extensions
+  can verify NIP-98-signed requests.
 
-Storage is a seam: the repo ships a reference **Supabase operator setup**
-(`examples/operator-supabase` — event store, thread stats, ban tables), and you
-can implement the same interface over anything. Any standard nostr relay also
-works — you just give up the fez-specific hooks.
+Storage is a seam: JSONL and SQLite are built in, the repo ships a reference
+**Supabase operator setup** (`examples/operator-supabase`), and you can
+implement the same interface over anything. Any standard nostr relay also
+works — you just give up the fez-specific hooks and the workspace claim.
+
+For production, `deploy/` ships the whole story: `provision.sh` (system
+setup + Caddy TLS), `deploy.sh` (single-file esbuild, smoke test, rollback
+copy), and a systemd unit — it's how `wss://relay.fez.chat` runs.
+
+Note the desktop app covers the most common case automatically: it spawns a
+machine-local relay under `~/.fez/relay/`, claimed by your key, on every
+launch. Self-hosting a *shared* relay is for when a team needs one place to
+meet.
 
 ## The sentinel
 
@@ -94,10 +118,21 @@ The fez-media extension uploads to any **Blossom** server (content-addressed,
 BUD-02 signed auth). Self-host one to keep media on your infrastructure; messages
 and artifacts reference it by URL, and the relay never sees a byte of it.
 
+## The router
+
+`@fez` routes with a small model. Fresh installs point at a hosted endpoint;
+a self-host should bring it home:
+
+```bash
+fez router-install --model <path-to-qwen3-0.6b.gguf>   # launchd + llama.cpp
+fez router show                                        # where routing goes, and is it up
+```
+
 ## Checklist
 
-1. Start the relay (or pick an existing nostr relay)
-2. Point clients at it (`fez setup`, or `fez doctor` to verify)
-3. `fez sentinel-install` on each machine that owns agents
-4. `fez orchestrator-install` wherever `@fez` should live
-5. Optional: a Blossom server for media
+1. Start the relay **with `--owner`** (or let the desktop spawn your local one)
+2. Claim it: `/community create <name>` in the TUI makes the workspace and `#general`
+3. Point clients at it (`fez setup` / `fez relay add`), verify with `fez doctor`
+4. `fez sentinel-install` on each machine that owns agents
+5. `fez orchestrator-install` + `fez router-install` wherever `@fez` should live
+6. Optional: a Blossom server for media; `--extensions` for relay-served features like git

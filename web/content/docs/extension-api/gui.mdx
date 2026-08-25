@@ -1,0 +1,72 @@
+---
+title: GUI surface
+description: Panels, cards, views, and themes in the desktop app.
+---
+
+The gui part is a single IIFE bundle in `~/.fez/gui-extensions/`, loaded by
+the desktop webview. The host injects React — the page keeps exactly one —
+so you write `h()` calls (or JSX with a bound factory), never `import react`:
+
+```ts
+import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
+
+let h: GuiExtensionApi["React"]["createElement"];
+
+export default function activate(api: GuiExtensionApi) {
+  h = api.React.createElement;
+  api.registerMessageDecorator(
+    (content) => content.startsWith("📊 poll: "),
+    ({ content, msgId, channelId }) => h(PollCard, { content, msgId, channelId }),
+  );
+}
+```
+
+Build with `esbuild --format=iife --global-name=__fezExt --platform=browser
+--jsx=transform --jsx-factory=h`. `api.React` carries `createElement` plus
+`useState`, `useEffect`, `useCallback`, `useRef`, `useMemo`.
+
+## Registration seams
+
+| Method | What it adds | Permission |
+| --- | --- | --- |
+| `registerSettingsPanel(name, render, opts?)` | a card in Settings → Extensions. The panel is filed under *your extension's* name regardless of the `name` argument — one extension can't impersonate another. `opts.source` links it to a channel source so the rail offers a settings button | `ui` |
+| `registerGuiCommand(name, run)` | a composer slash command; return `""` to emit nothing | `commands` |
+| `registerMessageDecorator(match, render)` | a card mounted under matching message bodies (how the poll card enters) | `ui` |
+| `registerThreadView(name, match, render)` | a lens on a whole thread, keyed on the root message's content; rendered *above* the replies — an index of the conversation, not a substitute | `ui` |
+| `registerPageView(name, match, render)` | own a whole document. `match` returning `true` adds a toggle; `"default"` opens your view instead of markdown. Markdown stays one click away — the document is the truth, a view is a lens | `ui` |
+| `registerBlockRenderer(lang, render, menu?)` | own a fenced code block by language tag. Pass `menu` (label + insert template) or your block type stays undiscoverable | `ui` |
+| `watchAgent(name)` | open the live activity pane for an agent | `read:agents` |
+| `openThread(channelId, rootId)` / `openUrl(url)` | navigation | `ui` |
+| `client` | the full `FezClient` — withheld entirely without the grant | `read:channels` |
+| `personas` | list/read/update/create personas and roster their keys — the power to reprogram every agent on the machine | `personas` (sensitive) |
+| `secrets` | `set(key, value)` and `has(key)` — **write-only by design**. A panel can store a token it just obtained and check one exists; it can never read it back. The value lands in the OS keychain and is read host-side | `ui` |
+
+Host-only (no published types yet): `registerTheme` (a CSS-variable pack,
+light + dark), `registerMarkdownPlugin` (a remark plugin, runs after gfm),
+`registerArtifactViewer` (render a typed kind-40300 artifact), `parseQuery`.
+
+## Page and block props
+
+`registerPageView`'s render receives `{ content, save, comment, title,
+channelId, slug?, editable }`. `save(next)` is the whole write path — it
+publishes a new version; your view never learns whether it's a wiki page or
+a channel doc. `comment(text, anchor, mentions)` anchors a thread to a line —
+mention an agent in it and the agent answers inside the document. `editable`
+is `false` when an old version is on screen: a view must not rewrite history.
+
+Block renderers receive `{ info, body, raw, channelId, slug? }` — `info` is
+everything after the language tag on the fence (`agent=researcher
+refresh=daily`), and `raw` is the verbatim block, the anchor for comments.
+
+## Network access
+
+The webview shadows `fetch` and `WebSocket` for extension code. Requests are
+refused unless a `network:` permission matches: `network:relay` expands to
+your workspace's relay hosts at call time, `network:example.com` is an exact
+host, `network:.example.com` covers subdomains, and `network:*` (sensitive)
+allows anything. `XMLHttpRequest` always throws — use `fetch`.
+
+## Reload behavior
+
+Gui parts reload live when an extension is installed, updated, or removed
+from the gallery. Headless and relay parts need their host restarted.
