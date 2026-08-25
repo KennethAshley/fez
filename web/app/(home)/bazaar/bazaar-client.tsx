@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 
+import { AnimatedSprite, PixelSprite } from '@/components/qud/pixel-sprite';
+import { SPRITES } from '@/components/qud/sprites';
+
 const ACCENT = '#FF6A00';
 
 // ---------------------------------------------------------------- cast
@@ -214,9 +217,9 @@ function RubricBar({
     <div className="flex items-center gap-2 text-[0.65rem]">
       <span className="w-20 shrink-0 uppercase tracking-wider text-neutral-600">{label}</span>
       <span className="w-8 shrink-0 text-neutral-700">{weight}</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-neutral-900">
+      <div className="h-1.5 flex-1 overflow-hidden bg-neutral-900">
         <div
-          className="h-full rounded-full bg-[#FF6A00] transition-[width] duration-700 ease-out"
+          className="h-full bg-[#FF6A00] transition-[width] duration-700 ease-out"
           style={{ width: active ? `${value}%` : '0%', transitionDelay: `${delay}ms` }}
         />
       </div>
@@ -245,8 +248,11 @@ function Typing() {
 export function BazaarClient() {
   const reduce = useReducedMotion();
   const [threads, setThreads] = useState<SimThread[]>([]);
+  // Deterministic seeds — Math.random() here rendered different numbers
+  // on the server and the client and tripped hydration (React #418).
+  // The sim scatters them within a few settlements anyway.
   const [ema, setEma] = useState<Record<string, number>>(
-    () => Object.fromEntries(MINERS.map((m) => [m.id, 55 + Math.random() * 20])),
+    () => Object.fromEntries(MINERS.map((m, i) => [m.id, 55 + ((i * 7) % 20)])),
   );
   const [settledCount, setSettledCount] = useState(0);
   const emaRef = useRef(ema);
@@ -309,8 +315,8 @@ export function BazaarClient() {
       {/* ---------------- leaderboard ---------------- */}
       <div className="rounded-sm border border-neutral-900 bg-neutral-950 p-4">
         <div className="flex items-baseline justify-between">
-          <span className="text-[0.68rem] uppercase tracking-[0.18em] text-[#FF6A00]">
-            miner standings · rolling ema
+          <span className="text-[0.68rem] lowercase tracking-[0.18em] text-[#cfc041]">
+            ⚖ miner standings <span className="text-neutral-600">· rolling ema</span>
           </span>
           <span className="text-[0.65rem] tabular-nums text-neutral-600">
             {settledCount} conversations scored
@@ -325,12 +331,20 @@ export function BazaarClient() {
               className="flex items-center gap-3"
             >
               <span className="w-4 text-[0.7rem] tabular-nums text-neutral-600">{rank + 1}</span>
-              <span className={`w-14 text-xs font-bold ${rank === 0 ? 'text-[#FF6A00]' : 'text-neutral-200'}`}>
+              <span className="sprite-live w-8 shrink-0">
+                {rank === 0 ? (
+                  <AnimatedSprite sprite={SPRITES[m.id]} scale={2} />
+                ) : (
+                  <PixelSprite sprite={SPRITES[m.id]} scale={2} mono="#5d564c" />
+                )}
+              </span>
+              <span className={`w-14 text-xs font-bold ${rank === 0 ? 'text-[#cfc041]' : 'text-neutral-200'}`}>
+                {rank === 0 && <span className="text-[#FF6A00]">&gt;</span>}
                 {m.name}
               </span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-900">
+              <div className="h-2 flex-1 overflow-hidden bg-neutral-900">
                 <div
-                  className="h-full rounded-full transition-[width] duration-1000 ease-out"
+                  className="h-full transition-[width] duration-1000 ease-out"
                   style={{
                     width: `${((ema[m.id] ?? 0) / topEma) * 100}%`,
                     background: rank === 0 ? ACCENT : '#7a4a26',
@@ -375,17 +389,25 @@ export function BazaarClient() {
                     kind 47001 · <span className="text-neutral-400">{t.scenario.type}</span>
                   </span>
                   <span
-                    className={`shrink-0 rounded-full border px-2 py-0.5 uppercase tracking-wider ${
+                    className={`shrink-0 lowercase tracking-wider ${
                       t.phase === 'settled'
-                        ? 'border-[#FF6A00] text-[#FF6A00]'
+                        ? 'text-[#FF6A00]'
                         : t.phase === 'scoring'
-                          ? 'border-neutral-400 text-neutral-300'
+                          ? 'text-[#cfc041]'
                           : t.phase === 'open'
-                            ? 'border-neutral-700 text-neutral-500'
-                            : 'border-neutral-600 text-neutral-400'
+                            ? 'text-neutral-500'
+                            : 'text-[#58c470]'
                     }`}
                   >
-                    {t.phase === 'working' ? <>miners working <Typing /></> : t.phase}
+                    <span className="text-neutral-700">[</span>
+                    {t.phase === 'working' ? (
+                      <>labor arrives <Typing /></>
+                    ) : t.phase === 'scoring' ? (
+                      'the validator judges'
+                    ) : (
+                      t.phase
+                    )}
+                    <span className="text-neutral-700">]</span>
                   </span>
                 </div>
 
@@ -403,17 +425,21 @@ export function BazaarClient() {
                       className={`border-t px-4 py-3 ${isWinner ? 'border-[#FF6A00]/40 bg-[#FF6A00]/[0.04]' : 'border-neutral-900'}`}
                     >
                       <div className="flex items-center justify-between text-[0.68rem]">
-                        <span className="uppercase tracking-[0.18em] text-[#FF6A00]">
-                          @{r.miner} · kind 47003
+                        <span className="flex items-center gap-2">
+                          <span className="sprite-live">
+                            <AnimatedSprite sprite={SPRITES[r.miner]} scale={2} />
+                          </span>
+                          <span className="tracking-[0.18em] text-[#cfc041]">@{r.miner}</span>
+                          <span className="text-neutral-700">· kind 47003</span>
                         </span>
                         {isWinner && (
                           <motion.span
                             initial={reduce ? false : { scale: 0.6, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
                             transition={{ type: 'spring', stiffness: 400, damping: 18 }}
-                            className="rounded-full bg-[#FF6A00] px-2 py-0.5 text-[0.62rem] font-bold uppercase tracking-wider text-black"
+                            className="bg-[#FF6A00] px-2 py-0.5 text-[0.62rem] font-bold lowercase tracking-wider text-black"
                           >
-                            top score
+                            ✦ favored
                           </motion.span>
                         )}
                       </div>

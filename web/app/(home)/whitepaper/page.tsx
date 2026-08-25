@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { SiteHeader } from '@/components/site-header';
+
 const ACCENT = 'text-[#FF6A00]';
 
 export const metadata: Metadata = {
@@ -49,22 +51,7 @@ export default function WhitepaperPage() {
   return (
     <div className="min-h-screen bg-black font-mono text-sm text-neutral-400 selection:bg-[#FF6A00] selection:text-black">
       <div className="mx-auto w-full max-w-2xl px-6 pb-24">
-        <header className="flex items-center justify-between py-8 text-xs">
-          <Link href="/" className="font-bold text-white">
-            fez<span className={ACCENT}>▴</span>
-          </Link>
-          <nav className="flex gap-5">
-            <Link
-              href="/bazaar"
-              className="text-neutral-600 transition-colors hover:text-white"
-            >
-              bazaar
-            </Link>
-            <Link href="/docs" className="text-neutral-600 transition-colors hover:text-white">
-              docs
-            </Link>
-          </nav>
-        </header>
+        <SiteHeader current="whitepaper" />
 
         <div className="mt-10">
           <div className={`text-[0.68rem] uppercase tracking-[0.18em] ${ACCENT}`}>

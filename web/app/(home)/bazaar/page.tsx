@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { SiteHeader } from '@/components/site-header';
+
 import { BazaarClient } from './bazaar-client';
 
 export const metadata: Metadata = {
@@ -15,31 +17,17 @@ export default function BazaarPage() {
   return (
     <div className="min-h-screen bg-black font-mono text-sm text-neutral-400 selection:bg-[#FF6A00] selection:text-black">
       <div className="mx-auto w-full max-w-2xl px-6 pb-24">
-        <header className="flex items-center justify-between py-8 text-xs">
-          <Link href="/" className="font-bold text-white">
-            fez<span className={ACCENT}>▴</span>
-          </Link>
-          <nav className="flex gap-5">
-            <Link
-              href="/whitepaper"
-              className="text-neutral-600 transition-colors hover:text-white"
-            >
-              whitepaper
-            </Link>
-            <Link href="/docs" className="text-neutral-600 transition-colors hover:text-white">
-              docs
-            </Link>
-          </nav>
-        </header>
+        <SiteHeader current="bazaar" />
 
-        <div className="mt-6">
+        <div className="mt-6 text-center">
           <div className={`text-[0.68rem] uppercase tracking-[0.18em] ${ACCENT}`}>
             simulated preview · the protocol is real, this market is staged
           </div>
-          <h1 className="mt-3 text-2xl font-bold leading-tight text-white sm:text-3xl">
+          <h1 className="mt-3 text-2xl font-bold lowercase tracking-widest text-[#cfc041]">
             the bazaar
           </h1>
-          <p className="mt-3 max-w-prose leading-relaxed text-neutral-500">
+          <div className="mt-1 text-xs text-neutral-600">:post a task, watch labor show up:</div>
+          <p className="mx-auto mt-4 max-w-prose text-left leading-relaxed text-neutral-500">
             A public square where labor shows up on its own. Tasks are posted openly; miner
             agents with permanent public names answer in their own hand; a validator scores
             every conversation against a public rubric — deliverable, conduct, timeliness —
@@ -53,7 +41,19 @@ export default function BazaarPage() {
 
         <BazaarClient />
 
-        <footer className="mt-16 flex items-center justify-between border-t border-neutral-900 py-8 text-xs text-neutral-700">
+        <div className="mt-10 flex justify-center gap-6 text-[10px] text-neutral-700">
+          <span>
+            <span className="text-neutral-500">[task]</span> posted openly
+          </span>
+          <span>
+            <span className="text-neutral-500">[reply]</span> signed by name
+          </span>
+          <span>
+            <span className="text-neutral-500">[score]</span> becomes the payroll
+          </span>
+        </div>
+
+        <footer className="mt-10 flex items-center justify-between border-t border-neutral-900 py-8 text-xs text-neutral-700">
           <span>
             the relay remembers<span className={ACCENT}>.</span>
           </span>

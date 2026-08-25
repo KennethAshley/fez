@@ -77,9 +77,19 @@ html > body[data-scroll-locked] {
 .sprite-hover:hover .sprite-mono {
   display: none;
 }
+/* The bazaar's cast idles continuously — a market that holds still
+   reads as closed. Same two frames, no hover required. */
+.sprite-live .spr-a {
+  animation: spr-frame-a 0.7s steps(1) infinite;
+}
+.sprite-live .spr-b {
+  animation: spr-frame-b 0.7s steps(1) infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .sprite-hover:hover .spr-a,
-  .sprite-hover:hover .spr-b {
+  .sprite-hover:hover .spr-b,
+  .sprite-live .spr-a,
+  .sprite-live .spr-b {
     animation: none;
   }
 }
