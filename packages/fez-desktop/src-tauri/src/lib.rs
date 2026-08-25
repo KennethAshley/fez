@@ -554,8 +554,16 @@ fn harness_installed(cmd: &str) -> bool {
     if let Ok(path) = std::env::var("PATH") {
         dirs.extend(path.split(':').map(String::from));
     }
-    // Executable, not merely present — a copy that landed without its exec
-    // bit (or a directory of the same name) must not report as installed.
+    // The Claude native installer's home (~/.claude/local) — the cask and
+    // install.sh symlink into ~/.local/bin and /opt/homebrew/bin (already
+    // listed), but an unlinked native install lives only here.
+    dirs.push(format!("{home}/.claude/local"));
+    binary_in_dirs(cmd, &dirs)
+}
+
+/// Executable, not merely present — a copy that landed without its exec
+/// bit (or a directory of the same name) must not report as installed.
+fn binary_in_dirs(cmd: &str, dirs: &[String]) -> bool {
     dirs.iter().any(|d| {
         use std::os::unix::fs::PermissionsExt;
         std::fs::metadata(std::path::Path::new(d).join(cmd))
@@ -567,7 +575,13 @@ fn harness_installed(cmd: &str) -> bool {
 #[tauri::command]
 fn detect_harnesses() -> Result<String, String> {
     let map = serde_json::json!({
-        "claude-code": harness_installed("claude-agent-acp"),
+        // The VENDOR CLI is the question, not the ACP adapter — fez
+        // bundles claude-agent-acp into ~/.fez/bin (same as pi-acp), so a
+        // user who installed Claude Code must never read "not detected"
+        // because an npm package they've never heard of is missing.
+        // (Buzz's two-axis availability, collapsed by shipping the axis
+        // that was ours to ship.)
+        "claude-code": harness_installed("claude"),
         "pi": harness_installed("pi-acp"),
     });
     Ok(map.to_string())
@@ -1669,9 +1683,10 @@ fn ensure_agent_runner() -> Result<bool, String> {
 fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
-    // fez-relay is optional: dev builds without bun don't produce it, and
-    // the app degrades to invite-only workspaces. pi/pi-acp stay required.
-    for (name, required) in [("pi", true), ("pi-acp", true), ("fez-relay", false)] {
+    // fez-relay and claude-agent-acp are optional: dev builds without bun
+    // don't produce them, and the app degrades (invite-only workspaces;
+    // claude via a PATH-installed adapter). pi/pi-acp stay required.
+    for (name, required) in [("pi", true), ("pi-acp", true), ("fez-relay", false), ("claude-agent-acp", false)] {
         if !required && !src.join(name).exists() {
             continue;
         }
@@ -1809,6 +1824,27 @@ fn min_fez_version_error(required: Option<&str>, host: &str) -> Option<String> {
         return Some(format!("needs fez ≥ {required}, you have {host} — update fez and retry"));
     }
     None
+}
+
+#[cfg(test)]
+mod harness_detect_tests {
+    use super::binary_in_dirs;
+
+    #[test]
+    fn executable_counts_and_exec_bit_matters() {
+        let dir = std::env::temp_dir().join(format!("fez-detect-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("claude");
+        std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let dirs = vec![dir.to_string_lossy().to_string()];
+        assert!(!binary_in_dirs("claude", &dirs), "non-executable must not count");
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(binary_in_dirs("claude", &dirs));
+        assert!(!binary_in_dirs("codex", &dirs));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]

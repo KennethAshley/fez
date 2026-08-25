@@ -27,6 +27,10 @@ import { fileURLToPath } from "node:url";
 // Versions we ship. Bump together with a tested pair.
 const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
+const CLAUDE_ACP_VERSION = "0.70.0"; // @agentclientprotocol/claude-agent-acp (the ACP↔claude-cli bridge)
+// The bundle's identity: any shipped binary changing must change this
+// string, or installed apps skip the recopy.
+const BUNDLE_VERSION = `${PI_VERSION}+claude-acp${CLAUDE_ACP_VERSION}`;
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
@@ -61,9 +65,10 @@ if (
   !process.env.FORCE &&
   fs.existsSync(path.join(OUT, `pi${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-relay${EXE}`)) &&
-  fs.readFileSync(marker, "utf8").trim() === PI_VERSION
+  fs.existsSync(path.join(OUT, `claude-agent-acp${EXE}`)) &&
+  fs.readFileSync(marker, "utf8").trim() === BUNDLE_VERSION
 ) {
-  console.log(`pi-agent already at ${PI_VERSION} — skipping (FORCE=1 to rebuild)`);
+  console.log(`pi-agent already at ${BUNDLE_VERSION} — skipping (FORCE=1 to rebuild)`);
   process.exit(0);
 }
 
@@ -82,46 +87,89 @@ if (!hasBun()) {
 
 fs.mkdirSync(WORK, { recursive: true });
 
+// Per-artifact reuse: a binary already in OUT is kept unless FORCE_ALL.
+// Upstream pi ships no lockfile, so a fresh-cache source build can drift
+// and fail — adding one NEW binary to the bundle must not require
+// rebuilding the three that already work. FORCE=1 re-runs the assembly;
+// FORCE_ALL=1 rebuilds every binary from scratch.
+const reuse = (name) => !process.env.FORCE_ALL && fs.existsSync(path.join(OUT, `${name}${EXE}`));
+
 // 1. pi — build from pinned source (bun --compile, host target).
-console.log(`\n▶ building pi ${PI_VERSION} from source…`);
-const piSrc = path.join(WORK, "pi");
-if (!fs.existsSync(piSrc)) run(`git clone --depth 1 ${PI_REF ? `--branch ${PI_REF} ` : ""}${PI_REPO} pi`, WORK);
-const codingAgent = path.join(piSrc, "packages", "coding-agent");
-const got = JSON.parse(fs.readFileSync(path.join(codingAgent, "package.json"), "utf8")).version;
-if (got !== PI_VERSION) throw new Error(`pi source is ${got}, expected ${PI_VERSION} — set PI_REF to a matching tag/SHA`);
-run("bun install", piSrc);
-run("npm run build:binary", codingAgent); // → dist/pi (+ copy-binary-assets)
+let codingAgent;
+if (reuse("pi")) {
+  console.log(`\n▶ pi: reusing existing binary (FORCE_ALL=1 to rebuild)`);
+} else {
+  console.log(`\n▶ building pi ${PI_VERSION} from source…`);
+  const piSrc = path.join(WORK, "pi");
+  if (!fs.existsSync(piSrc)) run(`git clone --depth 1 ${PI_REF ? `--branch ${PI_REF} ` : ""}${PI_REPO} pi`, WORK);
+  codingAgent = path.join(piSrc, "packages", "coding-agent");
+  const got = JSON.parse(fs.readFileSync(path.join(codingAgent, "package.json"), "utf8")).version;
+  if (got !== PI_VERSION) throw new Error(`pi source is ${got}, expected ${PI_VERSION} — set PI_REF to a matching tag/SHA`);
+  run("bun install", piSrc);
+  run("npm run build:binary", codingAgent); // → dist/pi (+ copy-binary-assets)
+}
 
 // 2. pi-acp — compile the pinned npm package's bundle.
-console.log(`\n▶ compiling pi-acp ${PI_ACP_VERSION}…`);
-const acpPkg = path.join(WORK, "pi-acp-pkg");
-fs.mkdirSync(acpPkg, { recursive: true });
-fs.writeFileSync(path.join(acpPkg, "package.json"), JSON.stringify({ name: "fez-pi-acp-build", private: true }));
-run(`npm install pi-acp@${PI_ACP_VERSION} --no-save --no-fund --no-audit`, acpPkg);
-const acpEntry = path.join(acpPkg, "node_modules", "pi-acp", "dist", "index.js");
-run(`bun build --compile ${JSON.stringify(acpEntry)} --outfile ${JSON.stringify(path.join(WORK, "pi-acp"))}`, WORK);
+if (reuse("pi-acp")) {
+  console.log(`\n▶ pi-acp: reusing existing binary`);
+} else {
+  console.log(`\n▶ compiling pi-acp ${PI_ACP_VERSION}…`);
+  const acpPkg = path.join(WORK, "pi-acp-pkg");
+  fs.mkdirSync(acpPkg, { recursive: true });
+  fs.writeFileSync(path.join(acpPkg, "package.json"), JSON.stringify({ name: "fez-pi-acp-build", private: true }));
+  run(`npm install pi-acp@${PI_ACP_VERSION} --no-save --no-fund --no-audit`, acpPkg);
+  const acpEntry = path.join(acpPkg, "node_modules", "pi-acp", "dist", "index.js");
+  run(`bun build --compile ${JSON.stringify(acpEntry)} --outfile ${JSON.stringify(path.join(WORK, "pi-acp"))}`, WORK);
+}
+
+// 2b. claude-agent-acp — the ACP↔claude-CLI bridge, compiled the same
+// way. Bundling it collapses Buzz's two-axis problem (CLI × adapter) to
+// one honest question: is the \`claude\` CLI on this machine? A user who
+// installed Claude Code should never be told "not detected" because an
+// npm package THEY'VE never heard of is missing — the adapter is fez's
+// plumbing, so fez ships it.
+console.log(`\n▶ compiling claude-agent-acp ${CLAUDE_ACP_VERSION}…`);
+if (!reuse("claude-agent-acp")) {
+  const clacpPkg = path.join(WORK, "claude-acp-pkg");
+  fs.mkdirSync(clacpPkg, { recursive: true });
+  fs.writeFileSync(path.join(clacpPkg, "package.json"), JSON.stringify({ name: "fez-claude-acp-build", private: true }));
+  run(`npm install @agentclientprotocol/claude-agent-acp@${CLAUDE_ACP_VERSION} --no-save --no-fund --no-audit`, clacpPkg);
+  const clacpEntry = path.join(clacpPkg, "node_modules", "@agentclientprotocol", "claude-agent-acp", "dist", "index.js");
+  run(`bun build --compile ${JSON.stringify(clacpEntry)} --outfile ${JSON.stringify(path.join(WORK, "claude-agent-acp"))}`, WORK);
+} else {
+  console.log("  (reusing existing binary)");
+}
 
 // 3. fez-relay — the local-workspace relay, compiled from the monorepo
 // source (ws + nostr-tools only, no native deps) so the DMG can spawn a
 // user-owned workspace with no install. See the cold-start spec.
 console.log(`\n▶ compiling fez-relay…`);
-const relayPkg = path.resolve(HERE, "..", "..", "fez-relay");
-run(
-  `bun build --compile ${JSON.stringify(path.join(relayPkg, "src", "cli.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-relay${EXE}`))}`,
-  relayPkg
-);
+if (!reuse("fez-relay")) {
+  const relayPkg = path.resolve(HERE, "..", "..", "fez-relay");
+  run(
+    `bun build --compile ${JSON.stringify(path.join(relayPkg, "src", "cli.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-relay${EXE}`))}`,
+    relayPkg
+  );
+} else {
+  console.log("  (reusing existing binary)");
+}
 
 // 4. Assemble pi-agent/ — binaries + required assets + VERSION.
 console.log(`\n▶ assembling ${path.relative(path.resolve(HERE, "..", ".."), OUT)}…`);
+const stage = path.join(WORK, "stage");
+fs.rmSync(stage, { recursive: true, force: true });
+fs.mkdirSync(path.join(stage, "theme"), { recursive: true });
+const from = (name) => (reuse(name) ? path.join(OUT, `${name}${EXE}`) : undefined);
+copyExec(from("pi") ?? path.join(codingAgent, "dist", `pi${EXE}`), path.join(stage, `pi${EXE}`));
+copyExec(from("pi-acp") ?? path.join(WORK, `pi-acp${EXE}`), path.join(stage, `pi-acp${EXE}`));
+copyExec(from("fez-relay") ?? path.join(WORK, `fez-relay${EXE}`), path.join(stage, `fez-relay${EXE}`));
+copyExec(from("claude-agent-acp") ?? path.join(WORK, `claude-agent-acp${EXE}`), path.join(stage, `claude-agent-acp${EXE}`));
+const themeSrc = codingAgent ? path.join(codingAgent, "dist", "theme") : path.join(OUT, "theme");
+for (const f of fs.readdirSync(themeSrc)) fs.copyFileSync(path.join(themeSrc, f), path.join(stage, "theme", f));
+const wasmSrc = codingAgent ? path.join(codingAgent, "dist", "photon_rs_bg.wasm") : path.join(OUT, "photon_rs_bg.wasm");
+if (fs.existsSync(wasmSrc)) fs.copyFileSync(wasmSrc, path.join(stage, "photon_rs_bg.wasm"));
 fs.rmSync(OUT, { recursive: true, force: true });
-fs.mkdirSync(path.join(OUT, "theme"), { recursive: true });
-const dist = path.join(codingAgent, "dist");
-copyExec(path.join(dist, `pi${EXE}`), path.join(OUT, `pi${EXE}`));
-copyExec(path.join(WORK, `pi-acp${EXE}`), path.join(OUT, `pi-acp${EXE}`));
-copyExec(path.join(WORK, `fez-relay${EXE}`), path.join(OUT, `fez-relay${EXE}`));
-for (const f of fs.readdirSync(path.join(dist, "theme"))) fs.copyFileSync(path.join(dist, "theme", f), path.join(OUT, "theme", f));
-const wasm = path.join(dist, "photon_rs_bg.wasm");
-if (fs.existsSync(wasm)) fs.copyFileSync(wasm, path.join(OUT, "photon_rs_bg.wasm"));
-fs.writeFileSync(marker, `${PI_VERSION}\n`);
+fs.renameSync(stage, OUT);
+fs.writeFileSync(marker, `${BUNDLE_VERSION}\n`);
 
 console.log(`\n✓ pi-agent ${PI_VERSION} ready (${(fs.statSync(path.join(OUT, `pi${EXE}`)).size / 1e6).toFixed(0)}MB pi + pi-acp + fez-relay)`);

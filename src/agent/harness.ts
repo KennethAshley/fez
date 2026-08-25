@@ -808,7 +808,10 @@ export function registerBuiltinHarnesses(): void {
   // config story (see isolatedClaudeEnv). pi: the bring-anything engine —
   // subscription OAuth, API keys, or fully local models; its config is its
   // own (~/.pi/agent), so the environment passes through untouched.
-  registerHarness(acpHarness({ id: "claude-code", aliases: ["claude"], command: "claude-agent-acp", env: isolatedClaudeEnv }));
+  // fezBin: the app bundles claude-agent-acp into ~/.fez/bin (like
+  // pi-acp), so having the claude CLI is enough — the adapter is fez's
+  // plumbing. A dev with the npm adapter on PATH is unaffected.
+  registerHarness(acpHarness({ id: "claude-code", aliases: ["claude"], command: fezBin("claude-agent-acp"), env: isolatedClaudeEnv }));
   // pi speaks ACP via the pi-acp bridge, which shells to `pi --mode rpc`.
   // Both prefer fez's bundled copies so the Built-in agent works with zero
   // install; PI_ACP_PI_COMMAND points the bundled bridge at the bundled pi
