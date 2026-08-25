@@ -909,6 +909,19 @@ button.author:hover { text-decoration: underline; }
 
 /* ── batch: avatars, dividers, intro, emoji picker, composer row ── */
 .avatar { display: inline-block; vertical-align: middle; border-radius: 4px; flex: none; }
+/* Hover wakes the creature: same stacked-frame flip as the boot splash,
+   but the beat comes from the pubkey (--spr-dur), so no two neighbors
+   tick alike. Block boxes + zero line-height — the hover must never
+   change the avatar's size (the website's layout-shift lesson). */
+.avatar-anim { position: relative; line-height: 0; }
+.avatar-anim svg { display: block; }
+.avatar-anim .spr-a { display: block; }
+.avatar-anim .spr-b { position: absolute; inset: 0; opacity: 0; }
+.avatar-anim:hover .spr-a { animation: spr-frame-a var(--spr-dur, 0.6s) steps(1) infinite; }
+.avatar-anim:hover .spr-b { animation: spr-frame-b var(--spr-dur, 0.6s) steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .avatar-anim:hover .spr-a, .avatar-anim:hover .spr-b { animation: none; }
+}
 .avatar-btn { background: none; border: 0; padding: 0; cursor: pointer; line-height: 0; }
 .bubble > .avatar-btn { grid-column: 1; grid-row: 1 / span 8; margin-top: 3px; align-self: start; }
 .bubble > :not(.avatar-btn) { grid-column: 2; }
