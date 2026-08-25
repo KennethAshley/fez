@@ -9,12 +9,19 @@ set -euo pipefail
 
 echo "This wipes fez from this machine: identity keys, agent keys,"
 echo "~/.fez (workspace relay + events included), and app storage."
-read -r -p "Type 'reset' to proceed: " answer
-[[ "$answer" == "reset" ]] || { echo "aborted."; exit 1; }
+if [[ "${1:-}" == "--yes" ]]; then
+  echo "(--yes: proceeding without prompt — the E2E harness drives this)"
+else
+  read -r -p "Type 'reset' to proceed: " answer
+  [[ "$answer" == "reset" ]] || { echo "aborted."; exit 1; }
+fi
 
 echo "▸ stopping fez processes"
 pkill -x fez 2>/dev/null || true
+pkill -x fez-desktop 2>/dev/null || true
 pkill -f '\.fez/bin/fez-relay' 2>/dev/null || true
+pkill -f '\.fez/bin/fez-sentinel' 2>/dev/null || true
+pkill -f '\.fez/bin/fez-agent' 2>/dev/null || true
 pkill -f 'fez agent' 2>/dev/null || true
 launchctl bootout "gui/$(id -u)/com.fez.sentinel" 2>/dev/null || true
 launchctl bootout "gui/$(id -u)/com.fez.orchestrator" 2>/dev/null || true

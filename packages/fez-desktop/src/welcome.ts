@@ -12,6 +12,7 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import type { FezClient } from "@fezchat/client";
 import { BrowserWire } from "./wire";
 import { relaySet } from "./relay";
+import { detectHarnesses } from "./harnesses";
 import {
   HELLO_MARKER,
   OPENER_MARKER,
@@ -64,7 +65,7 @@ async function agentKeyHex(): Promise<string> {
 }
 
 export async function readiness(): Promise<Readiness> {
-  const harnesses = await invoke<Record<string, boolean>>("detect_harnesses").catch(() => ({}) as Record<string, boolean>);
+  const harnesses = await detectHarnesses();
   const chutes = await invoke<boolean>("has_skill_secret", { skill: "chutes", key: "CHUTES_API_KEY" }).catch(() => false);
   const runner = await invoke<boolean>("runner_status").catch(() => false);
   return { authed: !!harnesses["claude-code"] || (!!harnesses["pi"] && chutes), runner };
@@ -144,7 +145,7 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
   const channel = client.state.workspace.channels.get("bootstrap-general");
   if (!channel) return;
 
-  const harnesses = await invoke<Record<string, boolean>>("detect_harnesses").catch(() => ({}) as Record<string, boolean>);
+  const harnesses = await detectHarnesses();
   await ensureFezPersona(harnesses["claude-code"] ? "claude-code" : "pi");
   const hex = await agentKeyHex();
 

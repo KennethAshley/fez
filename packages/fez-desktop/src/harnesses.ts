@@ -16,6 +16,20 @@ export interface HarnessInfo {
  * labeled as routing-only. Optimistic while loading (assume installed) so
  * the picker doesn't flash "not installed" on open.
  */
+/**
+ * The ONE parsed door to `detect_harnesses`. The Rust command returns a
+ * JSON *string*; a caller that indexes into it raw gets `undefined` for
+ * every harness — which is how readiness() reported "no model" on a
+ * machine with Claude Code installed, and the welcome team never came.
+ */
+export async function detectHarnesses(): Promise<Record<string, boolean>> {
+  try {
+    return JSON.parse(await invoke<string>("detect_harnesses")) as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+
 export function useHarnesses(): HarnessInfo[] {
   // undefined = still detecting; {} = detection FAILED. They used to be
   // one state that defaulted every harness to "installed", so a broken
