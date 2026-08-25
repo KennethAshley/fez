@@ -4,10 +4,10 @@ import { flash } from "./toast";
 import { relaySet } from "./relay";
 
 /**
- * Channel/client.state.workspace management — Buzz's ChannelManagementSheet as a fez
+ * Channel/workspace management — Buzz's ChannelManagementSheet as a fez
  * side pane. Members with roles, creator-gated moderation (kick / ban /
  * unban), invites by @name or pubkey, plus create-channel and
- * create-client.state.workspace. Every action is a client method — the pane renders
+ * create-workspace. Every action is a client method — the pane renders
  * trust rules it doesn't own: non-creators simply don't see the levers.
  */
 
@@ -75,7 +75,7 @@ export default function ManagePane({
       <div className="pane-body">
         <div className="manage-sub">
           {client.state.workspace.name} · {members.length} member{members.length === 1 ? "" : "s"}
-          {amCreator ? " · you created this client.state.workspace" : ""}
+          {amCreator ? " · you created this workspace" : ""}
         </div>
 
         <div className="manage-section">members</div>
@@ -192,7 +192,7 @@ function InviteCode({ communityName }: { communityName: string }) {
       >
         {copied ? "✓ copied" : code}
       </code>
-      <div className="settings-hint">Send this to someone — they paste it under "join client.state.workspace" (or onboard with it) and land in {communityName}.</div>
+      <div className="settings-hint">Send this to someone — they paste it under "join a workspace" (or onboard with it) and land in {communityName}.</div>
     </>
   );
 }
@@ -215,18 +215,25 @@ function JoinByCode({
     const match = /^fez-join:([^#]+)(?:#.*)?$/i.exec(code.trim());
     if (!match) return onResult("✗ not an invite code — expected fez-join:<relay>");
     const relay = match[1].trim();
-    setCode("");
-    const claimed = await client.openWorkspace(relay);
-    if (!claimed) {
-      return onResult(`+ added ${relay}, but it has no owner yet — it's an unclaimed workspace`);
+    // The code stays in the input until the join lands — an unreachable
+    // relay used to clear it first and report nothing, so a mistyped
+    // invite was simply gone.
+    try {
+      const claimed = await client.openWorkspace(relay);
+      setCode("");
+      if (!claimed) {
+        return onResult(`+ added ${relay}, but it has no owner yet — it's an unclaimed workspace`);
+      }
+      const first = [...client.state.workspace.channels.values()][0];
+      if (first) onOpenChannel(first.id);
+      onResult(
+        client.state.isMember(client.pubkey)
+          ? `✓ joined ${client.state.workspace.name}`
+          : `+ added ${client.state.workspace.name} — ask its owner to invite ${client.pubkey.slice(0, 12)}…`
+      );
+    } catch (err) {
+      onResult(`✗ couldn't open ${relay}: ${err instanceof Error ? err.message : String(err)}`);
     }
-    const first = [...client.state.workspace.channels.values()][0];
-    if (first) onOpenChannel(first.id);
-    onResult(
-      client.state.isMember(client.pubkey)
-        ? `✓ joined ${client.state.workspace.name}`
-        : `+ added ${client.state.workspace.name} — ask its owner to invite ${client.pubkey.slice(0, 12)}…`
-    );
   };
   return (
     <>
@@ -340,8 +347,8 @@ function CreateCommunity({
 }) {
   return (
     <CreateRow
-      label="new client.state.workspace"
-      placeholder="client.state.workspace name"
+      label="new workspace"
+      placeholder="workspace name"
       onCreate={(name) =>
         void (async () => {
           try {

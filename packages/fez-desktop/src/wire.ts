@@ -67,6 +67,10 @@ export class BrowserWire implements Wire {
   onRelayHealth?: (health: { url: string; connected: boolean }[]) => void;
 
   private watchdog?: ReturnType<typeof setInterval>;
+  /** Consecutive failed connects per relay — drives the backoff below. */
+  private attempts = new Map<string, number>();
+  /** Earliest next reconnect per relay; the watchdog respects it too. */
+  private nextTry = new Map<string, number>();
 
   constructor(urls: string | string[], keyHex: string) {
     this.urls = [...new Set((Array.isArray(urls) ? urls : [urls]).map((u) => u.trim()).filter(Boolean))];
@@ -84,6 +88,10 @@ export class BrowserWire implements Wire {
       if (this.closed) return;
       for (const url of this.urls) {
         const state = this.sockets.get(url)?.readyState;
+        // Respect the backoff window — without this check the watchdog
+        // defeated it, hammering an unreachable relay every 5s forever
+        // (a fully-offline machine ran a permanent reconnect storm).
+        if (Date.now() < (this.nextTry.get(url) ?? 0)) continue;
         if (state !== WebSocket.OPEN && state !== WebSocket.CONNECTING) this.connect(url);
       }
     }, 5000);
@@ -111,6 +119,8 @@ export class BrowserWire implements Wire {
     const ws = new WebSocket(url);
     this.sockets.set(url, ws);
     ws.onopen = () => {
+      this.attempts.delete(url);
+      this.nextTry.delete(url);
       this.reportStatus();
       // A relay that just arrived has no subscriptions of its own.
       for (const sub of this.subs.values()) this.fireTo(url, sub);
@@ -121,7 +131,15 @@ export class BrowserWire implements Wire {
       // hangs for its full timeout every time one relay is down.
       for (const bucket of this.queryBuckets.values()) this.dropFromBucket(bucket, url);
       for (const [id, pending] of this.pendingOks) this.dropFromOk(id, pending, url, "relay disconnected");
-      if (!this.closed) setTimeout(() => this.connect(url), 2000);
+      if (!this.closed) {
+        // 2s → 4s → 8s … capped at 30s, reset by a successful open — a
+        // down relay gets patience, not a fixed-rate hammer.
+        const failures = (this.attempts.get(url) ?? 0) + 1;
+        this.attempts.set(url, failures);
+        const delay = Math.min(30_000, 2000 * 2 ** (failures - 1));
+        this.nextTry.set(url, Date.now() + delay);
+        setTimeout(() => this.connect(url), delay);
+      }
     };
     ws.onmessage = (raw) => {
       let msg: unknown[];

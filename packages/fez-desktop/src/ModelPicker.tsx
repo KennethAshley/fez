@@ -23,14 +23,20 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
   const harnesses = useHarnesses();
   const claudeInstalled = harnesses.find((h) => h.id === "claude-code")?.installed ?? false;
   const [chutesModels, setChutesModels] = useState<string[]>([]);
+  const [chutesError, setChutesError] = useState<string>();
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Wire Chutes + list its models for the dropdown (needs the key; if
-    // absent this quietly returns nothing and the option just doesn't show).
+    // Wire Chutes + list its models for the dropdown. No key configured is
+    // the NORMAL state (the no-models hint already covers it); every other
+    // failure — network, a malformed local-models.json — used to be
+    // swallowed here while the backend produced a genuinely useful message.
     void invoke<string>("wire_chutes_pi")
       .then((json) => setChutesModels((JSON.parse(json) as { models: string[] }).models))
-      .catch(() => {})
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/Chutes key/i.test(msg)) setChutesError(msg);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -77,7 +83,8 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
       {current.startsWith("chutes:") && (
         <div className="settings-hint">Runs on Chutes GPUs (Bittensor). Key: Settings → secrets → chutes.</div>
       )}
-      {!loading && !hasOptions && (
+      {chutesError && <div className="settings-hint">⚠ Chutes: {chutesError}</div>}
+      {!loading && !hasOptions && !chutesError && (
         <div className="settings-hint">
           No models yet — install Claude Code, or add a Chutes key in Settings → secrets → chutes, then reopen.
         </div>

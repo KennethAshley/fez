@@ -17,19 +17,23 @@ export interface HarnessInfo {
  * the picker doesn't flash "not installed" on open.
  */
 export function useHarnesses(): HarnessInfo[] {
-  const [installed, setInstalled] = useState<Record<string, boolean>>({});
+  // undefined = still detecting; {} = detection FAILED. They used to be
+  // one state that defaulted every harness to "installed", so a broken
+  // detect offered Claude Code to machines that don't have it.
+  const [installed, setInstalled] = useState<Record<string, boolean>>();
   useEffect(() => {
     void invoke<string>("detect_harnesses")
       .then((json) => setInstalled(JSON.parse(json) as Record<string, boolean>))
-      .catch(() => {});
+      .catch(() => setInstalled({}));
   }, []);
   // The runtime is never shown to users (pi is invisible plumbing); the
   // ModelPicker only reads `installed` to decide whether Claude Code is
-  // offerable. Optimistic while loading (assume installed) so the picker
-  // doesn't flash a missing option on open.
+  // offerable. Optimistic only while loading, so the picker doesn't flash
+  // a missing option on open — a finished detection is trusted as-is.
+  const loading = installed === undefined;
   return [
-    { id: "pi", label: "Built-in", installed: installed.pi ?? true },
-    { id: "claude-code", label: "Claude Code", installed: installed["claude-code"] ?? true },
+    { id: "pi", label: "Built-in", installed: installed?.pi ?? loading },
+    { id: "claude-code", label: "Claude Code", installed: installed?.["claude-code"] ?? loading },
     { id: "router", label: "Router (routing only)", installed: true },
   ];
 }

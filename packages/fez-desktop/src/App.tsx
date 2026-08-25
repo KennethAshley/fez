@@ -404,9 +404,16 @@ function Shell({
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
       "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
-      "dmMessage", "jobsChanged", "notice", "artifact",
+      "dmMessage", "jobsChanged", "artifact",
     ] as const;
     for (const name of events) client.on(name, render as never);
+    // Notices carry the relay's own words — "claim this workspace", "ask
+    // the owner for an invite, your key is …" — the only first-run
+    // explanations the stack produces. They used to be wired to the
+    // force-render above, which drops its arguments: shown to nobody.
+    // Sticky (ms=0) because they are one-time instructions, and deduped
+    // by the toast store so reconnects don't stack repeats.
+    client.on("notice", ((text: string) => toast.info(text, 0)) as never);
     client.on("draft", ((channelId: string, authorPk: string, content: string, rootId?: string) => {
       let byAuthor = draftsRef.current.get(channelId);
       if (!byAuthor) draftsRef.current.set(channelId, (byAuthor = new Map()));
@@ -869,15 +876,16 @@ function Shell({
             >
               ☰
             </button>
-            {client.state.isOwner(client.pubkey) && (
-              <button
-                className="community-add"
-                title="manage — create channels, invite members, roles"
-                onClick={() => setPane({ kind: "manage" })}
-              >
-                +
-              </button>
-            )}
+            {/* Everyone gets manage — it holds "join a workspace" and
+                "claim/create", the only doors a fresh non-owner has; the
+                owner-only levers inside are gated by the pane itself. */}
+            <button
+              className="community-add"
+              title="manage — channels, members, join or create a workspace"
+              onClick={() => setPane({ kind: "manage" })}
+            >
+              +
+            </button>
           </div>
           {ownChannels.map(channelRow)}
           {client.state.workspace.channels.size === 0 && (
@@ -1248,7 +1256,7 @@ function Shell({
             </div>
             <div className="settings-hint browse-hint">
               Every channel here is yours already — one roster covers the whole workspace, so there is
-              nothing to join. {client.state.isOwner(client.pubkey) ? "Use manage (+) to add one." : ""}
+              nothing to join. Use manage (+) to create one, or to join another workspace.
             </div>
           </div>
         </div>
@@ -1592,35 +1600,45 @@ function ChannelView({
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
+    // Cleared optimistically for a snappy composer — but a throw before
+    // the wire (not a member, bad scope) used to eat the typed message
+    // with no trace; the catch puts the words back and says why.
     setDraft("");
+    const savedBindings = bindings;
     setBindings(new Map());
-    if (!editing && text.startsWith("/")) {
-      const feedback = await onCommand(text);
-      if (feedback) {
-        setCmdNotice(feedback);
-        setTimeout(() => setCmdNotice(undefined), 8000);
+    try {
+      if (!editing && text.startsWith("/")) {
+        const feedback = await onCommand(text);
+        if (feedback) {
+          setCmdNotice(feedback);
+          setTimeout(() => setCmdNotice(undefined), 8000);
+        }
+        return;
       }
-      return;
+      if (editing) {
+        const target = editing;
+        setEditing(undefined);
+        if (text !== target.original) await client.editMessage(channelId, target.id, text);
+        return;
+      }
+      // Against THIS channel's roster, not every name the client has ever
+      // seen — and a mention that reached nobody is said out loud, because
+      // it otherwise looks exactly like one that worked.
+      const resolution = client.resolveMentionsIn(text, channelId, savedBindings);
+      // A name that matches a local persona isn't "unresolved" — the sentinel
+      // will spawn it even though it hasn't announced yet. Only warn about
+      // names that are neither members nor spawnable agents (real typos).
+      const problem = describeMentionProblems({
+        ...resolution,
+        unresolved: resolution.unresolved.filter((n) => !localAgents.has(n.toLowerCase())),
+      });
+      await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks: resolution.pubkeys });
+      if (problem) onNotice(problem);
+    } catch (err) {
+      setDraft(text);
+      setBindings(savedBindings);
+      toast.error(`couldn't send: ${err instanceof Error ? err.message : String(err)}`);
     }
-    if (editing) {
-      const target = editing;
-      setEditing(undefined);
-      if (text !== target.original) await client.editMessage(channelId, target.id, text);
-      return;
-    }
-    // Against THIS channel's roster, not every name the client has ever
-    // seen — and a mention that reached nobody is said out loud, because
-    // it otherwise looks exactly like one that worked.
-    const resolution = client.resolveMentionsIn(text, channelId, bindings);
-    // A name that matches a local persona isn't "unresolved" — the sentinel
-    // will spawn it even though it hasn't announced yet. Only warn about
-    // names that are neither members nor spawnable agents (real typos).
-    const problem = describeMentionProblems({
-      ...resolution,
-      unresolved: resolution.unresolved.filter((n) => !localAgents.has(n.toLowerCase())),
-    });
-    await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks: resolution.pubkeys });
-    if (problem) onNotice(problem);
   };
 
   /** Discord's up-arrow: empty composer + ↑ edits your latest message in view. */
@@ -1747,17 +1765,22 @@ function ChannelView({
         )}
       </header>
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
-        {(client.state.workspace.members.size ?? 0) <= 1 && (
-          <div className="empty-room">
-            Nobody else is in this channel — agents can't hear you here. Pick a channel without the ∅ mark, or /invite members from the TUI.
-          </div>
-        )}
-        {messages.length === 0 && (client.state.workspace.members.size ?? 0) > 1 && (
+        {/* The two empty-state panels used to be inverted: FirstRun (the
+            helpful one) required members > 1 — impossible for a fresh solo
+            user — while the solo case always got a warning that pointed at
+            the TUI. FirstRun now owns every empty channel; the solo note
+            only accompanies channels that already have history. */}
+        {messages.length === 0 && (
           <FirstRun
             client={client}
             channelName={channelName}
             onOpenAgents={onAgents}
           />
+        )}
+        {messages.length > 0 && (client.state.workspace.members.size ?? 0) <= 1 && (
+          <div className="empty-room">
+            You're the only member here so far — invite people from manage (+), or mention an agent by name to bring one in.
+          </div>
         )}
         {threadRoot && (() => {
           const root = messages.find((m) => m.id === threadRoot);
@@ -1956,8 +1979,14 @@ function DmView({
     const text = draft.trim();
     if (!text) return;
     setDraft("");
-    if (group) await client.sendGroupDm(peers, text);
-    else await client.sendDm(convoKey, text);
+    try {
+      if (group) await client.sendGroupDm(peers, text);
+      else await client.sendDm(convoKey, text);
+    } catch (err) {
+      // Put the words back — a failed DM must not eat the draft.
+      setDraft(text);
+      toast.error(`couldn't send: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   // NOTE: the blob itself lands on the media server in the clear — only
