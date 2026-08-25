@@ -5,11 +5,12 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
 
 ## Tier 1 — blocks onboarding outright
 
-- [ ] **Sign + notarize the app.** Built `.app` is ad-hoc signed, no `_CodeSignature`, not notarized
-  (`src-tauri/tauri.conf.json` has no `bundle.macOS` block). Downloaded quarantined copy →
-  "fez-desktop is damaged and can't be opened" (unrecoverable variant). Covers the parked
-  notarize / xattr-docs / brew-cask work. Rename `com.ken.fez-desktop` → product identifier
-  FIRST (see Tier 3) — changing it later resets keychain ACLs + TCC for existing users.
+- [x] **Sign + notarize the app.** DONE (2026-08-25): v0.2.0 released signed + notarized +
+  stapled — `spctl` says "Notarized Developer ID". One-time setup via
+  `scripts/setup-signing.sh` (credentials in keychain service `fez-notary`); every release
+  via `scripts/release.sh` (build-signed.sh signs the bun binaries with JIT entitlements,
+  Tauri signs/notarizes/staples, gh publishes DMG + updater feed). Brew cask still optional
+  future work.
 - [ ] **Intel Macs: bundled agent silently broken.** `pi` / `pi-acp` are thin arm64
   (`src-tauri/pi-agent/`, no universal build). `harness_installed` (`src-tauri/src/lib.rs:355`)
   checks file existence only → UI claims agent installed, every spawn fails. Either ship
@@ -88,8 +89,10 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
   `fez-web-kohl.vercel.app/api/counts` with no consent/toggle (`SkillsView.tsx:35-36,307,757`);
   drag-drop uploads go to `blossom.primal.net` in the clear with no disclosure at the drop
   point (`upload.ts:16`, `App.tsx:1620-1631,1941-1954`).
-- [ ] **No updater.** No tauri-plugin-updater, no endpoints, no pubkey — early users stranded on
-  0.1.0 permanently. Retro-fitting later can't reach already-installed copies.
+- [x] **No updater.** DONE (2026-08-25): tauri-plugin-updater in v0.2.0 — pubkey + GitHub
+  Releases endpoint (`releases/latest/download/latest.json`) baked into the first public
+  build; launch-time check, background download, "quit and reopen" sticky toast. Minisign
+  key in keychain (`fez-notary/updater-key`); release.sh authors latest.json every release.
 - [x] **Minimum OS is a lie.** DONE: `bundle.macOS.minimumSystemVersion: "13.0"` in
   tauri.conf.json — matches what the bundled `pi` actually requires.
 - [ ] **Release build can silently ship agent-less.** PARTIAL: `PI_REF` now defaults to the
