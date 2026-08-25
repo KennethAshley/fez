@@ -155,6 +155,13 @@ function wrapLiveDoc(body: string): string {
 
 export function LiveArtifact({ artifact }: { artifact: Artifact }): React.ReactNode {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  // Staged BEFORE the bridge effect, because the effect keys on it: with
+  // srcDoc the iframe existed on first render, but a staged src arrives
+  // async — the first effect run finds no frame and must re-run when the
+  // url lands, or the bridge is never wired and every tool hangs on its
+  // own "loading…" (found the hard way).
+  const doc = artifact.content ? wrapLiveDoc(artifact.content) : undefined;
+  const stagedUrl = useArtifactDoc(doc);
 
   useEffect(() => {
     const frame = frameRef.current;
@@ -214,14 +221,8 @@ export function LiveArtifact({ artifact }: { artifact: Artifact }): React.ReactN
       clearInterval(safety);
       subs.clear();
     };
-  }, [artifact.content, artifact.url]);
+  }, [artifact.content, artifact.url, stagedUrl]);
 
-  // Staged over artifact:// instead of srcDoc, so the tool's own inline
-  // scripts answer to their own origin's policy, not the app CSP. The
-  // postMessage bridge above is unaffected — contentWindow is
-  // contentWindow whatever the src scheme.
-  const doc = artifact.content ? wrapLiveDoc(artifact.content) : undefined;
-  const stagedUrl = useArtifactDoc(doc);
   if (!doc || !stagedUrl) return null;
   return (
     <iframe
