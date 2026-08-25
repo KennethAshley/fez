@@ -1205,7 +1205,12 @@ fn install_bundled_agent(src: std::path::PathBuf) {
 fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
-    for name in ["pi", "pi-acp"] {
+    // fez-relay is optional: dev builds without bun don't produce it, and
+    // the app degrades to invite-only workspaces. pi/pi-acp stay required.
+    for (name, required) in [("pi", true), ("pi-acp", true), ("fez-relay", false)] {
+        if !required && !src.join(name).exists() {
+            continue;
+        }
         // Stage next to the destination, then rename: the rename is atomic,
         // so the sentinel can never spawn a half-copied executable, and
         // replacing a RUNNING pi swaps the directory entry instead of
