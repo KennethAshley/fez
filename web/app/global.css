@@ -10,3 +10,35 @@ html > body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
 }
+
+/* The roster's idle animation — two frames, no easing. steps(1) holds
+   each keyframe's value, so the sprite JUMPS between grid positions the
+   way an NES idle cycle does; any smoothing would break the fiction. */
+@keyframes sprite-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+.sprite-hover:hover .sprite-px {
+  animation: sprite-bob 0.55s steps(1) infinite;
+}
+/* Hovering a statue previews its lit palette: the two renders are
+   stacked, and hover swaps which one is visible. */
+.sprite-hover .sprite-lit {
+  display: none;
+}
+.sprite-hover:hover .sprite-lit {
+  display: block;
+}
+.sprite-hover:hover .sprite-mono {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sprite-hover:hover .sprite-px {
+    animation: none;
+  }
+}

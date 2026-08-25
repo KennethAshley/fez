@@ -96,13 +96,26 @@ export function AgentCodex() {
           <button
             key={a.id}
             onClick={() => setSelected(i)}
-            className={`flex w-[84px] flex-col items-center gap-2 rounded-sm border border-dotted px-2 pb-2 pt-3 transition-colors ${
+            className={`sprite-hover flex w-[84px] flex-col items-center gap-2 rounded-sm border border-dotted px-2 pb-2 pt-3 transition-colors ${
               i === selected
                 ? 'border-[#FF6A00]/60 text-white'
                 : 'border-transparent text-neutral-600 hover:border-neutral-800 hover:text-neutral-400'
             }`}
           >
-            <PixelSprite sprite={SPRITES[a.id]} scale={4} mono={i === selected ? undefined : '#5d564c'} />
+            {i === selected ? (
+              <span className="sprite-px">
+                <PixelSprite sprite={SPRITES[a.id]} scale={4} />
+              </span>
+            ) : (
+              <span className="sprite-px">
+                <span className="sprite-mono">
+                  <PixelSprite sprite={SPRITES[a.id]} scale={4} mono="#5d564c" />
+                </span>
+                <span className="sprite-lit">
+                  <PixelSprite sprite={SPRITES[a.id]} scale={4} />
+                </span>
+              </span>
+            )}
             <span className={`text-[10px] ${i === selected ? 'text-[#cfc041]' : ''}`}>
               {i === selected && <span className="text-[#FF6A00]">&gt;</span>}
               {a.name}
@@ -115,9 +128,13 @@ export function AgentCodex() {
       <div className="border border-neutral-900 px-5 py-6 sm:px-8">
         <Rule />
         <div className="my-5 flex flex-col items-center gap-2 text-center">
-          <BracketFrame>
-            <PixelSprite sprite={SPRITES[agent.id]} scale={6} />
-          </BracketFrame>
+          <span className="sprite-hover">
+            <BracketFrame>
+              <span className="sprite-px inline-block">
+                <PixelSprite sprite={SPRITES[agent.id]} scale={6} />
+              </span>
+            </BracketFrame>
+          </span>
           <div className="mt-2 text-sm text-[#cfc041]">
             {agent.name}, {agent.epithet}
           </div>

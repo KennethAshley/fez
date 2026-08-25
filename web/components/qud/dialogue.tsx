@@ -39,7 +39,11 @@ export function Dialogue() {
     <section className="pb-24 text-left">
       <div className="border border-neutral-900 px-5 py-6 sm:px-8">
         <div className="mb-4 flex flex-col items-center gap-2 text-center">
-          <PixelSprite sprite={SPRITES.fez} scale={5} />
+          <span className="sprite-hover">
+            <span className="sprite-px inline-block">
+              <PixelSprite sprite={SPRITES.fez} scale={5} />
+            </span>
+          </span>
           <div className="text-sm text-[#cfc041]">the guide</div>
         </div>
         <Rule glyph="⑃" />
