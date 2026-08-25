@@ -24,6 +24,9 @@ export APPLE_SIGNING_IDENTITY="$(kc identity)"
 export APPLE_ID="$(kc apple-id)"
 export APPLE_PASSWORD="$(kc password)"
 export APPLE_TEAM_ID="$(kc team-id)"
+# Updater artifact signing (minisign) — key lives in the keychain too.
+export TAURI_SIGNING_PRIVATE_KEY="$(kc updater-key)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 echo "▸ signing as: $APPLE_SIGNING_IDENTITY"
 
 echo "▸ preparing bundled agent (bun: $(bun --version))"

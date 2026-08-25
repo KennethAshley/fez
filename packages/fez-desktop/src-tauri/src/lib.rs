@@ -1431,6 +1431,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // artifact://localhost/<id> — the staged-doc server. Not found is
         // a real 404: a released or evicted doc renders an empty frame,
         // never someone else's content.

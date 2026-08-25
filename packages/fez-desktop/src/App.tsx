@@ -41,6 +41,7 @@ import { SPRITES } from "./sprites";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
 import { runCommand } from "./commands";
+import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
 import FirstRun from "./FirstRun";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
@@ -330,6 +331,9 @@ function Shell({
     setWatchOpener((agent) => setPane({ kind: "watch", agent }));
     return () => setWatchOpener(undefined);
   }, []);
+  // One update check per app run, once the shell is actually up — a user
+  // mid-onboarding shouldn't meet an update toast before a channel.
+  useEffect(() => startUpdateCheck(), []);
   const [banner, setBanner] = useState<string>();
   useEffect(() => {
     wire.onError = (message) => {
