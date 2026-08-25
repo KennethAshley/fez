@@ -4,7 +4,7 @@ A relay is one Node process and one SQLite file. Everything here exists
 to make that process start on boot, survive a crash, speak `wss://`, and
 have a copy of its data somewhere else.
 
-Live: **`wss://67-205-188-204.sslip.io`** (DigitalOcean, 1 GB droplet).
+Live: **`wss://relay.fez.chat`** (also `wss://67-205-188-204.sslip.io`) (DigitalOcean, 1 GB droplet).
 
 ## Why sslip.io
 
@@ -81,7 +81,7 @@ original relay is alive — a single point of failure wearing a second
 relay as a disguise.
 
 ```bash
-node deploy/mirror.mjs ws://localhost:7777 wss://67-205-188-204.sslip.io
+node deploy/mirror.mjs ws://localhost:7777 wss://relay.fez.chat
 ```
 
 Safe to re-run: events are content-addressed and the destination dedupes

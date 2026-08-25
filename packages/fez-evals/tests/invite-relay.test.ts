@@ -31,7 +31,7 @@ describe("relays an invite may name", () => {
 
   it("accepts addresses a guest can actually reach", () => {
     for (const url of [
-      "wss://67-205-188-204.sslip.io",
+      "wss://relay.fez.chat",
       "ws://100.125.7.88:7777", // tailnet
       "ws://192.168.1.20:7777", // LAN
       "wss://relay.example.com",

@@ -77,7 +77,7 @@ export function saveSettings(patch: Partial<FezSettings>): FezSettings {
  * to. `fez relay add/remove` changes it; running your own is a `docker
  * run` (deploy/Dockerfile).
  */
-export const DEFAULT_RELAY = "wss://67-205-188-204.sslip.io";
+export const DEFAULT_RELAY = "wss://relay.fez.chat";
 
 /**
  * The hosted routing endpoint a fresh install points @fez at.

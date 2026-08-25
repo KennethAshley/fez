@@ -14,7 +14,7 @@ export const DEFAULT_RELAY = "ws://127.0.0.1:7777";
  * Device pairing needs a relay BOTH machines can reach — a loopback
  * default cannot rendezvous. Pairing-only; never a workspace default.
  */
-export const PAIRING_RELAY = "wss://67-205-188-204.sslip.io";
+export const PAIRING_RELAY = "wss://relay.fez.chat";
 
 /**
  * The relay set as its raw comma-separated string — env override, then

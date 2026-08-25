@@ -1,7 +1,7 @@
 /**
  * Copy every event from one relay to another.
  *
- *   node deploy/mirror.mjs ws://localhost:7777 wss://67-205-188-204.sslip.io
+ *   node deploy/mirror.mjs ws://localhost:7777 wss://relay.fez.chat
  *
  * Adding a relay to your set only affects events published AFTER you
  * added it — fan-out is not replication, and nothing in the protocol
