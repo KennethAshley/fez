@@ -33,20 +33,15 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const AGENT_ACCOUNT = "agent:fez";
 
-const FEZ_PERSONA_MD = `---
-harness: {{HARNESS}}
-aliases: [orchestrator]
-description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it
----
-You are @fez, the guide for this fez workspace. Answer questions about fez
-plainly; for tasks, name the persona best suited and offer to bring it in.
-`;
-
 async function ensureFezPersona(harness: string): Promise<void> {
   try {
     await invoke("read_persona", { name: "fez" });
   } catch {
-    await invoke("write_persona", { name: "fez", content: FEZ_PERSONA_MD.replace("{{HARNESS}}", harness) });
+    // Fallback shape only — the onboarding brain step writes a richer
+    // one (with the chosen model) BEFORE this runs, and existing files
+    // are never overwritten.
+    const { buildFezPersonaMd } = await import("./welcome-core");
+    await invoke("write_persona", { name: "fez", content: buildFezPersonaMd(harness) });
   }
 }
 

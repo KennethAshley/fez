@@ -9,6 +9,7 @@ import {
   helloText,
   openerText,
   awakeText,
+  buildFezPersonaMd,
   ensureMarkedMessage,
   findMarked,
   type MarkerWire,
@@ -35,6 +36,24 @@ describe("welcome opener", () => {
       expect(text.length).toBeLessThan(260);
     }
     expect(awakeText()).toContain("@fez");
+  });
+
+  it("persona builder: one template, brain lines only when fully chosen", () => {
+    const claude = buildFezPersonaMd("claude-code");
+    expect(claude).toContain("harness: claude-code");
+    expect(claude).not.toContain("model:");
+    expect(claude).not.toContain("provider:");
+    const chutes = buildFezPersonaMd("pi", "deepseek-v3", "local-56105ece7a");
+    expect(chutes).toContain("harness: pi");
+    expect(chutes).toContain("model: deepseek-v3");
+    expect(chutes).toContain("provider: local-56105ece7a");
+    // a half-choice never emits half-frontmatter
+    expect(buildFezPersonaMd("pi", "deepseek-v3")).not.toContain("model:");
+    for (const md of [claude, chutes]) {
+      expect(md).toMatch(/^---\nharness:/);
+      expect(md).toContain("aliases: [orchestrator]");
+      expect(md).toContain("You are @fez");
+    }
   });
 
   it("marker idempotency: second ensure publishes nothing", async () => {

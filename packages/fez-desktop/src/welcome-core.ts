@@ -60,6 +60,24 @@ export function openerText(r: Readiness, _userName: string): string {
   return `${intro}\n\nOne thing first: I need a model to think with — connect one in Settings → Agents, then mention me.`;
 }
 
+/**
+ * The @fez persona, built from a brain choice. ONE builder shared by the
+ * onboarding brain step (which writes it with the chosen model) and the
+ * welcome fallback (which writes it from bare detection) — two templates
+ * drifted is how a guide ends up half-configured. Model/provider lines
+ * appear only when both are chosen (pi frontmatter: defaultModel/
+ * defaultProvider); Claude Code needs neither.
+ */
+export function buildFezPersonaMd(harness: string, model?: string, provider?: string): string {
+  const brainLines = model && provider ? `provider: ${provider}\nmodel: ${model}\n` : "";
+  return (
+    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\n` +
+    `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
+    `You are @fez, the guide for this fez workspace. Answer questions about fez\n` +
+    `plainly; for tasks, name the persona best suited and offer to bring it in.\n`
+  );
+}
+
 export function awakeText(): string {
   return "🎩 I'm awake — a model is connected. Try: @fez what can you do?";
 }

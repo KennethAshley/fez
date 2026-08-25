@@ -7,6 +7,8 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, setRelays } from "./relay";
+import { useHarnesses } from "./harnesses";
+import { buildFezPersonaMd } from "./welcome-core";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -30,7 +32,7 @@ export function deriveSas(a: string, b: string): string {
   return String(n % 1_000_000).padStart(6, "0");
 }
 
-type Step = "welcome" | "invite" | "pairing" | "restore" | "done";
+type Step = "welcome" | "invite" | "pairing" | "restore" | "brain" | "done";
 
 export default function Onboarding({ onComplete }: { onComplete: (relayUrl: string) => void }) {
   const [step, setStep] = useState<Step>("welcome");
@@ -86,7 +88,10 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           wire.close();
         } catch { /* identity is what matters */ }
       }
-      setStep("done");
+      // Buzz's harness page, fez-sized: one step that gives @fez a brain
+      // before it ever speaks — so the first greeting is a working guide,
+      // not an apology.
+      setStep("brain");
     } catch (err) {
       setError(String(err));
     } finally {
@@ -205,6 +210,8 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
             onBack={() => setStep("welcome")}
           />
         )}
+
+        {step === "brain" && <BrainStep onNext={() => setStep("done")} />}
 
         {step === "done" && (
           <>
@@ -438,4 +445,142 @@ function InviteStep({
       <button className="ob-secondary" onClick={onBack}>back</button>
     </>
   );
+}
+
+/** Chutes provider id in pi's local-models registry — mirrors ModelPicker. */
+const CHUTES_PROVIDER = "local-56105ece7a";
+
+/**
+ * Buzz's harness-choosing page, fez-sized: ONE step, two brains, because
+ * pi is invisible plumbing and users think about models, not runtimes.
+ * Claude Code shows Buzz-style live detection (READY / INSTALL); the
+ * Built-in card is zero-install (pi ships with the app) but honest about
+ * auth — the Chutes key is verified by actually listing models, so READY
+ * here means a model genuinely answers. Skip never soft-locks (Buzz's
+ * rule): @fez still arrives, says it needs a brain, and points at
+ * Settings.
+ */
+function BrainStep({ onNext }: { onNext: () => void }) {
+  const harnesses = useHarnesses();
+  const claudeInstalled = harnesses.find((h) => h.id === "claude-code")?.installed ?? false;
+  const [choice, setChoice] = useState<"claude-code" | "chutes">();
+  const [chutesKey, setChutesKey] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [model, setModel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const verifyChutes = async () => {
+    setError(undefined);
+    setBusy(true);
+    try {
+      await invoke("set_skill_secret", { skill: "chutes", key: "CHUTES_API_KEY", value: chutesKey.trim() });
+      // The proof is a live model list, not a saved string — Buzz's
+      // page-4 verification, inline.
+      const json = await invoke<string>("wire_chutes_pi");
+      const list = (JSON.parse(json) as { models: string[] }).models;
+      if (list.length === 0) throw new Error("the key was saved but Chutes reported no models");
+      setModels(list);
+      setModel(list[0]);
+      setChoice("chutes");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finish = async () => {
+    setBusy(true);
+    try {
+      if (choice === "claude-code") {
+        await invoke("write_persona", { name: "fez", content: buildFezPersonaMd("claude-code") });
+      } else if (choice === "chutes" && model) {
+        await invoke("write_persona", { name: "fez", content: buildFezPersonaMd("pi", model, CHUTES_PROVIDER) });
+      }
+    } catch { /* the welcome's fallback persona still lands */ }
+    onNext();
+  };
+
+  return (
+    <>
+      <h2>Give @fez a brain</h2>
+      <p className="ob-lede">
+        Your guide needs a model to think with. fez checked this machine — pick one, or skip and wire it up later in
+        Settings.
+      </p>
+
+      <div className="ob-brains">
+        <button
+          className={`ob-brain ${choice === "claude-code" ? "selected" : ""} ${claudeInstalled ? "" : "unavailable"}`}
+          onClick={() => (claudeInstalled ? setChoice("claude-code") : void openBrainInstall())}
+        >
+          <span className="ob-brain-name">Claude Code</span>
+          {claudeInstalled ? (
+            <>
+              <span className="ob-brain-pill ready">READY</span>
+              <span className="ob-brain-hint">installed — uses your Claude login</span>
+            </>
+          ) : (
+            <>
+              <span className="ob-brain-pill">INSTALL</span>
+              <span className="ob-brain-hint">not detected — opens the install page</span>
+            </>
+          )}
+        </button>
+
+        <div className={`ob-brain ${choice === "chutes" ? "selected" : ""}`}>
+          <span className="ob-brain-name">Built-in</span>
+          {choice === "chutes" ? (
+            <span className="ob-brain-pill ready">READY</span>
+          ) : (
+            <span className="ob-brain-pill">NEEDS A KEY</span>
+          )}
+          <span className="ob-brain-hint">ships with fez — runs on Chutes, decentralized GPUs</span>
+          {choice !== "chutes" ? (
+            <div className="ob-brain-auth">
+              <input
+                className="ob-input"
+                type="password"
+                placeholder="Chutes API key"
+                value={chutesKey}
+                spellCheck={false}
+                onChange={(e) => setChutesKey(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && chutesKey.trim() && !busy) void verifyChutes();
+                }}
+              />
+              <button className="ob-secondary" disabled={!chutesKey.trim() || busy} onClick={() => void verifyChutes()}>
+                {busy ? "checking…" : "verify"}
+              </button>
+              <span className="ob-brain-hint">
+                <a href="https://chutes.ai" target="_blank" rel="noreferrer">chutes.ai</a> — a capped key; a leak costs
+                at most its balance
+              </span>
+            </div>
+          ) : (
+            <select className="ob-input" value={model} onChange={(e) => setModel(e.target.value)}>
+              {models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {error && <p className="ob-error">{error}</p>}
+      <button className="ob-primary" disabled={busy || !choice} onClick={() => void finish()}>
+        {choice === "chutes" ? `continue with ${model}` : choice === "claude-code" ? "continue with Claude Code" : "pick a brain to continue"}
+      </button>
+      <div className="ob-alts">
+        <button className="ob-link" onClick={onNext}>skip for now</button>
+      </div>
+    </>
+  );
+}
+
+/** The vendor's install page — fez never curls-pipes-bash on your behalf. */
+async function openBrainInstall(): Promise<void> {
+  const { openUrl } = await import("@tauri-apps/plugin-opener");
+  await openUrl("https://claude.com/claude-code");
 }

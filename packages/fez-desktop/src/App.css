@@ -2763,3 +2763,23 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 /* The "run an agent on Chutes" one-click, under the chutes skill's secrets. */
 .chutes-substrate { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
 .chutes-substrate .env-footer-hint { font-size: 12px; color: var(--fg-dim); }
+
+/* ── onboarding: the brain step (Buzz's harness cards, fez-sized) ──── */
+.ob-brains { display: flex; flex-direction: column; gap: 10px; margin: 18px 0 6px; text-align: left; }
+.ob-brain {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  border: 1px solid var(--hairline); border-radius: 10px; background: var(--bg1);
+  padding: 12px 14px; cursor: pointer; color: var(--fg); font: inherit; text-align: left;
+}
+.ob-brain.selected { border-color: var(--accent); }
+.ob-brain.unavailable { opacity: 0.75; }
+.ob-brain-name { font-weight: 700; }
+.ob-brain-pill {
+  font-size: 10px; letter-spacing: 1px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--hairline); color: var(--fg-dim);
+}
+.ob-brain-pill.ready { border-color: var(--accent); color: var(--accent); }
+.ob-brain-hint { flex-basis: 100%; font-size: 12px; color: var(--fg-dim); }
+.ob-brain-hint a { color: var(--accent); }
+.ob-brain-auth { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.ob-brain-auth .ob-input { flex: 1; min-width: 200px; margin: 0; }
