@@ -1,4 +1,49 @@
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+
+/// Staged artifact documents, served over the `artifact://` custom
+/// protocol. Artifacts used to render as `srcDoc` iframes, but srcdoc
+/// documents INHERIT the parent page's CSP — so any real app CSP would
+/// blank every artifact and live tool. Served from their own scheme
+/// they are their own origin with their own (permissive) policy, while
+/// the iframe's sandbox attribute keeps doing the actual containment.
+/// BTreeMap because ids ascend: the first key is always the oldest,
+/// which makes the size cap a one-liner.
+static ARTIFACT_DOCS: Mutex<Option<std::collections::BTreeMap<u64, String>>> = Mutex::new(None);
+static ARTIFACT_NEXT: AtomicU64 = AtomicU64::new(1);
+/// More staged docs than this and the oldest fall off — a leaked stage
+/// (webview reloaded mid-flight) must not grow the map forever.
+const ARTIFACT_CAP: usize = 64;
+
+/// Park an artifact document; the webview turns the id into an
+/// artifact:// URL (convertFileSrc) and points the iframe's src at it.
+#[tauri::command]
+fn stage_artifact(html: String) -> u64 {
+    let id = ARTIFACT_NEXT.fetch_add(1, Ordering::Relaxed);
+    let mut guard = ARTIFACT_DOCS.lock().unwrap_or_else(|p| p.into_inner());
+    let docs = guard.get_or_insert_with(Default::default);
+    docs.insert(id, html);
+    while docs.len() > ARTIFACT_CAP {
+        let oldest = *docs.keys().next().unwrap();
+        docs.remove(&oldest);
+    }
+    id
+}
+
+/// The unmount half — a rendered artifact releases its doc.
+#[tauri::command]
+fn release_artifact(id: u64) {
+    let mut guard = ARTIFACT_DOCS.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(docs) = guard.as_mut() {
+        docs.remove(&id);
+    }
+}
+
+fn artifact_doc(id: u64) -> Option<String> {
+    let guard = ARTIFACT_DOCS.lock().unwrap_or_else(|p| p.into_inner());
+    guard.as_ref().and_then(|docs| docs.get(&id).cloned())
+}
 
 /// The user's fez identity from the macOS keychain — the same key every
 /// other fez surface uses (service "fez-keys"). The webview receives the
@@ -1246,6 +1291,23 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // artifact://localhost/<id> — the staged-doc server. Not found is
+        // a real 404: a released or evicted doc renders an empty frame,
+        // never someone else's content.
+        .register_uri_scheme_protocol("artifact", |_ctx, request| {
+            let id = request.uri().path().trim_start_matches('/').parse::<u64>().ok();
+            match id.and_then(artifact_doc) {
+                Some(doc) => tauri::http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/html; charset=utf-8")
+                    .body(doc.into_bytes())
+                    .unwrap_or_default(),
+                None => tauri::http::Response::builder()
+                    .status(404)
+                    .body(Vec::new())
+                    .unwrap_or_default(),
+            }
+        })
         .setup(|app| {
             // Off the main thread: the copy moves ~140MB on a version bump,
             // and running it synchronously here held the window back —
@@ -1256,7 +1318,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

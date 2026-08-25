@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useArtifactDoc } from "./artifact-url";
 import { parseQuery, type FezClient } from "@fezchat/client";
 import type { Artifact } from "@fezchat/client";
 
@@ -215,14 +216,19 @@ export function LiveArtifact({ artifact }: { artifact: Artifact }): React.ReactN
     };
   }, [artifact.content, artifact.url]);
 
+  // Staged over artifact:// instead of srcDoc, so the tool's own inline
+  // scripts answer to their own origin's policy, not the app CSP. The
+  // postMessage bridge above is unaffected — contentWindow is
+  // contentWindow whatever the src scheme.
   const doc = artifact.content ? wrapLiveDoc(artifact.content) : undefined;
-  if (!doc) return null;
+  const stagedUrl = useArtifactDoc(doc);
+  if (!doc || !stagedUrl) return null;
   return (
     <iframe
       ref={frameRef}
       className="artifact-frame"
       sandbox="allow-scripts"
-      srcDoc={doc}
+      src={stagedUrl}
       title={artifact.title ?? "live tool"}
     />
   );
