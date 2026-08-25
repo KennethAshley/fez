@@ -35,6 +35,8 @@ import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers } from "./InstallOffer";
 import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
+import { AnimatedSprite } from "./pixel-sprite";
+import { SPRITES } from "./sprites";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine } from "./upload";
 import { runCommand } from "./commands";
@@ -186,6 +188,50 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
   return bootPromise;
 }
 
+/**
+ * Cold-boot splash — Buzz's decision, worn by fez: the animation gets a
+ * MINIMUM time on screen (a real boot resolves faster than first paint,
+ * and an unheld splash is unmounted before it is ever seen), and once
+ * the app is mounted it runs as an overlay ABOVE it, so time-to-
+ * interactive pays nothing; only the reveal waits. Instead of one bee,
+ * the roster idles in a row — each familiar on its own two frames,
+ * staggered so the line reads as a crowd, not a metronome.
+ */
+const SPLASH_ROSTER = ["scout", "loom", "fez", "vault", "chip"] as const;
+const SPLASH_MIN_VISIBLE_MS = 1100;
+const SPLASH_FADE_MS = 220;
+let splashShownAt = Date.now();
+
+function BootSplash({ loading }: { loading: boolean }) {
+  const [phase, setPhase] = useState<"holding" | "fading" | "done">("holding");
+  useEffect(() => {
+    if (loading) return;
+    const hold = Math.max(0, SPLASH_MIN_VISIBLE_MS - (Date.now() - splashShownAt));
+    const fade = setTimeout(() => setPhase("fading"), hold);
+    const done = setTimeout(() => setPhase("done"), hold + SPLASH_FADE_MS);
+    return () => {
+      clearTimeout(fade);
+      clearTimeout(done);
+    };
+  }, [loading]);
+  if (phase === "done") return null;
+  return (
+    <div className={phase === "fading" ? "boot-splash fading" : "boot-splash"} role="status">
+      <div className="boot-splash-mark">
+        fez<span className="boot-splash-tri">▴</span>
+      </div>
+      <div className="boot-splash-roster">
+        {SPLASH_ROSTER.map((id, i) => (
+          <span key={id} className="boot-sprite" style={{ "--flap-delay": `${i * 0.14}s` } as React.CSSProperties}>
+            <AnimatedSprite sprite={SPRITES[id]} scale={4} />
+          </span>
+        ))}
+      </div>
+      <div className="boot-splash-caption">connecting to the relay…</div>
+    </div>
+  );
+}
+
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
   const [connected, setConnected] = useState(true);
@@ -194,6 +240,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    splashShownAt = Date.now(); // a re-boot (post-onboarding) re-arms the splash hold
     void bootOnce()
       .then(({ client, wire }) => {
         if (cancelled) return;
@@ -213,7 +260,7 @@ export default function App() {
     };
   }, [bootNonce]);
 
-  if (boot.phase === "loading") return <div className="boot">connecting…</div>;
+  if (boot.phase === "loading") return <BootSplash loading />;
   if (boot.phase === "onboarding") {
     return (
       <Onboarding
@@ -741,6 +788,7 @@ function Shell({
 
   return (
     <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
+      <BootSplash loading={false} />
       <Toaster />
       {!connected && (
         <div className="conn-bar">

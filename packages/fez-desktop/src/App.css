@@ -32,6 +32,36 @@ body {
 .boot { height: 100%; display: grid; place-items: center; color: var(--fg-dim); }
 .boot.error { color: var(--red); padding: 2rem; text-align: center; }
 
+/* ── cold-boot splash ──────────────────────────────────────────
+   The roster idles while the relay answers — Buzz's held-splash
+   decision (minimum visible time, overlay above the mounted app,
+   fade out) with fez's familiars instead of the bee. Frames flip
+   with steps(1): a JUMP between two hand-drawn poses, never a fade,
+   and each sprite starts on its own --flap-delay so the line reads
+   as a crowd, not a metronome. */
+.boot-splash {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  background: var(--bg0);
+  transition: opacity 220ms ease-out;
+}
+.boot-splash.fading { opacity: 0; pointer-events: none; }
+.boot-splash-mark { font-family: var(--font-mono); font-size: 22px; font-weight: 700; color: var(--fg); }
+.boot-splash-tri { color: var(--brand); }
+.boot-splash-roster { display: flex; align-items: flex-end; gap: 18px; }
+.boot-splash-caption { font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
+
+.sprite-anim { position: relative; display: block; line-height: 0; }
+.sprite-anim svg { display: block; }
+.sprite-anim .spr-b { position: absolute; inset: 0; opacity: 0; }
+@keyframes spr-frame-a { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes spr-frame-b { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+.boot-sprite .spr-a { animation: spr-frame-a 0.6s steps(1) infinite; animation-delay: var(--flap-delay, 0s); }
+.boot-sprite .spr-b { animation: spr-frame-b 0.6s steps(1) infinite; animation-delay: var(--flap-delay, 0s); }
+@media (prefers-reduced-motion: reduce) {
+  .boot-sprite .spr-a, .boot-sprite .spr-b { animation: none; }
+}
+
 /* The line under the macOS title bar.
    That bar is drawn by the OS, not the webview — there is no element in
    this document for the traffic lights and the window title, so no
