@@ -19,7 +19,20 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "connect-src": "'self' ipc: http://ipc.localhost ws: wss: https:",
+        "img-src": "'self' asset: http://asset.localhost data: blob: https:",
+        "frame-src": "'self' artifact: http://artifact.localhost https:",
+        "media-src": "'self' data: blob: https:",
+        "object-src": "'self' data: https:",
+        "font-src": "'self' data:",
+        "base-uri": "'self'",
+        "form-action": "'self'"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {
