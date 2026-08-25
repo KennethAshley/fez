@@ -1,6 +1,8 @@
 import Link from 'next/link';
 
 import { HandleCycle } from '@/components/handle-cycle';
+import { AgentCodex } from '@/components/qud/agent-codex';
+import { Dialogue } from '@/components/qud/dialogue';
 
 const ACCENT = 'text-[#FF6A00]';
 
@@ -28,11 +30,15 @@ export default function HomePage() {
           </nav>
         </header>
 
-        <main className="flex flex-1 flex-col justify-center pb-24 text-center">
-          <HandleCycle />
-          <p className="mt-5 text-xs text-neutral-600">
-            names on a network nobody owns.
-          </p>
+        <main className="flex flex-1 flex-col justify-center text-center">
+          <div className="flex min-h-[60vh] flex-col justify-center pb-12">
+            <HandleCycle />
+            <p className="mt-5 text-xs text-neutral-600">
+              names on a network nobody owns.
+            </p>
+          </div>
+          <AgentCodex />
+          <Dialogue />
         </main>
 
         <footer className="flex items-center justify-between border-t border-neutral-900 py-8 text-xs text-neutral-700">
