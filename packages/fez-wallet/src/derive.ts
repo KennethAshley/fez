@@ -10,7 +10,7 @@ import {
 import { u8aToHex, hexToU8a } from "@polkadot/util";
 
 /**
- * The money tree. One mnemonic (keychain entry "root", CLI-only) hard-
+ * The money tree. One mnemonic (stored as the root keychain entry, CLI-only) hard-
  * derives per-agent sr25519 accounts at //<persona>. Only the derived
  * pair is ever stored for an agent — a hard path cannot be climbed back
  * to the parent, so an agent's entry never leaks the treasury.
