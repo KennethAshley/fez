@@ -160,6 +160,15 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
       // exist by construction.
       await client.ensureChannel({ name: "general", id: "bootstrap-general" }).catch(() => {});
     }
+    // Local-workspace owners get the scripted @fez greeting (idempotent —
+    // relay-side markers) and a best-effort runner start. Non-blocking:
+    // a slow relay must not hold boot.
+    void import("./welcome")
+      .then(async ({ ensureWelcome }) => {
+        await invoke("ensure_agent_runner").catch(() => {});
+        await ensureWelcome(client);
+      })
+      .catch(() => {});
     const scope = client.state.scope;
     if (scope) await client.loadChannelHistory(scope.channelId);
     // Paint before anything renders, and keep following the OS: a
@@ -1634,6 +1643,18 @@ function ChannelView({
       });
       await client.sendChannelMessage(text, { threadRootId: threadRoot, mentionPks: resolution.pubkeys });
       if (problem) onNotice(problem);
+      // A mention of @fez that nothing answers must say why: 60s, then a
+      // sticky note — never a fabricated message (cold-start spec).
+      if (/@fez\b/i.test(text)) {
+        const before = client.messages(channelId).length;
+        setTimeout(() => {
+          const later = client.messages(channelId).slice(before);
+          const replied = later.some((m) => client.displayName(m.authorPk).toLowerCase() === "fez");
+          if (!replied) {
+            toast.info("@fez didn't answer in 60s — check Agents: is a model connected, and is the watcher (fez sentinel) running?", 0);
+          }
+        }, 60_000);
+      }
     } catch (err) {
       setDraft(text);
       setBindings(savedBindings);

@@ -8,8 +8,9 @@
  * cross-compile, which trips over pi's native deps).
  *
  * Steps: build `pi` from pinned source with `bun --compile`, compile the
- * `pi-acp` adapter from its pinned npm package, copy pi's required runtime
- * assets (theme JSONs, image wasm), stamp VERSION. Version-gated: a no-op
+ * `pi-acp` adapter from its pinned npm package, compile `fez-relay` from
+ * the monorepo (the local-workspace relay — cold-start spec), copy pi's
+ * required runtime assets (theme JSONs, image wasm), stamp VERSION. Version-gated: a no-op
  * once pi-agent/VERSION already matches (FORCE=1 to rebuild).
  *
  * Graceful when bun is absent (a plain dev machine): it still creates
@@ -54,8 +55,14 @@ const copyExec = (src, dst) => {
 fs.mkdirSync(OUT, { recursive: true });
 const marker = path.join(OUT, "VERSION");
 
-// Version gate.
-if (!process.env.FORCE && fs.existsSync(path.join(OUT, `pi${EXE}`)) && fs.readFileSync(marker, "utf8").trim() === PI_VERSION) {
+// Version gate. fez-relay's existence is part of the gate: a build made
+// before the relay joined the bundle must not skip past adding it.
+if (
+  !process.env.FORCE &&
+  fs.existsSync(path.join(OUT, `pi${EXE}`)) &&
+  fs.existsSync(path.join(OUT, `fez-relay${EXE}`)) &&
+  fs.readFileSync(marker, "utf8").trim() === PI_VERSION
+) {
   console.log(`pi-agent already at ${PI_VERSION} — skipping (FORCE=1 to rebuild)`);
   process.exit(0);
 }
@@ -94,16 +101,27 @@ run(`npm install pi-acp@${PI_ACP_VERSION} --no-save --no-fund --no-audit`, acpPk
 const acpEntry = path.join(acpPkg, "node_modules", "pi-acp", "dist", "index.js");
 run(`bun build --compile ${JSON.stringify(acpEntry)} --outfile ${JSON.stringify(path.join(WORK, "pi-acp"))}`, WORK);
 
-// 3. Assemble pi-agent/ — binaries + required assets + VERSION.
+// 3. fez-relay — the local-workspace relay, compiled from the monorepo
+// source (ws + nostr-tools only, no native deps) so the DMG can spawn a
+// user-owned workspace with no install. See the cold-start spec.
+console.log(`\n▶ compiling fez-relay…`);
+const relayPkg = path.resolve(HERE, "..", "..", "fez-relay");
+run(
+  `bun build --compile ${JSON.stringify(path.join(relayPkg, "src", "cli.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-relay${EXE}`))}`,
+  relayPkg
+);
+
+// 4. Assemble pi-agent/ — binaries + required assets + VERSION.
 console.log(`\n▶ assembling ${path.relative(path.resolve(HERE, "..", ".."), OUT)}…`);
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(path.join(OUT, "theme"), { recursive: true });
 const dist = path.join(codingAgent, "dist");
 copyExec(path.join(dist, `pi${EXE}`), path.join(OUT, `pi${EXE}`));
 copyExec(path.join(WORK, `pi-acp${EXE}`), path.join(OUT, `pi-acp${EXE}`));
+copyExec(path.join(WORK, `fez-relay${EXE}`), path.join(OUT, `fez-relay${EXE}`));
 for (const f of fs.readdirSync(path.join(dist, "theme"))) fs.copyFileSync(path.join(dist, "theme", f), path.join(OUT, "theme", f));
 const wasm = path.join(dist, "photon_rs_bg.wasm");
 if (fs.existsSync(wasm)) fs.copyFileSync(wasm, path.join(OUT, "photon_rs_bg.wasm"));
 fs.writeFileSync(marker, `${PI_VERSION}\n`);
 
-console.log(`\n✓ pi-agent ${PI_VERSION} ready (${(fs.statSync(path.join(OUT, `pi${EXE}`)).size / 1e6).toFixed(0)}MB pi + pi-acp)`);
+console.log(`\n✓ pi-agent ${PI_VERSION} ready (${(fs.statSync(path.join(OUT, `pi${EXE}`)).size / 1e6).toFixed(0)}MB pi + pi-acp + fez-relay)`);

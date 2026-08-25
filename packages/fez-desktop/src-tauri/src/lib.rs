@@ -1247,10 +1247,150 @@ fn install_bundled_agent(src: std::path::PathBuf) {
 /// pi + pi-acp executable, theme (pi needs it even in --mode rpc), and
 /// the wasm behind the image tools. Any failure aborts before the
 /// version marker is stamped.
+fn fez_relay_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    std::path::PathBuf::from(home).join(".fez").join("relay")
+}
+
+fn pid_alive(pidfile: &std::path::Path) -> Option<u32> {
+    let pid: u32 = std::fs::read_to_string(pidfile).ok()?.trim().parse().ok()?;
+    // kill -0: alive. /bin/kill keeps this file's no-extra-crates rule.
+    let ok = Command::new("/bin/kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    ok.then_some(pid)
+}
+
+/// Is the local workspace relay running? Pidfile + kill -0, the same
+/// convention as the CLI sentinel's pidfile.
+#[tauri::command]
+fn local_relay_status() -> bool {
+    pid_alive(&fez_relay_dir().join("relay.pid")).is_some()
+}
+
+/// Spawn (or adopt) the user-owned local relay and wait until its NIP-11
+/// answers. Creating ~/.fez/relay is the durable "this machine chose a
+/// local workspace" marker — .setup() respawns on it every launch.
+///
+/// The relay reads its identity from FLAGS, not its store — a restart
+/// without --owner would serve an UNCLAIMED workspace (fez-relay/src/
+/// cli.ts). So the first spawn persists its args to args.json and every
+/// respawn replays them; a restart can never change owner or name.
+#[tauri::command]
+fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
+    let dir = fez_relay_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let args_file = dir.join("args.json");
+    let (owner, name) = if owner.is_empty() {
+        let raw = std::fs::read_to_string(&args_file)
+            .map_err(|_| "no local workspace to respawn (missing args.json)".to_string())?;
+        let v: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| format!("args.json: {e}"))?;
+        (
+            v["owner"].as_str().unwrap_or_default().to_string(),
+            v["name"].as_str().unwrap_or_default().to_string(),
+        )
+    } else {
+        let v = serde_json::json!({ "owner": owner, "name": name });
+        std::fs::write(&args_file, v.to_string()).map_err(|e| format!("args.json: {e}"))?;
+        (owner, name)
+    };
+    if owner.len() != 64 || !owner.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("local relay needs a 64-hex owner pubkey".to_string());
+    }
+    let pidfile = dir.join("relay.pid");
+    if pid_alive(&pidfile).is_none() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-relay");
+        if !bin.exists() {
+            return Err(
+                "fez-relay isn't bundled in this build — join a workspace by invite instead"
+                    .to_string(),
+            );
+        }
+        let child = Command::new(&bin)
+            .args([
+                "--port",
+                "7777",
+                "--store",
+                &dir.join("events.jsonl").to_string_lossy(),
+                "--owner",
+                &owner,
+                "--name",
+                if name.is_empty() { "your workspace" } else { &name },
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("spawn fez-relay: {e}"))?;
+        std::fs::write(&pidfile, child.id().to_string()).map_err(|e| format!("pidfile: {e}"))?;
+    }
+    // Health: NIP-11 on the http origin, up to 5s.
+    for _ in 0..10 {
+        if ureq::get("http://127.0.0.1:7777")
+            .set("Accept", "application/nostr+json")
+            .timeout(std::time::Duration::from_millis(500))
+            .call()
+            .is_ok()
+        {
+            return Ok("ws://127.0.0.1:7777".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    Err("local relay didn't come up within 5s — check ~/.fez/relay".to_string())
+}
+
+/// Something is watching mentions: the CLI sentinel's pidfile is alive.
+#[tauri::command]
+fn runner_status() -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    pid_alive(&std::path::PathBuf::from(home).join(".fez").join("sentinel.pid")).is_some()
+}
+
+/// Best effort: if the fez CLI exists on this machine, start its sentinel
+/// detached. Ok(false) means "no CLI here" — the UI says so honestly
+/// instead of promising a reply that cannot come. Bundling the full
+/// runner chain (sentinel → fez agent → fez-acp) is the standalone-DMG
+/// follow-up, out of scope for the cold-start work.
+#[tauri::command]
+fn ensure_agent_runner() -> Result<bool, String> {
+    if runner_status() {
+        return Ok(true);
+    }
+    // Same real-install-dirs idea harness_installed uses: a GUI app's
+    // PATH is stripped, so look where installers actually put things.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("{home}/.fez/bin/fez"),
+        "/opt/homebrew/bin/fez".to_string(),
+        "/usr/local/bin/fez".to_string(),
+        format!("{home}/.local/bin/fez"),
+        format!("{home}/.bun/bin/fez"),
+        format!("{home}/.volta/bin/fez"),
+    ];
+    let Some(fez) = candidates.iter().find(|p| std::path::Path::new(p.as_str()).exists()) else {
+        return Ok(false);
+    };
+    Command::new(fez)
+        .arg("sentinel")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("spawn fez sentinel: {e}"))?;
+    Ok(true)
+}
+
 fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
-    for name in ["pi", "pi-acp"] {
+    // fez-relay is optional: dev builds without bun don't produce it, and
+    // the app degrades to invite-only workspaces. pi/pi-acp stay required.
+    for (name, required) in [("pi", true), ("pi-acp", true), ("fez-relay", false)] {
+        if !required && !src.join(name).exists() {
+            continue;
+        }
         // Stage next to the destination, then rename: the rename is atomic,
         // so the sentinel can never spawn a half-copied executable, and
         // replacing a RUNNING pi swaps the directory entry instead of
@@ -1316,9 +1456,19 @@ pub fn run() {
             if let Ok(dir) = app.path().resource_dir() {
                 std::thread::spawn(move || install_bundled_agent(dir.join("pi-agent")));
             }
+            // A machine that chose a local workspace gets its relay back on
+            // every launch — args.json replays the original owner/name, so
+            // a restart can never change the workspace's identity.
+            if fez_relay_dir().join("args.json").exists() {
+                std::thread::spawn(|| {
+                    if let Err(e) = ensure_local_relay(String::new(), String::new()) {
+                        eprintln!("local relay respawn: {e}");
+                    }
+                });
+            }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, runner_status, ensure_agent_runner])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
