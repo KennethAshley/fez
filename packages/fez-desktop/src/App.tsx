@@ -6,7 +6,7 @@ import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
 import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
-import { BrowserWire } from "./wire";
+import { BrowserWire, rustSigner } from "./wire";
 import { relaySet } from "./relay";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
@@ -127,8 +127,13 @@ let bootPromise: Promise<{ client: FezClient; wire: BrowserWire }> | undefined;
 
 function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
   bootPromise ??= (async () => {
-    const keyHex = await invoke<string>("get_identity", { account: ACCOUNT });
-    const wire = new BrowserWire(relaySet(), keyHex);
+    // The custody boundary: boot learns WHO you are, never the secret —
+    // the wire signs through rustSigner (a bare hex here would read as a
+    // SECRET, and a pubkey is also 64 hex chars — always the object).
+    // The Rust side still surfaces "no fez identity" for onboarding and
+    // "keychain access failed" for retry — same routing as before.
+    const pubkey = await invoke<string>("get_pubkey", { account: ACCOUNT });
+    const wire = new BrowserWire(relaySet(), rustSigner(pubkey));
     const client = new FezClient(wire);
     await client.start();
 
@@ -678,7 +683,7 @@ function Shell({
     await wire.publish({
       kind: KIND_OBSERVER_CONTROL,
       tags: [["p", pk]],
-      content: wire.encrypt(pk, JSON.stringify({ cmd: "cancel", ts: Date.now() })),
+      content: await wire.encrypt(pk, JSON.stringify({ cmd: "cancel", ts: Date.now() })),
     });
   };
 
@@ -2148,7 +2153,7 @@ function CostsPane({ client, wire, onClose }: { client: FezClient; wire: Browser
       const dayAgo = Date.now() - 24 * 3600_000;
       for (const event of events) {
         try {
-          const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as {
+          const metric = JSON.parse(await wire.decrypt(event.pubkey, event.content)) as {
             agent?: string;
             status?: string;
             durationMs?: number;
@@ -2584,7 +2589,7 @@ function Bubble({
     await wire.publish({
       kind: 1984,
       tags: [["p", creator]],
-      content: wire.encrypt(creator, JSON.stringify({ targetPk: msg.authorPk, reason: `${reason} (msg: ${msg.content.slice(0, 60)})`, ts: Date.now() })),
+      content: await wire.encrypt(creator, JSON.stringify({ targetPk: msg.authorPk, reason: `${reason} (msg: ${msg.content.slice(0, 60)})`, ts: Date.now() })),
     });
     setReported(true);
     setTimeout(() => setReported(false), 2500);

@@ -73,7 +73,7 @@ export default function PulseView({
       const records: TurnRec[] = [];
       for (const event of events) {
         try {
-          const metric = JSON.parse(wire.decrypt(event.pubkey, event.content)) as TurnRec;
+          const metric = JSON.parse(await wire.decrypt(event.pubkey, event.content)) as TurnRec;
           if (metric.agent && metric.ts) records.push(metric);
         } catch { /* not addressed to us */ }
       }

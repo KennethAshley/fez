@@ -29,7 +29,7 @@ export async function uploadFile(
 ): Promise<Uploaded> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const hash = bytesToHex(sha256(bytes));
-  const auth = wire.signEvent({
+  const auth = await wire.signEvent({
     kind: KIND_BLOSSOM_AUTH,
     tags: [
       ["t", "upload"],

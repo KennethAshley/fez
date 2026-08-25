@@ -38,7 +38,7 @@ export default function RemindersPane({
       const mapped: ReminderRow[] = [];
       for (const event of events) {
         try {
-          const body = JSON.parse(wire.decrypt(client.pubkey, event.content)) as {
+          const body = JSON.parse(await wire.decrypt(client.pubkey, event.content)) as {
             note?: string;
             remind_at?: number;
             about?: string;

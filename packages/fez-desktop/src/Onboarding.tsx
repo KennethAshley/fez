@@ -4,7 +4,7 @@ import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools/pure
 import { nip44 } from "nostr-tools";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { BrowserWire } from "./wire";
+import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY } from "./relay";
 
@@ -78,7 +78,9 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         // Best-effort: a profile that didn't publish is a display name to
         // fix later, not a reason to hold someone at the door.
         try {
-          const wire = new BrowserWire(activeRelay.split(","), hex);
+          // Identity was just stored — the wire signs via Rust custody,
+          // so it gets the pubkey-bearing signer, never the secret.
+          const wire = new BrowserWire(activeRelay.split(","), rustSigner(getPublicKey(secret)));
           await new Promise((r) => setTimeout(r, 600));
           await wire.publish({ kind: 0, tags: [], content: JSON.stringify({ name: name.trim() }) });
           wire.close();

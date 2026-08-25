@@ -114,8 +114,10 @@ export interface GuiClient {
   docsByChannel(): ReadonlyMap<string, { latestContent?: string }>;
   /** Publish a new doc version into a channel. */
   publishDoc(channelId: string, content: string): Promise<void>;
-  /** NIP-98 header for one request — the key stays behind the seam. */
-  httpAuthHeader(url: string, method: string): string | undefined;
+  /** NIP-98 header for one request — the key stays behind the seam.
+   * Async since key custody moved into the host process (the desktop
+   * signs in Rust); always await it. */
+  httpAuthHeader(url: string, method: string): Promise<string | undefined>;
   /** A pubkey's display name, hex-shortened when unknown. */
   displayName(pk: string): string;
   /** The pubkey behind an @name, if the client knows one. */

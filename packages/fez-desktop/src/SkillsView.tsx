@@ -302,7 +302,7 @@ export default function SkillsView({
     const key = `${listing.authorPk}:${listing.name}`;
     try {
       await invoke("write_persona_draft", { name: listing.name, content: stamped });
-      const receipt = wire.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", `persona:${listing.name}`], ["p", listing.authorPk]], content: "" });
+      const receipt = await wire.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", `persona:${listing.name}`], ["p", listing.authorPk]], content: "" });
       await wire.publish({ kind: receipt.kind, tags: receipt.tags, content: receipt.content }).catch(() => {});
       if (countsUrl()) void fetch(countsUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(receipt), signal: AbortSignal.timeout(5000) }).catch(() => {});
       setPersonaState({ ...personaState, [key]: "done" });
@@ -750,7 +750,7 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
       // (number). Only for relay listings: a receipt names an author,
       // and there is nobody to credit for a package you found yourself.
       if (target.authorPk) {
-        const receipt = wire.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", target.name], ["p", target.authorPk]], content: "" });
+        const receipt = await wire.signEvent({ kind: KIND_SKILL_INSTALL, tags: [["skill", target.name], ["p", target.authorPk]], content: "" });
         await wire.publish({ kind: receipt.kind, tags: receipt.tags, content: receipt.content, created_at: receipt.created_at }).catch(() => {});
         if (countsUrl()) void fetch(countsUrl(), {
           method: "POST",

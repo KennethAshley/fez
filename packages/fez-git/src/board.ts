@@ -74,7 +74,7 @@ export function makeLaneBoard(api: GuiExtensionApi) {
 
     /** GET a gated relay endpoint. Sign the PATH-ONLY url (the server's verifier strips queries). */
     const gated = useCallback(async (pathUrl: string, query: string, method = "GET"): Promise<Response | undefined> => {
-      const header = client.httpAuthHeader(pathUrl, method);
+      const header = await client.httpAuthHeader(pathUrl, method);
       if (!header) return undefined;
       return fetch(`${pathUrl}${query}`, { method, headers: { Authorization: header } });
     }, []);

@@ -1,3 +1,4 @@
+use nostr::JsonUtil as _;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -87,6 +88,121 @@ fn get_identity(account: Option<String>) -> Result<String, String> {
         return Err("keychain entry is not a 64-hex key".to_string());
     }
     Ok(hex)
+}
+
+// ── key custody ─────────────────────────────────────────────────────
+// The identity key stays HERE. The webview asks for a pubkey, for
+// signatures, and for DM crypto — never the secret (Buzz's custody
+// model). get_identity survives above as the EXPLICIT reveal used by
+// backup/settings; nothing on the boot or messaging path calls it.
+
+/// Keys per account, loaded from the keychain once per launch — DM
+/// history decrypt would otherwise spawn `security` per event.
+static IDENTITY_KEYS: Mutex<Option<std::collections::HashMap<String, nostr::Keys>>> =
+    Mutex::new(None);
+
+fn load_keys(account: Option<String>) -> Result<nostr::Keys, String> {
+    let name = account.clone().unwrap_or_else(|| "default".to_string());
+    {
+        let guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(keys) = guard.as_ref().and_then(|m| m.get(&name)) {
+            return Ok(keys.clone());
+        }
+    }
+    let hex = get_identity(account)?;
+    let keys = nostr::Keys::parse(&hex).map_err(|e| format!("bad identity key: {e}"))?;
+    let mut guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+    guard.get_or_insert_with(Default::default).insert(name, keys.clone());
+    Ok(keys)
+}
+
+/// The boot call: who am I — and nothing else crosses the bridge.
+#[tauri::command]
+fn get_pubkey(account: Option<String>) -> Result<String, String> {
+    Ok(load_keys(account)?.public_key().to_hex())
+}
+
+fn parse_tags(tags: Vec<Vec<String>>) -> Result<Vec<nostr::Tag>, String> {
+    tags.into_iter()
+        .map(|t| nostr::Tag::parse(t).map_err(|e| format!("bad tag: {e}")))
+        .collect()
+}
+
+/// Sign one event template — the webview's finalizeEvent, minus the key.
+#[tauri::command]
+async fn sign_event(
+    kind: u16,
+    content: String,
+    tags: Vec<Vec<String>>,
+    created_at: Option<u64>,
+    account: Option<String>,
+) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let mut builder = nostr::EventBuilder::new(nostr::Kind::from(kind), content).tags(parse_tags(tags)?);
+    if let Some(ts) = created_at {
+        builder = builder.custom_created_at(nostr::Timestamp::from(ts));
+    }
+    let event = builder.sign(&keys).await.map_err(|e| format!("sign failed: {e}"))?;
+    Ok(event.as_json())
+}
+
+#[tauri::command]
+fn nip44_encrypt(peer: String, plaintext: String, account: Option<String>) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let peer = nostr::PublicKey::from_hex(&peer).map_err(|e| format!("bad peer pubkey: {e}"))?;
+    nostr::nips::nip44::encrypt(keys.secret_key(), &peer, plaintext, nostr::nips::nip44::Version::V2)
+        .map_err(|e| format!("encrypt failed: {e}"))
+}
+
+#[tauri::command]
+fn nip44_decrypt(peer: String, ciphertext: String, account: Option<String>) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let peer = nostr::PublicKey::from_hex(&peer).map_err(|e| format!("bad peer pubkey: {e}"))?;
+    nostr::nips::nip44::decrypt(keys.secret_key(), &peer, ciphertext)
+        .map_err(|e| format!("decrypt failed: {e}"))
+}
+
+/// Gift-wrap ONE DM rumor for every recipient (NIP-59: seal, then wrap
+/// per key). One command for the whole set because the rumor's identity
+/// must be shared — per-recipient rumors would give every member of a
+/// group DM a different message id. Returns {"rumorId", "wraps": [json]}.
+#[tauri::command]
+async fn dm_wrap_all(
+    kind: u16,
+    content: String,
+    tags: Vec<Vec<String>>,
+    recipients: Vec<String>,
+    account: Option<String>,
+) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let mut rumor = nostr::EventBuilder::new(nostr::Kind::from(kind), content)
+        .tags(parse_tags(tags)?)
+        .build(keys.public_key());
+    let rumor_id = rumor.id().to_hex();
+    let mut wraps: Vec<serde_json::Value> = Vec::new();
+    for recipient in recipients {
+        let pk = nostr::PublicKey::from_hex(&recipient).map_err(|e| format!("bad recipient: {e}"))?;
+        let wrap = nostr::EventBuilder::gift_wrap(&keys, &pk, rumor.clone(), [])
+            .await
+            .map_err(|e| format!("wrap failed: {e}"))?;
+        wraps.push(serde_json::from_str(&wrap.as_json()).map_err(|e| e.to_string())?);
+    }
+    Ok(serde_json::json!({ "rumorId": rumor_id, "wraps": wraps }).to_string())
+}
+
+/// Unwrap an incoming gift wrap to its rumor (JSON), or error.
+#[tauri::command]
+async fn dm_unwrap(event: String, account: Option<String>) -> Result<String, String> {
+    let keys = load_keys(account)?;
+    let wrap = nostr::Event::from_json(&event).map_err(|e| format!("bad event: {e}"))?;
+    let gift = nostr::nips::nip59::UnwrappedGift::from_gift_wrap(&keys, &wrap)
+        .await
+        .map_err(|e| format!("unwrap failed: {e}"))?;
+    let mut rumor = gift.rumor;
+    // The rumor id is the DM's identity (dedup, threading) — make sure
+    // the JSON carries it even when the sender left it uncomputed.
+    rumor.ensure_id();
+    Ok(rumor.as_json())
 }
 
 /// Store a newly generated (or paired-in) identity in the keychain —
@@ -1469,7 +1585,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, runner_status, ensure_agent_runner])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, runner_status, ensure_agent_runner])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

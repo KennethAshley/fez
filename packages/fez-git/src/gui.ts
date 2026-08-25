@@ -533,7 +533,7 @@ export default function activate(api: GuiExtensionApi): void {
       const existing = repos.find((r) => r.repo === value || r.name === value.toLowerCase());
       if (!existing) return `⑂ no repo called "${value}" here`;
       const signUrl = `${gitBase}/${existing.repo}.git/fez-merge`;
-      const header = client.httpAuthHeader(signUrl, "POST");
+      const header = await client.httpAuthHeader(signUrl, "POST");
       if (!header) return "⑂ this client cannot sign requests — merge from the TUI instead";
       const into = rest[1]?.trim();
       const res = await fetch(`${signUrl}?branch=${encodeURIComponent(branch)}${into ? `&into=${encodeURIComponent(into)}` : ""}`, {
