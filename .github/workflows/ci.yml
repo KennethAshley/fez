@@ -55,3 +55,35 @@ jobs:
       - name: Test gate
         run: npx vitest --run
         working-directory: packages/fez-evals
+
+  e2e:
+    # ubuntu, same reasoning as the test job above: the desktop e2e suite
+    # drives a vite preview build in a real browser, not the Tauri
+    # webview, so nothing here needs darwin.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install (root + every package)
+        run: |
+          npm install
+          for dir in packages/*/; do
+            [ -f "$dir/package.json" ] && npm install --prefix "$dir"
+          done
+
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: packages/fez-desktop
+
+      # The kickoff spec spawns a real fez-relay (dist/cli.js) — build it
+      # ahead of time rather than relying on the test's own first-run
+      # fallback build.
+      - name: Build fez-relay
+        run: npm run build --prefix packages/fez-relay
+
+      - name: E2E gate
+        run: npm run test:e2e --prefix packages/fez-desktop
