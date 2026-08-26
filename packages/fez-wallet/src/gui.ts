@@ -1,12 +1,18 @@
 import type { El, GuiClient, GuiExtensionApi } from "@fezchat/extension-api/gui";
 import type { SpendEntry } from "./log.js";
-import { parseConsentRequest } from "./gui-logic.js";
+import { parseConsentRequest, requestStatus } from "./gui-logic.js";
 
-/** `toggleReaction` isn't in the shared GuiClient slice (extension-api
- * types only what most gui parts need) — reach for it the way fez-git
- * reaches under GuiClient for things it needs, typed against what's
- * actually used (fez-client:930). */
+/** `toggleReaction`, `msgById` and `myReactionTo` aren't in the shared
+ * GuiClient slice (extension-api types only what most gui parts need) —
+ * reach for them the way fez-git reaches under GuiClient for things it
+ * needs, typed against what's actually used (fez-client:738, :922, :930). */
 interface WalletClient extends GuiClient {
+  msgById(id: string): { authorPk: string; ts: number } | undefined;
+  /** My own live reaction on a target, if any (fez-client:922) — keyed by
+   * MY pubkey, which is exactly the owner check this card needs: the
+   * person viewing the wallet's consent card in their own client IS the
+   * owner whose ✅/❌ is authoritative. */
+  myReactionTo(targetId: string, emoji: string): string | undefined;
   toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
 }
 
@@ -20,17 +26,11 @@ interface WalletClient extends GuiClient {
  * storage seam (the CLI/MCP wrote them there — the webview can't read
  * wallet.json and shouldn't).
  *
- * Status probe (finding, not fixed here): `client.reactions(targetId)`
- * exists (fez-client:764) but keys its Set by DISPLAY NAME
- * (`who.add(this.displayName(event.pubkey))` at fez-client:918), not by
- * pubkey. `requestStatus` from gui-logic.ts needs the reacting pubkey to
- * compare against `ownerPk`, and no public accessor exposes that per
- * reaction — only the private `reactionIndex` has it. So the card
- * cannot render a resolved approved/declined state today; it always
- * shows the two buttons (idempotent — a second ✅ is a toggle, per
- * `toggleReaction`). Wiring real status is a client-side change
- * (exposing authorPk per reaction) out of scope for this package —
- * deferred polish the plan anticipated.
+ * The card only renders for the persona's OWN message: `msgById(msgId)`
+ * gives the actual poster's pubkey, compared against `pkByName(persona)`
+ * resolved from the parsed name. Any other rostered member echoing the
+ * three-line format under their own message renders a plain bubble —
+ * no buttons to absorb a click that authorizes nothing.
  */
 
 export default function activate(api: GuiExtensionApi): void {
@@ -41,28 +41,46 @@ export default function activate(api: GuiExtensionApi): void {
   // ── consent cards ────────────────────────────────────────────────
   api.registerMessageDecorator(
     (content) => parseConsentRequest(content) !== undefined,
-    ({ content, msgId, channelId, authorName }) => {
+    ({ content, msgId, channelId }) => {
       const req = parseConsentRequest(content);
       if (!req) return null as never;
-      // Author must be a known local agent — cosmetics alone don't count.
-      if (client.pkByName(req.persona) === undefined) return null as never;
-      void authorName;
+      // The card must be bound to the persona's OWN message — not merely
+      // to a rostered member who happens to know the format. If either
+      // lookup is unavailable, render nothing but the plain bubble.
+      const msg = client.msgById(msgId);
+      const personaPk = client.pkByName(req.persona);
+      if (!msg || !personaPk || msg.authorPk !== personaPk) return null as never;
+
       const react = (emoji: string) => () => void client.toggleReaction(channelId, msgId, emoji);
-      // Reactions/status: the client's reaction state isn't in the typed
-      // GuiClient slice, and even the real client's `reactions()` keys by
-      // display name rather than pubkey (see file header) — it can't
-      // drive requestStatus's ownerPk check. Render plain buttons.
+      const approved = client.myReactionTo(msgId, "✅") !== undefined;
+      const declined = client.myReactionTo(msgId, "❌") !== undefined;
+      const reactions: { content: string; authorPk: string }[] = [
+        ...(approved ? [{ content: "✅", authorPk: client.pubkey }] : []),
+        ...(declined ? [{ content: "❌", authorPk: client.pubkey }] : []),
+      ];
+      const status = requestStatus(reactions, client.pubkey, msg.ts, Date.now() / 1000);
+
       return h(
         "div",
         { style: { border: "1px solid var(--border, #333)", borderRadius: 8, padding: 10, marginTop: 6 } },
         h("div", { style: { fontWeight: 600 } }, `${req.persona} → ${req.amount}`),
         h("div", { style: { opacity: 0.8, fontSize: 12 } }, `to ${req.to}${req.memo ? ` — ${req.memo}` : ""}`),
-        h(
-          "div",
-          { style: { marginTop: 8, display: "flex", gap: 8 } },
-          h("button", { onClick: react("✅") }, "Approve ✅"),
-          h("button", { onClick: react("❌") }, "Decline ❌")
-        )
+        status === "pending"
+          ? h(
+              "div",
+              { style: { marginTop: 8, display: "flex", gap: 8 } },
+              h("button", { onClick: react("✅") }, "Approve ✅"),
+              h("button", { onClick: react("❌") }, "Decline ❌")
+            )
+          : h(
+              "div",
+              { style: { marginTop: 8, opacity: 0.8, fontSize: 12 } },
+              status === "approved"
+                ? "✅ approved"
+                : status === "declined"
+                  ? "❌ declined"
+                  : "expired — nothing was transferred"
+            )
       );
     }
   );

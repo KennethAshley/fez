@@ -19,7 +19,7 @@
       "gui": "dist/gui.js"
     },
     "permissions": [
-      "network:entrypoint-finney.opentensor.ai",
+      "network:.opentensor.ai",
       "network:relay",
       "publish",
       "read:channels",
