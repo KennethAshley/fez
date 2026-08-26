@@ -58,6 +58,7 @@ import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js"
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
+import { decide, claimOwnership, type OwnershipIO, type PresenceBeat } from "./ownership.js";
 
 export { piThinkingLevel };
 
@@ -728,18 +729,66 @@ async function main() {
     });
     await relay.publish(event);
   };
-  await announce();
-  const heartbeat = setInterval(announce, 12 * 60 * 60 * 1000);
+  // ── single ownership: the heartbeat is the lock ──────────────────
+  // (spec: docs/superpowers/specs/2026-08-26-agent-single-ownership-design.md)
+  const instanceNonce = crypto.randomUUID();
+  const takeOver = process.env.FEZ_AGENT_TAKEOVER === "1";
+  let supersedeBeats = takeOver ? 3 : 0; // ephemeral = at-most-once; say it thrice
+  const beat = (phase: "claim" | "steady") => {
+    const supersede = supersedeBeats > 0 ? ((supersedeBeats -= 1), true) : undefined;
+    return relay
+      .publish(
+        client.signEvent({
+          kind: KIND_PRESENCE,
+          tags: [],
+          content: JSON.stringify({ name: personaId, instance: instanceNonce, phase, ...(supersede ? { supersede } : {}) }),
+        })
+      )
+      .catch(() => {});
+  };
+
+  let ownershipPhase: "claiming" | "steady" = "claiming";
+  const foreignBeats: ((b: PresenceBeat) => void)[] = [];
+  relay.subscribe([{ kinds: [KIND_PRESENCE], authors: [myPubkey] }], (event) => {
+    try {
+      const parsed = JSON.parse(event.content) as PresenceBeat;
+      if (parsed.instance && parsed.instance !== instanceNonce) foreignBeats.forEach((cb) => cb(parsed));
+    } catch {
+      /* not a guard beat */
+    }
+  });
+  const io: OwnershipIO = {
+    publishBeat: (extra) => void beat(extra.phase),
+    onBeat: (cb) => {
+      foreignBeats.push(cb);
+      return () => foreignBeats.splice(foreignBeats.indexOf(cb), 1);
+    },
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  };
+  if ((await claimOwnership(io, { nonce: instanceNonce, takeOver })) === "yield") {
+    console.error(`@${personaId} is already running elsewhere — this instance yields (use --take-over to move it here)`);
+    process.exit(3);
+  }
+  ownershipPhase = "steady";
+  // Steady reactions: defend against claims, stand down when superseded.
+  io.onBeat((seen) => {
+    const verdict = decide({ nonce: instanceNonce, phase: ownershipPhase, takeOver }, seen);
+    if (verdict === "defend") void beat("steady");
+    else if (verdict === "shutdown") {
+      console.error(`@${personaId} superseded by another instance — shutting down`);
+      process.exit(0);
+    }
+  });
 
   // Presence: ephemeral beat every 30s — clients show ● while they keep
   // hearing us, ○ ~90s after we stop (exit, crash, network — no
   // explicit offline event needed).
-  const presenceBeat = () =>
-    void relay
-      .publish(client.signEvent({ kind: KIND_PRESENCE, tags: [], content: JSON.stringify({ name: personaId }) }))
-      .catch(() => {});
+  const presenceBeat = () => void beat("steady");
   presenceBeat();
   setInterval(presenceBeat, 30_000).unref?.();
+
+  await announce();
+  const heartbeat = setInterval(announce, 12 * 60 * 60 * 1000);
 
   console.log(`🟢 @${personaId} standing by ${channels.length > 0 ? `in ${channels.length} channel(s)` : "DM-only"} on ${relayUrls.join(", ")}`);
   console.log(`   Pubkey: ${myPubkey} | responds to: ${describeAuthorPolicy(authorPolicy, owner)}`);
