@@ -44,8 +44,22 @@ control for your agents**: "re-scan subnets" posts `@scout …` and the reply
 streams back into the tool's thread. Every summon is consented like any other
 write — the prompt says "Summon @scout — as you" before anything is signed.
 
+## The crystallize surface (gui part)
+
+Loom's gui part owns what happens when a tool is worth keeping:
+
+- **★ keep** — in the tool pane's header; lifts a tool out of scrollback
+- **▣ tools** — a rail view listing kept tools; reopen any in the pane
+- **⇪ share** — publish a kept tool back into its home channel
+- **⤓ export** — scaffold it into a real, publishable fez extension
+
+The sandbox and the read/consent bridge stay in fez core — the boundary that
+contains untrusted generated HTML can't be declared by an extension, and any
+agent can emit a live artifact, not just `@loom`. Uninstall loom and the
+crystallize surface vanishes; tools already shared into channels keep working.
+
 ## Status
 
 Experimental. The `@loom` builder persona, the read bridge (`artifact:live` in
-fez core), the tool pane, and consented write-back all ship. Next: a "keep this"
-gesture that crystallizes a tool into its own extension.
+fez core), the tool pane, consented write-back, and the crystallize surface
+(★ keep → ▣ tools → ⇪ share → ⤓ export) all ship.

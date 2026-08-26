@@ -1236,7 +1236,7 @@ button.author:hover { text-decoration: underline; }
 .tool-building { color: var(--accent); font-weight: 400; opacity: 0.85; animation: pulse-dim 1.4s ease-in-out infinite; }
 @keyframes pulse-dim { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.9; } }
 
-/* The 🔧 tools gallery — kept tools, crystallized out of scrollback. */
+/* ── ▣ tools gallery (fez-loom extension) ── */
 .tools-scroll { flex: 1; overflow-y: auto; padding: 22px 26px; min-height: 0; }
 .tools-head h2 { margin: 0 0 2px; font-family: var(--font-mono); font-size: 17px; }
 .tools-head { margin-bottom: 16px; }

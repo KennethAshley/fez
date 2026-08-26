@@ -1,21 +1,34 @@
 {
   "name": "@fezchat/loom",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
-  "description": "Loom for fez — describe a tool over your channel data and @loom weaves a live, streaming UI (sandboxed; reads the relay freely, every write asks you first). The good ones crystallize into extensions.",
+  "description": "Loom for fez — describe a tool over your channel data and @loom weaves a live, streaming UI (sandboxed; reads the relay freely, every write asks you first). Keep the good ones in the ▣ tools gallery; the best crystallize into extensions.",
   "type": "module",
   "fez": {
     "type": "extension",
     "personas": {
       "dir": "personas"
     },
+    "parts": {
+      "gui": "dist/gui.js"
+    },
     "permissions": [
       "read:channels",
       "publish",
-      "personas"
+      "personas",
+      "ui"
     ]
   },
+  "scripts": {
+    "build": "esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "check": "tsc --noEmit"
+  },
   "files": [
-    "personas"
-  ]
+    "personas",
+    "dist"
+  ],
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  }
 }

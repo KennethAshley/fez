@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -27,11 +27,9 @@ import ActivityFeed from "./ActivityFeed";
 import { viewerFor } from "./artifact-viewers";
 import { shareArtifact } from "./share-artifact";
 import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
-import { keepTool, unkeepTool, keptTools, isKept, toolArtifact, type KeptTool } from "./tools";
-import { exportTool } from "./export-tool";
 import { toast } from "./toast";
 import { startSummoner } from "./summoner";
-import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
+import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, extensionNavViews, extensionArtifactActions } from "./gui-extensions";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
@@ -81,7 +79,7 @@ type MainView =
   | { kind: "home" }
   | { kind: "pulse" }
   | { kind: "wiki" }
-  | { kind: "tools" }
+  | { kind: "ext"; name: string }
   | { kind: "extensions" }
   | { kind: "skills" };
 type SidePane =
@@ -353,8 +351,18 @@ function Shell({
   // module state — the seam pattern every other extension surface uses.
   useEffect(() => {
     setWatchOpener((agent) => setPane({ kind: "watch", agent }));
-    return () => setWatchOpener(undefined);
+    setToolOpener((artifact) => setPane({ kind: "tool", artifact }));
+    return () => {
+      setWatchOpener(undefined);
+      setToolOpener(undefined);
+    };
   }, []);
+  // Gui parts load after the shell mounts; the rail reads their nav
+  // views from a module registry, so it needs a nudge when that lands.
+  useEffect(() => {
+    window.addEventListener("fez-gui-extensions-changed", render);
+    return () => window.removeEventListener("fez-gui-extensions-changed", render);
+  }, [render]);
   // One update check per app run, once the shell is actually up — a user
   // mid-onboarding shouldn't meet an update toast before a channel.
   useEffect(() => startUpdateCheck(), []);
@@ -931,9 +939,16 @@ function Shell({
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
           ≡ docs
         </button>
-        <button className={view.kind === "tools" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "tools" })}>
-          ▣ tools
-        </button>
+        {/* Extension-owned rail views (loom's ▣ tools gallery enters here). */}
+        {extensionNavViews().map((nav) => (
+          <button
+            key={nav.name}
+            className={view.kind === "ext" && view.name === nav.name ? "channel active home-link" : "channel home-link"}
+            onClick={() => setView({ kind: "ext", name: nav.name })}
+          >
+            {nav.glyph} {nav.label}
+          </button>
+        ))}
         <div className="community">
           <div className="community-name">
             channels
@@ -1204,7 +1219,13 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
-      {view.kind === "tools" && <ToolsView client={client} onOpen={(artifact) => setPane({ kind: "tool", artifact })} />}
+      {view.kind === "ext" && (
+        <main className="main">
+          {extensionNavViews().find((nav) => nav.name === view.name)?.render() ?? (
+            <div className="pane-empty">this view's extension is no longer installed</div>
+          )}
+        </main>
+      )}
       {view.kind === "extensions" && <SkillsView only="extensions" client={client} wire={wire} />}
       {view.kind === "skills" && <SkillsView only="skills" client={client} wire={wire} />}
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
@@ -2366,31 +2387,15 @@ function MenuIcon({ d }: { d: string }) {
  * wins the pane; the thread keeps the handles to reopen the others. */
 function ToolPane({ artifact, building, onClose }: { artifact: Artifact; building?: boolean; onClose: () => void }) {
   const Viewer = viewerFor(artifact.type);
-  // Keeping crystallizes a throwaway tool into the durable ▣ tools list.
-  const [kept, setKept] = useState(() => isKept(artifact));
-  useEffect(() => {
-    const update = () => setKept(isKept(artifact));
-    update();
-    window.addEventListener("fez-tools-changed", update);
-    return () => window.removeEventListener("fez-tools-changed", update);
-  }, [artifact]);
-  const toggleKeep = () => {
-    const existing = keptTools().find((t) => t.content === artifact.content);
-    if (existing) unkeepTool(existing.id);
-    else keepTool(artifact);
-  };
   return (
     <aside className="pane tool-pane">
       <header className="pane-head">
         <span>▣ {artifact.title ?? "tool"}{building && <span className="tool-building"> · building…</span>}</span>
         <span className="pane-actions">
-          <button
-            className="pane-close"
-            title={kept ? "kept — click to remove from ▣ tools" : "keep this tool (adds it to ▣ tools)"}
-            onClick={toggleKeep}
-          >
-            {kept ? "★" : "☆"}
-          </button>
+          {/* Extension-contributed header actions — loom's ★ keep lives here. */}
+          {extensionArtifactActions().map((action) => (
+            <Fragment key={action.name}>{action.render({ artifact })}</Fragment>
+          ))}
           <button className="pane-close" onClick={onClose}>✕</button>
         </span>
       </header>
@@ -2398,76 +2403,6 @@ function ToolPane({ artifact, building, onClose }: { artifact: Artifact; buildin
         {Viewer ? <Viewer artifact={artifact} /> : <div className="pane-empty">no viewer for "{artifact.type}"</div>}
       </div>
     </aside>
-  );
-}
-
-/** The ▣ tools gallery — kept tools, lifted out of scrollback into a
- * durable home. Click one to open it in the pane; ✕ to forget it. */
-function ToolsView({ client, onOpen }: { client: FezClient; onOpen: (artifact: Artifact) => void }) {
-  const [tools, setTools] = useState(() => keptTools());
-  useEffect(() => {
-    const update = () => setTools(keptTools());
-    window.addEventListener("fez-tools-changed", update);
-    return () => window.removeEventListener("fez-tools-changed", update);
-  }, []);
-  // Crystallize, rung 2: publish the kept tool back into its home channel
-  // (fallback: the one in scope) as a user-signed artifact — it lands as a
-  // normal tool handle anyone there can open and ★ keep.
-  const share = async (t: KeptTool) => {
-    const channelId = t.channelId ?? client.state.scope?.channelId;
-    if (!channelId) {
-      toast.error("no channel to share into — open a channel first");
-      return;
-    }
-    const name = client.state.workspace.channels.get(channelId)?.name ?? "the channel";
-    if (!confirm(`Share "${t.title}" into #${name}? Everyone there can open and keep it.`)) return;
-    try {
-      await client.publishArtifact(channelId, { type: t.type, title: t.title, content: t.content });
-      toast.success(`Shared to #${name}`);
-    } catch (e) {
-      toast.error(`Share failed: ${String((e as Error)?.message ?? e)}`);
-    }
-  };
-  return (
-    <main className="main">
-      <div className="tools-scroll">
-        <div className="tools-head">
-          <h2>▣ tools</h2>
-          <p className="settings-hint">Tools you kept — reopen any in the pane. Ask @loom to build one, then ★ it.</p>
-        </div>
-        {tools.length === 0 ? (
-          <div className="pane-empty">no kept tools yet — build one with @loom, open it, and hit ★</div>
-        ) : (
-          <div className="tools-grid">
-            {tools.map((t) => (
-              <div key={t.id} className="tool-tile">
-                <button className="tool-tile-open" onClick={() => onOpen(toolArtifact(t))} title="open in the pane">
-                  <span className="tool-tile-icon">▣</span>
-                  <span className="tool-tile-title">{t.title}</span>
-                  <span className="tool-tile-date">{new Date(t.ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
-                </button>
-                <button className="tool-tile-forget" style={{ right: 48 }} title="share into its channel" onClick={() => void share(t)}>
-                  ⇪
-                </button>
-                <button
-                  className="tool-tile-forget"
-                  style={{ right: 26 }}
-                  title="export as a publishable fez extension"
-                  onClick={() =>
-                    void exportTool(t)
-                      .then((path) => toast.success(`Exported to ${path} — build & publish to share`))
-                      .catch((e) => toast.error(`Export failed: ${String((e as Error)?.message ?? e)}`))
-                  }
-                >
-                  ⤓
-                </button>
-                <button className="tool-tile-forget" title="forget this tool" onClick={() => unkeepTool(t.id)}>✕</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </main>
   );
 }
 

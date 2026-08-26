@@ -17,6 +17,19 @@ export interface RepoChannelLike {
   meta?: Record<string, string>;
 }
 
+/** A fez artifact, as the gui seams pass it around. */
+export interface ArtifactLike {
+  id: string;
+  channelId: string;
+  authorPk: string;
+  authorName: string;
+  type: string;
+  title?: string;
+  content: string;
+  ts: number;
+  rootId?: string;
+}
+
 /** Props a page view receives — a whole document (wiki page or channel doc). */
 export interface PageViewProps {
   content: string;
@@ -93,6 +106,25 @@ export interface GuiExtensionApi {
   watchAgent(name: string): void;
   /** Open a thread in the current channel view. */
   openThread(channelId: string, rootId: string): void;
+  /**
+   * A top-level view in the rail, beside inbox and docs — for a feature
+   * that is a PLACE (loom's ▣ tools gallery, a board). The host owns the
+   * button and the main-column shell; you own everything inside.
+   */
+  registerNavView(name: string, opts: { glyph: string; label: string }, render: () => El): void;
+  /**
+   * An action mounted in an open artifact pane's header, next to ✕. Your
+   * component receives the artifact and owns its own state.
+   */
+  registerArtifactAction(name: string, render: (props: { artifact: ArtifactLike }) => El): void;
+  /** Open an artifact in the tool pane — the same pane a thread's tool handle opens. */
+  openTool(artifact: ArtifactLike): void;
+  /**
+   * Write a scaffolded extension package to ~/fez-tools/<slug> — the
+   * host-side, path-bounded export. You supply file contents; where they
+   * land is not negotiable from here.
+   */
+  exportTool(files: { slug: string; guiJs: string; pkgJson: string; readme: string }): Promise<string>;
   /**
    * Read and edit agent personas — sensitive (`personas` permission),
    * because a persona is an agent's programming. Absent when ungranted.

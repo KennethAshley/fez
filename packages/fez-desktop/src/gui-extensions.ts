@@ -1,7 +1,7 @@
 import React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { FezClient } from "@fezchat/client";
+import type { Artifact, FezClient } from "@fezchat/client";
 import { parseQuery } from "@fezchat/client";
 import { registerArtifactViewer } from "./artifact-viewers";
 import { invitePersona } from "./invite-persona";
@@ -165,6 +165,32 @@ export interface GuiExtensionApi {
     match: (content: string) => boolean | "default",
     render: (props: PageViewProps) => React.ReactNode
   ) => void;
+  /**
+   * A top-level view in the rail, beside inbox and docs — how a feature
+   * that is a PLACE (loom's kept-tools gallery, a board) gets one without
+   * core growing it. The host owns the button and the <main> shell; the
+   * extension owns everything inside.
+   */
+  registerNavView: (
+    name: string,
+    opts: { glyph: string; label: string },
+    render: () => React.ReactNode
+  ) => void;
+  /**
+   * An action mounted in an open artifact pane's header, next to ✕. The
+   * component receives the artifact and owns its own state — loom's ★
+   * keep enters here, so core never learns what "keeping" is.
+   */
+  registerArtifactAction: (name: string, render: (props: { artifact: Artifact }) => React.ReactNode) => void;
+  /** Open an artifact in the tool pane — the same swap-semantics pane a
+   * thread's tool handle opens. */
+  openTool: (artifact: Artifact) => void;
+  /**
+   * Write a scaffolded extension package to ~/fez-tools/<slug> — the
+   * host-side, path-bounded export command. The extension supplies the
+   * file CONTENTS; where they may land is not negotiable from here.
+   */
+  exportTool: (files: { slug: string; guiJs: string; pkgJson: string; readme: string }) => Promise<string>;
 }
 
 /**
@@ -386,6 +412,55 @@ export function openThreadAt(channelId: string, rootId: string): void {
 const pageViews: PageView[] = [];
 export function registerPageView(name: string, match: PageView["match"], render: PageView["render"]): void {
   pageViews.push({ name, match, render });
+}
+
+/** A rail entry owned by an extension — see GuiExtensionApi.registerNavView. */
+export interface NavView {
+  name: string;
+  glyph: string;
+  label: string;
+  render: () => React.ReactNode;
+}
+const navViews: NavView[] = [];
+export function registerNavView(name: string, opts: { glyph: string; label: string }, render: NavView["render"]): void {
+  const view: NavView = { name, glyph: opts.glyph, label: opts.label, render };
+  // Re-registering replaces — the settings-panel rule, so a reload
+  // cannot stack two rail buttons for the same view.
+  const at = navViews.findIndex((v) => v.name === name);
+  if (at >= 0) navViews[at] = view;
+  else navViews.push(view);
+}
+export function extensionNavViews(): readonly NavView[] {
+  return navViews;
+}
+
+/** Header actions on an open artifact pane — see registerArtifactAction. */
+export interface ArtifactAction {
+  name: string;
+  render: (props: { artifact: Artifact }) => React.ReactNode;
+}
+const artifactActions: ArtifactAction[] = [];
+export function registerArtifactAction(name: string, render: ArtifactAction["render"]): void {
+  const action: ArtifactAction = { name, render };
+  const at = artifactActions.findIndex((a) => a.name === name);
+  if (at >= 0) artifactActions[at] = action;
+  else artifactActions.push(action);
+}
+export function extensionArtifactActions(): readonly ArtifactAction[] {
+  return artifactActions;
+}
+
+/**
+ * The tool pane, as a capability — the same parked-opener pattern as the
+ * watch pane: the pane is App state, extensions only get to say "open
+ * this artifact there".
+ */
+let toolOpener: ((artifact: Artifact) => void) | undefined;
+export function setToolOpener(open: ((artifact: Artifact) => void) | undefined): void {
+  toolOpener = open;
+}
+export function openTool(artifact: Artifact): void {
+  toolOpener?.(artifact);
 }
 /** The views that recognize this document, and which (if any) wants to open. */
 export function pageViewsFor(content: string): { views: PageView[]; preferred?: string } {
@@ -629,6 +704,8 @@ let baseline:
       blockMenu: number;
       threadViews: number;
       pageViews: number;
+      navViews: number;
+      artifactActions: number;
       themes: string[];
     }
   | undefined;
@@ -644,6 +721,8 @@ function captureBaseline(): void {
     blockMenu: blockMenu.length,
     threadViews: threadViews.length,
     pageViews: pageViews.length,
+    navViews: navViews.length,
+    artifactActions: artifactActions.length,
     themes: [...themes.keys()],
   };
 }
@@ -658,6 +737,8 @@ function restoreBaseline(): void {
   blockMenu.length = baseline.blockMenu;
   threadViews.length = baseline.threadViews;
   pageViews.length = baseline.pageViews;
+  navViews.length = baseline.navViews;
+  artifactActions.length = baseline.artifactActions;
   for (const k of [...themes.keys()]) if (!baseline.themes.includes(k)) themes.delete(k);
 }
 
@@ -747,6 +828,13 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
           }
         : undefined,
       registerThreadView: may("ui") ? registerThreadView : (refuse("ui", "add a thread view") as never),
+      registerNavView: may("ui") ? registerNavView : (refuse("ui", "add a rail view") as never),
+      registerArtifactAction: may("ui") ? registerArtifactAction : (refuse("ui", "add an artifact action") as never),
+      openTool: may("ui") ? openTool : (refuse("ui", "open the tool pane") as never),
+      exportTool: may("ui")
+        ? (files: { slug: string; guiJs: string; pkgJson: string; readme: string }) =>
+            invoke<string>("export_tool", files)
+        : (refuse("ui", "export a tool package") as never),
       openThread: may("ui") ? openThreadAt : (refuse("ui", "navigate threads") as never),
       watchAgent: may("read:agents") ? openWatch : (refuse("read:agents", "open the watch pane") as never),
       // The label is ignored on purpose — a panel is filed under the
@@ -772,5 +860,8 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       console.error(`🧩 gui extension "${name}" failed to load:`, err);
     }
   }
+  // Extensions load AFTER the shell mounts; anything rendering from these
+  // registries (the rail's nav views) hears this and re-reads.
+  window.dispatchEvent(new CustomEvent("fez-gui-extensions-changed"));
   return loaded;
 }

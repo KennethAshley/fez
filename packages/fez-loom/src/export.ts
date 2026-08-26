@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { KeptTool } from "./tools";
+import type { KeptTool } from "./store.js";
 
 /**
  * Crystallize's top rung: turn a kept tool into a real, publishable
@@ -10,6 +9,9 @@ import type { KeptTool } from "./tools";
  *
  * Exported tools are read-only for now (query + subscribe); write-back
  * needs the host consent prompt, which an extension can't yet raise.
+ *
+ * The actual disk write goes through the host's `api.exportTool` — a
+ * path-bounded command that only lands under ~/fez-tools/<slug>.
  */
 
 function slugify(title: string): string {
@@ -121,14 +123,16 @@ Rename \`fez-tool-${slug}\` to your own scope first if you like.
 `;
 }
 
-/** Write the package to ~/fez-tools/<slug>. Returns its path. */
-export async function exportTool(tool: KeptTool): Promise<string> {
+export type ExportFiles = { slug: string; guiJs: string; pkgJson: string; readme: string };
+
+/** Assemble the package files for a kept tool; the caller hands them to
+ * the host's exportTool to land on disk. */
+export function exportFiles(tool: KeptTool): ExportFiles {
   const slug = slugify(tool.title);
-  const doc = wrapReadOnlyDoc(tool.content);
-  return invoke<string>("export_tool", {
+  return {
     slug,
-    guiJs: guiModule(tool.title, doc),
+    guiJs: guiModule(tool.title, wrapReadOnlyDoc(tool.content)),
     pkgJson: packageJson(slug, tool.title),
     readme: readme(slug, tool.title),
-  });
+  };
 }
