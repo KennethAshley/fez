@@ -6,7 +6,7 @@ import { spawnRelay, type SpawnedRelay } from "./helpers/relay";
 import { BrowserWire } from "../../src/wire";
 import { WELCOME_CHANNEL_ID, KIND_MESSAGE } from "../../src/welcome-core";
 
-const PORT = 7777;
+const PORT = 7791;
 
 /**
  * The hardest GUI test: the post-onboarding welcome choreography, in
