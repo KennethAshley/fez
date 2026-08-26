@@ -30,6 +30,7 @@ import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
 import { keepTool, unkeepTool, keptTools, isKept, toolArtifact, type KeptTool } from "./tools";
 import { exportTool } from "./export-tool";
 import { toast } from "./toast";
+import { startSummoner } from "./summoner";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener } from "./gui-extensions";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
@@ -519,7 +520,22 @@ function Shell({
         target: { kind: "dm", convoKey: dm.senderPk },
       });
     }) as never);
-  }, [client, render]);
+
+    // The desktop's own summon host — spawns @-mentioned agents from
+    // this live subscription while the app is open, deferring entirely
+    // to a running sentinel (see summoner.ts). Same wire the rest of
+    // Shell already reads/writes; no new props threaded in.
+    const stopSummoner = startSummoner({
+      wire,
+      ownerPubkey: client.pubkey,
+      relays: relaySet(),
+      toast: (m) => toast.info(m, 0),
+    });
+
+    return () => {
+      stopSummoner();
+    };
+  }, [client, render, wire]);
 
   // ⌘K — Buzz's topbar search, as a palette (also /search <words>).
   const [searchOpen, setSearchOpen] = useState<false | { query: string }>(false);
