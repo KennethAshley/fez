@@ -337,7 +337,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           />
         )}
 
-        {step === "team" && <TeamStep keyHex={keyHex} onFinish={() => void finishWizard()} />}
+        {step === "team" && <TeamStep keyHex={keyHex} onFinish={() => void finishWizard()} onBack={() => setStep(prevStep(step))} />}
       </div>
     </div>
   );
@@ -668,7 +668,7 @@ function ProfileStep({
  * since TeamStep IS the terminal step (Buzz's flow ends at "team"; there
  * is no separate "done").
  */
-function TeamStep({ keyHex, onFinish }: { keyHex?: string; onFinish: () => void }) {
+function TeamStep({ keyHex, onFinish, onBack }: { keyHex?: string; onFinish: () => void; onBack: () => void }) {
   const [showBackup, setShowBackup] = useState(false);
   return (
     <>
@@ -698,6 +698,7 @@ function TeamStep({ keyHex, onFinish }: { keyHex?: string; onFinish: () => void 
         </div>
       )}
       <button className="ob-primary" onClick={onFinish}>take me to fez</button>
+      <button className="ob-secondary" onClick={onBack}>back</button>
     </>
   );
 }
