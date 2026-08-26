@@ -20,11 +20,19 @@
   --hairline: #32302f;
   --phosphor: #b8bb26;
   --viz-ok: #43a56c; --viz-fail: #fb4934;
+  /* Two-surface shell (Buzz's construction, Qud material): the window
+     is a dark WELL the rail floats on; content lives on raised CARDS.
+     The edge is the card's 1px lit rim — bone at low alpha, doing the
+     separating that hard dividers used to do. */
+  --well: #121415;
+  --surface: #1d2021;
+  --edge: rgba(235, 219, 178, 0.13);
+  --radius-card: 12px;
 }
 * { box-sizing: border-box; margin: 0; }
 html, body, #root { height: 100%; }
 body {
-  background: var(--bg0);
+  background: var(--well);
   color: var(--fg);
   font: 14px/1.5 -apple-system, "SF Pro Text", Helvetica, sans-serif;
   overflow: hidden;
@@ -73,8 +81,8 @@ body {
    below shifts by a pixel. */
 .shell {
   display: flex; height: 100vh;
-  box-shadow: inset 0 1px 0 var(--bg2);
-  box-shadow: inset 0 1px 0 var(--hairline);
+  /* The cave wall behind everything — a touch darker at the floor. */
+  background: linear-gradient(var(--well), color-mix(in srgb, var(--well) 78%, black));
 }
 
 /* ── left rail ─────────────────────────────────────────────────
@@ -87,8 +95,9 @@ body {
 .rail {
   width: var(--rail-w, 240px);
   min-width: var(--rail-w, 240px);
-  background: var(--bg-rail, var(--bg1));
-  border-right: 1px solid var(--hairline, var(--bg2));
+  /* The rail floats on the well (Buzz's sidebar-on-gradient): no ground
+     of its own, no divider — the content card's rim draws the boundary. */
+  background: transparent;
   padding: 12px 8px 0;
   font-family: var(--font-mono);
   font-size: 12.5px;
@@ -158,7 +167,19 @@ body {
 .dot.partial { background: var(--yellow); }
 
 /* ── main column ───────────────────────────────────────────── */
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* The content card — Buzz's ContentSurface, Qud material: raised off
+   the well, rimmed in bone, corners clipped so the topbar and composer
+   inherit the shape. Nearly flush to the rail (the 8px breath lives on
+   the window side), like Buzz's ml-px. */
+.main {
+  flex: 1; display: flex; flex-direction: column; min-width: 0;
+  margin: 8px 8px 8px 0;
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-card);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
+}
 /* Two rows in one block: the channel's name, and the channel's doc
    under it. The border belongs to the block, not to either row. */
 .topbar {
@@ -330,8 +351,14 @@ body {
 .pane {
   width: var(--pane-w, 340px);
   min-width: var(--pane-w, 340px);
-  border-left: 1px solid var(--hairline, var(--bg2));
-  background: var(--bg1);
+  /* A second card, not a bolted-on panel — Buzz's right-anchored
+     surface (its panel-left shadow), worn by threads and settings. */
+  margin: 8px 8px 8px 0;
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-card);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   animation: pane-in 160ms cubic-bezier(0.2, 0, 0.2, 1);
@@ -1068,7 +1095,7 @@ button.author:hover { text-decoration: underline; }
 .settings-overlay { align-items: center; padding-top: 0; }
 .settings-modal { width: min(640px, 92vw); max-height: 82vh; display: flex; }
 .settings-modal .pane {
-  width: 100%; min-width: 0; border-left: 0; border: 1px solid var(--bg2);
+  width: 100%; min-width: 0; margin: 0; border-left: 0; border: 1px solid var(--bg2);
   border-radius: 12px; overflow: hidden; box-shadow: 0 16px 48px rgb(0,0,0,0.6);
   max-height: 82vh;
 }
