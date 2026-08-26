@@ -16,6 +16,7 @@ program
   .option("--respond-to <policy>", "anyone | owner | allowlist:<pk,...> (default: persona frontmatter, else owner)")
   .option("--owner <pubkey>", "owner pubkey (default: your fez identity)")
   .option("--on-busy <mode>", "steer | queue", "steer")
+  .option("--take-over", "supersede a live instance of this persona elsewhere (it shuts down)")
   .action(async (personaId: string, options) => {
     const { resolveRelays } = await import("../shared/settings.js");
     process.env.FEZ_RELAY = resolveRelays(options.relay).join(",");
@@ -23,6 +24,7 @@ program
     process.env.FEZ_AGENT_CHANNELS = options.channels === "none" ? "" : options.channels;
     if (options.respondTo) process.env.FEZ_AGENT_RESPOND_TO = options.respondTo;
     process.env.FEZ_AGENT_ON_BUSY = options.onBusy;
+    if (options.takeOver) process.env.FEZ_AGENT_TAKEOVER = "1";
     // Owner defaults to the user's own identity — the observer stream
     // (/watch) and sibling gating work out of the box instead of being
     // an env var most people never discover.

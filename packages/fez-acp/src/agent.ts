@@ -428,8 +428,12 @@ async function main() {
         cmd = execSync(`ps -o command= -p ${existingPid}`, { stdio: ["ignore", "pipe", "ignore"] }).toString();
       } catch { /* dead pid — stale claim */ }
       if (cmd.includes(`agent ${personaId}`)) {
-        console.error(`❌ another @${personaId} is already running (pid ${existingPid}) — one process per persona. Kill it first or let the sentinel manage restarts.`);
-        process.exit(1);
+        if (process.env.FEZ_AGENT_TAKEOVER === "1") {
+          console.log(`take-over: a local instance (pid ${existingPid}) holds the pidfile — superseding via the relay gate`);
+        } else {
+          console.error(`❌ another @${personaId} is already running (pid ${existingPid}) — one process per persona. Kill it first or let the sentinel manage restarts.`);
+          process.exit(1);
+        }
       }
     }
   } catch { /* no pidfile — first claim */ }
