@@ -89,7 +89,14 @@ export async function walletSend(
       agentSecretHex: deps.agentNostrKey,
       channelId: deps.config.consentChannel,
       ownerPk: deps.ownerPk,
-      text: `💸 ${deps.persona} requests ${formatAmount(amount)} → ${to}${args.memo ? ` (${args.memo})` : ""} — react ✅ to approve, ❌ to decline`,
+      // Rendered as a channel message — short lines, truncated address,
+      // the amount up front. The full address matters less than the
+      // amount and reason; anyone auditing has the chain.
+      text: [
+        `💸 **${deps.persona}** wants to send **${formatAmount(amount)}**`,
+        `to \`${to.length > 16 ? `${to.slice(0, 8)}…${to.slice(-6)}` : to}\`${args.memo ? ` — ${args.memo}` : ""}`,
+        `react ✅ to approve · ❌ to decline`,
+      ].join("\n"),
     });
     // Subscribe BEFORE publishing so a fast reaction can't slip past.
     const decision = awaitDecision(relay, request.id, deps.ownerPk, CONSENT_TIMEOUT_MS, deps.signal);
