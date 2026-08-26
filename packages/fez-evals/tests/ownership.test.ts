@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { decide, claimOwnership, type OwnershipIO, type PresenceBeat } from "../../fez-acp/src/ownership.js";
+import {
+  decide,
+  claimOwnership,
+  takeOverActive,
+  shutdownGraced,
+  type OwnershipIO,
+  type PresenceBeat,
+} from "../../fez-acp/src/ownership.js";
 
 const claiming = (nonce: string, takeOver = false) => ({ nonce, phase: "claiming" as const, takeOver });
 const steady = (nonce: string, takeOver = false) => ({ nonce, phase: "steady" as const, takeOver });
@@ -33,6 +40,45 @@ describe("decide", () => {
   it("dueling take-overs: lower nonce survives", () => {
     expect(decide(steady("a", true), { instance: "b", phase: "steady", supersede: true })).toBe("defend");
     expect(decide(steady("b", true), { instance: "a", phase: "steady", supersede: true })).toBe("shutdown");
+  });
+  it("a plain claim yields to a superseding incumbent", () => {
+    expect(decide(claiming("z"), { instance: "a", phase: "steady", supersede: true })).toBe("yield");
+  });
+  it("claiming take-over vs a superseding incumbent: exactly one survivor", () => {
+    // Two take-overs land at once; the duel is by nonce, not by who is
+    // further along. z loses to a and stands down before announcing…
+    expect(decide(claiming("z", true), { instance: "a", phase: "steady", supersede: true })).toBe("yield");
+    // …and a, the lower nonce, ignores z's supersede. One survivor: a.
+    expect(decide(claiming("a", true), { instance: "z", phase: "steady", supersede: true })).toBe("ignore");
+    expect(decide(steady("a", true), { instance: "z", phase: "steady", supersede: true })).toBe("defend");
+  });
+});
+
+describe("takeOverActive — the move is a transition, not a trait", () => {
+  it("is active only while supersede beats remain to be sent", () => {
+    expect(takeOverActive(true, 3)).toBe(true);
+    expect(takeOverActive(true, 1)).toBe(true);
+    expect(takeOverActive(true, 0)).toBe(false);
+    expect(takeOverActive(false, 3)).toBe(false); // never took over at all
+  });
+  it("a decayed take-over is an ordinary incumbent: a later supersede shuts it down", () => {
+    // Persona moved once with --take-over (nonce "a"), transition long
+    // finished. A SECOND --take-over ("z") arrives. With the old sticky
+    // immunity "a" defended (a < z) and the new instance announced and
+    // then died — the move visibly failed. Decayed, "a" stands down.
+    expect(decide(steady("a", takeOverActive(true, 0)), { instance: "z", phase: "steady", supersede: true })).toBe("shutdown");
+    // While the move is still in flight it is still immune.
+    expect(decide(steady("a", takeOverActive(true, 2)), { instance: "z", phase: "steady", supersede: true })).toBe("defend");
+  });
+});
+
+describe("shutdownGraced — a dying incumbent must not take the winner with it", () => {
+  it("graces a nonce-tie shutdown in the first moments of steady", () => {
+    expect(shutdownGraced({ instance: "a", phase: "steady" }, 1_000)).toBe(true);
+    expect(shutdownGraced({ instance: "a", phase: "steady" }, 30_000)).toBe(false); // window closed
+  });
+  it("never graces an explicit supersede", () => {
+    expect(shutdownGraced({ instance: "a", phase: "steady", supersede: true }, 1_000)).toBe(false);
   });
 });
 

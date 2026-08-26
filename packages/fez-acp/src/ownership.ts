@@ -37,6 +37,32 @@ export function decide(
   return mine.nonce < seen.instance ? "defend" : "shutdown"; // split-brain
 }
 
+/**
+ * A take-over is a transition, not a trait. Immunity to foreign supersedes
+ * lasts exactly as long as the move itself — while supersede-carrying beats
+ * remain to be sent. Once they are spent the instance is an ordinary
+ * incumbent, so a LATER `--take-over` can move the persona again; sticky
+ * immunity made the second move fail (old instance defended on nonce, new
+ * one announced and then died to the incumbent's next plain beat).
+ */
+export function takeOverActive(takeOver: boolean, supersedeBeatsLeft: number): boolean {
+  return takeOver && supersedeBeatsLeft > 0;
+}
+
+/** How long after entering steady a nonce-tie shutdown is forgiven. */
+export const STEADY_GRACE_MS = 10_000;
+
+/**
+ * Dual-death guard: a just-superseded incumbent keeps beating for a moment
+ * while it shuts down, and those plain steady beats can lose the winner the
+ * steady/steady nonce tie — leaving nobody. For a short window after
+ * entering steady, such a shutdown is ignored. An explicit supersede is
+ * never graced: that is a human deliberately moving the persona.
+ */
+export function shutdownGraced(seen: PresenceBeat, msSinceSteady: number, graceMs = STEADY_GRACE_MS): boolean {
+  return !seen.supersede && msSinceSteady < graceMs;
+}
+
 export interface OwnershipIO {
   publishBeat(extra: { phase: "claim" | "steady"; supersede?: boolean }): void;
   /** Beats from OTHER processes on this persona's key. Returns unsubscribe. */

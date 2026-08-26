@@ -58,7 +58,7 @@ import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js"
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
-import { decide, claimOwnership, type OwnershipIO, type PresenceBeat } from "./ownership.js";
+import { decide, claimOwnership, takeOverActive, shutdownGraced, type OwnershipIO, type PresenceBeat } from "./ownership.js";
 
 export { piThinkingLevel };
 
@@ -738,8 +738,9 @@ async function main() {
   const instanceNonce = crypto.randomUUID();
   const takeOver = process.env.FEZ_AGENT_TAKEOVER === "1";
   let supersedeBeats = takeOver ? 3 : 0; // ephemeral = at-most-once; say it thrice
-  const beat = (phase: "claim" | "steady") => {
-    const supersede = supersedeBeats > 0 ? ((supersedeBeats -= 1), true) : undefined;
+  /** Spend one of the take-over's supersede beats, if any are left. */
+  const spendSupersede = (): boolean => (supersedeBeats > 0 ? ((supersedeBeats -= 1), true) : false);
+  const beat = (phase: "claim" | "steady", supersede = false) => {
     return relay
       .publish(
         client.signEvent({
@@ -762,7 +763,12 @@ async function main() {
     }
   });
   const io: OwnershipIO = {
-    publishBeat: (extra) => void beat(extra.phase),
+    // The gate says what it wants on the wire; it still costs one of the
+    // take-over's three supersede beats, so the counter and the wire agree.
+    publishBeat: (extra) => {
+      if (extra.supersede) spendSupersede();
+      void beat(extra.phase, extra.supersede === true);
+    },
     onBeat: (cb) => {
       foreignBeats.push(cb);
       return () => foreignBeats.splice(foreignBeats.indexOf(cb), 1);
@@ -774,11 +780,22 @@ async function main() {
     process.exit(3);
   }
   ownershipPhase = "steady";
+  const steadyAt = Date.now();
   // Steady reactions: defend against claims, stand down when superseded.
+  // Our take-over standing decays as its supersede beats are spent — once
+  // the move is done we are an ordinary incumbent and the NEXT take-over
+  // gets to move the persona too.
   io.onBeat((seen) => {
-    const verdict = decide({ nonce: instanceNonce, phase: ownershipPhase, takeOver }, seen);
+    const verdict = decide(
+      { nonce: instanceNonce, phase: ownershipPhase, takeOver: takeOverActive(takeOver, supersedeBeats) },
+      seen
+    );
     if (verdict === "defend") void beat("steady");
     else if (verdict === "shutdown") {
+      // A predecessor we just superseded keeps beating while it dies; those
+      // plain beats must not win the nonce tie and kill us too (dual death).
+      // Supersede-triggered shutdowns are never graced.
+      if (shutdownGraced(seen, Date.now() - steadyAt)) return;
       console.error(`@${personaId} superseded by another instance — shutting down`);
       process.exit(0);
     }
@@ -787,7 +804,9 @@ async function main() {
   // Presence: ephemeral beat every 30s — clients show ● while they keep
   // hearing us, ○ ~90s after we stop (exit, crash, network — no
   // explicit offline event needed).
-  const presenceBeat = () => void beat("steady");
+  // A take-over's remaining supersede beats ride the ordinary presence
+  // beats until the budget is spent — then this is a plain heartbeat.
+  const presenceBeat = () => void beat("steady", spendSupersede());
   presenceBeat();
   setInterval(presenceBeat, 30_000).unref?.();
 
