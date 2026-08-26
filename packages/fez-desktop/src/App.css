@@ -1634,14 +1634,22 @@ button.author:hover { text-decoration: underline; }
 /* ── workspace title — the header itself ─────────────────────── */
 /* It replaced the wordmark: which app you are in is not news, where you
    are is. The relay-health dot rides with it. */
-.workspace-title {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px 12px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;
-  color: var(--fg); min-width: 0;
+/* Buzz's sidebar head: a search pill where the title used to be. */
+.rail-search {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  margin: 10px 10px 12px; padding: 8px 10px;
+  border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg0);
+  color: var(--fg-dim); font: inherit; font-size: 13px; cursor: pointer; text-align: left;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
-.workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-search:hover, .rail-search:focus-visible { border-color: var(--accent); color: var(--fg); }
+.rail-search-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-search-kbd {
+  flex: none; font-size: 10px; font-family: inherit; letter-spacing: 0.04em;
+  border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 5px; color: var(--fg-dim);
+}
 .workspace-unclaimed {
-  margin-left: auto; flex: none; font-size: 10px; font-weight: 500; letter-spacing: 0.06em;
+  margin: -6px 12px 8px; font-size: 10px; font-weight: 500; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--fg-dim);
 }
 

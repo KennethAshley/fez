@@ -904,14 +904,13 @@ function Shell({
       )}
       {banner && <div className="conn-bar error">{banner}</div>}
       <aside className="rail">
-        {/* The workspace IS the header. The wordmark told you which
-            app you were in — which you know — while the thing you
-            actually need, WHERE you are, sat below it. The relay-health
-            dot comes along: it was never about the brand.
-
-            Search left the sidebar for the top right, where a global
-            action belongs, next to the other per-view tools. */}
-        <div className="workspace-title" title={client.state.workspace.relay}>
+        {/* Buzz's sidebar head: search, not a title. The workspace name
+            told you where you are once — search is what you reach for
+            every day (⌘K works from anywhere; this is its visible home).
+            The relay-health dot rides along: it was never about the
+            brand, and the workspace name still lives in the browse list
+            and this row's tooltip. */}
+        <button className="rail-search" title={`${client.state.workspace.name} · ${client.state.workspace.relay}`} onClick={() => setSearchOpen({ query: "" })}>
           <span
             className={connected ? (relayHealth.every((r) => r.connected) ? "dot on" : "dot partial") : "dot off"}
             title={
@@ -920,9 +919,10 @@ function Shell({
                 : relayHealth.map((r) => `${r.connected ? "●" : "○"} ${r.url}`).join("\n")
             }
           />
-          <span className="workspace-name">{client.state.workspace.name}</span>
-          {!client.state.workspace.owner && <span className="workspace-unclaimed">unclaimed</span>}
-        </div>
+          <span className="rail-search-label">Search everything</span>
+          <kbd className="rail-search-kbd">⌘K</kbd>
+        </button>
+        {!client.state.workspace.owner && <div className="workspace-unclaimed">unclaimed</div>}
         <div className="rail-scroll">
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           ▤ inbox
@@ -1092,7 +1092,11 @@ function Shell({
               <div className="menu-backdrop" onClick={() => setSelfMenu(false)} />
               <div className="self-menu">
                 <div className="self-menu-head" title={client.pubkey}>
-                  {client.pubkey.slice(0, 16)}…
+                  {/* Your NAME, not your key — the key is one hover away.
+                      nameOf (kind-0 profile) beats the onboarding-saved
+                      name beats the prefix, for a fresh session whose
+                      profile event has not arrived yet. */}
+                  {client.nameOf(client.pubkey) ?? localStorage.getItem("fez-name") ?? `${client.pubkey.slice(0, 8)}…`}
                 </div>
                 {(
                   [
@@ -1830,7 +1834,7 @@ function ChannelView({
             <div className="members-pop">
               <div className="self-menu-head">{client.state.workspace.members.size ?? 0} members</div>
               {[...(client.state.workspace.members.keys() ?? [])]
-                .map((pk) => ({ pk, name: client.knownNames().get(pk) ?? pk.slice(0, 8) }))
+                .map((pk) => ({ pk, name: client.knownNames().get(pk) ?? client.nameOf(pk) ?? pk.slice(0, 8) }))
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map(({ pk, name }) => (
                   <button
