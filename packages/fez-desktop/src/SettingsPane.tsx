@@ -4,7 +4,8 @@ import type { FezClient } from "@fezchat/client";
 import { mediaServer } from "./upload";
 import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";
-import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, resolvedScheme, guiExtensionStatus } from "./gui-extensions";
+import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, resolvedScheme, guiExtensionStatus, extensionSettingsPanels } from "./gui-extensions";
+import { ExtensionPanel } from "./SkillsView";
 import { SkillSecretsSection } from "./SkillSecrets";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { flash } from "./toast";
@@ -37,6 +38,7 @@ const SETTINGS_TABS = {
   keyboard: "keyboard",
   skills: "secrets",
   agents: "agent defaults",
+  extensions: "extensions",
   backup: "backup & identity",
 } as const;
 type SettingsSection = keyof typeof SETTINGS_TABS;
@@ -212,6 +214,22 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           any model from your Chutes account (add a key in <b>secrets → chutes</b>). Nothing to set globally.
         </div>
 
+        </>)}
+        {section === "extensions" && (<>
+        <div className="manage-section">extension settings</div>
+        {/* Configuration lives HERE; the Extensions view is for finding,
+            installing and removing. Panels that claim a channel source
+            keep configuring from that source's rail group, where the
+            thing they configure actually is. */}
+        {extensionSettingsPanels().filter((panel) => !panel.source).length === 0 && (
+          <div className="settings-hint">no installed extension has settings.</div>
+        )}
+        {extensionSettingsPanels().filter((panel) => !panel.source).map((panel) => (
+          <div key={panel.name} className="pulse-section ext-settings">
+            <div className="pulse-section-head"><span>{panel.name}</span></div>
+            <ExtensionPanel panel={panel} />
+          </div>
+        ))}
         </>)}
         {section === "backup" && (<>
         <div className="manage-section">archive</div>
