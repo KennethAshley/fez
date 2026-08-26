@@ -1892,6 +1892,22 @@ fn spawn_agent(
     repo: Option<String>,
     base_branch: Option<String>,
 ) -> Result<u32, String> {
+    spawn_agent_process(persona, channels, owner, relays, repo, base_branch)
+}
+
+/// THE spawn primitive — every agent process the desktop starts is born
+/// here (Buzz's bottleneck: no caller can bypass validation, env, the
+/// reap thread, the registry, or the sentinel gate by reaching a spawn
+/// some other way). Returns the pid, or 0 when a live sentinel owns
+/// spawning on this machine (deferred: success with no process).
+pub(crate) fn spawn_agent_process(
+    persona: String,
+    channels: Vec<String>,
+    owner: String,
+    relays: String,
+    repo: Option<String>,
+    base_branch: Option<String>,
+) -> Result<u32, String> {
     if !valid_persona_name(&persona) {
         return Err(format!("invalid persona name: {persona}"));
     }
@@ -1904,6 +1920,13 @@ fn spawn_agent(
         if !safe_work(b) {
             return Err(format!("unsafe branch name refused: {b}"));
         }
+    }
+    // One summoner per machine: a live sentinel (TUI world, opt-in
+    // fleet daemon) owns spawning. Checked in the PRIMITIVE so every
+    // policy caller inherits it — the TS summoner's own check is the
+    // first gate, this is the one nothing can bypass.
+    if runner_status() {
+        return Ok(0);
     }
     let home = std::env::var("HOME").unwrap_or_default();
     let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-agent");
@@ -1981,6 +2004,13 @@ fn kill_agent(persona: String) -> Result<bool, String> {
 /// double-spawns on top of them.
 #[tauri::command]
 fn agent_alive(persona: String) -> bool {
+    agent_is_alive(&persona)
+}
+
+/// Crate-internal liveness (the command above is just its Tauri face) —
+/// registry pid (name-checked) OR a sentinel-style process for the persona.
+pub(crate) fn agent_is_alive(persona: &str) -> bool {
+    let persona = persona.to_string();
     if !valid_persona_name(&persona) {
         return false;
     }
@@ -2115,16 +2145,13 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, managed_agents::managed_agent_status, managed_agents::stop_managed_agents])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, event| {
-            // The GUI is the only supervisor of its own managed agent
-            // children — they must not outlive the window (Buzz's shape:
-            // supervise while open, not a background daemon).
-            if let tauri::RunEvent::Exit = event {
-                let _ = managed_agents::stop_managed_agents();
-            }
+        .run(|_app, _event| {
+            // Agents are DETACHED and deliberately outlive the window —
+            // the fleet thesis (an agent mid-task must not die because a
+            // window closed). Stopping one is explicit: kill_agent.
         });
 }
 
