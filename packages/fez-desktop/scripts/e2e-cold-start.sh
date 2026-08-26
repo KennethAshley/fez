@@ -120,7 +120,10 @@ while ((SECONDS < DEADLINE)); do
     notready=$(grep "One thing first" $E | grep -c "bootstrap-welcome" || true)
     team=$(grep "fez-welcome.team.v1" $E | grep -c "bootstrap-welcome" || true)
     kickoff=$(grep "fez-welcome.kickoff.v1" $E | grep -c "bootstrap-welcome" || true)
-    channel=$(grep "\"kind\":47101" $E | grep "bootstrap-welcome" | grep -c "\"name\":\"welcome\"" || true)
+    # The channel's name lives in the event's CONTENT, which the store
+    # holds JSON-escaped (\"name\":\"welcome\") — match the literal
+    # backslashes with -F, or this reads 0 against a perfect store.
+    channel=$(grep "\"kind\":47101" $E | grep "bootstrap-welcome" | grep -cF '\"name\":\"welcome\"' || true)
     announces=$(grep -c "\"kind\":47000" $E || true)
     speakers=$(grep "\"kind\":47103" $E | grep "bootstrap-welcome" | grep -o "\"pubkey\":\"[0-9a-f]*\"" | sort -u | wc -l | tr -d " ")
     # Managed-agent logs, not a sentinel pidfile: the GUI spawns
