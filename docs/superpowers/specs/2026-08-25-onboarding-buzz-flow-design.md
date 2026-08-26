@@ -185,16 +185,52 @@ key custody note survives somewhere on the exit path).
 
 ## Testing
 
-- Unit: welcome-core changes (persona effort field, marker checks across
-  two channels, team rename) — the existing fez-evals surface.
-- The addressing eval that pins `teamOpenerText` against the real parser
-  must pass with the new names (@drift, @quill).
-- E2E: extend `e2e-cold-start.sh` to assert (a) #welcome exists and is the
-  opened channel, (b) opener + summons + two intros + kickoff appear, (c)
-  a pi turn completes with a configured provider. Ship gate: passes on the
-  mini.
-- Manual: the four provider verify paths (one real key each where
-  available; error path for a garbage key).
+This work is centered on the GUI; the GUI is what must demonstrably work.
+Three layers, all required before ship:
+
+**1. Playwright GUI suite (new — the centerpiece).** fez-desktop currently
+has no GUI tests; `e2e-cold-start.sh` seeds *around* onboarding, so the
+wizard has zero automated coverage today. Adopt Buzz's proven pattern
+(`buzz/desktop/tests/e2e/onboarding.spec.ts` + `helpers/bridge.ts`):
+Playwright against the built vite bundle served over plain http (no Tauri —
+tauri-driver has no macOS support), with an injected **mock native bridge**
+that fakes the `invoke` layer deterministically (`detect_harnesses`,
+`claude_brain_status`, `set_identity`, `ensure_local_relay`,
+`set_skill_secret`, provider verify/model-list calls, `runner_status`) and
+a mock relay for wire traffic. Specs to write:
+
+- Full wizard walk: every step in the locked order, Back from every step,
+  Skip from every skippable step — asserting skip never soft-locks.
+- Harness page: all four Claude states (READY / SIGN IN / SET UP /
+  INSTALL) via bridge fixtures; Fez card always READY.
+- Defaults page: Claude → model list renders; Fez → each of the four
+  providers verifies (mock success → models + effort appear) and fails
+  honestly (garbage key → inline error, no advance); persona frontmatter
+  written with provider/model/effort asserted through the bridge.
+- Community page: all three doors reach their step and return.
+- Profile: name publish, avatar skip = sprite fallback.
+- Welcome kickoff rendering: with a seeded mock relay, #welcome is the
+  opened channel and shows opener → summons → intros → kickoff; the
+  general channel shows none of them.
+
+Wired as `npm test:e2e` in fez-desktop + a playwright.config.ts; runs
+headless locally and in CI.
+
+**2. Real-hardware composition test.** Extend `e2e-cold-start.sh` to
+assert (a) #welcome exists and is the channel the app opens, (b) opener +
+summons + two real intros + kickoff appear in the relay store, (c) a pi
+turn completes with a configured provider. Ship gate: passes on the mini
+(the E2E-before-ship rule). The GUI wizard itself can't be automated on
+macOS hardware — that's what layer 1 covers; the mini run proves the
+native half the mocks stand in for.
+
+**3. Unit + evals.** welcome-core changes (effort field, two-channel
+marker checks, team rename); the addressing eval pinning `teamOpenerText`
+against the real parser must pass with @drift/@quill.
+
+**Manual before ship:** one human pass through the real wizard on the mini
+(fresh account), including one real provider key verify (Chutes at
+minimum) and the Claude Code READY path.
 
 ## Out of scope
 
