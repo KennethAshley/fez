@@ -15,6 +15,81 @@ const APPROVE = new Set(["✅", "+"]);
 const DECLINE = new Set(["❌", "-"]);
 const WINDOW_S = 600;
 
+/**
+ * A receive-address line, wherever it sits in the message. The strict
+ * contract ("<persona> receive address (chain): <addr>") lasted one live
+ * round: agents paraphrase tool output ("My TAO receive address:
+ * `5Dq6…`"), so the parser accepts any line carrying the phrase plus an
+ * address-shaped token. WHO the address belongs to is not parsed from
+ * text at all — the card takes it from the message's author, which the
+ * caller has already verified. Backticks are display, not data.
+ */
+export function parseReceiveAddress(content: string): { chain: string; address: string } | undefined {
+  for (const raw of content.split("\n")) {
+    const line = raw.replace(/`/g, "");
+    if (!/receive address/i.test(line)) continue;
+    const address = /[1-9A-HJ-NP-Za-km-z]{40,60}/.exec(line)?.[0];
+    if (!address) continue;
+    const chain = /\(([^)]+)\)/.exec(line)?.[1].toLowerCase() ?? "tao";
+    return { chain, address };
+  }
+  return undefined;
+}
+
+/** Reverse the address book: who is this address? Accepts the full
+ * address or a `head…tail` truncated display form. */
+export function personaFor(
+  shown: string,
+  book: { treasury?: string; personas?: Record<string, string> }
+): string | undefined {
+  const entries: [string, string][] = [
+    ...(book.treasury ? ([["treasury", book.treasury]] as [string, string][]) : []),
+    ...Object.entries(book.personas ?? {}),
+  ];
+  const hit = entries.find(([, addr]) => {
+    if (addr === shown) return true;
+    const cut = shown.indexOf("…");
+    if (cut <= 0 || cut === shown.length - 1) return false;
+    return addr.startsWith(shown.slice(0, cut)) && addr.endsWith(shown.slice(cut + 1));
+  });
+  return hit?.[0];
+}
+
+/** The ledger entry a consent request produced, if it has landed:
+ * same persona and recipient, numerically the same amount, timestamped
+ * at or after the request. Newest wins — the ledger appends. */
+export function matchSpend(
+  req: { persona: string; amount: string; to: string },
+  msgTs: number,
+  log: { ts: string; persona: string; to: string; amount: string; asset: string; txHash: string }[]
+): { txHash: string } | undefined {
+  const reqNum = parseFloat(req.amount);
+  const toMatches = (to: string) => {
+    if (to === req.to) return true;
+    const cut = req.to.indexOf("…");
+    if (cut <= 0 || cut === req.to.length - 1) return false;
+    return to.startsWith(req.to.slice(0, cut)) && to.endsWith(req.to.slice(cut + 1));
+  };
+  return [...log]
+    .reverse()
+    .find(
+      (e) =>
+        e.persona === req.persona &&
+        toMatches(e.to) &&
+        parseFloat(e.amount) === reqNum &&
+        req.amount.endsWith(e.asset) &&
+        Date.parse(e.ts) / 1000 >= msgTs
+    );
+}
+
+/** Countdown text for a pending card; undefined once the window is spent. */
+export function remainingText(msgTs: number, now: number): string | undefined {
+  const left = WINDOW_S - (now - msgTs);
+  if (left <= 0) return undefined;
+  const mins = Math.floor(left / 60);
+  return mins >= 1 ? `expires in ${mins}m` : "expires in <1m";
+}
+
 export function requestStatus(
   reactions: { content: string; authorPk: string }[],
   ownerPk: string,

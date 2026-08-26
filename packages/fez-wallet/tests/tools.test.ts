@@ -105,6 +105,15 @@ describe("tools", () => {
     expect(transfers).toHaveLength(1);
   });
 
+  it("the consent request carries the full recipient address", async () => {
+    const { walletSend } = await import("../src/tools.js");
+    const { relay, getRequest } = autoRelay(() => "✅");
+    const { d } = deps({ relay: async () => relay });
+    const long = "5E76cpgXAHSZKM7pRhYcbNnCXcuFpZzVN9F7G7G4";
+    await walletSend(d, { to: long, amount: "0.5", asset: "TAO" });
+    expect(getRequest()?.content).toContain(long);
+  });
+
   it("declined consent does not transfer", async () => {
     const { walletSend } = await import("../src/tools.js");
     const { relay } = autoRelay(() => "❌");

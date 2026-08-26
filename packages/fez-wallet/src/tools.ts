@@ -92,12 +92,12 @@ export async function walletSend(
       agentSecretHex: deps.agentNostrKey,
       channelId: deps.config.consentChannel,
       ownerPk: deps.ownerPk,
-      // Rendered as a channel message — short lines, truncated address,
-      // the amount up front. The full address matters less than the
-      // amount and reason; anyone auditing has the chain.
+      // Rendered as a channel message — amount up front, and the FULL
+      // address: what the owner approves must be the address that gets
+      // paid, verbatim. The gui card does the shortening for display.
       text: [
         `💸 **${deps.persona}** wants to send **${formatAmount(amount)}**`,
-        `to \`${to.length > 16 ? `${to.slice(0, 8)}…${to.slice(-6)}` : to}\`${args.memo ? ` — ${args.memo}` : ""}`,
+        `to \`${to}\`${args.memo ? ` — ${args.memo}` : ""}`,
         `react ✅ to approve · ❌ to decline`,
       ].join("\n"),
     });
