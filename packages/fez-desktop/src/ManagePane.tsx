@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FezClient } from "@fezchat/client";
 import { flash } from "./toast";
 import { relaySet } from "./relay";
+import Avatar from "./Avatar";
 
 /**
  * Channel/workspace management — Buzz's ChannelManagementSheet as a fez
@@ -80,10 +81,16 @@ export default function ManagePane({
 
         <div className="manage-section">members</div>
         {members.map((member) => (
-          <div key={member.pk} className="manage-row">
-            <span className={member.online ? "dot on" : "dot off"} />
+          <div key={member.pk} className={member.online ? "manage-row" : "manage-row away"}>
+            {/* Faces here too — the party roster next door has them, and
+                a name with no creature is the odd one out now. */}
+            <span className="manage-face">
+              <Avatar pk={member.pk} size={20} title={member.name} quip={false} />
+              <span className={member.online ? "self-presence on" : "self-presence off"} />
+            </span>
             <span className="manage-name">{member.name}</span>
-            <span className="role-tag">{member.role}</span>
+            {/* "bot" is the protocol's word; the app's word is agent. */}
+            <span className="role-tag">{member.role === "bot" ? "agent" : member.role}</span>
             {amCreator && member.pk !== client.state.workspace.owner && (
               <span className="manage-actions">
                 <button
@@ -98,7 +105,11 @@ export default function ManagePane({
                   title="ban from the whole workspace"
                   onClick={() => confirmThen(`ban:${member.pk}`, () => void run(`banned ${member.name}`, () => client.banUser(member.pk)))}
                 >
-                  {armed === `ban:${member.pk}` ? "ban?" : "⛔"}
+                  {/* A typographic mark, not the red-circle emoji: the
+                      only colour glyph in the pane shouted "danger" on
+                      every row for something you rarely do. The armed
+                      state is where the red belongs. */}
+                  {armed === `ban:${member.pk}` ? "ban?" : "⊘"}
                 </button>
               </span>
             )}
@@ -169,10 +180,17 @@ function InviteCode({ communityName }: { communityName: string }) {
 
   if (!reachable) {
     return (
+      // A code block dropped mid-sentence broke the paragraph in two and
+      // made the relay hard to read. Statement, then the relay on its
+      // own line, then what to do about it.
       <div className="settings-hint">
-        Your only relay is <code className="pk-code">{relays[0]}</code>, which points at whatever machine
-        opens the invite — so a code made from it would send guests to themselves. Add a relay they can
-        reach (a LAN or Tailscale address, or a hosted one) and the code appears here.
+        <p>No invite code yet — your only relay is local:</p>
+        <code className="pk-code">{relays[0]}</code>
+        <p>
+          It points at whatever machine opens the invite, so a code made from it would send guests to
+          themselves. Add a relay they can reach — a LAN or Tailscale address, or a hosted one — and the
+          code appears here.
+        </p>
       </div>
     );
   }

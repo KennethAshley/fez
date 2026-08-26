@@ -1847,12 +1847,29 @@ function ChannelView({
             <button className="topbar-tool" title="search everything (⌘K)" onClick={onSearch}>
               ⌕
             </button>
+            {/* The party, not a glyph for it: three faces and the count.
+                ⚉ rendered like an emoji beside the other marks and told
+                you nothing about who is actually here. */}
             <button
               className="topbar-tool topbar-members"
               title="members"
               onClick={() => setMembersOpen((open) => !open)}
             >
-              ⚉ {client.state.workspace.members.size ?? 0}
+              <span className="party-pile">
+                {[...(client.state.workspace.members.keys() ?? [])]
+                  .sort((a, b) => Number(client.isOnline(b)) - Number(client.isOnline(a)))
+                  .slice(0, 3)
+                  .map((pk) => (
+                    <span key={pk} className="party-pile-face">
+                      <Avatar pk={pk} size={18} title={client.displayName(pk)} quip={false} />
+                    </span>
+                  ))}
+              </span>
+              {/* Only what the faces can't say. A total beside three
+                  visible creatures counted them twice. */}
+              {(client.state.workspace.members.size ?? 0) > 3 && (
+                <span className="party-more">+{(client.state.workspace.members.size ?? 0) - 3}</span>
+              )}
             </button>
             <button className="topbar-tool" title="channel doc" onClick={onDocs}>
               ≡{client.docsByChannel().has(channelId) && <span className="doc-dot" />}
@@ -1865,24 +1882,56 @@ function ChannelView({
         {membersOpen && !threadRoot && (
           <>
             <div className="menu-backdrop" onClick={() => setMembersOpen(false)} />
-            <div className="members-pop">
-              <div className="self-menu-head">{client.state.workspace.members.size ?? 0} members</div>
+            {/* The party roster. Everything here is real state doing the
+                work: the portrait is the member's own creature, the
+                class line is their role (agents say what they're
+                doing when they're working), presence rides the
+                portrait, and the party is ordered the way a party is —
+                you first, then who's awake, then who isn't. */}
+            <div className="members-pop party">
+              <div className="manage-section">party · {client.state.workspace.members.size ?? 0}</div>
               {[...(client.state.workspace.members.keys() ?? [])]
-                .map((pk) => ({ pk, name: client.knownNames().get(pk) ?? client.nameOf(pk) ?? pk.slice(0, 8) }))
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map(({ pk, name }) => (
+                .map((pk) => {
+                  const name = client.knownNames().get(pk) ?? client.nameOf(pk) ?? pk.slice(0, 8);
+                  const agentName = client.agents().get(pk);
+                  const busy = agentName ? working.get(agentName) : undefined;
+                  const live = busy && Date.now() - busy.ts < 30_000;
+                  const role = client.state.roleOf(pk);
+                  return {
+                    pk,
+                    name,
+                    online: client.isOnline(pk),
+                    self: pk === client.pubkey,
+                    // Class line: what they ARE, or what they're doing.
+                    klass: live ? busy.activity : agentName ? "agent" : role === "owner" ? "owner" : "member",
+                    live,
+                  };
+                })
+                .sort((a, b) =>
+                  Number(b.self) - Number(a.self) ||
+                  Number(b.online) - Number(a.online) ||
+                  a.name.localeCompare(b.name)
+                )
+                .map((m) => (
                   <button
-                    key={pk}
-                    className="self-menu-item"
+                    key={m.pk}
+                    className={m.online ? "party-row" : "party-row away"}
                     onClick={() => {
                       setMembersOpen(false);
-                      onProfile(pk);
+                      onProfile(m.pk);
                     }}
                   >
-                    <Avatar pk={pk} size={16} title={name} />
-                    <span className={client.isOnline(pk) ? "dot on" : "dot off"} />
-                    {name}
-                    {pk === client.pubkey && <span className="self-menu-key">you</span>}
+                    <span className="party-portrait">
+                      <Avatar pk={m.pk} size={28} title={m.name} quip={false} />
+                      <span className={m.online ? "self-presence on" : "self-presence off"} />
+                    </span>
+                    <span className="party-meta">
+                      <span className="party-name">
+                        {m.name}
+                        {m.self && <span className="party-you">you</span>}
+                      </span>
+                      <span className={m.live ? "party-class live" : "party-class"}>{m.klass}</span>
+                    </span>
                   </button>
                 ))}
             </div>

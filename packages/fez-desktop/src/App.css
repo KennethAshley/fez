@@ -643,12 +643,16 @@ select.ob-input:hover { border-color: var(--accent); }
    carry much less ink than a letter at the same size, and the target
    was under 30px. 21px in a 32px square — the same target the format
    bars use — so they land as buttons rather than marks. */
+/* One family: ⌕ ≡ ⚙ come from three unicode blocks and the system draws
+   each at its own weight, which at 21px read as three different
+   toolbars. Mono, one size, one box. */
 .topbar-tool {
   margin-left: auto; background: none; border: 0; color: var(--fg-dim);
-  font: inherit; font-size: 21px; line-height: 1; cursor: pointer; border-radius: 7px;
-  width: 32px; height: 32px; padding: 0;
+  font-family: var(--font-mono); font-size: 16px; line-height: 1; cursor: pointer; border-radius: 7px;
+  width: 30px; height: 30px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
 }
+.topbar-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .topbar-tool:hover {
   background: var(--bg2);
   color: var(--fg);
@@ -662,6 +666,18 @@ select.ob-input:hover { border-color: var(--accent); }
 }
 .manage-section::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
 .manage-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+.manage-face { position: relative; line-height: 0; flex: none; }
+.manage-face .self-presence { width: 8px; height: 8px; right: -3px; bottom: -3px; border-color: var(--bg1); }
+.manage-row.away { opacity: 0.55; }
+.manage-row.away:hover { opacity: 1; }
+/* Kick and ban are destructive and rare — they appear on the row you
+   are pointing at, the same idiom the agent pencil uses. */
+.manage-row .manage-actions { opacity: 0; transition: opacity 110ms ease; }
+.manage-row:hover .manage-actions, .manage-row:focus-within .manage-actions { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .manage-row .manage-actions { transition: none; } }
+.settings-hint p { margin: 0 0 6px; }
+.settings-hint p:last-child { margin-bottom: 0; }
+.settings-hint .pk-code { margin-bottom: 6px; }
 .manage-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .role-tag {
   background: var(--bg2); border-radius: 8px; font-size: 10px; padding: 1px 7px; color: var(--fg-dim);
@@ -963,8 +979,17 @@ button.author:hover { text-decoration: underline; }
 }
 
 /* ── reminders + docs panes ────────────────────────────────── */
-.topbar-tools { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.topbar-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .topbar-tools .topbar-tool { margin-left: 0; position: relative; }
+/* The members control shows the party itself — overlapping portraits,
+   online first, then the count. */
+/* No overlap: circular avatars crop into a tidy pile, but these are
+   irregular silhouettes — quill's blade cut straight through drift.
+   Each creature gets its own air, and the row still reads as a party. */
+.topbar-members { width: auto; padding: 0 8px; gap: 6px; }
+.party-more { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
+.party-pile { display: inline-flex; align-items: center; gap: 5px; }
+.party-pile-face { line-height: 0; }
 .doc-dot {
   position: absolute; top: 1px; right: -3px; width: 5px; height: 5px;
   border-radius: 50%; background: var(--accent);
@@ -1424,6 +1449,41 @@ button.author:hover { text-decoration: underline; }
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 10px;
   box-shadow: 0 12px 32px rgb(0,0,0,0.5); padding: 4px 0; font-weight: 400;
 }
+/* ── the party roster ───────────────────────────────────────
+   A member list wants to read like a party: framed portraits, a name,
+   and the class line under it. Every part is real state — the creature
+   is theirs, the class is their role (or what an agent is doing right
+   now), presence rides the portrait, and the order is you, then who's
+   awake, then who isn't. */
+.party { min-width: 250px; padding: 8px 10px 10px; }
+.party .manage-section { margin: 2px 0 6px; }
+.party-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--fg); font: inherit; font-family: var(--font-mono);
+  padding: 5px 6px; border-radius: 8px; cursor: pointer; position: relative;
+}
+.party-row:hover { background: color-mix(in srgb, var(--bg2) 65%, transparent); }
+.party-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.party-row.away { opacity: 0.5; }
+.party-row.away:hover { opacity: 1; }
+.party-portrait {
+  position: relative; flex: none; line-height: 0;
+  display: grid; place-items: center; width: 38px; height: 38px;
+  border: 1px solid var(--hairline); border-radius: 8px;
+  background: color-mix(in srgb, var(--bg0) 70%, transparent);
+}
+.party-meta { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.party-name { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 12.5px; }
+.party-you {
+  font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--bg0); background: var(--brand); border-radius: 4px; padding: 0 4px;
+}
+.party-class {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;
+}
+/* An agent mid-task says what it is doing instead of what it is. */
+.party-class.live { color: var(--phosphor); text-transform: none; letter-spacing: 0; }
 
 .composer-actions { display: flex; align-items: center; gap: 4px; padding: 6px 2px 0; }
 /* The link and paperclip are the only colour emoji in a toolbar of
@@ -2696,6 +2756,116 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .ob-link:hover { color: var(--accent); }
 .ob-primary:disabled { opacity: 0.5; cursor: default; }
 
+/* ── the front door ─────────────────────────────────────────
+   The welcome step wears no card: the cast stands on the page, wakes
+   one at a time, and then idles — each creature on its own beat, the
+   boot splash's stagger worn by the first screen anyone sees. */
+.ob-welcome {
+  width: 520px; background: none; border: 0; padding: 0 20px; gap: 18px;
+  align-items: center;
+}
+.ob-welcome .ob-logo { font-size: 44px; letter-spacing: -0.02em; }
+.ob-welcome .ob-tri { font-size: 28px; }
+.ob-party {
+  display: flex; align-items: flex-end; justify-content: center; gap: 18px;
+  padding: 18px 26px; border: 1px solid var(--hairline); border-radius: 12px;
+  background: color-mix(in srgb, var(--bg1) 70%, transparent);
+  position: relative;
+}
+/* Light pooling at their feet — a stage, not a drawn line. */
+.ob-party::after {
+  content: ""; position: absolute; left: 30px; right: 30px; bottom: 14px; height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--phosphor) 12%, transparent), transparent 72%);
+}
+.ob-party-face {
+  position: relative; line-height: 0; z-index: 1;
+  animation: ob-wake 420ms ease-out both; animation-delay: var(--wake, 0ms);
+}
+.ob-party-face .spr-a { animation: spr-frame-a var(--beat, 0.6s) steps(1) infinite; animation-delay: var(--wake, 0ms); }
+.ob-party-face .spr-b { animation: spr-frame-b var(--beat, 0.6s) steps(1) infinite; animation-delay: var(--wake, 0ms); }
+@keyframes ob-wake { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* The machine talking, in the same mono prompt ⌘K uses. */
+.ob-welcome .ob-lede {
+  font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7; max-width: 430px;
+  margin: 0; text-align: left;
+}
+.ob-prompt { color: var(--phosphor); font-weight: 700; margin-right: 6px; }
+/* Ember: the front door wears the app's own colour, the one the
+   selection notch and the relics use. */
+.ob-welcome .ob-primary {
+  background: var(--brand); color: var(--bg0); border: 0; font-weight: 700;
+  padding: 11px 30px; border-radius: 9px; font-size: 14px; cursor: pointer;
+  font-family: var(--font-mono);
+}
+.ob-welcome .ob-alts {
+  display: flex; flex-direction: row; align-items: center; justify-content: center;
+  gap: 8px; flex-wrap: wrap; border: 0; padding: 0; margin: 0;
+}
+.ob-welcome .ob-link { font-family: var(--font-mono); font-size: 11.5px; padding: 2px 4px; }
+.ob-alt-sep { color: var(--fg-dim); opacity: 0.5; font-size: 11px; }
+@media (prefers-reduced-motion: reduce) {
+  .ob-party-face, .ob-party-face .spr-a, .ob-party-face .spr-b { animation: none; }
+}
+
+/* ── the rest of the wizard ─────────────────────────────────
+   Past the door, five screens that used to be five unrelated dialogs:
+   sans headings, generic accent buttons, and the cast nowhere to be
+   seen until the last page. They speak the front door's language now. */
+.ob-spine {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em; margin-bottom: 4px;
+}
+.ob-spine-step { color: var(--fg-dim); opacity: 0.5; }
+.ob-spine-step.done { opacity: 0.8; }
+.ob-spine-step.on { color: var(--brand); opacity: 1; font-weight: 700; }
+.ob-spine-rule { flex: 1; height: 1px; background: var(--hairline); }
+
+.ob-card h2 { font-family: var(--font-mono); font-size: 19px; letter-spacing: -0.01em; margin: 0; }
+.ob-card .ob-lede { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7; text-align: left; margin: 0; }
+/* The same ember action on every step: get started → continue → take me
+   to fez is one button doing one job. */
+.ob-primary {
+  background: var(--brand); color: var(--bg0); border: 0; font-weight: 700;
+  padding: 11px 30px; border-radius: 9px; font-size: 14px; font-family: var(--font-mono); cursor: pointer;
+}
+
+.ob-escort {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px; text-align: left;
+  border: 1px solid var(--hairline); border-radius: 10px;
+  background: color-mix(in srgb, var(--bg1) 70%, transparent);
+}
+.ob-escort-face { line-height: 0; flex: none; position: relative; }
+.ob-escort-face .spr-a { animation: spr-frame-a 0.66s steps(1) infinite; }
+.ob-escort-face .spr-b { animation: spr-frame-b 0.66s steps(1) infinite; }
+.ob-escort-line { font-family: var(--font-mono); font-size: 12px; color: var(--fg); }
+
+/* Picking wears the ember notch, like every other choice in the app. */
+.ob-brain { position: relative; }
+.ob-brain.selected {
+  border-color: var(--hairline); background: color-mix(in srgb, var(--bg2) 65%, transparent);
+}
+.ob-brain.selected::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; background: var(--brand);
+}
+
+/* The profile step shows the face the key already grew. */
+.ob-mine { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 0 4px; }
+.ob-mine-face {
+  position: relative; line-height: 0; display: grid; place-items: center; cursor: pointer;
+  width: 104px; height: 104px; border: 1px solid var(--hairline); border-radius: 12px; overflow: hidden;
+  background: color-mix(in srgb, var(--bg0) 70%, transparent);
+}
+.ob-mine-face .spr-a { animation: spr-frame-a 0.7s steps(1) infinite; }
+.ob-mine-face .spr-b { animation: spr-frame-b 0.7s steps(1) infinite; }
+.ob-mine-note { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim); }
+
+.ob-team-job { display: block; letter-spacing: 0; font-size: 10px; opacity: 0.8; margin-top: 2px; text-transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ob-escort-face .spr-a, .ob-escort-face .spr-b,
+  .ob-mine-face .spr-a, .ob-mine-face .spr-b { animation: none; }
+}
+
 /* ── first run: the app talking, not a fake agent ── */
 .first-run { max-width: 560px; }
 .first-run p { line-height: 1.6; }
@@ -3006,14 +3176,11 @@ button.ob-brain:active { transform: translateY(1px); }
 .ob-brain-auth { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .ob-brain-auth .ob-input { flex: 1; min-width: 200px; margin: 0; }
 
-/* ── onboarding: profile (avatar pick) and team (starter roster) ──── */
-.ob-avatar-pick {
-  width: 96px; height: 96px; border-radius: 50%; background: rgba(255,255,255,0.5);
-  display: flex; align-items: center; justify-content: center; margin: 12px auto;
-  cursor: pointer; overflow: hidden;
-}
+/* ── onboarding: profile (avatar) and team (starter roster) ────────
+   The grey +-in-a-circle retired: the profile step shows the creature
+   the key grew (.ob-mine-face), and a picture replaces it inside that
+   same frame. */
 .ob-avatar-img { width: 100%; height: 100%; object-fit: cover; }
-.ob-avatar-plus { font-size: 28px; opacity: 0.6; }
 /* Bottom-aligned: the sprites differ in height, and only a shared
    ground line makes them read as one cast — captions land on one
    baseline for free. */

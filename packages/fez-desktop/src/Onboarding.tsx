@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools/pure";
 import { nip44 } from "nostr-tools";
@@ -10,11 +10,52 @@ import { DEFAULT_RELAY, PAIRING_RELAY, relayRaw, setRelays } from "./relay";
 import { type Step, nextStep, prevStep } from "./onboarding-steps";
 import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
+import { generateSprite } from "./sprite-gen";
 import { buildFezPersonaMd, buildStarterPersonaMd, STARTER_TEAM } from "./welcome-core";
 
 export { nextStep, prevStep };
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
+
+/** Who greets you at the door — the guide in the middle, flanked. */
+const WELCOME_CAST = ["scout", "quill", "fez", "drift", "loom"] as const;
+
+/**
+ * The wizard's spine. Five screens follow the door, and until now none
+ * of them said which one you were on — five dialogs in a trench coat.
+ * The numbers are the app's own mono; the current one wears ember.
+ */
+function Spine({ at }: { at: 1 | 2 | 3 | 4 | 5 }) {
+  return (
+    <div className="ob-spine">
+      {[1, 2, 3, 4, 5].map((n, i) => (
+        <Fragment key={n}>
+          {i > 0 && <span className="ob-spine-rule" />}
+          <span className={n === at ? "ob-spine-step on" : n < at ? "ob-spine-step done" : "ob-spine-step"}>
+            {String(n).padStart(2, "0")}
+          </span>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One of the cast escorts each step — whoever's job it is. Scout checked
+ * the machine, loom knows what everyone runs on, fez asks where we all
+ * live. They were absent between the door and the last screen, which is
+ * why the middle of the wizard read as a different product.
+ */
+function Escort({ who, says }: { who: keyof typeof SPRITES; says: string }) {
+  return (
+    <div className="ob-escort">
+      <span className="ob-escort-face">
+        <AnimatedSprite sprite={SPRITES[who]} scale={4} />
+      </span>
+      <span className="ob-escort-line">{says}</span>
+    </div>
+  );
+}
 
 /**
  * First-launch onboarding (Buzz's machine-onboarding decisions, fez-
@@ -201,24 +242,44 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
 
   return (
     <div className="onboarding">
-      <div className="ob-card">
+      {/* The welcome step is the front door and carries no card — the
+          party stands on the page. Every other step keeps the card it
+          has always had. */}
+      <div className={step === "welcome" ? "ob-card ob-welcome" : "ob-card"}>
         {step === "welcome" && (
           <>
             {/* The wordmark IS the name — an <h1>fez</h1> under it just
                 said it twice. That only read as sensible while the logo
                 was an emoji standing in for a logo. */}
             <div className="ob-logo">fez<span className="ob-tri">▴</span></div>
+            {/* The party assembles: the cast wakes one at a time and then
+                idles, each on its own beat. The front door used to be a
+                card any product could have shown; the first thing you
+                meet should be who you are about to work with. */}
+            <div className="ob-party">
+              {WELCOME_CAST.map((name, i) => (
+                <span
+                  key={name}
+                  className="ob-party-face"
+                  style={{ "--wake": `${i * 90}ms`, "--beat": `${0.5 + i * 0.07}s` } as React.CSSProperties}
+                >
+                  <AnimatedSprite sprite={SPRITES[name]} scale={5} />
+                </span>
+              ))}
+            </div>
             <p className="ob-lede">
-              Communities for you and your agents. Your identity is a key on this machine, not an account on
-              someone's server — and everything private is encrypted before it leaves.
+              <span className="ob-prompt">&gt;</span> Communities for you and your agents. Your identity is a key on
+              this machine, not an account on someone's server — and everything private is encrypted before it leaves.
             </p>
             {error && <p className="ob-error">{error}</p>}
             <button className="ob-primary" disabled={busy} onClick={() => void start()}>
               {busy ? "setting up…" : "get started"}
             </button>
             <div className="ob-alts">
-              <button className="ob-link" onClick={() => setStep("invite")}>I have an invite or a community</button>
-              <button className="ob-link" onClick={() => setStep("pairing")}>I use fez on another device</button>
+              <button className="ob-link" onClick={() => setStep("invite")}>I have an invite</button>
+              <span className="ob-alt-sep">·</span>
+              <button className="ob-link" onClick={() => setStep("pairing")}>another device</button>
+              <span className="ob-alt-sep">·</span>
               <button className="ob-link" onClick={() => setStep("restore")}>restore from backup</button>
             </div>
           </>
@@ -332,6 +393,9 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           <ProfileStep
             name={name}
             setName={setName}
+            /* The face is the KEY's — this step is only reachable once
+               start() has made one. */
+            pubkey={keyHex ? getPublicKey(hexToBytes(keyHex)) : ""}
             onNext={(avatar) => void saveProfile(avatar)}
             onBack={() => setStep(prevStep("profile"))}
           />
@@ -576,8 +640,9 @@ function CommunityStep({
 }) {
   return (
     <>
+      <Spine at={3} />
       <h2>Join or create a community</h2>
-      <p className="ob-lede">Join with an invite, create your own, or reconnect one you already have.</p>
+      <Escort who="fez" says="Where should we all live?" />
       <div className="ob-brains">
         <button className="ob-brain" disabled={busy} onClick={onJoin}>
           <span className="ob-brain-name">Join a community</span>
@@ -606,11 +671,13 @@ function CommunityStep({
 function ProfileStep({
   name,
   setName,
+  pubkey,
   onNext,
   onBack,
 }: {
   name: string;
   setName: (n: string) => void;
+  pubkey: string;
   onNext: (avatarDataUrl?: string) => void;
   onBack: () => void;
 }) {
@@ -631,14 +698,28 @@ function ProfileStep({
   };
   return (
     <>
+      <Spine at={4} />
       <h2>Build your profile</h2>
       <p className="ob-lede">
-        A name and (optionally) a face. Skip the picture and you get your generated sprite — every key has one.
+        <span className="ob-prompt">&gt;</span> Your key already grew you a face. Give it a name — or bring your own
+        picture.
       </p>
-      <label className="ob-avatar-pick">
-        {avatar ? <img className="ob-avatar-img" src={avatar} alt="your avatar" /> : <span className="ob-avatar-plus">+</span>}
-        <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => pick(e.target.files?.[0])} />
-      </label>
+      {/* The face the key made, not a grey + asking for an upload: it
+          already exists, it is on every surface, and showing it makes
+          "skip" the appealing choice rather than the lazy one. */}
+      <div className="ob-mine">
+        <label className="ob-mine-face" title="use a picture instead">
+          {avatar ? (
+            <img className="ob-avatar-img" src={avatar} alt="your avatar" />
+          ) : (
+            <AnimatedSprite sprite={generateSprite(pubkey)} scale={6} />
+          )}
+          <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => pick(e.target.files?.[0])} />
+        </label>
+        <span className="ob-mine-note">
+          {avatar ? "your picture · click to change" : "grown from your key · yours on every surface"}
+        </span>
+      </div>
       <input
         className="ob-input"
         value={name}
@@ -658,6 +739,8 @@ function ProfileStep({
         <button className="ob-link" onClick={() => onNext(avatar)}>skip for now</button>
       </div>
       <button className="ob-secondary" onClick={onBack}>back</button>
+      {/* generateSprite is the same call Avatar makes, so the creature
+          here IS the one every surface will show. */}
     </>
   );
 }
@@ -672,19 +755,24 @@ function TeamStep({ keyHex, onFinish, onBack }: { keyHex?: string; onFinish: () 
   const [showBackup, setShowBackup] = useState(false);
   return (
     <>
+      <Spine at={5} />
       <h2>Meet your starter team</h2>
-      <p className="ob-lede">fez brings agents into the same room. These three will help you get started.</p>
+      <p className="ob-lede">
+        <span className="ob-prompt">&gt;</span> fez brings agents into the same room. These three will help you get
+        started.
+      </p>
       <div className="ob-team">
-        {(["fez", "drift", "quill"] as const).map((id) => (
+        {([["fez", "your guide"], ["drift", "research"], ["quill", "writing"]] as const).map(([id, job]) => (
           <figure key={id} className="ob-team-member">
             <AnimatedSprite sprite={SPRITES[id]} />
-            <figcaption>{id.toUpperCase()}</figcaption>
+            {/* Names alone made you guess what each one is for. */}
+            <figcaption>{id.toUpperCase()}<span className="ob-team-job">{job}</span></figcaption>
           </figure>
         ))}
       </div>
       <p className="ob-lede">
-        Your key lives in the macOS keychain. If you lose this machine without a backup, the identity is gone —
-        that's the deal with owning it.
+        <span className="ob-prompt">&gt;</span> Your key lives in the macOS keychain. If you lose this machine without
+        a backup, the identity is gone — that's the deal with owning it.
       </p>
       {keyHex && (
         <div className="ob-backup">
@@ -807,8 +895,12 @@ function HarnessStep({
 
   return (
     <>
+      <Spine at={1} />
       <h2>Your agent harnesses</h2>
-      <p className="ob-lede">fez checked this machine. Fez ships with the app; Claude Code is detected if you have it.</p>
+      <Escort who="scout" says="I checked this machine." />
+      <p className="ob-lede">
+        <span className="ob-prompt">&gt;</span> Fez ships with the app; Claude Code is detected if you have it.
+      </p>
       <div className="ob-brains">
         <div className="ob-brain">
           <span className="ob-brain-name">Fez</span>
@@ -945,8 +1037,13 @@ function DefaultsStep({
 
   return (
     <>
+      <Spine at={2} />
       <h2>Configure your defaults</h2>
-      <p className="ob-lede">Your agents run on this unless you give one its own setup — changeable any time in Settings.</p>
+      <Escort who="loom" says="This is what we'll all run on." />
+      <p className="ob-lede">
+        <span className="ob-prompt">&gt;</span> Your agents run on this unless you give one its own setup —
+        changeable any time in Settings.
+      </p>
       <label className="ob-label">default harness</label>
       <select
         className="ob-input"
