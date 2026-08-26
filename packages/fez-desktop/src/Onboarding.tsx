@@ -797,7 +797,10 @@ function DefaultsStep({
       <select
         className="ob-input"
         value={brain.harness ?? ""}
-        onChange={(e) => setBrain({ ...brain, harness: e.target.value as Brain["harness"], provider: undefined, model: undefined })}
+        onChange={(e) => {
+          setModels([]);
+          setBrain({ ...brain, harness: e.target.value as Brain["harness"], providerId: undefined, provider: undefined, model: undefined });
+        }}
       >
         <option value="">choose…</option>
         <option value="pi">Fez</option>
