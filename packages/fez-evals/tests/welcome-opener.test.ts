@@ -12,10 +12,23 @@ import {
   buildFezPersonaMd,
   ensureMarkedMessage,
   findMarked,
+  STARTER_TEAM,
+  teamOpenerText,
   type MarkerWire,
   type ChannelEvent,
 } from "../../fez-desktop/src/welcome-core.js";
+import { summonMentions } from "../../fez-sentinel/src/index.js";
 import * as core from "../../fez-desktop/src/welcome-core.js";
+
+describe("starter team — fez cast names", () => {
+  it("is drift (researcher) then quill (scribe)", () => {
+    expect(STARTER_TEAM.map((p) => p.id)).toEqual(["drift", "quill"]);
+  });
+  it("summons copy addresses both by real parser rules", () => {
+    // fez-acp/sentinel addressing: each @name must open a sentence.
+    expect(summonMentions(teamOpenerText(STARTER_TEAM.map((p) => p.id)))).toEqual(["drift", "quill"]);
+  });
+});
 
 describe("welcome opener", () => {
   it("copy matrix: every readiness state says something true, actionable, and chat-sized", () => {
