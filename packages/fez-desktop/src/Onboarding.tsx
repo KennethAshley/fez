@@ -6,7 +6,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
-import { DEFAULT_RELAY, PAIRING_RELAY, setRelays } from "./relay";
+import { DEFAULT_RELAY, PAIRING_RELAY, relayRaw, setRelays } from "./relay";
 import { type Step, nextStep, prevStep } from "./onboarding-steps";
 import { PixelSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
@@ -169,7 +169,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         await invoke("write_persona", { name: p.id, content: buildStarterPersonaMd(p, harness, model, brain.provider, brain.effort) }).catch(() => {});
       }
     } catch { /* welcome.ts's fallback persona still lands */ }
-    onComplete(relayUrl);
+    onComplete(relayRaw());
   };
 
   /**
@@ -820,7 +820,8 @@ function HarnessStep({
           className={`ob-brain ${claude?.installed ? "" : "unavailable"}`}
           disabled={settingUp}
           onClick={() => {
-            if (!claude?.installed) return void openBrainInstall();
+            if (!claude) return; // still probing — do nothing until we know
+            if (!claude.installed) return void openBrainInstall();
             if (!claude.authed) return; // SIGN IN state — the hint says how
             if (claude.adapterReady) return; // already READY — nothing to do
             // One-time bridge setup: the managed node runtime + the ACP

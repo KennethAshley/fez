@@ -137,7 +137,7 @@ async function ensureStarterTeam(
     } catch {
       await invoke("write_persona", {
         name: p.id,
-        content: buildStarterPersonaMd(p, brain.harness, brain.model, brain.provider),
+        content: buildStarterPersonaMd(p, brain.harness, brain.model, brain.provider, brain.effort),
       });
     }
   }
@@ -159,7 +159,7 @@ async function ensureStarterTeam(
       await client.invite(pk, "bot").catch(() => {});
       await client.attestAgent(pk).catch(() => {});
     }
-    await invoke("start_managed_agent", { persona: p.id, owner, relay, channels: channelId }).catch(() => {});
+    await invoke("start_managed_agent", { persona: p.id, owner, relay, channels: `${channelId},bootstrap-general` }).catch(() => {});
   }
 
   const teamPosted = await ensureMarkedMessage(
@@ -216,7 +216,7 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
     persona: "fez",
     owner: client.pubkey,
     relay: relaySet()[0],
-    channels: channel.id,
+    channels: `${channel.id},bootstrap-general`,
   }).catch(() => {});
 
   const r = await readiness();
