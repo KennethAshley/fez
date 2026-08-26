@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
 import { mediaServer } from "./upload";
@@ -43,6 +43,14 @@ const SETTINGS_TABS = {
 } as const;
 type SettingsSection = keyof typeof SETTINGS_TABS;
 
+// Buzz's grouped-nav decision: sections cluster by whose thing they
+// configure, not by feature age. Labels share the rail's divider grammar.
+const SETTINGS_GROUPS: { label: string; sections: SettingsSection[] }[] = [
+  { label: "you", sections: ["profile", "appearance", "keyboard", "backup"] },
+  { label: "workspace", sections: ["servers", "agents", "skills"] },
+  { label: "extensions", sections: ["extensions"] },
+];
+
 export default function SettingsPane({ client, wire, onClose }: { client: FezClient; wire: BrowserWire; onClose: () => void }) {
   const [name, setName] = useState(client.knownNames().get(client.pubkey) ?? "");
   const [status, setStatus] = useState(client.statusOf(client.pubkey) ?? "");
@@ -82,21 +90,39 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
     }
   };
 
+  // A full-screen takeover closes the way every screen does: Escape.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
-    <aside className="pane settings-pane">
-      <header className="pane-head">
-        <span>⚙ settings</span>
-        <button className="pane-close" onClick={onClose}>✕</button>
-      </header>
-      <div className="settings-layout">
-        <nav className="settings-nav">
-          {Object.entries(SETTINGS_TABS).map(([key, label]) => (
-            <button key={key} className={section === key ? "settings-nav-item active" : "settings-nav-item"} onClick={() => setSection(key as SettingsSection)}>
-              {label}
-            </button>
-          ))}
-        </nav>
-      <div className="pane-body settings-content">
+    <div className="settings-screen">
+      <nav className="settings-rail">
+        <button className="settings-back" onClick={onClose}>← back</button>
+        {SETTINGS_GROUPS.map((group) => (
+          <div key={group.label} className="settings-group">
+            <div className="community-name"><span className="community-label">{group.label}</span></div>
+            {group.sections.map((key) => (
+              <button
+                key={key}
+                className={section === key ? "settings-nav-item active" : "settings-nav-item"}
+                onClick={() => setSection(key)}
+              >
+                {SETTINGS_TABS[key]}
+              </button>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="settings-body">
+      <div className="settings-col">
         {section === "profile" && (<>
         <div className="manage-section">profile</div>
         <div className="settings-field">
@@ -253,7 +279,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         </>)}
       </div>
       </div>
-    </aside>
+    </div>
   );
 }
 

@@ -1090,7 +1090,9 @@ button.author:hover { text-decoration: underline; }
 .self-menu-key { margin-left: auto; font-size: 10.5px; color: var(--fg-dim); }
 .self-menu-rule { height: 1px; margin: 4px 0; background: var(--bg2); }
 
-/* settings as a centered modal (Claude's pattern) */
+/* centered modal chrome — now worn only by per-extension settings
+   (opened from a bridged group, next to the thing they configure);
+   the main settings became a full screen. */
 .settings-overlay { align-items: center; padding-top: 0; }
 .settings-modal { width: min(640px, 92vw); max-height: 82vh; display: flex; }
 .settings-modal .pane {
@@ -1416,19 +1418,46 @@ button.author:hover { text-decoration: underline; }
 .secret-input { width: 170px; padding: 3px 8px; font-size: 12px; }
 
 /* settings modal: left nav + content sections */
-.settings-layout { display: flex; flex: 1; min-height: 0; }
-.settings-nav {
-  width: 150px; min-width: 150px; border-right: 1px solid var(--bg2);
-  padding: 10px 6px; display: flex; flex-direction: column; gap: 2px;
+/* ── settings as a full screen (Buzz's model) ──────────────
+   Its own rail with the way back at the top, grouped nav in the
+   divider grammar, one scrolling content column. Sits under .overlay
+   (z 50) so dialogs opened from settings still stack above. */
+.settings-screen {
+  position: fixed; inset: 0; z-index: 45; display: flex;
+  background: var(--bg0);
 }
+.settings-rail {
+  width: 220px; min-width: 220px; background: var(--bg-rail);
+  border-right: 1px solid var(--hairline); padding: 12px 8px;
+  font-family: var(--font-mono); font-size: 12.5px;
+  display: flex; flex-direction: column; overflow-y: auto;
+}
+.settings-back {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; color: var(--fg-dim); font: inherit;
+  padding: 5px 10px; border-radius: 6px; cursor: pointer; text-align: left;
+  margin-bottom: 8px;
+}
+.settings-back:hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); color: var(--fg); }
+.settings-back:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.settings-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
 .settings-nav-item {
+  position: relative;
   background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 12.5px;
-  text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer;
+  text-align: left; padding: 5px 10px; border-radius: 6px; cursor: pointer;
 }
-.settings-nav-item:hover { background: var(--bg2); color: var(--fg); }
-.settings-nav-item.active { background: var(--bg2); color: var(--accent); font-weight: 600; }
-.settings-content { flex: 1; min-width: 0; }
-.settings-modal .settings-pane { min-height: 480px; }
+.settings-nav-item:hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); color: var(--fg); }
+.settings-nav-item.active {
+  background: color-mix(in srgb, var(--bg2) 65%, transparent);
+  color: var(--fg); font-weight: 600;
+}
+.settings-nav-item.active::before {
+  content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px;
+  background: var(--brand);
+}
+.settings-nav-item:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.settings-body { flex: 1; min-width: 0; overflow-y: auto; }
+.settings-col { max-width: 680px; padding: 24px 36px 64px; font-size: 13px; }
 
 
 /* ── extension panels: bare `code` reads as code ──────────────

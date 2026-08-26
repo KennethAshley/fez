@@ -1356,13 +1356,7 @@ function Shell({
           </div>
         </div>
       )}
-      {settingsOpen && (
-        <div className="overlay settings-overlay" onClick={(e) => e.target === e.currentTarget && setSettingsOpen(false)}>
-          <div className="settings-modal">
-            <SettingsPane client={client} wire={wire} onClose={() => setSettingsOpen(false)} />
-          </div>
-        </div>
-      )}
+      {settingsOpen && <SettingsPane client={client} wire={wire} onClose={() => setSettingsOpen(false)} />}
       {/* One extension's settings, opened from the group of channels it
           owns. The same panel object the settings pane renders — an
           extension writes it once and it appears wherever its work is. */}
