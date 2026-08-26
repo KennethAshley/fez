@@ -1,4 +1,5 @@
 use nostr::JsonUtil as _;
+mod managed_agents;
 mod managed_node;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1930,9 +1931,17 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner, managed_agents::start_managed_agent, managed_agents::managed_agent_status, managed_agents::stop_managed_agents])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // The GUI is the only supervisor of its own managed agent
+            // children — they must not outlive the window (Buzz's shape:
+            // supervise while open, not a background daemon).
+            if let tauri::RunEvent::Exit = event {
+                let _ = managed_agents::stop_managed_agents();
+            }
+        });
 }
 
 /// The fez host version `fez.minFezVersion` is enforced against — a
