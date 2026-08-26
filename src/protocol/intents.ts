@@ -11,9 +11,13 @@
  * The queue is plaintext on purpose: an executor without keys could not
  * decrypt a sealed payload to release it, and the content becomes public
  * at send_at regardless.
+ *
+ * CRITICAL: parseSealed returns PLAIN UNVERIFIED data. The relay ingest
+ * pipeline must call verifyEvent() before releasing the sealed event.
+ * Never stamp verifiedSymbol — that marks the data as cryptographically
+ * verified without checking the signature, which would bypass signature
+ * verification entirely.
  */
-
-import { verifiedSymbol } from "nostr-tools/pure";
 
 export interface SealedEvent {
   id: string;
@@ -45,10 +49,7 @@ export function parseSealed(content: string): SealedEvent | undefined {
     ) {
       return undefined;
     }
-    // Cast and restore the verifiedSymbol that would be present on a finalizeEvent result
-    const result = e as SealedEvent;
-    (result as any)[verifiedSymbol] = true;
-    return result;
+    return e as SealedEvent;
   } catch {
     return undefined;
   }
