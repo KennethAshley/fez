@@ -79,10 +79,15 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: packages/fez-desktop
 
-      # The kickoff spec spawns a real fez-relay (dist/cli.js) — build it
-      # ahead of time rather than relying on the test's own first-run
-      # fallback build.
-      - name: Build fez-relay
+      # Build all packages (fez-client, fez-artifact-viewers dists are gitignored
+      # but required by fez-desktop's build via vite preview in the e2e suite).
+      # Uses build-all.mjs for correct bootstrap order (relay/client/viewers before core).
+      - name: Build (all packages)
+        run: npm run build
+
+      # The kickoff spec spawns a real fez-relay (dist/cli.js) — already built
+      # above as part of the full build, but kept explicit as a checkpoint.
+      - name: Build fez-relay (checkpoint)
         run: npm run build --prefix packages/fez-relay
 
       - name: E2E gate
