@@ -89,6 +89,8 @@ export async function cmdStatus(io: CliIo, adapter: ChainAdapter): Promise<void>
   const config = loadConfig();
   const asset = adapter.assets[0].symbol;
   const treasury = treasuryPair(mnemonic);
+  await mirrorAddresses({ treasury: treasury.address });
+  await mirrorEndpoint(config.endpoints.tao);
   const tb = await adapter.balance(treasury.address, asset);
   io.print(`treasury  ${treasury.address}  ${formatAmount(tb)}`);
   for (const persona of Object.keys(config.personas).sort()) {

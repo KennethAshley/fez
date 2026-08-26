@@ -71,7 +71,9 @@ function deps(over: Partial<import("../src/tools.js").ToolDeps> = {}) {
 }
 
 beforeEach(() => {
+  process.env.FEZ_WALLET_STORE = "file";
   process.env.FEZ_WALLET_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "fez-wallet-tools-"));
+  process.env.FEZ_EXTENSION_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "fez-wallet-ext-"));
 });
 
 describe("tools", () => {

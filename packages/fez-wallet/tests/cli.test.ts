@@ -8,6 +8,7 @@ import type { ChainAdapter } from "../src/chains/adapter.js";
 beforeEach(async () => {
   process.env.FEZ_WALLET_STORE = "file";
   process.env.FEZ_WALLET_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "fez-wallet-cli-"));
+  process.env.FEZ_EXTENSION_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "fez-wallet-ext-"));
   await cryptoWaitReady();
 });
 
@@ -82,6 +83,19 @@ describe("cli ceremony", () => {
     expect(out).toContain("treasury");
     expect(out).toContain("scout");
     expect(out).toContain("5 TAO");
+  });
+
+  it("status refreshes the extension-data mirror with treasury address and endpoint", async () => {
+    const { cmdInit, cmdStatus } = await import("../src/cli-commands.js");
+    const { io } = collect();
+    await cmdInit(io);
+    const { adapter } = fakeAdapter();
+    await cmdStatus(io, adapter);
+    // Verify mirror was written to the temp FEZ_EXTENSION_DATA_DIR, not the real home
+    const mirrorFile = path.join(process.env.FEZ_EXTENSION_DATA_DIR!, "wallet.json");
+    const mirror = JSON.parse(await fs.promises.readFile(mirrorFile, "utf8"));
+    expect(mirror.addresses?.treasury).toBeDefined();
+    expect(mirror.endpoint).toBeDefined();
   });
 
   it("derive without init explains itself", async () => {
