@@ -8,6 +8,7 @@
  * when any message in the channel already carries it. Reinstalls,
  * paired second devices, and re-runs all converge on one greeting.
  */
+export const WELCOME_CHANNEL_ID = "bootstrap-welcome";
 export const HELLO_MARKER = "fez-welcome.hello.v1";
 export const OPENER_MARKER = "fez-welcome.opener.v1";
 export const AWAKE_MARKER = "fez-welcome.awake.v1";
@@ -72,8 +73,10 @@ export function openerText(r: Readiness, _userName: string): string {
  * appear only when both are chosen (pi frontmatter: defaultModel/
  * defaultProvider); Claude Code needs neither.
  */
-export function buildFezPersonaMd(harness: string, model?: string, provider?: string): string {
-  const brainLines = model && provider ? `provider: ${provider}\nmodel: ${model}\n` : "";
+export function buildFezPersonaMd(harness: string, model?: string, provider?: string, effort?: string): string {
+  const brainLines =
+    (model && provider ? `provider: ${provider}\nmodel: ${model}\n` : model ? `model: ${model}\n` : "") +
+    (effort ? `effort: ${effort}\n` : "");
   return (
     `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\n` +
     `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
@@ -111,8 +114,10 @@ export const STARTER_TEAM: StarterPersona[] = [
 ];
 
 /** A starter teammate's persona — inherits the brain @fez was given. */
-export function buildStarterPersonaMd(p: StarterPersona, harness: string, model?: string, provider?: string): string {
-  const brainLines = model && provider ? `provider: ${provider}\nmodel: ${model}\n` : "";
+export function buildStarterPersonaMd(p: StarterPersona, harness: string, model?: string, provider?: string, effort?: string): string {
+  const brainLines =
+    (model && provider ? `provider: ${provider}\nmodel: ${model}\n` : model ? `model: ${model}\n` : "") +
+    (effort ? `effort: ${effort}\n` : "");
   return `---\nharness: ${harness}\n${brainLines}description: ${p.description}\n---\n${p.prompt}\n`;
 }
 
@@ -121,9 +126,9 @@ export function buildStarterPersonaMd(p: StarterPersona, harness: string, model?
  * @fez was given, and parsing the file (rather than threading state
  * through the app) keeps fez.md the single source of that choice.
  */
-export function parsePersonaBrain(md: string): { harness: string; model?: string; provider?: string } {
+export function parsePersonaBrain(md: string): { harness: string; model?: string; provider?: string; effort?: string } {
   const grab = (key: string) => md.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim();
-  return { harness: grab("harness") ?? "pi", model: grab("model"), provider: grab("provider") };
+  return { harness: grab("harness") ?? "pi", model: grab("model"), provider: grab("provider"), effort: grab("effort") };
 }
 
 /**

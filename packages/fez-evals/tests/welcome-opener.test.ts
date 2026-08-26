@@ -10,6 +10,8 @@ import {
   openerText,
   awakeText,
   buildFezPersonaMd,
+  parsePersonaBrain,
+  WELCOME_CHANNEL_ID,
   ensureMarkedMessage,
   findMarked,
   STARTER_TEAM,
@@ -61,8 +63,10 @@ describe("welcome opener", () => {
     expect(chutes).toContain("harness: pi");
     expect(chutes).toContain("model: deepseek-v3");
     expect(chutes).toContain("provider: local-56105ece7a");
-    // a half-choice never emits half-frontmatter
-    expect(buildFezPersonaMd("pi", "deepseek-v3")).not.toContain("model:");
+    // model alone (without provider) emits model: for claude-code personas
+    const modelAlone = buildFezPersonaMd("pi", "deepseek-v3");
+    expect(modelAlone).toContain("model: deepseek-v3");
+    expect(modelAlone).not.toContain("provider:");
     for (const md of [claude, chutes]) {
       expect(md).toMatch(/^---\nharness:/);
       expect(md).toContain("aliases: [orchestrator]");
@@ -138,6 +142,22 @@ describe("welcome opener", () => {
     } finally {
       child.kill();
     }
+  });
+});
+
+describe("persona brain — effort", () => {
+  it("round-trips harness/provider/model/effort", () => {
+    const md = buildFezPersonaMd("pi", "deepseek-ai/DeepSeek-V3.2", "local-56105ece7a", "high");
+    expect(parsePersonaBrain(md)).toEqual({
+      harness: "pi", model: "deepseek-ai/DeepSeek-V3.2", provider: "local-56105ece7a", effort: "high",
+    });
+  });
+  it("omits effort/model/provider lines when not chosen", () => {
+    const md = buildFezPersonaMd("claude-code");
+    expect(md).not.toMatch(/^(effort|model|provider):/m);
+  });
+  it("names the welcome channel", () => {
+    expect(WELCOME_CHANNEL_ID).toBe("bootstrap-welcome");
   });
 });
 
