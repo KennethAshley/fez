@@ -3,6 +3,7 @@ import { readEntry, writeEntry, readRootEntry, writeRootEntry } from "./store.js
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex } from "./config.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
+import { mirrorAddresses, mirrorEndpoint, mirrorSpend } from "./storage-mirror.js";
 
 /**
  * The ceremony. This module is the ONLY place the "root" entry (the
@@ -41,8 +42,12 @@ export function cmdInit(io: CliIo): void {
   io.print("");
   io.print(`  ${mnemonic}`);
   io.print("");
-  io.print(`treasury address: ${treasuryPair(mnemonic).address}`);
+  const treasuryAddress = treasuryPair(mnemonic).address;
+  io.print(`treasury address: ${treasuryAddress}`);
   io.print("fund the treasury, then: fez-wallet derive <persona> && fez-wallet fund <persona> <amount>");
+  void mirrorAddresses({ treasury: treasuryAddress });
+  const config = loadConfig();
+  void mirrorEndpoint(config.endpoints.tao);
 }
 
 export function cmdDerive(io: CliIo, persona: string): void {
@@ -55,6 +60,7 @@ export function cmdDerive(io: CliIo, persona: string): void {
   assignEvmIndex(config, persona);
   saveConfig(config);
   io.print(`${persona}: ${pair.address}`);
+  void mirrorAddresses({ persona: { name: persona, address: pair.address } });
 }
 
 export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string, amount: string): Promise<void> {
@@ -67,6 +73,15 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
   const parsed = parseAmount(amount, decimals, adapter.assets[0].symbol);
   const { txHash } = await adapter.transfer(treasuryPair(mnemonic), to, parsed);
   io.print(`funded ${persona} with ${formatAmount(parsed)} (tx ${txHash})`);
+  void mirrorSpend({
+    ts: new Date().toISOString(),
+    persona: "treasury",
+    to,
+    amount,
+    asset: adapter.assets[0].symbol,
+    txHash,
+    consent: "auto",
+  });
 }
 
 export async function cmdStatus(io: CliIo, adapter: ChainAdapter): Promise<void> {
