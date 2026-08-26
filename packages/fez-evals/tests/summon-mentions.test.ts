@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { summonMentions } from "../../fez-sentinel/src/index.js";
+import { summonMentions } from "../../../src/agent/summon.js";
 
 /**
  * Mention ≠ summon. A message that merely SPEAKS ABOUT an agent —
