@@ -7,10 +7,15 @@ import type { FezClient } from "@fezchat/client";
 import { reloadGuiExtensions } from "./gui-extensions";
 import { CATALOG, PERM_LABEL, SENSITIVE, norm, githubUrl, npmUrl, type CatalogEntry } from "./extensions-catalog";
 import { useConfig } from "./config-store";
+import { generateArtifact } from "./artifact-sprite";
+import { AnimatedSprite } from "./pixel-sprite";
 
 /**
  * The install gallery — discover the official fez extensions and install
- * one with a click. Each card names what the extension ADDS and the
+ * one with a click. Each card is led by the extension's relic (a
+ * deterministic sprite from artifact-sprite.ts) which carries install
+ * state in the sultan-statue grammar: dormant relics sit muted and
+ * installing lights them. Cards name what the extension ADDS and the
  * permissions it asks for; installing fetches the tarball from npm and
  * copies its parts into ~/.fez (self-sufficient, no CLI), then re-scans
  * gui extensions so a new panel appears live. The catalog itself lives in
@@ -138,9 +143,14 @@ export function ExtensionGallery({
       <div className="ext-detail">
         <button className="pane-back" onClick={() => setDetail(undefined)}>← extensions</button>
         <div className="ext-detail-head">
-          <div>
-            <div className="ext-detail-title">{detail.title}</div>
-            <code className="gallery-name">{detail.name}{info?.version ? `@${info.version}` : ""}</code>
+          <div className={`ext-detail-id ${done ? "lit" : "dormant"}`}>
+            <span className="artifact-slot big">
+              <AnimatedSprite sprite={generateArtifact(detail.name)} scale={6} />
+            </span>
+            <div>
+              <div className="ext-detail-title">{detail.title}</div>
+              <code className="gallery-name">{detail.name}{info?.version ? `@${info.version}` : ""}</code>
+            </div>
           </div>
           {done ? (
             newer ? (
@@ -204,32 +214,43 @@ export function ExtensionGallery({
         const key = norm(entry.name);
         const cur = installedVer[key];
         const newer = latest[key] && cur && latest[key] !== cur ? latest[key] : undefined;
+        const sens = entry.permissions.filter((p) => SENSITIVE.has(p)).length;
         return (
-          <div key={entry.name} className="gallery-card">
-            <div className="gallery-main clickable" onClick={() => setDetail(entry)} title="details">
-              <div className="gallery-head">
-                <span className="gallery-title">{entry.title}</span>
-                <code className="gallery-name">{entry.name}</code>
-              </div>
-              <div className="gallery-blurb">{entry.blurb}</div>
-              <div className="gallery-where">{done ? "✓ installed · " : ""}{entry.where}</div>
+          <div key={entry.name} className={`gallery-card ${done ? "lit" : "dormant"}`}>
+            <button className="gallery-main" onClick={() => setDetail(entry)} title="details">
+              <span className="artifact-slot">
+                <AnimatedSprite sprite={generateArtifact(entry.name)} scale={4} />
+              </span>
+              <span className="gallery-body">
+                <span className="gallery-head">
+                  <span className="gallery-title">{entry.title}</span>
+                  <code className="gallery-name">{entry.name}</code>
+                </span>
+                <span className="gallery-blurb">{entry.blurb}</span>
+                <span className="gallery-where">↳ {entry.where}</span>
+              </span>
+            </button>
+            <div className="gallery-foot">
+              <span className="gallery-grants">
+                {entry.permissions.length} grants{sens ? <span className="sens"> · ⚠ {sens} sensitive</span> : null}
+              </span>
+              {done ? (
+                <div className="gallery-actions">
+                  {newer ? (
+                    <button className="gallery-install update" disabled={busy} onClick={() => void update(entry)}>
+                      {busy ? "updating…" : `update → ${newer}`}
+                    </button>
+                  ) : (
+                    <span className="gallery-install installed">✓ installed{cur ? ` · ${cur}` : ""}</span>
+                  )}
+                  <button className="gallery-uninstall" onClick={() => void uninstall(entry)}>uninstall</button>
+                </div>
+              ) : (
+                <button className="gallery-install" disabled={busy} onClick={() => setConfirming(entry)}>
+                  {busy ? "installing…" : "install"}
+                </button>
+              )}
             </div>
-            {done ? (
-              <div className="gallery-actions">
-                {newer ? (
-                  <button className="gallery-install update" disabled={busy} onClick={() => void update(entry)}>
-                    {busy ? "updating…" : `update → ${newer}`}
-                  </button>
-                ) : (
-                  <span className="gallery-install installed">installed{cur ? ` · ${cur}` : ""}</span>
-                )}
-                <button className="gallery-uninstall" onClick={() => void uninstall(entry)}>uninstall</button>
-              </div>
-            ) : (
-              <button className="gallery-install" disabled={busy} onClick={() => setConfirming(entry)}>
-                {busy ? "installing…" : "install"}
-              </button>
-            )}
           </div>
         );
       })}
@@ -237,8 +258,13 @@ export function ExtensionGallery({
       {confirming && (
         <div className="consent-backdrop" onClick={() => setConfirming(undefined)}>
           <div className="consent-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="ext-modal-head">
-              Install <strong>{confirming.title}</strong> <code>{confirming.name}</code>?
+            <div className="ext-modal-head lit">
+              <span className="artifact-slot">
+                <AnimatedSprite sprite={generateArtifact(confirming.name)} scale={3} />
+              </span>
+              <span>
+                Install <strong>{confirming.title}</strong> <code>{confirming.name}</code>?
+              </span>
             </div>
             <div className="settings-hint">It asks for:</div>
             <ul className="gallery-perms">

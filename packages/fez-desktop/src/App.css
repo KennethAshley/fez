@@ -109,10 +109,15 @@ body {
   color: var(--fg-dim); padding: 4px 10px;
   display: flex; align-items: center; gap: 6px;
 }
+/* Section labels share the day-divider grammar: label, then a hairline
+   running to the actions — one structural voice across the app. */
+.community-label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.community-label::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
 .channel {
   display: flex; align-items: center; gap: 6px; width: 100%;
   background: none; border: 0; color: var(--fg-dim); font: inherit;
   padding: 5px 10px; border-radius: 6px; cursor: pointer; text-align: left;
+  position: relative;
 }
 /* ── channel states ────────────────────────────────────────
    These were indistinguishable: :hover and .active both painted
@@ -129,16 +134,28 @@ body {
    rows already use a 2px left edge to mean "this one"), and it is drawn
    with an inset shadow rather than a border or ::before so nothing
    shifts by a pixel between states. */
-/* Hover is a neutral ground; active is its OWN colour, faintly carrying
-   the accent. That difference in hue is the whole signal — no bar, no
-   marker — and it works because the two grounds are different kinds of
-   thing rather than two strengths of the same one. */
+/* Hover is a neutral ground; active is a quiet ground plus the ember
+   notch — the sultan-statue grammar in miniature: rows sit muted, the
+   chosen one is lit. The notch is the app's own left-edge idiom
+   (comment threads, missing-skill rows), drawn as an inset shadow so
+   nothing shifts a pixel between states. */
 .channel:hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); color: var(--fg); }
 .channel.active {
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg2));
+  background: color-mix(in srgb, var(--bg2) 65%, transparent);
   color: var(--fg); font-weight: 600;
 }
-.channel.active:hover { background: color-mix(in srgb, var(--accent) 24%, var(--bg2)); }
+/* The notch is a square-cornered pixel, not a rounded edge — drawn as
+   an overlay so the row's radius can't round it and nothing shifts. */
+.channel.active::before {
+  content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px;
+  background: var(--brand);
+}
+.channel.active:hover { background: color-mix(in srgb, var(--bg2) 85%, transparent); }
+.channel.active .hash { color: var(--brand); }
+/* Nav glyphs are dim at rest; the active view's glyph runs phosphor —
+   the terminal LED --phosphor was minted for. */
+.nav-glyph { color: var(--fg-dim); transition: color 110ms ease; }
+.channel.active .nav-glyph { color: var(--phosphor); }
 .channel:active { transform: translateY(0.5px); }
 /* Keyboard users get the same answer the mouse gets. */
 .channel:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
@@ -608,7 +625,9 @@ select.ob-input:hover { border-color: var(--accent); }
 .manage-section {
   font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim);
   margin: 14px 0 6px;
+  display: flex; align-items: center; gap: 8px;
 }
+.manage-section::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
 .manage-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
 .manage-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .role-tag {
@@ -1477,19 +1496,50 @@ button.author:hover { text-decoration: underline; }
 .keymap-reset { background: none; border: none; cursor: pointer; color: var(--fg-dim); font-size: 14px; }
 .keymap-reset:hover { color: var(--fg); }
 
-/* extension install gallery — curated cards with one-click install */
-.ext-gallery { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+/* extension install gallery — inventory tiles, each led by its generated
+   relic (artifact-sprite.ts). The sultan-statue grammar carries install
+   state: a dormant relic sits muted, hovering makes it stir, installing
+   lights it — the sprite is the badge. */
+.ext-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
+.ext-gallery > .settings-hint { grid-column: 1 / -1; }
 .gallery-card {
-  display: flex; align-items: center; gap: 14px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px; padding: 12px;
   border: 1px solid var(--hairline); border-radius: 10px; background: color-mix(in srgb, var(--bg2) 40%, transparent);
 }
-.gallery-main { flex: 1; min-width: 0; }
-.gallery-head { display: flex; align-items: baseline; gap: 8px; }
+.gallery-main {
+  display: flex; align-items: flex-start; gap: 12px; flex: 1; min-width: 0;
+  background: none; border: 0; padding: 0; font: inherit; text-align: left; color: inherit; cursor: pointer;
+}
+.gallery-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.gallery-main:hover .gallery-title { color: var(--accent); }
+.gallery-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.artifact-slot {
+  flex: none; display: grid; place-items: center; width: 60px; height: 60px; line-height: 0;
+  border: 1px solid var(--hairline); border-radius: 8px;
+  background: color-mix(in srgb, var(--bg0) 70%, transparent);
+}
+.artifact-slot.big { width: 96px; height: 96px; }
+.artifact-slot .sprite-anim svg { transition: filter 0.35s; }
+.dormant .artifact-slot .sprite-anim svg { filter: grayscale(0.9) opacity(0.5); }
+.gallery-card.dormant:hover .artifact-slot .sprite-anim svg,
+.ext-detail-id.dormant:hover .artifact-slot .sprite-anim svg { filter: grayscale(0.45) opacity(0.8); }
+/* hover wakes the glint — same steps(1) frame flip the avatars use */
+.gallery-card:hover .artifact-slot .spr-a, .ext-detail-id:hover .artifact-slot .spr-a { animation: spr-frame-a 0.9s steps(1) infinite; }
+.gallery-card:hover .artifact-slot .spr-b, .ext-detail-id:hover .artifact-slot .spr-b { animation: spr-frame-b 0.9s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .gallery-card:hover .artifact-slot .spr-a, .ext-detail-id:hover .artifact-slot .spr-a,
+  .gallery-card:hover .artifact-slot .spr-b, .ext-detail-id:hover .artifact-slot .spr-b { animation: none; }
+  .artifact-slot .sprite-anim svg { transition: none; }
+}
+.gallery-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .gallery-title { font-weight: 600; font-size: 14px; color: var(--fg); }
 .gallery-name { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
 .gallery-blurb { font-size: 12.5px; color: var(--fg-dim); margin-top: 3px; line-height: 1.4; }
 .gallery-where { font-size: 11.5px; color: var(--fg-dim); opacity: 0.8; margin-top: 4px; font-style: italic; }
-.gallery-actions { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.gallery-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gallery-grants { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
+.gallery-grants .sens { color: var(--yellow); white-space: nowrap; }
+.gallery-actions { flex: none; display: flex; align-items: center; gap: 6px; }
 .gallery-install.update { color: var(--bg0); background: var(--yellow); border-color: var(--yellow); }
 .gallery-install.update:hover:not(:disabled) { filter: brightness(1.08); }
 .gallery-uninstall { background: none; border: none; cursor: pointer; color: var(--fg-dim); font-size: 11.5px; padding: 2px 6px; }
@@ -1525,10 +1575,9 @@ button.author:hover { text-decoration: underline; }
 .consent-allow:hover { filter: brightness(1.05); }
 
 /* extension detail page */
-.gallery-main.clickable { cursor: pointer; }
-.gallery-main.clickable:hover .gallery-title { color: var(--accent); }
 .ext-detail { display: flex; flex-direction: column; gap: 14px; padding-bottom: 24px; }
 .ext-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.ext-detail-id { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .ext-detail-title { font-size: 20px; font-weight: 700; color: var(--fg); }
 .ext-detail-links { display: flex; gap: 12px; }
 .ext-detail-section { display: flex; flex-direction: column; gap: 4px; }
@@ -1554,6 +1603,13 @@ button.author:hover { text-decoration: underline; }
 }
 .install-offer.unknown { border-color: color-mix(in srgb, var(--yellow) 40%, var(--hairline)); color: var(--fg-dim); font-size: 12.5px; }
 .install-offer-row { display: flex; align-items: center; gap: 10px; }
+.install-offer .artifact-slot { width: 46px; height: 46px; }
+.install-offer:hover .artifact-slot .spr-a { animation: spr-frame-a 0.9s steps(1) infinite; }
+.install-offer:hover .artifact-slot .spr-b { animation: spr-frame-b 0.9s steps(1) infinite; }
+.install-offer.dormant:hover .artifact-slot .sprite-anim svg { filter: grayscale(0.45) opacity(0.8); }
+@media (prefers-reduced-motion: reduce) {
+  .install-offer:hover .artifact-slot .spr-a, .install-offer:hover .artifact-slot .spr-b { animation: none; }
+}
 .install-offer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .install-offer-title { font-size: 13px; font-weight: 600; color: var(--fg); }
 .install-offer-blurb { font-size: 12px; color: var(--fg-dim); }
@@ -1563,7 +1619,8 @@ button.author:hover { text-decoration: underline; }
 .memory-row { padding: 8px 10px; border: 1px solid var(--hairline); border-radius: 8px; margin-top: 6px; background: color-mix(in srgb, var(--bg2) 30%, transparent); }
 .memory-text { font-size: 13px; line-height: 1.45; color: var(--fg); }
 .memory-meta { font-size: 11px; color: var(--fg-dim); margin-top: 4px; }
-.ext-modal-head { font-size: 14px; color: var(--fg); }
+.ext-modal-head { font-size: 14px; color: var(--fg); display: flex; align-items: center; gap: 12px; }
+.ext-modal-head .artifact-slot { width: 46px; height: 46px; }
 .gallery-perms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .gallery-perms li { font-size: 12.5px; color: var(--fg-dim); }
 .gallery-perms li.sensitive { color: var(--yellow); }
@@ -1887,7 +1944,7 @@ button.author:hover { text-decoration: underline; }
    splits one control into two, and no value fixes that. */
 .composer-box {
   background: var(--bg-rail);
-  border: 1px solid var(--bg2);
+  border: 1px solid var(--hairline);
   border-radius: 8px;
   padding: 4px 10px 6px;
 }
@@ -1921,7 +1978,7 @@ button.author:hover { text-decoration: underline; }
 }
 .format-bar button:hover { background: var(--bg2); color: var(--fg); }
 .format-bar .tray-sep { margin: 3px 5px; }
-.composer-box .format-bar { border-bottom-color: var(--bg2); }
+.composer-box .format-bar { border-bottom-color: var(--hairline); }
 
 /* @fezchat/bittensor gui part: subnet dev-activity card */
 .bt-card {
@@ -2840,9 +2897,16 @@ button.ob-brain:active { transform: translateY(1px); }
 
 /* ── the mention nudge (Buzz's composer hint, dismissible) ─────────── */
 .mention-hint {
-  display: flex; align-items: center; gap: 8px; margin: 4px 42px 8px;
+  display: flex; align-items: center; gap: 10px; margin: 4px 42px 8px;
   padding: 6px 12px; border: 1px solid var(--hairline); border-radius: 8px;
   background: var(--bg1); color: var(--fg-dim); font-size: 12px;
+}
+/* The guide speaks as itself — its sprite, woken on hover like any avatar. */
+.mention-hint-sprite { position: relative; line-height: 0; flex: none; }
+.mention-hint:hover .mention-hint-sprite .spr-a { animation: spr-frame-a 0.6s steps(1) infinite; }
+.mention-hint:hover .mention-hint-sprite .spr-b { animation: spr-frame-b 0.6s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .mention-hint:hover .mention-hint-sprite .spr-a, .mention-hint:hover .mention-hint-sprite .spr-b { animation: none; }
 }
 .mention-hint-x {
   margin-left: auto; background: none; border: 0; cursor: pointer;

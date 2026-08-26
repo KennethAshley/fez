@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
 import { PERM_LABEL, SENSITIVE, norm, catalogEntry, installExtension } from "./extensions-catalog";
 import { flash } from "./toast";
+import { generateArtifact } from "./artifact-sprite";
+import { AnimatedSprite } from "./pixel-sprite";
 
 // @fez offers an install by putting `fez:install @fezchat/<name>` in its
 // message. Only the official @fezchat scope is honored — a stray marker
@@ -83,10 +85,13 @@ export function InstallOffer({ content, authorName, client }: { content: string;
           );
         }
         return (
-          <div key={name} className="install-offer">
+          <div key={name} className={`install-offer ${done ? "lit" : "dormant"}`}>
             <div className="install-offer-row">
+              <span className="artifact-slot">
+                <AnimatedSprite sprite={generateArtifact(name)} scale={3} />
+              </span>
               <div className="install-offer-main">
-                <span className="install-offer-title">💡 {authorName} suggests installing {entry.title}</span>
+                <span className="install-offer-title">{authorName} suggests installing {entry.title}</span>
                 <span className="install-offer-blurb">{entry.blurb}</span>
               </div>
               {done ? (

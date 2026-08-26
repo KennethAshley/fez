@@ -933,11 +933,11 @@ function Shell({
         {!client.state.workspace.owner && <div className="workspace-unclaimed">unclaimed</div>}
         <div className="rail-scroll">
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
-          ▤ inbox
+          <span className="nav-glyph">▤</span> inbox
           {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
         </button>
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
-          ≡ docs
+          <span className="nav-glyph">≡</span> docs
         </button>
         {/* Extension-owned rail views (loom's ▣ tools gallery enters here). */}
         {extensionNavViews().map((nav) => (
@@ -946,12 +946,12 @@ function Shell({
             className={view.kind === "ext" && view.name === nav.name ? "channel active home-link" : "channel home-link"}
             onClick={() => setView({ kind: "ext", name: nav.name })}
           >
-            {nav.glyph} {nav.label}
+            <span className="nav-glyph">{nav.glyph}</span> {nav.label}
           </button>
         ))}
         <div className="community">
           <div className="community-name">
-            channels
+            <span className="community-label">channels</span>
             {/* Group actions sit with the group, not in the nav list —
                 browsing channels is a thing you do TO this list. */}
             <button
@@ -1028,7 +1028,7 @@ function Shell({
           return (
             <div className="community" key={source}>
               <div className="community-name">
-                {source}
+                <span className="community-label">{source}</span>
                 {panel && (
                   <button
                     className="community-add"
@@ -1050,7 +1050,7 @@ function Shell({
         })}
         <div className="community">
           <div className="community-name">
-            dms
+            <span className="community-label">dms</span>
             <NewDmButton client={client} onOpen={openDm} />
           </div>
             {dmConvos.slice(0, 10).map(([key, convo]) => {
@@ -1098,7 +1098,7 @@ function Shell({
           className={pane?.kind === "agents" ? "channel active home-link" : "channel home-link"}
           onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}
         >
-          ⚉ agents
+          <span className="nav-glyph">⚉</span> agents
           {benchPending > 0 && <span className="badge">{benchPending}</span>}
         </button>
         <div className="self-wrap">
@@ -2985,7 +2985,10 @@ function MentionHint() {
   if (dismissed) return null;
   return (
     <div className="mention-hint">
-      <span>🎩 Mention @fez or a teammate whenever you want their help.</span>
+      <span className="mention-hint-sprite">
+        <AnimatedSprite sprite={SPRITES.fez} scale={2} />
+      </span>
+      <span>Mention @fez or a teammate whenever you want their help.</span>
       <button
         className="mention-hint-x"
         title="dismiss"
