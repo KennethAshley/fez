@@ -1,5 +1,5 @@
 import type { StoredEvent } from "./relay.js";
-import { parseSealed } from "../../../src/protocol/intents.js";
+import { parseSealed } from "@fezchat/protocol";
 
 /**
  * The timestamp escrow (de-sentinel workstream 3): watches sealed 40006
@@ -42,6 +42,17 @@ export function activateScheduler(api: SchedulerApi): void {
   const fire = async (intent: StoredEvent) => {
     timers.delete(intent.id);
     if (done.has(intent.id)) return;
+
+    // Re-arm for long delays beyond MAX_DELAY (2^31-1 ms = ~24.9 days)
+    const at = Number(intent.tags.find((t) => t[0] === "send_at")?.[1]);
+    const remaining = at * 1000 - Date.now();
+    if (remaining > 1000) {
+      // Still meaningfully in the future — re-arm in chunks
+      const delayMs = Math.min(Math.max(0, remaining), MAX_DELAY);
+      timers.set(intent.id, setTimeout(() => void fire(intent), delayMs));
+      return;
+    }
+
     done.add(intent.id);
     const inner = parseSealed(intent.content);
     if (!inner) return;

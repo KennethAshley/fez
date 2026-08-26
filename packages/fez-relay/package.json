@@ -13,6 +13,7 @@
     "build": "tsc && chmod +x dist/cli.js"
   },
   "dependencies": {
+    "@fezchat/protocol": "file:../..",
     "nostr-tools": "^2.14.0",
     "ws": "^8.18.0"
   },

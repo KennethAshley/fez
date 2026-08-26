@@ -48,6 +48,7 @@ describe("relay scheduler", () => {
     expect(inj.id).toBe(inner.id);
     expect(inj.kind).toBe(inner.kind);
     expect(inj.pubkey).toBe(inner.pubkey);
+    expect(inj.created_at).toBe(inner.created_at);
     expect(inj.content).toBe(inner.content);
     expect(inj.tags).toEqual(inner.tags);
     expect(inj.sig).toBe(inner.sig);
@@ -63,6 +64,7 @@ describe("relay scheduler", () => {
     expect(inj.id).toBe(inner.id);
     expect(inj.kind).toBe(inner.kind);
     expect(inj.pubkey).toBe(inner.pubkey);
+    expect(inj.created_at).toBe(inner.created_at);
     expect(inj.content).toBe(inner.content);
     expect(inj.tags).toEqual(inner.tags);
     expect(inj.sig).toBe(inner.sig);
@@ -79,6 +81,7 @@ describe("relay scheduler", () => {
     expect(inj.id).toBe(inner.id);
     expect(inj.kind).toBe(inner.kind);
     expect(inj.pubkey).toBe(inner.pubkey);
+    expect(inj.created_at).toBe(inner.created_at);
     expect(inj.content).toBe(inner.content);
     expect(inj.tags).toEqual(inner.tags);
     expect(inj.sig).toBe(inner.sig);
@@ -123,6 +126,36 @@ describe("relay scheduler", () => {
     expect(inj.id).toBe(inner.id);
     expect(inj.kind).toBe(inner.kind);
     expect(inj.pubkey).toBe(inner.pubkey);
+    expect(inj.created_at).toBe(inner.created_at);
+    expect(inj.content).toBe(inner.content);
+    expect(inj.tags).toEqual(inner.tags);
+    expect(inj.sig).toBe(inner.sig);
+  });
+
+  it("long delays beyond MAX_DELAY are re-armed in chunks", async () => {
+    // Send at now + 30 days (in seconds), which is ~2.592e9 seconds = well beyond 2^31-1 ms
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000; // 2,592,000,000 ms
+    const MAX_DELAY = 2 ** 31 - 1; // 2,147,483,647 ms
+    const { inner, intent } = sealedIntent(now() + 30 * 24 * 60 * 60);
+    const { api, injected } = fakeApi([intent]);
+    activateScheduler(api);
+    expect(injected).toHaveLength(0);
+
+    // Advance by MAX_DELAY (first chunk)
+    await vi.advanceTimersByTimeAsync(MAX_DELAY);
+    // Intent should NOT fire yet, should still be pending
+    expect(injected).toHaveLength(0);
+
+    // Advance the remainder to actually reach send_at
+    const remaining = thirtyDaysMs - MAX_DELAY;
+    await vi.advanceTimersByTimeAsync(remaining + 1000);
+    // Now it should have fired
+    expect(injected).toHaveLength(1);
+    const inj = injected[0] as typeof inner;
+    expect(inj.id).toBe(inner.id);
+    expect(inj.kind).toBe(inner.kind);
+    expect(inj.pubkey).toBe(inner.pubkey);
+    expect(inj.created_at).toBe(inner.created_at);
     expect(inj.content).toBe(inner.content);
     expect(inj.tags).toEqual(inner.tags);
     expect(inj.sig).toBe(inner.sig);
