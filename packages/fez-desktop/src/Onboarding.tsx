@@ -69,7 +69,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
       if (!localStorage.getItem("fez-pending-invite")) {
         activeRelay = await invoke<string>("ensure_local_relay", {
           owner: getPublicKey(secret),
-          name: name.trim() ? `${name.trim()}'s workspace` : "your workspace",
+          name: "your workspace",
         });
         setRelayUrl(activeRelay);
       }
@@ -282,6 +282,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
             >
               open fez
             </button>
+            <button className="ob-secondary" onClick={() => setStep(prevStep(step))}>back</button>
           </>
         )}
       </div>
