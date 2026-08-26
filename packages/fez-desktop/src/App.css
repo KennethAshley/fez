@@ -706,14 +706,23 @@ select.ob-input:hover { border-color: var(--accent); }
 .home-section {
   font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim);
   margin: 18px 0 8px;
+  display: flex; align-items: center; gap: 8px;
 }
+.home-section::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
 .home-section:first-child { margin-top: 0; }
+/* Ten filled cards at equal weight gave the eye nowhere to land, and a
+   rule between every row just traded one grid for another. Nothing
+   separates them but air and the creature holding the left column;
+   hover is what draws the row. */
 .inbox-row {
-  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
-  background: var(--bg1); border: 0; color: var(--fg); font: inherit; padding: 10px 14px;
-  border-radius: 8px; cursor: pointer; margin-bottom: 6px;
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--fg); font: inherit; padding: 8px;
+  border-radius: 8px; cursor: pointer; position: relative;
 }
-.inbox-row:hover { background: var(--bg2); }
+.inbox-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.inbox-glyph { width: 22px; text-align: center; color: var(--fg-dim); font-size: 14px; flex: none; }
+.inbox-row:hover { background: color-mix(in srgb, var(--bg2) 45%, transparent); }
+.inbox-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .inbox-author { color: var(--yellow); font-weight: 600; }
 .inbox-row .badge { margin-left: 8px; }
 .settings-field { margin-bottom: 8px; }
@@ -1022,15 +1031,35 @@ button.author:hover { text-decoration: underline; }
   display: flex; align-items: baseline;
 }
 .channel-intro p { color: var(--fg-dim); font-size: 13px; }
+/* The empty docs page: quill waiting, and the way to start on the page
+   itself rather than a + in the column beside it. */
+.doc-intro { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding-top: 44px; }
+.doc-intro h2, .doc-intro p { margin: 0; }
+.doc-intro-sprite { position: relative; line-height: 0; }
+.doc-intro-sprite .spr-a { animation: spr-frame-a 0.8s steps(1) infinite; }
+.doc-intro-sprite .spr-b { animation: spr-frame-b 0.8s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .doc-intro-sprite .spr-a, .doc-intro-sprite .spr-b { animation: none; }
+}
+.doc-intro .agent-action { margin-top: 4px; }
 .armed-delete { background: var(--red) !important; color: var(--bg0) !important; font-weight: 700; }
 .composer-row { display: flex; align-items: flex-end; gap: 6px; }
 .composer-row textarea { flex: 1; }
+/* One family, like the self menu: @ (text), the paperclip (an SVG line
+   icon) and ☺ (a unicode glyph the system draws at its own size) used to
+   sit at three different optical weights. A single size and colour makes
+   them read as one set of tools. */
 .composer-tool { flex: none;
-  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 17px;
-  width: 34px; height: 32px; border-radius: 7px; cursor: pointer;
+  display: grid; place-items: center;
+  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 15px;
+  width: 30px; height: 28px; border-radius: 7px; cursor: pointer;
 }
-.composer-tool:hover { border-color: var(--accent);
+.composer-tool svg { width: 14px; height: 14px; }
+.composer-tool:hover {
   background: var(--bg2); color: var(--fg);
+}
+.composer-tool:focus-visible, .composer-send:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
 }
 .emoji-char { font-size: 15px; margin-right: 4px; }
 .emoji-grid-pop {
@@ -1202,12 +1231,25 @@ button.author:hover { text-decoration: underline; }
 }
 
 /* ── skills catalog + marketplace ──────────────────────────── */
+/* ── skills / extensions list ──────────────────────────────
+   This was three nested rounded boxes deep — a bordered legend, a
+   bordered section, and a bordered card per row, on grounds so close
+   the nesting said nothing. Sections are divider-grammar headings now
+   (same as the rail and settings) and rows are flat, separated by one
+   hairline. The only rows that keep a card are the missing ones, where
+   the colour IS the information. */
+.skill-section { margin-bottom: 22px; }
 .skill-row {
-  display: flex; align-items: flex-start; gap: 10px; background: var(--bg1);
-  border: 1px solid var(--hairline); border-radius: 8px; padding: 10px 14px;
-  margin-bottom: 8px;
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 2px; position: relative;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
 }
-.skill-row.market { background: var(--bg0); }
+.skill-row:last-child { border-bottom: 0; }
+.skill-row:hover { background: color-mix(in srgb, var(--bg2) 30%, transparent); }
+.skill-row.market {
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 10px 14px; margin-bottom: 8px;
+}
 .skill-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
 .skill-name { font-family: var(--font-mono); font-weight: 700; display: flex; gap: 8px; align-items: center; }
 .skill-desc { font-size: 13px; }
@@ -1218,6 +1260,14 @@ button.author:hover { text-decoration: underline; }
 .skill-env { font-family: var(--font-mono); font-size: 11px; color: var(--yellow); }
 .skill-author { display: flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
 .skill-actions { display: flex; gap: 6px; align-items: center; flex: none; }
+/* Secondary actions, the rail's idiom: present on hover or keyboard
+   focus. Ten rows each advertising "list on relay" made the page look
+   like a form to fill in. */
+.skill-section .skill-row .skill-actions { opacity: 0; transition: opacity 110ms ease; }
+.skill-section .skill-row:hover .skill-actions,
+.skill-section .skill-row:focus-within .skill-actions { opacity: 1; }
+.ext-missing .skill-row .skill-actions { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .skill-section .skill-row .skill-actions { transition: none; } }
 .publish-form { display: flex; gap: 6px; align-items: center; }
 .publish-form .manage-input { width: 180px; font-size: 11px; padding: 4px 8px; }
 .publish-what { font-size: 11px; color: var(--fg-dim); max-width: 260px; line-height: 1.45; }
@@ -1948,11 +1998,10 @@ button.author:hover { text-decoration: underline; }
 
 /* The vocabulary, said once. Four words were in play — extension,
    skill, mcpServer, pack — with nothing relating them. */
-/* Body content now, not header chrome — so it takes a card like the
-   sections it introduces rather than the topbar's flush padding. */
+/* A lead paragraph, not a card: it introduces the page, and boxing a
+   sentence made it the heaviest thing on screen after the header. */
 .ext-legend {
-  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
-  padding: 11px 14px; margin-bottom: 12px;
+  padding: 4px 2px 0; margin-bottom: 6px;
   font-size: 11.5px; color: var(--fg-dim); line-height: 1.5; max-width: 640px;
 }
 .ext-legend strong { color: var(--fg); font-weight: 700; }
@@ -1962,7 +2011,8 @@ button.author:hover { text-decoration: underline; }
 .ext-missing .skill-row {
   --tint: var(--red);
   background: color-mix(in srgb, var(--tint) 9%, var(--bg1));
-  border-color: color-mix(in srgb, var(--tint) 32%, var(--hairline));
+  border: 1px solid color-mix(in srgb, var(--tint) 32%, var(--hairline));
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 8px;
 }
 .missing-tag { color: var(--red); border-color: var(--red); }
 

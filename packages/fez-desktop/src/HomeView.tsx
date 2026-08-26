@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FezClient, WireEvent } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 import { OpenLoops } from "./LoopsView";
+import Avatar from "./Avatar";
 
 /**
  * Home — Buzz's HomeScreen/FeedSection, fez-shaped: a personal inbox of
@@ -18,6 +19,9 @@ interface MentionRow {
   channelId: string;
     channelName: string;
   author: string;
+  /** Who wrote it — the row wears their creature, and the face is the
+   * fastest way to read "who wants me" down a list of ten. */
+  pk: string;
   snippet: string;
   ts: number;
 }
@@ -63,6 +67,7 @@ export default function HomeView({
             channelId,
             channelName: ref.name,
             author: client.displayName(event.pubkey),
+            pk: event.pubkey,
             snippet: event.content.replace(/\s+/g, " ").slice(0, 160),
             ts: event.created_at,
           };
@@ -110,10 +115,13 @@ export default function HomeView({
             signature takes one. */}
         {mentions?.map((row) => (
           <button key={row.id} className="inbox-row" onClick={() => onOpenChannel(row.channelId, row.id)}>
-            <span className="search-meta">
-              # {row.channelName} · <span className="inbox-author">{row.author}</span> · {when(row.ts)}
+            <Avatar pk={row.pk} size={22} title={row.author} quip={false} />
+            <span className="inbox-main">
+              <span className="search-meta">
+                # {row.channelName} · <span className="inbox-author">{row.author}</span> · {when(row.ts)}
+              </span>
+              <span className="search-snippet">{row.snippet}</span>
             </span>
-            <span className="search-snippet">{row.snippet}</span>
           </button>
         ))}
 
@@ -126,12 +134,20 @@ export default function HomeView({
               const last = convo.msgs.at(-1);
               return (
                 <button key={key} className="inbox-row" onClick={() => onOpenDm(key)}>
-                  <span className="search-meta">
-                    ✉ <span className="inbox-author">{client.dmTitle(key)}</span>
-                    {last && <> · {when(last.ts)}</>}
-                    {convo.unread > 0 && <span className="badge">{convo.unread}</span>}
+                  {/* A group DM has no single face; it keeps the envelope. */}
+                  {key.includes("+") ? (
+                    <span className="inbox-glyph">✉</span>
+                  ) : (
+                    <Avatar pk={key} size={22} title={client.dmTitle(key)} quip={false} />
+                  )}
+                  <span className="inbox-main">
+                    <span className="search-meta">
+                      <span className="inbox-author">{client.dmTitle(key)}</span>
+                      {last && <> · {when(last.ts)}</>}
+                      {convo.unread > 0 && <span className="badge">{convo.unread}</span>}
+                    </span>
+                    {last && <span className="search-snippet">{last.text.replace(/\s+/g, " ").slice(0, 160)}</span>}
                   </span>
-                  {last && <span className="search-snippet">{last.text.replace(/\s+/g, " ").slice(0, 160)}</span>}
                 </button>
               );
             })}
@@ -174,8 +190,13 @@ function DraftsSection({
       <div className="home-section">drafts</div>
       {drafts.map((draft) => (
         <button key={draft.label + draft.text.slice(0, 8)} className="inbox-row" onClick={draft.open}>
-          <span className="search-meta">✎ {draft.label}</span>
-          <span className="search-snippet">{draft.text.replace(/\s+/g, " ").slice(0, 160)}</span>
+          {/* A draft has no author but you — the pencil holds the column
+              so the rows still line up with the mentions above. */}
+          <span className="inbox-glyph">✎</span>
+          <span className="inbox-main">
+            <span className="search-meta">{draft.label}</span>
+            <span className="search-snippet">{draft.text.replace(/\s+/g, " ").slice(0, 160)}</span>
+          </span>
         </button>
       ))}
     </>

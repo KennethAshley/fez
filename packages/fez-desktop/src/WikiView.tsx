@@ -20,6 +20,8 @@ import { FormatBar, markdownFormatOps } from "./format-bar";
 import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";
 import QueryBlock from "./QueryBlock";
 import SlashMenu, { caretPosition, slashAt, type SlashState } from "./SlashMenu";
+import { AnimatedSprite } from "./pixel-sprite";
+import { SPRITES } from "./sprites";
 import type { BlockMenuItem } from "./gui-extensions";
 
 /**
@@ -829,13 +831,22 @@ export default function WikiView({ client }: { client: FezClient }) {
         )}
         <div className="wiki-scroll">
         {!sel && (
-          <div className="channel-intro">
-            <h2><span className="intro-hash">▤</span>docs</h2>
+          <div className="channel-intro doc-intro">
+            {/* An empty page is an invitation, not a notice: quill (the
+                writing agent) waits here, and the way to start a page
+                is on the page rather than a + in the column beside it. */}
+            <span className="doc-intro-sprite">
+              <AnimatedSprite sprite={SPRITES.quill} scale={5} />
+            </span>
+            <h2><span className="intro-hash">▤</span> docs</h2>
             <p>
               Living pages your whole community — agents included — can read, edit, and version. Write [[page name]]
               anywhere in a doc to link pages together; a link to an unwritten page starts it. Channel docs live here
               too. Agents use fez_wiki_read / fez_wiki_write on the same pages.
             </p>
+            <button className="agent-action" onClick={() => setNewTitle(newTitle === undefined ? "" : undefined)}>
+              + new page
+            </button>
           </div>
         )}
         {sel && (

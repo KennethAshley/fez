@@ -381,8 +381,8 @@ export default function SkillsView({
                 permanent "requirements" section that is always green
                 trains you to stop reading it. */}
             {only !== "extensions" && missing.length > 0 && (
-              <div className="pulse-section ext-missing">
-                <div className="pulse-section-head"><span>your agents need something</span></div>
+              <div className="skill-section ext-missing">
+                <div className="manage-section">your agents need something</div>
                 {missing.map(({ agent, skill, source, runs }) => {
                   const listing = skillListings.find((l) => l.name === skill);
                   return (
@@ -442,8 +442,8 @@ export default function SkillsView({
                 panels still configure from their channel rail group.) */}
 
             {/* ── everything on this machine ───────────────────── */}
-            <div className="pulse-section">
-              <div className="pulse-section-head"><span>{only === "extensions" ? "installed" : "defined here"}</span></div>
+            <div className="skill-section">
+              <div className="manage-section">{only === "extensions" ? "installed" : "defined here"}</div>
               {everything.length === 0 && <div className="pane-empty">nothing installed yet — see browse</div>}
               {everything.map(({ name, parts, config, wanted }) => {
                 const localPath = machineLocalPath(config);
@@ -452,7 +452,12 @@ export default function SkillsView({
                   <div className="skill-main">
                     <span className="skill-name">
                       {name}
-                      {parts.map((part) => (
+                      {/* Chips earn their place by DIFFERENTIATING. In
+                          the skills list every row is a skill, so a
+                          "skill" chip on all ten restated the heading
+                          ten times; the other parts (gui, headless) are
+                          still worth naming. */}
+                      {parts.filter((part) => !(only === "skills" && part === "skill")).map((part) => (
                         <span
                           key={part}
                           className="role-tag"
@@ -534,8 +539,8 @@ export default function SkillsView({
           />
         )}
         {tab === "browse" && only !== "extensions" && (
-          <div className="pulse-section">
-            <div className="pulse-section-head">
+          <div className="skill-section">
+            <div className="manage-section">
               <span>listed on your relay</span>
               <span className="ext-filters">
                 {(["all", "agents", "skills", "packs"] as const).map((name) => (

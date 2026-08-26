@@ -59,8 +59,12 @@ export default function Composer({
   const [gridOpen, setGridOpen] = useState(false);
   const [gridQuery, setGridQuery] = useState("");
   const [selection, setSelection] = useState<{ start: number; end: number }>();
-  // Slack keeps the formatting bar in the box; Aa toggles it and the choice sticks.
-  const [trayOpen, setTrayOpenState] = useState(() => localStorage.getItem("fez-format-bar") !== "0");
+  // Formatting lives in ONE place. Open by default, the bar took the top
+  // third of the box while Aa said the same thing below it and selecting
+  // text floated the tray anyway — three controls for one job, and a
+  // message field that looked like a word processor. Aa opens it and the
+  // choice sticks (a returning user who turned it on keeps it on).
+  const [trayOpen, setTrayOpenState] = useState(() => localStorage.getItem("fez-format-bar") === "1");
   const setTrayOpen = (open: boolean) => {
     setTrayOpenState(open);
     localStorage.setItem("fez-format-bar", open ? "1" : "0");
