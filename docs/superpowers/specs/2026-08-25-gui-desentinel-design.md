@@ -235,3 +235,30 @@ extension tasks relay-side (revisit per-extension later); Windows/Linux.
   `process.kill(pid,0)`) for `~/.fez/sentinel.pid` — fine, but the
   "sentinel alive?" guard added in workstreams 1–2 should reuse the
   Rust one, not add a third.
+
+---
+
+## Addendum (2026-08-26): workstream 4 re-scoped against the onboarding merge
+
+The onboarding-buzz-flow merge landed part of workstream 4 ahead of us:
+`readiness()` no longer gates on the sentinel, the boot-time
+`ensure_agent_runner` call is gone from App.tsx, and a new
+`managed_agents.rs` gives the app Buzz-style supervised agents
+(sentinel-deferring, same env contract).
+
+Consequences:
+
+- **The desktop now has two spawn systems** — managed_agents (in-memory
+  children, app-supervised, onboarding's) and the ws1 summoner
+  (spawn_agent, detached, name-checked pid registry). They should
+  consolidate into ONE Rust spawn primitive; deferred until the
+  onboarding work's manual pass completes (rewriting that module
+  mid-pass is interference). Tracked as a named follow-up.
+- **Workstream 4 reduces to pure demotion**: delete ensure_agent_runner
+  (runner_status stays — it is the one-summoner/one-notifier guard the
+  summoner, reminders and managed_agents all share), stop bundling
+  fez-sentinel in prepare-pi-agent (CLI's sentinel-install remains the
+  opt-in path), and sweep stale sentinel copy in the desktop.
+- **Workstream 2 is verified-and-closed as part of this pass** — DMs and
+  reminders already notify natively; owner-mentions confirmed or added
+  alongside.
