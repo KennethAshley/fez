@@ -295,6 +295,10 @@ export const KIND_MSG_BOOKMARK = 40005; // private-ish bookmark (author's own li
  * content = NIP-44 self-encrypted {note, remind_at, about?} — reminders
  * are private data on a public relay (legacy plaintext form had a
  * remind_at tag; still decoded).
+ * 40006 content is either legacy plaintext (the message text; sentinel-
+ * fired) or a SEALED intent: JSON {sealed: <full signed 47103 with
+ * created_at = send_at>} released verbatim by the relay scheduler or the
+ * sentinel at fire time — see src/protocol/intents.ts.
  */
 export const KIND_SCHEDULED = 40006;
 export const KIND_REMINDER = 40007;
