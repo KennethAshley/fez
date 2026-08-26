@@ -57,6 +57,9 @@ import { isAddressedTo } from "./addressing.js";
 import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
+import { piThinkingLevel } from "./thinking.js";
+
+export { piThinkingLevel };
 
 /**
  * fez-acp — the standing agent runtime, buzz-acp's role in fez: a
@@ -182,6 +185,12 @@ async function main() {
   if (!harness || !(await harness.detect())) {
     console.error(`Persona "${personaId}" needs harness "${persona.harness}" which isn't available`);
     process.exit(1);
+  }
+  // Claude Code has no per-session model param in our ACP path; the CLI
+  // honors ANTHROPIC_MODEL, and this process is per-persona, so process
+  // env is exactly persona-scoped.
+  if (persona.harness === "claude-code" && persona.extra.model) {
+    process.env.ANTHROPIC_MODEL = persona.extra.model;
   }
   // Access policy precedence: an EXPLICIT flag/env wins (operator
   // intent), then the persona's own frontmatter (the owner's declared
@@ -346,6 +355,8 @@ async function main() {
     const piSettings: Record<string, unknown> = { quietStartup: true };
     if (persona.extra.provider) piSettings.defaultProvider = persona.extra.provider;
     if (persona.extra.model) piSettings.defaultModel = persona.extra.model;
+    const thinking = piThinkingLevel(persona.extra.effort);
+    if (thinking) piSettings.defaultThinkingLevel = thinking;
     // `packages:` frontmatter — pi registry packages (pi.dev/packages)
     // this persona's mind inherits: `packages: [npm:pi-web-access,
     // npm:pi-hermes-memory]`. Written project-locally; pi resolves and
