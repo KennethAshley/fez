@@ -101,6 +101,18 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
     expect(s.mcpServers?.tidy).toBeDefined();
   });
 
+  test("the skill entry's relative args resolve to real files in the installed package", () => {
+    // A package manifest says `args: ["dist/mcp.js"]` relative to ITSELF;
+    // copied verbatim into settings it can never spawn (no cwd travels
+    // with it — found live: fez-wallet's skill was uncallable by every
+    // agent). Install must absolutize args that name package files.
+    const s = settings.load() as { mcpServers?: Record<string, { args?: string[] }> };
+    const arg = s.mcpServers?.tidy?.args?.[0] ?? "";
+    expect(path.isAbsolute(arg)).toBe(true);
+    expect(fs.existsSync(arg)).toBe(true);
+    expect(arg.endsWith(path.join("dist", "mcp.js"))).toBe(true);
+  });
+
   test("install records the declared permission grant (parity with fez link)", () => {
     const s = settings.load() as { extensionPermissions?: Record<string, string[]> };
     // parsed, not verbatim: the unrecognized id grants nothing

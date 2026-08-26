@@ -2,6 +2,7 @@ import { fezHomeAt } from "../shared/fez-home.js";
 import { loadSettings, saveSettings } from "../shared/settings.js";
 import { execSync } from "child_process";
 import fs from "fs/promises";
+import { existsSync } from "fs";
 import path from "path";
 import os from "os";
 import chalk from "chalk";
@@ -130,6 +131,26 @@ export function npmPackageName(source: string): string {
   if (pkg.startsWith("@fezchat/")) return pkg.slice("@fezchat/".length);
   if (pkg.startsWith("@")) return pkg.slice(1).replace("/", "-");
   return pkg;
+}
+
+/**
+ * A manifest's skill part speaks in package-relative paths ("dist/mcp.js")
+ * because a package can't know where it will land; settings.json speaks to
+ * a spawner that carries no cwd. Bridge at write time: any arg that names
+ * an existing file inside the package resolves to its absolute path; flags
+ * and non-file values pass through untouched. Found live: fez-wallet's
+ * skill was uncallable by every agent — `node dist/mcp.js` from nowhere.
+ * Shared with `fez link`, which writes the same entry from the source dir.
+ */
+export function resolveSkillArgs<T extends { args?: string[] }>(skill: T, pkgDir: string): T {
+  if (!skill.args?.length) return skill;
+  const root = path.resolve(pkgDir);
+  const args = skill.args.map((arg) => {
+    if (path.isAbsolute(arg)) return arg;
+    const abs = path.resolve(root, arg);
+    return abs.startsWith(root + path.sep) && existsSync(abs) ? abs : arg;
+  });
+  return { ...skill, args };
 }
 
 export class PackageManager {
@@ -704,7 +725,7 @@ export class PackageManager {
       this.settings.save({
         mcpServers: {
           ...settings.mcpServers,
-          [name]: { ...parts.skill, ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+          [name]: { ...resolveSkillArgs(parts.skill, pkgDir), ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
         },
       });
       console.log(chalk.dim(`   Defined skill "${name}" in ~/.fez/settings.json`));

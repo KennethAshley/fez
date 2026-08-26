@@ -4,7 +4,7 @@ import chalk from "chalk";
 import fs from "fs/promises";
 import path from "path";
 import { CapabilityClient } from "../protocol/client.js";
-import { PackageManager } from "../extensions/package-manager.js";
+import { PackageManager, resolveSkillArgs } from "../extensions/package-manager.js";
 import { fezHome } from "../shared/fez-home.js";
 
 export function registerExtensionCommands(program: Command): void {
@@ -280,7 +280,9 @@ program
       saveSettings({
         mcpServers: {
           ...settings.mcpServers,
-          [name]: { ...parts.skill, ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+          // Relative args ("dist/mcp.js") resolve against the LINKED dir —
+          // same rule as install, or the spawner has no way to find them.
+          [name]: { ...resolveSkillArgs(parts.skill, pkgDir), ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
         },
       } as never);
       console.log(chalk.green(`✓ skill "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn`));
