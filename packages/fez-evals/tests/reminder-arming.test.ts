@@ -110,4 +110,33 @@ describe("client reminder arming", () => {
     await vi.advanceTimersByTimeAsync(61_000);
     expect(handler).toHaveBeenCalledWith("live one");
   });
+
+  it("a reminder beyond setTimeout's cap re-arms instead of firing early", async () => {
+    const THIRTY_DAYS_S = 30 * 24 * 60 * 60;
+    const MAX_DELAY_MS = 2 ** 31 - 1; // ~24.85 days
+    const remindAt = Math.floor(Date.now() / 1000) + THIRTY_DAYS_S;
+    const { wire } = fakeWire();
+    const client = new FezClient(wire);
+    const handler = vi.fn();
+    client.on("reminderDue", handler as never);
+
+    // Exercises armReminder directly rather than through client.start():
+    // this case targets the chunked re-arm fix in isolation, and start()
+    // also spins up the presence/typing intervals, which under fake
+    // timers turn a 30-day advance into millions of incidental ticks.
+    await (
+      client as unknown as { armReminder(event: { id: string; content: string }): Promise<void> }
+    ).armReminder(reminderEvent("rem4", "long haul", remindAt));
+
+    // Advancing exactly to the setTimeout cap must NOT fire — the old
+    // bug clamped the delay and emitted at the cap, ~5 days early.
+    await vi.advanceTimersByTimeAsync(MAX_DELAY_MS);
+    expect(handler).not.toHaveBeenCalled();
+
+    // The remainder to the real remind_at fires exactly once.
+    const remaining = remindAt * 1000 - Date.now();
+    await vi.advanceTimersByTimeAsync(remaining + 1000);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith("long haul");
+  });
 });

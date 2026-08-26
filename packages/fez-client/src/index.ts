@@ -241,6 +241,10 @@ const MSG_CACHE_CAP = 1000;
 const HISTORY_LIMIT = 50;
 const PAGE_SIZE = 50;
 const JOB_CAP = 100;
+/** setTimeout's hard cap (~24.9 days) — a delay beyond this re-arms in
+ * chunks rather than firing early (same shape as the relay scheduler's
+ * fire(), packages/fez-relay/src/scheduler.ts). */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 // ── Public state shapes ──────────────────────────────────────────────────
 
@@ -1047,13 +1051,25 @@ export class FezClient {
     try {
       const body = JSON.parse(await this.wire.decrypt(this.pubkey, event.content)) as { note?: string; remind_at?: number };
       if (typeof body.remind_at !== "number") return;
-      const delayMs = Math.min(Math.max(0, body.remind_at * 1000 - Date.now()), 2 ** 31 - 1);
+      const remindAt = body.remind_at;
+      const note = body.note || "(reminder)";
+      // setTimeout's ~24.9-day cap means a long delay gets clamped on
+      // arm — waking at the clamp and emitting then would fire early.
+      // Recompute what's actually left and re-arm another chunk instead
+      // (identical shape to the relay scheduler's fire(), see
+      // packages/fez-relay/src/scheduler.ts).
+      const wake = () => {
+        const remaining = remindAt * 1000 - Date.now();
+        if (remaining > 1000) {
+          this.reminderTimers.set(event.id, setTimeout(wake, Math.min(remaining, MAX_TIMER_DELAY_MS)));
+          return;
+        }
+        this.reminderTimers.delete(event.id);
+        this.emit("reminderDue", note);
+      };
       this.reminderTimers.set(
         event.id,
-        setTimeout(() => {
-          this.reminderTimers.delete(event.id);
-          this.emit("reminderDue", body.note || "(reminder)");
-        }, delayMs)
+        setTimeout(wake, Math.min(Math.max(0, remindAt * 1000 - Date.now()), MAX_TIMER_DELAY_MS))
       );
     } catch { /* not decryptable/parsable — not ours or legacy-broken */ }
   }
