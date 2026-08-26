@@ -178,9 +178,9 @@ function extractDiff(
   };
 }
 
-function spawnDetect(command: string, args: string[]): Promise<boolean> {
+function spawnDetect(command: string, args: string[], env?: NodeJS.ProcessEnv): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: "ignore" });
+    const child = spawn(command, args, { stdio: "ignore", ...(env ? { env } : {}) });
     child.on("error", () => resolve(false));
     child.on("exit", (code) => resolve(code === 0));
   });
@@ -654,7 +654,16 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
     id: descriptor.id,
     aliases: descriptor.aliases,
     command,
-    detect: () => spawnDetect(command, ["--version"]),
+    detect: () => {
+      // An absolute command fez itself installed IS the detection — and
+      // probing by spawn needs the SAME env sessions get: the managed
+      // adapter's shim starts with `#!/usr/bin/env node`, and the
+      // managed node lives on the descriptor env's PATH, not the
+      // caller's. Detect ran env-blind once and told a spawned teammate
+      // its harness "isn't available" while sessions would have worked.
+      if (path.isAbsolute(command)) return Promise.resolve(fs.existsSync(command));
+      return spawnDetect(command, ["--version"], descriptor.env());
+    },
 
     // ACP has no system-prompt field, so the honest declaration is
     // "meta": we put it where the spec allows and prefix it too, but
