@@ -41,7 +41,7 @@ pub fn start_managed_agent(persona: String, owner: String, relay: String, channe
     if sentinel_alive() {
         return Ok(()); // the TUI world owns spawning right now — never double-spawn
     }
-    let mut guard = CHILDREN.lock().map_err(|e| e.to_string())?;
+    let mut guard = CHILDREN.lock().unwrap_or_else(|p| p.into_inner());
     let children = guard.get_or_insert_with(HashMap::new);
     if let Some(child) = children.get_mut(&persona) {
         if child.try_wait().map_err(|e| e.to_string())?.is_none() {
@@ -71,7 +71,7 @@ pub fn start_managed_agent(persona: String, owner: String, relay: String, channe
 
 #[tauri::command]
 pub fn managed_agent_status() -> Result<String, String> {
-    let mut guard = CHILDREN.lock().map_err(|e| e.to_string())?;
+    let mut guard = CHILDREN.lock().unwrap_or_else(|p| p.into_inner());
     let children = guard.get_or_insert_with(HashMap::new);
     let mut map = serde_json::Map::new();
     for (name, child) in children.iter_mut() {
@@ -83,7 +83,7 @@ pub fn managed_agent_status() -> Result<String, String> {
 
 #[tauri::command]
 pub fn stop_managed_agents() -> Result<(), String> {
-    let mut guard = CHILDREN.lock().map_err(|e| e.to_string())?;
+    let mut guard = CHILDREN.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(children) = guard.as_mut() {
         for (_, child) in children.iter_mut() {
             let _ = child.kill();
