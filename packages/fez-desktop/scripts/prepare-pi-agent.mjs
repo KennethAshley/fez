@@ -27,10 +27,9 @@ import { fileURLToPath } from "node:url";
 // Versions we ship. Bump together with a tested pair.
 const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
-const CLAUDE_ACP_VERSION = "0.70.0"; // @agentclientprotocol/claude-agent-acp (the ACP↔claude-cli bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+claude-acp${CLAUDE_ACP_VERSION}+svc1`;
+const BUNDLE_VERSION = `${PI_VERSION}+svc2`;
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
@@ -65,7 +64,6 @@ if (
   !process.env.FORCE &&
   fs.existsSync(path.join(OUT, `pi${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-relay${EXE}`)) &&
-  fs.existsSync(path.join(OUT, `claude-agent-acp${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-sentinel${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-agent${EXE}`)) &&
   fs.readFileSync(marker, "utf8").trim() === BUNDLE_VERSION
@@ -124,24 +122,6 @@ if (reuse("pi-acp")) {
   run(`bun build --compile ${JSON.stringify(acpEntry)} --outfile ${JSON.stringify(path.join(WORK, "pi-acp"))}`, WORK);
 }
 
-// 2b. claude-agent-acp — the ACP↔claude-CLI bridge, compiled the same
-// way. Bundling it collapses Buzz's two-axis problem (CLI × adapter) to
-// one honest question: is the \`claude\` CLI on this machine? A user who
-// installed Claude Code should never be told "not detected" because an
-// npm package THEY'VE never heard of is missing — the adapter is fez's
-// plumbing, so fez ships it.
-console.log(`\n▶ compiling claude-agent-acp ${CLAUDE_ACP_VERSION}…`);
-if (!reuse("claude-agent-acp")) {
-  const clacpPkg = path.join(WORK, "claude-acp-pkg");
-  fs.mkdirSync(clacpPkg, { recursive: true });
-  fs.writeFileSync(path.join(clacpPkg, "package.json"), JSON.stringify({ name: "fez-claude-acp-build", private: true }));
-  run(`npm install @agentclientprotocol/claude-agent-acp@${CLAUDE_ACP_VERSION} --no-save --no-fund --no-audit`, clacpPkg);
-  const clacpEntry = path.join(clacpPkg, "node_modules", "@agentclientprotocol", "claude-agent-acp", "dist", "index.js");
-  run(`bun build --compile ${JSON.stringify(clacpEntry)} --outfile ${JSON.stringify(path.join(WORK, "claude-agent-acp"))}`, WORK);
-} else {
-  console.log("  (reusing existing binary)");
-}
-
 // 3. fez-relay — the local-workspace relay, compiled from the monorepo
 // source (ws + nostr-tools only, no native deps) so the DMG can spawn a
 // user-owned workspace with no install. See the cold-start spec.
@@ -190,7 +170,6 @@ const from = (name) => (reuse(name) ? path.join(OUT, `${name}${EXE}`) : undefine
 copyExec(from("pi") ?? path.join(codingAgent, "dist", `pi${EXE}`), path.join(stage, `pi${EXE}`));
 copyExec(from("pi-acp") ?? path.join(WORK, `pi-acp${EXE}`), path.join(stage, `pi-acp${EXE}`));
 copyExec(from("fez-relay") ?? path.join(WORK, `fez-relay${EXE}`), path.join(stage, `fez-relay${EXE}`));
-copyExec(from("claude-agent-acp") ?? path.join(WORK, `claude-agent-acp${EXE}`), path.join(stage, `claude-agent-acp${EXE}`));
 copyExec(from("fez-sentinel") ?? path.join(WORK, `fez-sentinel${EXE}`), path.join(stage, `fez-sentinel${EXE}`));
 copyExec(from("fez-agent") ?? path.join(WORK, `fez-agent${EXE}`), path.join(stage, `fez-agent${EXE}`));
 const themeSrc = codingAgent ? path.join(codingAgent, "dist", "theme") : path.join(OUT, "theme");

@@ -208,9 +208,9 @@ function spawnDetect(command: string, args: string[]): Promise<boolean> {
  * FEZ_HARNESS_INHERIT=1: raw environment, connectors and all.
  */
 function isolatedClaudeEnv(): NodeJS.ProcessEnv {
-  if (process.env.FEZ_HARNESS_INHERIT === "1") return process.env;
+  if (process.env.FEZ_HARNESS_INHERIT === "1") return withManagedNodePath(process.env);
   if (process.env.FEZ_HARNESS_ISOLATE !== "1") {
-    return { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "false" };
+    return withManagedNodePath({ ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "false" });
   }
   const dir = fezHome("harness", "claude", "shared");
   try {
@@ -239,11 +239,11 @@ function isolatedClaudeEnv(): NodeJS.ProcessEnv {
   } catch {
     // Isolation is best-effort: a seeding failure falls back to inherited
     // config (the pre-isolation behavior) rather than a broken agent.
-    return process.env;
+    return withManagedNodePath(process.env);
   }
   // Belt and braces with settings.json's disableClaudeAiConnectors — the
   // env form covers a dir seeded before that setting existed.
-  return { ...process.env, CLAUDE_CONFIG_DIR: dir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" };
+  return withManagedNodePath({ ...process.env, CLAUDE_CONFIG_DIR: dir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" });
 }
 
 /**
@@ -800,6 +800,26 @@ function fezBin(name: string): string {
   return fs.existsSync(owned) ? owned : name;
 }
 
+/**
+ * A tool from the app's managed node prefix (~/.fez/node-tools) — vendor
+ * ACP adapters live here as REAL node programs with real node_modules,
+ * run by the private runtime in ~/.fez/runtimes/node (managed_node.rs).
+ * Compiling them was tried and is impossible: their SDKs load
+ * dynamically and escape any bundle.
+ */
+function fezManagedNodeTool(name: string): string {
+  const managed = fezHome("node-tools", "bin", name);
+  return fs.existsSync(managed) ? managed : name;
+}
+
+/** Prepend the managed node runtime to PATH — the npm bin shims start
+ * with `#!/usr/bin/env node`, and a fresh machine has no other node. */
+function withManagedNodePath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const nodeBin = fezHome("runtimes", "node", "v24.18.0", "darwin-arm64", "bin");
+  if (!fs.existsSync(nodeBin)) return env;
+  return { ...env, PATH: `${nodeBin}:${env.PATH ?? "/usr/bin:/bin"}` };
+}
+
 export function registerBuiltinHarnesses(): void {
   // Idempotent — the wizard, doctor, TUI, and services may each call it.
   if (builtinsRegistered) return;
@@ -808,10 +828,12 @@ export function registerBuiltinHarnesses(): void {
   // config story (see isolatedClaudeEnv). pi: the bring-anything engine —
   // subscription OAuth, API keys, or fully local models; its config is its
   // own (~/.pi/agent), so the environment passes through untouched.
-  // fezBin: the app bundles claude-agent-acp into ~/.fez/bin (like
-  // pi-acp), so having the claude CLI is enough — the adapter is fez's
-  // plumbing. A dev with the npm adapter on PATH is unaffected.
-  registerHarness(acpHarness({ id: "claude-code", aliases: ["claude"], command: fezBin("claude-agent-acp"), env: isolatedClaudeEnv }));
+  // The Claude adapter is npm-installed by the app into the managed
+  // prefix (~/.fez/node-tools, run by the private node runtime in
+  // ~/.fez/runtimes/node) — it CANNOT be compiled, its SDK loads
+  // dynamically. Prefer the managed install; a dev with the npm adapter
+  // on PATH is unaffected.
+  registerHarness(acpHarness({ id: "claude-code", aliases: ["claude"], command: fezManagedNodeTool("claude-agent-acp"), env: isolatedClaudeEnv }));
   // pi speaks ACP via the pi-acp bridge, which shells to `pi --mode rpc`.
   // Both prefer fez's bundled copies so the Built-in agent works with zero
   // install; PI_ACP_PI_COMMAND points the bundled bridge at the bundled pi

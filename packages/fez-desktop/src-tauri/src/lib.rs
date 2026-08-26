@@ -1,4 +1,5 @@
 use nostr::JsonUtil as _;
+mod managed_node;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -524,6 +525,13 @@ fn tar_list_md(tar_bytes: &[u8], dir: &str) -> Vec<(String, String)> {
 /// rather than trusting `which`. Returns {"claude-code": bool, "pi": bool}
 /// so the UI can show what's ready and what needs installing.
 fn harness_installed(cmd: &str) -> bool {
+    binary_in_dirs(cmd, &harness_search_dirs())
+}
+
+/// Every place an installer actually puts things — shared by harness
+/// detection and the claude auth probe, so the two can't disagree about
+/// where `claude` lives.
+fn harness_search_dirs() -> Vec<String> {
     let home = std::env::var("HOME").unwrap_or_default();
     let mut dirs: Vec<String> = vec![
         // fez's own bundled binaries first — the Built-in agent (pi/pi-acp)
@@ -558,7 +566,48 @@ fn harness_installed(cmd: &str) -> bool {
     // install.sh symlink into ~/.local/bin and /opt/homebrew/bin (already
     // listed), but an unlinked native install lives only here.
     dirs.push(format!("{home}/.claude/local"));
-    binary_in_dirs(cmd, &dirs)
+    dirs
+}
+
+/// Composite state for the onboarding brain card: Buzz's two claims kept
+/// separate — "installed" (the CLI exists) and "signed in" (its auth
+/// probe says so) — plus whether fez's managed adapter is runnable.
+/// READY may only be claimed when all three hold.
+#[tauri::command]
+fn claude_brain_status() -> Result<String, String> {
+    let dirs = harness_search_dirs();
+    let claude = dirs
+        .iter()
+        .map(|d| std::path::Path::new(d).join("claude"))
+        .find(|p| p.is_file());
+    let installed = claude.is_some();
+    let authed = match &claude {
+        Some(path) => {
+            // 10s kill deadline, Buzz's number — a hung probe must not
+            // hang onboarding.
+            match Command::new(path).args(["auth", "status"]).output() {
+                Ok(out) => managed_node::parse_claude_auth(&String::from_utf8_lossy(&out.stdout))
+                    .or_else(|| managed_node::parse_claude_auth(&String::from_utf8_lossy(&out.stderr)))
+                    .unwrap_or(false),
+                Err(_) => false,
+            }
+        }
+        None => false,
+    };
+    Ok(serde_json::json!({
+        "installed": installed,
+        "authed": authed,
+        "adapterReady": managed_node::adapter_ready(),
+    })
+    .to_string())
+}
+
+/// Provision the private node runtime + the Claude ACP adapter — the
+/// managed-npm decision (see managed_node.rs). First run downloads and
+/// takes tens of seconds; the brain card owns the spinner.
+#[tauri::command]
+fn ensure_claude_adapter() -> Result<String, String> {
+    managed_node::ensure_claude_adapter()
 }
 
 /// Executable, not merely present — a copy that landed without its exec
@@ -1704,14 +1753,17 @@ fn ensure_agent_runner() -> Result<bool, String> {
 fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
-    // fez-relay and claude-agent-acp are optional: dev builds without bun
-    // don't produce them, and the app degrades (invite-only workspaces;
-    // claude via a PATH-installed adapter). pi/pi-acp stay required.
+    // A bun-compiled claude-agent-acp shipped briefly and was BROKEN —
+    // its SDK loads dynamically and escaped the bundle. The adapter now
+    // installs via the managed node runtime (managed_node.rs); delete
+    // the dead binary so it can't shadow the working one.
+    let _ = std::fs::remove_file(bin.join("claude-agent-acp"));
+    // fez-relay and the services are optional: dev builds without bun
+    // don't produce them, and the app degrades. pi/pi-acp stay required.
     for (name, required) in [
         ("pi", true),
         ("pi-acp", true),
         ("fez-relay", false),
-        ("claude-agent-acp", false),
         ("fez-sentinel", false),
         ("fez-agent", false),
     ] {
@@ -1818,7 +1870,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

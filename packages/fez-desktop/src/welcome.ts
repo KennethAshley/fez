@@ -66,6 +66,21 @@ async function agentKeyHex(): Promise<string> {
 
 export async function readiness(): Promise<Readiness> {
   const harnesses = await detectHarnesses();
+  // Claude counts only when all three claims hold: CLI installed, its
+  // auth probe says signed in, and the managed adapter is runnable —
+  // "installed" alone once produced READY on a machine that could not
+  // complete a single turn.
+  let claudeReady = false;
+  try {
+    const c = JSON.parse(await invoke<string>("claude_brain_status")) as {
+      installed: boolean;
+      authed: boolean;
+      adapterReady: boolean;
+    };
+    claudeReady = c.installed && c.authed && c.adapterReady;
+  } catch {
+    claudeReady = false;
+  }
   const chutes = await invoke<boolean>("has_skill_secret", { skill: "chutes", key: "CHUTES_API_KEY" }).catch(() => false);
   // The boot path spawns the bundled sentinel moments before this runs,
   // and runner_status is a pidfile the sentinel writes AFTER its own
@@ -76,7 +91,7 @@ export async function readiness(): Promise<Readiness> {
     runner = await invoke<boolean>("runner_status").catch(() => false);
     if (!runner) await sleep(500);
   }
-  return { authed: !!harnesses["claude-code"] || (!!harnesses["pi"] && chutes), runner };
+  return { authed: claudeReady || (!!harnesses["pi"] && chutes), runner };
 }
 
 function markerWire(hex: string): MarkerWire & { close(): void } {

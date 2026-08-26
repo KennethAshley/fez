@@ -44,6 +44,7 @@ scp -q "$HERE/reset-machine.sh" "$HOST":/tmp/reset-machine.sh
 SEED_HEX=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 CHUTES_KEY=$(security find-generic-password -s fez-skill-env -a chutes.CHUTES_API_KEY -w)
 E2E_MODEL="${E2E_MODEL:-deepseek-ai/DeepSeek-V3.2-TEE}"
+E2E_BRAIN="${E2E_BRAIN:-chutes}"   # chutes (fully seedable) | claude (needs `claude /login` on the target once)
 # Unlock + seed in ONE remote session: on modern macOS an ssh keychain
 # unlock is scoped to its own security session — unlocking in one
 # connection and writing in the next fails with "User interaction is
@@ -63,7 +64,27 @@ mkdir -p ~/.fez/personas ~/.pi/agent
 cat > ~/.pi/agent/local-models.json <<PI
 [{\"id\":\"56105ece7a\",\"name\":\"Chutes\",\"baseUrl\":\"https://llm.chutes.ai/v1\",\"apiKey\":\"$CHUTES_KEY\",\"status\":\"checking\"}]
 PI
-cat > ~/.fez/personas/fez.md <<MD
+if [ "$E2E_BRAIN" = claude ]; then
+  # Managed runtime + adapter, exactly the layout managed_node.rs makes
+  # (Rust provisioning itself is verified by \`cargo test managed_provision\`).
+  if [ ! -x ~/.fez/node-tools/bin/claude-agent-acp ]; then
+    mkdir -p ~/.fez/runtimes/node && cd ~/.fez/runtimes/node
+    curl -sO https://nodejs.org/dist/v24.18.0/node-v24.18.0-darwin-arm64.tar.gz
+    echo 'e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1  node-v24.18.0-darwin-arm64.tar.gz' | shasum -a 256 -c - >/dev/null
+    tar -xzf node-v24.18.0-darwin-arm64.tar.gz && mkdir -p v24.18.0 && rm -rf v24.18.0/darwin-arm64 && mv node-v24.18.0-darwin-arm64 v24.18.0/darwin-arm64 && rm node-v24.18.0-darwin-arm64.tar.gz
+    PATH=~/.fez/runtimes/node/v24.18.0/darwin-arm64/bin:\$PATH ~/.fez/runtimes/node/v24.18.0/darwin-arm64/bin/npm install -g --prefix ~/.fez/node-tools @agentclientprotocol/claude-agent-acp@0.70.0 --no-fund --no-audit >/dev/null
+  fi
+  cat > ~/.fez/personas/fez.md <<MD
+---
+harness: claude-code
+aliases: [orchestrator]
+description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it
+---
+You are @fez, the guide for this fez workspace. Answer questions about fez
+plainly; for tasks, name the persona best suited and offer to bring it in.
+MD
+else
+  cat > ~/.fez/personas/fez.md <<MD
 ---
 harness: pi
 provider: local-56105ece7a
@@ -73,7 +94,8 @@ description: your guide to fez — ask how anything works, or hand over a task a
 ---
 You are @fez, the guide for this fez workspace. Answer questions about fez
 plainly; for tasks, name the persona best suited and offer to bring it in.
-MD"
+MD
+fi"
 
 echo "▸ launching fez"
 "${SSH[@]}" 'open -a fez'

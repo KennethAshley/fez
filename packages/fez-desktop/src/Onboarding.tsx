@@ -7,7 +7,6 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, setRelays } from "./relay";
-import { useHarnesses } from "./harnesses";
 import { buildFezPersonaMd } from "./welcome-core";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
@@ -473,9 +472,22 @@ const CHUTES_PROVIDER = "local-56105ece7a";
  * rule): @fez still arrives, says it needs a brain, and points at
  * Settings.
  */
+interface ClaudeBrain {
+  installed: boolean;
+  authed: boolean;
+  adapterReady: boolean;
+}
+
 function BrainStep({ onNext }: { onNext: () => void }) {
-  const harnesses = useHarnesses();
-  const claudeInstalled = harnesses.find((h) => h.id === "claude-code")?.installed ?? false;
+  const [claude, setClaude] = useState<ClaudeBrain>();
+  const probeClaude = () =>
+    invoke<string>("claude_brain_status")
+      .then((json) => setClaude(JSON.parse(json) as ClaudeBrain))
+      .catch(() => setClaude({ installed: false, authed: false, adapterReady: false }));
+  useEffect(() => {
+    void probeClaude();
+  }, []);
+  const [settingUp, setSettingUp] = useState(false);
   const [choice, setChoice] = useState<"claude-code" | "chutes">();
   const [chutesKey, setChutesKey] = useState("");
   const [models, setModels] = useState<string[]>([]);
@@ -525,19 +537,63 @@ function BrainStep({ onNext }: { onNext: () => void }) {
 
       <div className="ob-brains">
         <button
-          className={`ob-brain ${choice === "claude-code" ? "selected" : ""} ${claudeInstalled ? "" : "unavailable"}`}
-          onClick={() => (claudeInstalled ? setChoice("claude-code") : void openBrainInstall())}
+          className={`ob-brain ${choice === "claude-code" ? "selected" : ""} ${claude?.installed ? "" : "unavailable"}`}
+          disabled={settingUp}
+          onClick={() => {
+            if (!claude?.installed) return void openBrainInstall();
+            if (!claude.authed) return; // SIGN IN state — the hint says how
+            if (claude.adapterReady) return setChoice("claude-code");
+            // One-time bridge setup: the managed node runtime + the ACP
+            // adapter as a real node program (compiling it was tried and
+            // is impossible — its SDK loads dynamically).
+            setSettingUp(true);
+            setError(undefined);
+            void invoke("ensure_claude_adapter")
+              .then(() => {
+                setClaude({ ...claude, adapterReady: true });
+                setChoice("claude-code");
+              })
+              .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+              .finally(() => setSettingUp(false));
+          }}
         >
           <span className="ob-brain-name">Claude Code</span>
-          {claudeInstalled ? (
-            <>
-              <span className="ob-brain-pill ready">READY</span>
-              <span className="ob-brain-hint">installed — uses your Claude login</span>
-            </>
-          ) : (
+          {!claude ? (
+            <span className="ob-brain-pill">CHECKING…</span>
+          ) : !claude.installed ? (
             <>
               <span className="ob-brain-pill">INSTALL</span>
               <span className="ob-brain-hint">not detected — opens the install page</span>
+            </>
+          ) : !claude.authed ? (
+            <>
+              <span className="ob-brain-pill">SIGN IN</span>
+              <span className="ob-brain-hint">
+                installed but signed out — run <code>claude /login</code> in Terminal, then{" "}
+                <a
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void probeClaude();
+                  }}
+                >
+                  check again
+                </a>
+              </span>
+            </>
+          ) : settingUp ? (
+            <>
+              <span className="ob-brain-pill">SETTING UP…</span>
+              <span className="ob-brain-hint">first-time bridge install (~30s) — one time only</span>
+            </>
+          ) : claude.adapterReady ? (
+            <>
+              <span className="ob-brain-pill ready">READY</span>
+              <span className="ob-brain-hint">signed in — uses your Claude subscription</span>
+            </>
+          ) : (
+            <>
+              <span className="ob-brain-pill">SET UP</span>
+              <span className="ob-brain-hint">signed in — click to install the bridge (one time, ~30s)</span>
             </>
           )}
         </button>
