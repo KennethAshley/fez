@@ -185,10 +185,121 @@ export class SummonEngine {
     (timer as { unref?: () => void }).unref?.();
   }
 
-  private async maybeRestart(_persona: string, _channelId: string, _work?: WorkContext): Promise<void> {}
-  private async workContextOf(_event: SummonEvent, _channelId: string): Promise<WorkContext | undefined> { return undefined; }
-  private async preInvite(_persona: string): Promise<void> {}
-  private async handleAnnouncement(_event: SummonEvent): Promise<void> {}
-  private async handleDocComment(_event: SummonEvent): Promise<void> {}
-  async handleGiftWrapRecipient(_recipientPk: string): Promise<void> {}
+  private async handleAnnouncement(event: SummonEvent): Promise<void> {
+    let name: string | undefined;
+    try {
+      name = JSON.parse(event.content).name?.toLowerCase();
+    } catch { return; }
+    if (!name) return;
+    this.agentPkToName.set(event.pubkey, name);
+    if (await this.host.registryEntry(name)) this.attestAgent(event.pubkey);
+    const target = this.pendingInvites.get(name);
+    if (target) {
+      this.pendingInvites.delete(name);
+      this.attestAgent(event.pubkey);
+      try {
+        await this.inviteToWorkspace(event.pubkey);
+        this.log(`🤝 @${name} announced — invited to its channel`);
+      } catch {
+        this.log(`⚠️  invite for @${name} failed`);
+      }
+    }
+  }
+
+  private async handleDocComment(event: SummonEvent): Promise<void> {
+    if (!this.authorized(event.pubkey)) return;
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    if (!channelId) return;
+    for (const persona of summonMentions(event.content)) {
+      if (this.spawning.has(persona) || !(await this.host.personaExists(persona)) || (await this.host.agentAlive(persona))) continue;
+      this.pendingInvites.set(persona, { channelId });
+      await this.summon(persona, [channelId], `doc comment by ${this.nameOf(event.pubkey)}`);
+    }
+  }
+
+  async handleGiftWrapRecipient(recipientPk: string): Promise<void> {
+    const persona = this.agentPkToName.get(recipientPk);
+    if (!persona) return;
+    if (this.spawning.has(persona) || !(await this.host.personaExists(persona)) || (await this.host.agentAlive(persona))) return;
+    const prior = await this.host.registryEntry(persona);
+    await this.summon(persona, prior?.channels ?? [], "DM for a sleeping agent");
+  }
+
+  /** Running, but summoned into a channel it doesn't serve — or onto a
+   * DIFFERENT line: one process per persona, one body per line, so a
+   * line switch is a restart. */
+  private async maybeRestart(persona: string, channelId: string, work?: WorkContext): Promise<void> {
+    const entry = await this.host.registryEntry(persona);
+    if (!entry) return;
+    const needsChannel = !entry.channels.includes(channelId);
+    const needsLine = work !== undefined && (entry.work?.repo !== work.repo || (work.line !== undefined && entry.work?.line !== work.line));
+    if (!needsChannel && !needsLine) return;
+    this.spawning.add(persona);
+    this.pendingInvites.set(persona, { channelId });
+    this.log(needsLine ? `🔁 moving @${persona} onto line ${work?.line} (restart)` : `🔁 pulling @${persona} into a new channel (restart with union)`);
+    try {
+      await this.host.restart(persona, needsChannel ? [...entry.channels, channelId] : entry.channels, work ?? entry.work);
+    } finally {
+      this.spawning.delete(persona);
+    }
+  }
+
+  private attestAgent(agentPubkey: string): void {
+    if (this.attested.has(agentPubkey) || agentPubkey === this.host.ownerPubkey) return;
+    this.attested.add(agentPubkey);
+    this.attestedSiblings.add(agentPubkey);
+    void this.host
+      .publish({ kind: KIND_ATTESTATION, tags: [["p", agentPubkey]], content: "" })
+      .catch(() => this.attested.delete(agentPubkey));
+  }
+
+  private async inviteToWorkspace(agentPubkey: string): Promise<void> {
+    const rosters = await this.host.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
+    const latest = rosters.sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0)).at(-1);
+    const ptags = latest?.tags.filter((t) => t[0] === "p") ?? [];
+    if (ptags.some((t) => t[1] === agentPubkey)) return;
+    ptags.push(["p", agentPubkey, "bot"]);
+    await this.host.publish({
+      kind: KIND_MEMBERSHIP,
+      tags: [["d", ROSTER_D], ...ptags],
+      content: "",
+      created_at: Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1),
+    });
+  }
+
+  /** Roster the persona BEFORE its process exists (sentinel's preInvite —
+   * a repo agent's first act is cloning and the clone is roster-gated). */
+  private async preInvite(persona: string): Promise<void> {
+    try {
+      const pk = await this.host.personaPubkey(persona);
+      if (!pk) return;
+      await this.inviteToWorkspace(pk);
+      this.attestAgent(pk);
+    } catch (err) {
+      this.log(`⚠️  pre-invite for @${persona} failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  private async workContextOf(event: SummonEvent, channelId: string): Promise<WorkContext | undefined> {
+    try {
+      const chans = await this.host.query([{ kinds: [47101], "#d": [channelId], authors: [this.host.ownerPubkey] }]);
+      const latest = chans.sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0];
+      if (!latest) return undefined;
+      const parsed = JSON.parse(latest.content) as { source?: string; meta?: { repo?: string } };
+      if (parsed.source !== "fez-git") return undefined;
+      const repo = safeWork(parsed.meta?.repo);
+      if (!repo) return undefined;
+      const eTags = event.tags.filter((t) => t[0] === "e" && t[1]);
+      const rootId = (eTags.find((t) => t[3] === "root") ?? eTags[0])?.[1];
+      if (!rootId) return { repo };
+      const [root] = await this.host.query([{ ids: [rootId] }]);
+      const marker = root?.content?.match(/^⑂ `([^`]+)`/);
+      if (!marker) return { repo };
+      const branch = marker[1];
+      const line = safeWork(branch.includes("/") ? branch.slice(branch.indexOf("/") + 1) : branch);
+      return line ? { repo, line } : { repo };
+    } catch {
+      return undefined;
+    }
+  }
 }
