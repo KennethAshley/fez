@@ -78,6 +78,15 @@ if (!hasBun()) {
     console.error(`✗ ${msg}`);
     process.exit(1);
   }
+  // A STALE bundle is worse than none: without bun the OUT dir keeps
+  // whatever binaries it already has, and "warn and continue" shipped a
+  // day-old fez-agent that refused every claude-code persona. If
+  // binaries exist from an outdated build, refuse; only a truly empty
+  // OUT may proceed bundle-less (the app falls back to a system pi).
+  if (fs.existsSync(path.join(OUT, `fez-agent${EXE}`))) {
+    console.error(`✗ ${msg} — and ${OUT} holds binaries from an older build. Refusing to ship them.`);
+    process.exit(1);
+  }
   // Leave a marker so the tauri resource path still resolves; the app
   // falls back to a system pi at runtime.
   fs.writeFileSync(marker, "none\n");
