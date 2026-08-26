@@ -260,6 +260,20 @@ export interface RelayHandle {
    * for restating what the workspace is.
    */
   advertise(key: string, value: unknown): void;
+  /**
+   * Observe every accepted event (stored and ephemeral), after fan-out.
+   *
+   * The seam a built-in module (a scheduler, a bridge) uses to react to
+   * the relay's own traffic without opening a websocket to itself.
+   */
+  onEvent(cb: (event: StoredEvent) => void): void;
+  /**
+   * Feed an event through the relay's normal ingest pipeline — dedupe,
+   * signature verification, policies, store, fan-out — exactly as if it
+   * arrived over the wire. The relay stays the validator; injection
+   * grants no authority a signed event doesn't already carry.
+   */
+  inject(event: StoredEvent): { accepted: boolean; reason?: string };
 }
 
 export function startRelay(options: RelayOptions): RelayHandle {
@@ -303,6 +317,10 @@ export function startRelay(options: RelayOptions): RelayHandle {
     query: (filter) => events.filter((e) => matches(e, filter)),
   };
 
+  // Extension seam (RelayHandle.onEvent / .inject): fed every accepted
+  // event, after fan-out. A throwing observer must never break ingest.
+  const observers: ((event: StoredEvent) => void)[] = [];
+
   const subs = new Map<WebSocket, Map<string, Filter[]>>();
   // NIP-42 connection identity: challenge issued at connect, pubkey set
   // once a valid kind-22242 AUTH lands. Read-side policies key on it.
@@ -323,6 +341,133 @@ export function startRelay(options: RelayOptions): RelayHandle {
     }
     return true;
   };
+
+  /**
+   * The full ingest pipeline: duplicate check → signature verification →
+   * policy pipeline (first reject wins) → NIP-09 deletion masking →
+   * replaceable-event compaction → store → fan-out → observer notify.
+   *
+   * The oracle for both call sites: a live wire EVENT and RelayHandle's
+   * `inject()` run this SAME function, so an extension-fed event is
+   * validated exactly as strictly as one that arrived over a socket —
+   * injection grants no authority a signed event doesn't already carry.
+   *
+   * Deliberately synchronous (`ctx.via` is carried for a future caller
+   * that wants to tell the two apart, e.g. in logging): every built-in
+   * policy already resolves its verdict synchronously, and `inject()`
+   * must return its verdict immediately rather than as a Promise.
+   *
+   * Size/frame caps are NOT here — those are a wire-framing concern and
+   * stay in the ws message handler, the one call site that has frames.
+   */
+  function ingest(
+    event: StoredEvent,
+    ctxMeta: { via: "wire" | "inject" }
+  ): { accepted: boolean; reason?: string } {
+    void ctxMeta; // reserved for future via-aware logging/observers
+    let suppressFanout = false;
+
+    if (known.has(event.id) || ephemeralSeen.has(event.id) || tombstoned.has(event.id)) {
+      return { accepted: false, reason: "duplicate: already have this event" };
+    }
+
+    if (verify && !verifyEvent(event)) {
+      return { accepted: false, reason: "invalid: bad signature" };
+    }
+
+    for (const policy of policies) {
+      let verdict: { accept: boolean; reason?: string };
+      try {
+        // Every built-in policy resolves synchronously; the seam requires
+        // it (see doc comment above), so a thenable is not awaited here.
+        verdict = policy.onEvent(event, ctx) as { accept: boolean; reason?: string };
+      } catch (err) {
+        verdict = { accept: false, reason: `error: policy ${policy.name} failed` };
+        log(`⚠️ policy ${policy.name} threw: ${err instanceof Error ? err.message : err}`);
+      }
+      if (!verdict.accept) {
+        log(`⛔ ${policy.name} rejected kind ${event.kind} from ${event.pubkey.slice(0, 8)}…: ${verdict.reason}`);
+        return { accepted: false, reason: verdict.reason };
+      }
+    }
+
+    if (isEphemeral(event.kind)) {
+      // Ephemerals are never stored, so their dedup memory is bounded
+      // separately (typing/draft heartbeats would grow `known` forever).
+      ephemeralSeen.add(event.id);
+      if (ephemeralSeen.size > 10_000) {
+        let i = 0;
+        for (const id of ephemeralSeen) {
+          ephemeralSeen.delete(id);
+          if (++i >= 5_000) break;
+        }
+      }
+    } else {
+      known.add(event.id);
+      events.push(event);
+      store?.append(event);
+      // NIP-09: an accepted deletion masks the author's own events from
+      // future REQs immediately (the JSONL keeps both — masking
+      // re-derives at load). The kind 5 itself still stores + fans out
+      // so clients can tombstone.
+      if (event.kind === 5) {
+        for (const tag of event.tags) {
+          if (tag[0] !== "e" || !tag[1]) continue;
+          const idx = events.findIndex((e) => e.id === tag[1]);
+          if (idx >= 0 && events[idx].pubkey === event.pubkey && DELETABLE_KINDS.has(events[idx].kind)) {
+            tombstoned.add(tag[1]);
+            events.splice(idx, 1);
+          }
+        }
+      }
+      // Replaceable latest-wins at ingest: evict the loser from the
+      // serving index (the append-only store keeps history; the
+      // boot-time compaction pass re-derives the same answer).
+      const key = replaceKey(event);
+      if (key) {
+        const rivalIdx = events.findIndex((e) => e !== event && replaceKey(e) === key);
+        if (rivalIdx >= 0) {
+          const rival = events[rivalIdx];
+          if (newerWins(rival, event) === rival) {
+            events.pop(); // the new arrival lost; rival keeps serving
+            suppressFanout = true; // don't push a stale version to live subs
+          } else {
+            events.splice(rivalIdx, 1);
+          }
+        }
+      }
+    }
+
+    if (!suppressFanout) {
+      for (const [client, clientSubs] of subs) {
+        if (client.readyState !== WebSocket.OPEN) continue;
+        // Slow-consumer fence: a client that stops draining its socket
+        // would buffer unboundedly here. Cut it loose — clients own
+        // reconnect+resubscribe, so recovery is clean (Buzz's decision:
+        // disconnect beats silent per-event drops, which desync state).
+        if (client.bufferedAmount > limits.maxBufferedBytes) {
+          log(`⚠️ dropping slow consumer (${Math.round(client.bufferedAmount / 1024)}KB buffered)`);
+          client.terminate();
+          continue;
+        }
+        for (const [subId, filters] of clientSubs) {
+          if (filters.some((f) => matches(event, f)) && deliverable(event, client)) {
+            client.send(JSON.stringify(["EVENT", subId, event]));
+          }
+        }
+      }
+    }
+
+    for (const observer of observers) {
+      try {
+        observer(event);
+      } catch (err) {
+        log(`⚠️ onEvent observer threw (ignored): ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    return { accepted: true };
+  }
 
   // NIP-11: the workspace's identity card, served over HTTP on the same
   // port. A client asks who owns this workspace BEFORE it trusts a
@@ -409,106 +554,25 @@ export function startRelay(options: RelayOptions): RelayHandle {
       }
 
       if (msg[0] === "EVENT") {
-        void (async () => {
-          const event = msg[1] as StoredEvent;
-          let suppressFanout = false;
+        const event = msg[1] as StoredEvent;
 
-          if (typeof event?.content === "string" && Buffer.byteLength(event.content) > limits.maxContentBytes) {
-            ws.send(JSON.stringify(["OK", event.id ?? "", false, "invalid: content too large"]));
-            return;
-          }
+        // Frame/content size cap: a wire-framing concern, so it stays
+        // here rather than in the shared ingest pipeline (an injected
+        // event never arrived as a frame).
+        if (typeof event?.content === "string" && Buffer.byteLength(event.content) > limits.maxContentBytes) {
+          ws.send(JSON.stringify(["OK", event.id ?? "", false, "invalid: content too large"]));
+          return;
+        }
 
-          if (known.has(event.id) || ephemeralSeen.has(event.id) || tombstoned.has(event.id)) {
-            ws.send(JSON.stringify(["OK", event.id, true, "duplicate: already have this event"]));
-            return;
-          }
-
-          if (verify && !verifyEvent(event)) {
-            ws.send(JSON.stringify(["OK", event.id, false, "invalid: bad signature"]));
-            return;
-          }
-
-          for (const policy of policies) {
-            let verdict;
-            try {
-              verdict = await policy.onEvent(event, ctx);
-            } catch (err) {
-              verdict = { accept: false as const, reason: `error: policy ${policy.name} failed` };
-              log(`⚠️ policy ${policy.name} threw: ${err instanceof Error ? err.message : err}`);
-            }
-            if (!verdict.accept) {
-              ws.send(JSON.stringify(["OK", event.id, false, verdict.reason]));
-              log(`⛔ ${policy.name} rejected kind ${event.kind} from ${event.pubkey.slice(0, 8)}…: ${verdict.reason}`);
-              return;
-            }
-          }
-
-          if (isEphemeral(event.kind)) {
-            // Ephemerals are never stored, so their dedup memory is bounded
-            // separately (typing/draft heartbeats would grow `known` forever).
-            ephemeralSeen.add(event.id);
-            if (ephemeralSeen.size > 10_000) {
-              let i = 0;
-              for (const id of ephemeralSeen) {
-                ephemeralSeen.delete(id);
-                if (++i >= 5_000) break;
-              }
-            }
-          } else {
-            known.add(event.id);
-            events.push(event);
-            store?.append(event);
-            // NIP-09: an accepted deletion masks the author's own events
-            // from future REQs immediately (the JSONL keeps both — masking
-            // re-derives at load). The kind 5 itself still stores + fans
-            // out so clients can tombstone.
-            if (event.kind === 5) {
-              for (const tag of event.tags) {
-                if (tag[0] !== "e" || !tag[1]) continue;
-                const idx = events.findIndex((e) => e.id === tag[1]);
-                if (idx >= 0 && events[idx].pubkey === event.pubkey && DELETABLE_KINDS.has(events[idx].kind)) {
-                  tombstoned.add(tag[1]);
-                  events.splice(idx, 1);
-                }
-              }
-            }
-            // Replaceable latest-wins at ingest: evict the loser from the
-            // serving index (the append-only store keeps history; the
-            // boot-time compaction pass re-derives the same answer).
-            const key = replaceKey(event);
-            if (key) {
-              const rivalIdx = events.findIndex((e) => e !== event && replaceKey(e) === key);
-              if (rivalIdx >= 0) {
-                const rival = events[rivalIdx];
-                if (newerWins(rival, event) === rival) {
-                  events.pop(); // the new arrival lost; rival keeps serving
-                  suppressFanout = true; // don't push a stale version to live subs
-                } else {
-                  events.splice(rivalIdx, 1);
-                }
-              }
-            }
-          }
-          ws.send(JSON.stringify(["OK", event.id, true, ""]));
-          if (suppressFanout) return;
-          for (const [client, clientSubs] of subs) {
-            if (client.readyState !== WebSocket.OPEN) continue;
-            // Slow-consumer fence: a client that stops draining its socket
-            // would buffer unboundedly here. Cut it loose — clients own
-            // reconnect+resubscribe, so recovery is clean (Buzz's decision:
-            // disconnect beats silent per-event drops, which desync state).
-            if (client.bufferedAmount > limits.maxBufferedBytes) {
-              log(`⚠️ dropping slow consumer (${Math.round(client.bufferedAmount / 1024)}KB buffered)`);
-              client.terminate();
-              continue;
-            }
-            for (const [subId, filters] of clientSubs) {
-              if (filters.some((f) => matches(event, f)) && deliverable(event, client)) {
-                client.send(JSON.stringify(["EVENT", subId, event]));
-              }
-            }
-          }
-        })();
+        const verdict = ingest(event, { via: "wire" });
+        // NIP-20: a replayed EVENT (client publish-retry, reconnect echo)
+        // is still OK=true — the event IS accepted, the client's retry
+        // succeeded — even though ingest()'s own verdict is `accepted:
+        // false` (it did no new work). That distinction is exactly what
+        // inject() needs to report honestly; the wire reply papers over
+        // it, as it always has.
+        const wireAccepted = verdict.accepted || Boolean(verdict.reason?.startsWith("duplicate:"));
+        ws.send(JSON.stringify(["OK", event.id, wireAccepted, verdict.reason ?? ""]));
         return;
       }
 
@@ -608,6 +672,10 @@ export function startRelay(options: RelayOptions): RelayHandle {
     advertise: (key, value) => {
       advertised[key] = value;
     },
+    onEvent: (cb) => {
+      observers.push(cb);
+    },
+    inject: (event) => ingest(event, { via: "inject" }),
     // Both listeners, or the process keeps a handle open — the http
     // server owns the port now, so closing only the wss leaves it bound.
     close: () => {

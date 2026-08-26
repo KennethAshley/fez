@@ -144,6 +144,8 @@ async function main() {
       owner: workspace.owner,
       query: (filter) => handle.query(filter),
       advertise: (key, value) => handle.advertise(key, value),
+      onEvent: (cb) => handle.onEvent(cb),
+      inject: (event) => handle.inject(event),
       log: (line) => console.log(line),
     });
     // Registered AFTER start rather than passed in, because an extension

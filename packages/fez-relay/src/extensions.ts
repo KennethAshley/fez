@@ -78,6 +78,15 @@ export interface RelayExtensionAPI {
    */
   owner?: string;
   log(line: string): void;
+  /** Observe every accepted event (stored + ephemeral), after fan-out. */
+  onEvent(cb: (event: StoredEvent) => void): void;
+  /**
+   * Feed an event through the relay's normal ingest pipeline — dedupe,
+   * signature verification, policies, store, fan-out — exactly as if it
+   * arrived over the wire. The relay stays the validator; injection
+   * grants no authority a signed event doesn't already carry.
+   */
+  inject(event: StoredEvent): { accepted: boolean; reason?: string };
 }
 
 export interface LoadedRelayExtensions {
@@ -96,6 +105,10 @@ export interface LoadOptions {
   /** Where an advertised NIP-11 field lands — RelayHandle.advertise. */
   advertise?: (key: string, value: unknown) => void;
   log?: (line: string) => void;
+  /** RelayHandle.onEvent, threaded through so an extension can observe traffic. */
+  onEvent(cb: (event: StoredEvent) => void): void;
+  /** RelayHandle.inject, threaded through so an extension can feed the pipeline. */
+  inject(event: StoredEvent): { accepted: boolean; reason?: string };
 }
 
 /**
@@ -134,6 +147,8 @@ export async function loadRelayExtensions(opts: LoadOptions): Promise<LoadedRela
       origins: opts.origins ?? [],
       owner: opts.owner,
       log: (line) => log(`${name}: ${line}`),
+      onEvent: opts.onEvent,
+      inject: opts.inject,
     };
     try {
       const module = (await import(pathToFileURL(path.join(dir, entry)).href)) as {
