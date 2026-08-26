@@ -83,7 +83,18 @@ test("post-onboarding boot: #welcome opens with hello, opener, summons, intros, 
       content: "I'm @quill — I write and edit, from drafts to tricky wording. Hand me anything that needs to read well.",
     });
 
-    await expect(page.getByText(/What can we help you build/i)).toBeVisible({ timeout: 130_000 }); // kickoff after intros
+    // Prove the intros actually landed and rendered — without this, a
+    // broken intro path (identity wiring, introCount matching, publish
+    // shape) would still let the test pass via ensureStarterTeam's 120s
+    // no-intro backstop, since the kickoff text arrives either way.
+    await expect(page.getByText(/I dig up sources and check claims/i)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/write and edit, from drafts to tricky wording/i)).toBeVisible({ timeout: 15_000 });
+
+    // Tight ceiling: the real intro-triggered path lands the kickoff in
+    // ~10s. 45s is generous headroom but still far under the 120s
+    // no-intro backstop, so a pass here can only mean the intro path
+    // actually fired — not that the test degraded to slow-but-green.
+    await expect(page.getByText(/What can we help you build/i)).toBeVisible({ timeout: 45_000 }); // kickoff after intros
   } finally {
     for (const w of teamWires) w.close();
     relay?.kill();
