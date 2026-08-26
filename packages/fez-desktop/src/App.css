@@ -389,6 +389,7 @@ body {
   color: var(--fg); font: inherit; padding: 10px 14px; outline: none; text-align: center;
 }
 .ob-input:focus { border-color: var(--accent); }
+.ob-label { font-size: 12px; opacity: 0.7; margin: 10px 0 4px; display: block; text-align: left; }
 .ob-primary {
   background: var(--accent); border: 0; color: var(--bg0); font: inherit; font-weight: 700;
   padding: 10px 16px; border-radius: 8px; cursor: pointer;

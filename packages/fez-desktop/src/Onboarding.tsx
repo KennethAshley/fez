@@ -46,6 +46,28 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
   const [name, setName] = useState("");
   const [showBackup, setShowBackup] = useState(false);
 
+  // The Claude probe is lifted here (not local to HarnessStep) so the
+  // defaults page can read the same READY-ness without re-detecting —
+  // "installed but the page you're on right now didn't check" is not a
+  // state either page should have to explain.
+  const [claude, setClaude] = useState<ClaudeBrain>();
+  const probeClaude = () =>
+    invoke<string>("claude_brain_status")
+      .then((json) => setClaude(JSON.parse(json) as ClaudeBrain))
+      .catch(() => setClaude({ installed: false, authed: false, adapterReady: false }));
+  useEffect(() => {
+    // Once per visit to the page that cares, not once per app lifetime —
+    // the guard is "haven't probed yet", not a ref, so navigating away
+    // and back re-checks (e.g. after installing Claude Code and returning).
+    if (step === "harness" && !claude) void probeClaude();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+  const setupClaude = async () => {
+    await invoke("ensure_claude_adapter");
+    setClaude((c) => (c ? { ...c, adapterReady: true } : c));
+  };
+  const [brain, setBrain] = useState<Brain>({});
+
   /**
    * The whole happy path: a name, a key, a profile, in.
    *
@@ -218,11 +240,23 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         {step === "reconnect" && <ReconnectStep onNext={() => setStep("harness")} />}
 
         {step === "harness" && (
-          <PlaceholderStep step="harness" onBack={() => setStep(prevStep("harness"))} onNext={() => setStep(nextStep("harness"))} />
+          <HarnessStep
+            claude={claude}
+            onProbe={probeClaude}
+            onSetup={setupClaude}
+            onNext={() => setStep(nextStep("harness"))}
+            onBack={() => setStep(prevStep("harness"))}
+          />
         )}
 
         {step === "defaults" && (
-          <PlaceholderStep step="defaults" onBack={() => setStep(prevStep("defaults"))} onNext={() => setStep(nextStep("defaults"))} />
+          <DefaultsStep
+            claudeReady={!!claude?.installed && !!claude?.authed && !!claude?.adapterReady}
+            brain={brain}
+            setBrain={setBrain}
+            onNext={() => setStep(nextStep("defaults"))}
+            onBack={() => setStep(prevStep("defaults"))}
+          />
         )}
 
         {step === "community" && (
@@ -501,11 +535,10 @@ function InviteStep({
 }
 
 /**
- * Placeholder body for harness/defaults/community/profile — Tasks 8-9
- * fill these in with the real pages (harness detection, provider/model
- * config, join/create/reconnect, name + avatar). Keeping a generic
- * shell here means the wizard is walkable end-to-end at every commit
- * on this branch, not just once the real pages land.
+ * Placeholder body for community/profile — Task 9 fills these in with
+ * the real pages (join/create/reconnect, name + avatar). Keeping a
+ * generic shell here means the wizard is walkable end-to-end at every
+ * commit on this branch, not just once the real pages land.
  */
 function PlaceholderStep({ step, onBack, onNext }: { step: Step; onBack: () => void; onNext: () => void }) {
   return (
@@ -571,6 +604,280 @@ function ReconnectStep({ onNext }: { onNext: () => void }) {
       ))}
       {error && <p className="ob-error">{error}</p>}
       <button className="ob-primary" onClick={onNext}>{added.length > 0 ? "continue" : "skip — just this machine"}</button>
+    </>
+  );
+}
+
+interface ClaudeBrain {
+  installed: boolean;
+  authed: boolean;
+  adapterReady: boolean;
+}
+
+/**
+ * The brain @fez ends up with, threaded through defaults → (Task 9)
+ * finish, where it becomes a single `write_persona` call. Nothing here
+ * writes a persona — that happens once, on wizard completion, so a user
+ * who changes their mind three times on this page never leaves a
+ * half-written file behind.
+ */
+interface Brain {
+  harness?: "pi" | "claude-code";
+  providerId?: string;
+  provider?: string;
+  model?: string;
+  effort?: string;
+}
+
+/**
+ * Buzz's harness grid, fez-sized: two cards, purely informational — no
+ * selection happens here, because it's not a choice yet, it's a status
+ * check. Fez ships with the app and is always ready; Claude Code is
+ * detected live and walked through install → sign-in → one-time bridge
+ * setup. The actual "what does @fez run on" choice is the next page.
+ */
+function HarnessStep({
+  claude,
+  onProbe,
+  onSetup,
+  onNext,
+  onBack,
+}: {
+  claude?: ClaudeBrain;
+  onProbe: () => void;
+  onSetup: () => Promise<void>;
+  onNext: () => void;
+  onBack: () => void;
+}) {
+  const [settingUp, setSettingUp] = useState(false);
+  const [error, setError] = useState<string>();
+
+  return (
+    <>
+      <h2>Your agent harnesses</h2>
+      <p className="ob-lede">fez checked this machine. Fez ships with the app; Claude Code is detected if you have it.</p>
+      <div className="ob-brains">
+        <div className="ob-brain">
+          <span className="ob-brain-name">Fez</span>
+          <span className="ob-brain-pill ready">READY</span>
+          <span className="ob-brain-hint">ships with fez — bring a model key on the next page</span>
+        </div>
+
+        <button
+          className={`ob-brain ${claude?.installed ? "" : "unavailable"}`}
+          disabled={settingUp}
+          onClick={() => {
+            if (!claude?.installed) return void openBrainInstall();
+            if (!claude.authed) return; // SIGN IN state — the hint says how
+            if (claude.adapterReady) return; // already READY — nothing to do
+            // One-time bridge setup: the managed node runtime + the ACP
+            // adapter as a real node program (compiling it was tried and
+            // is impossible — its SDK loads dynamically).
+            setSettingUp(true);
+            setError(undefined);
+            void onSetup()
+              .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+              .finally(() => setSettingUp(false));
+          }}
+        >
+          <span className="ob-brain-name">Claude Code</span>
+          {!claude ? (
+            <span className="ob-brain-pill">CHECKING…</span>
+          ) : !claude.installed ? (
+            <>
+              <span className="ob-brain-pill">INSTALL</span>
+              <span className="ob-brain-hint">not detected — opens the install page</span>
+            </>
+          ) : !claude.authed ? (
+            <>
+              <span className="ob-brain-pill">SIGN IN</span>
+              <span className="ob-brain-hint">
+                installed but signed out — run <code>claude /login</code> in Terminal, then{" "}
+                <a
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onProbe();
+                  }}
+                >
+                  check again
+                </a>
+              </span>
+            </>
+          ) : settingUp ? (
+            <>
+              <span className="ob-brain-pill">SETTING UP…</span>
+              <span className="ob-brain-hint">first-time bridge install (~30s) — one time only</span>
+            </>
+          ) : claude.adapterReady ? (
+            <>
+              <span className="ob-brain-pill ready">READY</span>
+              <span className="ob-brain-hint">signed in — uses your Claude subscription</span>
+            </>
+          ) : (
+            <>
+              <span className="ob-brain-pill">SET UP</span>
+              <span className="ob-brain-hint">signed in — click to install the bridge (one time, ~30s)</span>
+            </>
+          )}
+        </button>
+      </div>
+      {error && <p className="ob-error">{error}</p>}
+      <button className="ob-primary" onClick={onNext}>continue</button>
+      <button className="ob-secondary" onClick={onBack}>back</button>
+    </>
+  );
+}
+
+/** The vendor's install page — fez never curls-pipes-bash on your behalf. */
+async function openBrainInstall(): Promise<void> {
+  const { openUrl } = await import("@tauri-apps/plugin-opener");
+  await openUrl("https://claude.com/claude-code");
+}
+
+/** The v1 provider table (mirrors the Rust `provider_spec` list). */
+export const PROVIDERS = [
+  { id: "chutes", label: "Chutes", hint: "decentralized GPUs — chutes.ai" },
+  { id: "anthropic", label: "Anthropic", hint: "api key from console.anthropic.com" },
+  { id: "openai", label: "OpenAI", hint: "api key from platform.openai.com" },
+  { id: "openrouter", label: "OpenRouter", hint: "one key, many models — openrouter.ai" },
+];
+export const CLAUDE_MODELS = ["default", "opus", "sonnet", "haiku"];
+export const EFFORTS = ["low", "medium", "high"];
+
+/**
+ * What @fez runs on, chosen once and changeable later in Settings. Two
+ * shapes: Claude Code (nothing to configure — it uses your subscription,
+ * gated on the harness page's READY state) or Fez/pi (pick a provider,
+ * paste a key, verify it against a live model list — Buzz's page-4
+ * verification, generalized past Chutes to the four-provider table).
+ */
+function DefaultsStep({
+  claudeReady,
+  brain,
+  setBrain,
+  onNext,
+  onBack,
+}: {
+  claudeReady: boolean;
+  brain: Brain;
+  setBrain: (b: Brain) => void;
+  onNext: () => void;
+  onBack: () => void;
+}) {
+  const [providerKey, setProviderKey] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const verify = async () => {
+    if (!brain.providerId) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      if (providerKey.trim()) {
+        const spec = { chutes: "CHUTES_API_KEY", anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", openrouter: "OPENROUTER_API_KEY" } as const;
+        await invoke("set_skill_secret", { skill: brain.providerId, key: spec[brain.providerId as keyof typeof spec], value: providerKey.trim() });
+      }
+      const json = await invoke<string>("wire_provider_pi", { provider: brain.providerId });
+      const r = JSON.parse(json) as { provider: string; models: string[] };
+      setModels(r.models);
+      setBrain({ ...brain, harness: "pi", provider: r.provider, model: r.models[0], effort: brain.effort ?? "medium" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <h2>Configure your defaults</h2>
+      <p className="ob-lede">Your agents run on this unless you give one its own setup — changeable any time in Settings.</p>
+      <label className="ob-label">default harness</label>
+      <select
+        className="ob-input"
+        value={brain.harness ?? ""}
+        onChange={(e) => setBrain({ ...brain, harness: e.target.value as Brain["harness"], provider: undefined, model: undefined })}
+      >
+        <option value="">choose…</option>
+        <option value="pi">Fez</option>
+        {claudeReady && <option value="claude-code">Claude Code</option>}
+      </select>
+
+      {brain.harness === "claude-code" && (
+        <>
+          <label className="ob-label">model</label>
+          <select className="ob-input" value={brain.model ?? "default"} onChange={(e) => setBrain({ ...brain, model: e.target.value })}>
+            {CLAUDE_MODELS.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <span className="ob-brain-hint">uses your Claude subscription</span>
+        </>
+      )}
+
+      {brain.harness === "pi" && (
+        <>
+          <label className="ob-label">provider</label>
+          <select
+            className="ob-input"
+            value={brain.providerId ?? ""}
+            onChange={(e) => {
+              setModels([]);
+              setBrain({ ...brain, providerId: e.target.value, provider: undefined, model: undefined });
+            }}
+          >
+            <option value="">choose…</option>
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+          {brain.providerId && models.length === 0 && (
+            <div className="ob-brain-auth">
+              <input
+                className="ob-input"
+                type="password"
+                placeholder={`${PROVIDERS.find((p) => p.id === brain.providerId)?.label} API key`}
+                value={providerKey}
+                spellCheck={false}
+                onChange={(e) => setProviderKey(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !busy) void verify();
+                }}
+              />
+              <button className="ob-secondary" disabled={busy} onClick={() => void verify()}>
+                {busy ? "checking…" : "verify"}
+              </button>
+              <span className="ob-brain-hint">{PROVIDERS.find((p) => p.id === brain.providerId)?.hint}</span>
+            </div>
+          )}
+          {models.length > 0 && (
+            <>
+              <label className="ob-label">model</label>
+              <select className="ob-input" value={brain.model ?? ""} onChange={(e) => setBrain({ ...brain, model: e.target.value })}>
+                {models.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <label className="ob-label">effort</label>
+              <select className="ob-input" value={brain.effort ?? "medium"} onChange={(e) => setBrain({ ...brain, effort: e.target.value })}>
+                {EFFORTS.map((e2) => (
+                  <option key={e2} value={e2}>{e2}</option>
+                ))}
+              </select>
+            </>
+          )}
+        </>
+      )}
+
+      {error && <p className="ob-error">{error}</p>}
+      <button className="ob-primary" disabled={busy || (brain.harness === "pi" && !brain.model)} onClick={onNext}>
+        {brain.harness === "pi" && brain.model ? `continue with ${brain.model}` : brain.harness === "claude-code" ? "continue with Claude Code" : "continue"}
+      </button>
+      <div className="ob-alts">
+        <button className="ob-link" onClick={onNext}>skip for now</button>
+      </div>
+      <button className="ob-secondary" onClick={onBack}>back</button>
     </>
   );
 }
