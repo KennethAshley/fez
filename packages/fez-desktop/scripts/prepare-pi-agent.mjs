@@ -29,7 +29,7 @@ const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+svc2`;
+const BUNDLE_VERSION = `${PI_VERSION}+svc3`;
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
@@ -87,12 +87,18 @@ if (!hasBun()) {
 
 fs.mkdirSync(WORK, { recursive: true });
 
-// Per-artifact reuse: a binary already in OUT is kept unless FORCE_ALL.
-// Upstream pi ships no lockfile, so a fresh-cache source build can drift
-// and fail — adding one NEW binary to the bundle must not require
-// rebuilding the three that already work. FORCE=1 re-runs the assembly;
-// FORCE_ALL=1 rebuilds every binary from scratch.
-const reuse = (name) => !process.env.FORCE_ALL && fs.existsSync(path.join(OUT, `${name}${EXE}`));
+// Per-artifact reuse — for the PINNED EXTERNAL binaries only (pi,
+// pi-acp): upstream pi ships no lockfile, so a fresh-cache source build
+// can drift and fail; a binary that already works is kept. fez's OWN
+// binaries (fez-relay, fez-sentinel, fez-agent) are cheap bun compiles
+// of THIS repo's source and always rebuild — a reused copy silently
+// ships yesterday's runtime (found live: a fez-agent predating the
+// managed Claude adapter refused every claude-code persona on a machine
+// where the desktop had just verified Claude READY). FORCE=1 re-runs
+// the assembly; FORCE_ALL=1 rebuilds even the pinned externals.
+const OWN = new Set(["fez-relay", "fez-sentinel", "fez-agent"]);
+const reuse = (name) =>
+  !OWN.has(name) && !process.env.FORCE_ALL && fs.existsSync(path.join(OUT, `${name}${EXE}`));
 
 // 1. pi — build from pinned source (bun --compile, host target).
 let codingAgent;

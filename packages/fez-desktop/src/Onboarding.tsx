@@ -8,7 +8,7 @@ import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, relayRaw, setRelays } from "./relay";
 import { type Step, nextStep, prevStep } from "./onboarding-steps";
-import { PixelSprite } from "./pixel-sprite";
+import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
 import { buildFezPersonaMd, buildStarterPersonaMd, STARTER_TEAM } from "./welcome-core";
 
@@ -677,7 +677,7 @@ function TeamStep({ keyHex, onFinish, onBack }: { keyHex?: string; onFinish: () 
       <div className="ob-team">
         {(["fez", "drift", "quill"] as const).map((id) => (
           <figure key={id} className="ob-team-member">
-            <PixelSprite sprite={SPRITES[id]} />
+            <AnimatedSprite sprite={SPRITES[id]} />
             <figcaption>{id.toUpperCase()}</figcaption>
           </figure>
         ))}
