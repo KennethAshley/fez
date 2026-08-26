@@ -85,8 +85,11 @@ export interface RelayExtensionAPI {
    * signature verification, policies, store, fan-out — exactly as if it
    * arrived over the wire. The relay stays the validator; injection
    * grants no authority a signed event doesn't already carry.
+   *
+   * A Promise because the policy pipeline it runs through may itself be
+   * async (`RelayPolicy.onEvent` returns `PolicyVerdict | Promise<PolicyVerdict>`).
    */
-  inject(event: StoredEvent): { accepted: boolean; reason?: string };
+  inject(event: StoredEvent): Promise<{ accepted: boolean; reason?: string }>;
 }
 
 export interface LoadedRelayExtensions {
@@ -108,7 +111,7 @@ export interface LoadOptions {
   /** RelayHandle.onEvent, threaded through so an extension can observe traffic. */
   onEvent(cb: (event: StoredEvent) => void): void;
   /** RelayHandle.inject, threaded through so an extension can feed the pipeline. */
-  inject(event: StoredEvent): { accepted: boolean; reason?: string };
+  inject(event: StoredEvent): Promise<{ accepted: boolean; reason?: string }>;
 }
 
 /**

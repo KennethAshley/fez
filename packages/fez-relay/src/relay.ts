@@ -272,8 +272,11 @@ export interface RelayHandle {
    * signature verification, policies, store, fan-out — exactly as if it
    * arrived over the wire. The relay stays the validator; injection
    * grants no authority a signed event doesn't already carry.
+   *
+   * A Promise because the policy pipeline it runs through may itself be
+   * async (`RelayPolicy.onEvent` returns `PolicyVerdict | Promise<PolicyVerdict>`).
    */
-  inject(event: StoredEvent): { accepted: boolean; reason?: string };
+  inject(event: StoredEvent): Promise<{ accepted: boolean; reason?: string }>;
 }
 
 export function startRelay(options: RelayOptions): RelayHandle {
@@ -352,18 +355,21 @@ export function startRelay(options: RelayOptions): RelayHandle {
    * validated exactly as strictly as one that arrived over a socket —
    * injection grants no authority a signed event doesn't already carry.
    *
-   * Deliberately synchronous (`ctx.via` is carried for a future caller
-   * that wants to tell the two apart, e.g. in logging): every built-in
-   * policy already resolves its verdict synchronously, and `inject()`
-   * must return its verdict immediately rather than as a Promise.
+   * Async, matching the pre-extraction ws handler exactly: `RelayPolicy.onEvent`
+   * is typed `PolicyVerdict | Promise<PolicyVerdict>`, and the original
+   * inline code `await`ed every verdict inside its own async IIFE. A
+   * policy that genuinely resolves asynchronously must still be waited
+   * on here, or its matched events would be silently rejected with no
+   * diagnostic — so `inject()` returns a Promise too, and both call
+   * sites await it.
    *
    * Size/frame caps are NOT here — those are a wire-framing concern and
    * stay in the ws message handler, the one call site that has frames.
    */
-  function ingest(
+  async function ingest(
     event: StoredEvent,
     ctxMeta: { via: "wire" | "inject" }
-  ): { accepted: boolean; reason?: string } {
+  ): Promise<{ accepted: boolean; reason?: string }> {
     void ctxMeta; // reserved for future via-aware logging/observers
     let suppressFanout = false;
 
@@ -378,9 +384,7 @@ export function startRelay(options: RelayOptions): RelayHandle {
     for (const policy of policies) {
       let verdict: { accept: boolean; reason?: string };
       try {
-        // Every built-in policy resolves synchronously; the seam requires
-        // it (see doc comment above), so a thenable is not awaited here.
-        verdict = policy.onEvent(event, ctx) as { accept: boolean; reason?: string };
+        verdict = await policy.onEvent(event, ctx);
       } catch (err) {
         verdict = { accept: false, reason: `error: policy ${policy.name} failed` };
         log(`⚠️ policy ${policy.name} threw: ${err instanceof Error ? err.message : err}`);
@@ -564,15 +568,19 @@ export function startRelay(options: RelayOptions): RelayHandle {
           return;
         }
 
-        const verdict = ingest(event, { via: "wire" });
-        // NIP-20: a replayed EVENT (client publish-retry, reconnect echo)
-        // is still OK=true — the event IS accepted, the client's retry
-        // succeeded — even though ingest()'s own verdict is `accepted:
-        // false` (it did no new work). That distinction is exactly what
-        // inject() needs to report honestly; the wire reply papers over
-        // it, as it always has.
-        const wireAccepted = verdict.accepted || Boolean(verdict.reason?.startsWith("duplicate:"));
-        ws.send(JSON.stringify(["OK", event.id, wireAccepted, verdict.reason ?? ""]));
+        // ingest() is async (policies may be) — same async context the
+        // inline handler ran in pre-extraction.
+        void (async () => {
+          const verdict = await ingest(event, { via: "wire" });
+          // NIP-20: a replayed EVENT (client publish-retry, reconnect echo)
+          // is still OK=true — the event IS accepted, the client's retry
+          // succeeded — even though ingest()'s own verdict is `accepted:
+          // false` (it did no new work). That distinction is exactly what
+          // inject() needs to report honestly; the wire reply papers over
+          // it, as it always has.
+          const wireAccepted = verdict.accepted || Boolean(verdict.reason?.startsWith("duplicate:"));
+          ws.send(JSON.stringify(["OK", event.id, wireAccepted, verdict.reason ?? ""]));
+        })();
         return;
       }
 

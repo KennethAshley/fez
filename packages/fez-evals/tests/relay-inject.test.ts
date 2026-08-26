@@ -65,7 +65,7 @@ describe("relay inject + observers", () => {
     relay.onEvent((e) => seenByObserver.push(e));
 
     const e = ev("released", Math.floor(Date.now() / 1000));
-    const verdict = relay.inject(e);
+    const verdict = await relay.inject(e);
     expect(verdict.accepted).toBe(true);
 
     // observer saw it
@@ -82,8 +82,8 @@ describe("relay inject + observers", () => {
   test("inject of a duplicate id is rejected, not double-stored", async () => {
     const e = ev("once", Math.floor(Date.now() / 1000));
     const before = relay.eventCount;
-    expect(relay.inject(e).accepted).toBe(true);
-    expect(relay.inject(e).accepted).toBe(false);
+    expect((await relay.inject(e)).accepted).toBe(true);
+    expect((await relay.inject(e)).accepted).toBe(false);
     expect(relay.eventCount).toBe(before + 1);
     // query returns exactly one copy
     expect(relay.query({ ids: [e.id] })).toHaveLength(1);
@@ -91,7 +91,7 @@ describe("relay inject + observers", () => {
 
   test("inject verifies signatures — a tampered event is refused", async () => {
     const e = { ...ev("real", Math.floor(Date.now() / 1000)), content: "forged" };
-    const verdict = relay.inject(e);
+    const verdict = await relay.inject(e);
     expect(verdict.accepted).toBe(false);
     expect(relay.query({ ids: [e.id] })).toHaveLength(0);
   });
