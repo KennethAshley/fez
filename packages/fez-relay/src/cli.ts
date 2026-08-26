@@ -31,6 +31,7 @@ async function main() {
   let port: number | undefined;
   let store: string | undefined;
   let verifySignatures: boolean | undefined;
+  let scheduler = true;
   // Policies are built AFTER parsing: membership/moderation take the
   // workspace owner, and --owner may appear after --policy on the line.
   const policySpecs: { name: string; value?: string }[] = [];
@@ -49,6 +50,7 @@ async function main() {
     if (arg === "--port") port = Number(args[++i]);
     else if (arg === "--store") store = args[++i];
     else if (arg === "--no-verify") verifySignatures = false;
+    else if (arg === "--no-scheduler") scheduler = false;
     else if (arg === "--config") configPath = args[++i];
     else if (arg === "--extensions") extensionsDir = args[i + 1]?.startsWith("--") === false ? args[++i] : "";
     else if (arg === "--extensions-data") extensionsData = args[++i];
@@ -69,12 +71,13 @@ async function main() {
       console.log(
         "Usage: fez-relay [--port N] [--store FILE] [--no-verify] [--policy NAME[=ARG]]... [--config FILE]\n" +
           "                 [--owner HEX] [--name TEXT] [--description TEXT] [--icon URL]\n" +
-          "                 [--extensions [DIR]] [--extensions-data DIR] [--origin URL]...\n\n" +
+          "                 [--extensions [DIR]] [--extensions-data DIR] [--origin URL]... [--no-scheduler]\n\n" +
           "--extensions loads ~/.fez/relay-extensions (or DIR): code that runs INSIDE this\n" +
           "relay, installed by `fez install`. Off unless asked for — installing an\n" +
           "extension and letting it into the event store are two decisions.\n" +
           "--origin is the PUBLIC url this relay answers to; extensions that verify\n" +
-          "signed requests need it, because behind a proxy the relay cannot know.\n\n" +
+          "signed requests need it, because behind a proxy the relay cannot know.\n" +
+          "--no-scheduler   don't execute sealed 40006 schedule intents\n\n" +
           "A relay is a workspace. --owner is the pubkey whose signature makes a channel\n" +
           "or roster event count; it is served in the NIP-11 document and is what the\n" +
           "membership and moderation policies enforce. Without it the workspace is\n" +
@@ -154,6 +157,16 @@ async function main() {
     // second construction phase.
     handle.httpHandlers.push(...loaded.httpHandlers);
     for (const policy of loaded.policies) handle.policies.push(policy);
+  }
+
+  if (scheduler) {
+    const { activateScheduler } = await import("./scheduler.js");
+    activateScheduler({
+      query: (f) => handle.query(f as never),
+      onEvent: (cb) => handle.onEvent(cb),
+      inject: (e) => handle.inject(e),
+      log: (line) => console.log(line),
+    });
   }
 }
 
