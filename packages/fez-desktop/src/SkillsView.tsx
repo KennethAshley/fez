@@ -10,7 +10,6 @@ import FindSource from "./FindSource";
 import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
 import { useConfig, bumpConfig } from "./config-store";
-import { extensionSettingsPanels } from "./gui-extensions";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
