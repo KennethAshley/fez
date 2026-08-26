@@ -16,3 +16,14 @@ Operators can add policies at the door without making the store smart: membershi
 node packages/fez-relay/dist/cli.js --port 7777 --store events.jsonl \
   --owner <pubkey> --extensions --origin https://your-relay
 ```
+
+## Scheduler
+
+The relay executes sealed 40006 schedule intents by default: the client
+signs the final message at schedule time (`created_at = send_at`) and
+embeds it in the intent; at the appointed time the relay injects the
+embedded, author-signed event through its normal ingest pipeline. The
+relay signs nothing — it is a timestamp escrow, not an author. Disable
+with `--no-scheduler`. Legacy plaintext intents are ignored here (the
+sentinel fires those). Cancel by tombstoning the intent (kind 5) before
+`send_at`.
