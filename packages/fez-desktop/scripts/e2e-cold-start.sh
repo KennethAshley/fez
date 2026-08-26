@@ -131,10 +131,10 @@ while ((SECONDS < DEADLINE)); do
     announces=$(grep -c "\"kind\":47000" $E || true)
     speakers=$(grep "\"kind\":47103" $E | grep "bootstrap-welcome" | grep -o "\"pubkey\":\"[0-9a-f]*\"" | sort -u | wc -l | tr -d " ")
     # Managed-agent logs, not a sentinel pidfile: the GUI spawns
-    # fez/drift/quill itself now (managed_agents.rs), and a
-    # <persona>.desktop.log per starter persona is the spawn witness.
+    # fez/drift/quill itself through the ONE spawn primitive, which
+    # logs every persona to <persona>.log — the spawn witness.
     logs=1
-    for f in fez drift quill; do [[ -s ~/.fez/logs/$f.desktop.log ]] || logs=0; done
+    for f in fez drift quill; do [[ -s ~/.fez/logs/$f.log ]] || logs=0; done
     personas=$(ls ~/.fez/personas/ 2>/dev/null | tr "\n" ",")
     echo "hello=$hello opener=$opener notready=$notready team=$team kickoff=$kickoff channel=$channel announces=$announces speakers=$speakers logs=$logs personas=$personas"
   ')
@@ -158,7 +158,7 @@ fi
 
 echo "✗ FAIL — final state above. Logs:"
 "${SSH[@]}" '
-  echo "--- managed-agent logs:"; for f in fez drift quill; do echo "· $f.desktop.log:"; tail -10 ~/.fez/logs/$f.desktop.log 2>/dev/null; done
+  echo "--- managed-agent logs:"; for f in fez drift quill; do echo "· $f.log:"; tail -10 ~/.fez/logs/$f.log 2>/dev/null; done
   echo "--- relay.log:"; tail -5 ~/.fez/relay/relay.log 2>/dev/null
   echo "--- processes:"; pgrep -fl "fez-agent|claude" | head -5
   echo "--- 47103 contents:"; grep "\"kind\":47103" ~/.fez/relay/events.jsonl 2>/dev/null | python3 -c "import sys,json
