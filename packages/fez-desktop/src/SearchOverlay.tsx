@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, WireEvent } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
+import { AnimatedSprite } from "./pixel-sprite";
+import { SPRITES } from "./sprites";
 
 /**
  * ⌘K search — Buzz's topbar search as a command-palette overlay. The
@@ -103,10 +105,9 @@ export default function SearchOverlay({
     <div className="overlay" onMouseDown={onClose}>
       <div className="search-box" onMouseDown={(e) => e.stopPropagation()}>
         <div className="search-head">
-          <svg className="search-glyph" width="15" height="15" viewBox="0 0 15 15" aria-hidden>
-            <circle cx="6.5" cy="6.5" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" />
-            <line x1="10.2" y1="10.2" x2="13.5" y2="13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
+          {/* The prompt, not a magnifier: ⌘K is fez's command line. Dim
+              at rest, phosphor once something's typed. */}
+          <span className={query.trim() ? "search-glyph live" : "search-glyph"} aria-hidden>&gt;</span>
           <input
             ref={inputRef}
             className="search-input"
@@ -134,7 +135,17 @@ export default function SearchOverlay({
           )}
         </div>
         <div className="search-results" ref={listRef}>
-          {rows?.length === 0 && <div className="search-empty">nothing matching "{query.trim()}"</div>}
+          {rows?.length === 0 && (
+            <div className="search-empty">
+              {/* Scout came back empty-handed — the cast's searcher,
+                  pacing its two-frame idle while you rephrase. */}
+              <span className="search-empty-sprite">
+                <AnimatedSprite sprite={SPRITES.scout} scale={4} />
+              </span>
+              <div>nothing matching "{query.trim()}"</div>
+              <div className="search-empty-sub">scout turned over every stone</div>
+            </div>
+          )}
           {rows?.map((row, index) => (
             <button
               key={row.id}

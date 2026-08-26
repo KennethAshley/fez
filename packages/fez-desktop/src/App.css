@@ -294,7 +294,11 @@ body {
   display: flex; align-items: center; gap: 10px; padding: 0 16px;
   background: var(--field); border-bottom: 1px solid var(--hairline);
 }
-.search-glyph { color: var(--fg-dim); flex: none; }
+.search-glyph {
+  color: var(--fg-dim); flex: none; font: 600 15px var(--font-mono);
+  transition: color 110ms ease;
+}
+.search-glyph.live { color: var(--phosphor); }
 .search-input {
   flex: 1; min-width: 0; background: none; border: 0;
   color: var(--fg); font: inherit; font-size: 15px; padding: 14px 0; outline: none;
@@ -307,17 +311,31 @@ body {
 }
 .search-clear:hover { color: var(--fg); }
 .search-results { max-height: 50vh; overflow-y: auto; }
-.search-empty { color: var(--fg-dim); text-align: center; padding: 28px 16px; font-size: 13px; }
+.search-empty {
+  color: var(--fg-dim); text-align: center; padding: 26px 16px 24px; font-size: 13px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+/* Unlike hover-woken avatars, the empty-handed scout paces on its own —
+   waiting is the one state where idle motion is the message. */
+.search-empty-sprite { position: relative; line-height: 0; }
+.search-empty-sprite .spr-a { animation: spr-frame-a 0.7s steps(1) infinite; }
+.search-empty-sprite .spr-b { animation: spr-frame-b 0.7s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .search-empty-sprite .spr-a, .search-empty-sprite .spr-b { animation: none; }
+}
+.search-empty-sub { font-family: var(--font-mono); font-size: 11px; opacity: 0.7; font-style: italic; }
 .search-row {
   display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left;
   background: none; border: 0; color: var(--fg); font: inherit; padding: 10px 16px; cursor: pointer;
   border-bottom: 1px solid color-mix(in srgb, var(--bg2) 40%, transparent);
+  position: relative;
 }
-/* Same "this one" idiom as the rail: an accent-tinted ground plus the
-   2px left edge, drawn as an inset shadow so nothing shifts a pixel. */
-.search-row.active {
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg1));
-  box-shadow: inset 2px 0 0 var(--accent);
+/* Same "this one" idiom as the rail: quiet ground plus the square
+   ember notch, drawn as an overlay so nothing shifts a pixel. */
+.search-row.active { background: color-mix(in srgb, var(--bg2) 65%, transparent); }
+.search-row.active::before {
+  content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px;
+  background: var(--brand);
 }
 .search-chan { color: var(--accent); font-weight: 600; }
 .search-sep { opacity: 0.5; margin: 0 2px; }
@@ -580,7 +598,22 @@ select.ob-input:hover { border-color: var(--accent); }
   border-radius: 6px; cursor: pointer;
 }
 .agent-row:hover { background: var(--bg2); }
+/* Presence rides the creature here too; an absent agent reads as absent
+   rather than announcing it in words. */
+.agent-face { position: relative; line-height: 0; flex: none; }
+.agent-row.away { opacity: 0.55; }
+.agent-row.away:hover { opacity: 1; }
 .agent-name { font-weight: 600; }
+.agent-stack { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.agent-hint { color: var(--fg-dim); font-size: 11px; font-family: var(--font-mono); }
+/* The pencil is a secondary action — the rail's leave-button idiom:
+   present on hover or keyboard focus, invisible the rest of the time. */
+/* margin-left:auto used to come from .agent-sub, which an online agent
+   with nothing to say no longer renders. */
+.agent-row > .agent-edit { margin-left: auto; }
+.agent-edit { opacity: 0; transition: opacity 110ms ease; }
+.agent-row:hover .agent-edit, .agent-row:focus-within .agent-edit { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .agent-edit { transition: none; } }
 .agent-sub {
   margin-left: auto; color: var(--fg-dim); font-size: 11px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;
@@ -1071,6 +1104,14 @@ button.author:hover { text-decoration: underline; }
   color: var(--fg); font: inherit; font-family: var(--font-mono); cursor: pointer; text-align: left;
 }
 .self-card:hover { background: var(--bg1); }
+.self-face { position: relative; line-height: 0; flex: none; }
+.self-presence {
+  position: absolute; right: -2px; bottom: -2px; width: 9px; height: 9px;
+  border-radius: 50%; border: 2px solid var(--bg0);
+}
+.self-card:hover .self-presence { border-color: var(--bg1); }
+.self-presence.on { background: var(--phosphor); }
+.self-presence.off { background: var(--fg-dim); }
 .self-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .self-name { font-weight: 700; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .self-status { font-size: 10.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1086,18 +1127,22 @@ button.author:hover { text-decoration: underline; }
   background: var(--bg1); border: 1px solid var(--bg2); border-radius: 10px; overflow: hidden;
   box-shadow: 0 12px 32px rgb(0,0,0,0.5); padding: 4px 0;
 }
-.self-menu-head {
-  padding: 8px 12px 6px; font-size: 10.5px; color: var(--fg-dim);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+.self-menu-group { padding-bottom: 2px; }
+.self-menu-group .community-name { padding: 4px 12px 2px; }
 .self-menu-item {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
   background: none; border: 0; color: var(--fg); font: inherit; font-family: var(--font-mono);
-  font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+  font-size: 12.5px; padding: 6px 12px; cursor: pointer;
 }
-.self-menu-item:hover { background: var(--bg2); color: var(--accent); }
-.self-menu-glyph { width: 20px; text-align: center; color: var(--fg-dim); font-size: 15px; }
-.self-menu-item:hover .self-menu-glyph { color: var(--accent); }
+.self-menu-item:hover { background: color-mix(in srgb, var(--bg2) 65%, transparent); color: var(--fg); }
+.self-menu-item:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* One family: mono unicode marks at a single size, so eight rows read
+   as one set rather than eight drawings. */
+.self-menu-glyph {
+  width: 18px; text-align: center; color: var(--fg-dim);
+  font: 13px/1 var(--font-mono);
+}
+.self-menu-item:hover .self-menu-glyph { color: var(--phosphor); }
 .self-menu-key { margin-left: auto; font-size: 10.5px; color: var(--fg-dim); }
 .self-menu-rule { height: 1px; margin: 4px 0; background: var(--bg2); }
 

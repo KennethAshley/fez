@@ -1105,39 +1105,53 @@ function Shell({
           {selfMenu && (
             <>
               <div className="menu-backdrop" onClick={() => setSelfMenu(false)} />
+              {/* Grouped by where each one takes you — panes open beside
+                  the chat, views replace the main column, and the two
+                  shortcuts sit apart. Glyphs are the rail's own marks
+                  wherever the destination is the same. */}
               <div className="self-menu">
-                <div className="self-menu-head" title={client.pubkey}>
-                  {/* Your NAME, not your key — the key is one hover away.
-                      nameOf (kind-0 profile) beats the onboarding-saved
-                      name beats the prefix, for a fresh session whose
-                      profile event has not arrived yet. */}
-                  {client.nameOf(client.pubkey) ?? localStorage.getItem("fez-name") ?? `${client.pubkey.slice(0, 8)}…`}
-                </div>
                 {(
                   [
-                    ["⊙", "profile", () => setPane({ kind: "profile", pk: client.pubkey })],
-                    ["⌕", "search", () => setSearchOpen({ query: "" }), "⌘K"],
-                    ["@", "agents", () => setPane({ kind: "agents" })],
-                    [<MenuIcon key="m" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />, "memory", () => setPane({ kind: "memory" })],
-                    ["$", "costs", () => setPane({ kind: "costs" })],
-                    ["◷", "reminders", () => setPane({ kind: "reminders" })],
-                    ["⊞", "extensions", () => setView({ kind: "extensions" })],
-                    [<MenuIcon key="s" d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />, "skills", () => setView({ kind: "skills" })],
-                  ] as [React.ReactNode, string, () => void, string?][]
-                ).map(([glyph, label, action, key]) => (
-                  <button
-                    key={label}
-                    className="self-menu-item"
-                    onClick={() => {
-                      setSelfMenu(false);
-                      action();
-                    }}
-                  >
-                    <span className="self-menu-glyph">{glyph}</span> {label}
-                    {key && <span className="self-menu-key">{key}</span>}
-                  </button>
+                    ["panes", [
+                      ["~", "profile", () => setPane({ kind: "profile", pk: client.pubkey })],
+                      ["⚉", "agents", () => setPane({ kind: "agents" })],
+                      ["◈", "memory", () => setPane({ kind: "memory" })],
+                      ["$", "costs", () => setPane({ kind: "costs" })],
+                      ["◷", "reminders", () => setPane({ kind: "reminders" })],
+                    ]],
+                    ["views", [
+                      ["⊞", "extensions", () => setView({ kind: "extensions" })],
+                      ["⚒", "skills", () => setView({ kind: "skills" })],
+                    ]],
+                  ] as [string, [string, string, () => void][]][]
+                ).map(([group, items]) => (
+                  <div className="self-menu-group" key={group}>
+                    <div className="community-name"><span className="community-label">{group}</span></div>
+                    {items.map(([glyph, label, action]) => (
+                      <button
+                        key={label}
+                        className="self-menu-item"
+                        onClick={() => {
+                          setSelfMenu(false);
+                          action();
+                        }}
+                      >
+                        <span className="self-menu-glyph">{glyph}</span> {label}
+                      </button>
+                    ))}
+                  </div>
                 ))}
                 <div className="self-menu-rule" />
+                <button
+                  className="self-menu-item"
+                  onClick={() => {
+                    setSelfMenu(false);
+                    setSearchOpen({ query: "" });
+                  }}
+                >
+                  <span className="self-menu-glyph">⌕</span> search
+                  <span className="self-menu-key">⌘K</span>
+                </button>
                 <button
                   className="self-menu-item"
                   onClick={() => {
@@ -1152,12 +1166,17 @@ function Shell({
             </>
           )}
           <button className="self-card" title="menu" onClick={() => setSelfMenu((open) => !open)}>
-            <Avatar pk={client.pubkey} size={28} title="you" />
+            {/* Presence rides the creature — a dot beside the word
+                "online" said it twice, and the ring keeps it attached
+                to the face rather than floating in the row. */}
+            <span className="self-face">
+              <Avatar pk={client.pubkey} size={28} title="you" />
+              <span className={connected ? "self-presence on" : "self-presence off"} />
+            </span>
             <span className="self-meta">
               <span className="self-name">{client.knownNames().get(client.pubkey) ?? "you"}</span>
               <span className="self-status">{client.statusOf(client.pubkey) ?? (connected ? "online" : "reconnecting…")}</span>
             </span>
-            <span className={connected ? "dot on" : "dot off"} />
             <span className="self-chevron">{selfMenu ? "⌄" : "⌃"}</span>
           </button>
         </div>
@@ -2361,17 +2380,6 @@ function ArtifactCard({ artifact, onAuthor, onOpen, onShare }: { artifact: Artif
         </div>
       )}
     </div>
-  );
-}
-
-/** A small monochrome line-icon for menu/rail glyphs that have no clean
- * unicode (brain, wrench) — inherits currentColor so it matches the text
- * glyphs beside it instead of a full-color emoji. */
-function MenuIcon({ d }: { d: string }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: "middle" }}>
-      <path d={d} />
-    </svg>
   );
 }
 

@@ -366,21 +366,28 @@ export default function AgentsPane({
           {roster.length === 0 && (
             <div className="pane-empty">no agents known yet — they appear when their 47000 metadata reaches your relay</div>
           )}
+          {/* Both groups are labeled now — the summoned roster used to
+              start with no heading, so the stats block bled into it. */}
+          {roster.length > 0 && <div className="manage-section">summoned</div>}
           {roster.map((agent) => {
             const busy = working.get(agent.name);
             const active = busy && Date.now() - busy.ts < 30_000;
             const localName = localPersonas.find((name) => name.toLowerCase() === agent.name.toLowerCase());
+            // Presence rides the creature (the self card's rule): a dot
+            // beside the word "online" said it twice. Offline rows dim
+            // instead — absence you can see at a glance.
+            const sub = active ? busy.activity : client.statusOf(agent.pk) ?? (agent.online ? "" : "offline");
             return (
-              <button key={agent.pk} className="agent-row" onClick={() => setSelected(agent.pk)}>
-                <Avatar pk={agent.pk} size={18} title={agent.name} />
-                <span className={agent.online ? "dot on" : "dot off"} />
+              <button key={agent.pk} className={agent.online ? "agent-row" : "agent-row away"} onClick={() => setSelected(agent.pk)}>
+                <span className="agent-face">
+                  <Avatar pk={agent.pk} size={24} title={agent.name} />
+                  <span className={agent.online ? "self-presence on" : "self-presence off"} />
+                </span>
                 <HoverCard client={client} pk={agent.pk}>
                   <span className="agent-name">@{agent.name}</span>
                 </HoverCard>
                 {active && <span className="working">⚙</span>}
-                <span className="agent-sub">
-                  {active ? busy.activity : client.statusOf(agent.pk) ?? (agent.online ? "online" : "offline")}
-                </span>
+                {sub && <span className="agent-sub">{sub}</span>}
                 {localName && (
                   <span
                     className="agent-edit"
@@ -403,9 +410,13 @@ export default function AgentsPane({
                 <div key={name} className="agent-row agent-row-static">
                   <button className="agent-row-main" title="edit persona" onClick={() => setEditingPersona(name)}>
                     <span className="agent-ghost">◌</span>
-                    <span className="agent-name">@{name}</span>
-                    <span className="agent-sub">
-                      {invited === name ? "✓ on the roster — mention to wake" : `mention @${name} to summon · click to edit`}
+                    {/* The hint gets its own line — at 140px on the same
+                        row it truncated mid-word ("mention @deploye…"). */}
+                    <span className="agent-stack">
+                      <span className="agent-name">@{name}</span>
+                      <span className="agent-hint">
+                        {invited === name ? "✓ on the roster — mention to wake" : `mention @${name} to summon · click to edit`}
+                      </span>
                     </span>
                   </button>
                   {/* The stable-key invite: on the roster BEFORE first
