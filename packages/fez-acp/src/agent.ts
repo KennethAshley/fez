@@ -1163,11 +1163,19 @@ async function main() {
       recent.set(channelId, context.slice(-10));
 
       const mentioned = isMention(event);
-      const authorIsMember = roster.members.has(event.pubkey);
+      // The owner is implicitly a member of their own workspace — the
+      // same rule every client applies (workspace-state isMember). An
+      // owner-less roster write once deafened every agent to the owner
+      // for a day, silently; the implicit check plus the log line below
+      // make that failure impossible-and-loud instead of silent.
+      const authorIsMember = roster.members.has(event.pubkey) || event.pubkey === owner;
 
       if (!mentioned) return;
       if (!(await authorAllowed(event.pubkey))) return;
-      if (!authorIsMember) return;
+      if (!authorIsMember) {
+        console.log(`🚫 Mention from ${event.pubkey.slice(0, 8)}… dropped — not on the workspace roster`);
+        return;
+      }
 
       // Agent-to-agent chain cap — mirrors the TUI's MAX_CHAIN_DEPTH for
       // relay-dispatched agents. Human messages carry no depth tag

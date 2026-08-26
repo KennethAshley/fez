@@ -1546,6 +1546,14 @@ export class FezClient {
 
   /** Republish the workspace roster — the one place membership changes. */
   private async publishRoster(members: Map<string, Role>): Promise<void> {
+    // The owner is ALWAYS on their own roster. Agents gate mentions on
+    // the roster's p-tags alone, so a single owner-less write silently
+    // deafened every agent to the owner — and self-perpetuated, because
+    // each later publish copied the map. (Aug 25 incident: one rewrite
+    // dropped the owner; nothing replied for a day.) Guarding at the
+    // ONE write site beats trusting every caller's hydration.
+    const owner = this.state.workspace.owner;
+    if (owner && !members.has(owner)) members = new Map([[owner, "owner" as Role], ...members]);
     const event = await this.wire.publish({
       kind: K.MEMBERSHIP,
       tags: [["d", K.ROSTER_D], ...[...members.entries()].map(([pk, r]) => ["p", pk, r])],
