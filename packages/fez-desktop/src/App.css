@@ -888,13 +888,24 @@ button.author {
 .bubble.mine button.author { color: var(--accent); }
 button.author:hover { text-decoration: underline; }
 .topbar button.author { font-family: var(--font-mono); font-size: 13px; color: var(--fg); }
-.profile-name { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; }
+/* profile portrait — the look card: the creature on a stage, name
+   beneath, chips in a quiet row, status as the creature speaking. */
+.profile-portrait { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 14px 0 8px; }
+.portrait-slot {
+  display: grid; place-items: center; width: 112px; height: 112px; line-height: 0;
+  border: 1px solid var(--hairline); border-radius: 12px;
+  background: color-mix(in srgb, var(--bg0) 70%, transparent);
+}
+.portrait-name { font-weight: 700; font-size: 16px; }
+.portrait-chips { display: flex; align-items: center; gap: 6px; }
+.portrait-line { font-size: 13px; font-style: italic; }
+.portrait-line.dim { color: var(--fg-dim); font-family: var(--font-mono); font-size: 12px; font-style: normal; }
+.profile-actions { flex-direction: column; align-items: stretch; margin-top: 14px; }
+.profile-actions .agent-action { width: 100%; text-align: center; }
 .profile-you {
   font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
   background: var(--bg2); color: var(--accent); border-radius: 8px; padding: 1px 7px;
 }
-.profile-status { margin-top: 4px; font-size: 13px; }
-.profile-status.dim { color: var(--fg-dim); font-family: var(--font-mono); font-size: 12px; }
 .pk-code {
   display: block; word-break: break-all; background: var(--bg0); border: 1px solid var(--hairline);
   border-radius: 6px; padding: 8px 10px; font-family: var(--font-mono); font-size: 11px; cursor: pointer;

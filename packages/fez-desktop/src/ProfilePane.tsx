@@ -87,17 +87,25 @@ export default function ProfilePane({
         <button className="pane-close" onClick={onClose}>✕</button>
       </header>
       <div className="pane-body">
-        <div className="profile-name">
-          <Avatar pk={pk} size={40} title={name} />
-          <span className={online ? "dot on" : "dot off"} /> {name}
-          {self && <span className="profile-you">you</span>}
-          {agentName && <span className="role-tag">agent</span>}
-          {role && role !== "bot" && <span className="role-tag">{role}</span>}
-          {live && <span className="working">⚙</span>}
+        {/* The look card: identity gets a stage. The creature large in a
+            framed slot, name beneath, chips in a quiet row, and the
+            status line as the creature speaking. */}
+        <div className="profile-portrait">
+          <span className="portrait-slot">
+            <Avatar pk={pk} size={88} title={name} />
+          </span>
+          <div className="portrait-name">{name}</div>
+          <div className="portrait-chips">
+            <span className={online ? "dot on" : "dot off"} />
+            {self && <span className="profile-you">you</span>}
+            {agentName && <span className="role-tag">agent</span>}
+            {role && role !== "bot" && <span className="role-tag">{role}</span>}
+            {live && <span className="working">⚙</span>}
+          </div>
+          {live && <div className="agent-headline shimmer">{busy.activity}</div>}
+          {!live && status && <div className="portrait-line">“{status}”</div>}
+          {!live && !status && <div className="portrait-line dim">{online ? "online" : "offline"}</div>}
         </div>
-        {live && <div className="agent-headline shimmer">{busy.activity}</div>}
-        {status && <div className="profile-status">{status}</div>}
-        {!status && !live && <div className="profile-status dim">{online ? "online" : "offline"}</div>}
 
         <div className="manage-section">pubkey</div>
         <code className="pk-code" onClick={copyPk} title="click to copy">
@@ -105,7 +113,7 @@ export default function ProfilePane({
         </code>
         <div className="settings-hint">This key IS the identity — names are just labels people publish for it.</div>
 
-        <div className="agent-actions">
+        <div className="agent-actions profile-actions">
           {!self && <button className="agent-action" onClick={() => onDm(pk)}>✉ dm</button>}
           {agentName && <button className="agent-action" onClick={() => onWatch(agentName)}>◉ watch live</button>}
           {canInvite && (
