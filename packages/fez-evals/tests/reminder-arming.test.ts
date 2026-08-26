@@ -139,4 +139,33 @@ describe("client reminder arming", () => {
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith("long haul");
   });
+
+  it("hydrating a long-past reminder does not re-toast it", async () => {
+    // Without a sentinel, nothing tombstones a fired reminder — so every
+    // launch used to re-arm (and immediately re-emit) every own reminder
+    // still sitting on the relay, no matter how long ago it was due.
+    const remindAt = Math.floor(Date.now() / 1000) - 3600; // 1 hour ago
+    const { wire } = fakeWire({ reminders: [reminderEvent("rem5", "long gone", remindAt)] });
+    const client = new FezClient(wire);
+
+    const handler = vi.fn();
+    client.on("reminderDue", handler as never);
+
+    await client.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("hydrating a just-missed reminder (<=60s late) still fires", async () => {
+    const remindAt = Math.floor(Date.now() / 1000) - 30; // 30s ago
+    const { wire } = fakeWire({ reminders: [reminderEvent("rem6", "just missed", remindAt)] });
+    const client = new FezClient(wire);
+
+    const handler = vi.fn();
+    client.on("reminderDue", handler as never);
+
+    await client.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(handler).toHaveBeenCalledWith("just missed");
+  });
 });

@@ -523,9 +523,19 @@ function Shell({
     client.on("reminderDue", ((note: string) => {
       void (async () => {
         // The sentinel delivers OS notifications when it's alive — one
-        // notifier per machine (same rule as the summoner).
+        // notifier per machine (same rule as the summoner). Otherwise
+        // this window is the only deliverer, so it owes a real native
+        // notification (same mechanism as the dmMessage handler above),
+        // not just an in-app toast.
         const sentinel = await invoke<boolean>("runner_status").catch(() => false);
-        if (!sentinel) toast.info(`⏰ ${note}`, 0);
+        if (!sentinel) {
+          notifyEvent({
+            key: `reminder:${note}`,
+            title: "⏰ Reminder",
+            body: note,
+            label: "Reminders",
+          });
+        }
       })();
     }) as never);
 

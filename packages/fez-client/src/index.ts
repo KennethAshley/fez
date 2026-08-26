@@ -1799,6 +1799,16 @@ export class FezClient {
       }
       for (const event of reminderEvents) {
         if (tombstoned.has(event.id)) continue;
+        // Without a sentinel, nothing tombstones a reminder once it
+        // fires — so hydrating unconditionally re-emitted EVERY past
+        // reminder on every launch. A just-missed one (<=60s late)
+        // still deserves to fire; anything further past is stale and
+        // should stay silent instead of re-toasting forever. Live
+        // subscription arrivals (below) are untouched by this filter.
+        try {
+          const body = JSON.parse(await this.wire.decrypt(this.pubkey, event.content)) as { remind_at?: number };
+          if (typeof body.remind_at === "number" && body.remind_at * 1000 < Date.now() - 60_000) continue;
+        } catch { /* not decryptable/parsable — let armReminder's own handling apply */ }
         void this.armReminder(event);
       }
     } catch { /* live stream fills in */ }

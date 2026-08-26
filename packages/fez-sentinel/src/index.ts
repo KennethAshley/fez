@@ -419,6 +419,23 @@ async function main() {
   async function fireIntent(intent: IntentEvent): Promise<void> {
     armedTimers.delete(intent.id);
     if (firedIntents.has(intent.id)) return;
+
+    // setTimeout's ~24.9-day cap (2^31-1 ms) means armIntent may have
+    // clamped a longer delay — recompute what's actually left and re-arm
+    // another chunk instead of firing early. For a sealed 40006 that
+    // means not disarming the relay scheduler's own correct chunked
+    // timer out from under it (shape mirrors the relay scheduler's own
+    // fire(), see packages/fez-relay/src/scheduler.ts).
+    const at =
+      intent.kind === KIND_REMINDER
+        ? decodeReminder(intent).at
+        : Number(intent.tags.find((t) => t[0] === "send_at")?.[1]);
+    const remaining = at * 1000 - Date.now();
+    if (remaining > 1000) {
+      armedTimers.set(intent.id, setTimeout(() => void fireIntent(intent), Math.min(remaining, 2 ** 31 - 1)));
+      return;
+    }
+
     firedIntents.add(intent.id);
     if (intent.kind === KIND_SCHEDULED) {
       const sealed = parseSealed(intent.content);
@@ -431,9 +448,17 @@ async function main() {
       } else {
         // Legacy plaintext. The old gate also required a retired "c"
         // tag scheduleMessage never set — legacy intents silently never
-        // fired. h alone is the address.
+        // fired, which means the c-tag bugfix would otherwise deliver
+        // every historical one — months late — the first time an
+        // upgraded sentinel boots. Sealed intents are NOT subject to
+        // this cutoff: the relay scheduler owns their timing, and a
+        // late sentinel wake just releases normally (id-dedupe protects
+        // it if the relay already did).
         const h = intent.tags.find((t) => t[0] === "h")?.[1];
-        if (h) {
+        const STALE_MS = 24 * 60 * 60 * 1000;
+        if (Date.now() - at * 1000 > STALE_MS) {
+          console.log(`⏲ legacy intent ${intent.id.slice(0, 8)}… too stale to deliver — tombstoned`);
+        } else if (h) {
           await relay.publish(client.signEvent({ kind: KIND_CHANNEL_MSG, tags: [["h", h]], content: intent.content }));
           console.log(`⏲ delivered scheduled message to channel ${h.slice(0, 8)}…`);
         }
