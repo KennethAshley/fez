@@ -28,12 +28,9 @@ export function summonMentions(content: string): string[] {
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`[^`\n]*`/g, " ")
     .replace(/"[^"\n]*"/g, " ")
-    .replace(/"[^"\n]*"/g, " ")
-    .replace(/[“][^”\n]*[”]/g, " ")
-    .replace(/[‘][^’\n]*[’]/g, " ");
+    .replace(/“[^”\n]*”/g, " ");
   return [...new Set([...prose.matchAll(/@([\w-]+)/g)].map((m) => m[1].toLowerCase()))];
 }
-
 export interface SummonEvent {
   id?: string;
   kind: number;
