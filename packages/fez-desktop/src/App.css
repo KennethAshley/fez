@@ -211,9 +211,16 @@ body {
 .tombstone { color: var(--fg-dim); font-style: italic; padding: 4px 0; }
 .mention { color: var(--accent); font-weight: 600; }
 .bubble-foot { display: flex; gap: 8px; align-items: center; min-height: 0; }
+/* Only a foot with content earns the gap — an empty foot must stay
+ * collapsed or every message grows phantom padding. */
+.bubble-foot:not(:empty) { margin-top: 5px; }
 .pill {
-  background: var(--bg2); border-radius: 10px; padding: 1px 8px;
+  background: var(--bg2); border-radius: 10px; padding: 1px 7px;
   border: 1px solid transparent; cursor: pointer; font: inherit; color: var(--fg);
+  /* The foot row reads at 12px (see .thread-link beside it); inheriting the
+   * bubble's body size made the emoji shout. Sizing the pill down scales
+   * emoji and count together. word-spacing opens the emoji↔count gap. */
+  font-size: 12px; line-height: 1.6; word-spacing: 3px;
 }
 .thread-link {
   background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px;
