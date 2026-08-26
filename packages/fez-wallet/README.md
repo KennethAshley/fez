@@ -45,3 +45,13 @@ owner's ✅ / ❌ reaction. Timeout declines.
    back to the treasury address (auto), then an over-threshold send —
    approve the ✅ path once and let one time out.
 5. `fez-wallet status` and `wallet_history` should agree with the chain.
+
+## GUI
+
+The extension ships a gui part: consent requests in chat grow
+Approve ✅ / Decline ❌ buttons (they publish your ordinary reaction —
+the same event the wallet trusts), and Settings gains a Wallet card
+with live balances and the spend ledger. The panel reads only the
+public state the CLI mirrors into extension storage (addresses,
+endpoint, history) — keys never touch the webview. Ceremony (init/
+derive/fund) remains CLI-only by design.
