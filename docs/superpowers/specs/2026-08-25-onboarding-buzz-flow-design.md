@@ -48,30 +48,52 @@ screenshots from Ken's Buzz walkthrough (2026-08-25).
    doors off the welcome card.
 8. **Skip never soft-locks** (Buzz's rule, already ours): every step has a
    skip/later path, and the in-app fallbacks stay honest about gaps.
+9. **The GUI does not use the sentinel** (locked with Ken, 2026-08-25).
+   The sentinel was extracted from the TUI so the fleet works with no
+   window open — that premise doesn't hold for the desktop, which is
+   itself a long-lived process. The desktop supervises its agents
+   directly (Buzz's `managed_agents` shape): it spawns the starter
+   agents as managed children after bootstrap, reconciles them while the
+   app runs, and stops them on quit. The sentinel remains the TUI /
+   headless runner only. Guard rail: the desktop defers to a live
+   sentinel pidfile (and vice versa via fez-acp's existing duplicate
+   guard) so running TUI + GUI together never double-spawns a persona.
 
-## 0. Diagnosis workstream (gates everything)
+## 0. Architecture: desktop-managed agents (replaces sentinel-in-GUI)
 
-Before UI work, run systematic-debugging on the two failures, witnessed by
-`e2e-cold-start.sh` on the mini (the E2E-before-ship rule applies to this
-whole spec). Suspects to confirm or eliminate:
+Decision 9 dissolves the old "runner chain" diagnosis: instead of making
+`ensure_agent_runner` → sentinel → summon → spawn reliable, the GUI owns
+the lifecycle. What the desktop takes over from the sentinel (all
+mechanisms it already half-has):
 
-- **pi authed-gate:** `readiness()` in `welcome.ts` — `authed:
-  claudeReady || (!!harnesses["pi"] && chutes)`. Must become "pi + any
-  configured provider credential", not Chutes specifically.
-- **Runner chain:** does the bundled sentinel actually start on a fresh
-  machine (pidfile via `runner_status`), and does it wake personas by
-  mention? The six-binary bundle exists; verify the spawn path end to end.
-- **Teammate rostering:** @fez gets `client.invite(agentPk, "bot")` +
-  `attestAgent`; the teammates get neither. Confirm whether the sentinel
-  gives woken personas their own keys and whether those keys are rostered —
-  an unrostered teammate's intro would be invisible (the exact bug the
-  roster fix caught for @fez).
-- **pi turn completion:** with a valid provider key, does a pi-acp turn
-  actually complete from the app? (invoke\<T\> is a cast, not a check —
-  verify the real payloads.)
+- **Keys:** per-persona keychain identity, service `fez-keys`, account
+  `agent:<name>` — the same accounts the sentinel/CLI use
+  (`loadOrCreateKey`), so an agent has one identity no matter who spawns
+  it. The desktop already does exactly this for @fez (`AGENT_ACCOUNT =
+  "agent:fez"` in welcome.ts).
+- **Roster + attest:** the desktop client rosters and attests each
+  managed agent's pubkey before it speaks (`client.invite(pk, "bot")` +
+  `client.attestAgent(pk)`) — @fez already gets this; the teammates now
+  do too. Attestation still matters for the TUI/sentinel world and for
+  fez-acp's sibling gating.
+- **Spawn:** the Tauri backend spawns `~/.fez/bin/fez-agent` per persona
+  with the same env the sentinel's `agentEnvCmd` builds
+  (`FEZ_AGENT_OWNER`, `FEZ_RELAY`, `FEZ_AGENT_PERSONA`,
+  `FEZ_AGENT_CHANNELS`), logs to `~/.fez/logs/`, restarts on crash with
+  bounded backoff, kills children on app exit.
+- **Mention handling needs no watcher:** a running fez-acp agent has its
+  own relay subscription and `respondTo` gating — agents that are alive
+  answer their own mentions. The GUI keeps the trio alive; there is no
+  wake-on-mention step to break.
+- **Readiness:** `runner: true` when the managed trio is running
+  (backend status query), replacing the sentinel pidfile poll. The
+  `authed` half becomes "claude ready OR pi + any configured provider
+  credential" (not Chutes specifically).
 
-Findings feed the implementation plan; anything structural discovered here
-upgrades this spec.
+Remaining diagnosis (small, still first): with a valid provider key,
+verify a pi-acp turn completes end to end from a desktop-spawned
+`fez-agent` (invoke\<T\> is a cast, not a check — verify real payloads),
+witnessed by `e2e-cold-start.sh` on the mini.
 
 ## 1. Step flow (Onboarding.tsx)
 
@@ -156,10 +178,17 @@ key custody note survives somewhere on the exit path).
 
 ## 7. #welcome channel + kickoff choreography
 
-- **Bootstrap creates `#welcome`** (private — roster: owner + the three
-  agent keys) alongside general. `ensureWelcome` targets it instead of
+- **Bootstrap creates `#welcome`** alongside general, via
+  `client.ensureChannel({ name: "welcome", id: "bootstrap-welcome",
+  visibility: "closed" })` — the same fixed-id converging-race shape as
+  bootstrap-general. `ensureWelcome` targets it instead of
   `bootstrap-general`; App.tsx opens `#welcome` on first post-onboarding
-  boot.
+  boot. Honesty note: fez has no per-channel membership enforcement —
+  the relay's membership policy gates on the single workspace-wide
+  roster, and `visibility: "closed"` is serialized but unenforced. In a
+  fresh solo workspace the members are the owner + the trio anyway, so
+  "private" is truthful in effect; real per-channel privacy is a relay
+  policy for another spec.
 - **Migration/idempotency:** existing installs whose opener markers live in
   general are left alone (markers are relay-side; a new #welcome on an old
   workspace would re-greet — so `ensureWelcome` checks BOTH channels for
@@ -168,9 +197,12 @@ key custody note survives somewhere on the exit path).
   description/prompt) and `quill` (scribe description/prompt). Persona
   files `drift.md`, `quill.md`.
 - **Roster + attest teammates:** `ensureStarterTeam` gains the same
-  invite/attest treatment @fez gets — each teammate's agent key (however
-  the sentinel derives it — per diagnosis) is made a member of #welcome
-  before the summons posts.
+  invite/attest treatment @fez gets — each teammate's key is the
+  keychain identity `fez-keys` / `agent:<name>` (the account convention
+  the whole stack shares), rostered + attested before the summons posts.
+- **Spawn:** after rostering, the desktop starts @drift and @quill (and
+  @fez) as managed children per section 0 — no sentinel involved. Their
+  running fez-acp processes see the summons themselves and answer.
 - **Readiness gate widened:** `authed` = claudeReady OR (pi bundled AND any
   provider credential configured). Effort/provider/model come from
   `fez.md`.
@@ -179,7 +211,7 @@ key custody note survives somewhere on the exit path).
   thread per Buzz) → intros counted → kickoff question, all
   relay-marker-idempotent.
 - **Thread shape:** Buzz's intros land as thread replies to the summons.
-  fez's teammates reply wherever the sentinel puts them today; if that's
+  fez's teammates reply wherever fez-acp puts them today; if that's
   in-channel rather than threaded, keep it — thread mechanics are not
   worth blocking on. The kickoff waits on intros either way.
 
