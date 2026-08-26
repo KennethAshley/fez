@@ -14,6 +14,9 @@ use std::sync::Mutex;
 /// which makes the size cap a one-liner.
 static ARTIFACT_DOCS: Mutex<Option<std::collections::BTreeMap<u64, String>>> = Mutex::new(None);
 static ARTIFACT_NEXT: AtomicU64 = AtomicU64::new(1);
+/// Synchronize agent-registry read-modify-write across Tauri command invocations
+/// to prevent lost updates when spawn_agent and kill_agent race.
+static AGENTS_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 /// More staged docs than this and the oldest fall off — a leaked stage
 /// (webview reloaded mid-flight) must not grow the map forever.
 const ARTIFACT_CAP: usize = 64;
@@ -1860,6 +1863,7 @@ fn spawn_agent(
     }
     let child = cmd.spawn().map_err(|e| format!("spawn fez-agent: {e}"))?;
     let pid = child.id();
+    let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut rows: Vec<SpawnedAgent> =
         load_agents_registry().into_iter().filter(|r| r.persona != persona).collect();
     rows.push(SpawnedAgent { persona, channels, repo, line: base_branch, pid });
@@ -1869,6 +1873,7 @@ fn spawn_agent(
 
 #[tauri::command]
 fn kill_agent(persona: String) -> Result<bool, String> {
+    let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let rows = load_agents_registry();
     let hit = rows.iter().find(|r| r.persona == persona).cloned();
     let killed = match &hit {
