@@ -65,14 +65,17 @@ async function deps(signal?: AbortSignal): Promise<ToolDeps> {
   }
   const config = loadConfig();
   const relays = (process.env.FEZ_RELAY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const agentNostrKey = readAgentNostrKey(persona!);
   return {
     persona: persona!,
     pair: pairFromStored(stored),
     adapters: [cachedSubstrateAdapter(config.endpoints.tao), evm],
     config,
     ownerPk: process.env.FEZ_AGENT_OWNER,
-    agentNostrKey: readAgentNostrKey(persona!),
-    relay: relays.length ? () => poolRelay(relays) : undefined,
+    agentNostrKey,
+    // The agent's nostr key doubles as the NIP-42 auth identity —
+    // membership-gated relays withhold reads from anonymous connections.
+    relay: relays.length ? () => poolRelay(relays, agentNostrKey) : undefined,
     signal,
   };
 }

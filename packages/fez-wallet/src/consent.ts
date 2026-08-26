@@ -97,20 +97,37 @@ export function awaitDecision(
  * scoped to that one request. */
 const relayPools = new Map<string, ConsentRelay>();
 
-export async function poolRelay(relayUrls: string[]): Promise<ConsentRelay> {
-  const key = [...relayUrls].sort().join(",");
+/**
+ * Production ConsentRelay over the fleet's RelayConnection rather than a
+ * raw SimplePool: membership-gated relays (the Buzz model fez-relay
+ * enforces) withhold READS from unauthenticated connections, so a pool
+ * that never answers the NIP-42 challenge subscribes to silence — the
+ * owner's ✅ exists on the relay and the wallet never sees it (found
+ * live in the testnet e2e). RelayConnection already speaks NIP-42 via
+ * authSigner; the agent's nostr key signs the 22242.
+ */
+export async function poolRelay(relayUrls: string[], authSecretHex?: string): Promise<ConsentRelay> {
+  const key = [...relayUrls].sort().join(",") + (authSecretHex ? ":authed" : "");
   const cached = relayPools.get(key);
   if (cached) return cached;
 
-  const { SimplePool } = await import("nostr-tools/pool");
-  const pool = new SimplePool();
+  const { RelayConnection } = await import("@fezchat/protocol");
+  const { finalizeEvent } = await import("nostr-tools/pure");
+  const { hexToBytes } = await import("nostr-tools/utils");
+  const conn = new RelayConnection({
+    urls: relayUrls,
+    authSigner: authSecretHex
+      ? async (template: { kind: number; created_at: number; tags: string[][]; content: string }) =>
+          finalizeEvent(template, hexToBytes(authSecretHex))
+      : undefined,
+  });
+  await conn.connect();
   const relay: ConsentRelay = {
     async publish(event) {
-      await Promise.any(pool.publish(relayUrls, event));
+      await conn.publish(event as never);
     },
     subscribe(filter: Filter, onEvent) {
-      const sub = pool.subscribeMany(relayUrls, filter, { onevent: onEvent });
-      return () => sub.close();
+      return conn.subscribe([filter] as never, onEvent as never);
     },
   };
   relayPools.set(key, relay);

@@ -4,10 +4,19 @@
   "private": true,
   "description": "Per-agent allowance wallets for fez — HD-derived accounts from one master mnemonic, TAO live (EVM later), threshold consent via owner-signed reactions. The balance IS the cap.",
   "type": "module",
-  "bin": { "fez-wallet": "dist/cli.js" },
+  "bin": {
+    "fez-wallet": "dist/cli.js"
+  },
   "fez": {
     "type": "extension",
-    "parts": { "skill": { "command": "node", "args": ["dist/mcp.js"] } },
+    "parts": {
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ]
+      }
+    },
     "permissions": [
       "network:entrypoint-finney.opentensor.ai",
       "network:relay",
@@ -27,12 +36,15 @@
     "@polkadot/util": "^13.2.3",
     "@polkadot/util-crypto": "^13.2.3",
     "nostr-tools": "^2.10.0",
-    "zod": "^3.23.0"
+    "zod": "^3.23.0",
+    "@fezchat/protocol": "file:../.."
   },
   "devDependencies": {
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ]
 }
