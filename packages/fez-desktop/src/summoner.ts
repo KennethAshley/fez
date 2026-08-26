@@ -40,6 +40,17 @@ export function startSummoner(opts: {
     return verdict;
   }
 
+  // Courtesy half of single ownership (the agent's boot-time yield is
+  // the guard): a persona whose key beat presence within the TTL is
+  // alive SOMEWHERE — don't spawn a duplicate for it. Advisory only;
+  // racing spawners are settled by the agents themselves.
+  const KIND_PRESENCE = 20001;
+  const PRESENCE_TTL_MS = 90_000;
+  const lastBeat = new Map<string, number>();
+  const offPresence = wire.subscribe([{ kinds: [KIND_PRESENCE] }], (ev) => {
+    lastBeat.set(ev.pubkey, Date.now());
+  });
+
   const host: SummonHost = {
     ownerPubkey,
     personaExists: async (name) => {
@@ -63,7 +74,11 @@ export function startSummoner(opts: {
       }
       return undefined;
     },
-    agentAlive: (name) => invoke<boolean>("agent_alive", { persona: name }).catch(() => false),
+    agentAlive: async (name) => {
+      if (await invoke<boolean>("agent_alive", { persona: name }).catch(() => false)) return true;
+      const pk = await host.personaPubkey(name).catch(() => undefined);
+      return !!pk && Date.now() - (lastBeat.get(pk) ?? 0) < PRESENCE_TTL_MS;
+    },
     registryEntry: async (name) => {
       const rows = await invoke<{ persona: string; channels: string[]; repo?: string; line?: string }[]>("spawned_agents").catch(() => []);
       const row = rows.find((r) => r.persona === name);
@@ -151,5 +166,6 @@ export function startSummoner(opts: {
   return () => {
     clearTimeout(dmTimer);
     unsub();
+    offPresence();
   };
 }
