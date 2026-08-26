@@ -42,12 +42,6 @@ export const BUILT_IN_DEFAULT = {
     // theme accents, so they are tuned per scheme rather than reused.
     "--viz-ok": "#43a56c",
     "--viz-fail": "#fb4934",
-    // Two-surface shell: the well behind everything, the raised card,
-    // its lit rim, and the card's corner radius.
-    "--well": "#121415",
-    "--surface": "#1d2021",
-    "--edge": "rgba(235, 219, 178, 0.13)",
-    "--radius-card": "12px",
     "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
   },
   light: {
@@ -71,12 +65,6 @@ export const BUILT_IN_DEFAULT = {
     "--phosphor": "#79740e",
     "--viz-ok": "#427b58",
     "--viz-fail": "#9d0006",
-    // Paper card on a deeper parchment well — same construction as
-    // night, lit the other way.
-    "--well": "#d9d0b6",
-    "--surface": "#fbf1c7",
-    "--edge": "rgba(60, 56, 54, 0.18)",
-    "--radius-card": "12px",
     "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
   },
 };

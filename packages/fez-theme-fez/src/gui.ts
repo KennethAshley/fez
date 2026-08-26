@@ -92,12 +92,6 @@ export default function activate(api: ThemeApi): void {
       "--phosphor": "#FF6A00",
       "--viz-ok": "#5f8f6a",
       "--viz-fail": "#d64545",
-      // The well is true black — the deepest room the rail used to be —
-      // and the card lifts barely off it; the rim does the rest.
-      "--well": "#000000",
-      "--surface": "#0a0908",
-      "--edge": "rgba(232, 226, 217, 0.10)",
-      "--radius-card": "12px",
       "--font-mono": FACE,
     },
 
@@ -128,10 +122,6 @@ export default function activate(api: ThemeApi): void {
       "--phosphor": "#c24a00",
       "--viz-ok": "#4e7a58",
       "--viz-fail": "#a52f2f",
-      "--well": "#d5c9b4",
-      "--surface": "#f4efe6",
-      "--edge": "rgba(26, 23, 20, 0.16)",
-      "--radius-card": "12px",
       "--font-mono": FACE,
     },
   });
