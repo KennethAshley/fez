@@ -242,9 +242,9 @@ fn set_identity(account: Option<String>, hex: String) -> Result<(), String> {
 }
 
 /// Create a persona file (~/.fez/personas/<name>.md) — the GUI's agent
-/// creation. The MD file is the whole contract: herdr/sentinel spawn the
-/// agent on its first @mention. Refuses overwrite; existing personas are
-/// edited in an editor, not silently replaced from a dialog.
+/// creation. The MD file is the whole contract: the desktop's summoner
+/// spawns the agent on its first @mention. Refuses overwrite; existing
+/// personas are edited in an editor, not silently replaced from a dialog.
 #[tauri::command]
 fn write_persona(name: String, content: String) -> Result<String, String> {
     if name.len() < 2

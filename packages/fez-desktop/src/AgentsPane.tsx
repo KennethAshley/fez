@@ -668,9 +668,9 @@ function AgentDetail({
 /**
  * Agent creation, GUI-side — Buzz's AgentDefinitionDialog reduced to the
  * fez contract: the persona MD file IS the agent. The shell writes
- * ~/.fez/personas/<name>.md (refusing overwrite); herdr/sentinel spawn
- * it on its first @mention, with its own stable key. No daemon to
- * configure, nothing to start.
+ * ~/.fez/personas/<name>.md (refusing overwrite); the app's summoner
+ * spawns it on its first @mention, with its own stable key. No daemon
+ * to configure, nothing to start.
  */
 const BRIDGE_PROMPT = `You are a BRIDGE between communities. Your one job: when summoned in the
 DESTINATION channel, read recent activity in the SOURCE channel with
