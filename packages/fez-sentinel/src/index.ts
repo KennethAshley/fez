@@ -16,6 +16,7 @@ import {
   KIND_DOC_COMMENT,
   KIND_GIFT_WRAP,
   KIND_OBSERVER,
+  KIND_PRESENCE,
   makeChannels,
   summonMentions,
   isSafeWork,
@@ -281,23 +282,39 @@ async function main() {
     };
   }
 
+  // Courtesy half of single ownership (the agent's boot-time yield is
+  // the guard): a persona whose key beat presence within the TTL is
+  // alive SOMEWHERE — don't spawn a duplicate for it. Advisory only;
+  // racing spawners are settled by the agents themselves.
+  const PRESENCE_TTL_MS = 90_000;
+  const lastBeat = new Map<string, number>();
+  relay.subscribe([{ kinds: [KIND_PRESENCE] }], (event) => {
+    lastBeat.set(event.pubkey, Date.now());
+  });
+
+  async function resolvePersonaPubkey(persona: string): Promise<string | undefined> {
+    const { loadOrCreateKey } = await import("@fezchat/protocol");
+    const { getPublicKey } = await import("nostr-tools/pure");
+    try {
+      const hexKey = loadOrCreateKey(`agent:${persona}`);
+      return getPublicKey(Uint8Array.from(hexKey.match(/../g)!.map((b) => parseInt(b, 16))));
+    } catch {
+      return undefined;
+    }
+  }
+
   // ── summon engine — policy shared with the desktop host (@fezchat/protocol) ──
   const { SummonEngine } = await import("@fezchat/protocol");
   const engine = new SummonEngine(
     {
       ownerPubkey: myPubkey,
       personaExists,
-      personaPubkey: async (persona: string) => {
-        const { loadOrCreateKey } = await import("@fezchat/protocol");
-        const { getPublicKey } = await import("nostr-tools/pure");
-        try {
-          const hexKey = loadOrCreateKey(`agent:${persona}`);
-          return getPublicKey(Uint8Array.from(hexKey.match(/../g)!.map((b) => parseInt(b, 16))));
-        } catch {
-          return undefined;
-        }
+      personaPubkey: resolvePersonaPubkey,
+      agentAlive: async (persona: string) => {
+        if (agentProcessAlive(persona)) return true;
+        const pk = await resolvePersonaPubkey(persona).catch(() => undefined);
+        return !!pk && Date.now() - (lastBeat.get(pk) ?? 0) < PRESENCE_TTL_MS;
       },
-      agentAlive: agentProcessAlive,
       registryEntry: (persona: string) => {
         const t = loadRegistry().find((x) => x.persona === persona);
         return t ? { channels: t.channels, work: t.work } : undefined;
