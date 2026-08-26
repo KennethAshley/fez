@@ -140,10 +140,13 @@ export default function SkillsView({
   const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[]; sources: Record<string, string> }[]>([]);
 
   /**
-   * One row per thing on this machine, whatever kind it is. An
-   * extension and a bare MCP server were shown as two separate lists,
-   * which is most of why the page did not parse: `fez-polls` appeared
-   * only as a skill while its gui and headless parts went unmentioned.
+   * One row per thing THIS ENVIRONMENT can see. The machine also holds
+   * headless parts that only ever run in the TUI; showing them here
+   * (which we did) buried the three cards that render in this app under
+   * eight that never would — the desktop lists the desktop, the TUI
+   * lists its own. A package still gets ONE row for all its parts
+   * (fez-polls is gui+headless+skill, not three entries); it just needs
+   * a part that lives here to earn the row.
    */
   const everything: {
     name: string;
@@ -164,12 +167,14 @@ export default function SkillsView({
           wanted: agentDeps.filter((dep) => dep.skills.includes(name)).map((dep) => dep.agent),
         };
       })
-      // A row is a PACKAGE when it files code into this app or the TUI;
-      // anything that is only a settings.json entry is a bare skill.
+      // EXTENSIONS = renders in this app (has a gui part). SKILLS = a
+      // settings.json entry agents call, shown there only when the
+      // package has no gui row to carry it. Headless-only packages
+      // belong to the TUI's environment and get no desktop row at all.
       .filter((row) => {
         if (!only) return true;
-        const isPackage = row.parts.some((part) => part === "gui" || part === "headless");
-        return only === "extensions" ? isPackage : !isPackage;
+        const inApp = row.parts.includes("gui");
+        return only === "extensions" ? inApp : !inApp && !!row.config;
       });
   }, [localParts, installed, agentDeps, only]);
 
