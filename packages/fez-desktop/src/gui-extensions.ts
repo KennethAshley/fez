@@ -61,6 +61,14 @@ export interface GuiExtensionApi {
   React: typeof React;
   parseQuery: typeof parseQuery;
   client: FezClient;
+  /**
+   * Read-only view of this extension's own state file
+   * (~/.fez/extension-data/<name>.json — the same namespace the
+   * headless part's api.storage writes). Gui parts render state; the
+   * CLI/MCP/headless side owns writes. Not permission-gated, matching
+   * the headless stance.
+   */
+  storage: { get<T = unknown>(key: string): Promise<T | undefined> };
   registerArtifactViewer: typeof registerArtifactViewer;
   /**
    * Agent personas, as files — LIST/READ/UPDATE plus the stable-key
@@ -690,6 +698,20 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       // extensions still get it, since narrowing every method is a bigger
       // change than this pass — flagged in the extensions view instead.
       client: may("read:channels") ? client : (undefined as never),
+      // Read-only view of this extension's own state file — the gui
+      // half of headless api.storage. Namespace-locked to `name` here;
+      // the Rust command only re-checks the name can't traverse.
+      storage: {
+        get: async <T = unknown>(key: string): Promise<T | undefined> => {
+          try {
+            const raw = await invoke<string>("extension_storage_read", { name });
+            const data = JSON.parse(raw) as Record<string, unknown>;
+            return data[key] as T | undefined;
+          } catch {
+            return undefined;
+          }
+        },
+      },
       registerArtifactViewer: may("ui") ? registerArtifactViewer : (refuse("ui", "register an artifact viewer") as never),
       registerTheme: may("ui") ? registerTheme : (refuse("ui", "register a theme") as never),
       registerMessageDecorator: may("ui") ? registerMessageDecorator : (refuse("ui", "decorate messages") as never),

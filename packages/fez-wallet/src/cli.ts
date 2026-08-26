@@ -12,11 +12,11 @@ try {
   const adapter = () => substrateAdapter({ endpoint: loadConfig().endpoints.tao });
   switch (cmd) {
     case "init":
-      cmdInit(io);
+      await cmdInit(io);
       break;
     case "derive":
       if (!rest[0]) throw new Error("usage: fez-wallet derive <persona>");
-      cmdDerive(io, rest[0]);
+      await cmdDerive(io, rest[0]);
       break;
     case "fund":
       if (!rest[0] || !rest[1]) throw new Error("usage: fez-wallet fund <persona> <amount>");

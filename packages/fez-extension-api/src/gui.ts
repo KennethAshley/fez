@@ -54,6 +54,14 @@ export interface GuiExtensionApi {
   };
   /** The shared @fezchat/client instance — read state, publish as the user. Withheld without `read:channels`. */
   client: GuiClient;
+  /**
+   * Read-only view of this extension's own state file
+   * (~/.fez/extension-data/<name>.json — the same namespace the
+   * headless part's api.storage writes). Gui parts render state; the
+   * CLI/MCP/headless side owns writes. Not permission-gated, matching
+   * the headless stance.
+   */
+  storage: { get<T = unknown>(key: string): Promise<T | undefined> };
   /** Open a browser to `url`. */
   openUrl(url: string): Promise<void>;
   /** A card in Settings that configures this extension. `opts.source` ties it to a channel source for the rail. */
