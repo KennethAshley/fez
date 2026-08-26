@@ -133,7 +133,7 @@ export async function runCommand(text: string, ctx: CommandCtx): Promise<string>
         const body = rest.slice(1).join(" ");
         if (!delay || !body) return "usage: /schedule <10m|2h> <message>";
         await client.scheduleMessage(ctx.channelId, Math.floor(Date.now() / 1000) + delay, body);
-        return `⏲ scheduled for ${new Date(Date.now() + delay * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — the sentinel sends it`;
+        return `⏲ scheduled for ${new Date(Date.now() + delay * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — sealed and delivered by the relay at the appointed time.`;
       }
       case "invite": {
         const pk = resolvePk(client, rest[0] ?? "");

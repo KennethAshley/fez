@@ -456,6 +456,8 @@ export interface ClientEvents {
   artifact: (channelId: string, artifact: Artifact) => void;
   /** Client-level announcements a view should surface (first-run bootstrap etc.). */
   notice: (text: string) => void;
+  /** One of OWN reminders reached its time while this client was alive. */
+  reminderDue: (note: string) => void;
 }
 
 export { setStatePersistence, type StatePersistence };
@@ -520,6 +522,11 @@ export class FezClient {
   private artifactsByChannel = new Map<string, Artifact[]>();
   private seenArtifactIds = new Set<string>();
   private seenDocIds = new Set<string>();
+
+  /** Armed reminder timers (id → timer); the client fires its OWN
+   * reminders while alive — the desktop toasts them, the sentinel keeps
+   * covering app-closed delivery (hosts dedupe via runner_status). */
+  private reminderTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(wire: Wire) {
     this.wire = wire;
@@ -1027,6 +1034,28 @@ export class FezClient {
         JSON.stringify({ note, remind_at: remindAt, ...(aboutEventId ? { about: aboutEventId } : {}) })
       ),
     });
+  }
+
+  /**
+   * Arm a local timer for an own stored reminder so the client can emit
+   * "reminderDue" the moment its remind_at arrives while alive. Not the
+   * only deliverer: the sentinel covers app-closed delivery from the
+   * same relay-scheduled sealed event. Idempotent per event id.
+   */
+  private async armReminder(event: { id: string; content: string }): Promise<void> {
+    if (this.reminderTimers.has(event.id)) return;
+    try {
+      const body = JSON.parse(await this.wire.decrypt(this.pubkey, event.content)) as { note?: string; remind_at?: number };
+      if (typeof body.remind_at !== "number") return;
+      const delayMs = Math.min(Math.max(0, body.remind_at * 1000 - Date.now()), 2 ** 31 - 1);
+      this.reminderTimers.set(
+        event.id,
+        setTimeout(() => {
+          this.reminderTimers.delete(event.id);
+          this.emit("reminderDue", body.note || "(reminder)");
+        }, delayMs)
+      );
+    } catch { /* not decryptable/parsable — not ours or legacy-broken */ }
   }
 
   async sendDm(peerPk: string, text: string): Promise<void> {
@@ -1715,6 +1744,23 @@ export class FezClient {
     this.wire.subscribe([{ kinds: [K.PRESENCE] }], (e) => {
       this.lastSeenByPk.set(e.pubkey, Date.now());
     });
+    // Reminders: pubkey-scoped, not channel-scoped, so they live outside
+    // resubscribe()'s channel-set filters. New ones arm as they arrive;
+    // an own-authored kind-5 e-tagging an armed id disarms it (the
+    // reminder never fires — it does NOT get tombstoned by firing).
+    this.wire.subscribe([{ kinds: [K.REMINDER], authors: [this.pubkey] }], (e) => {
+      void this.armReminder(e);
+    });
+    this.wire.subscribe([{ kinds: [K.DELETION], authors: [this.pubkey] }], (e) => {
+      for (const tag of e.tags) {
+        if (tag[0] !== "e") continue;
+        const timer = this.reminderTimers.get(tag[1]);
+        if (timer) {
+          clearTimeout(timer);
+          this.reminderTimers.delete(tag[1]);
+        }
+      }
+    });
     const beat = () => void this.wire.publish({ kind: K.PRESENCE, tags: [], content: "{}" }).catch(() => {});
     beat();
     setInterval(() => {
@@ -1722,6 +1768,24 @@ export class FezClient {
       this.emit("presenceChanged");
     }, PRESENCE_BEAT_MS).unref?.();
     setInterval(() => this.emit("typingChanged"), 1000).unref?.();
+
+    // Reminders hydrate: arm every own, non-tombstoned reminder already
+    // on the relay so a stored one still fires after a restart if its
+    // time hasn't passed yet.
+    try {
+      const [reminderEvents, ownDeletions] = await Promise.all([
+        this.wire.query([{ kinds: [K.REMINDER], authors: [this.pubkey] }]),
+        this.wire.query([{ kinds: [K.DELETION], authors: [this.pubkey] }]),
+      ]);
+      const tombstoned = new Set<string>();
+      for (const del of ownDeletions) {
+        for (const tag of del.tags) if (tag[0] === "e" && tag[1]) tombstoned.add(tag[1]);
+      }
+      for (const event of reminderEvents) {
+        if (tombstoned.has(event.id)) continue;
+        void this.armReminder(event);
+      }
+    } catch { /* live stream fills in */ }
 
     // Names roster: agent announcements + human kind-0 profiles + status.
     try {

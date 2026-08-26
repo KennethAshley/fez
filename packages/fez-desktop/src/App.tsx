@@ -520,6 +520,14 @@ function Shell({
         target: { kind: "dm", convoKey: dm.senderPk },
       });
     }) as never);
+    client.on("reminderDue", ((note: string) => {
+      void (async () => {
+        // The sentinel delivers OS notifications when it's alive — one
+        // notifier per machine (same rule as the summoner).
+        const sentinel = await invoke<boolean>("runner_status").catch(() => false);
+        if (!sentinel) toast.info(`⏰ ${note}`, 0);
+      })();
+    }) as never);
 
     // The desktop's own summon host — spawns @-mentioned agents from
     // this live subscription while the app is open, deferring entirely

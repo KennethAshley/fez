@@ -6,8 +6,9 @@ import type { BrowserWire } from "./wire";
  * Reminders — Buzz's RemindersPanel over fez's encrypted 40007s. Note,
  * fire time, and subject are NIP-44 self-encrypted (the relay sees
  * nothing), so listing is: query your own events, decrypt with your own
- * key. The sentinel is the executor; this pane is the ledger — upcoming
- * first, recent past dimmed below.
+ * key. Delivered while fez is open; install the fleet watcher (`fez
+ * sentinel-install`) for delivery when it isn't. This pane is the ledger
+ * — upcoming first, recent past dimmed below.
  */
 
 const KIND_REMINDER = 40007;
@@ -87,7 +88,7 @@ export default function RemindersPane({
       <div className="pane-body">
         {!rows && <div className="pane-empty">decrypting…</div>}
         {rows && upcoming.length === 0 && (
-          <div className="pane-empty">nothing scheduled — hover a message and hit ◷. The sentinel delivers them.</div>
+          <div className="pane-empty">nothing scheduled — hover a message and hit ◷. Delivered when due — by fez while it's open, by the fleet watcher otherwise.</div>
         )}
         {upcoming.map((reminder) => row(reminder, false))}
         {past.length > 0 && (
