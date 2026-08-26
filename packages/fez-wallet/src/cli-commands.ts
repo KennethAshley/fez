@@ -34,7 +34,7 @@ function requireUsablePersonaName(persona: string): void {
   }
 }
 
-export function cmdInit(io: CliIo): void {
+export async function cmdInit(io: CliIo): Promise<void> {
   if (readRootEntry()) throw new Error("a wallet root already exists — refusing to overwrite it");
   const mnemonic = generateWalletMnemonic();
   writeRootEntry(mnemonic);
@@ -45,12 +45,12 @@ export function cmdInit(io: CliIo): void {
   const treasuryAddress = treasuryPair(mnemonic).address;
   io.print(`treasury address: ${treasuryAddress}`);
   io.print("fund the treasury, then: fez-wallet derive <persona> && fez-wallet fund <persona> <amount>");
-  void mirrorAddresses({ treasury: treasuryAddress });
+  await mirrorAddresses({ treasury: treasuryAddress });
   const config = loadConfig();
-  void mirrorEndpoint(config.endpoints.tao);
+  await mirrorEndpoint(config.endpoints.tao);
 }
 
-export function cmdDerive(io: CliIo, persona: string): void {
+export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
   requireUsablePersonaName(persona);
   const mnemonic = requireRoot();
   const existing = readEntry(persona);
@@ -60,7 +60,7 @@ export function cmdDerive(io: CliIo, persona: string): void {
   assignEvmIndex(config, persona);
   saveConfig(config);
   io.print(`${persona}: ${pair.address}`);
-  void mirrorAddresses({ persona: { name: persona, address: pair.address } });
+  await mirrorAddresses({ persona: { name: persona, address: pair.address } });
 }
 
 export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string, amount: string): Promise<void> {
@@ -73,7 +73,7 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
   const parsed = parseAmount(amount, decimals, adapter.assets[0].symbol);
   const { txHash } = await adapter.transfer(treasuryPair(mnemonic), to, parsed);
   io.print(`funded ${persona} with ${formatAmount(parsed)} (tx ${txHash})`);
-  void mirrorSpend({
+  await mirrorSpend({
     ts: new Date().toISOString(),
     persona: "treasury",
     to,

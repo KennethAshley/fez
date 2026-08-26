@@ -36,11 +36,11 @@ describe("cli ceremony", () => {
     const { cmdInit } = await import("../src/cli-commands.js");
     const { readRootEntry } = await import("../src/store.js");
     const { io, lines } = collect();
-    cmdInit(io);
+    await cmdInit(io);
     const root = readRootEntry();
     expect(root!.split(" ")).toHaveLength(24);
     expect(lines.join("\n")).toContain(root!); // shown for paper backup
-    expect(() => cmdInit(io)).toThrow(/already/i); // refuses a second init
+    await expect(cmdInit(io)).rejects.toThrow(/already/i); // refuses a second init
   });
 
   it("derive stores the pair, assigns an index, and is idempotent", async () => {
@@ -49,12 +49,12 @@ describe("cli ceremony", () => {
     const { loadConfig } = await import("../src/config.js");
     const { pairFromStored } = await import("../src/derive.js");
     const { io, lines } = collect();
-    cmdInit(io);
-    cmdDerive(io, "scout");
+    await cmdInit(io);
+    await cmdDerive(io, "scout");
     const stored = pairFromStored(readEntry("scout")!);
     expect(loadConfig().personas.scout.index).toBe(0);
     expect(lines.join("\n")).toContain(stored.address);
-    cmdDerive(io, "scout"); // no throw, same address printed again
+    await cmdDerive(io, "scout"); // no throw, same address printed again
     expect(pairFromStored(readEntry("scout")!).address).toBe(stored.address);
   });
 
@@ -63,8 +63,8 @@ describe("cli ceremony", () => {
     const { readEntry } = await import("../src/store.js");
     const { pairFromStored } = await import("../src/derive.js");
     const { io } = collect();
-    cmdInit(io);
-    cmdDerive(io, "scout");
+    await cmdInit(io);
+    await cmdDerive(io, "scout");
     const { adapter, transfers } = fakeAdapter();
     await cmdFund(io, adapter, "scout", "1.5");
     expect(transfers[0].to).toBe(pairFromStored(readEntry("scout")!).address);
@@ -74,8 +74,8 @@ describe("cli ceremony", () => {
   it("status lists treasury and derived personas", async () => {
     const { cmdInit, cmdDerive, cmdStatus } = await import("../src/cli-commands.js");
     const { io, lines } = collect();
-    cmdInit(io);
-    cmdDerive(io, "scout");
+    await cmdInit(io);
+    await cmdDerive(io, "scout");
     const { adapter } = fakeAdapter();
     await cmdStatus(io, adapter);
     const out = lines.join("\n");
@@ -87,21 +87,21 @@ describe("cli ceremony", () => {
   it("derive without init explains itself", async () => {
     const { cmdDerive } = await import("../src/cli-commands.js");
     const { io } = collect();
-    expect(() => cmdDerive(io, "scout")).toThrow(/fez-wallet init/);
+    await expect(cmdDerive(io, "scout")).rejects.toThrow(/fez-wallet init/);
   });
 
   it("derive refuses the reserved root name — clearly, before touching the mnemonic", async () => {
     const { cmdInit, cmdDerive } = await import("../src/cli-commands.js");
     const { io } = collect();
-    cmdInit(io);
-    expect(() => cmdDerive(io, "root")).toThrow(/reserved/i);
+    await cmdInit(io);
+    await expect(cmdDerive(io, "root")).rejects.toThrow(/reserved/i);
   });
 
   it("derive refuses traversal-shaped persona names", async () => {
     const { cmdInit, cmdDerive } = await import("../src/cli-commands.js");
     const { io } = collect();
-    cmdInit(io);
-    expect(() => cmdDerive(io, "../x")).toThrow(/invalid persona name/i);
-    expect(() => cmdDerive(io, "a/b")).toThrow(/invalid persona name/i);
+    await cmdInit(io);
+    await expect(cmdDerive(io, "../x")).rejects.toThrow(/invalid persona name/i);
+    await expect(cmdDerive(io, "a/b")).rejects.toThrow(/invalid persona name/i);
   });
 });
