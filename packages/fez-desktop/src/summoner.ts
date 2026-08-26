@@ -70,25 +70,42 @@ export function startSummoner(opts: {
       return row ? { channels: row.channels, work: row.repo ? { repo: row.repo, line: row.line } : undefined } : undefined;
     },
     spawn: async (persona, channels, work) => {
-      await invoke("spawn_agent", {
-        persona,
-        channels,
-        owner: ownerPubkey,
-        relays: relays.join(","),
-        repo: work?.repo ?? null,
-        baseBranch: work?.line ?? null,
-      });
+      try {
+        await invoke("spawn_agent", {
+          persona,
+          channels,
+          owner: ownerPubkey,
+          relays: relays.join(","),
+          repo: work?.repo ?? null,
+          baseBranch: work?.line ?? null,
+        });
+      } catch (err) {
+        // The invoke rejection (e.g. "fez-agent isn't bundled in this
+        // build") otherwise vanished into the engine's own log() call,
+        // which had no host.log wired up to print it anywhere the user
+        // could see — a summon just silently did nothing. Toast it, then
+        // re-throw so the engine's own catch/log/cooldown still runs.
+        const message = err instanceof Error ? err.message : String(err);
+        toast(`@${persona} couldn't start: ${message}`);
+        throw err;
+      }
     },
     restart: async (persona, channels, work) => {
       await invoke("kill_agent", { persona }).catch(() => {});
-      await invoke("spawn_agent", {
-        persona,
-        channels,
-        owner: ownerPubkey,
-        relays: relays.join(","),
-        repo: work?.repo ?? null,
-        baseBranch: work?.line ?? null,
-      });
+      try {
+        await invoke("spawn_agent", {
+          persona,
+          channels,
+          owner: ownerPubkey,
+          relays: relays.join(","),
+          repo: work?.repo ?? null,
+          baseBranch: work?.line ?? null,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast(`@${persona} couldn't start: ${message}`);
+        throw err;
+      }
     },
     query: (filters) => wire.query(filters as never) as Promise<SummonEvent[]>,
     publish: async (template) => {
@@ -97,6 +114,7 @@ export function startSummoner(opts: {
     announceTimeout: (persona) => {
       toast(`@${persona} failed to start — its process died before announcing (see ~/.fez/logs/${persona}.log)`);
     },
+    log: (line) => console.log(line),
   };
 
   const engine = new SummonEngine(host);

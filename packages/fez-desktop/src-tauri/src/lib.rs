@@ -1794,6 +1794,44 @@ fn raw_pid_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+/// pid_alive_named's story again, for the agent registry: rows persist
+/// across reboots, macOS reuses low pids, and a bare `kill -0` believes
+/// any process wearing the pid — a reused pid made agent_alive a false
+/// positive (the persona looked running when it wasn't) and made
+/// kill_agent SIGTERM an innocent, unrelated process. `command=` (full
+/// command line, not just comm) so the ~/.fez/bin/fez-agent path still
+/// matches on a substring.
+fn pid_is_fez_agent(pid: u32) -> bool {
+    if !raw_pid_alive(pid) {
+        return false;
+    }
+    Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains("fez-agent"))
+        .unwrap_or(false)
+}
+
+/// Mirrors the sentinel's own liveness probe (fez-sentinel/src/index.ts
+/// agentProcessAlive): an agent the SENTINEL spawned (`fez agent
+/// <persona>` in dev, `cli.js agent <persona>` from source) never enters
+/// the desktop's pid registry at all. Without this, a sentinel that dies
+/// leaves its agents running but invisible to the desktop, which then
+/// double-spawns on top of them the next time it thinks a persona is
+/// needed. `persona` is webview-supplied, so it's validated here too
+/// (not just at call sites) before it reaches a pgrep pattern.
+fn sentinel_agent_alive(persona: &str) -> bool {
+    if !valid_persona_name(persona) {
+        return false;
+    }
+    Command::new("/usr/bin/pgrep")
+        .args(["-f", &format!(r"(fez|cli\.js) agent {persona}")])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Same safety contract as the shared TS isSafeWork: word char first,
 /// then word chars / dot / slash / dash, bounded, no `..`.
 fn safe_work(value: &str) -> bool {
@@ -1861,8 +1899,16 @@ fn spawn_agent(
             cmd.env("FEZ_AGENT_BASE_BRANCH", b);
         }
     }
-    let child = cmd.spawn().map_err(|e| format!("spawn fez-agent: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| format!("spawn fez-agent: {e}"))?;
     let pid = child.id();
+    // Reap it: an unwaited Child that exits becomes a ZOMBIE, and `kill -0`
+    // succeeds on a zombie — so a dead agent kept reading as "alive" until
+    // the whole app quit, suppressing the engine's 90s watchdog and making
+    // the persona unsummonable. This thread's only job is the wait();
+    // nothing here needs the exit status.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut rows: Vec<SpawnedAgent> =
         load_agents_registry().into_iter().filter(|r| r.persona != persona).collect();
@@ -1876,8 +1922,11 @@ fn kill_agent(persona: String) -> Result<bool, String> {
     let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let rows = load_agents_registry();
     let hit = rows.iter().find(|r| r.persona == persona).cloned();
+    // Never signal a pid whose command doesn't match — a reused pid across
+    // a reboot belongs to some unrelated process, and a bare kill -0 (or
+    // worse, a real kill) can't tell the difference.
     let killed = match &hit {
-        Some(row) if raw_pid_alive(row.pid) => std::process::Command::new("/bin/kill")
+        Some(row) if pid_is_fez_agent(row.pid) => std::process::Command::new("/bin/kill")
             .arg(row.pid.to_string())
             .status()
             .map(|s| s.success())
@@ -1891,11 +1940,22 @@ fn kill_agent(persona: String) -> Result<bool, String> {
     Ok(killed)
 }
 
+/// Alive if EITHER our own registry says so (name-checked pid, not a
+/// bare kill -0 — see pid_is_fez_agent) OR a sentinel-spawned process for
+/// this persona exists (see sentinel_agent_alive). The second check is
+/// the reverse split-brain fix: a dead sentinel's detached agents keep
+/// running with nothing in the desktop's registry, and without this the
+/// desktop can't tell them apart from "nothing is running" and
+/// double-spawns on top of them.
 #[tauri::command]
 fn agent_alive(persona: String) -> bool {
-    load_agents_registry()
+    if !valid_persona_name(&persona) {
+        return false;
+    }
+    let registry_alive = load_agents_registry()
         .iter()
-        .any(|r| r.persona == persona && raw_pid_alive(r.pid))
+        .any(|r| r.persona == persona && pid_is_fez_agent(r.pid));
+    registry_alive || sentinel_agent_alive(&persona)
 }
 
 #[tauri::command]
