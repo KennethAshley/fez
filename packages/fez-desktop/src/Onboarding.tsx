@@ -7,7 +7,9 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, setRelays } from "./relay";
-import { buildFezPersonaMd } from "./welcome-core";
+import { type Step, nextStep, prevStep } from "./onboarding-steps";
+
+export { nextStep, prevStep };
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -30,8 +32,6 @@ export function deriveSas(a: string, b: string): string {
   const n = digest[0] * 2 ** 40 + digest[1] * 2 ** 32 + digest[2] * 2 ** 24 + digest[3] * 2 ** 16 + digest[4] * 256 + digest[5];
   return String(n % 1_000_000).padStart(6, "0");
 }
-
-type Step = "welcome" | "invite" | "pairing" | "restore" | "reconnect" | "brain" | "done";
 
 export default function Onboarding({ onComplete }: { onComplete: (relayUrl: string) => void }) {
   const [step, setStep] = useState<Step>("welcome");
@@ -74,27 +74,35 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         setRelayUrl(activeRelay);
       }
       setRelays(activeRelay);
-      localStorage.setItem("fez-name", name.trim()); // the welcome opener greets by name
-      if (name.trim()) {
-        // Best-effort: a profile that didn't publish is a display name to
-        // fix later, not a reason to hold someone at the door.
-        try {
-          // Identity was just stored — the wire signs via Rust custody,
-          // so it gets the pubkey-bearing signer, never the secret.
-          const wire = new BrowserWire(activeRelay.split(","), rustSigner(getPublicKey(secret)));
-          await new Promise((r) => setTimeout(r, 600));
-          await wire.publish({ kind: 0, tags: [], content: JSON.stringify({ name: name.trim() }) });
-          wire.close();
-        } catch { /* identity is what matters */ }
-      }
       // Buzz's harness page, fez-sized: one step that gives @fez a brain
       // before it ever speaks — so the first greeting is a working guide,
       // not an apology.
-      setStep("brain");
+      setStep("harness");
     } catch (err) {
       setError(String(err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // TODO(task-9): this belongs in ProfileStep, run when the name is
+  // collected and saved, not stapled onto the terminal "team" step. It
+  // lives here for now because the welcome card no longer asks for a
+  // name and profile/community are still placeholders.
+  const completeLegacySetup = async () => {
+    localStorage.setItem("fez-name", name.trim()); // the welcome opener greets by name
+    if (name.trim() && keyHex) {
+      // Best-effort: a profile that didn't publish is a display name to
+      // fix later, not a reason to hold someone at the door.
+      try {
+        // Identity already exists — the wire signs via Rust custody, so
+        // it gets the pubkey-bearing signer, never the secret.
+        const secretBytes = Uint8Array.from(keyHex.match(/.{2}/g)!.map((b) => parseInt(b, 16)));
+        const wire = new BrowserWire(relayUrl.split(","), rustSigner(getPublicKey(secretBytes)));
+        await new Promise((r) => setTimeout(r, 600));
+        await wire.publish({ kind: 0, tags: [], content: JSON.stringify({ name: name.trim() }) });
+        wire.close();
+      } catch { /* identity is what matters */ }
     }
   };
 
@@ -138,20 +146,9 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               Communities for you and your agents. Your identity is a key on this machine, not an account on
               someone's server — and everything private is encrypted before it leaves.
             </p>
-            <input
-              className="ob-input"
-              value={name}
-              autoFocus
-              spellCheck={false}
-              placeholder="your name"
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !busy) void start();
-              }}
-            />
             {error && <p className="ob-error">{error}</p>}
             <button className="ob-primary" disabled={busy} onClick={() => void start()}>
-              {busy ? "setting up…" : name.trim() ? `continue as ${name.trim()}` : "get started"}
+              {busy ? "setting up…" : "get started"}
             </button>
             <div className="ob-alts">
               <button className="ob-link" onClick={() => setStep("invite")}>I have an invite or a community</button>
@@ -218,12 +215,48 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           />
         )}
 
-        {step === "reconnect" && <ReconnectStep onNext={() => setStep("brain")} />}
+        {step === "reconnect" && <ReconnectStep onNext={() => setStep("harness")} />}
 
-        {step === "brain" && <BrainStep onNext={() => setStep("done")} />}
+        {step === "harness" && (
+          <PlaceholderStep step="harness" onBack={() => setStep(prevStep("harness"))} onNext={() => setStep(nextStep("harness"))} />
+        )}
 
-        {step === "done" && (
+        {step === "defaults" && (
+          <PlaceholderStep step="defaults" onBack={() => setStep(prevStep("defaults"))} onNext={() => setStep(nextStep("defaults"))} />
+        )}
+
+        {step === "community" && (
+          <PlaceholderStep step="community" onBack={() => setStep(prevStep("community"))} onNext={() => setStep(nextStep("community"))} />
+        )}
+
+        {step === "profile" && (
           <>
+            {/* The one placeholder with real content this task: the name
+                field that used to live on the welcome card now lives
+                here, where it belongs — Task 9 builds out the rest of
+                ProfileStep (avatar, etc.) around it. */}
+            <h2>profile</h2>
+            <input
+              className="ob-input"
+              value={name}
+              autoFocus
+              spellCheck={false}
+              placeholder="your name"
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") setStep(nextStep("profile"));
+              }}
+            />
+            <button className="ob-primary" onClick={() => setStep(nextStep("profile"))}>continue</button>
+            <button className="ob-secondary" onClick={() => setStep(prevStep("profile"))}>back</button>
+          </>
+        )}
+
+        {step === "team" && (
+          <>
+            {/* Task 9 replaces this with the real TeamStep (roster +
+                backup-key reveal); the "you're in" content stays here for
+                now so the wizard is still walkable end-to-end. */}
             <div className="ob-logo">✓</div>
             <h2>You're in</h2>
             <p className="ob-lede">
@@ -241,7 +274,14 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
                 )}
               </div>
             )}
-            <button className="ob-primary" onClick={() => onComplete(relayUrl)}>open fez</button>
+            <button
+              className="ob-primary"
+              onClick={() => {
+                void completeLegacySetup().finally(() => onComplete(relayUrl));
+              }}
+            >
+              open fez
+            </button>
           </>
         )}
       </div>
@@ -459,199 +499,21 @@ function InviteStep({
   );
 }
 
-/** Chutes provider id in pi's local-models registry — mirrors ModelPicker. */
-const CHUTES_PROVIDER = "local-56105ece7a";
-
 /**
- * Buzz's harness-choosing page, fez-sized: ONE step, two brains, because
- * pi is invisible plumbing and users think about models, not runtimes.
- * Claude Code shows Buzz-style live detection (READY / INSTALL); the
- * Built-in card is zero-install (pi ships with the app) but honest about
- * auth — the Chutes key is verified by actually listing models, so READY
- * here means a model genuinely answers. Skip never soft-locks (Buzz's
- * rule): @fez still arrives, says it needs a brain, and points at
- * Settings.
+ * Placeholder body for harness/defaults/community/profile — Tasks 8-9
+ * fill these in with the real pages (harness detection, provider/model
+ * config, join/create/reconnect, name + avatar). Keeping a generic
+ * shell here means the wizard is walkable end-to-end at every commit
+ * on this branch, not just once the real pages land.
  */
-interface ClaudeBrain {
-  installed: boolean;
-  authed: boolean;
-  adapterReady: boolean;
-}
-
-function BrainStep({ onNext }: { onNext: () => void }) {
-  const [claude, setClaude] = useState<ClaudeBrain>();
-  const probeClaude = () =>
-    invoke<string>("claude_brain_status")
-      .then((json) => setClaude(JSON.parse(json) as ClaudeBrain))
-      .catch(() => setClaude({ installed: false, authed: false, adapterReady: false }));
-  useEffect(() => {
-    void probeClaude();
-  }, []);
-  const [settingUp, setSettingUp] = useState(false);
-  const [choice, setChoice] = useState<"claude-code" | "chutes">();
-  const [chutesKey, setChutesKey] = useState("");
-  const [models, setModels] = useState<string[]>([]);
-  const [model, setModel] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-
-  const verifyChutes = async () => {
-    setError(undefined);
-    setBusy(true);
-    try {
-      await invoke("set_skill_secret", { skill: "chutes", key: "CHUTES_API_KEY", value: chutesKey.trim() });
-      // The proof is a live model list, not a saved string — Buzz's
-      // page-4 verification, inline.
-      const json = await invoke<string>("wire_chutes_pi");
-      const list = (JSON.parse(json) as { models: string[] }).models;
-      if (list.length === 0) throw new Error("the key was saved but Chutes reported no models");
-      setModels(list);
-      setModel(list[0]);
-      setChoice("chutes");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const finish = async () => {
-    setBusy(true);
-    try {
-      if (choice === "claude-code") {
-        await invoke("write_persona", { name: "fez", content: buildFezPersonaMd("claude-code") });
-      } else if (choice === "chutes" && model) {
-        await invoke("write_persona", { name: "fez", content: buildFezPersonaMd("pi", model, CHUTES_PROVIDER) });
-      }
-    } catch { /* the welcome's fallback persona still lands */ }
-    onNext();
-  };
-
+function PlaceholderStep({ step, onBack, onNext }: { step: Step; onBack: () => void; onNext: () => void }) {
   return (
     <>
-      <h2>Give @fez a brain</h2>
-      <p className="ob-lede">
-        Your guide needs a model to think with. fez checked this machine — pick one, or skip and wire it up later in
-        Settings.
-      </p>
-
-      <div className="ob-brains">
-        <button
-          className={`ob-brain ${choice === "claude-code" ? "selected" : ""} ${claude?.installed ? "" : "unavailable"}`}
-          disabled={settingUp}
-          onClick={() => {
-            if (!claude?.installed) return void openBrainInstall();
-            if (!claude.authed) return; // SIGN IN state — the hint says how
-            if (claude.adapterReady) return setChoice("claude-code");
-            // One-time bridge setup: the managed node runtime + the ACP
-            // adapter as a real node program (compiling it was tried and
-            // is impossible — its SDK loads dynamically).
-            setSettingUp(true);
-            setError(undefined);
-            void invoke("ensure_claude_adapter")
-              .then(() => {
-                setClaude({ ...claude, adapterReady: true });
-                setChoice("claude-code");
-              })
-              .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-              .finally(() => setSettingUp(false));
-          }}
-        >
-          <span className="ob-brain-name">Claude Code</span>
-          {!claude ? (
-            <span className="ob-brain-pill">CHECKING…</span>
-          ) : !claude.installed ? (
-            <>
-              <span className="ob-brain-pill">INSTALL</span>
-              <span className="ob-brain-hint">not detected — opens the install page</span>
-            </>
-          ) : !claude.authed ? (
-            <>
-              <span className="ob-brain-pill">SIGN IN</span>
-              <span className="ob-brain-hint">
-                installed but signed out — run <code>claude /login</code> in Terminal, then{" "}
-                <a
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void probeClaude();
-                  }}
-                >
-                  check again
-                </a>
-              </span>
-            </>
-          ) : settingUp ? (
-            <>
-              <span className="ob-brain-pill">SETTING UP…</span>
-              <span className="ob-brain-hint">first-time bridge install (~30s) — one time only</span>
-            </>
-          ) : claude.adapterReady ? (
-            <>
-              <span className="ob-brain-pill ready">READY</span>
-              <span className="ob-brain-hint">signed in — uses your Claude subscription</span>
-            </>
-          ) : (
-            <>
-              <span className="ob-brain-pill">SET UP</span>
-              <span className="ob-brain-hint">signed in — click to install the bridge (one time, ~30s)</span>
-            </>
-          )}
-        </button>
-
-        <div className={`ob-brain ${choice === "chutes" ? "selected" : ""}`}>
-          <span className="ob-brain-name">Built-in</span>
-          {choice === "chutes" ? (
-            <span className="ob-brain-pill ready">READY</span>
-          ) : (
-            <span className="ob-brain-pill">NEEDS A KEY</span>
-          )}
-          <span className="ob-brain-hint">ships with fez — runs on Chutes, decentralized GPUs</span>
-          {choice !== "chutes" ? (
-            <div className="ob-brain-auth">
-              <input
-                className="ob-input"
-                type="password"
-                placeholder="Chutes API key"
-                value={chutesKey}
-                spellCheck={false}
-                onChange={(e) => setChutesKey(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && chutesKey.trim() && !busy) void verifyChutes();
-                }}
-              />
-              <button className="ob-secondary" disabled={!chutesKey.trim() || busy} onClick={() => void verifyChutes()}>
-                {busy ? "checking…" : "verify"}
-              </button>
-              <span className="ob-brain-hint">
-                <a href="https://chutes.ai" target="_blank" rel="noreferrer">chutes.ai</a> — a capped key; a leak costs
-                at most its balance
-              </span>
-            </div>
-          ) : (
-            <select className="ob-input" value={model} onChange={(e) => setModel(e.target.value)}>
-              {models.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          )}
-        </div>
-      </div>
-
-      {error && <p className="ob-error">{error}</p>}
-      <button className="ob-primary" disabled={busy || !choice} onClick={() => void finish()}>
-        {choice === "chutes" ? `continue with ${model}` : choice === "claude-code" ? "continue with Claude Code" : "pick a brain to continue"}
-      </button>
-      <div className="ob-alts">
-        <button className="ob-link" onClick={onNext}>skip for now</button>
-      </div>
+      <h2>{step}</h2>
+      <button className="ob-primary" onClick={onNext}>continue</button>
+      <button className="ob-secondary" onClick={onBack}>back</button>
     </>
   );
-}
-
-/** The vendor's install page — fez never curls-pipes-bash on your behalf. */
-async function openBrainInstall(): Promise<void> {
-  const { openUrl } = await import("@tauri-apps/plugin-opener");
-  await openUrl("https://claude.com/claude-code");
 }
 
 /**
