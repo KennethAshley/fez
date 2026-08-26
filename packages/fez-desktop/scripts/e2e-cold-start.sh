@@ -121,9 +121,13 @@ while ((SECONDS < DEADLINE)); do
     team=$(grep "fez-welcome.team.v1" $E | grep -c "bootstrap-welcome" || true)
     kickoff=$(grep "fez-welcome.kickoff.v1" $E | grep -c "bootstrap-welcome" || true)
     # The channel's name lives in the event's CONTENT, which the store
-    # holds JSON-escaped (\"name\":\"welcome\") — match the literal
-    # backslashes with -F, or this reads 0 against a perfect store.
-    channel=$(grep "\"kind\":47101" $E | grep "bootstrap-welcome" | grep -cF '\"name\":\"welcome\"' || true)
+    # holds JSON-escaped (backslash-quoted "name":"welcome"). This whole
+    # block travels inside ONE single-quoted ssh string, so the pattern
+    # (and these comments) must contain no apostrophes, quotes or
+    # backslashes of their own — two prior quoted patterns were eaten by
+    # the LOCAL shell and read 0 against a perfect store. Dot-classes
+    # carry the claim instead.
+    channel=$(grep "\"kind\":47101" $E | grep "bootstrap-welcome" | grep -Ec "name.{1,3}:.{1,3}welcome" || true)
     announces=$(grep -c "\"kind\":47000" $E || true)
     speakers=$(grep "\"kind\":47103" $E | grep "bootstrap-welcome" | grep -o "\"pubkey\":\"[0-9a-f]*\"" | sort -u | wc -l | tr -d " ")
     # Managed-agent logs, not a sentinel pidfile: the GUI spawns
