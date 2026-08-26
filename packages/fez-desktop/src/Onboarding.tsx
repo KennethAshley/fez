@@ -3,11 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { generateSecretKey, getPublicKey, finalizeEvent } from "nostr-tools/pure";
 import { nip44 } from "nostr-tools";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, setRelays } from "./relay";
 import { type Step, nextStep, prevStep } from "./onboarding-steps";
+import { PixelSprite } from "./pixel-sprite";
+import { SPRITES } from "./sprites";
+import { buildFezPersonaMd, buildStarterPersonaMd, STARTER_TEAM } from "./welcome-core";
 
 export { nextStep, prevStep };
 
@@ -44,7 +47,11 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
   const [error, setError] = useState<string>();
   const [keyHex, setKeyHex] = useState<string>();
   const [name, setName] = useState("");
-  const [showBackup, setShowBackup] = useState(false);
+  // Which door led to "reconnect": the side-door chain (pairing/restore)
+  // rejoins the main flow at "harness"; the community page's own
+  // reconnect door returns to "profile" — same step, two callers, so the
+  // target travels as state rather than being baked into the step name.
+  const [reconnectFrom, setReconnectFrom] = useState<"pairing" | "community">("pairing");
 
   // The Claude probe is lifted here (not local to HarnessStep) so the
   // defaults page can read the same READY-ness without re-detecting —
@@ -84,21 +91,12 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
       const hex = bytesToHex(secret);
       await invoke("set_identity", { hex, account: ACCOUNT });
       setKeyHex(hex);
-      // Cold path (no invite): this machine becomes the workspace — the
-      // app spawns a local relay claimed by the new identity. An invite
-      // instead means joining THEIR relay; no local spawn.
-      let activeRelay = relayUrl;
-      if (!localStorage.getItem("fez-pending-invite")) {
-        activeRelay = await invoke<string>("ensure_local_relay", {
-          owner: getPublicKey(secret),
-          name: "your workspace",
-        });
-        setRelayUrl(activeRelay);
-      }
-      setRelays(activeRelay);
       // Buzz's harness page, fez-sized: one step that gives @fez a brain
       // before it ever speaks — so the first greeting is a working guide,
-      // not an apology.
+      // not an apology. The local-relay claim moves to CommunityStep's
+      // "create a community" door — identity creation and workspace
+      // claim are two different decisions now that community has its
+      // own page with three doors (join/create/reconnect).
       setStep("harness");
     } catch (err) {
       setError(String(err));
@@ -107,11 +105,35 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
     }
   };
 
-  // TODO(task-9): this belongs in ProfileStep, run when the name is
-  // collected and saved, not stapled onto the terminal "team" step. It
-  // lives here for now because the welcome card no longer asks for a
-  // name and profile/community are still placeholders.
-  const completeLegacySetup = async () => {
+  /**
+   * "Create a community": this machine becomes the workspace. Runs on
+   * the community page, not `start()` — an invite (pending) or a
+   * reconnect skip this entirely, so the claim belongs to the door you
+   * actually walked through, not to identity creation.
+   */
+  const createWorkspace = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      if (!localStorage.getItem("fez-pending-invite")) {
+        const url = await invoke<string>("ensure_local_relay", {
+          owner: getPublicKey(hexToBytes(keyHex!)),
+          name: "your workspace",
+        });
+        setRelayUrl(url);
+        setRelays(url);
+      }
+      setStep("profile");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** ProfileStep's onNext: save the name, best-effort publish the kind-0
+   * profile (name + optional avatar), then on to meet the team. */
+  const saveProfile = async (avatar?: string) => {
     localStorage.setItem("fez-name", name.trim()); // the welcome opener greets by name
     if (name.trim() && keyHex) {
       // Best-effort: a profile that didn't publish is a display name to
@@ -119,13 +141,35 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
       try {
         // Identity already exists — the wire signs via Rust custody, so
         // it gets the pubkey-bearing signer, never the secret.
-        const secretBytes = Uint8Array.from(keyHex.match(/.{2}/g)!.map((b) => parseInt(b, 16)));
+        const secretBytes = hexToBytes(keyHex);
         const wire = new BrowserWire(relayUrl.split(","), rustSigner(getPublicKey(secretBytes)));
         await new Promise((r) => setTimeout(r, 600));
-        await wire.publish({ kind: 0, tags: [], content: JSON.stringify({ name: name.trim() }) });
+        await wire.publish({
+          kind: 0,
+          tags: [],
+          content: JSON.stringify({ name: name.trim(), ...(avatar ? { picture: avatar } : {}) }),
+        });
         wire.close();
       } catch { /* identity is what matters */ }
     }
+    setStep("team");
+  };
+
+  /**
+   * TeamStep's onFinish: the ONE place personas get written — a user who
+   * changes their mind three times on the defaults page never leaves a
+   * half-written persona behind, because nothing writes one until here.
+   */
+  const finishWizard = async () => {
+    try {
+      const harness = brain.harness ?? "pi"; // skipped defaults → honest not-ready opener covers it
+      const model = brain.model === "default" ? undefined : brain.model;
+      await invoke("write_persona", { name: "fez", content: buildFezPersonaMd(harness, model, brain.provider, brain.effort) });
+      for (const p of STARTER_TEAM) {
+        await invoke("write_persona", { name: p.id, content: buildStarterPersonaMd(p, harness, model, brain.provider, brain.effort) }).catch(() => {});
+      }
+    } catch { /* welcome.ts's fallback persona still lands */ }
+    onComplete(relayUrl);
   };
 
   /**
@@ -184,11 +228,18 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           <InviteStep
             error={error}
             onAccept={(code) => {
-              if (acceptInvite(code)) setStep("welcome");
+              // Two contexts share this one step: pre-identity (the
+              // welcome side door — keyHex isn't set yet, so accepting
+              // just records the pending relay and returns to welcome,
+              // where "get started" creates the identity) and
+              // post-identity (CommunityStep's "join" door, reached only
+              // after start() has run) — joining a community there IS
+              // the community choice, so it goes straight to profile.
+              if (acceptInvite(code)) setStep(keyHex ? "profile" : "welcome");
             }}
             onBack={() => {
               setError(undefined);
-              setStep("welcome");
+              setStep(keyHex ? "community" : "welcome");
             }}
           />
         )}
@@ -209,6 +260,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               })
                 .then((url) => setRelays(url))
                 .catch(() => {});
+              setReconnectFrom("pairing");
               setStep("reconnect");
             }}
             onBack={() => setStep("welcome")}
@@ -231,13 +283,16 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               })
                 .then((url) => setRelays(url))
                 .catch(() => {});
+              setReconnectFrom("pairing");
               setStep("reconnect");
             }}
             onBack={() => setStep("welcome")}
           />
         )}
 
-        {step === "reconnect" && <ReconnectStep onNext={() => setStep("harness")} />}
+        {step === "reconnect" && (
+          <ReconnectStep onNext={() => setStep(reconnectFrom === "community" ? "profile" : "harness")} />
+        )}
 
         {step === "harness" && (
           <HarnessStep
@@ -260,65 +315,29 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         )}
 
         {step === "community" && (
-          <PlaceholderStep step="community" onBack={() => setStep(prevStep("community"))} onNext={() => setStep(nextStep("community"))} />
+          <CommunityStep
+            busy={busy}
+            error={error}
+            onJoin={() => setStep("invite")}
+            onReconnect={() => {
+              setReconnectFrom("community");
+              setStep("reconnect");
+            }}
+            onCreated={() => void createWorkspace()}
+            onBack={() => setStep(prevStep("community"))}
+          />
         )}
 
         {step === "profile" && (
-          <>
-            {/* The one placeholder with real content this task: the name
-                field that used to live on the welcome card now lives
-                here, where it belongs — Task 9 builds out the rest of
-                ProfileStep (avatar, etc.) around it. */}
-            <h2>profile</h2>
-            <input
-              className="ob-input"
-              value={name}
-              autoFocus
-              spellCheck={false}
-              placeholder="your name"
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") setStep(nextStep("profile"));
-              }}
-            />
-            <button className="ob-primary" onClick={() => setStep(nextStep("profile"))}>continue</button>
-            <button className="ob-secondary" onClick={() => setStep(prevStep("profile"))}>back</button>
-          </>
+          <ProfileStep
+            name={name}
+            setName={setName}
+            onNext={(avatar) => void saveProfile(avatar)}
+            onBack={() => setStep(prevStep("profile"))}
+          />
         )}
 
-        {step === "team" && (
-          <>
-            {/* Task 9 replaces this with the real TeamStep (roster +
-                backup-key reveal); the "you're in" content stays here for
-                now so the wizard is still walkable end-to-end. */}
-            <div className="ob-logo">✓</div>
-            <h2>You're in</h2>
-            <p className="ob-lede">
-              Your key lives in the macOS keychain. If you lose this machine without a backup, the identity is gone —
-              that's the deal with owning it.
-            </p>
-            {keyHex && (
-              <div className="ob-backup">
-                {!showBackup ? (
-                  <button className="ob-secondary" onClick={() => setShowBackup(true)}>reveal backup key (write it somewhere safe)</button>
-                ) : (
-                  <code className="ob-key" onClick={() => void navigator.clipboard.writeText(keyHex)} title="click to copy">
-                    {keyHex}
-                  </code>
-                )}
-              </div>
-            )}
-            <button
-              className="ob-primary"
-              onClick={() => {
-                void completeLegacySetup().finally(() => onComplete(relayUrl));
-              }}
-            >
-              open fez
-            </button>
-            <button className="ob-secondary" onClick={() => setStep(prevStep(step))}>back</button>
-          </>
-        )}
+        {step === "team" && <TeamStep keyHex={keyHex} onFinish={() => void finishWizard()} />}
       </div>
     </div>
   );
@@ -535,17 +554,150 @@ function InviteStep({
 }
 
 /**
- * Placeholder body for community/profile — Task 9 fills these in with
- * the real pages (join/create/reconnect, name + avatar). Keeping a
- * generic shell here means the wizard is walkable end-to-end at every
- * commit on this branch, not just once the real pages land.
+ * The community page: three doors, Buzz's join/create/reconnect shape.
+ * Every path here already has an identity (`start()` runs before this
+ * step is reachable) — this page decides where the workspace lives, not
+ * who you are.
  */
-function PlaceholderStep({ step, onBack, onNext }: { step: Step; onBack: () => void; onNext: () => void }) {
+function CommunityStep({
+  busy,
+  error,
+  onJoin,
+  onReconnect,
+  onCreated,
+  onBack,
+}: {
+  busy: boolean;
+  error?: string;
+  onJoin: () => void;
+  onReconnect: () => void;
+  onCreated: () => void;
+  onBack: () => void;
+}) {
   return (
     <>
-      <h2>{step}</h2>
-      <button className="ob-primary" onClick={onNext}>continue</button>
+      <h2>Join or create a community</h2>
+      <p className="ob-lede">Join with an invite, create your own, or reconnect one you already have.</p>
+      <div className="ob-brains">
+        <button className="ob-brain" disabled={busy} onClick={onJoin}>
+          <span className="ob-brain-name">Join a community</span>
+          <span className="ob-brain-hint">paste an invite code or community URL</span>
+        </button>
+        <button className="ob-brain" disabled={busy} onClick={onCreated}>
+          <span className="ob-brain-name">Create a community</span>
+          <span className="ob-brain-hint">this machine becomes your workspace</span>
+        </button>
+        <button className="ob-brain" disabled={busy} onClick={onReconnect}>
+          <span className="ob-brain-name">I already have a community</span>
+          <span className="ob-brain-hint">your key is your membership — add its relay</span>
+        </button>
+      </div>
+      {error && <p className="ob-error">{error}</p>}
       <button className="ob-secondary" onClick={onBack}>back</button>
+    </>
+  );
+}
+
+/**
+ * A name and (optionally) a face. Skip the picture and you get your
+ * generated sprite — every key has one (Avatar.tsx's sprite-gen), so
+ * "no avatar" is never a broken state, just the default one.
+ */
+function ProfileStep({
+  name,
+  setName,
+  onNext,
+  onBack,
+}: {
+  name: string;
+  setName: (n: string) => void;
+  onNext: (avatarDataUrl?: string) => void;
+  onBack: () => void;
+}) {
+  const [avatar, setAvatar] = useState<string>();
+  const [error, setError] = useState<string>();
+  const pick = (file?: File) => {
+    if (!file) return;
+    if (file.size > 256 * 1024) {
+      setError("that image is over 256KB — pick a smaller one, or skip (you get a generated sprite)");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setError(undefined);
+      setAvatar(String(reader.result));
+    };
+    reader.readAsDataURL(file);
+  };
+  return (
+    <>
+      <h2>Build your profile</h2>
+      <p className="ob-lede">
+        A name and (optionally) a face. Skip the picture and you get your generated sprite — every key has one.
+      </p>
+      <label className="ob-avatar-pick">
+        {avatar ? <img className="ob-avatar-img" src={avatar} alt="your avatar" /> : <span className="ob-avatar-plus">+</span>}
+        <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => pick(e.target.files?.[0])} />
+      </label>
+      <input
+        className="ob-input"
+        value={name}
+        autoFocus
+        spellCheck={false}
+        placeholder="your name"
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && name.trim()) onNext(avatar);
+        }}
+      />
+      {error && <p className="ob-error">{error}</p>}
+      <button className="ob-primary" disabled={!name.trim()} onClick={() => onNext(avatar)}>
+        continue
+      </button>
+      <div className="ob-alts">
+        <button className="ob-link" onClick={() => onNext(avatar)}>skip for now</button>
+      </div>
+      <button className="ob-secondary" onClick={onBack}>back</button>
+    </>
+  );
+}
+
+/**
+ * Meet the starter team, and the wizard's last screen — the backup-key
+ * reveal that used to live on the terminal "done" step lives here now,
+ * since TeamStep IS the terminal step (Buzz's flow ends at "team"; there
+ * is no separate "done").
+ */
+function TeamStep({ keyHex, onFinish }: { keyHex?: string; onFinish: () => void }) {
+  const [showBackup, setShowBackup] = useState(false);
+  return (
+    <>
+      <h2>Meet your starter team</h2>
+      <p className="ob-lede">fez brings agents into the same room. These three will help you get started.</p>
+      <div className="ob-team">
+        {(["fez", "drift", "quill"] as const).map((id) => (
+          <figure key={id} className="ob-team-member">
+            <PixelSprite sprite={SPRITES[id]} />
+            <figcaption>{id.toUpperCase()}</figcaption>
+          </figure>
+        ))}
+      </div>
+      <p className="ob-lede">
+        Your key lives in the macOS keychain. If you lose this machine without a backup, the identity is gone —
+        that's the deal with owning it.
+      </p>
+      {keyHex && (
+        <div className="ob-backup">
+          {!showBackup ? (
+            <button className="ob-secondary" onClick={() => setShowBackup(true)}>reveal backup key (write it somewhere safe)</button>
+          ) : (
+            <code className="ob-key" onClick={() => void navigator.clipboard.writeText(keyHex)} title="click to copy">
+              {keyHex}
+            </code>
+          )}
+        </div>
+      )}
+      <button className="ob-primary" onClick={onFinish}>take me to fez</button>
     </>
   );
 }
