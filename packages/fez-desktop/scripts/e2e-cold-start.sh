@@ -3,16 +3,19 @@
 # Drive the FULL cold start on a real test machine over SSH and verify
 # against the relay's actual event store — the composition test that
 # headless evals cannot be: real Tauri invokes, real bundle install,
-# real sentinel, real agent turns. Run FROM the dev machine:
+# real desktop-managed agent turns. Run FROM the dev machine:
 #
 #   bash scripts/e2e-cold-start.sh [host]     # default ken@100.90.101.74
 #
 # What it does: build the .app (adhoc-signed — rsync sets no quarantine,
 # so Gatekeeper doesn't block it), replace /Applications/fez.app on the
-# target, reset the target to fez-never-ran, seed an identity + a
-# claude-code @fez persona (simulating a completed onboarding with the
-# brain chosen), launch, then poll the relay store until the whole first
-# minute has demonstrably happened — or dump every log when it hasn't.
+# target, reset the target to fez-never-ran, seed an identity + a @fez
+# persona (simulating a completed onboarding with the brain chosen),
+# launch, then poll the relay store until the whole #welcome choreography
+# has demonstrably happened in bootstrap-welcome — real Tauri invokes,
+# real bundle install, real desktop-managed agent turns (the app spawns
+# fez/drift/quill itself; no sentinel in the GUI path) — or dump every
+# log when it hasn't.
 set -euo pipefail
 
 HOST="${1:-ken@100.90.101.74}"
@@ -108,36 +111,49 @@ while ((SECONDS < DEADLINE)); do
   STATE=$("${SSH[@]}" '
     E=~/.fez/relay/events.jsonl
     [[ -f $E ]] || { echo "no-store"; exit 0; }
-    hello=$(grep -c "fez-welcome.hello.v1" $E || true)
-    opener=$(grep -c "fez-welcome.opener.v1" $E || true)
-    notready=$(grep -c "One thing first" $E || true)
-    team=$(grep -c "fez-welcome.team.v1" $E || true)
-    kickoff=$(grep -c "fez-welcome.kickoff.v1" $E || true)
+    # Each grep is scoped to bootstrap-welcome (not bootstrap-general):
+    # a marked event carries both the "client" marker tag and the "h"
+    # channel tag on the same jsonl line, so chaining a second grep over
+    # the channel id confirms it landed in #welcome.
+    hello=$(grep "fez-welcome.hello.v1" $E | grep -c "bootstrap-welcome" || true)
+    opener=$(grep "fez-welcome.opener.v1" $E | grep -c "bootstrap-welcome" || true)
+    notready=$(grep "One thing first" $E | grep -c "bootstrap-welcome" || true)
+    team=$(grep "fez-welcome.team.v1" $E | grep -c "bootstrap-welcome" || true)
+    kickoff=$(grep "fez-welcome.kickoff.v1" $E | grep -c "bootstrap-welcome" || true)
+    channel=$(grep "\"kind\":47101" $E | grep "bootstrap-welcome" | grep -c "\"name\":\"welcome\"" || true)
     announces=$(grep -c "\"kind\":47000" $E || true)
-    speakers=$(grep "\"kind\":47103" $E | grep -o "\"pubkey\":\"[0-9a-f]*\"" | sort -u | wc -l | tr -d " ")
+    speakers=$(grep "\"kind\":47103" $E | grep "bootstrap-welcome" | grep -o "\"pubkey\":\"[0-9a-f]*\"" | sort -u | wc -l | tr -d " ")
+    # Managed-agent logs, not a sentinel pidfile: the GUI spawns
+    # fez/drift/quill itself now (managed_agents.rs), and a
+    # <persona>.desktop.log per starter persona is the spawn witness.
+    logs=1
+    for f in fez drift quill; do [[ -s ~/.fez/logs/$f.desktop.log ]] || logs=0; done
     personas=$(ls ~/.fez/personas/ 2>/dev/null | tr "\n" ",")
-    echo "hello=$hello opener=$opener notready=$notready team=$team kickoff=$kickoff announces=$announces speakers=$speakers personas=$personas"
+    echo "hello=$hello opener=$opener notready=$notready team=$team kickoff=$kickoff channel=$channel announces=$announces speakers=$speakers logs=$logs personas=$personas"
   ')
   echo "  [$SECONDS s] $STATE"
-  if [[ "$STATE" == *"notready=0"* && "$STATE" == *"team=1"* && "$STATE" == *"kickoff=1"* ]]; then
-    # team opener up, ready-variant opener, kickoff posted — now demand
-    # REAL intros: ≥3 distinct 47103 speakers (guide + two teammates).
+  if [[ "$STATE" == *"hello=1"* && "$STATE" == *"opener=1"* && "$STATE" == *"notready=0"* \
+     && "$STATE" == *"team=1"* && "$STATE" == *"kickoff=1"* && "$STATE" == *"channel=1"* \
+     && "$STATE" == *"logs=1"* ]]; then
+    # team opener up, ready-variant opener, kickoff posted, #welcome
+    # channel present, managed-agent logs alive — now demand REAL
+    # intros: ≥3 distinct 47103 speakers (guide + two teammates), i.e.
+    # two messages authored by pubkeys that are neither owner nor @fez.
     SPEAKERS=$(sed -n 's/.*speakers=\([0-9]*\).*/\1/p' <<<"$STATE")
     if ((SPEAKERS >= 3)); then PASS=1; break; fi
   fi
 done
 
 if [[ -n "$PASS" ]]; then
-  echo "✓ PASS — claimed workspace, ready opener, team summoned, real intros, kickoff."
+  echo "✓ PASS — #welcome channel, hello, ready opener, team summoned, real intros, kickoff, managed-agent logs alive."
   exit 0
 fi
 
 echo "✗ FAIL — final state above. Logs:"
 "${SSH[@]}" '
-  echo "--- sentinel.log:"; tail -15 ~/.fez/logs/sentinel.log 2>/dev/null
-  echo "--- agent logs:"; for f in ~/.fez/logs/researcher.log ~/.fez/logs/scribe.log; do echo "· $f:"; tail -10 "$f" 2>/dev/null; done
+  echo "--- managed-agent logs:"; for f in fez drift quill; do echo "· $f.desktop.log:"; tail -10 ~/.fez/logs/$f.desktop.log 2>/dev/null; done
   echo "--- relay.log:"; tail -5 ~/.fez/relay/relay.log 2>/dev/null
-  echo "--- processes:"; pgrep -fl "fez-sentinel|fez-agent|claude" | head -5
+  echo "--- processes:"; pgrep -fl "fez-agent|claude" | head -5
   echo "--- 47103 contents:"; grep "\"kind\":47103" ~/.fez/relay/events.jsonl 2>/dev/null | python3 -c "import sys,json
 for l in sys.stdin:
     e=json.loads(l); print(e[\"pubkey\"][:8], repr(e[\"content\"][:100]))"
