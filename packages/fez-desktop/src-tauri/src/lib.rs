@@ -1750,6 +1750,154 @@ fn ensure_agent_runner() -> Result<bool, String> {
     Ok(true)
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct SpawnedAgent {
+    persona: String,
+    channels: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<String>,
+    pid: u32,
+}
+
+fn agents_registry_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    std::path::PathBuf::from(home).join(".fez").join("desktop-agents.json")
+}
+
+fn load_agents_registry() -> Vec<SpawnedAgent> {
+    std::fs::read_to_string(agents_registry_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_agents_registry(rows: &[SpawnedAgent]) {
+    if let Some(dir) = agents_registry_path().parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(
+        agents_registry_path(),
+        serde_json::to_string_pretty(rows).unwrap_or_else(|_| "[]".into()),
+    );
+}
+
+fn raw_pid_alive(pid: u32) -> bool {
+    std::process::Command::new("/bin/kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Same safety contract as the shared TS isSafeWork: word char first,
+/// then word chars / dot / slash / dash, bounded, no `..`.
+fn safe_work(value: &str) -> bool {
+    if value.is_empty() || value.len() > 201 || value.contains("..") {
+        return false;
+    }
+    let mut chars = value.chars();
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphanumeric() || first == '_') {
+        return false;
+    }
+    value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))
+}
+
+/// Spawn the bundled agent runtime for a persona, detached, and record
+/// its pid. The desktop's half of the summoner — policy lives in the
+/// shared SummonEngine on the JS side; this is only mechanics.
+#[tauri::command]
+fn spawn_agent(
+    persona: String,
+    channels: Vec<String>,
+    owner: String,
+    relays: String,
+    repo: Option<String>,
+    base_branch: Option<String>,
+) -> Result<u32, String> {
+    if !valid_persona_name(&persona) {
+        return Err(format!("invalid persona name: {persona}"));
+    }
+    if let Some(r) = &repo {
+        if !safe_work(r) {
+            return Err(format!("unsafe repo name refused: {r}"));
+        }
+    }
+    if let Some(b) = &base_branch {
+        if !safe_work(b) {
+            return Err(format!("unsafe branch name refused: {b}"));
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-agent");
+    if !bin.exists() {
+        return Err("fez-agent isn't bundled in this build".to_string());
+    }
+    let log_dir = std::path::PathBuf::from(&home).join(".fez").join("logs");
+    std::fs::create_dir_all(&log_dir).map_err(|e| format!("logs dir: {e}"))?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join(format!("{persona}.log")))
+        .map_err(|e| format!("agent log: {e}"))?;
+    let log_err = log.try_clone().map_err(|e| format!("agent log: {e}"))?;
+    let mut cmd = Command::new(&bin);
+    cmd.env("FEZ_AGENT_PERSONA", &persona)
+        .env("FEZ_AGENT_CHANNELS", channels.join(","))
+        .env("FEZ_AGENT_OWNER", &owner)
+        .env("FEZ_RELAY", &relays)
+        .stdout(log)
+        .stderr(log_err);
+    if let Some(r) = &repo {
+        cmd.env("FEZ_AGENT_REPO", r);
+        if let Some(b) = &base_branch {
+            cmd.env("FEZ_AGENT_BASE_BRANCH", b);
+        }
+    }
+    let child = cmd.spawn().map_err(|e| format!("spawn fez-agent: {e}"))?;
+    let pid = child.id();
+    let mut rows: Vec<SpawnedAgent> =
+        load_agents_registry().into_iter().filter(|r| r.persona != persona).collect();
+    rows.push(SpawnedAgent { persona, channels, repo, line: base_branch, pid });
+    save_agents_registry(&rows);
+    Ok(pid)
+}
+
+#[tauri::command]
+fn kill_agent(persona: String) -> Result<bool, String> {
+    let rows = load_agents_registry();
+    let hit = rows.iter().find(|r| r.persona == persona).cloned();
+    let killed = match &hit {
+        Some(row) if raw_pid_alive(row.pid) => std::process::Command::new("/bin/kill")
+            .arg(row.pid.to_string())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false),
+        _ => false,
+    };
+    if hit.is_some() {
+        let rest: Vec<SpawnedAgent> = rows.into_iter().filter(|r| r.persona != persona).collect();
+        save_agents_registry(&rest);
+    }
+    Ok(killed)
+}
+
+#[tauri::command]
+fn agent_alive(persona: String) -> bool {
+    load_agents_registry()
+        .iter()
+        .any(|r| r.persona == persona && raw_pid_alive(r.pid))
+}
+
+#[tauri::command]
+fn spawned_agents() -> Vec<SpawnedAgent> {
+    load_agents_registry()
+}
+
 fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
@@ -1870,7 +2018,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner, spawn_agent, kill_agent, agent_alive, spawned_agents])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
