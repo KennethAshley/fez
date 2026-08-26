@@ -14,6 +14,7 @@ import { BrowserWire } from "./wire";
 import { relaySet } from "./relay";
 import { detectHarnesses } from "./harnesses";
 import {
+  WELCOME_CHANNEL_ID,
   HELLO_MARKER,
   OPENER_MARKER,
   AWAKE_MARKER,
@@ -32,6 +33,7 @@ import {
   introCount,
   ensureMarkedMessage,
   findMarked,
+  shouldPublishMarked,
   type Readiness,
   type MarkerWire,
 } from "./welcome-core";
@@ -64,6 +66,8 @@ async function agentKeyHex(): Promise<string> {
   }
 }
 
+const PROVIDER_IDS = ["chutes", "anthropic", "openai", "openrouter"];
+
 export async function readiness(): Promise<Readiness> {
   const harnesses = await detectHarnesses();
   // Claude counts only when all three claims hold: CLI installed, its
@@ -81,17 +85,18 @@ export async function readiness(): Promise<Readiness> {
   } catch {
     claudeReady = false;
   }
-  const chutes = await invoke<boolean>("has_skill_secret", { skill: "chutes", key: "CHUTES_API_KEY" }).catch(() => false);
-  // The boot path spawns the bundled sentinel moments before this runs,
-  // and runner_status is a pidfile the sentinel writes AFTER its own
-  // startup — "not yet" is pending, not absent (the NIP-11 owner lesson
-  // again). Poll briefly; a machine with no runner settles false fast.
-  let runner = false;
-  for (let i = 0; i < 12 && !runner; i++) {
-    runner = await invoke<boolean>("runner_status").catch(() => false);
-    if (!runner) await sleep(500);
+  // Any configured provider counts — the Chutes-only gate was the bug
+  // that kept the team from ever spawning.
+  let piKeyed = false;
+  for (const p of PROVIDER_IDS) {
+    if (await invoke<boolean>("provider_key_present", { provider: p }).catch(() => false)) {
+      piKeyed = true;
+      break;
+    }
   }
-  return { authed: claudeReady || (!!harnesses["pi"] && chutes), runner };
+  // runner: the app supervises its own agents now — spawn is ours to do,
+  // so "someone is listening" is simply "we are able to spawn".
+  return { authed: claudeReady || (!!harnesses["pi"] && piKeyed), runner: true };
 }
 
 function markerWire(hex: string): MarkerWire & { close(): void } {
@@ -132,9 +137,29 @@ async function ensureStarterTeam(
     } catch {
       await invoke("write_persona", {
         name: p.id,
-        content: buildStarterPersonaMd(p, brain.harness, brain.model, brain.provider),
+        content: buildStarterPersonaMd(p, brain.harness, brain.model, brain.provider, brain.effort),
       });
     }
+  }
+
+  const owner = client.pubkey;
+  const relay = relaySet()[0];
+  for (const p of STARTER_TEAM) {
+    // Same custody as @fez: keychain fez-keys / agent:<name> — the key the
+    // spawned fez-agent will load is the key we roster here.
+    let hex: string;
+    try {
+      hex = await invoke<string>("get_identity", { account: `agent:${p.id}` });
+    } catch {
+      hex = bytesToHex(generateSecretKey());
+      await invoke("set_identity", { hex, account: `agent:${p.id}` });
+    }
+    const pk = getPublicKey(hexToBytes(hex));
+    if (!client.state.isMember(pk)) {
+      await client.invite(pk, "bot").catch(() => {});
+      await client.attestAgent(pk).catch(() => {});
+    }
+    await invoke("start_managed_agent", { persona: p.id, owner, relay, channels: `${channelId},bootstrap-general` }).catch(() => {});
   }
 
   const teamPosted = await ensureMarkedMessage(
@@ -165,7 +190,9 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
   // Only in a local workspace the user owns; never on joined relays.
   if (!relaySet()[0].startsWith("ws://127.0.0.1")) return;
   if (!client.state.isOwner(client.pubkey)) return;
-  const channel = client.state.workspace.channels.get("bootstrap-general");
+  // Post into #welcome when it exists; an old install without it keeps
+  // its general-channel history honored.
+  const channel = client.state.workspace.channels.get(WELCOME_CHANNEL_ID) ?? client.state.workspace.channels.get("bootstrap-general");
   if (!channel) return;
 
   const harnesses = await detectHarnesses();
@@ -184,6 +211,13 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
     // owner or attested siblings, and the team opener is @fez speaking.
     await client.attestAgent(agentPk).catch(() => {});
   }
+  // The guide should answer real mentions, not only post scripted lines.
+  await invoke("start_managed_agent", {
+    persona: "fez",
+    owner: client.pubkey,
+    relay: relaySet()[0],
+    channels: `${channel.id},bootstrap-general`,
+  }).catch(() => {});
 
   const r = await readiness();
   const userName = localStorage.getItem("fez-name") ?? "";
@@ -193,15 +227,24 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
     // replaceable, so republishing the same profile every run is a no-op.
     await w.publish({ kind: 0, tags: [], content: JSON.stringify({ name: "fez" }) }).catch(() => {});
 
-    const existing = await w.existing(channel.id);
-    if (!findMarked(existing, OPENER_MARKER)) {
+    // Marker idempotency across both rooms: an old install's history
+    // lives in #general, a fresh one's in #welcome — query both and
+    // merge before any publish, so neither line repeats.
+    const welcomeEvents = await w.existing(WELCOME_CHANNEL_ID).catch(() => []);
+    const generalEvents = await w.existing("bootstrap-general").catch(() => []);
+    const existing = [...welcomeEvents, ...generalEvents];
+    if (shouldPublishMarked(existing, OPENER_MARKER)) {
       // A RECEIVED message, not furniture: a typing beat, a short hello,
       // a breath, then the intro — the same rhythm a person would have.
       await w.publish({ kind: KIND_TYPING, tags: [["h", channel.id]], content: "" }).catch(() => {});
       await sleep(1400);
-      await ensureMarkedMessage(w, channel.id, client.pubkey, HELLO_MARKER, helloText(userName));
+      if (shouldPublishMarked(existing, HELLO_MARKER)) {
+        await ensureMarkedMessage(w, channel.id, client.pubkey, HELLO_MARKER, helloText(userName));
+      }
       await sleep(900);
-      await ensureMarkedMessage(w, channel.id, client.pubkey, OPENER_MARKER, openerText(r, userName));
+      if (shouldPublishMarked(existing, OPENER_MARKER)) {
+        await ensureMarkedMessage(w, channel.id, client.pubkey, OPENER_MARKER, openerText(r, userName));
+      }
       // A ready guide brings its team: real teammates, real turns.
       if (r.authed && r.runner) {
         await sleep(1200);
@@ -217,7 +260,7 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
       // ready-day-one opener never grows a spurious "I'm awake" later.
       if (r.authed && r.runner) {
         const opener = findMarked(existing, OPENER_MARKER);
-        if (opener?.content.includes(NOT_READY_CUE)) {
+        if (opener?.content.includes(NOT_READY_CUE) && !findMarked(existing, AWAKE_MARKER)) {
           await ensureMarkedMessage(w, channel.id, client.pubkey, AWAKE_MARKER, awakeText());
         }
         // The team arrives whenever readiness does — day one, or the day

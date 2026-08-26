@@ -9,7 +9,8 @@
     "prepare-pi-agent": "node scripts/prepare-pi-agent.mjs",
     "check": "tsc --noEmit",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@fezchat/artifact-viewers": "file:../fez-artifact-viewers",
@@ -28,6 +29,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

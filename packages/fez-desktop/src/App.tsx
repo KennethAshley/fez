@@ -190,7 +190,6 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
       // detection must not hold boot.
       void import("./welcome")
         .then(async ({ ensureWelcome }) => {
-          await invoke("ensure_agent_runner").catch(() => {});
           await ensureWelcome(client);
         })
         .catch(() => {});
@@ -1882,7 +1881,7 @@ function ChannelView({
             You're the only member here so far — invite people from manage (+), or mention an agent by name to bring one in.
           </div>
         )}
-        {channelId === "bootstrap-general" && (client.state.workspace.members.size ?? 0) > 1 && <MentionHint />}
+        {(channelId === "bootstrap-general" || channelId === "bootstrap-welcome") && (client.state.workspace.members.size ?? 0) > 1 && <MentionHint />}
         {threadRoot && (() => {
           const root = messages.find((m) => m.id === threadRoot);
           const view = root ? threadViewFor(root.content) : undefined;

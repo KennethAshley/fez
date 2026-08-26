@@ -8,6 +8,7 @@
  * when any message in the channel already carries it. Reinstalls,
  * paired second devices, and re-runs all converge on one greeting.
  */
+export const WELCOME_CHANNEL_ID = "bootstrap-welcome";
 export const HELLO_MARKER = "fez-welcome.hello.v1";
 export const OPENER_MARKER = "fez-welcome.opener.v1";
 export const AWAKE_MARKER = "fez-welcome.awake.v1";
@@ -45,6 +46,17 @@ export function findMarked(events: ChannelEvent[], marker: string): ChannelEvent
 }
 
 /**
+ * The cross-room publish decision: an old install's marker may live in
+ * #general, a fresh one's in #welcome — whether a scripted line is still
+ * due must consult BOTH rooms' events merged, never just the target
+ * channel's, or a re-greeted old install gets a second opener/hello.
+ * Pure so the merge logic is testable without a running client.
+ */
+export function shouldPublishMarked(existing: ChannelEvent[], marker: string): boolean {
+  return !findMarked(existing, marker);
+}
+
+/**
  * Two short bubbles, not one memo. The welcome reads as a MESSAGE
  * someone sent, so it's sized like one — the workspace/keychain lore
  * moved to the docs; a first hello is not the place for architecture.
@@ -72,8 +84,10 @@ export function openerText(r: Readiness, _userName: string): string {
  * appear only when both are chosen (pi frontmatter: defaultModel/
  * defaultProvider); Claude Code needs neither.
  */
-export function buildFezPersonaMd(harness: string, model?: string, provider?: string): string {
-  const brainLines = model && provider ? `provider: ${provider}\nmodel: ${model}\n` : "";
+export function buildFezPersonaMd(harness: string, model?: string, provider?: string, effort?: string): string {
+  const brainLines =
+    (model && provider ? `provider: ${provider}\nmodel: ${model}\n` : model ? `model: ${model}\n` : "") +
+    (effort ? `effort: ${effort}\n` : "");
   return (
     `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\n` +
     `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
@@ -97,22 +111,24 @@ export interface StarterPersona {
 
 export const STARTER_TEAM: StarterPersona[] = [
   {
-    id: "researcher",
+    id: "drift",
     description: "search the web, find papers and specs, look up facts, verify claims",
     prompt:
-      "You are a careful researcher. Dig into questions, compare options, check assumptions, and come back with clear, sourced answers. When a task belongs to a different agent, hand it off with an @mention and say why.",
+      "You are @drift, a careful researcher — just passing through, always finding things. Dig into questions, compare options, check assumptions, and come back with clear, sourced answers. When a task belongs to a different agent, hand it off with an @mention and say why.",
   },
   {
-    id: "scribe",
+    id: "quill",
     description: "write and edit — drafts, summaries, docs, tricky wording",
     prompt:
-      "You are a precise, warm writer. Help with drafts, edits, summaries, and making hard things land clearly and kindly. When a task belongs to a different agent, hand it off with an @mention and say why.",
+      "You are @quill, a precise, warm writer — the ink's still wet. Help with drafts, edits, summaries, and making hard things land clearly and kindly. When a task belongs to a different agent, hand it off with an @mention and say why.",
   },
 ];
 
 /** A starter teammate's persona — inherits the brain @fez was given. */
-export function buildStarterPersonaMd(p: StarterPersona, harness: string, model?: string, provider?: string): string {
-  const brainLines = model && provider ? `provider: ${provider}\nmodel: ${model}\n` : "";
+export function buildStarterPersonaMd(p: StarterPersona, harness: string, model?: string, provider?: string, effort?: string): string {
+  const brainLines =
+    (model && provider ? `provider: ${provider}\nmodel: ${model}\n` : model ? `model: ${model}\n` : "") +
+    (effort ? `effort: ${effort}\n` : "");
   return `---\nharness: ${harness}\n${brainLines}description: ${p.description}\n---\n${p.prompt}\n`;
 }
 
@@ -121,9 +137,9 @@ export function buildStarterPersonaMd(p: StarterPersona, harness: string, model?
  * @fez was given, and parsing the file (rather than threading state
  * through the app) keeps fez.md the single source of that choice.
  */
-export function parsePersonaBrain(md: string): { harness: string; model?: string; provider?: string } {
+export function parsePersonaBrain(md: string): { harness: string; model?: string; provider?: string; effort?: string } {
   const grab = (key: string) => md.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim();
-  return { harness: grab("harness") ?? "pi", model: grab("model"), provider: grab("provider") };
+  return { harness: grab("harness") ?? "pi", model: grab("model"), provider: grab("provider"), effort: grab("effort") };
 }
 
 /**

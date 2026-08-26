@@ -1,4 +1,5 @@
 use nostr::JsonUtil as _;
+mod managed_agents;
 mod managed_node;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -639,30 +640,78 @@ fn detect_harnesses() -> Result<String, String> {
     Ok(map.to_string())
 }
 
-/// Wire Chutes into pi as a provider and return the models — the backend
-/// for the agent editor's "runs on: Chutes" option. Reads the Chutes key
-/// from the keychain (set in Settings → secrets), registers the endpoint
-/// in ~/.pi/agent/local-models.json (pi's local-models extension turns it
-/// into provider `local-56105ece7a`), and returns {provider, models}. The
-/// editor sets the persona's provider/model itself, so this creates no
-/// persona. Provider id is sha256("https://llm.chutes.ai/v1")[:10], fixed
-/// because the base url is fixed.
+/// A brain the onboarding/settings UI can wire into pi as a local-models
+/// provider: id/name for display, the base URL pi's local-models extension
+/// will call, the keychain key name (namespaced "<id>.<key_name>" in
+/// service "fez-skill-env"), and how the models-listing probe authenticates.
+struct ProviderSpec {
+    /// UI id and skill-secret namespace ("chutes" → account "chutes.CHUTES_API_KEY").
+    id: &'static str,
+    name: &'static str,
+    base_url: &'static str,
+    key_name: &'static str,
+    /// How the models-listing endpoint authenticates.
+    auth: ProviderAuth,
+}
+
+enum ProviderAuth {
+    Bearer,
+    XApiKey,
+}
+
+/// The v1 provider table — chutes/anthropic/openai/openrouter. Adding a
+/// provider is adding a row here; wire_provider_pi and provider_key_present
+/// are both fully data-driven off it.
+fn provider_spec(id: &str) -> Option<&'static ProviderSpec> {
+    const PROVIDERS: &[ProviderSpec] = &[
+        ProviderSpec { id: "chutes", name: "Chutes", base_url: "https://llm.chutes.ai/v1", key_name: "CHUTES_API_KEY", auth: ProviderAuth::Bearer },
+        ProviderSpec { id: "anthropic", name: "Anthropic", base_url: "https://api.anthropic.com/v1", key_name: "ANTHROPIC_API_KEY", auth: ProviderAuth::XApiKey },
+        ProviderSpec { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1", key_name: "OPENAI_API_KEY", auth: ProviderAuth::Bearer },
+        ProviderSpec { id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", key_name: "OPENROUTER_API_KEY", auth: ProviderAuth::Bearer },
+    ];
+    PROVIDERS.iter().find(|p| p.id == id)
+}
+
+/// pi's local-models provider id: "local-" + sha256(baseUrl)[..10]. This fn
+/// returns just the hash fragment (the `id` field in local-models.json).
+fn local_provider_id(base_url: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hex = hex::encode(Sha256::digest(base_url.as_bytes()));
+    hex[..10].to_string()
+}
+
+/// Whether a provider's key is already in the keychain — the "already
+/// wired?" check the onboarding/settings UI uses before showing a key
+/// prompt.
 #[tauri::command]
-fn wire_chutes_pi() -> Result<String, String> {
-    const BASE_URL: &str = "https://llm.chutes.ai/v1";
-    const PROVIDER: &str = "local-56105ece7a";
-    const ID: &str = "56105ece7a";
+fn provider_key_present(provider: String) -> Result<bool, String> {
+    let spec = provider_spec(&provider).ok_or_else(|| format!("unknown provider {provider}"))?;
+    has_skill_secret(spec.id.to_string(), spec.key_name.to_string())
+}
+
+/// Wire a provider into pi as a local-models endpoint and return the
+/// models — the backend for the agent editor's "runs on: <provider>"
+/// option. Reads the provider's key from the keychain (set in Settings →
+/// secrets), registers the endpoint in ~/.pi/agent/local-models.json (pi's
+/// local-models extension turns it into provider `local-<id>`), and
+/// returns {provider, models}. The editor sets the persona's
+/// provider/model itself, so this creates no persona. Provider id is
+/// sha256(base_url)[:10], fixed because each provider's base url is fixed.
+#[tauri::command]
+fn wire_provider_pi(provider: String) -> Result<String, String> {
+    let spec = provider_spec(&provider).ok_or_else(|| format!("unknown provider {provider}"))?;
     let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
 
     let key = Command::new("security")
-        .args(["find-generic-password", "-s", "fez-skill-env", "-a", "chutes.CHUTES_API_KEY", "-w"])
+        .args(["find-generic-password", "-s", "fez-skill-env", "-a", &format!("{}.{}", spec.id, spec.key_name), "-w"])
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|k| !k.is_empty())
-        .ok_or_else(|| "Set the Chutes key first: Settings → secrets → chutes → CHUTES_API_KEY.".to_string())?;
+        .ok_or_else(|| format!("No {} key yet — add it first.", spec.name))?;
 
+    let frag = local_provider_id(spec.base_url);
     let cfg = std::path::Path::new(&home).join(".pi").join("agent").join("local-models.json");
     // This file belongs to pi, not fez — a malformed or unexpected shape
     // is a reason to STOP, not to overwrite it with just our entry
@@ -674,8 +723,8 @@ fn wire_chutes_pi() -> Result<String, String> {
         })?,
         Err(_) => Vec::new(),
     };
-    endpoints.retain(|e| e.get("id").and_then(|v| v.as_str()) != Some(ID));
-    endpoints.push(serde_json::json!({ "id": ID, "name": "Chutes", "baseUrl": BASE_URL, "apiKey": key, "status": "checking" }));
+    endpoints.retain(|e| e.get("id").and_then(|v| v.as_str()) != Some(frag.as_str()));
+    endpoints.push(serde_json::json!({ "id": frag, "name": spec.name, "baseUrl": spec.base_url, "apiKey": key, "status": "checking" }));
     if let Some(parent) = cfg.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -683,23 +732,35 @@ fn wire_chutes_pi() -> Result<String, String> {
     std::fs::write(&cfg, text + "\n")
         .map_err(|e| format!("couldn't write pi local-models.json: {e}"))?;
 
-    let models_body = ureq::get(&format!("{BASE_URL}/models"))
-        .set("authorization", &format!("Bearer {key}"))
-        .timeout(std::time::Duration::from_secs(30))
+    // The proof is a live model list. Anthropic's native listing wants
+    // x-api-key + anthropic-version; the OpenAI-compat providers take Bearer.
+    let req = ureq::get(&format!("{}/models", spec.base_url)).timeout(std::time::Duration::from_secs(30));
+    let req = match spec.auth {
+        ProviderAuth::Bearer => req.set("authorization", &format!("Bearer {key}")),
+        ProviderAuth::XApiKey => req.set("x-api-key", &key).set("anthropic-version", "2023-06-01"),
+    };
+    let body = req
         .call()
-        .map_err(|e| format!("Chutes wired, but couldn't list models: {e}"))?
+        .map_err(|e| format!("{} wired, but couldn't list models: {e}", spec.name))?
         .into_string()
         .map_err(|e| e.to_string())?;
-    let parsed: serde_json::Value = serde_json::from_str(&models_body).map_err(|e| e.to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let models: Vec<String> = parsed
         .pointer("/data")
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from)).collect())
         .unwrap_or_default();
     if models.is_empty() {
-        return Err("Chutes returned no models".to_string());
+        return Err(format!("{} returned no models", spec.name));
     }
-    Ok(serde_json::json!({ "provider": PROVIDER, "models": models }).to_string())
+    Ok(serde_json::json!({ "provider": format!("local-{frag}"), "models": models }).to_string())
+}
+
+/// Kept as a thin wrapper so existing webview callers (ModelPicker,
+/// Onboarding) that invoke `wire_chutes_pi` directly keep working.
+#[tauri::command]
+fn wire_chutes_pi() -> Result<String, String> {
+    wire_provider_pi("chutes".into())
 }
 
 /// Export a kept tool as a real, publishable @fezchat extension: write a
@@ -2083,9 +2144,17 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner, spawn_agent, kill_agent, agent_alive, spawned_agents])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, managed_agents::managed_agent_status, managed_agents::stop_managed_agents])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // The GUI is the only supervisor of its own managed agent
+            // children — they must not outlive the window (Buzz's shape:
+            // supervise while open, not a background daemon).
+            if let tauri::RunEvent::Exit = event {
+                let _ = managed_agents::stop_managed_agents();
+            }
+        });
 }
 
 /// The fez host version `fez.minFezVersion` is enforced against — a
@@ -2244,5 +2313,22 @@ mod host_compat_tests {
             let err = min_fez_version_error(Some(bad), "0.2.0").expect("must refuse");
             assert!(err.contains("refusing to guess"), "{bad}: {err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use super::{provider_spec, local_provider_id};
+    #[test]
+    fn table_has_the_v1_four() {
+        for p in ["chutes", "anthropic", "openai", "openrouter"] {
+            assert!(provider_spec(p).is_some(), "missing provider {p}");
+        }
+        assert!(provider_spec("nope").is_none());
+    }
+    #[test]
+    fn chutes_id_matches_the_legacy_constant() {
+        // sha256("https://llm.chutes.ai/v1")[..10] — pinned by the existing wiring.
+        assert_eq!(local_provider_id("https://llm.chutes.ai/v1"), "56105ece7a");
     }
 }
