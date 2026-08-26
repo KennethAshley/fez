@@ -45,6 +45,15 @@ describe("store (file backend)", () => {
     expect(() => writeEntry("root", "x")).toThrow(/reserved/i);
   });
 
+  it("rejects case variants of the reserved name (case-insensitive filesystems alias them)", async () => {
+    const { readEntry, writeEntry, writeRootEntry } = await import("../src/store.js");
+    writeRootEntry("secret words here");
+    for (const alias of ["ROOT", "Root", "rOoT"]) {
+      expect(() => readEntry(alias)).toThrow(/reserved/i);
+      expect(() => writeEntry(alias, "x")).toThrow(/reserved/i);
+    }
+  });
+
   it("readRootEntry/writeRootEntry reach the reserved entry the generic path refuses", async () => {
     const { readRootEntry, writeRootEntry, readEntry } = await import("../src/store.js");
     expect(readRootEntry()).toBeUndefined();

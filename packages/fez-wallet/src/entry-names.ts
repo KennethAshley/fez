@@ -28,7 +28,10 @@ export function isValidEntryName(name: string): boolean {
 }
 
 export function isReservedEntryName(name: string): boolean {
-  return name === RESERVED_NAME;
+  // Case-insensitive: on the file backend a case-insensitive filesystem
+  // (macOS default) aliases "ROOT" to the same file as the reserved
+  // entry, so every case variant is reserved too.
+  return name.toLowerCase() === RESERVED_NAME;
 }
 
 /** For store.ts's readRootEntry/writeRootEntry only. */

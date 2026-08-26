@@ -82,16 +82,15 @@ async function connectApi(endpoint: string): Promise<SubstrateApi> {
   try {
     await provider.connect();
     await raceConnect(provider.isReady, endpoint);
-  } catch {
-    throw new Error(`chain unreachable at ${endpoint}`);
-  }
-  try {
     return (await ApiPromise.create({
       provider,
       throwOnConnect: true,
       noInitWarn: true,
     })) as unknown as SubstrateApi;
   } catch {
+    // Release the half-open socket — with the memo cleared on failure,
+    // each retry would otherwise abandon one provider (final review).
+    provider.disconnect().catch(() => {});
     throw new Error(`chain unreachable at ${endpoint}`);
   }
 }
