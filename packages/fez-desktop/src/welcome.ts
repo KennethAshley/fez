@@ -33,6 +33,7 @@ import {
   introCount,
   ensureMarkedMessage,
   findMarked,
+  shouldPublishMarked,
   type Readiness,
   type MarkerWire,
 } from "./welcome-core";
@@ -232,16 +233,16 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
     const welcomeEvents = await w.existing(WELCOME_CHANNEL_ID).catch(() => []);
     const generalEvents = await w.existing("bootstrap-general").catch(() => []);
     const existing = [...welcomeEvents, ...generalEvents];
-    if (!findMarked(existing, OPENER_MARKER)) {
+    if (shouldPublishMarked(existing, OPENER_MARKER)) {
       // A RECEIVED message, not furniture: a typing beat, a short hello,
       // a breath, then the intro — the same rhythm a person would have.
       await w.publish({ kind: KIND_TYPING, tags: [["h", channel.id]], content: "" }).catch(() => {});
       await sleep(1400);
-      if (!findMarked(existing, HELLO_MARKER)) {
+      if (shouldPublishMarked(existing, HELLO_MARKER)) {
         await ensureMarkedMessage(w, channel.id, client.pubkey, HELLO_MARKER, helloText(userName));
       }
       await sleep(900);
-      if (!findMarked(existing, OPENER_MARKER)) {
+      if (shouldPublishMarked(existing, OPENER_MARKER)) {
         await ensureMarkedMessage(w, channel.id, client.pubkey, OPENER_MARKER, openerText(r, userName));
       }
       // A ready guide brings its team: real teammates, real turns.

@@ -9,8 +9,10 @@ import { BrowserWire } from "../../fez-desktop/src/wire.js";
 import { ensureOwnerBootstrap } from "../../fez-desktop/src/boot-workspace.js";
 import {
   OPENER_MARKER,
+  WELCOME_CHANNEL_ID,
   openerText,
   ensureMarkedMessage,
+  shouldPublishMarked,
   type MarkerWire,
 } from "../../fez-desktop/src/welcome-core.js";
 import { FezClient, setStatePersistence } from "../../fez-client/dist/index.js";
@@ -174,6 +176,86 @@ describe("cold start — claimed workspace, a room, and a guide that speaks", ()
     expect(client.state.workspace.channels.has("bootstrap-welcome")).toBe(true);
     expect(client.state.workspace.channels.get("bootstrap-welcome")?.name).toBe("welcome");
     expect(client.state.scope?.channelId).toBe("bootstrap-welcome");
+    wire.close();
+  }, 30_000);
+
+  it("migration by omission: a workspace with pre-existing channels gets NO new #welcome", async () => {
+    blankState();
+    const sk = generateSecretKey();
+    const owner = getPublicKey(sk);
+    const relay = spawnRelay(7915, owner);
+    children.push(relay);
+    await waitForNip11(7915);
+
+    const wire = new BrowserWire([`ws://127.0.0.1:7915`], bytesToHex(sk));
+    const client = new FezClient(wire);
+    await client.start();
+    // Simulate an old install: only bootstrap-general exists, created
+    // long before #welcome did — created directly, NOT through
+    // ensureOwnerBootstrap, which is exactly how a pre-#welcome install
+    // would arrive at this call already holding one channel.
+    await client.ensureChannel({ name: "general", id: "bootstrap-general" });
+    expect(client.state.workspace.channels.size).toBe(1);
+
+    const ready = await ensureOwnerBootstrap(client);
+    expect(ready).toBe(true);
+    // The zero-channels guard only fires on a truly blank workspace — a
+    // workspace that already has a room is never handed a new #welcome.
+    expect(client.state.workspace.channels.has(WELCOME_CHANNEL_ID)).toBe(false);
+    expect(client.state.workspace.channels.size).toBe(1);
+    wire.close();
+  }, 30_000);
+
+  it("merged-marker dedup: an opener marker parked in #general (pre-#welcome) suppresses a duplicate", async () => {
+    blankState();
+    const sk = generateSecretKey();
+    const owner = getPublicKey(sk);
+    const relay = spawnRelay(7916, owner);
+    children.push(relay);
+    await waitForNip11(7916);
+
+    const { client, ready, wire } = await bootAndBootstrap(7916, bytesToHex(sk));
+    expect(ready).toBe(true);
+    const general = client.state.workspace.channels.get("bootstrap-general")!;
+    const welcomeCh = client.state.workspace.channels.get(WELCOME_CHANNEL_ID)!;
+
+    // Simulate an old install whose OPENER_MARKER lives in #general (from
+    // before #welcome existed) — posted directly via a raw agent wire,
+    // the same way the first test above posts the scripted opener.
+    const agentSk = generateSecretKey();
+    const agentWire = new BrowserWire([`ws://127.0.0.1:7916`], bytesToHex(agentSk));
+    const marker: MarkerWire = {
+      existing: async (channelId) =>
+        (await agentWire.query([{ kinds: [47103], "#h": [channelId], limit: 500 }])).map((e) => ({
+          tags: e.tags,
+          content: e.content,
+        })),
+      publish: (tmpl) => agentWire.publish(tmpl),
+    };
+    const posted = await ensureMarkedMessage(
+      marker,
+      general.id,
+      client.pubkey,
+      OPENER_MARKER,
+      openerText({ authed: false, runner: false }, "Ken")
+    );
+    expect(posted).toBe(true);
+
+    // The exact merge welcome.ts performs before any publish decision:
+    // query BOTH rooms, concatenate.
+    const welcomeEvents = await marker.existing(welcomeCh.id);
+    const generalEvents = await marker.existing(general.id);
+    const merged = [...welcomeEvents, ...generalEvents];
+
+    // The marker lives ONLY in #general, but the pure decision consults
+    // both rooms merged — a second opener must not be considered due,
+    // which is what stops a re-greeted old install.
+    expect(shouldPublishMarked(merged, OPENER_MARKER)).toBe(false);
+    // And sanity: querying #welcome alone would have missed it entirely
+    // (the bug this merge exists to prevent).
+    expect(shouldPublishMarked(welcomeEvents, OPENER_MARKER)).toBe(true);
+
+    agentWire.close();
     wire.close();
   }, 30_000);
 });

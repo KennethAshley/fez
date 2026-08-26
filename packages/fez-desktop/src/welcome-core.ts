@@ -46,6 +46,17 @@ export function findMarked(events: ChannelEvent[], marker: string): ChannelEvent
 }
 
 /**
+ * The cross-room publish decision: an old install's marker may live in
+ * #general, a fresh one's in #welcome — whether a scripted line is still
+ * due must consult BOTH rooms' events merged, never just the target
+ * channel's, or a re-greeted old install gets a second opener/hello.
+ * Pure so the merge logic is testable without a running client.
+ */
+export function shouldPublishMarked(existing: ChannelEvent[], marker: string): boolean {
+  return !findMarked(existing, marker);
+}
+
+/**
  * Two short bubbles, not one memo. The welcome reads as a MESSAGE
  * someone sent, so it's sized like one — the workspace/keychain lore
  * moved to the docs; a first hello is not the place for architecture.
