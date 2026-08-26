@@ -133,8 +133,13 @@ export function parsePersonaBrain(md: string): { harness: string; model?: string
  * "I'm helpful!" from an agent that can't think is a lie).
  */
 export function teamOpenerText(names: string[]): string {
-  const mentions = names.map((n) => `@${n}`).join(" and ");
-  return `${mentions}, introduce yourselves in a sentence or two — what you're good at, and when to bring you in. Don't start any work yet.`;
+  // Each @name must OPEN a sentence: the addressing parser (rightly)
+  // treats a mid-sentence mention as a downstream handoff, not an
+  // addressee — "@a and @b, hello" summons only a. The eval pins this
+  // copy against the real parser.
+  const [first, ...rest] = names;
+  const restLines = rest.map((n) => ` @${n} — you too.`).join("");
+  return `@${first} — introduce yourself in a sentence or two: what you're good at, and when to bring you in.${restLines} Don't start any work yet.`;
 }
 
 export function kickoffText(): string {

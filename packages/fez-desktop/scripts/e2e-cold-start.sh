@@ -20,6 +20,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG="$(dirname "$HERE")"
 SSH=(ssh -o ConnectTimeout=5 -o BatchMode=yes "$HOST")
 
+
 echo "▸ building fez.app (no notarization — E2E only)"
 # The updater plugin insists on its signing key even for an app-only
 # build; same custody build-signed.sh uses.
@@ -43,10 +44,19 @@ scp -q "$HERE/reset-machine.sh" "$HOST":/tmp/reset-machine.sh
 SEED_HEX=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 CHUTES_KEY=$(security find-generic-password -s fez-skill-env -a chutes.CHUTES_API_KEY -w)
 E2E_MODEL="${E2E_MODEL:-deepseek-ai/DeepSeek-V3.2-TEE}"
-"${SSH[@]}" "# -A: any app may read these TEST items without a GUI ACL prompt — an
-# item created by the security CLI would otherwise block the app's boot
-# on an authorization dialog nobody is there to click. Production
-# identities are created BY the app and never need this.
+# Unlock + seed in ONE remote session: on modern macOS an ssh keychain
+# unlock is scoped to its own security session — unlocking in one
+# connection and writing in the next fails with "User interaction is
+# not allowed" (found the hard way, twice). The login password comes
+# from THIS machine's keychain (fez-e2e/mini-login) over ssh stdin.
+# -A on the test items: an item created by the security CLI would
+# otherwise block the app's boot on an ACL dialog nobody is there to
+# click. Production identities are created BY the app.
+MINI_PW=$(security find-generic-password -s fez-e2e -a mini-login -w)
+printf '%s\n' "$MINI_PW" | "${SSH[@]}" "IFS= read -r PW
+security unlock-keychain -p \"\$PW\" ~/Library/Keychains/login.keychain-db || exit 1
+security set-keychain-settings ~/Library/Keychains/login.keychain-db
+echo '  keychain unlocked (auto-lock off)'
 security add-generic-password -A -s fez-keys -a default -w $SEED_HEX
 security add-generic-password -A -s fez-skill-env -a chutes.CHUTES_API_KEY -w '$CHUTES_KEY'
 mkdir -p ~/.fez/personas ~/.pi/agent

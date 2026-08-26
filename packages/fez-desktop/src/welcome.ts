@@ -67,7 +67,15 @@ async function agentKeyHex(): Promise<string> {
 export async function readiness(): Promise<Readiness> {
   const harnesses = await detectHarnesses();
   const chutes = await invoke<boolean>("has_skill_secret", { skill: "chutes", key: "CHUTES_API_KEY" }).catch(() => false);
-  const runner = await invoke<boolean>("runner_status").catch(() => false);
+  // The boot path spawns the bundled sentinel moments before this runs,
+  // and runner_status is a pidfile the sentinel writes AFTER its own
+  // startup — "not yet" is pending, not absent (the NIP-11 owner lesson
+  // again). Poll briefly; a machine with no runner settles false fast.
+  let runner = false;
+  for (let i = 0; i < 12 && !runner; i++) {
+    runner = await invoke<boolean>("runner_status").catch(() => false);
+    if (!runner) await sleep(500);
+  }
   return { authed: !!harnesses["claude-code"] || (!!harnesses["pi"] && chutes), runner };
 }
 

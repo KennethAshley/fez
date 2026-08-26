@@ -127,3 +127,17 @@ describe("welcome opener", () => {
     }
   });
 });
+
+describe("team opener × the real addressing parser", () => {
+  it("every starter is an ADDRESSEE of the team opener, per fez-acp's own rules", async () => {
+    // The rule that only a first or sentence-opening @name addresses is
+    // correct ("if good, ping @coder" must not fire coder) — so the
+    // opener's COPY must satisfy the PARSER. "@researcher and @scribe,
+    // …" silently classified scribe as a downstream handoff, and half
+    // the welcome team never woke. Pin copy against parser forever.
+    const { addressees } = await import("../../fez-acp/src/addressing.js");
+    const opener = core.teamOpenerText(core.STARTER_TEAM.map((p) => p.id));
+    const named = addressees(opener);
+    for (const p of core.STARTER_TEAM) expect(named).toContain(p.id);
+  });
+});

@@ -32,6 +32,10 @@ export async function resolveChannels(relay: RelayConnection, specs: string[], r
       const wanted = spec.replace(/^#/, "").toLowerCase();
       const ids = channelEvents
         .filter((e) => {
+          // An exact d-tag match IS the channel — fixed ids exist now
+          // (bootstrap-general), and the UUID test above no longer
+          // implies "everything else is a name".
+          if (e.tags.some((t) => t[0] === "d" && t[1] === spec)) return true;
           try {
             return (JSON.parse(e.content).name ?? "").toLowerCase() === wanted;
           } catch {

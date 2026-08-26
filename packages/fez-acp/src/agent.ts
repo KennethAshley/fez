@@ -54,7 +54,7 @@ import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
-import { capReply as capReplyPure } from "./bridge-policy.js";
+import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 
@@ -193,7 +193,9 @@ async function main() {
   // Prompt rules bend under manipulation; this doesn't — a bridge talked
   // into dumping a channel log still can't publish more than the cap.
   const maxReplyChars = Number(persona.extra.maxReplyChars) > 0 ? Number(persona.extra.maxReplyChars) : undefined;
-  const capReply = (text: string): string => capReplyPure(text, maxReplyChars);
+  // Noise first, cap second — a banner that survives the cap wastes the
+  // budget on plumbing.
+  const capReply = (text: string): string => capReplyPure(stripHarnessNoise(text), maxReplyChars);
   const shareLevel = (persona.extra.shareLevel as string | undefined)?.trim();
   // Resolve declared skills; the unresolved ones aren't silently dropped
   // — the agent is told about the gap so it can SAY SO when a task needs
