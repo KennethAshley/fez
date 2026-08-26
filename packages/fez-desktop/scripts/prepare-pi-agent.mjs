@@ -64,7 +64,6 @@ if (
   !process.env.FORCE &&
   fs.existsSync(path.join(OUT, `pi${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-relay${EXE}`)) &&
-  fs.existsSync(path.join(OUT, `fez-sentinel${EXE}`)) &&
   fs.existsSync(path.join(OUT, `fez-agent${EXE}`)) &&
   fs.readFileSync(marker, "utf8").trim() === BUNDLE_VERSION
 ) {
@@ -99,13 +98,13 @@ fs.mkdirSync(WORK, { recursive: true });
 // Per-artifact reuse — for the PINNED EXTERNAL binaries only (pi,
 // pi-acp): upstream pi ships no lockfile, so a fresh-cache source build
 // can drift and fail; a binary that already works is kept. fez's OWN
-// binaries (fez-relay, fez-sentinel, fez-agent) are cheap bun compiles
+// binaries (fez-relay, fez-agent) are cheap bun compiles
 // of THIS repo's source and always rebuild — a reused copy silently
 // ships yesterday's runtime (found live: a fez-agent predating the
 // managed Claude adapter refused every claude-code persona on a machine
 // where the desktop had just verified Claude READY). FORCE=1 re-runs
 // the assembly; FORCE_ALL=1 rebuilds even the pinned externals.
-const OWN = new Set(["fez-relay", "fez-sentinel", "fez-agent"]);
+const OWN = new Set(["fez-relay", "fez-agent"]);
 const reuse = (name) =>
   !OWN.has(name) && !process.env.FORCE_ALL && fs.existsSync(path.join(OUT, `${name}${EXE}`));
 
@@ -151,21 +150,12 @@ if (!reuse("fez-relay")) {
   console.log("  (reusing existing binary)");
 }
 
-// 3b. fez-sentinel + fez-agent — the always-on watcher and the standing
-// agent runtime, compiled from the monorepo. THE cold-start knot: the
-// sentinel is what hears "@researcher" and the agent runtime is what
-// answers, and a desktop-only machine has neither unless fez ships them
-// — Buzz's buzz-agent sidecar decision, fez-shaped.
-console.log(`\n▶ compiling fez-sentinel + fez-agent…`);
-if (!reuse("fez-sentinel")) {
-  const sentinelPkg = path.resolve(HERE, "..", "..", "fez-sentinel");
-  run(
-    `bun build --compile ${JSON.stringify(path.join(sentinelPkg, "src", "index.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-sentinel${EXE}`))}`,
-    sentinelPkg
-  );
-} else {
-  console.log("  (fez-sentinel: reusing existing binary)");
-}
+// 3b. fez-agent — the standing agent runtime, compiled from the
+// monorepo. The app summons and supervises agents itself now (ws1
+// summoner + managed_agents); the sentinel is CLI-installed opt-in
+// fleet infrastructure (`fez sentinel-install`) and no longer ships
+// in the bundle (de-sentinel ws4).
+console.log(`\n▶ compiling fez-agent…`);
 if (!reuse("fez-agent")) {
   const acpRuntimePkg = path.resolve(HERE, "..", "..", "fez-acp");
   run(
@@ -185,7 +175,6 @@ const from = (name) => (reuse(name) ? path.join(OUT, `${name}${EXE}`) : undefine
 copyExec(from("pi") ?? path.join(codingAgent, "dist", `pi${EXE}`), path.join(stage, `pi${EXE}`));
 copyExec(from("pi-acp") ?? path.join(WORK, `pi-acp${EXE}`), path.join(stage, `pi-acp${EXE}`));
 copyExec(from("fez-relay") ?? path.join(WORK, `fez-relay${EXE}`), path.join(stage, `fez-relay${EXE}`));
-copyExec(from("fez-sentinel") ?? path.join(WORK, `fez-sentinel${EXE}`), path.join(stage, `fez-sentinel${EXE}`));
 copyExec(from("fez-agent") ?? path.join(WORK, `fez-agent${EXE}`), path.join(stage, `fez-agent${EXE}`));
 const themeSrc = codingAgent ? path.join(codingAgent, "dist", "theme") : path.join(OUT, "theme");
 for (const f of fs.readdirSync(themeSrc)) fs.copyFileSync(path.join(themeSrc, f), path.join(stage, "theme", f));

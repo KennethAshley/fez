@@ -148,7 +148,7 @@ export async function runCommand(text: string, ctx: CommandCtx): Promise<string>
         // pane's invite button (invite-persona.ts).
         const outcome = await invitePersona(client, rest[0] ?? "", rest[1] === "member" ? "member" : "bot");
         if (outcome.kind === "invited") return `✓ invited @${outcome.persona} (local persona) as ${outcome.role} — mention @${outcome.persona} to wake it`;
-        if (outcome.kind === "no-key") return `@${outcome.persona} is a local persona that has never run — mention @${outcome.persona} in a channel to spawn it (the sentinel invites it automatically)`;
+        if (outcome.kind === "no-key") return `@${outcome.persona} is a local persona that has never run — mention @${outcome.persona} in a channel to spawn it (the app invites it automatically)`;
         return `nobody named "${rest[0] ?? ""}"`;
       }
       case "kick": {

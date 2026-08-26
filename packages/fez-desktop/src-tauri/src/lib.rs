@@ -1785,60 +1785,6 @@ fn runner_status() -> bool {
     pid_alive(&std::path::PathBuf::from(home).join(".fez").join("sentinel.pid")).is_some()
 }
 
-/// Best effort: if the fez CLI exists on this machine, start its sentinel
-/// detached. Ok(false) means "no CLI here" — the UI says so honestly
-/// instead of promising a reply that cannot come. Bundling the full
-/// runner chain (sentinel → fez agent → fez-acp) is the standalone-DMG
-/// follow-up, out of scope for the cold-start work.
-#[tauri::command]
-fn ensure_agent_runner() -> Result<bool, String> {
-    if runner_status() {
-        return Ok(true);
-    }
-    let home = std::env::var("HOME").unwrap_or_default();
-    // The bundled sentinel first — it ships with the app precisely so a
-    // desktop-only machine has something listening for mentions. Its
-    // words go to a log, not /dev/null: "the team never spoke" was
-    // undiagnosable when the listener died silently.
-    let bundled = format!("{home}/.fez/bin/fez-sentinel");
-    if std::path::Path::new(&bundled).exists() {
-        let log_dir = std::path::Path::new(&home).join(".fez").join("logs");
-        std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
-        let log = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_dir.join("sentinel.log"))
-            .map_err(|e| format!("sentinel.log: {e}"))?;
-        let log_err = log.try_clone().map_err(|e| format!("sentinel.log: {e}"))?;
-        Command::new(&bundled)
-            .stdout(log)
-            .stderr(log_err)
-            .spawn()
-            .map_err(|e| format!("spawn fez-sentinel: {e}"))?;
-        return Ok(true);
-    }
-    // Same real-install-dirs idea harness_installed uses: a GUI app's
-    // PATH is stripped, so look where installers actually put things.
-    let candidates = [
-        format!("{home}/.fez/bin/fez"),
-        "/opt/homebrew/bin/fez".to_string(),
-        "/usr/local/bin/fez".to_string(),
-        format!("{home}/.local/bin/fez"),
-        format!("{home}/.bun/bin/fez"),
-        format!("{home}/.volta/bin/fez"),
-    ];
-    let Some(fez) = candidates.iter().find(|p| std::path::Path::new(p.as_str()).exists()) else {
-        return Ok(false);
-    };
-    Command::new(fez)
-        .arg("sentinel")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("spawn fez sentinel: {e}"))?;
-    Ok(true)
-}
-
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct SpawnedAgent {
     persona: String,
@@ -2169,7 +2115,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, ensure_agent_runner, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, managed_agents::managed_agent_status, managed_agents::stop_managed_agents])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, managed_agents::managed_agent_status, managed_agents::stop_managed_agents])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {
