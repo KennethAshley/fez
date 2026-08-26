@@ -87,9 +87,11 @@ describe("cold start — claimed workspace, a room, and a guide that speaks", ()
     expect(client.state.isOwner(client.pubkey)).toBe(true);
     const general = client.state.workspace.channels.get("bootstrap-general");
     expect(general?.name).toBe("general");
-    // Land IN the room, not beside it: a fresh owner staring at
+    // Land IN a room, not beside it: a fresh owner staring at
     // "no channel — pick one from the rail" is the bug, not a state.
-    expect(client.state.scope?.channelId).toBe("bootstrap-general");
+    // #welcome now exists too on a fresh workspace, and outranks
+    // #general as the landing spot — it's the guided room.
+    expect(client.state.scope?.channelId).toBe("bootstrap-welcome");
 
     // The welcome layer over the same relay: the agent key posts the
     // scripted opener into the room the bootstrap just made.
@@ -158,4 +160,20 @@ describe("cold start — claimed workspace, a room, and a guide that speaks", ()
     expect(client.state.workspace.channels.get("bootstrap-general")?.name).toBe("general");
     wire.close();
   }, 40_000);
+
+  it("creates #welcome and lands scope in it", async () => {
+    blankState();
+    const sk = generateSecretKey();
+    const owner = getPublicKey(sk);
+    const relay = spawnRelay(7914, owner);
+    children.push(relay);
+    await waitForNip11(7914);
+
+    const { client, ready, wire } = await bootAndBootstrap(7914, bytesToHex(sk));
+    expect(ready).toBe(true);
+    expect(client.state.workspace.channels.has("bootstrap-welcome")).toBe(true);
+    expect(client.state.workspace.channels.get("bootstrap-welcome")?.name).toBe("welcome");
+    expect(client.state.scope?.channelId).toBe("bootstrap-welcome");
+    wire.close();
+  }, 30_000);
 });
