@@ -79,6 +79,13 @@ export function dmConvoKey(participants: string[], myPk: string): string {
 export interface Wire {
   pubkey: string;
   publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent>;
+  /**
+   * Sign WITHOUT publishing — sealed schedule intents embed a future-
+   * dated, pre-signed event. Optional: a wire that can't provide it
+   * degrades scheduleMessage to the legacy plaintext form (sentinel-
+   * fired). The TUI's wire and BrowserWire both provide it.
+   */
+  signEvent?(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): WireEvent | Promise<WireEvent>;
   subscribe(filters: WireFilter[], onEvent: (event: WireEvent) => void): () => void;
   query(filters: WireFilter[]): Promise<WireEvent[]>;
   /**
@@ -976,6 +983,28 @@ export class FezClient {
   }
 
   async scheduleMessage(channelId: string, sendAt: number, text: string): Promise<void> {
+    if (this.wire.signEvent) {
+      // Sealed intent: the FINAL message, signed now, dated send_at —
+      // whoever executes (relay scheduler, sentinel) releases it
+      // verbatim and never needs our key. Format defined in
+      // src/protocol/intents.ts (sealContent/parseSealed); inlined here
+      // rather than imported because fez-client is its own tsc build
+      // with declaration emit and a src-rooted include, so a relative
+      // import reaching outside packages/fez-client/src would break
+      // the rootDir contract.
+      const inner = await this.wire.signEvent({
+        kind: K.MESSAGE,
+        tags: [["h", channelId]],
+        content: text,
+        created_at: sendAt,
+      });
+      await this.wire.publish({
+        kind: K.SCHEDULED,
+        tags: [["h", channelId], ["send_at", String(sendAt)]],
+        content: JSON.stringify({ sealed: inner }),
+      });
+      return;
+    }
     await this.wire.publish({
       kind: K.SCHEDULED,
       tags: [["h", channelId], ["send_at", String(sendAt)]],
