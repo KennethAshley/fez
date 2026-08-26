@@ -19,6 +19,7 @@ import {
   makeChannels,
   summonMentions,
   isSafeWork,
+  parseSealed,
 } from "@fezchat/protocol";
 
 /**
@@ -420,11 +421,22 @@ async function main() {
     if (firedIntents.has(intent.id)) return;
     firedIntents.add(intent.id);
     if (intent.kind === KIND_SCHEDULED) {
-      const h = intent.tags.find((t) => t[0] === "h")?.[1];
-      const c = intent.tags.find((t) => t[0] === "c")?.[1];
-      if (h && c) {
-        await relay.publish(client.signEvent({ kind: KIND_CHANNEL_MSG, tags: [["h", h]], content: intent.content }));
-        console.log(`⏲ delivered scheduled message to channel ${h.slice(0, 8)}…`);
+      const sealed = parseSealed(intent.content);
+      if (sealed) {
+        // Sealed intent: release the author's own pre-signed event
+        // verbatim. Idempotent — if the relay scheduler already released
+        // it, the duplicate id is dropped at ingest.
+        await relay.publish(sealed as never);
+        console.log(`⏲ released sealed scheduled message ${sealed.id.slice(0, 8)}…`);
+      } else {
+        // Legacy plaintext. The old gate also required a retired "c"
+        // tag scheduleMessage never set — legacy intents silently never
+        // fired. h alone is the address.
+        const h = intent.tags.find((t) => t[0] === "h")?.[1];
+        if (h) {
+          await relay.publish(client.signEvent({ kind: KIND_CHANNEL_MSG, tags: [["h", h]], content: intent.content }));
+          console.log(`⏲ delivered scheduled message to channel ${h.slice(0, 8)}…`);
+        }
       }
     } else {
       const { note } = decodeReminder(intent);
