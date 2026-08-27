@@ -9,6 +9,7 @@ import type { ToolDeps } from "../src/tools.js";
 import type { ChainAdapter } from "../src/chains/adapter.js";
 import type { ConsentRelay, SignedNostrEvent } from "../src/consent.js";
 import { parseReceipt, buildReceipt } from "../src/receipt.js";
+import { parseConsentRequest } from "../src/gui-logic.js";
 import { hexToBytes } from "nostr-tools/utils";
 
 const ownerSk = generateSecretKey();
@@ -270,6 +271,83 @@ describe("new payee consent", () => {
       { to: "@chip", amount: "0.0001", asset: "TAO" }
     );
     expect(asks).toBe(2);
+  });
+});
+
+describe("an unknowable network is said out loud (spec §8)", () => {
+  it("the consent card says the network could not be checked for a raw address", async () => {
+    const { relay, getRequest } = autoRelay(() => "✅");
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    await walletSend(
+      {
+        ...baseDeps(adapter),
+        relay: async () => relay,
+        resolve: async () => ({ address: "5Raw", via: "raw" }),
+      },
+      { to: "5Raw", amount: "0.5", asset: "TAO" } // over the 0.01 threshold
+    );
+    expect(getRequest()?.content).toContain("network could not be checked");
+    expect(getRequest()?.content).toContain("test"); // which network you ARE on
+    expect(transfers).toHaveLength(1);
+    // ...and the card still parses, with the warning carried as a note.
+    const parsed = parseConsentRequest(getRequest()!.content)!;
+    expect(parsed.to).toBe("5Raw");
+    expect(parsed.notes).toEqual([expect.stringContaining("network could not be checked")]);
+  });
+
+  it("says nothing of the sort when the payee published a network", async () => {
+    const { relay, getRequest } = autoRelay(() => "✅");
+    const { adapter } = fakeAdapter(2_000_000_000n);
+    await walletSend(
+      {
+        ...baseDeps(adapter),
+        relay: async () => relay,
+        resolve: async () => ({ address: "5Chip", network: "test", via: "agent" }),
+      },
+      { to: "@chip", amount: "0.5", asset: "TAO" }
+    );
+    expect(getRequest()?.content).not.toContain("network could not be checked");
+  });
+});
+
+describe("a payee is remembered only once money has moved", () => {
+  function throwingAdapter(): ChainAdapter {
+    return {
+      ...fakeAdapter(2_000_000_000n).adapter,
+      transfer: async () => {
+        throw new Error("chain rejected the extrinsic");
+      },
+    };
+  }
+
+  it("a thrown transfer leaves knownPayees empty, so the next payment still asks", async () => {
+    const relay = autoRelay(() => "✅");
+    const d: ToolDeps = {
+      ...baseDeps(throwingAdapter()),
+      ownerPk,
+      agentNostrKey,
+      relay: () => Promise.resolve(relay.relay),
+      resolve: async () => ({ address: "5Chip", network: "test", via: "agent", payeePubkey: "chippk" }),
+    };
+    await expect(walletSend(d, { to: "@chip", amount: "0.0001", asset: "TAO" })).rejects.toThrow(/chain rejected/);
+    expect(d.config.knownPayees).toEqual([]);
+    const file = path.join(process.env.FEZ_WALLET_HOME!, "wallet.json");
+    const onDisk = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
+    expect(onDisk).not.toContain("chippk");
+  });
+
+  it("a completed transfer does remember the payee", async () => {
+    const relay = autoRelay(() => "✅");
+    const { adapter } = fakeAdapter(2_000_000_000n);
+    const d: ToolDeps = {
+      ...baseDeps(adapter),
+      ownerPk,
+      agentNostrKey,
+      relay: () => Promise.resolve(relay.relay),
+      resolve: async () => ({ address: "5Chip", network: "test", via: "agent", payeePubkey: "chippk" }),
+    };
+    await walletSend(d, { to: "@chip", amount: "0.0001", asset: "TAO" });
+    expect(d.config.knownPayees).toEqual(["chippk"]);
   });
 });
 

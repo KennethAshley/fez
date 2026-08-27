@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor } from "../src/gui-logic.js";
-import { networkLabel, validThreshold, receiptLine } from "../src/gui-logic.js";
+import { networkLabel, validThreshold, mergeThresholds, receiptLine } from "../src/gui-logic.js";
 import type { SpendEntry } from "../src/log.js";
 
 const MSG = [
@@ -25,6 +25,43 @@ describe("parseConsentRequest", () => {
   it("rejects ordinary messages and near-misses", () => {
     expect(parseConsentRequest("hello 💸 world")).toBeUndefined();
     expect(parseConsentRequest("💸 **scout** wants to send **1 TAO**")).toBeUndefined(); // no footer
+  });
+
+  it("still parses when walletSend prepends notes, and hands them back", () => {
+    const withNotes = [
+      "first payment to this agent",
+      "network could not be checked — this address publishes none (you are on test)",
+      ...MSG.split("\n"),
+    ].join("\n");
+    const req = parseConsentRequest(withNotes);
+    expect(req?.persona).toBe("scout");
+    expect(req?.to).toBe("5E76cpgX…F7G7G4");
+    expect(req?.notes).toEqual([
+      "first payment to this agent",
+      "network could not be checked — this address publishes none (you are on test)",
+    ]);
+  });
+
+  it("carries no notes key when there is nothing to warn about", () => {
+    expect(parseConsentRequest(MSG)).not.toHaveProperty("notes");
+  });
+});
+
+describe("mergeThresholds", () => {
+  it("keeps every per-persona threshold when the panel edits the default", () => {
+    expect(mergeThresholds({ default: "0.01", scout: "0.0001" }, "0.5")).toEqual({
+      default: "0.5",
+      scout: "0.0001",
+    });
+  });
+
+  it("works from nothing at all", () => {
+    expect(mergeThresholds(undefined, "0.5")).toEqual({ default: "0.5" });
+  });
+
+  it("never loosens a tighter persona threshold — the direction that costs money", () => {
+    const merged = mergeThresholds({ default: "0.01", scout: "0.0001" }, "10");
+    expect(merged.scout).toBe("0.0001");
   });
 });
 

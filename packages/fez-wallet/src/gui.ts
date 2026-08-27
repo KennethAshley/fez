@@ -13,6 +13,7 @@ import {
   logsFor,
   networkLabel,
   validThreshold,
+  mergeThresholds,
   receiptLine,
 } from "./gui-logic.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
@@ -208,7 +209,7 @@ export default function activate(api: GuiExtensionApi): void {
     channelId,
     msgTs,
   }: {
-    req: { persona: string; amount: string; to: string; memo?: string };
+    req: { persona: string; amount: string; to: string; memo?: string; notes?: string[] };
     msgId: string;
     channelId: string;
     msgTs: number;
@@ -273,6 +274,13 @@ export default function activate(api: GuiExtensionApi): void {
         who ? h("strong", null, `@${who} · `) : null,
         h("span", { style: mono, title: req.to }, shortAddr(req.to)),
         req.memo ? ` — ${req.memo}` : ""
+      ),
+      // Whatever walletSend put above the 💸 line: "first payment to
+      // this agent", "network could not be checked …". The owner is
+      // approving on the strength of these, so they render in the card
+      // and not only in the raw bubble text.
+      ...(req.notes ?? []).map((note) =>
+        h("div", { key: note, style: { ...dim, marginTop: 4 } }, `⚠ ${note}`)
       ),
       status === "pending"
         ? h(
@@ -449,9 +457,13 @@ export default function activate(api: GuiExtensionApi): void {
       await api.prefs.set("network", next);
     }, []);
 
+    // Read-modify-write, never write: `thresholds` holds per-persona
+    // entries this panel neither shows nor owns (see mergeThresholds).
     const onThreshold = useCallback(async (next: string) => {
       setThreshold(next);
-      if (validThreshold(next)) await api.prefs.set("thresholds", { default: next });
+      if (!validThreshold(next)) return;
+      const existing = await api.prefs.get<Record<string, string>>("thresholds");
+      await api.prefs.set("thresholds", mergeThresholds(existing, next));
     }, []);
 
     useEffect(() => {

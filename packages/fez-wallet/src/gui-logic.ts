@@ -4,15 +4,33 @@ import type { SpendEntry } from "./log.js";
 import type { ParsedReceipt } from "./receipt.js";
 import { formatAmount } from "./chains/adapter.js";
 
+/**
+ * The 💸 line need not be the FIRST line: walletSend prepends note lines
+ * ("first payment to this agent", "network could not be checked …") that
+ * the owner has to see before deciding. An anchored-at-zero parser
+ * dropped the card for exactly the requests that most needed one, so the
+ * head is located rather than assumed, and anything that isn't head,
+ * destination or the react footer comes back as `notes` for the card to
+ * render.
+ */
 export function parseConsentRequest(
   content: string
-): { persona: string; amount: string; to: string; memo?: string } | undefined {
+): { persona: string; amount: string; to: string; memo?: string; notes?: string[] } | undefined {
   const lines = content.split("\n");
-  if (lines.length < 3) return undefined;
-  const head = /^💸 \*\*(.+)\*\* wants to send \*\*(.+)\*\*$/.exec(lines[0]);
-  const dest = /^to `([^`]+)`(?: — (.+))?$/.exec(lines[1]);
-  if (!head || !dest || !lines[2].startsWith("react ✅")) return undefined;
-  return { persona: head[1], amount: head[2], to: dest[1], ...(dest[2] ? { memo: dest[2] } : {}) };
+  const i = lines.findIndex((l) => /^💸 \*\*(.+)\*\* wants to send \*\*(.+)\*\*$/.test(l));
+  if (i < 0 || lines.length < i + 3) return undefined;
+  const head = /^💸 \*\*(.+)\*\* wants to send \*\*(.+)\*\*$/.exec(lines[i])!;
+  const dest = /^to `([^`]+)`(?: — (.+))?$/.exec(lines[i + 1]);
+  const footer = lines.findIndex((l, n) => n > i + 1 && l.startsWith("react ✅"));
+  if (!dest || footer < 0) return undefined;
+  const notes = lines.filter((l, n) => n !== i && n !== i + 1 && n !== footer && l.trim() !== "");
+  return {
+    persona: head[1],
+    amount: head[2],
+    to: dest[1],
+    ...(dest[2] ? { memo: dest[2] } : {}),
+    ...(notes.length ? { notes } : {}),
+  };
 }
 
 const APPROVE = new Set(["✅", "+"]);
@@ -128,6 +146,23 @@ export function logsFor(
  * mistakes a testnet transfer for a real one. */
 export function networkLabel(network: string): string {
   return network === "finney" ? "finney (mainnet)" : `${network} — play money`;
+}
+
+/**
+ * The panel edits ONE key of the thresholds object — `default` — and
+ * every other key belongs to somebody else: `thresholdFor` reads a
+ * per-persona threshold, and migratePrefs moved wallet.json's into
+ * prefs. Writing `{ default: next }` wholesale deleted them, and the
+ * harm ran the wrong way: a persona deliberately held to a TIGHTER
+ * threshold fell back to the looser default, so MORE money auto-sent
+ * with no consent card. Merge, never replace. (The panel still shows
+ * only `default`; the rest it preserves without displaying.)
+ */
+export function mergeThresholds(
+  existing: Record<string, string> | undefined,
+  next: string
+): Record<string, string> {
+  return { ...(existing ?? {}), default: next };
 }
 
 /** Same shape parseAmount accepts, checked before it reaches the wallet:

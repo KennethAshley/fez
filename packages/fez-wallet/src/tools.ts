@@ -89,8 +89,8 @@ export async function walletSend(
 
   // Before anything is signed: the guard that keeps a play session from
   // touching real TAO. A raw address announces no network and cannot be
-  // checked — that is said out loud in the consent card rather than
-  // allowed to look safe.
+  // checked — the consent card below says so in as many words (spec §8)
+  // rather than letting an unchecked destination look checked.
   if (resolved.network && resolved.network !== deps.config.network) {
     throw new Error(
       `you're on ${deps.config.network}, ${args.to} is on ${resolved.network} — nothing was sent`
@@ -127,6 +127,12 @@ export async function walletSend(
       // paid, verbatim. The gui card does the shortening for display.
       text: [
         ...(newPayee ? ["first payment to this agent"] : []),
+        // Spec §8: an unknowable network is stated, never implied safe.
+        // Note lines sit ABOVE the 💸 line and the card renders them as
+        // its own notes (gui-logic's parseConsentRequest).
+        ...(resolved.network === undefined
+          ? [`network could not be checked — this address publishes none (you are on ${deps.config.network})`]
+          : []),
         `💸 **${deps.persona}** wants to send **${formatAmount(amount)}**`,
         `to \`${to}\`${args.memo ? ` — ${args.memo}` : ""}`,
         `react ✅ to approve · ❌ to decline`,
@@ -146,12 +152,6 @@ export async function walletSend(
       return `send ${reason} — nothing was transferred`;
     }
     consent = "approved";
-    // Remembered only on approval — a decline or timeout must never
-    // silently authorize every future payment to this pubkey.
-    if (resolved.payeePubkey) {
-      rememberPayee(deps.config, resolved.payeePubkey);
-      saveConfig(deps.config);
-    }
   }
 
   // Re-checked right before the transfer fires (finding #6): a caller that
@@ -175,6 +175,14 @@ export async function walletSend(
   };
   appendLog(entry);
   void mirrorSpend(entry);
+  // Remembered only after money actually moved, and only on approval: a
+  // decline, a timeout, or a transfer that threw must never mark this
+  // pubkey known — that would spend the new-payee card on a payment that
+  // never happened and wave the NEXT one straight through.
+  if (consent === "approved" && resolved.payeePubkey) {
+    rememberPayee(deps.config, resolved.payeePubkey);
+    saveConfig(deps.config);
+  }
   if (!endpointMirrored) {
     endpointMirrored = true;
     const config = loadConfig();
