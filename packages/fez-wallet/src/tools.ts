@@ -2,7 +2,7 @@ import type { WalletPair } from "./derive.js";
 import { pairFromStored } from "./derive.js";
 import { readEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { type WalletConfig, thresholdFor, loadConfig } from "./config.js";
+import { type WalletConfig, thresholdFor, loadConfig, rememberPayee, saveConfig } from "./config.js";
 import { appendLog, readLog } from "./log.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { buildConsentRequest, awaitDecision, type ConsentRelay } from "./consent.js";
@@ -104,8 +104,14 @@ export async function walletSend(
   }
 
   const threshold = parseAmount(thresholdFor(deps.config, deps.persona), decimals, args.asset);
+  // The threshold answers "how much". A payee you have never paid raises
+  // "to whom", which no amount can answer — so the first payment to a
+  // given pubkey shows a card whatever its size, and only the first.
+  const newPayee =
+    resolved.payeePubkey !== undefined && !deps.config.knownPayees.includes(resolved.payeePubkey);
+  const needsConsent = amount.raw > threshold.raw || newPayee;
   let consent: "auto" | "approved" = "auto";
-  if (amount.raw > threshold.raw) {
+  if (needsConsent) {
     if (!deps.relay || !deps.ownerPk || !deps.agentNostrKey || !deps.config.consentChannel) {
       throw new Error(
         "this amount needs owner consent, but the consent channel is not configured (set consentChannel in wallet.json)"
@@ -120,6 +126,7 @@ export async function walletSend(
       // address: what the owner approves must be the address that gets
       // paid, verbatim. The gui card does the shortening for display.
       text: [
+        ...(newPayee ? ["first payment to this agent"] : []),
         `💸 **${deps.persona}** wants to send **${formatAmount(amount)}**`,
         `to \`${to}\`${args.memo ? ` — ${args.memo}` : ""}`,
         `react ✅ to approve · ❌ to decline`,
@@ -139,6 +146,12 @@ export async function walletSend(
       return `send ${reason} — nothing was transferred`;
     }
     consent = "approved";
+    // Remembered only on approval — a decline or timeout must never
+    // silently authorize every future payment to this pubkey.
+    if (resolved.payeePubkey) {
+      rememberPayee(deps.config, resolved.payeePubkey);
+      saveConfig(deps.config);
+    }
   }
 
   // Re-checked right before the transfer fires (finding #6): a caller that

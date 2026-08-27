@@ -70,6 +70,7 @@ function baseDeps(adapter: ChainAdapter): ToolDeps {
       personas: {},
       endpoints: { tao: "wss://unused" },
       network: "test",
+      knownPayees: [],
     },
     ownerPk,
     agentNostrKey,
@@ -216,6 +217,59 @@ describe("cross-owner sends", () => {
       { to: "5Raw", amount: "0.001", asset: "TAO" }
     );
     expect(transfers[0].to).toBe("5Raw");
+  });
+});
+
+describe("new payee consent", () => {
+  it("asks the first time, even under the threshold", async () => {
+    const { adapter, transfers } = fakeAdapter(1_000_000_000n);
+    let asked = false;
+    const relay = autoRelay((ev) => { asked = true; return "✅"; });
+    await walletSend(
+      {
+        ...baseDeps(adapter),
+        ownerPk,
+        agentNostrKey,
+        relay: () => Promise.resolve(relay.relay),
+        resolve: async () => ({ address: "5Chip", network: "test", via: "agent", payeePubkey: "chippk" }),
+      },
+      { to: "@chip", amount: "0.0001", asset: "TAO" } // well under the 0.01 threshold
+    );
+    expect(asked).toBe(true);
+    expect(transfers).toHaveLength(1);
+  });
+
+  it("does not ask again once that payee is known", async () => {
+    const { adapter } = fakeAdapter(1_000_000_000n);
+    let asks = 0;
+    const relay = autoRelay(() => { asks++; return "✅"; });
+    const deps: ToolDeps = {
+      ...baseDeps(adapter),
+      ownerPk,
+      agentNostrKey,
+      relay: () => Promise.resolve(relay.relay),
+      resolve: async () => ({ address: "5Chip", network: "test", via: "agent", payeePubkey: "chippk" }),
+    };
+    const args = { to: "@chip", amount: "0.0001", asset: "TAO" };
+    await walletSend(deps, args);
+    await walletSend(deps, args);
+    expect(asks).toBe(1);
+  });
+
+  it("keys on the pubkey, not the name — a name is not an identity", async () => {
+    const { adapter } = fakeAdapter(1_000_000_000n);
+    let asks = 0;
+    const relay = autoRelay(() => { asks++; return "✅"; });
+    const base = { ...baseDeps(adapter), ownerPk, agentNostrKey, relay: () => Promise.resolve(relay.relay) };
+    await walletSend(
+      { ...base, resolve: async () => ({ address: "5A", network: "test", via: "agent", payeePubkey: "pkA" }) },
+      { to: "@chip", amount: "0.0001", asset: "TAO" }
+    );
+    await walletSend(
+      { ...base, resolve: async () => ({ address: "5B", network: "test", via: "agent", payeePubkey: "pkB" }) },
+      { to: "@chip", amount: "0.0001", asset: "TAO" }
+    );
+    expect(asks).toBe(2);
   });
 });
 

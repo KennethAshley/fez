@@ -11,6 +11,7 @@ export interface WalletConfig {
   personas: Record<string, { index: number }>; // stable EVM derivation indexes
   endpoints: { tao: string };
   network: Network;
+  knownPayees: string[]; // payee pubkeys that have been approved at least once
 }
 
 const DEFAULTS: WalletConfig = {
@@ -18,6 +19,7 @@ const DEFAULTS: WalletConfig = {
   personas: {},
   endpoints: { tao: "wss://entrypoint-finney.opentensor.ai:443" },
   network: "finney",
+  knownPayees: [],
 };
 
 const ENDPOINTS: Record<Network, string> = {
@@ -108,6 +110,15 @@ export function migratePrefs(): void {
 
 export function thresholdFor(c: WalletConfig, persona: string): string {
   return c.thresholds[persona] ?? c.thresholds.default;
+}
+
+/** A payee is remembered only after an owner approves a payment to them —
+ * never on decline or timeout, which would silently authorize every
+ * future payment to that pubkey. Keyed on the pubkey, never the name:
+ * two owners can each run an agent called "chip", and keying on the name
+ * would let the second one inherit the first one's approval. */
+export function rememberPayee(c: WalletConfig, pubkey: string): void {
+  if (!c.knownPayees.includes(pubkey)) c.knownPayees = [...c.knownPayees, pubkey];
 }
 
 export function assignEvmIndex(c: WalletConfig, persona: string): number {
