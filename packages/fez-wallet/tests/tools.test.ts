@@ -8,6 +8,7 @@ import { walletSend } from "../src/tools.js";
 import type { ToolDeps } from "../src/tools.js";
 import type { ChainAdapter } from "../src/chains/adapter.js";
 import type { ConsentRelay, SignedNostrEvent } from "../src/consent.js";
+import { parseReceipt } from "../src/receipt.js";
 
 const ownerSk = generateSecretKey();
 const ownerPk = getPublicKey(ownerSk);
@@ -23,7 +24,7 @@ function fakeAdapter(balanceRao: bigint) {
     balance: async () => ({ raw: balanceRao, decimals: 9, symbol: "TAO" }),
     transfer: async (_p, to, amount) => {
       transfers.push({ to, raw: amount.raw });
-      return { txHash: "0xfeed" };
+      return { txHash: "0xfeed", blockRef: "0xblock" };
     },
   };
   return { adapter, transfers };
@@ -213,5 +214,64 @@ describe("cross-owner sends", () => {
       { to: "5Raw", amount: "0.001", asset: "TAO" }
     );
     expect(transfers[0].to).toBe("5Raw");
+  });
+});
+
+describe("receipts", () => {
+  function relayCapturing(published: SignedNostrEvent[]) {
+    const relay: ConsentRelay = {
+      publish: async (ev) => { published.push(ev); },
+      subscribe: () => () => {},
+      query: async () => [],
+    };
+    return () => Promise.resolve(relay);
+  }
+
+  it("publishes a receipt e-tagged to the paid-for message", async () => {
+    const { adapter } = fakeAdapter(1_000_000_000n);
+    const published: SignedNostrEvent[] = [];
+    await walletSend(
+      {
+        ...baseDeps(adapter),
+        agentNostrKey,
+        relay: relayCapturing(published),
+        resolve: async () => ({ address: "5Chip", network: "test", via: "agent" }),
+      },
+      { to: "@chip", amount: "0.001", asset: "TAO", for: "msg1" }
+    );
+    const r = published.map(parseReceipt).find(Boolean)!;
+    expect(r.forEvent).toBe("msg1");
+    expect(r.raw).toBe(1_000_000n);
+    expect(r.txHash).toBe("0xfeed");
+  });
+
+  it("publishes no receipt when no message was named", async () => {
+    const { adapter } = fakeAdapter(1_000_000_000n);
+    const published: SignedNostrEvent[] = [];
+    await walletSend(
+      { ...baseDeps(adapter), agentNostrKey, relay: relayCapturing(published), resolve: async () => ({ address: "5Raw", via: "raw" }) },
+      { to: "5Raw", amount: "0.001", asset: "TAO" }
+    );
+    expect(published.map(parseReceipt).filter(Boolean)).toHaveLength(0);
+  });
+
+  it("keeps the transfer when the receipt fails to publish, and says so", async () => {
+    const { adapter, transfers } = fakeAdapter(1_000_000_000n);
+    const failing: ConsentRelay = {
+      publish: async () => { throw new Error("relay down"); },
+      subscribe: () => () => {},
+      query: async () => [],
+    };
+    const out = await walletSend(
+      {
+        ...baseDeps(adapter),
+        agentNostrKey,
+        relay: () => Promise.resolve(failing),
+        resolve: async () => ({ address: "5Chip", network: "test", via: "agent" }),
+      },
+      { to: "@chip", amount: "0.001", asset: "TAO", for: "msg1" }
+    );
+    expect(transfers).toHaveLength(1);
+    expect(out).toMatch(/receipt/i);
   });
 });

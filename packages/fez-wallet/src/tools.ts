@@ -8,6 +8,7 @@ import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.j
 import { buildConsentRequest, awaitDecision, type ConsentRelay } from "./consent.js";
 import { mirrorSpend, mirrorEndpoint } from "./storage-mirror.js";
 import type { Resolved } from "./resolve.js";
+import { buildReceipt } from "./receipt.js";
 
 export const CONSENT_TIMEOUT_MS = 600_000; // 10 minutes
 
@@ -71,7 +72,7 @@ export async function walletBalance(deps: ToolDeps, args: { chain?: string; asse
 
 export async function walletSend(
   deps: ToolDeps,
-  args: { to: string; amount: string; asset: string; memo?: string }
+  args: { to: string; amount: string; asset: string; memo?: string; for?: string }
 ): Promise<string> {
   const a = adapterFor(deps, undefined, args.asset);
   const decimals = a.assets.find((x) => x.symbol === args.asset)!.decimals;
@@ -145,7 +146,7 @@ export async function walletSend(
     return "send declined (request was aborted) — nothing was transferred";
   }
 
-  const { txHash } = await a.transfer(deps.pair, to, amount);
+  const { txHash, blockRef } = await a.transfer(deps.pair, to, amount);
   const entry = {
     ts: deps.now ? deps.now() : new Date().toISOString(),
     persona: deps.persona,
@@ -164,7 +165,33 @@ export async function walletSend(
     const config = loadConfig();
     void mirrorEndpoint(config.endpoints.tao, config.network);
   }
-  return `sent ${formatAmount(amount)} → ${to} (tx ${txHash}${consent === "approved" ? ", owner-approved" : ""})`;
+
+  let receiptNote = "";
+  if (args.for && deps.relay && deps.agentNostrKey) {
+    try {
+      const relay = await deps.relay();
+      await relay.publish(
+        buildReceipt({
+          agentSecretHex: deps.agentNostrKey,
+          forEvent: args.for,
+          payeePubkey: resolved.payeePubkey,
+          channelId: deps.config.consentChannel,
+          amount,
+          chain: a.chain,
+          network: deps.config.network,
+          txHash,
+          blockRef,
+          memo: args.memo,
+        })
+      );
+    } catch {
+      // The money moved; the note about it did not. Two separate facts,
+      // and a failed event must never provoke a retried transfer.
+      receiptNote = " (the receipt failed to publish — the transfer stands)";
+    }
+  }
+
+  return `sent ${formatAmount(amount)} → ${to} (tx ${txHash}${consent === "approved" ? ", owner-approved" : ""})${receiptNote}`;
 }
 
 export function walletHistory(deps: ToolDeps, args: { limit?: number }): string {

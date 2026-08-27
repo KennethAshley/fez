@@ -181,10 +181,14 @@ server.registerTool(
       amount: z.string().describe("Decimal amount, e.g. '0.05'."),
       asset: z.string().describe("Asset symbol, e.g. 'TAO'."),
       memo: z.string().optional().describe("Short human-readable reason — shown in the consent request."),
+      for: z
+        .string()
+        .optional()
+        .describe("Id of the message this pays for — the payment shows under it in chat."),
     },
   },
-  async ({ to, amount, asset, memo }, extra) =>
-    text(await walletSend(await deps(extra.signal), { to, amount, asset, memo }))
+  async ({ to, amount, asset, memo, for: forEvent }, extra) =>
+    text(await walletSend(await deps(extra.signal), { to, amount, asset, memo, for: forEvent }))
 );
 
 server.registerTool(
