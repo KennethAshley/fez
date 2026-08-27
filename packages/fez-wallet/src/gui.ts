@@ -1,5 +1,6 @@
 import type { El, GuiClient, GuiExtensionApi } from "@fezchat/extension-api/gui";
 import type { SpendEntry } from "./log.js";
+import type { Network } from "./storage-mirror.js";
 import qrcode from "qrcode-generator";
 import {
   parseConsentRequest,
@@ -26,6 +27,16 @@ interface WalletClient extends GuiClient {
 }
 
 type AddressBook = { treasury?: string; personas?: Record<string, string> };
+
+/** The mirror now keys the ledger by network (a testnet play session
+ * must never be mistaken for a real spend) — the panel still shows one
+ * combined history, sorted back to chronological order, with each row
+ * labelled by which chain it happened on. */
+function flattenLogs(logs: Partial<Record<Network, SpendEntry[]>> | undefined): SpendEntry[] {
+  return Object.values(logs ?? {})
+    .flat()
+    .sort((a, b) => a.ts.localeCompare(b.ts));
+}
 
 /**
  * fez-wallet, GUI part — the consent inbox, receive cards, and the
@@ -219,8 +230,8 @@ export default function activate(api: GuiExtensionApi): void {
       let dead = false;
       let tries = 0;
       const look = async () => {
-        const log = ((await api.storage.get("log")) as SpendEntry[]) ?? [];
-        const hit = matchSpend(req, msgTs, log);
+        const logs = (await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>> | undefined;
+        const hit = matchSpend(req, msgTs, flattenLogs(logs));
         if (dead) return;
         if (hit) setSpend(hit);
         else if (++tries < 10) setTimeout(() => void look(), 3_000);
@@ -364,7 +375,8 @@ export default function activate(api: GuiExtensionApi): void {
       void (async () => {
         setAddresses(((await api.storage.get("addresses")) as AddressBook) ?? {});
         setEndpoint(await api.storage.get("endpoint"));
-        setLog(((await api.storage.get("log")) as SpendEntry[]) ?? []);
+        const logs = (await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>> | undefined;
+        setLog(flattenLogs(logs));
       })();
     }, []);
 
@@ -443,6 +455,7 @@ export default function activate(api: GuiExtensionApi): void {
                   null,
                   h("th", null, "time"),
                   h("th", null, "agent"),
+                  h("th", null, "net"),
                   h("th", null, "amount"),
                   h("th", null, "to"),
                   h("th", null, "memo"),
@@ -459,6 +472,7 @@ export default function activate(api: GuiExtensionApi): void {
                     { key: `${entry.txHash}-${i}` },
                     h("td", null, entry.ts),
                     h("td", null, entry.persona),
+                    h("td", null, entry.network),
                     h("td", null, `${entry.amount} ${entry.asset}`),
                     h("td", { title: entry.to }, shortAddr(entry.to)),
                     h("td", null, entry.memo ?? ""),

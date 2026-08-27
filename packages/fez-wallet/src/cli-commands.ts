@@ -73,6 +73,7 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
   const parsed = parseAmount(amount, decimals, adapter.assets[0].symbol);
   const { txHash } = await adapter.transfer(treasuryPair(mnemonic), to, parsed);
   io.print(`funded ${persona} with ${formatAmount(parsed)} (tx ${txHash})`);
+  const config = loadConfig();
   await mirrorSpend({
     ts: new Date().toISOString(),
     persona: "treasury",
@@ -81,6 +82,7 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
     asset: adapter.assets[0].symbol,
     txHash,
     consent: "auto",
+    network: config.network,
   });
 }
 

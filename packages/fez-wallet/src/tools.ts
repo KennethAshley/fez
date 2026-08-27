@@ -134,6 +134,7 @@ export async function walletSend(
     txHash,
     memo: args.memo,
     consent,
+    network: deps.config.network,
   };
   appendLog(entry);
   void mirrorSpend(entry);
@@ -146,7 +147,7 @@ export async function walletSend(
 }
 
 export function walletHistory(deps: ToolDeps, args: { limit?: number }): string {
-  const rows = readLog(args.limit ?? 20).filter((r) => r.persona === deps.persona);
+  const rows = readLog(deps.config.network, args.limit ?? 20).filter((r) => r.persona === deps.persona);
   if (rows.length === 0) return "no transfers recorded.";
   return rows
     .map((r) => `- ${r.ts} · ${r.amount} ${r.asset} → ${r.to}${r.memo ? ` (${r.memo})` : ""} · ${r.consent} · ${r.txHash}`)

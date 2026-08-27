@@ -37,7 +37,7 @@ export interface WalletPrefs {
 type State = {
   addresses?: { treasury?: string; personas?: Record<string, string> };
   endpoint?: string;
-  log?: SpendEntry[];
+  logs?: Partial<Record<Network, SpendEntry[]>>;
   prefs?: WalletPrefs;
   [k: string]: unknown;
 };
@@ -81,7 +81,8 @@ export function mirrorEndpoint(endpoint: string): Promise<void> {
 
 export function mirrorSpend(entry: SpendEntry): Promise<void> {
   return update((s) => {
-    s.log = [...(s.log ?? []), entry].slice(-MAX_LOG);
+    const logs = (s.logs ??= {});
+    logs[entry.network] = [...(logs[entry.network] ?? []), entry].slice(-MAX_LOG);
   });
 }
 

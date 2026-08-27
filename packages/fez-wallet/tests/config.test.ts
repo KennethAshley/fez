@@ -39,9 +39,9 @@ describe("config", () => {
 
   it("spend log appends and reads back newest-first with limit", async () => {
     const { appendLog, readLog } = await import("../src/log.js");
-    appendLog({ ts: "2026-08-25T00:00:00Z", persona: "scout", to: "5F...", amount: "0.01", asset: "TAO", txHash: "0x1", consent: "auto" });
-    appendLog({ ts: "2026-08-25T00:01:00Z", persona: "scout", to: "5G...", amount: "0.5", asset: "TAO", txHash: "0x2", consent: "approved" });
-    const rows = readLog(1);
+    appendLog({ ts: "2026-08-25T00:00:00Z", persona: "scout", to: "5F...", amount: "0.01", asset: "TAO", txHash: "0x1", consent: "auto", network: "test" });
+    appendLog({ ts: "2026-08-25T00:01:00Z", persona: "scout", to: "5G...", amount: "0.5", asset: "TAO", txHash: "0x2", consent: "approved", network: "test" });
+    const rows = readLog("test", 1);
     expect(rows).toHaveLength(1);
     expect(rows[0].txHash).toBe("0x2");
   });
