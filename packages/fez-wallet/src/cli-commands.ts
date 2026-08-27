@@ -66,12 +66,16 @@ export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
 
 const NETWORKS: Network[] = ["test", "finney"];
 
-/** The only path that changes which chain the wallet talks to. Prefs
- * write first; loadConfig() is re-read from disk afterward so what we
- * print is what is now actually persisted, not what we assume. An
- * unknown network throws before anything is written (invariant: no
- * partial state). */
+/** The only path that changes which chain the wallet talks to. An unknown
+ * network is rejected before ANY side effect — including the one-time
+ * migration — so `fez-wallet network mainnet` on a real disk with a legacy
+ * wallet.json never mutates anything on the way to throwing. Prefs write
+ * first; loadConfig() is re-read from disk afterward so what we print is
+ * what is now actually persisted, not what we assume. */
 export async function cmdNetwork(io: CliIo, next?: string): Promise<void> {
+  if (next !== undefined && !NETWORKS.includes(next as Network)) {
+    throw new Error(`unknown network "${next}" — expected one of: ${NETWORKS.join(", ")}`);
+  }
   migratePrefs();
   migrateLog();
   if (!next) {
@@ -79,9 +83,6 @@ export async function cmdNetwork(io: CliIo, next?: string): Promise<void> {
     io.print(`network: ${c.network}${c.network === "finney" ? "" : "  ⚠️  play money"}`);
     io.print(`endpoint: ${c.endpoints.tao}`);
     return;
-  }
-  if (!NETWORKS.includes(next as Network)) {
-    throw new Error(`unknown network "${next}" — expected one of: ${NETWORKS.join(", ")}`);
   }
   await mirrorPrefs({ network: next as Network });
   const c = loadConfig();

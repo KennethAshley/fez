@@ -149,4 +149,27 @@ describe("fez-wallet network", () => {
     await expect(cmdNetwork(i, "mainnet")).rejects.toThrow(/test.*finney/);
     expect(loadConfig().network).toBe("finney");
   });
+
+  it("rejects an unknown network before the one-time migration ever runs — legacy wallet.json is untouched", async () => {
+    // A legacy on-disk config with thresholds still in the old spot and a
+    // recognised endpoint — exactly what migratePrefs() would move on a
+    // real disk. An invalid network argument must be rejected before that
+    // migration write (or anything else) touches this file.
+    const legacyFile = path.join(process.env.FEZ_WALLET_HOME!, "wallet.json");
+    const legacy = {
+      thresholds: { default: "0.02" },
+      personas: {},
+      endpoints: { tao: "wss://entrypoint-finney.opentensor.ai:443" },
+      network: "finney",
+    };
+    fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
+    fs.writeFileSync(legacyFile, JSON.stringify(legacy, null, 2) + "\n");
+    const before = fs.readFileSync(legacyFile, "utf-8");
+
+    const { io: i } = io();
+    await expect(cmdNetwork(i, "mainnet")).rejects.toThrow(/test.*finney/);
+
+    const after = fs.readFileSync(legacyFile, "utf-8");
+    expect(after).toBe(before); // byte-for-byte — no migration, no partial write
+  });
 });
