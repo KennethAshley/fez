@@ -14,6 +14,8 @@ export interface RawEvent {
 }
 
 export interface MinerRow {
+  /** True for the single highest-scoring miner — the one the notch marks. */
+  leading: boolean;
   pk: string;
   name: string;
   picture?: string;
@@ -23,12 +25,41 @@ export interface MinerRow {
   tasksScored: number;
   avgTotal: number;
   bestRank?: number;
-  earned: number;
-  spentUsd: number;
+  /** Undefined when the miner does not report it — NOT zero. A miner that
+   *  publishes no spend figure has not spent nothing. */
+  earned?: number;
+  spentUsd?: number;
 }
 
 /** A miner announces every five minutes; three misses and it is not alive. */
 const HEARTBEAT_WINDOW_MS = 15 * 60_000;
+
+/**
+ * The freshest announce a miner has published.
+ *
+ * Kind 47000 is NOT replaceable — NIP-01 reserves 10000-19999 for that, and
+ * 47000 sits outside it — so a relay keeps every announce a miner ever sent,
+ * not just its latest. Taking the first match returns an arbitrary old one,
+ * which renders as a live miner that is "not seen recently" with nothing
+ * answered and nothing spent.
+ */
+export function latestAnnounce(announces: RawEvent[], pk: string): Beat | undefined {
+  let best: Beat | undefined;
+  for (const e of announces) {
+    if (e.pubkey !== pk) continue;
+    const beat = parse<Beat>(e.content);
+    if (!beat) continue;
+    if (best === undefined || (beat.heartbeat ?? 0) > (best.heartbeat ?? 0)) best = beat;
+  }
+  return best;
+}
+
+interface Beat {
+  heartbeat?: number;
+  answered?: number;
+  earned?: number;
+  spentUsd?: number;
+}
 
 const parse = <T,>(content: string | undefined): T | undefined => {
   if (!content) return undefined;
@@ -62,12 +93,7 @@ export function minerRows(opts: {
     const prof = parse<{ name?: string; picture?: string }>(
       profiles.find((e) => e.pubkey === pk)?.content,
     );
-    const beat = parse<{
-      heartbeat?: number;
-      answered?: number;
-      earned?: number;
-      spentUsd?: number;
-    }>(announces.find((e) => e.pubkey === pk)?.content);
+    const beat = latestAnnounce(announces, pk);
 
     const scores = attestations
       .filter((e) => e.tags?.some((t) => t[0] === "p" && t[1] === pk))
@@ -78,6 +104,7 @@ export function minerRows(opts: {
     const ranks = scores.map((s) => s.rank).filter((r): r is number => typeof r === "number");
 
     return {
+      leading: false,   // assigned after the sort — only one row can lead
       pk,
       name: prof?.name ?? pk.slice(0, 8),
       picture: prof?.picture,
@@ -89,12 +116,17 @@ export function minerRows(opts: {
       tasksScored: totals.length,
       avgTotal: totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : 0,
       bestRank: ranks.length ? Math.min(...ranks) : undefined,
-      earned: beat?.earned ?? 0,
-      spentUsd: beat?.spentUsd ?? 0,
+      earned: beat?.earned,
+      spentUsd: beat?.spentUsd,
     };
   });
 
-  return rows.sort((a, b) => b.avgTotal - a.avgTotal);
+  rows.sort((a, b) => b.avgTotal - a.avgTotal);
+  // Exactly one leader, and only when someone has actually been judged.
+  // `bestRank === 1` means "won a round once", which several miners can be.
+  const top = rows[0];
+  if (top && top.tasksScored > 0) top.leading = true;
+  return rows;
 }
 
 /** One line of plain status, so a row reads without decoding numbers. */

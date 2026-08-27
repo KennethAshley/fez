@@ -7,7 +7,7 @@
   "fez": {
     "type": "extension",
     "parts": { "gui": "dist/gui.js" },
-    "permissions": ["network:.fez.chat", "read:agents", "ui"],
+    "permissions": ["network:.fez.chat", "read:channels", "ui"],
     "minFezVersion": "0.2.0"
   },
   "scripts": {

@@ -86,20 +86,24 @@ export default function bazaar(api: GuiExtensionApi): void {
   const { createElement: h, useState, useEffect, useMemo } = api.React;
 
   function BazaarView(): El {
-    const client = api.client as GuiClient;
+    // `client` is WITHHELD unless read:channels was granted — it is undefined,
+    // not an object with empty methods. Reaching straight for a method on it
+    // crashes the whole view, which is how this shipped the first time.
+    const client = api.client as GuiClient | undefined;
     const [collected, setCollected] = useState<Collected>(empty);
     const [tick, setTick] = useState(0);
 
     // Which of the cast this workspace actually knows. An agent that is both a
     // workspace member and a miner shares one key, so one lookup covers both.
     const mine = useMemo(() => {
+      if (!client) return [];
       const found: string[] = [];
       for (const name of FLEET) {
         const pk = client.pkByName(name);
         if (pk && !found.includes(pk)) found.push(pk);
       }
       return found;
-    }, [tick]);
+    }, [tick, client]);
 
     useEffect(() => {
       const stop = watchBazaar((c) => setCollected({ ...c }));
@@ -126,8 +130,20 @@ export default function bazaar(api: GuiExtensionApi): void {
           style: { marginLeft: "auto", color: DIM, fontSize: "0.72rem", textDecoration: "none" },
         }, "open the board ↗"),
       ),
-      rows.length === 0 ? emptyState() : h("div", {}, ...rows.map(minerRow)),
+      !client ? noClient() : rows.length === 0 ? emptyState() : h("div", {}, ...rows.map(minerRow)),
     );
+
+    /** Degrade with an explanation, never a blank panel or a crash. */
+    function noClient(): El {
+      return h("div", { style: { color: DIM, lineHeight: 1.7, maxWidth: "44ch" } },
+        h("div", { style: { color: FG } }, "This view needs the read:channels permission."),
+        h("div", { style: { fontSize: "0.8rem", marginTop: "0.4rem" } },
+          "It reads your agents' names to find them on the bazaar. Grant it from the extension's settings, or ",
+          h("a", { href: BOARD_URL, target: "_blank", rel: "noreferrer", style: { color: BRAND } },
+            "watch the public board"),
+          " instead."),
+      );
+    }
 
     function emptyState(): El {
       // The cast holds empty rooms — say what to do, not that there is nothing.
@@ -153,7 +169,7 @@ export default function bazaar(api: GuiExtensionApi): void {
       },
         // The leader gets the square ember notch, drawn as an overlay so it
         // never picks up a radius. Nothing else in this view is brand-coloured.
-        r.bestRank === 1
+        r.leading
           ? h("span", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: "2px", background: BRAND } })
           : null,
         r.picture
@@ -167,8 +183,13 @@ export default function bazaar(api: GuiExtensionApi): void {
           judged
             ? h("div", { style: { color: ACCENT } }, r.avgTotal.toFixed(3))
             : h("div", { style: { color: DIM } }, "—"),
-          h("div", { style: { color: DIM, fontSize: "0.7rem", marginTop: "0.15rem" } },
-            `spent $${r.spentUsd.toFixed(2)}`),
+          // Only shown when the miner actually reports it. Until miners
+          // publish spend, an absent figure stays absent rather than
+          // becoming a confident \"$0.00\".
+          r.spentUsd !== undefined
+            ? h("div", { style: { color: DIM, fontSize: "0.7rem", marginTop: "0.15rem" } },
+                `spent $${r.spentUsd.toFixed(2)}`)
+            : null,
         ),
       );
     }

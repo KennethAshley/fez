@@ -76,6 +76,15 @@ describe("minerRows", () => {
     expect(row.spentUsd).toBe(0.5);
   });
 
+  it("leaves spend undefined when the miner does not report it", () => {
+    // A miner publishing no spend figure has not spent nothing — rendering
+    // \"$0.00\" would state a fact nobody supplied.
+    const silent: RawEvent = { pubkey: "pk1", content: JSON.stringify({ heartbeat: SEC - 60, answered: 3 }) };
+    const row = minerRows({ ...base, announces: [silent], myPks: ["pk1"] })[0]!;
+    expect(row.spentUsd).toBeUndefined();
+    expect(row.earned).toBeUndefined();
+  });
+
   it("shows an unjudged miner rather than hiding it", () => {
     const rows = minerRows({ ...base, attestations: [] });
     expect(rows).toHaveLength(2);
@@ -102,5 +111,43 @@ describe("statusLine", () => {
   it("says so plainly when nothing has been judged", () => {
     const row = minerRows({ ...base, attestations: [] })[0]!;
     expect(statusLine(row)).toContain("not yet judged");
+  });
+});
+
+describe("latestAnnounce", () => {
+  it("takes the freshest announce, not the first one the relay returned", () => {
+    // 47000 is outside NIP-01's replaceable range, so relays keep every
+    // announce. Picking the first match shows a live miner as long gone.
+    const stale = announce("pk1", { heartbeat: SEC - 9999, answered: 0, spentUsd: 0 });
+    const fresh = announce("pk1", { heartbeat: SEC - 30, answered: 41, spentUsd: 1.25 });
+    const row = minerRows({ ...base, announces: [stale, fresh], myPks: ["pk1"] })[0]!;
+    expect(row.alive).toBe(true);
+    expect(row.answered).toBe(41);
+    expect(row.spentUsd).toBe(1.25);
+  });
+
+  it("works whichever order the relay delivered them in", () => {
+    const stale = announce("pk1", { heartbeat: SEC - 9999, answered: 0 });
+    const fresh = announce("pk1", { heartbeat: SEC - 30, answered: 41 });
+    for (const order of [[stale, fresh], [fresh, stale]]) {
+      expect(minerRows({ ...base, announces: order, myPks: ["pk1"] })[0]!.answered).toBe(41);
+    }
+  });
+});
+
+describe("leading", () => {
+  it("marks exactly one miner, even when several have won a round", () => {
+    const rows = minerRows({
+      ...base,
+      attestations: [attestation("pk1", 0.9, 1), attestation("pk2", 0.5, 1)],
+    });
+    expect(rows.filter((r) => r.leading)).toHaveLength(1);
+    expect(rows.find((r) => r.leading)?.pk).toBe("pk1");
+    // pk2 won a round too — bestRank 1 — but it does not lead.
+    expect(rows.find((r) => r.pk === "pk2")?.bestRank).toBe(1);
+  });
+
+  it("marks nobody when nothing has been judged", () => {
+    expect(minerRows({ ...base, attestations: [] }).some((r) => r.leading)).toBe(false);
   });
 });
