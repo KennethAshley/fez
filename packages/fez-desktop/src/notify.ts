@@ -1,6 +1,7 @@
 import { isPermissionGranted, requestPermission, sendNotification, onAction } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { notifyAllows, readPrefs, type NotifyKind, type NotifyPrefs } from "./notify-prefs";
+import { notifyAllows, readPrefs, soundFor, type NotifyKind, type NotifyPrefs } from "./notify-prefs";
+import { SOUND_NAMES, playSound } from "./sounds";
 
 /** Per machine, like the mute list — see notify-prefs.ts. */
 export const NOTIFY_KEY = "fez-notify";
@@ -88,6 +89,8 @@ interface Pending {
   body: string;
   label: string;
   target?: NotifTarget;
+  /** Resolved once, when the burst opens — fired once, when it closes. */
+  sound?: string;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -106,7 +109,11 @@ export function notifyEvent(opts: {
   // The focus rule lives in the gate now rather than here: "only when
   // unfocused" is a DEFAULT, not a law, and the settings page can lift it.
   const focused = typeof document !== "undefined" && document.hasFocus();
-  if (!notifyAllows(readPrefs(localStorage.getItem(NOTIFY_KEY)), opts.kind, focused)) return;
+  const prefs = readPrefs(localStorage.getItem(NOTIFY_KEY));
+  if (!notifyAllows(prefs, opts.kind, focused)) return;
+  // The sound rides the same coalescing window as the banner: a chatty
+  // channel collapsing to one ping must not still play six times.
+  const sound = soundFor(prefs, opts.kind, SOUND_NAMES);
   const prev = pending.get(opts.key);
   if (prev) clearTimeout(prev.timer);
   const count = (prev?.count ?? 0) + 1;
@@ -114,8 +121,9 @@ export function notifyEvent(opts: {
     const p = pending.get(opts.key);
     pending.delete(opts.key);
     if (!p) return;
+    if (p.sound) playSound(p.sound);
     if (p.count === 1) void fire(p.title, p.body, p.target);
     else void fire(`${p.count} new in ${p.label}`, p.body, p.target);
   }, WINDOW_MS);
-  pending.set(opts.key, { count, title: opts.title, body: opts.body, label: opts.label, target: opts.target, timer });
+  pending.set(opts.key, { count, title: opts.title, body: opts.body, label: opts.label, target: opts.target, sound, timer });
 }

@@ -3473,3 +3473,9 @@ button.ob-brain:active { transform: translateY(1px); }
   color: var(--fg-dim); font-size: 14px; line-height: 1;
 }
 .mention-hint-x:hover { color: var(--fg); }
+
+/* A category's two decisions — which sound, and whether it alerts at all
+   — sit together on its row rather than in separate columns you have to
+   read across. */
+.notify-controls { display: flex; align-items: center; gap: 8px; }
+.notify-controls .manage-select { min-width: 110px; font-size: 12px; padding: 4px 6px; }

@@ -14,6 +14,7 @@ import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
 import { loadNotifyPrefs, saveNotifyPrefs } from "./notify";
 import { NOTIFY_KINDS, NOTIFY_LABELS, NOTIFY_UNBUILT, type NotifyPrefs } from "./notify-prefs";
+import { SOUND_NAMES, playSound } from "./sounds";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -490,17 +491,69 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
                 unbuilt ? (
                   <span className="set-value" style={{ color: "var(--fg-dim)" }}>not built yet</span>
                 ) : (
-                  <Toggle
-                    on={notify.kinds[kind]}
-                    disabled={!notify.enabled}
-                    onChange={(on) => setNotify({ ...notify, kinds: { ...notify.kinds, [kind]: on } })}
-                    label={NOTIFY_LABELS[kind].label}
-                  />
+                  <span className="notify-controls">
+                    {/* The picker sits with the toggle it belongs to: one
+                        row per category, both of its decisions in reach. */}
+                    {SOUND_NAMES.length > 0 && (
+                      <>
+                        <select
+                          className="manage-select"
+                          value={notify.sounds[kind]}
+                          disabled={!notify.enabled || !notify.sound || !notify.kinds[kind]}
+                          aria-label={`sound for ${NOTIFY_LABELS[kind].label}`}
+                          onChange={(e) => setNotify({ ...notify, sounds: { ...notify.sounds, [kind]: e.target.value } })}
+                        >
+                          <option value="">silent</option>
+                          {SOUND_NAMES.map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="composer-tool"
+                          title="preview"
+                          disabled={!notify.sounds[kind]}
+                          onClick={() => notify.sounds[kind] && playSound(notify.sounds[kind])}
+                        >
+                          ▶
+                        </button>
+                      </>
+                    )}
+                    <Toggle
+                      on={notify.kinds[kind]}
+                      disabled={!notify.enabled}
+                      onChange={(on) => setNotify({ ...notify, kinds: { ...notify.kinds, [kind]: on } })}
+                      label={NOTIFY_LABELS[kind].label}
+                    />
+                  </span>
                 )
               }
             />
           );
         })}
+
+        <div className="manage-section">sound</div>
+        {SOUND_NAMES.length === 0 ? (
+          // No files installed. Saying so beats a picker with nothing in
+          // it, and beats hiding the section as though sound were absent.
+          <Row
+            label="no sounds installed"
+            desc="fez ships no audio — sound files are licensed to a person, not to a repository. Drop .mp3 files into packages/fez-desktop/public/sounds/ and list them in src/sounds.ts, and a picker appears on every category above."
+            control={<span className="set-value">none</span>}
+          />
+        ) : (
+          <Row
+            label="play a sound"
+            desc="Alerts make a noise as well as a banner. Each category picks its own above; a category set to silent stays silent."
+            control={
+              <Toggle
+                on={notify.sound}
+                disabled={!notify.enabled}
+                onChange={(on) => setNotify({ ...notify, sound: on })}
+                label="play a sound"
+              />
+            }
+          />
+        )}
 
         </>)}
         {section === "keyboard" && (<>

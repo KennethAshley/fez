@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_NOTIFY, notifyAllows, readPrefs, type NotifyPrefs } from "../../fez-desktop/src/notify-prefs.js";
+import { DEFAULT_NOTIFY, notifyAllows, readPrefs, soundFor, type NotifyPrefs } from "../../fez-desktop/src/notify-prefs.js";
 
 /**
  * The gate in front of every native notification. Its failure mode is
@@ -58,5 +58,53 @@ describe("readPrefs", () => {
 
   it("keeps a saved master switch", () => {
     expect(readPrefs(JSON.stringify({ enabled: false })).enabled).toBe(false);
+  });
+});
+
+/**
+ * Sound. The files are supplied separately (licensed assets, not checked
+ * in from anywhere), so every rule here has to survive a catalog that is
+ * EMPTY, and a saved preference naming a file somebody later deleted.
+ */
+describe("soundFor", () => {
+  const catalog = ["chime", "knock"];
+  const withSound = (over: Partial<NotifyPrefs> = {}): NotifyPrefs => ({
+    ...DEFAULT_NOTIFY,
+    sound: true,
+    sounds: { ...DEFAULT_NOTIFY.sounds, dm: "chime", mention: "knock" },
+    ...over,
+  });
+
+  it("names the file chosen for that category", () => {
+    expect(soundFor(withSound(), "dm", catalog)).toBe("chime");
+    expect(soundFor(withSound(), "mention", catalog)).toBe("knock");
+  });
+
+  it("is silent when the sound master is off", () => {
+    expect(soundFor(withSound({ sound: false }), "dm", catalog)).toBeUndefined();
+  });
+
+  // Turning a category off should not leave it audible — the row says
+  // "off", and a sound still playing would make the page a liar.
+  it("is silent for a category whose own toggle is off", () => {
+    const p = withSound({ kinds: { ...DEFAULT_NOTIFY.kinds, dm: false } });
+    expect(soundFor(p, "dm", catalog)).toBeUndefined();
+  });
+
+  it("is silent when no sound was chosen for it", () => {
+    expect(soundFor(withSound(), "needs_action", catalog)).toBeUndefined();
+  });
+
+  // The saved name outlives the file. Playing a missing asset is a
+  // silent 404 that looks exactly like a broken toggle.
+  it("is silent when the chosen file is no longer installed", () => {
+    expect(soundFor(withSound(), "dm", ["knock"])).toBeUndefined();
+    expect(soundFor(withSound(), "dm", [])).toBeUndefined();
+  });
+
+  it("survives prefs saved before sound existed", () => {
+    const old = readPrefs(JSON.stringify({ enabled: true, kinds: { dm: true } }));
+    expect(old.sound).toBe(true);
+    expect(soundFor(old, "dm", catalog)).toBeUndefined(); // nothing chosen yet
   });
 });

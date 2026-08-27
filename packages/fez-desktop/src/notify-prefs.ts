@@ -21,6 +21,12 @@ export interface NotifyPrefs {
    *  behavior: a ping for what you are already looking at is noise. */
   whileFocused: boolean;
   kinds: Record<NotifyKind, boolean>;
+  /** Master for sound. Independent of `enabled`: some people want the
+   *  banner without the noise, and some want only the noise. */
+  sound: boolean;
+  /** Which file each category plays. "" means that category is silent
+   *  even when sound is on — the default, since fez ships no sounds. */
+  sounds: Record<NotifyKind, string>;
 }
 
 export const NOTIFY_KINDS: NotifyKind[] = ["dm", "mention", "needs_action", "agent_error", "thread_reply"];
@@ -29,6 +35,8 @@ export const DEFAULT_NOTIFY: NotifyPrefs = {
   enabled: true,
   whileFocused: false,
   kinds: { dm: true, mention: true, needs_action: true, agent_error: true, thread_reply: true },
+  sound: true,
+  sounds: { dm: "", mention: "", needs_action: "", agent_error: "", thread_reply: "" },
 };
 
 /** Should this notification fire? */
@@ -53,10 +61,17 @@ export function readPrefs(raw: string | null | undefined): NotifyPrefs {
       const value = (saved.kinds as Record<string, unknown> | undefined)?.[kind];
       if (typeof value === "boolean") kinds[kind] = value;
     }
+    const sounds = { ...DEFAULT_NOTIFY.sounds };
+    for (const kind of NOTIFY_KINDS) {
+      const value = (saved.sounds as Record<string, unknown> | undefined)?.[kind];
+      if (typeof value === "string") sounds[kind] = value;
+    }
     return {
       enabled: typeof saved.enabled === "boolean" ? saved.enabled : DEFAULT_NOTIFY.enabled,
       whileFocused: typeof saved.whileFocused === "boolean" ? saved.whileFocused : DEFAULT_NOTIFY.whileFocused,
       kinds,
+      sound: typeof saved.sound === "boolean" ? saved.sound : DEFAULT_NOTIFY.sound,
+      sounds,
     };
   } catch {
     return DEFAULT_NOTIFY;
@@ -79,3 +94,22 @@ export const NOTIFY_LABELS: Record<NotifyKind, { label: string; desc: string }> 
  * front of no emitter is worse still.
  */
 export const NOTIFY_UNBUILT: ReadonlySet<NotifyKind> = new Set<NotifyKind>(["thread_reply"]);
+
+/**
+ * Which sound file this category should play, or undefined for silence.
+ *
+ * `installed` is the catalog of files actually present. A saved choice
+ * outlives the file it names — assets are supplied per install rather
+ * than shipped — and playing a missing one is a silent 404 that looks
+ * exactly like a broken toggle, so an uninstalled name resolves to
+ * silence rather than to an attempt.
+ */
+export function soundFor(prefs: NotifyPrefs, kind: NotifyKind, installed: readonly string[]): string | undefined {
+  if (!prefs.sound) return undefined;
+  // A category switched off is off in every sense — leaving it audible
+  // would make the settings row a liar.
+  if (prefs.kinds[kind] === false) return undefined;
+  const name = prefs.sounds[kind];
+  if (!name || !installed.includes(name)) return undefined;
+  return name;
+}
