@@ -48,7 +48,14 @@ export async function resolveRecipient(to: string, deps: ResolveDeps): Promise<R
   }
   if (matches.length === 1) {
     const events = await deps.addressEvents(addressFilter([matches[0].pubkey], deps.chain, deps.network));
-    const parsed = events.map(parseAddressEvent).find(Boolean);
+    // Newest first: an addressable event self-replaces, but a relay may
+    // still hand back a superseded one alongside the current address —
+    // and paying an agent at the address it rotated away from is money
+    // sent nowhere. `created_at` is the only ordering the event carries.
+    const parsed = [...events]
+      .sort((a, b) => b.created_at - a.created_at)
+      .map(parseAddressEvent)
+      .find(Boolean);
     if (!parsed) {
       throw new Error(`${name} hasn't published a ${deps.chain.toUpperCase()} address`);
     }

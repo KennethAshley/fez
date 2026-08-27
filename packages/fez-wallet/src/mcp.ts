@@ -9,13 +9,14 @@ import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
 import { evmAdapter } from "./chains/evm.js";
-import { poolRelay, KIND_AGENT_METADATA } from "./consent.js";
+import { poolRelay } from "./consent.js";
 import { walletAddress, walletBalance, walletSend, walletHistory, type ToolDeps } from "./tools.js";
 import type { ChainAdapter } from "./chains/adapter.js";
 import type { WalletPair } from "./derive.js";
 import type { WalletConfig } from "./config.js";
 import { resolveRecipient } from "./resolve.js";
-import { buildAddressEvent } from "./address-event.js";
+import { rosterFilter, rosterFromEvents } from "./roster.js";
+import { createAddressAnnouncer } from "./announce.js";
 
 /**
  * fez-wallet, skill part — the calling agent's OWN allowance account.
@@ -61,9 +62,10 @@ const evm = evmAdapter(); // stateless stub — one instance is plenty
  * bookkeeping. Failure is silent by design — an agent that cannot
  * announce where to be paid must still be able to pay. Called unawaited
  * from deps() (never at startup — that's the @polkadot handshake trap
- * fez-bittensor already paid for) and guarded to run at most once per
- * process. */
-let addressPublished = false;
+ * fez-bittensor already paid for) and guarded, per chain+network, to run
+ * at most once per process: a network flip mid-process has its own
+ * announce to make (announce.ts). */
+const announceAddress = createAddressAnnouncer();
 async function publishOwnAddress(
   config: WalletConfig,
   pair: WalletPair,
@@ -71,19 +73,17 @@ async function publishOwnAddress(
   relays: string[],
   agentNostrKey: string | undefined
 ) {
-  if (addressPublished || !relays.length || !agentNostrKey) return;
-  addressPublished = true;
-  try {
-    const relay = await poolRelay(relays, agentNostrKey);
-    await relay.publish(
-      buildAddressEvent({
-        agentSecretHex: agentNostrKey,
-        chain: adapter.chain,
-        network: config.network,
-        address: adapter.address(pair),
-      })
-    );
-  } catch { /* announcing is not a precondition for paying */ }
+  if (!relays.length || !agentNostrKey) return;
+  await announceAddress({
+    agentSecretHex: agentNostrKey,
+    chain: adapter.chain,
+    network: config.network,
+    address: adapter.address(pair),
+    publish: async (ev) => {
+      const relay = await poolRelay(relays, agentNostrKey);
+      await relay.publish(ev);
+    },
+  });
 }
 
 /** Deps are built lazily per call: config edits and newly derived keys
@@ -123,20 +123,9 @@ async function deps(signal?: AbortSignal): Promise<ToolDeps> {
           return resolveRecipient(to, {
             chain: "tao",
             network: config.network,
-            roster: async () => {
-              const events = await relay.query({
-                kinds: [KIND_AGENT_METADATA],
-                ...(config.consentChannel ? { "#h": [config.consentChannel] } : {}),
-              });
-              return events.flatMap((ev) => {
-                try {
-                  const name = (JSON.parse(ev.content) as { name?: string }).name;
-                  return name ? [{ name, pubkey: ev.pubkey }] : [];
-                } catch {
-                  return [];
-                }
-              });
-            },
+            // Unscoped by the kind's own shape — see roster.ts, and do
+            // not put the consent channel back into this filter.
+            roster: async () => rosterFromEvents(await relay.query(rosterFilter())),
             addressEvents: (filter) => relay.query(filter),
             localAddress: (n) => {
               if (!isValidEntryName(n) || isReservedEntryName(n)) return undefined;

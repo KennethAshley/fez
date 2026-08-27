@@ -63,6 +63,20 @@ describe("resolveRecipient", () => {
     );
   });
 
+  it("pays the NEWEST published address when a relay hands back a superseded one", async () => {
+    const old = buildAddressEvent({ agentSecretHex: chipSk, chain: "tao", network: "test", address: "5Rotated" });
+    const current = {
+      ...buildAddressEvent({ agentSecretHex: chipSk, chain: "tao", network: "test", address: "5Current" }),
+      created_at: old.created_at + 60,
+    };
+    // Oldest first: relays promise no ordering, and the old address is
+    // an account the agent has rotated away from — money sent nowhere.
+    const r = await resolveRecipient("@chip", deps({ addressEvents: async () => [old, current] }));
+    expect(r.address).toBe("5Current");
+    const flipped = await resolveRecipient("@chip", deps({ addressEvents: async () => [current, old] }));
+    expect(flipped.address).toBe("5Current");
+  });
+
   it("reports the payee's network so the caller can guard on it", async () => {
     const r = await resolveRecipient(
       "@chip",
