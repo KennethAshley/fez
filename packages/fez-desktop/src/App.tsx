@@ -1,11 +1,12 @@
-import { Fragment, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Fragment, createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
-import { FezClient, setStatePersistence, type Artifact, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
+import { FezClient, setStatePersistence, type Artifact, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
+import { MEDIA_LINE, PLAYABLE_URL, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
@@ -2990,7 +2991,7 @@ function Bubble({
         <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
       ) : (
         <div className="bubble-body md">
-          <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} />
+          <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} media={msg.media} />
         </div>
       )}
       {proposalIdsIn(msg.content).map((id) => (
@@ -3069,59 +3070,136 @@ function renderMentions(text: string, tagged?: ReadonlySet<string>, onMention?: 
   });
 }
 
-const IMAGE_URL = /https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg)(?:\?\S*)?/gi;
-/** 📎 name.ext (…) url — fez-media's share line; render the blob when the NAME is an image. */
-const MEDIA_LINE = /📎\s+(\S+\.(?:png|jpe?g|gif|webp|svg))\s+\([^)]*\)\s+(https?:\/\/\S+)/i;
+/**
+ * What varies per message, carried through context instead of through the
+ * component map.
+ *
+ * The map below MUST keep a stable identity across renders: a fresh object
+ * means fresh element types, so React unmounts and remounts every node it
+ * produced — which for a <video> or <audio> means playback stops dead. With
+ * only <img> in the map that was invisible; with players it would mean any
+ * arriving message kills whatever the user was watching. Buzz hit exactly
+ * this (desktop/src/shared/ui/markdown/MarkdownVideoPlayer.tsx).
+ */
+const MdContext = createContext<{
+  tagged?: ReadonlySet<string>;
+  onMention?: (name: string) => void;
+  media?: MediaAttachment[];
+}>({});
 
-/** Markdown body: gfm, @mention accents, external links via the OS browser, inline images. */
-function MdBody({ text, tagged, onMention }: { text: string; tagged?: ReadonlySet<string>; onMention?: (name: string) => void }) {
-  const images = [...new Set([...(text.match(IMAGE_URL) ?? []), ...(text.match(MEDIA_LINE) ? [text.match(MEDIA_LINE)![2]] : [])])];
-  return (
-    <>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              onClick={(e) => {
-                e.preventDefault();
-                if (href) void openUrl(href);
-              }}
+/** Reserve the box before the bytes land, so arriving media doesn't shove the timeline. */
+function aspectFrom(dim: string | undefined): React.CSSProperties | undefined {
+  const [w, h] = (dim ?? "").split("x").map(Number);
+  return w > 0 && h > 0 ? { aspectRatio: `${w} / ${h}` } : undefined;
+}
+
+/**
+ * One URL, rendered as whatever it actually is. `mediaKind` believes the
+ * sender's imeta MIME first and the file extension second, and answers
+ * undefined for anything it can't identify — in which case this renders
+ * nothing and the URL stays the ordinary link the markdown already made.
+ */
+function MediaEmbed({ src, alt, entry }: { src: string; alt?: string; entry?: MediaAttachment }) {
+  const kind = mediaKind(src, entry?.mime);
+  const style = aspectFrom(entry?.dim);
+  if (kind === "video") {
+    return <video className="md-video" src={src} style={style} controls preload="metadata" playsInline />;
+  }
+  if (kind === "audio") return <audio className="md-audio" src={src} controls preload="metadata" />;
+  if (kind === "image") return <img className="md-img" src={src} style={style} alt={alt ?? ""} />;
+  return null;
+}
+
+const MD_COMPONENTS = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a
+      href={href}
+      onClick={(e) => {
+        e.preventDefault();
+        if (href) void openUrl(href);
+      }}
+    >
+      {children}
+    </a>
+  ),
+  img: function MdImg({ src, alt }: { src?: string; alt?: string }) {
+    const { media } = useContext(MdContext);
+    if (!src) return null;
+    // ![](url) is markdown's only media syntax, so a posted video arrives
+    // through this component too — hence the branch rather than an <img>.
+    return <MediaEmbed src={src} alt={alt} entry={media?.find((m) => m.url === src)} />;
+  },
+  code: ({ className, children }: { className?: string; children?: React.ReactNode }) => {
+    // ```diff fences render like the transcript's diff blocks —
+    // agents posting patches into channels get real diffs.
+    if (/language-diff/.test(className ?? "")) {
+      return (
+        <span className="md-diff">
+          {String(children ?? "").replace(/\n$/, "").split("\n").map((line, index) => (
+            <span
+              key={index}
+              className={line.startsWith("+") ? "diff-line add" : line.startsWith("-") ? "diff-line del" : "diff-line"}
             >
-              {children}
-            </a>
-          ),
-          img: ({ src, alt }) => (src ? <img className="md-img" src={src} alt={alt ?? ""} /> : null),
-          code: ({ className, children }) => {
-            // ```diff fences render like the transcript's diff blocks —
-            // agents posting patches into channels get real diffs.
-            if (/language-diff/.test(className ?? "")) {
-              return (
-                <span className="md-diff">
-                  {String(children ?? "").replace(/\n$/, "").split("\n").map((line, index) => (
-                    <span
-                      key={index}
-                      className={line.startsWith("+") ? "diff-line add" : line.startsWith("-") ? "diff-line del" : "diff-line"}
-                    >
-                      {line || " "}
-                    </span>
-                  ))}
-                </span>
-              );
-            }
-            return <code className={className}>{children}</code>;
-          },
-          p: ({ children }) => <p>{accentMentions(children, tagged, onMention)}</p>,
-          li: ({ children }) => <li>{accentMentions(children, tagged, onMention)}</li>,
-        }}
-      >
+              {line || " "}
+            </span>
+          ))}
+        </span>
+      );
+    }
+    return <code className={className}>{children}</code>;
+  },
+  p: function MdP({ children }: { children?: React.ReactNode }) {
+    const { tagged, onMention } = useContext(MdContext);
+    return <p>{accentMentions(children, tagged, onMention)}</p>;
+  },
+  li: function MdLi({ children }: { children?: React.ReactNode }) {
+    const { tagged, onMention } = useContext(MdContext);
+    return <li>{accentMentions(children, tagged, onMention)}</li>;
+  },
+};
+
+const MD_PLUGINS = [remarkGfm, remarkBreaks];
+
+/**
+ * Markdown body: gfm, @mention accents, external links via the OS browser,
+ * and inline media.
+ *
+ * Bare media URLs in prose get an embed appended, because that is how media
+ * arrives from every surface that isn't the composer: fez-media's share
+ * line, an agent pasting a blob URL, a link dropped in chat. `media` is the
+ * message's NIP-92 attachments — the sender's own declaration of what each
+ * URL is, which is the only thing that can classify a content-addressed
+ * blob whose URL is a bare hash.
+ */
+function MdBody({
+  text,
+  tagged,
+  onMention,
+  media,
+}: {
+  text: string;
+  tagged?: ReadonlySet<string>;
+  onMention?: (name: string) => void;
+  media?: MediaAttachment[];
+}) {
+  const context = useMemo(() => ({ tagged, onMention, media }), [tagged, onMention, media]);
+  const embeds = useMemo(() => {
+    const shareLine = text.match(MEDIA_LINE);
+    const urls = new Set([...(text.match(PLAYABLE_URL) ?? []), ...(shareLine ? [shareLine[2]] : [])]);
+    // Attachments the sender declared but never wrote into the body still
+    // belong on screen — an imeta-only message is otherwise an empty bubble.
+    for (const entry of media ?? []) if (mediaKind(entry.url, entry.mime)) urls.add(entry.url);
+    return [...urls];
+  }, [text, media]);
+  return (
+    <MdContext.Provider value={context}>
+      <ReactMarkdown remarkPlugins={MD_PLUGINS} components={MD_COMPONENTS}>
         {text}
       </ReactMarkdown>
-      {images.map((src) => (
-        <img key={src} className="md-img" src={src} alt="" />
+      {embeds.map((src) => (
+        <MediaEmbed key={src} src={src} entry={media?.find((m) => m.url === src)} />
       ))}
-    </>
+    </MdContext.Provider>
   );
 }
 

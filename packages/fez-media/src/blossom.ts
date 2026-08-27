@@ -76,7 +76,12 @@ export async function uploadToBlossom(
   };
 }
 
-const MIME_BY_EXT: Record<string, string> = {
+/**
+ * Extension → MIME. Exported because the desktop renderer keeps a
+ * dependency-light mirror of the playable half of this table (the webview
+ * can't import this package) and a test gates the two against each other.
+ */
+export const MIME_BY_EXT: Record<string, string> = {
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",

@@ -23,6 +23,52 @@ export interface Uploaded {
   /** MIME type, when the browser knew it — what lets an agent runner
    * decide an attachment is an image worth fetching for vision. */
   type?: string;
+  /** "WxH" for visual media the browser could measure. Carried so the
+   * renderer can reserve the box before the bytes arrive; without it a
+   * loading image or video shoves everything below it down the timeline. */
+  dim?: string;
+}
+
+/**
+ * Best-effort intrinsic size, for the imeta `dim` field.
+ *
+ * Purely so the receiving renderer can reserve the box before the bytes
+ * land — a loading image or video with no reserved space shoves every
+ * message below it down the timeline as it pops in. Never blocks the
+ * upload: anything the browser can't decode inside the timeout simply
+ * uploads without a dim, and the renderer falls back to its own max box.
+ */
+async function measure(file: File): Promise<string | undefined> {
+  const kind = file.type.split("/")[0];
+  if (kind !== "image" && kind !== "video") return undefined;
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise<string | undefined>((resolve) => {
+      const timer = setTimeout(() => resolve(undefined), 3_000);
+      const settle = (w: number, h: number) => {
+        clearTimeout(timer);
+        resolve(w > 0 && h > 0 ? `${w}x${h}` : undefined);
+      };
+      const fail = () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      };
+      if (kind === "image") {
+        const image = new Image();
+        image.onload = () => settle(image.naturalWidth, image.naturalHeight);
+        image.onerror = fail;
+        image.src = url;
+      } else {
+        const video = document.createElement("video");
+        video.preload = "metadata";
+        video.onloadedmetadata = () => settle(video.videoWidth, video.videoHeight);
+        video.onerror = fail;
+        video.src = url;
+      }
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export async function uploadFile(
@@ -65,12 +111,24 @@ export async function uploadFile(
     xhr.onerror = () => reject(new Error("upload failed — network error"));
     xhr.send(bytes);
   });
-  return { url: body.url ?? `${base}/${hash}`, name: file.name, size: bytes.length, type: file.type || undefined };
+  return {
+    url: body.url ?? `${base}/${hash}`,
+    name: file.name,
+    size: bytes.length,
+    type: file.type || undefined,
+    dim: await measure(file),
+  };
 }
 
 /** NIP-92 media tag — structured twin of the share line, for machines. */
 export function imetaTag(upload: Uploaded): string[] {
-  return ["imeta", `url ${upload.url}`, ...(upload.type ? [`m ${upload.type}`] : []), `size ${upload.size}`];
+  return [
+    "imeta",
+    `url ${upload.url}`,
+    ...(upload.type ? [`m ${upload.type}`] : []),
+    `size ${upload.size}`,
+    ...(upload.dim ? [`dim ${upload.dim}`] : []),
+  ];
 }
 
 export function humanSize(bytes: number): string {

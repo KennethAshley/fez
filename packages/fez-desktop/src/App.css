@@ -600,6 +600,13 @@ select.ob-input:hover { border-color: var(--accent); }
 .md table { border-collapse: collapse; margin: 6px 0; }
 .md th, .md td { border: 1px solid var(--bg2); padding: 3px 8px; font-size: 13px; }
 .md-img { max-width: 420px; max-height: 320px; border-radius: 8px; display: block; margin: 6px 0; }
+/* Same box as an image, so a video and a screenshot sit at one width in the
+   timeline. width without height lets an aspect-ratio (from imeta dim)
+   reserve the space before the first frame arrives. */
+.md-video { max-width: 420px; width: 100%; border-radius: 8px; display: block; margin: 6px 0; background: var(--bg-sunken, #000); }
+/* Audio has no natural size and the native control fills whatever it is
+   given; cap it so a voice note doesn't stretch the width of the bubble. */
+.md-audio { max-width: 420px; width: 100%; display: block; margin: 6px 0; }
 
 /* ── agents pane ───────────────────────────────────────────── */
 .pane-back { background: none; border: 0; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }

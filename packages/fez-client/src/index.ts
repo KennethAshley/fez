@@ -248,6 +248,49 @@ const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 // ── Public state shapes ──────────────────────────────────────────────────
 
+/** One attachment described by a NIP-92 imeta tag. */
+export interface MediaAttachment {
+  url: string;
+  /** Declared MIME. The only thing that can classify a content-addressed
+   *  blob, whose URL is a bare hash with no extension to sniff. */
+  mime?: string;
+  /** "WxH" when the sender measured it — lets a renderer reserve the box
+   *  before the bytes land, so arriving media doesn't shove the timeline. */
+  dim?: string;
+  size?: number;
+}
+
+/**
+ * Project an event's imeta tags into attachments, in tag order.
+ *
+ * Each tag is ["imeta", "url …", "m …", …] — space-separated key/value
+ * pairs, one per element. Unknown keys (NIP-92 also defines alt, blurhash,
+ * fallback, service) are dropped rather than fought over; an entry with no
+ * url describes nothing and is skipped. Malformed fields never discard the
+ * entry, because a half-described attachment still renders.
+ */
+export function parseImeta(tags: string[][]): MediaAttachment[] {
+  const out: MediaAttachment[] = [];
+  for (const tag of tags) {
+    if (tag[0] !== "imeta") continue;
+    const fields = new Map<string, string>();
+    for (const part of tag.slice(1)) {
+      const space = part.indexOf(" ");
+      if (space > 0) fields.set(part.slice(0, space), part.slice(space + 1));
+    }
+    const url = fields.get("url");
+    if (!url) continue;
+    const size = Number(fields.get("size"));
+    out.push({
+      url,
+      ...(fields.get("m") ? { mime: fields.get("m") } : {}),
+      ...(fields.get("dim") ? { dim: fields.get("dim") } : {}),
+      ...(Number.isFinite(size) && size > 0 ? { size } : {}),
+    });
+  }
+  return out;
+}
+
 export interface Msg {
   id: string;
   authorPk: string;
@@ -263,6 +306,9 @@ export interface Msg {
   mentionPks: string[];
   /** Honest tombstone (Buzz's decision: a visible removal, not a silent hole). */
   deletedBy?: "author" | "moderator";
+  /** NIP-92 attachments declared on the event. Present so a renderer can
+   *  trust the sender's MIME instead of guessing from the URL. */
+  media?: MediaAttachment[];
 }
 
 export interface Job {
@@ -1930,6 +1976,7 @@ export class FezClient {
   // ── Internal machinery (ported 1:1 from the communities extension) ─────
 
   private buildMsg(event: WireEvent): Msg {
+    const media = parseImeta(event.tags);
     const parentId = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
     const rootId = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? parentId;
     return {
@@ -1941,6 +1988,7 @@ export class FezClient {
       rootId,
       ts: event.created_at,
       mentionPks: event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
+      ...(media.length ? { media } : {}),
     };
   }
 
