@@ -25,7 +25,12 @@ export interface ArtifactLike {
   authorName: string;
   type: string;
   title?: string;
-  content: string;
+  /** Optional because an artifact may reference its payload by `url`
+   *  instead of carrying it inline — the host's Artifact has always
+   *  declared it that way. Promising a string here handed extension
+   *  authors a value that can be undefined at runtime, with the type
+   *  system swearing it couldn't be. */
+  content?: string;
   ts: number;
   rootId?: string;
 }
