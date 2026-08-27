@@ -34,12 +34,28 @@ export interface SubstrateApi {
         signAndSend(
           pair: unknown,
           callback: (result: {
-            status: { isInBlock: boolean };
+            status: { isInBlock: boolean; asInBlock: { toHex(): string } };
             dispatchError?: SubstrateDispatchError;
             txHash: { toHex(): string };
           }) => void
         ): Promise<() => void>;
       };
+    };
+  };
+  /** Used only by getTransfer — substrate has no by-hash extrinsic lookup,
+   * so verifying a receipt means fetching the block it landed in and
+   * scanning its extrinsics for the one that matches. */
+  rpc: {
+    chain: {
+      getBlock(hash: string): Promise<{
+        block: {
+          extrinsics: Array<{
+            hash: { toHex(): string };
+            signer: { toString(): string };
+            method: { args: unknown[] };
+          }>;
+        };
+      }>;
     };
   };
 }
@@ -140,7 +156,7 @@ export function substrateAdapter(opts: { endpoint: string; apiFactory?: () => Pr
       // with the decoded error — never a hash on the failure path.
       let unsub: (() => void) | undefined;
       let settled = false;
-      return new Promise<{ txHash: string }>((resolve, reject) => {
+      return new Promise<{ txHash: string; blockRef?: string }>((resolve, reject) => {
         const settle = (fn: () => void) => {
           if (settled) return;
           settled = true;
@@ -153,7 +169,10 @@ export function substrateAdapter(opts: { endpoint: string; apiFactory?: () => Pr
             if (r.dispatchError) {
               settle(() => reject(new Error(`transfer failed: ${decodeDispatchError(a, r.dispatchError!)}`)));
             } else if (r.status.isInBlock) {
-              settle(() => resolve({ txHash: r.txHash.toHex() }));
+              // status.asInBlock is the block hash the transfer settled in
+              // — free at this point, and exactly what getTransfer needs
+              // to verify the receipt later without an indexer.
+              settle(() => resolve({ txHash: r.txHash.toHex(), blockRef: r.status.asInBlock.toHex() }));
             }
           })
           .then((u) => {
@@ -162,6 +181,30 @@ export function substrateAdapter(opts: { endpoint: string; apiFactory?: () => Pr
           })
           .catch(reject);
       });
+    },
+    async getTransfer(blockRef: string, txHash: string) {
+      const a = await api();
+      try {
+        const block = await a.rpc.chain.getBlock(blockRef);
+        for (const ex of block.block.extrinsics) {
+          if (ex.hash.toHex() !== txHash) continue;
+          const [dest, value] = ex.method.args as [{ toString(): string }, { toString(): string }];
+          return {
+            from: ex.signer.toString(),
+            to: dest.toString(),
+            raw: BigInt(value.toString()),
+          };
+        }
+        // The block answered but doesn't hold this extrinsic (pruned
+        // content within a retained block, or a bad reference). Still
+        // unverifiable, never "invalid" — we have no way to tell a
+        // forged txHash from one the node simply can't show us anymore.
+        return undefined;
+      } catch {
+        // Pruned, unreachable, or a block this node never had. The caller
+        // must render this as unverifiable — not as a failed check.
+        return undefined;
+      }
     },
   };
 }

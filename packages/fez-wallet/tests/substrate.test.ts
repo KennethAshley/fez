@@ -23,7 +23,10 @@ describe("substrate adapter (mocked api)", () => {
   // Callback-shaped signAndSend (finding #5) — a real ISubmittableResult
   // stream: one or more status callbacks, settling only on inBlock (with
   // no dispatchError) or on a dispatchError showing up first.
-  function fakeApiWithResults(results: Array<{ isInBlock: boolean; dispatchError?: unknown }>) {
+  function fakeApiWithResults(
+    results: Array<{ isInBlock: boolean; dispatchError?: unknown; inBlockHash?: string }>,
+    txHash = "0xdeadbeef"
+  ) {
     return {
       registry: {
         findMetaError: (_e: unknown) => ({ section: "balances", name: "ExistentialDeposit", docs: ["balance too low"] }),
@@ -38,11 +41,19 @@ describe("substrate adapter (mocked api)", () => {
           transferKeepAlive: (to: string, amount: bigint) => ({
             signAndSend: async (
               _pair: unknown,
-              cb: (r: { status: { isInBlock: boolean }; dispatchError?: unknown; txHash: { toHex(): string } }) => void
+              cb: (r: {
+                status: { isInBlock: boolean; asInBlock: { toHex(): string } };
+                dispatchError?: unknown;
+                txHash: { toHex(): string };
+              }) => void
             ) => {
               sent.push({ to, amount });
               for (const r of results) {
-                cb({ status: { isInBlock: r.isInBlock }, dispatchError: r.dispatchError, txHash: { toHex: () => "0xdeadbeef" } });
+                cb({
+                  status: { isInBlock: r.isInBlock, asInBlock: { toHex: () => r.inBlockHash ?? "0xblock" } },
+                  dispatchError: r.dispatchError,
+                  txHash: { toHex: () => txHash },
+                });
               }
               return () => {};
             },
@@ -99,6 +110,79 @@ describe("substrate adapter (mocked api)", () => {
     const b = await retryAdapter.balance("5Fake", "TAO");
     expect(b.raw).toBe(2_000_000_000n);
     expect(calls).toBe(2);
+  });
+
+  it("returns the block hash it landed in", async () => {
+    const pair = { publicKeyHex: "aa", secretKeyHex: "bb", address: "5Fake" };
+    const blockAdapter = substrateAdapter({
+      endpoint: "ws://fake",
+      apiFactory: async () => fakeApiWithResults([{ isInBlock: true, inBlockHash: "0xblock" }], "0xtx") as never,
+    });
+    const result = await blockAdapter.transfer(pair, "5Dest", { raw: 1n, decimals: 9, symbol: "TAO" });
+    expect(result).toEqual({ txHash: "0xtx", blockRef: "0xblock" });
+  });
+});
+
+describe("substrate adapter — block lookup (getTransfer)", () => {
+  // A minimal fake exposing only the rpc.chain.getBlock slice getTransfer
+  // needs — extrinsics carry a hash, a signer, and decoded call args
+  // shaped like real polkadot Codec objects (toHex()/toString()).
+  function fakeApiWithBlock(opts: {
+    blockHash: string;
+    extrinsics: Array<{ hash: string; signer: string; args: [string, bigint] }>;
+  }) {
+    return {
+      rpc: {
+        chain: {
+          getBlock: async (hash: string) => {
+            if (hash !== opts.blockHash) throw new Error("no such block");
+            return {
+              block: {
+                extrinsics: opts.extrinsics.map((ex) => ({
+                  hash: { toHex: () => ex.hash },
+                  signer: { toString: () => ex.signer },
+                  method: {
+                    args: [{ toString: () => ex.args[0] }, { toString: () => ex.args[1].toString() }],
+                  },
+                })),
+              },
+            };
+          },
+        },
+      },
+    };
+  }
+
+  it("finds a transfer in its block and reports from/to/amount", async () => {
+    const adapter = substrateAdapter({
+      endpoint: "ws://fake",
+      apiFactory: async () =>
+        fakeApiWithBlock({
+          blockHash: "0xblock",
+          extrinsics: [{ hash: "0xtx", signer: "5From", args: ["5To", 5_000_000n] }],
+        }) as never,
+    });
+    expect(await adapter.getTransfer!("0xblock", "0xtx")).toEqual({
+      from: "5From",
+      to: "5To",
+      raw: 5_000_000n,
+    });
+  });
+
+  it("returns undefined when the block no longer has the extrinsic", async () => {
+    const adapter = substrateAdapter({
+      endpoint: "ws://fake",
+      apiFactory: async () => fakeApiWithBlock({ blockHash: "0xblock", extrinsics: [] }) as never,
+    });
+    expect(await adapter.getTransfer!("0xblock", "0xtx")).toBeUndefined();
+  });
+
+  it("returns undefined (unverifiable, not invalid) when the node can't look up the block", async () => {
+    const adapter = substrateAdapter({
+      endpoint: "ws://fake",
+      apiFactory: async () => fakeApiWithBlock({ blockHash: "0xblock", extrinsics: [] }) as never,
+    });
+    expect(await adapter.getTransfer!("0xnotfound", "0xtx")).toBeUndefined();
   });
 });
 

@@ -11,7 +11,13 @@ export interface ChainAdapter {
   assets: { symbol: string; decimals: number }[];
   address(pair: WalletPair): string;
   balance(address: string, asset: string): Promise<Amount>;
-  transfer(pair: WalletPair, to: string, amount: Amount): Promise<{ txHash: string }>;
+  /** `blockRef` is the block the transfer landed in — a plain block hash
+   * on substrate. Carried so a receipt can be verified without an
+   * indexer: substrate cannot look an extrinsic up by hash alone. */
+  transfer(pair: WalletPair, to: string, amount: Amount): Promise<{ txHash: string; blockRef?: string }>;
+  /** Undefined when the chain (or the retained history) can't answer.
+   * Undefined means UNVERIFIABLE, never "invalid" — see spec §4. */
+  getTransfer?(blockRef: string, txHash: string): Promise<{ from: string; to: string; raw: bigint } | undefined>;
 }
 
 export function parseAmount(text: string, decimals: number, symbol: string): Amount {
