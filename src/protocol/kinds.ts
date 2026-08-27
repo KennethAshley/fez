@@ -36,6 +36,10 @@ export const KIND_AGENT_AUDIT = 47020;
  */
 export const KIND_TURN_METRIC = 47030;
 
+/** A payment, e-tagged to the message it paid for. Signed by the payer;
+ * verifiable by anyone against the block it names. */
+export const KIND_PAYMENT_RECEIPT = 47040;
+
 /**
  * Observer control — the reverse half of the observer stream (20004):
  * OWNER → agent commands as ephemeral NIP-44-encrypted frames. v1: {cmd:
