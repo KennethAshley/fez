@@ -34,17 +34,82 @@ owner's ✅ / ❌ reaction. Timeout declines.
 5. The mnemonic is printed once, at init, and lives nowhere but the
    keychain.
 
-## Testnet e2e (before real TAO)
+## Networks
 
-1. Point the endpoint at testnet: set `endpoints.tao` to
-   `wss://test.finney.opentensor.ai:443` in `~/.fez/wallet.json`.
-2. `fez-wallet init`, fund the treasury address from the testnet faucet.
-3. `fez-wallet derive <persona>` for an agent that runs in your fleet,
-   `fez-wallet fund <persona> 0.1`.
-4. From the agent: `wallet_balance`, then a sub-threshold `wallet_send`
-   back to the treasury address (auto), then an over-threshold send —
-   approve the ✅ path once and let one time out.
-5. `fez-wallet status` and `wallet_history` should agree with the chain.
+    fez-wallet network            # which chain am I on
+    fez-wallet network test       # testnet — play money
+    fez-wallet network finney     # mainnet — real TAO
+
+Keys are the same on both chains; balances, history and the ledger are
+not. An explicit `endpoints.tao` in `wallet.json` still wins, for a local
+node or a fork.
+
+## Paying another owner's agent (two machines)
+
+1. Both sides: `fez-wallet network test`, then `init` / `derive` / `fund`.
+2. Both agents run once so each publishes its address event.
+3. From one agent: `wallet_send` to `@theirname`, naming the message it
+   pays for. Approve the card.
+4. The bolt appears under that message on BOTH screens.
+5. `fez-wallet status` and `wallet_history` reconcile to the chain on
+   both sides.
+
+Failure paths worth walking once: an agent that has published no address,
+a payee on the other network, and a card left to time out.
+
+No real TAO until this passes end to end.
+
+## Resolution
+
+`wallet_send`'s `to` is tried in order, and never blocks:
+
+1. **A local store entry** (`chip`) — an agent you hold keys for.
+   Unchanged; proof of delivery is the chain.
+2. **A channel-roster name** (`@chip` or `chip`) — resolved through that
+   agent's own published address event (kind `30175`, one per chain +
+   network, signed by the agent's own nostr key). Two roster members
+   sharing a name is an error, not a coin flip: the send fails and names
+   both candidates by npub rather than picking. An agent that has
+   published no address for the chain fails the same way, by name.
+3. **Anything else** is passed through as a raw address, exactly as
+   before — the chain is the only validator of address shape.
+
+Before signing, a send is refused if the resolved payee's announced
+network differs from yours (`you're on test, chip is on finney —
+nothing was sent`). A raw address (tier 3) announces no network, so this
+guard does not cover that path — it still sends, unguarded.
+
+A first payment to a given roster payee always raises a consent card,
+whatever the amount; approved once, that payee is remembered by pubkey
+(never by name — a name is not an identity) and the threshold governs
+from then on.
+
+## Receipts
+
+`wallet_send` takes one more optional argument, `for` — the id of the
+message the payment is for. Omit it and nothing changes: a plain
+transfer, no receipt. Give it, and once the transfer lands the wallet
+publishes a receipt (kind `47040`) naming that message, the payee, the
+amount and the block the transfer landed in — rendered under the paid
+message on every participant's screen, e.g.
+`⚡ 0.05 TAO · a1b2c3d4… · couldn't check this block`.
+
+A receipt can in principle be checked against the chain: fetch the
+named block, compare signer, destination and amount. A public endpoint
+prunes old blocks, though, so a receipt whose block has aged out simply
+cannot be checked — that is **unverifiable, not false**; only a receipt
+whose block was fetched and did not match would be shown as a lie.
+
+**Known limitation:** every receipt in the UI today reads "couldn't
+check this block," regardless of whether it would in fact verify. The
+check itself (`verifyReceipt` in `src/receipt.ts`) is implemented and
+tested at the library level and returns `"verified"` / `"unverifiable"`
+/ `"false"`, but the webview does not call it yet — wiring that in is
+future work, not something a user sees happen today.
+
+If the receipt fails to publish, the transfer still stands and the
+ledger still records it — the tool's reply just says the note didn't go
+out.
 
 ## GUI
 
