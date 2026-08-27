@@ -40,7 +40,7 @@ import Avatar from "./Avatar";
 import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
 import HoverCard from "./HoverCard";
-import { uploadFile, shareLine, imetaTag, setMediaServer, type Uploaded } from "./upload";
+import { uploadFile, shareLine, imetaTag, setMediaServer, reconcileMediaServer, type Uploaded } from "./upload";
 import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
@@ -134,13 +134,20 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     // The Rust side still surfaces "no fez identity" for onboarding and
     // "keychain access failed" for retry — same routing as before.
     const pubkey = await invoke<string>("get_pubkey", { account: ACCOUNT });
-    // Self-heal media custody: installs that set a media server before it
-    // was written through to settings.json have the value in this webview's
-    // cache and nowhere an agent can read it, so their uploads land on a
-    // host no agent will fetch from. Idempotent, and only for a value that
-    // is actually there.
-    const cachedMedia = localStorage.getItem("fez-media-server")?.trim();
-    if (cachedMedia) setMediaServer(cachedMedia);
+    // Reconcile media custody. settings.json is the authority — the CLI and
+    // every agent read it — so a value there wins and refreshes this
+    // webview's cache. Only an install whose value never made it out of the
+    // cache gets written through.
+    const media = reconcileMediaServer({
+      stored: await invoke<string>("read_media_server").catch(() => ""),
+      cached: localStorage.getItem("fez-media-server") ?? "",
+    });
+    if ("setCache" in media) localStorage.setItem("fez-media-server", media.setCache);
+    else if ("writeThrough" in media) {
+      await setMediaServer(media.writeThrough).catch((err) =>
+        console.warn("couldn't write the media server through to settings.json:", err)
+      );
+    }
     // Self-heal the local workspace: a loopback-only relay set with
     // nothing behind it strands the app at "reconnecting…" (a restored
     // identity landed exactly there — no path had spawned the relay).

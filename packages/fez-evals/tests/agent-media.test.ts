@@ -99,6 +99,22 @@ describe("attachmentNotice", () => {
   });
 });
 
+describe("attachmentNotice ceiling", () => {
+  it("lists at most a few, and says how many it left out", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ url: `https://b.example/${i}.png`, mime: "image/png" }));
+    const notice = attachmentNotice(many)!;
+    // A hostile message with 200 imeta tags must not write 200 urls into
+    // the prompt, and must not invite 200 fetches.
+    expect(notice.match(/https:\/\/b\.example/g)!.length).toBeLessThanOrEqual(3);
+    expect(notice).toMatch(/9 more/);
+  });
+
+  it("says nothing about extras when everything fits", () => {
+    const notice = attachmentNotice([{ url: "https://b.example/a.png", mime: "image/png" }])!;
+    expect(notice).not.toMatch(/more/);
+  });
+});
+
 describe("fetchAttachment", () => {
   let server: http.Server;
   let host: string;
@@ -112,7 +128,11 @@ describe("fetchAttachment", () => {
 
   beforeAll(async () => {
     server = http.createServer((req, res) => {
-      const hit = BODIES[(req.url ?? "").split("?")[0]];
+      const url = (req.url ?? "").split("?")[0];
+      if (url === "/away") return res.writeHead(302, { location: "http://evil.example/metadata" }).end();
+      if (url === "/here") return res.writeHead(302, { location: "/shot.png" }).end();
+      if (url === "/loop") return res.writeHead(302, { location: "/loop" }).end();
+      const hit = BODIES[url];
       if (!hit) return res.writeHead(404).end();
       res.writeHead(200, { "content-type": hit[0] }).end(hit[1]);
     });
@@ -159,5 +179,34 @@ describe("fetchAttachment", () => {
     expect(got.ok).toBe(false);
     if (got.ok) return;
     expect(got.reason).toMatch(/application\/pdf/);
+  });
+
+  /**
+   * The allowlist has to survive the redirect, or it guards nothing: an
+   * allowlisted host that answers 302 can walk the fetch onto any address
+   * — a link-local metadata endpoint included — and the body lands in the
+   * model's context as an "image". The default media server is a public
+   * one nobody here operates.
+   */
+  it("does not follow a redirect off the allowlist", async () => {
+    const got = await fetchAttachment(`http://${host}/away`, { hosts: hosts() });
+    expect(got.ok).toBe(false);
+    if (got.ok) return;
+    expect(got.reason).toMatch(/redirect/i);
+    expect(got.reason).toMatch(/evil\.example|not this workspace/i);
+  });
+
+  it("still follows a redirect that stays on the allowlisted host", async () => {
+    const got = await fetchAttachment(`http://${host}/here`, { hosts: hosts() });
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.mimeType).toBe("image/png");
+  });
+
+  it("gives up rather than chasing a redirect chain", async () => {
+    const got = await fetchAttachment(`http://${host}/loop`, { hosts: hosts() });
+    expect(got.ok).toBe(false);
+    if (got.ok) return;
+    expect(got.reason).toMatch(/redirect/i);
   });
 });

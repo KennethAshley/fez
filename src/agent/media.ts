@@ -20,6 +20,20 @@ const DEFAULT_MEDIA_HOST = "blossom.primal.net";
 /** Big enough for a screenshot, small enough not to eat a turn's context. */
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
+/**
+ * How many attachments a single message may offer the model.
+ *
+ * The old auto-fetch capped images per turn; describing them instead of
+ * fetching them removed the reason for a byte cap but NOT the reason for a
+ * count. A message can carry as many imeta tags as its author felt like
+ * writing, and every url listed is both prompt text and an invitation to
+ * spend a fetch. Three is what a person plausibly attached on purpose.
+ */
+export const MAX_ATTACHMENTS_OFFERED = 3;
+
+/** How many hops a media server may bounce us through before we give up. */
+const MAX_REDIRECTS = 3;
+
 export interface Attachment {
   url: string;
   /** From imeta. Absent for a bare pasted URL — only a fetch can say. */
@@ -116,11 +130,18 @@ export function attachmentNotice(items: Attachment[]): string | undefined {
   const viewable = items.filter((a) => !unperceivable.includes(a));
   const lines: string[] = [];
   if (viewable.length > 0) {
+    const offered = viewable.slice(0, MAX_ATTACHMENTS_OFFERED);
+    const withheld = viewable.length - offered.length;
     lines.push(
       `This message has ${viewable.length} attachment(s). You have NOT seen them. ` +
         `Call fez_view_attachment with a url below to look at one, and only if looking would actually help:`,
-      ...viewable.map((a) => `- ${a.url}${a.mime ? ` (${a.mime}${a.size ? `, ${human(a.size)}` : ""})` : ""}`)
+      ...offered.map((a) => `- ${a.url}${a.mime ? ` (${a.mime}${a.size ? `, ${human(a.size)}` : ""})` : ""}`)
     );
+    if (withheld > 0) {
+      lines.push(
+        `(${withheld} more not listed — a message offering this many is more likely noise than a request to look at all of them.)`
+      );
+    }
   }
   if (unperceivable.length > 0) {
     const kinds = [...new Set(unperceivable.map((a) => a.mime!.split("/")[0]))].join(" and ");
@@ -131,6 +152,45 @@ export function attachmentNotice(items: Attachment[]): string | undefined {
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * Follow redirects ourselves, checking the allowlist at every hop.
+ *
+ * `fetch` follows redirects by default, which quietly undoes the allowlist:
+ * an allowlisted media server that answers 302 can walk the request onto
+ * any address — a link-local metadata endpoint included — and the body
+ * comes back looking like an ordinary response. The default media server
+ * is a public one nobody here operates, so "we trust the first host" is not
+ * the same as "we trust wherever it points".
+ *
+ * Redirects are still ALLOWED, because a Blossom server legitimately
+ * bounces to blob storage; they are just held to the same list as the
+ * first request, and a redirect out of the workspace explains itself
+ * rather than failing mutely.
+ */
+async function followWithinAllowlist(
+  url: string,
+  opts: { hosts: Set<string>; timeoutMs?: number }
+): Promise<{ res: Response } | { reason: string }> {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const res = await fetch(current, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 10_000),
+    });
+    if (res.status < 300 || res.status >= 400) return { res };
+    const location = res.headers.get("location");
+    if (!location) return { reason: `the server answered ${res.status} with nowhere to go` };
+    const next = new URL(location, current);
+    if (!opts.hosts.has(next.host)) {
+      return {
+        reason: `it redirected to ${next.host}, which is not this workspace's media server — refusing to follow`,
+      };
+    }
+    current = next.toString();
+  }
+  return { reason: `too many redirects (more than ${MAX_REDIRECTS}) — giving up` };
 }
 
 /**
@@ -158,7 +218,9 @@ export async function fetchAttachment(
     };
   }
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(opts.timeoutMs ?? 10_000) });
+    const hop = await followWithinAllowlist(url, opts);
+    if ("reason" in hop) return { ok: false, reason: hop.reason };
+    const res = hop.res;
     if (!res.ok) return { ok: false, reason: `the server answered ${res.status}` };
     const mime = (res.headers.get("content-type") ?? "").split(";")[0].trim();
     if (/^(audio|video)\//.test(mime)) {

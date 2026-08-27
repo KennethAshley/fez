@@ -22,17 +22,46 @@ export function mediaServer(): string {
  * ~/.fez/settings.json is what the rest of the system reads, and for
  * media that "rest" includes every agent: an agent builds its fetch
  * allowlist from settings.json's mediaServer, so a GUI that wrote only
- * its own cache left agents refusing the very images being uploaded,
- * without a word in any log the user would see.
+ * its own cache left agents refusing the very images being uploaded.
+ *
+ * Awaits the custody write and THROWS if it fails, because the failure
+ * modes here are quiet by nature: the Rust side rejects a scheme-less
+ * url, and a caller that shrugged that off would flash "saved" over the
+ * exact divergence this function exists to prevent.
  */
-export function setMediaServer(url: string): void {
+export async function setMediaServer(url: string): Promise<void> {
   const trimmed = url.trim();
   localStorage.setItem("fez-media-server", trimmed);
-  void import("@tauri-apps/api/core")
-    .then(({ invoke }) => invoke("write_media_server", { url: trimmed }))
-    .catch(() => {
-      /* outside tauri (tests) the cache is all there is */
-    });
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("write_media_server", { url: trimmed });
+  } catch (err) {
+    // Outside tauri (tests) the cache is all there is, and that is fine.
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+/**
+ * Which way the two spellings should be reconciled at boot.
+ *
+ * Custody WINS. The first pass healed the cache into settings.json every
+ * launch, which quietly inverted that: once the GUI had ever set a media
+ * server, editing settings.json from the CLI was reverted on next boot —
+ * against precisely the bring-your-own-server person the write-through was
+ * added for. Healing is only for the install that has a cached value and
+ * no custody one yet.
+ *
+ * Pure so the precedence can be tested without a browser.
+ */
+export function reconcileMediaServer(state: { stored: string; cached: string }):
+  | { setCache: string }
+  | { writeThrough: string }
+  | Record<string, never> {
+  const stored = state.stored.trim();
+  const cached = state.cached.trim();
+  if (stored) return stored === cached ? {} : { setCache: stored };
+  return cached ? { writeThrough: cached } : {};
 }
 
 export interface Uploaded {

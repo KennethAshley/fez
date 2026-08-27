@@ -132,10 +132,16 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
     }
   };
 
-  const saveServers = () => {
+  const saveServers = async () => {
     setRelays(relay);
-    setMediaServer(media);
-    flash("✓ saved");
+    try {
+      await setMediaServer(media);
+      flash("✓ saved");
+    } catch (err) {
+      // The relay half already landed; say what didn't rather than
+      // reporting a success the agents will never see.
+      flash(`✗ media server not saved: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   // Saved-but-not-applied is read from storage vs boot, not from a flag
@@ -243,7 +249,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
           <label>media server (Blossom)</label>
           <input className="manage-input" value={media} spellCheck={false} onChange={(e) => setMedia(e.target.value)} />
         </div>
-        <button className="agent-action" onClick={saveServers}>save</button>
+        <button className="agent-action" onClick={() => void saveServers()}>save</button>
         {needsRelaunch && (
           <div className="settings-field" style={{ marginTop: 8 }}>
             <div className="settings-hint">
