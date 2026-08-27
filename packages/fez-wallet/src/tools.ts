@@ -141,7 +141,7 @@ export async function walletSend(
   if (!endpointMirrored) {
     endpointMirrored = true;
     const config = loadConfig();
-    void mirrorEndpoint(config.endpoints.tao);
+    void mirrorEndpoint(config.endpoints.tao, config.network);
   }
   return `sent ${formatAmount(amount)} → ${to} (tx ${txHash}${consent === "approved" ? ", owner-approved" : ""})`;
 }

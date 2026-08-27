@@ -37,6 +37,11 @@ export interface WalletPrefs {
 type State = {
   addresses?: { treasury?: string; personas?: Record<string, string> };
   endpoint?: string;
+  /** Which network the endpoint (and hence the ledger) is actually
+   * reading — mirrored alongside it so the gui part, which cannot read
+   * config.ts, still knows which `logs` entry is live rather than
+   * having to guess or show both at once. */
+  network?: Network;
   logs?: Partial<Record<Network, SpendEntry[]>>;
   prefs?: WalletPrefs;
   [k: string]: unknown;
@@ -73,9 +78,10 @@ export function mirrorAddresses(u: { treasury?: string; persona?: { name: string
   });
 }
 
-export function mirrorEndpoint(endpoint: string): Promise<void> {
+export function mirrorEndpoint(endpoint: string, network: Network): Promise<void> {
   return update((s) => {
     s.endpoint = endpoint;
+    s.network = network;
   });
 }
 

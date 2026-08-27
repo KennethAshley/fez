@@ -22,10 +22,18 @@ describe("storage mirror", () => {
     const { mirrorAddresses, mirrorEndpoint } = await import("../src/storage-mirror.js");
     await mirrorAddresses({ treasury: "5Treasury" });
     await mirrorAddresses({ persona: { name: "scout", address: "5Scout" } });
-    await mirrorEndpoint("wss://test.finney.opentensor.ai:443");
+    await mirrorEndpoint("wss://test.finney.opentensor.ai:443", "test");
     const s = await readState();
     expect(s.addresses).toEqual({ treasury: "5Treasury", personas: { scout: "5Scout" } });
     expect(s.endpoint).toBe("wss://test.finney.opentensor.ai:443");
+  });
+
+  it("mirrors which network the endpoint belongs to, alongside it", async () => {
+    const { mirrorEndpoint } = await import("../src/storage-mirror.js");
+    await mirrorEndpoint("wss://entrypoint-finney.opentensor.ai:443", "finney");
+    expect((await readState()).network).toBe("finney");
+    await mirrorEndpoint("wss://test.finney.opentensor.ai:443", "test");
+    expect((await readState()).network).toBe("test");
   });
 
   it("appends spend entries and caps at 500", async () => {

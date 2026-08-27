@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses } from "../src/gui-logic.js";
+import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor } from "../src/gui-logic.js";
+import type { SpendEntry } from "../src/log.js";
 
 const MSG = [
   "💸 **scout** wants to send **0.05 TAO**",
@@ -153,5 +154,36 @@ describe("extractAddresses", () => {
   it("caps at five per message", () => {
     const many = Array.from({ length: 6 }, (_, i) => `5${String.fromCharCode(65 + i)}${"x".repeat(44)}`).join(" ");
     expect(extractAddresses(many)).toHaveLength(5);
+  });
+});
+
+describe("logsFor", () => {
+  const testEntry: SpendEntry = {
+    ts: "1", persona: "scout", to: "5X", amount: "0.01", asset: "TAO",
+    txHash: "0xtest", consent: "auto", network: "test",
+  };
+  const finneyEntry: SpendEntry = {
+    ts: "2", persona: "scout", to: "5X", amount: "1", asset: "TAO",
+    txHash: "0xreal", consent: "auto", network: "finney",
+  };
+
+  it("returns only the given network's rows", () => {
+    const logs = { test: [testEntry], finney: [finneyEntry] };
+    expect(logsFor(logs, "test")).toEqual([testEntry]);
+    expect(logsFor(logs, "finney")).toEqual([finneyEntry]);
+  });
+
+  it("falls back to finney when no network is mirrored yet", () => {
+    const logs = { finney: [finneyEntry] };
+    expect(logsFor(logs, undefined)).toEqual([finneyEntry]);
+  });
+
+  it("reads a missing network as empty, never falling through to another chain's rows", () => {
+    const logs = { finney: [finneyEntry] };
+    expect(logsFor(logs, "test")).toEqual([]);
+  });
+
+  it("reads undefined logs as empty", () => {
+    expect(logsFor(undefined, "test")).toEqual([]);
   });
 });

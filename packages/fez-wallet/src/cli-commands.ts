@@ -47,7 +47,7 @@ export async function cmdInit(io: CliIo): Promise<void> {
   io.print("fund the treasury, then: fez-wallet derive <persona> && fez-wallet fund <persona> <amount>");
   await mirrorAddresses({ treasury: treasuryAddress });
   const config = loadConfig();
-  await mirrorEndpoint(config.endpoints.tao);
+  await mirrorEndpoint(config.endpoints.tao, config.network);
 }
 
 export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
@@ -92,7 +92,7 @@ export async function cmdStatus(io: CliIo, adapter: ChainAdapter): Promise<void>
   const asset = adapter.assets[0].symbol;
   const treasury = treasuryPair(mnemonic);
   await mirrorAddresses({ treasury: treasury.address });
-  await mirrorEndpoint(config.endpoints.tao);
+  await mirrorEndpoint(config.endpoints.tao, config.network);
   const tb = await adapter.balance(treasury.address, asset);
   io.print(`treasury  ${treasury.address}  ${formatAmount(tb)}`);
   for (const persona of Object.keys(config.personas).sort()) {

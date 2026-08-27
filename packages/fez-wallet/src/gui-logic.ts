@@ -1,4 +1,6 @@
 /** Pure logic for the wallet gui part — node-testable, no React. */
+import type { Network } from "./storage-mirror.js";
+import type { SpendEntry } from "./log.js";
 
 export function parseConsentRequest(
   content: string
@@ -107,6 +109,16 @@ export function remainingText(msgTs: number, now: number): string | undefined {
   if (left <= 0) return undefined;
   const mins = Math.floor(left / 60);
   return mins >= 1 ? `expires in ${mins}m` : "expires in <1m";
+}
+
+/** The one network's rows the panel shows — never both at once (the
+ * whole point of splitting the ledger). A network that hasn't been
+ * mirrored yet falls back to "finney": never guess a testnet is live. */
+export function logsFor(
+  logs: Partial<Record<Network, SpendEntry[]>> | undefined,
+  network: Network | undefined
+): SpendEntry[] {
+  return (logs ?? {})[network ?? "finney"] ?? [];
 }
 
 export function requestStatus(
