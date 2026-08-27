@@ -1575,7 +1575,9 @@ button.author:hover { text-decoration: underline; }
 /* An agent mid-task says what it is doing instead of what it is. */
 .party-class.live { color: var(--phosphor); text-transform: none; letter-spacing: 0; }
 
-.composer-actions { display: flex; align-items: center; gap: 4px; padding: 6px 2px 0; }
+/* No horizontal padding of its own: the box owns the inset, so the send
+   button's right gap is one number rather than two summed. */
+.composer-actions { display: flex; align-items: center; gap: 4px; padding: 6px 0 0; }
 /* The link and paperclip are the only colour emoji in a toolbar of
    typographic glyphs (B I </> S ≔ ⒈ ❝ ▤ @ ☺ Aa), which is what made
    them read as foreign. Desaturating is the fix that survives: there is
@@ -1583,9 +1585,13 @@ button.author:hover { text-decoration: underline; }
 .emoji-glyph { filter: grayscale(1); opacity: 0.7; }
 .emoji-glyph:hover { opacity: 1; }
 .composer-tool.on { background: var(--bg2); color: var(--accent); }
+/* Not a circle. Round in fez means STATUS — the presence dot, the live
+   pip, the avatar ring — and this was the only circular control in the
+   app, borrowing a shape that means something else. Squared to the
+   family radius, and sized to the tools it sits beside. */
 .composer-send {
   margin-left: auto; background: var(--accent); border: 0; color: var(--bg0);
-  font: inherit; font-size: 16px; font-weight: 700; width: 34px; height: 32px; border-radius: 16px; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 700; width: 30px; height: 28px; border-radius: 6px; cursor: pointer;
 }
 /* Stays the primary colour when there is nothing to send — dimmed, not
    greyed. Swapping to --bg2 made it disappear into the composer, so the
@@ -2366,7 +2372,12 @@ button.author:hover { text-decoration: underline; }
   background: var(--bg-rail);
   border: 1px solid var(--hairline);
   border-radius: 8px;
-  padding: 4px 10px 6px;
+  /* Right and bottom must match, or the send button sits nearer one
+     edge than the other and the corner reads as a mistake. They were
+     12 and 6 — .composer-actions adds its own 2px to the right and
+     nothing to the bottom, so the two insets have to be counted
+     TOGETHER, not read off this line alone. */
+  padding: 4px 8px 8px;
 }
 .composer:focus-within .composer-box { border-color: color-mix(in srgb, var(--fg) 28%, var(--bg2)); }
 .composer.dragging .composer-box { border-color: var(--accent); border-style: dashed; }
