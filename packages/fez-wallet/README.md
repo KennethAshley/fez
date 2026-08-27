@@ -19,9 +19,13 @@ tool.
 `wallet_address` · `wallet_balance` · `wallet_send` · `wallet_history`
 — always scoped to the calling agent (identity from FEZ_AGENT_PERSONA,
 never from arguments). Sends over the per-agent threshold (default
-0.01 TAO, `thresholds` in `~/.fez/wallet.json`) post a consent request
-(kind 47103) to `consentChannel` and wait up to 10 minutes for the
-owner's ✅ / ❌ reaction. Timeout declines.
+0.01 TAO) post a consent request (kind 47103) to `consentChannel` and
+wait up to 10 minutes for the owner's ✅ / ❌ reaction. Timeout declines.
+`thresholds` (and `network`) are preferences, not config — they live in
+the extension's prefs, changed from the CLI (`fez-wallet network`) or
+the Settings → Wallet panel, never by hand-editing `wallet.json`.
+`wallet.json` still holds what the CLI ceremony owns: persona indexes,
+`consentChannel`, an explicit endpoint override.
 
 ## Custody invariants
 
@@ -118,5 +122,7 @@ Approve ✅ / Decline ❌ buttons (they publish your ordinary reaction —
 the same event the wallet trusts), and Settings gains a Wallet card
 with live balances and the spend ledger. The panel reads only the
 public state the CLI mirrors into extension storage (addresses,
-endpoint, history) — keys never touch the webview. Ceremony (init/
-derive/fund) remains CLI-only by design.
+endpoint, history) — keys never touch the webview. The same panel also
+writes: a network selector (`test` / `finney`) and a consent-threshold
+editor, both writing directly to prefs. Ceremony (init/derive/fund)
+remains CLI-only by design.
