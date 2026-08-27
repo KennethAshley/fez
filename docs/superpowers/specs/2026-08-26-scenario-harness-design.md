@@ -20,10 +20,13 @@ matter there — two agents locked in a reply loop, a reply that orphans its
 thread under load, a GUI that drops events during a burst — are invisible to
 every layer above.
 
-A second gap surfaced while scoping. `packages/fez-media/src/blossom.ts` maps
-`mp4`, `mov`, `mp3`, and `wav` mimes, but `packages/fez-desktop/src/App.tsx:3095`
-renders images only. Audio and video arrive as bare links, and no voice capture
-path exists anywhere. Voice and video are a product gap, not merely a test gap.
+A second gap surfaced while scoping: `packages/fez-media/src/blossom.ts` mapped
+`mp4`, `mov`, `mp3`, and `wav` mimes while the renderer drew images only, so
+audio and video arrived as bare links. Playback landed on 2026-08-26 (commit
+8c47d0b) — the renderer now reads the NIP-92 imeta the composer had always been
+writing, and classifies by declared MIME with the file extension as fallback.
+**Voice capture remains absent**: nothing in fez records audio, so "send a voice
+note" has no answer regardless of playback.
 
 ## Goals
 
@@ -40,8 +43,8 @@ path exists anywhere. Voice and video are a product gap, not merely a test gap.
 
 ## Non-Goals
 
-- The audio/video render path and voice capture. Documented as a launch gap and
-  pinned by scenario #9; not built here.
+- Voice capture. Playback shipped separately (8c47d0b); recording did not, and
+  is a launch gap documented rather than closed here.
 - LLM-judged answer quality. That is `@fezchat/bench`'s question.
 - Throughput or load testing beyond ~5 agents and ~500 messages. This proves
   correctness under concurrency, not scale.
@@ -150,9 +153,12 @@ Each is a pure function over an `Outcome`, named for the bug it catches.
 
 - `blob-resolves` — every posted media URL returns 200 and its sha256 matches
   the content-addressed name.
-- `unsupported-media-degrades` — an mp4 or wav posts as a labeled link, not a
-  broken bubble or an exception. This invariant pins the known gap in place so
-  it cannot rot into a crash.
+- `media-renders-as-its-kind` — an image draws an `<img>`, an mp4 a `<video>`,
+  a wav an `<audio>`, and a format nobody can identify stays an ordinary link
+  rather than becoming a player that will never play.
+- `playback-survives-traffic` — a message arriving mid-playback does not stop
+  it. The markdown component map's identity is what guarantees this
+  (`App.tsx`), and it is one refactor away from silently regressing.
 
 ### GUI (only when Playwright is attached)
 
@@ -224,7 +230,7 @@ release. GUI = Playwright attaches.
 | 6 | `delete-mid-turn` | human deletes the message an agent is answering | CI + GUI |
 | 7 | `edit-storm` | rapid edits and reactions on messages being replied to | CI + GUI |
 | 8 | `media-image` | agent posts image, blob resolves, renders | CI + GUI |
-| 9 | `media-degrade` | mp4 and wav degrade to labeled links | CI + GUI |
+| 9 | `media-kinds` | image, mp4, and wav each draw the right element; unknown stays a link | CI + GUI |
 | 10 | `doc-comments` | `DOC_COMMENT` thread with agents participating | CI |
 | 11 | `cross-harness-parity` | claude-code + pi, one room, one prompt | Live |
 | 12 | `two-clients-one-room` | two subscribers must agree on order | CI + GUI |
@@ -288,7 +294,7 @@ store directory into the next.
 
 ## Follow-ups this design deliberately defers
 
-1. Audio and video render path, plus voice capture. Launch gap, documented.
+1. Voice capture. Playback shipped 2026-08-26 (8c47d0b); recording did not.
 2. A registry gate for `MAX_CHAIN_DEPTH`, if the drift risk below is accepted.
 3. Throughput and soak testing beyond this harness's ceiling.
 4. A chutes-backed harness, so decentralized inference can hold a seat in a
