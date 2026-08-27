@@ -106,6 +106,60 @@ describe("network preferences", () => {
     expect(JSON.parse(fs.readFileSync(walletJson, "utf-8")).endpoints.tao).toBe("ws://127.0.0.1:9944");
   });
 
+  // The bug this pins: loadConfig() DERIVES endpoints.tao from the active
+  // network, and saveConfig used to write that whole object back — turning
+  // the derived endpoint into a permanent explicit override. Asserting only
+  // `config.network` is what let it ship: the label moved and the socket
+  // did not, so the session said "testnet" while spending real TAO.
+  it("a save/load round-trip never pins the endpoint — network and endpoint move TOGETHER", async () => {
+    const { saveConfig } = await import("../src/config.js");
+    saveConfig(loadConfig()); // `fez-wallet derive` / rememberPayee do exactly this
+    await mirrorPrefs({ network: "test" });
+    const c = loadConfig();
+    expect(c.network).toBe("test");
+    expect(c.endpoints.tao).toBe("wss://test.finney.opentensor.ai:443");
+    // and back again, so this is not one-way luck
+    await mirrorPrefs({ network: "finney" });
+    const back = loadConfig();
+    expect(back.network).toBe("finney");
+    expect(back.endpoints.tao).toBe("wss://entrypoint-finney.opentensor.ai:443");
+    expect(JSON.parse(fs.readFileSync(path.join(process.env.FEZ_WALLET_HOME!, "wallet.json"), "utf-8")).network)
+      .toBeUndefined();
+  });
+
+  it("a genuine explicit endpoint survives a save/load round-trip and still wins", async () => {
+    const { saveConfig } = await import("../src/config.js");
+    fs.writeFileSync(
+      path.join(process.env.FEZ_WALLET_HOME!, "wallet.json"),
+      JSON.stringify({ endpoints: { tao: "ws://127.0.0.1:9944" } })
+    );
+    const c = loadConfig();
+    expect(c.endpoints.tao).toBe("ws://127.0.0.1:9944");
+    saveConfig(c);
+    expect(loadConfig().endpoints.tao).toBe("ws://127.0.0.1:9944");
+    // still an override after the network moves — a local node is not finney
+    await mirrorPrefs({ network: "test" });
+    const after = loadConfig();
+    expect(after.network).toBe("test");
+    expect(after.endpoints.tao).toBe("ws://127.0.0.1:9944");
+  });
+
+  it("a save never leaks a prefs threshold into wallet.json (spec §6: deleting prefs resets)", async () => {
+    const { saveConfig } = await import("../src/config.js");
+    await mirrorPrefs({ thresholds: { default: "5" } }); // loosened in the panel
+    saveConfig(loadConfig());
+    fs.rmSync(path.join(process.env.FEZ_EXTENSION_DATA_DIR!, "wallet.json"), { force: true });
+    expect(loadConfig().thresholds.default).toBe("0.01");
+  });
+
+  it("keeps a per-persona threshold that only wallet.json holds", async () => {
+    const { saveConfig, thresholdFor } = await import("../src/config.js");
+    const c = loadConfig();
+    c.thresholds.scout = "0.05";
+    saveConfig(c);
+    expect(thresholdFor(loadConfig(), "scout")).toBe("0.05");
+  });
+
   it("maps both networks to their endpoints", () => {
     expect(endpointFor("test")).toBe("wss://test.finney.opentensor.ai:443");
     expect(endpointFor("finney")).toBe("wss://entrypoint-finney.opentensor.ai:443");

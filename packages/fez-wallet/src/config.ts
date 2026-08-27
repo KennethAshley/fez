@@ -69,10 +69,49 @@ export function loadConfig(): WalletConfig {
   };
 }
 
+/**
+ * wallet.json holds ONLY what the ceremony owns — personas, knownPayees,
+ * consentChannel, and a genuinely explicit endpoint. Everything loadConfig()
+ * *derives* is stripped on the way out, because saveConfig is reached by two
+ * ordinary paths (`fez-wallet derive`, and rememberPayee after the first
+ * approved payee) that hand back the object loadConfig() just built.
+ *
+ * Writing that object verbatim turned derived state into a permanent
+ * explicit override: `endpoints.tao` — filled in from the ACTIVE network —
+ * became a pin that "an explicit endpoint always wins" then honoured
+ * forever. Flipping prefs to "test" afterwards moved `network` (the guard,
+ * the ledger filename, the "play money" label and the consent card) while
+ * the socket stayed on finney: a session that says testnet everywhere and
+ * spends real TAO. The same write leaked prefs' thresholds into wallet.json,
+ * so a loosened threshold survived deleting prefs (spec §6 promises the
+ * opposite).
+ *
+ * The rule both strips share: drop anything loadConfig() would have supplied
+ * on its own; keep only what it could not have.
+ */
 export function saveConfig(c: WalletConfig): void {
+  const prefs = readPrefs();
+  const { network: _derivedNetwork, endpoints, thresholds, ...owned } = c;
+  const persisted: Record<string, unknown> = { ...owned };
+
+  // A recognised network endpoint is network-owned, exactly as migratePrefs
+  // treats it — only an endpoint no network maps to (a local node, a fork)
+  // is a real override, and that one still survives and still wins.
+  const derived = new Set<string>(Object.values(ENDPOINTS));
+  const keptEndpoints: Record<string, string> = { ...(endpoints as Record<string, string> | undefined) };
+  if (keptEndpoints.tao === undefined || derived.has(keptEndpoints.tao)) delete keptEndpoints.tao;
+  if (Object.keys(keptEndpoints).length > 0) persisted.endpoints = keptEndpoints;
+
+  // Thresholds prefs owns, or that are just the default echoed back, are
+  // dropped; a per-persona threshold that lives only in wallet.json stays.
+  const kept = Object.entries(thresholds ?? {}).filter(
+    ([k, v]) => prefs.thresholds?.[k] === undefined && DEFAULTS.thresholds[k] !== v
+  );
+  if (kept.length > 0) persisted.thresholds = Object.fromEntries(kept);
+
   const file = configFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(c, null, 2) + "\n", { mode: 0o600 });
+  fs.writeFileSync(file, JSON.stringify(persisted, null, 2) + "\n", { mode: 0o600 });
 }
 
 /** One-time move of user-settable fields into prefs (spec §6: one home
