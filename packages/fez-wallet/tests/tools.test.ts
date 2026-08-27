@@ -44,6 +44,7 @@ function autoRelay(decide: (req: SignedNostrEvent) => string | null) {
       handler = on;
       return () => {};
     },
+    query: async () => [],
   };
   return { relay, getRequest: () => request };
 }

@@ -21,6 +21,7 @@ function fakeRelay() {
       handlers.push(onEvent);
       return () => {};
     },
+    query: async () => [],
   };
   return { relay, emit: (ev: SignedNostrEvent) => handlers.forEach((h) => h(ev)) };
 }

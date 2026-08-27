@@ -20,6 +20,7 @@ export interface ConsentRelay {
     filter: Filter,
     onEvent: (ev: SignedNostrEvent) => void
   ): () => void;
+  query(filter: Filter): Promise<SignedNostrEvent[]>;
 }
 
 const APPROVE = new Set(["✅", "+"]);
@@ -128,6 +129,9 @@ export async function poolRelay(relayUrls: string[], authSecretHex?: string): Pr
     },
     subscribe(filter: Filter, onEvent) {
       return conn.subscribe([filter] as never, onEvent as never);
+    },
+    async query(filter: Filter) {
+      return (await conn.query([filter] as never)) as SignedNostrEvent[];
     },
   };
   relayPools.set(key, relay);
