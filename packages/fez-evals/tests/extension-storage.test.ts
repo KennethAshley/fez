@@ -80,23 +80,39 @@ describe("extension storage", () => {
 });
 
 /**
- * Inventory completeness, after Buzz's egress guard: this asserts over
- * FUTURE code, not just today's. Any new Tauri command that writes the
- * extension-data directory must go through the prefs-scoped helper, or
- * the subtree scoping is not a rule — it is a habit.
+ * Inventory heuristic, after Buzz's egress guard. What this DOES catch:
+ * a future command whose own body names the literal "extension-data"
+ * path segment and calls one of the write patterns below directly — a
+ * copy-pasted path-join plus a direct write, which is how this class of
+ * command has always been written in this file so far (both existing
+ * ones look exactly like that). What it does NOT catch: a write reached
+ * entirely through indirection — e.g. a shared helper that builds the
+ * path once and is called from several commands, none of which mentions
+ * "extension-data" or a write syscall themselves. The second assertion
+ * below closes part of that gap (a helper is still text in this file, so
+ * a *new* occurrence of the literal is visible even if it moves into a
+ * fn neither test currently names) but a helper that computes the path
+ * without the literal string ("extension-data") would still slip past
+ * both. This is a tripwire, not a proof of exhaustiveness.
  */
 describe("extension-data write inventory", () => {
   const libRs = fs.readFileSync(
     path.join(__dirname, "../../fez-desktop/src-tauri/src/lib.rs"),
     "utf-8"
   );
+  // Widened past fs::write to the other direct-write idioms Rust code
+  // actually uses for "serialize a json::Value to a file": File::create
+  // (often paired with to_writer/to_writer_pretty) and write_all/OpenOptions
+  // for anything that opens a handle explicitly.
+  const WRITE_PATTERN = /fs::write|write_all|OpenOptions|File::create|to_writer/;
+  const KNOWN_FNS = ["extension_storage_read", "extension_storage_write"];
 
   it("has exactly one command writing extension-data", () => {
     // Commands that name the directory AND write it.
     const writers = libRs
       .split("#[tauri::command]")
       .slice(1)
-      .filter((body) => body.includes("extension-data") && /fs::write|write_all|OpenOptions/.test(body))
+      .filter((body) => body.includes("extension-data") && WRITE_PATTERN.test(body))
       .map((body) => /fn\s+(\w+)/.exec(body)?.[1]);
     expect(writers).toEqual(["extension_storage_write"]);
   });
@@ -104,5 +120,24 @@ describe("extension-data write inventory", () => {
   it("scopes that command to the prefs subtree", () => {
     const body = libRs.split("fn extension_storage_write")[1].split("#[tauri::command]")[0];
     expect(body).toContain("\"prefs\"");
+  });
+
+  it("accounts for every occurrence of the extension-data literal in one of the two known functions", () => {
+    // Closes the shared-helper hole in the first assertion: a future fn
+    // that builds its path through a helper wouldn't show up there, but
+    // if that helper (or the new fn itself) names "extension-data"
+    // anywhere in this file, that occurrence has to live inside
+    // extension_storage_read or extension_storage_write — the only two
+    // places that literal is allowed to appear today. A third site
+    // (helper or otherwise) fails this even though the first assertion
+    // would miss it.
+    const totalOccurrences = (libRs.match(/"extension-data"/g) || []).length;
+    expect(totalOccurrences).toBe(2); // today's count — read+write, one each
+
+    const coveredOccurrences = KNOWN_FNS.reduce((sum, fnName) => {
+      const body = libRs.split(`fn ${fnName}`)[1].split("#[tauri::command]")[0];
+      return sum + (body.match(/"extension-data"/g) || []).length;
+    }, 0);
+    expect(coveredOccurrences).toBe(totalOccurrences);
   });
 });
