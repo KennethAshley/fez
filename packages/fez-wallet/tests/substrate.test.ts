@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseAmount, formatAmount } from "../src/chains/adapter.js";
-import { substrateAdapter, TAO_DECIMALS, raceConnect } from "../src/chains/substrate.js";
+import { substrateAdapter, TAO_DECIMALS, raceConnect, ambiguousTransferError } from "../src/chains/substrate.js";
 
 describe("amounts", () => {
   it("parses TAO to rao", () => {
@@ -120,6 +120,46 @@ describe("substrate adapter (mocked api)", () => {
     });
     const result = await blockAdapter.transfer(pair, "5Dest", { raw: 1n, decimals: 9, symbol: "TAO" });
     expect(result).toEqual({ txHash: "0xtx", blockRef: "0xblock" });
+  });
+});
+
+describe("submitted but never included (finding #3)", () => {
+  // A pool that accepted the extrinsic and then went quiet: signAndSend
+  // resolved, no status callback ever fires. Without a ceiling this hangs
+  // the MCP call forever; with one, the ONLY safe report is ambiguous.
+  function silentApi() {
+    return {
+      tx: {
+        balances: {
+          transferKeepAlive: () => ({
+            signAndSend: async () => () => {}, // accepted for broadcast, then silence
+          }),
+        },
+      },
+    };
+  }
+
+  it("times out instead of hanging, and says the transfer may have landed", async () => {
+    const adapter = substrateAdapter({
+      endpoint: "ws://fake",
+      apiFactory: async () => silentApi() as never,
+      inBlockTimeoutMs: 20,
+    });
+    const pair = { publicKeyHex: "aa", secretKeyHex: "bb", address: "5Fake" };
+    const err = await adapter
+      .transfer(pair, "5Dest", { raw: 100n, decimals: 9, symbol: "TAO" })
+      .then(() => undefined, (e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    // Ambiguity is the point: an agent told "failed" retries, and a retry
+    // on an extrinsic that did land pays twice.
+    expect(err!.message).toMatch(/MAY OR MAY NOT/);
+    expect(err!.message).toMatch(/do not retry/i);
+    expect(err!.message).toContain("5Dest");
+    expect(err!.message).not.toMatch(/^transfer failed/);
+  });
+
+  it("names the ambiguity in seconds", () => {
+    expect(ambiguousTransferError("5Dest", 120_000).message).toContain("120s");
   });
 });
 
