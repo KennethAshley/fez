@@ -15,7 +15,7 @@ import {
   validThreshold,
   receiptLine,
 } from "./gui-logic.js";
-import { KIND_PAYMENT_RECEIPT, parseReceipt, type ParsedReceipt } from "./receipt.js";
+import { parseReceipt, type ParsedReceipt } from "./receipt.js";
 import type { SignedNostrEvent } from "./consent.js";
 
 /** `toggleReaction`, `msgById` and `myReactionTo` aren't in the shared
@@ -30,16 +30,21 @@ interface WalletClient extends GuiClient {
    * owner whose ✅/❌ is authoritative. */
   myReactionTo(targetId: string, emoji: string): string | undefined;
   toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
-  /** Every workspace known, one of them active (fez-client:1500) — the
-   * ONLY way this extension can name the relay to ask about a receipt.
-   * Payment receipts (47040) never enter fez-client's own subscription:
-   * resubscribe()'s live filter and loadChannelHistory()'s backfill both
-   * hardcode their kind lists, and 47040 is in neither — a gap this task
-   * cannot close from gui.ts alone (that filter lives in @fezchat/client,
-   * outside this task's files). Querying the relay directly, the same
-   * way this file already dials `@polkadot/api` straight for balances
-   * instead of going through `client`, is the only path that exists. */
-  workspaces(): { relay: string; name: string; active: boolean }[];
+  /** Payment receipts (47040) e-tagging one message, verbatim (fez-client's
+   * own paymentReceiptsFor()) — the AUTHENTICATED connection the desktop
+   * already maintains. A bare relay pool was tried here first and reverted:
+   * fez's relays are membership-gated (NIP-42), and an anonymous pool
+   * connection gets silently refused reads on one — indistinguishable from
+   * "nobody has paid anyone yet". Only `client`'s own connection has
+   * already authenticated. */
+  paymentReceiptsFor(targetId: string): readonly SignedNostrEvent[];
+  /** Restates GuiClient's own `on` overload alongside the new one: TS
+   * does not merge a narrower override of an inherited method, it
+   * replaces it, so both signatures have to be spelled out here. */
+  on(event: "channelsChanged", handler: () => void): () => void;
+  /** Fires once a live receipt lands e-tagging `targetId`, so an
+   * already-open message can pick it up without a remount. */
+  on(event: "paymentReceipt", handler: (channelId: string, targetId: string) => void): () => void;
 }
 
 type AddressBook = { treasury?: string; personas?: Record<string, string> };
@@ -329,38 +334,24 @@ export default function activate(api: GuiExtensionApi): void {
   // to match "this bubble has a receipt" ahead of render time — the
   // match predicate is unconditional, and ReceiptLine itself renders
   // nothing for the (overwhelming) common case of a message nobody paid
-  // for. One query per bubble is wasteful but simple; a msgId cache
-  // keeps re-mounts (scrolling past the same message twice) from asking
-  // twice.
-  const receiptCache = new Map<string, ParsedReceipt[]>();
-  let pool: { querySync(relays: string[], filter: Record<string, unknown>): Promise<SignedNostrEvent[]> } | undefined;
-
-  async function receiptsFor(msgId: string): Promise<ParsedReceipt[]> {
-    const cached = receiptCache.get(msgId);
-    if (cached) return cached;
-    const relay = client.workspaces().find((w) => w.active)?.relay;
-    if (!relay) return [];
-    try {
-      pool ??= new (await import("nostr-tools/pool")).SimplePool();
-      const events = await pool.querySync([relay], { kinds: [KIND_PAYMENT_RECEIPT], "#e": [msgId], limit: 5 });
-      const receipts = events.map((e) => parseReceipt(e)).filter((r): r is ParsedReceipt => r !== undefined);
-      receiptCache.set(msgId, receipts);
-      return receipts;
-    } catch {
-      return []; // relay unreachable — no receipt shown, never a wrong one
-    }
-  }
+  // for. Receipt data comes from `client.paymentReceiptsFor()` — the
+  // desktop's own authenticated relay connection, subscribed to kind
+  // 47040 alongside messages/reactions/etc (fez-client's resubscribe()
+  // and loadChannelHistory()). An in-process SimplePool was tried here
+  // first and reverted: fez's relays are membership-gated (NIP-42) and
+  // silently withhold reads from an anonymous pool connection — a
+  // read that looks empty and a read that never happened are the same
+  // failure shape, which is exactly the trap this file must not repeat.
+  const parseAll = (events: readonly SignedNostrEvent[]): ParsedReceipt[] =>
+    events.map((e) => parseReceipt(e)).filter((r): r is ParsedReceipt => r !== undefined);
 
   function ReceiptLine({ msgId }: { msgId: string }): El {
-    const [receipts, setReceipts] = useState<ParsedReceipt[]>([]);
+    const [receipts, setReceipts] = useState<ParsedReceipt[]>(() => parseAll(client.paymentReceiptsFor(msgId)));
     useEffect(() => {
-      let dead = false;
-      void receiptsFor(msgId).then((r) => {
-        if (!dead) setReceipts(r);
+      setReceipts(parseAll(client.paymentReceiptsFor(msgId)));
+      return client.on("paymentReceipt", (_channelId, targetId) => {
+        if (targetId === msgId) setReceipts(parseAll(client.paymentReceiptsFor(msgId)));
       });
-      return () => {
-        dead = true;
-      };
     }, [msgId]);
     if (receipts.length === 0) return null as never;
     return h(
