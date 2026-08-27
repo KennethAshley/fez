@@ -165,8 +165,46 @@ Each is a pure function over an `Outcome`, named for the bug it catches.
 
 Two honest notes. `render-bounded` requires a re-render counter in the app
 behind a test flag — the only invariant that touches product code. And
-`no-agent-loop` can be detected but not prevented here; if it fires, the fix is
-a product-side guard that does not yet exist.
+`no-agent-loop` verifies a guard that already exists rather than exposing a
+missing one; see "Existing loop guards" below.
+
+## Existing loop guards (what #5 actually tests)
+
+fez already ships an agent-to-agent loop brake in four layers:
+
+- **Chain-depth cap**, checked by the replying agent before it answers —
+  `packages/fez-acp/src/agent.ts:1258`, and `:1696` for DMs. Human messages
+  carry no `depth` tag (depth 0); each agent reply writes `trigger + 1`.
+- **The same cap at the summoner**, so a sleeping agent is not woken into a
+  loop — `src/agent/summon.ts:138`.
+- **Turn budget**, 30/hour, `FEZ_AGENT_MAX_TURNS_PER_HOUR` — `agent.ts:640`.
+- **Circuit breaker with cooldown**, self-mention exclusion, and a per-persona
+  summon cooldown — `agent.ts:1602`, `summon.ts:145` and `:159`.
+
+There is also a prompt-side rule that an `@` is a summons and not a courtesy
+(`agent.ts:1433`) — the same fix Buzz landed for its runaway reply loop
+(`docs/welcome-kickoff-silent-failures.md` §2, 2026-07-18). Buzz's reasoning
+is worth preserving: "don't loop" is not a rule an agent can follow, because a
+loop is a global property of a conversation while each turn looks locally
+reasonable. The rule must become a local per-turn test. Buzz's own circuit
+breaker remains unbuilt; what fez ships is what their doc lists as a candidate.
+
+Scenario #5 therefore verifies a guard rather than exposing a missing one. It
+targets two specific weaknesses:
+
+1. **Cross-harness depth propagation.** The cap holds only because every reply
+   copies `depth: trigger + 1` (`agent.ts:1367`). An adapter that drops the tag
+   resets depth to 0 on every hop and the cap never trips. A chutes-hosted
+   model is the likeliest offender, which is why #5 and #11 overlap.
+2. **Constant drift.** `MAX_CHAIN_DEPTH = 5` is a copy-pasted literal in four
+   places — `agent.ts:92`, `packages/fez-orchestrator/src/orchestrator.ts:71`,
+   `src/cli/tui.ts:126`, `packages/fez-workflows/src/workflows.ts:49` — with no
+   gate against drift, the same failure shape `kinds-registry.test.ts` exists to
+   prevent.
+
+Buzz's warning applies to any change here: a too-aggressive breaker manufactures
+unexplained silence, which is a worse bug than the loop. Keep the cap high, and
+log when it fires.
 
 ## Scenario matrix
 
@@ -248,5 +286,5 @@ store directory into the next.
 ## Follow-ups this design deliberately defers
 
 1. Audio and video render path, plus voice capture. Launch gap, documented.
-2. A product-side agent-loop guard, if #5 proves one is needed.
+2. A registry gate for `MAX_CHAIN_DEPTH`, if the drift risk below is accepted.
 3. Throughput and soak testing beyond this harness's ceiling.
