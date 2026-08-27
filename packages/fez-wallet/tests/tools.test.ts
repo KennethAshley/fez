@@ -311,6 +311,39 @@ describe("wallet_history", () => {
     expect(await walletHistory({ ...baseDeps(adapter) }, { limit: 10 })).toEqual(expect.any(String));
   });
 
+  it("filters out inbound receipts from a different network", async () => {
+    const { walletHistory } = await import("../src/tools.js");
+    const { adapter } = fakeAdapter(0n);
+    const onTest = buildReceipt({
+      agentSecretHex: bytesToHex(generateSecretKey()),
+      payeePubkey: agentPubkey,
+      amount: { raw: 11_000_000n, decimals: 9, symbol: "TAO" },
+      chain: "tao",
+      network: "test",
+      txHash: "0xtest",
+    });
+    const onFinney = buildReceipt({
+      agentSecretHex: bytesToHex(generateSecretKey()),
+      payeePubkey: agentPubkey,
+      amount: { raw: 99_000_000n, decimals: 9, symbol: "TAO" },
+      chain: "tao",
+      network: "finney",
+      txHash: "0xfinney",
+    });
+    const relay: ConsentRelay = {
+      publish: async () => {},
+      subscribe: () => () => {},
+      query: async () => [onTest, onFinney],
+    };
+    const out = await walletHistory(
+      { ...baseDeps(adapter), agentNostrKey, relay: () => Promise.resolve(relay) },
+      { limit: 10 }
+    );
+    expect(out).toMatch(/0\.011 TAO/);
+    expect(out).not.toMatch(/0\.099 TAO/);
+    expect(out).not.toContain("0xfinney");
+  });
+
   it("still returns local rows when the relay throws", async () => {
     const { walletSend, walletHistory } = await import("../src/tools.js");
     const { adapter, transfers } = fakeAdapter(2_000_000_000n);
