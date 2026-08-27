@@ -61,6 +61,7 @@ function deps(over: Partial<import("../src/tools.js").ToolDeps> = {}) {
         consentChannel: "chan1",
         personas: {},
         endpoints: { tao: "wss://unused" },
+        network: "finney" as const,
       },
       ownerPk,
       agentNostrKey,

@@ -27,10 +27,18 @@ function file(): string {
   return path.join(dir, `${STORAGE_NAME}.json`);
 }
 
+export type Network = "test" | "finney";
+
+export interface WalletPrefs {
+  network?: Network;
+  thresholds?: Record<string, string>;
+}
+
 type State = {
   addresses?: { treasury?: string; personas?: Record<string, string> };
   endpoint?: string;
   log?: SpendEntry[];
+  prefs?: WalletPrefs;
   [k: string]: unknown;
 };
 
@@ -74,5 +82,14 @@ export function mirrorEndpoint(endpoint: string): Promise<void> {
 export function mirrorSpend(entry: SpendEntry): Promise<void> {
   return update((s) => {
     s.log = [...(s.log ?? []), entry].slice(-MAX_LOG);
+  });
+}
+
+/** User preferences — the ONE subtree a gui part may write (spec §6).
+ * Goes through the same serialized queue as the ledger writes, so a
+ * panel edit can never interleave with a spend. */
+export function mirrorPrefs(p: Partial<WalletPrefs>): Promise<void> {
+  return update((s) => {
+    s.prefs = { ...(s.prefs ?? {}), ...p };
   });
 }
