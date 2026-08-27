@@ -12,6 +12,7 @@
 
 ## Global Constraints
 
+- **`src/index.ts` is a wall of NAMED export lists** (29 of them, one lone `export *`). A new protocol-side symbol that isn't added to its line does not exist as far as `@fezchat/protocol` consumers — including every test — are concerned, and the failure is an import error, not a type error. Each task below names the exact line it must extend. `packages/fez-client/src/index.ts` is the opposite: `export *`, nothing to do.
 - **`skill-source.ts` is mirrored and the mirror is test-enforced.** The canonical Node implementation is `src/extensions/skill-source.ts`; the browser-safe copy is `packages/fez-client/src/skill-source.ts`. `packages/fez-evals/tests/skill-source.test.ts` runs **both** over one case table and fails on any disagreement. Every function added in Task 1 must be added to **both files, with identical behaviour**.
 - **No new Tauri command.** `read_skills` already returns the raw `mcpServers` JSON and `config-store.ts` exposes it as `useConfig().skills`. New fields ride along in that same JSON; only TypeScript types widen.
 - **Never store a `local` flag.** The spec proposed one; `machineLocalPath(config)` already derives it from the entry's args and the GUI already uses it (`SkillsView.tsx:274,449`). Storing it would be a second source of truth. **This is a deliberate departure from the spec.**
@@ -356,6 +357,12 @@ Add the imports at the top of the file:
 import { type SkillEntry, type SkillSpec } from "./skill-source.js";
 ```
 
+Then export it from the barrel — `src/index.ts:33` is a **named list**, so the test's `import { skillEntryFor } from "@fezchat/protocol"` fails until you extend it:
+
+```ts
+export { PackageManager, skillEntryFor, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
+```
+
 - [ ] **Step 4: Run test to verify it passes**
 
 ```bash
@@ -572,6 +579,12 @@ export function resolveDeclaredSkills(
 }
 ```
 
+Export it from the barrel — `src/index.ts:64` is a **named list**, so extend it or the test's import fails:
+
+```ts
+export { findMcpServer, registerMcpServer, loadMcpServersFromSettings, resolveDeclaredSkills } from "./extensions/mcp-servers.js";
+```
+
 - [ ] **Step 4: Run test to verify it passes**
 
 ```bash
@@ -581,18 +594,24 @@ Expected: PASS.
 
 - [ ] **Step 5: Wire it into the spawn path**
 
-In `packages/fez-acp/src/agent.ts`, replace the `missingSkills` / `mcpServers` block (lines 210-224) with:
+`agent.ts` is **pure ESM** — every import in lines 2-63 is an `import` statement and there is no `require` in scope. Add `resolveDeclaredSkills` to the existing named import from `@fezchat/protocol` (the block spanning lines 2-52, beside `findMcpServer`, `installHint`, `wellKnownSource`).
+
+The block at lines 199-205 already does `await import("@fezchat/protocol")` to call `loadMcpServersFromSettings(loadSettings().mcpServers)`. **Reuse that same call** — capture the settings it already reads instead of adding a second loader. Rewrite lines 199-224 as:
 
 ```ts
+  // Headless skill resolution: agents don't run the TUI's extension
+  // host, so declared skills resolve from settings.json's mcpServers.
+  let catalog: Record<string, never> = {};
+  try {
+    const proto = (await import("@fezchat/protocol")) as unknown as {
+      loadSettings: () => { mcpServers?: Record<string, never> };
+      loadMcpServersFromSettings: (entries?: Record<string, Record<string, unknown>>) => void;
+    };
+    catalog = proto.loadSettings().mcpServers ?? {};
+    proto.loadMcpServersFromSettings(catalog as never);
+  } catch { /* settings unavailable — registry stays as-is */ }
+
   const declared = persona.mcpServers.map((name) => ({ name, source: persona.mcpSources?.[name] }));
-  const catalog = (() => {
-    try {
-      const proto = require("@fezchat/protocol") as { loadSettings: () => { mcpServers?: Record<string, never> } };
-      return proto.loadSettings().mcpServers ?? {};
-    } catch {
-      return {};
-    }
-  })();
   const { resolved, missing } = resolveDeclaredSkills(catalog, declared);
   const missingSkills = missing.map((m) => m.name);
   if (missing.length > 0) {
@@ -1523,6 +1542,12 @@ export function nearestKnownKey(key: string): string | undefined {
   }
   return best?.key;
 }
+```
+
+Export it from the barrel — `src/index.ts:61` is a **named list**, so extend it or the test's import fails:
+
+```ts
+export { findPersona, listPersonas, validatePersonaFile, mergeDefaults, parseSkillEntries, nearestKnownKey, KNOWN_EXTRA_KEYS, type Persona, type PersonaValidation } from "./identity/personas.js";
 ```
 
 Replace the unknown-key warning (lines 243-245):
