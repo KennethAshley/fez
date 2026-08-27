@@ -287,6 +287,26 @@ describe("receipt rendering", () => {
   it("renders nothing for an unexpected asset on the tao chain", () => {
     expect(receiptLine({ ...base, symbol: "USDC" } as never, "verified")).toBeUndefined();
   });
+
+  // `chain` and `network` are separate tags on a 47040: test and finney
+  // are both chain "tao". The panel already refuses to print an amount it
+  // cannot get the decimals for — printing play money as though it were
+  // real is the same class of lie about the same number.
+  it("says so when the payment was play money", () => {
+    const play = receiptLine({ ...base, network: "test" } as never, "verified");
+    expect(play).toMatch(/test/i);
+  });
+
+  it("does not label mainnet — its absence is what means real money", () => {
+    const real = receiptLine({ ...base, network: "finney" } as never, "verified");
+    expect(real).not.toMatch(/test|play money/i);
+  });
+
+  it("never renders a testnet payment identically to a real one", () => {
+    const real = receiptLine({ ...base, network: "finney" } as never, "verified");
+    const play = receiptLine({ ...base, network: "test" } as never, "verified");
+    expect(play).not.toEqual(real);
+  });
 });
 
 describe("panelEndpoint — which chain the panel dials", () => {

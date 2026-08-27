@@ -196,13 +196,18 @@ export function receiptLine(
   if (!isRenderableReceipt(r)) return undefined;
   const amount = formatAmount({ raw: r.raw, decimals: 9, symbol: r.symbol });
   const who = `${r.payer.slice(0, 8)}…`;
+  // `chain` and `network` are separate tags — test and finney are BOTH
+  // chain "tao", so the filter above passes play money through to the
+  // same line as real money. Qualify the amount, never the mainnet one:
+  // the badge means "not real", so its absence has to mean "real".
+  const money = r.network === "finney" ? "" : ` · ${networkLabel(r.network)}`;
   const suffix =
     state === "verified"
       ? ""
       : state === "unverifiable"
         ? " · couldn't check this block"
         : " · ⚠️ the chain does not match this receipt";
-  return `⚡ ${amount} · ${who}${suffix}`;
+  return `⚡ ${amount}${money} · ${who}${suffix}`;
 }
 
 export function requestStatus(
