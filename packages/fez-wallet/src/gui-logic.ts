@@ -82,6 +82,25 @@ export function matchSpend(
     );
 }
 
+/**
+ * SS58 addresses loose in a chat message — for the taostats/copy chip
+ * row. Bittensor addresses are base58 and start with "5" (ss58 prefix
+ * 42); the lookarounds refuse tokens embedded in longer base58-legal
+ * runs, which is what keeps 64-char hex pubkeys out. Fenced code blocks
+ * are stripped (pasted logs and tool source aren't payment surfaces);
+ * inline backticks need no handling — a backtick already breaks the
+ * token boundary. First-seen order, deduped, capped at five.
+ */
+export function extractAddresses(content: string): string[] {
+  const prose = content.replace(/```[\s\S]*?```/g, " ");
+  const seen: string[] = [];
+  for (const m of prose.matchAll(/(?<![1-9A-HJ-NP-Za-km-z])5[1-9A-HJ-NP-Za-km-z]{39,49}(?![1-9A-HJ-NP-Za-km-z])/g)) {
+    if (!seen.includes(m[0])) seen.push(m[0]);
+    if (seen.length === 5) break;
+  }
+  return seen;
+}
+
 /** Countdown text for a pending card; undefined once the window is spent. */
 export function remainingText(msgTs: number, now: number): string | undefined {
   const left = WINDOW_S - (now - msgTs);

@@ -8,6 +8,7 @@ import {
   personaFor,
   matchSpend,
   remainingText,
+  extractAddresses,
 } from "./gui-logic.js";
 
 /** `toggleReaction`, `msgById` and `myReactionTo` aren't in the shared
@@ -286,6 +287,52 @@ export default function activate(api: GuiExtensionApi): void {
       );
     }
   );
+
+  // ── address chips ────────────────────────────────────────────────
+  // Any SS58 address loose in chat gets copy + a taostats link. Consent
+  // and receive messages are excluded — their cards already carry the
+  // address with copy (and QR); a second row under the same bubble is
+  // noise, not help.
+  api.registerMessageDecorator(
+    (content) =>
+      parseConsentRequest(content) === undefined &&
+      parseReceiveAddress(content) === undefined &&
+      extractAddresses(content).length > 0,
+    ({ content }) =>
+      h(
+        "div",
+        { style: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 } },
+        ...extractAddresses(content).map((addr) => h(AddressChip, { key: addr, address: addr }))
+      )
+  );
+
+  function AddressChip({ address }: { address: string }): El {
+    return h(
+      "span",
+      {
+        style: {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          border: "1px solid var(--hairline, #333)",
+          borderRadius: 8,
+          padding: "1px 8px",
+          fontSize: 12,
+        },
+      },
+      h("span", { style: mono, title: address }, shortAddr(address)),
+      h(CopyButton, { text: address }),
+      h(
+        "button",
+        {
+          className: "skill-link",
+          title: "open on taostats",
+          onClick: () => void api.openUrl(`https://taostats.io/account/${address}`),
+        },
+        "taostats ↗"
+      )
+    );
+  }
 
   // ── wallet panel ─────────────────────────────────────────────────
   api.registerSettingsPanel("Wallet", () => h(WalletPanel));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText } from "../src/gui-logic.js";
+import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses } from "../src/gui-logic.js";
 
 const MSG = [
   "💸 **scout** wants to send **0.05 TAO**",
@@ -125,5 +125,33 @@ describe("remainingText", () => {
   });
   it("is undefined once expired", () => {
     expect(remainingText(0, 601)).toBeUndefined();
+  });
+});
+
+describe("extractAddresses", () => {
+  const A = "5E76cpgXAHSZKM7pRhYcbNnCXcuFpZzVN9F7G7G4abcd";
+  const B = "5Dq6YPvfzJ47LDfK4zLqCAkUTgGPBieULCX6wfuAbcdE";
+  it("finds a bare address in prose", () => {
+    expect(extractAddresses(`send it to ${A} thanks`)).toEqual([A]);
+  });
+  it("finds an address wrapped in inline backticks", () => {
+    expect(extractAddresses(`vault's address is \`${B}\``)).toEqual([B]);
+  });
+  it("ignores addresses inside fenced code blocks", () => {
+    expect(extractAddresses("```\nconst a = \"" + A + "\";\n```")).toEqual([]);
+  });
+  it("dedupes repeats, keeps first-seen order", () => {
+    expect(extractAddresses(`${A} then ${B} then ${A} again`)).toEqual([A, B]);
+  });
+  it("rejects a 64-char hex pubkey run", () => {
+    const hex = "4d9a4f8e4875128d59a44b58365de32cb223b433e72e948e8d61b3cd3342aabb";
+    expect(extractAddresses(`pk ${hex}`)).toEqual([]);
+  });
+  it("rejects short and non-5-prefixed tokens", () => {
+    expect(extractAddresses("5TooShort and AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).toEqual([]);
+  });
+  it("caps at five per message", () => {
+    const many = Array.from({ length: 6 }, (_, i) => `5${String.fromCharCode(65 + i)}${"x".repeat(44)}`).join(" ");
+    expect(extractAddresses(many)).toHaveLength(5);
   });
 });
