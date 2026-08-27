@@ -3,6 +3,9 @@ import { rosterFilter, rosterFromEvents, ROSTER_WINDOW_S } from "../src/roster.j
 import { resolveRecipient } from "../src/resolve.js";
 import { KIND_AGENT_METADATA } from "../src/consent.js";
 import type { SignedNostrEvent } from "../src/consent.js";
+import { buildAddressEvent } from "../src/address-event.js";
+import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
+import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 
 /** A 47000 announce as fez-acp actually publishes it: NO tags at all. */
 function announce(pubkey: string, name: string, created_at: number): SignedNostrEvent {
@@ -60,7 +63,12 @@ describe("rosterFromEvents", () => {
 });
 
 describe("roster → resolveRecipient (the wiring the deps() bug lived in)", () => {
-  const pk = "9".repeat(64);
+  // A REAL key: the address event has to carry a real signature now that
+  // resolveRecipient re-verifies it rather than trusting the relay's
+  // authors filter. The announce itself is still the unsigned stub —
+  // rosterFromEvents reads names, not money.
+  const chipSk = bytesToHex(generateSecretKey());
+  const pk = getPublicKey(hexToBytes(chipSk));
   // Three restarts of one agent — the shape that made a live "@chip"
   // throw "matches more than one agent" listing the same npub twice.
   const events = [announce(pk, "chip", 100), announce(pk, "chip", 200)];
@@ -71,15 +79,7 @@ describe("roster → resolveRecipient (the wiring the deps() bug lived in)", () 
       network: "test",
       roster: async () => rosterFromEvents(events),
       addressEvents: async () => [
-        {
-          id: "addr",
-          kind: 30175,
-          pubkey: pk,
-          created_at: 500,
-          tags: [["d", "tao:test"], ["chain", "tao"], ["network", "test"]],
-          content: "5Chip",
-          sig: "00",
-        },
+        buildAddressEvent({ agentSecretHex: chipSk, chain: "tao", network: "test", address: "5Chip" }),
       ],
       localAddress: () => undefined,
     });

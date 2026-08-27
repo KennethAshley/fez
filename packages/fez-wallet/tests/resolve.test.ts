@@ -77,6 +77,48 @@ describe("resolveRecipient", () => {
     expect(flipped.address).toBe("5Current");
   });
 
+  // FEZ_RELAY is a comma-separated LIST: one misbehaving relay in the set
+  // can answer an authors-filtered query with an event it signed itself.
+  // The filter is advisory; the author check is the trust rule.
+  it("ignores an address event signed by anyone but the roster member", async () => {
+    const impostorSk = bytesToHex(generateSecretKey());
+    const forged = buildAddressEvent({
+      agentSecretHex: impostorSk,
+      chain: "tao",
+      network: "test",
+      address: "5Attacker",
+    });
+    // The ONLY event returned — nothing to fall back to, so a resolver that
+    // trusted the filter would silently pay 5Attacker.
+    await expect(
+      resolveRecipient("@chip", deps({ addressEvents: async () => [forged] }))
+    ).rejects.toThrow(/chip hasn't published/i);
+  });
+
+  it("ignores a forged event even when it is the newest of several", async () => {
+    const impostorSk = bytesToHex(generateSecretKey());
+    const genuine = buildAddressEvent({ agentSecretHex: chipSk, chain: "tao", network: "test", address: "5Chip" });
+    const forged = {
+      ...buildAddressEvent({ agentSecretHex: impostorSk, chain: "tao", network: "test", address: "5Attacker" }),
+      created_at: genuine.created_at + 600,
+    };
+    const r = await resolveRecipient("@chip", deps({ addressEvents: async () => [genuine, forged] }));
+    expect(r.address).toBe("5Chip");
+  });
+
+  it("ignores an event that carries the right pubkey but a broken signature", async () => {
+    // Through JSON, the way a relay actually delivers one — nostr-tools
+    // stamps locally-finalized events as already-verified, and a wire
+    // event carries no such stamp.
+    const tampered = JSON.parse(
+      JSON.stringify(buildAddressEvent({ agentSecretHex: chipSk, chain: "tao", network: "test", address: "5Chip" }))
+    );
+    tampered.content = "5Attacker"; // re-written after signing; pubkey still chip's
+    await expect(
+      resolveRecipient("@chip", deps({ addressEvents: async () => [tampered] }))
+    ).rejects.toThrow(/chip hasn't published/i);
+  });
+
   it("reports the payee's network so the caller can guard on it", async () => {
     const r = await resolveRecipient(
       "@chip",

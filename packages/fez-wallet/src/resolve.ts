@@ -1,4 +1,5 @@
 import type { Filter } from "nostr-tools";
+import { verifyEvent } from "nostr-tools/pure";
 import type { SignedNostrEvent } from "./consent.js";
 import type { Network } from "./storage-mirror.js";
 import { parseAddressEvent, addressFilter } from "./address-event.js";
@@ -48,11 +49,19 @@ export async function resolveRecipient(to: string, deps: ResolveDeps): Promise<R
   }
   if (matches.length === 1) {
     const events = await deps.addressEvents(addressFilter([matches[0].pubkey], deps.chain, deps.network));
+    // Filters are advisory — re-verify the trust rule locally (the same
+    // rule consent.ts applies to the owner's ✅). FEZ_RELAY is a LIST, so
+    // one misbehaving relay in the set answering with its own signed
+    // 30175 would otherwise redirect a sub-threshold send to an
+    // already-known payee — no consent card, and a receipt that still
+    // p-tags the genuine payee. The author must BE the roster member, and
+    // the signature must actually be theirs.
+    const authentic = events.filter((ev) => ev.pubkey === matches[0].pubkey && verifyEvent(ev));
     // Newest first: an addressable event self-replaces, but a relay may
     // still hand back a superseded one alongside the current address —
     // and paying an agent at the address it rotated away from is money
     // sent nowhere. `created_at` is the only ordering the event carries.
-    const parsed = [...events]
+    const parsed = authentic
       .sort((a, b) => b.created_at - a.created_at)
       .map(parseAddressEvent)
       .find(Boolean);
