@@ -243,6 +243,7 @@ describe("receipts", () => {
     expect(r.forEvent).toBe("msg1");
     expect(r.raw).toBe(1_000_000n);
     expect(r.txHash).toBe("0xfeed");
+    expect(r.blockRef).toBe("0xblock");
   });
 
   it("publishes no receipt when no message was named", async () => {
