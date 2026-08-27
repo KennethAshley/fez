@@ -160,6 +160,52 @@ describe("network preferences", () => {
     expect(thresholdFor(loadConfig(), "scout")).toBe("0.05");
   });
 
+  // The write-side strip only cleans files written AFTER it shipped. Every
+  // `fez-wallet derive` before it wrote a recognised endpoint into
+  // wallet.json, and migratePrefs — the only thing that heals one — runs
+  // solely from `fez-wallet network`. So the read side has to apply the same
+  // rule, or legacy state resurrects the original Critical.
+  it("ignores a legacy recognised endpoint that names the WRONG network", async () => {
+    await mirrorPrefs({ network: "test" });
+    fs.writeFileSync(
+      path.join(process.env.FEZ_WALLET_HOME!, "wallet.json"),
+      // as `fez-wallet derive` wrote it, back when finney was active
+      JSON.stringify({ endpoints: { tao: "wss://entrypoint-finney.opentensor.ai:443" } })
+    );
+    const c = loadConfig();
+    expect(c.network).toBe("test");
+    expect(c.endpoints.tao).toBe("wss://test.finney.opentensor.ai:443"); // agrees, no migratePrefs
+  });
+
+  it("still honours an unrecognised endpoint on read, across a network flip", async () => {
+    fs.writeFileSync(
+      path.join(process.env.FEZ_WALLET_HOME!, "wallet.json"),
+      JSON.stringify({ endpoints: { tao: "ws://127.0.0.1:9944" } })
+    );
+    expect(loadConfig().endpoints.tao).toBe("ws://127.0.0.1:9944");
+    await mirrorPrefs({ network: "test" });
+    expect(loadConfig().endpoints.tao).toBe("ws://127.0.0.1:9944");
+    await mirrorPrefs({ network: "finney" });
+    expect(loadConfig().endpoints.tao).toBe("ws://127.0.0.1:9944");
+  });
+
+  // The panel path exactly: the Rust command writes prefs and nothing else,
+  // so migratePrefs is never reached and cannot be what saves the owner.
+  it("a panel-only network flip over a legacy pinned wallet.json still agrees", async () => {
+    fs.writeFileSync(
+      path.join(process.env.FEZ_WALLET_HOME!, "wallet.json"),
+      JSON.stringify({
+        personas: { scout: { index: 0 } },
+        endpoints: { tao: "wss://entrypoint-finney.opentensor.ai:443" },
+      })
+    );
+    await mirrorPrefs({ network: "test" }); // the panel selector, no CLI
+    const c = loadConfig();
+    expect(c.network).toBe("test");
+    expect(c.endpoints.tao).toBe(endpointFor("test"));
+    expect(c.personas.scout.index).toBe(0); // ceremony state untouched
+  });
+
   it("maps both networks to their endpoints", () => {
     expect(endpointFor("test")).toBe("wss://test.finney.opentensor.ai:443");
     expect(endpointFor("finney")).toBe("wss://entrypoint-finney.opentensor.ai:443");

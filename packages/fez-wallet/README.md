@@ -52,8 +52,10 @@ turn into a wallet.json override the selector cannot move.
 
 Keys are the same on both chains; balances, history and the ledger are
 not. An explicit `endpoints.tao` in `wallet.json` still wins, for a local
-node or a fork — "explicit" meaning an endpoint no network maps to; one
-that does is network-owned and is dropped on write.
+node or a fork — "explicit" meaning an endpoint no network maps to. One
+that does is network-owned: dropped on write, and ignored on read in
+favour of the active network's, so a `wallet.json` pinned before that
+rule existed cannot outlive it.
 
 ## Paying another owner's agent (two machines)
 

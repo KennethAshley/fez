@@ -31,6 +31,15 @@ export function endpointFor(network: Network): string {
   return ENDPOINTS[network];
 }
 
+/** A recognised network endpoint is network-owned, never a user override:
+ * whoever wrote it was naming a network, and the network's own home is
+ * prefs. Only an endpoint no network maps to — a local node, a fork — is a
+ * genuine override. Read and write sides share this one rule, so a
+ * wallet.json written before the rule existed cannot outlive it. */
+function isNetworkOwnedEndpoint(url: string | undefined): boolean {
+  return url !== undefined && (Object.values(ENDPOINTS) as string[]).includes(url);
+}
+
 function configFile(): string {
   return path.join(process.env.FEZ_WALLET_HOME ?? path.join(os.homedir(), ".fez"), "wallet.json");
 }
@@ -64,8 +73,19 @@ export function loadConfig(): WalletConfig {
     network,
     // prefs wins; wallet.json's thresholds are legacy until migratePrefs runs.
     thresholds: { ...DEFAULTS.thresholds, ...onDisk.thresholds, ...prefs.thresholds },
-    // An explicit endpoint always wins — local nodes and forks need it.
-    endpoints: { tao: onDisk.endpoints?.tao ?? endpointFor(network) },
+    // Only an UNRECOGNISED endpoint wins — local nodes and forks need that,
+    // and nothing else could have put it there. A recognised one is a
+    // legacy pin from before saveConfig stopped writing derived state
+    // (every `fez-wallet derive` wrote one); honouring it would let the
+    // network label move while the socket stayed on the old chain — a
+    // session that says testnet everywhere and spends real TAO. migratePrefs
+    // heals such a file, but it only runs from `fez-wallet network`, and the
+    // panel flips the network without it.
+    endpoints: {
+      tao: isNetworkOwnedEndpoint(onDisk.endpoints?.tao)
+        ? endpointFor(network)
+        : onDisk.endpoints?.tao ?? endpointFor(network),
+    },
   };
 }
 
@@ -94,12 +114,11 @@ export function saveConfig(c: WalletConfig): void {
   const { network: _derivedNetwork, endpoints, thresholds, ...owned } = c;
   const persisted: Record<string, unknown> = { ...owned };
 
-  // A recognised network endpoint is network-owned, exactly as migratePrefs
-  // treats it — only an endpoint no network maps to (a local node, a fork)
-  // is a real override, and that one still survives and still wins.
-  const derived = new Set<string>(Object.values(ENDPOINTS));
+  // A recognised network endpoint is network-owned, exactly as loadConfig
+  // and migratePrefs treat it — only an endpoint no network maps to (a local
+  // node, a fork) is a real override, and that one still survives and wins.
   const keptEndpoints: Record<string, string> = { ...(endpoints as Record<string, string> | undefined) };
-  if (keptEndpoints.tao === undefined || derived.has(keptEndpoints.tao)) delete keptEndpoints.tao;
+  if (keptEndpoints.tao === undefined || isNetworkOwnedEndpoint(keptEndpoints.tao)) delete keptEndpoints.tao;
   if (Object.keys(keptEndpoints).length > 0) persisted.endpoints = keptEndpoints;
 
   // Thresholds prefs owns, or that are just the default echoed back, are

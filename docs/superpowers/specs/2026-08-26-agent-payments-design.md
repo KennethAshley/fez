@@ -131,12 +131,21 @@ An explicit `endpoints.tao` still wins, for a local node or a fork. Flipped by
 `fez-wallet network <test\|finney>`; `fez-wallet network` prints the current one.
 
 **Explicit means *unrecognised*.** An endpoint that maps to one of the networks
-above is network-owned, not an override: `saveConfig` strips it on write, the
-same rule the one-time migration applies. Otherwise the derived endpoint that
+above is network-owned, not an override. `loadConfig` ignores it and derives
+from the active network; `saveConfig` strips it on write; the one-time
+migration turns it into that network. Otherwise the derived endpoint that
 `loadConfig` filled in would be written back by ordinary paths (`fez-wallet
 derive`, remembering a payee) and become a permanent pin — `network` would then
 move with the selector while the socket stayed put, and a session labelled
 `test` everywhere would spend real TAO.
+
+The rule has to hold on **read** as well as write, or it only protects files
+written after it shipped. Every `fez-wallet derive` before it wrote such a pin,
+and `migratePrefs` — the one thing that heals a pinned file — runs only from
+`fez-wallet network`. The panel's selector writes prefs through the Rust
+command and never reaches it, so a write-only rule would leave that exact
+mislabelled-mainnet spend alive in legacy state. Symmetric, migration is a
+tidy-up rather than the only thing standing between the owner and it.
 
 **Keys are untouched.** An SS58 is chain-agnostic; the same `//persona`
 account exists on both chains with different balances. What gets namespaced is
