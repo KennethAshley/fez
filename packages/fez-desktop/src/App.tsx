@@ -2850,10 +2850,20 @@ function Bubble({
   const remind = (deltaS: number) => {
     setRemindOpen(false);
     const note = `${msg.authorName}: ${msg.content.replace(/\s+/g, " ").slice(0, 80)}`;
-    void client.setReminder(Math.floor(Date.now() / 1000) + deltaS, note, msg.id).then(() => {
-      setRemindSet(true);
-      setTimeout(() => setRemindSet(false), 2500);
-    });
+    // The rejection used to go nowhere: `void … .then()` with no catch, so
+    // a refused publish closed the popover and did NOTHING — no tick, no
+    // toast, nothing in the pane, and no way to tell a failure from a
+    // success. `/schedule` has always reported its errors (runCommand
+    // wraps them); the button silently did not.
+    void client
+      .setReminder(Math.floor(Date.now() / 1000) + deltaS, note, msg.id)
+      .then(() => {
+        setRemindSet(true);
+        setTimeout(() => setRemindSet(false), 2500);
+      })
+      .catch((err: unknown) => {
+        toast.error(`✗ reminder not set — ${err instanceof Error ? err.message : String(err)}`);
+      });
   };
   const tomorrow9 = () => {
     const date = new Date();

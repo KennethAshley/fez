@@ -133,6 +133,32 @@ fn parse_tags(tags: Vec<Vec<String>>) -> Result<Vec<nostr::Tag>, String> {
         .collect()
 }
 
+/// Build and sign one event from an already-parsed template.
+///
+/// `allow_self_tagging` is load-bearing, not decoration. nostr-rs strips
+/// any `p` tag matching the author during `build` unless it is set —
+/// "removes any `p` tags that match the author's public key". A reminder
+/// is addressed to ITSELF (`["p", <own pubkey>]`), so the tag vanished
+/// between parse and signature and the event reached the relay untagged;
+/// every `#p` query then missed it, silently, because a stripped tag is
+/// an error nowhere. A signer signs what it was asked to sign; deciding
+/// which of the caller's tags are worth keeping is not its job.
+fn build_event(
+    kind: u16,
+    content: String,
+    tags: Vec<nostr::Tag>,
+    created_at: Option<u64>,
+    keys: &nostr::Keys,
+) -> Result<nostr::Event, String> {
+    let mut builder = nostr::EventBuilder::new(nostr::Kind::from(kind), content)
+        .allow_self_tagging()
+        .tags(tags);
+    if let Some(ts) = created_at {
+        builder = builder.custom_created_at(nostr::Timestamp::from(ts));
+    }
+    builder.sign_with_keys(keys).map_err(|e| format!("sign failed: {e}"))
+}
+
 /// Sign one event template — the webview's finalizeEvent, minus the key.
 #[tauri::command]
 async fn sign_event(
@@ -143,11 +169,7 @@ async fn sign_event(
     account: Option<String>,
 ) -> Result<String, String> {
     let keys = load_keys(account)?;
-    let mut builder = nostr::EventBuilder::new(nostr::Kind::from(kind), content).tags(parse_tags(tags)?);
-    if let Some(ts) = created_at {
-        builder = builder.custom_created_at(nostr::Timestamp::from(ts));
-    }
-    let event = builder.sign(&keys).await.map_err(|e| format!("sign failed: {e}"))?;
+    let event = build_event(kind, content, parse_tags(tags)?, created_at, &keys)?;
     Ok(event.as_json())
 }
 
@@ -2424,5 +2446,50 @@ mod provider_tests {
     fn chutes_id_matches_the_legacy_constant() {
         // sha256("https://llm.chutes.ai/v1")[..10] — pinned by the existing wiring.
         assert_eq!(local_provider_id("https://llm.chutes.ai/v1"), "56105ece7a");
+    }
+}
+
+#[cfg(test)]
+mod self_tag_tests {
+    use super::{build_event, parse_tags};
+
+    /// A reminder is addressed to ITSELF: `["p", <own pubkey>]`. nostr-rs
+    /// strips such a tag during `build` unless self-tagging is allowed
+    /// ("removes any `p` tags that match the author's public key"), so the
+    /// event reached the relay untagged and every `#p` query missed it —
+    /// silently, because a stripped tag is not an error anywhere.
+    ///
+    /// A signer must sign what it was asked to sign. This pins that.
+    #[test]
+    fn a_self_addressed_p_tag_survives_signing() {
+        let keys = nostr::Keys::generate();
+        let me = keys.public_key().to_hex();
+        let event = build_event(
+            40007,
+            "ciphertext".to_string(),
+            parse_tags(vec![vec!["p".to_string(), me.clone()]]).unwrap(),
+            None,
+            &keys,
+        )
+        .expect("sign");
+        assert_eq!(event.tags.len(), 1, "the self `p` tag was stripped: {:?}", event.tags);
+    }
+
+    /// The ordinary case must keep working: a `p` tag naming SOMEONE ELSE
+    /// was never at risk, and this is what proved the signer innocent for
+    /// too long while reminders were broken.
+    #[test]
+    fn a_p_tag_naming_someone_else_also_survives() {
+        let keys = nostr::Keys::generate();
+        let other = nostr::Keys::generate().public_key().to_hex();
+        let event = build_event(
+            47006,
+            String::new(),
+            parse_tags(vec![vec!["p".to_string(), other]]).unwrap(),
+            None,
+            &keys,
+        )
+        .expect("sign");
+        assert_eq!(event.tags.len(), 1);
     }
 }
