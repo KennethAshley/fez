@@ -1903,6 +1903,10 @@ button.author:hover { text-decoration: underline; }
 /* It replaced the wordmark: which app you are in is not news, where you
    are is. The relay-health dot rides with it. */
 /* Buzz's sidebar head: a search pill where the title used to be. */
+.rail-head {
+  margin: -12px -8px 8px; padding: 12px 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+}
 .rail-search {
   display: flex; align-items: center; gap: 8px; min-width: 0;
   margin: 10px 10px 12px; padding: 8px 10px;
