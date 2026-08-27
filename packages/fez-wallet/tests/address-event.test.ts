@@ -39,6 +39,20 @@ describe("address event", () => {
     expect(parseAddressEvent(wrongKind)).toBeUndefined();
   });
 
+  it("uses the adapter's own address, not a persona name or anything else", () => {
+    const adapter = {
+      chain: "tao",
+      address: () => "5AdapterOwnAddress",
+    };
+    const ev = buildAddressEvent({
+      agentSecretHex: sk,
+      chain: adapter.chain,
+      network: "test",
+      address: adapter.address(),
+    });
+    expect(parseAddressEvent(ev)?.address).toBe("5AdapterOwnAddress");
+  });
+
   it("filters by author, kind and d tag", () => {
     const pk = getPublicKey(generateSecretKey());
     expect(addressFilter([pk], "tao", "finney")).toEqual({

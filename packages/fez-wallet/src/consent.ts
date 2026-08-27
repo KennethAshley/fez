@@ -11,6 +11,7 @@ import type { Filter } from "nostr-tools";
 
 export const KIND_CHANNEL_MESSAGE = 47103; // matches src/protocol/kinds.ts
 export const KIND_REACTION = 7;
+export const KIND_AGENT_METADATA = 47000; // matches src/protocol/kinds.ts — the roster's name→pubkey source
 
 export type SignedNostrEvent = NostrEvent;
 

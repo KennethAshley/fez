@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { bytesToHex } from "nostr-tools/utils";
+import { walletSend } from "../src/tools.js";
+import type { ToolDeps } from "../src/tools.js";
 import type { ChainAdapter } from "../src/chains/adapter.js";
 import type { ConsentRelay, SignedNostrEvent } from "../src/consent.js";
 
@@ -49,26 +51,26 @@ function autoRelay(decide: (req: SignedNostrEvent) => string | null) {
   return { relay, getRequest: () => request };
 }
 
-function deps(over: Partial<import("../src/tools.js").ToolDeps> = {}) {
-  const { adapter, transfers } = fakeAdapter(2_000_000_000n); // 2 TAO
+/** The ToolDeps shape every test starts from: persona "scout" on the
+ * "test" network, an owner + consent channel wired for the
+ * over-threshold path. Callers spread this with an adapter from
+ * fakeAdapter() and override whatever the test needs (relay, resolve,
+ * signal, ...). */
+function baseDeps(adapter: ChainAdapter): ToolDeps {
   return {
-    transfers,
-    d: {
-      persona: "scout",
-      pair,
-      adapters: [adapter],
-      config: {
-        thresholds: { default: "0.01" },
-        consentChannel: "chan1",
-        personas: {},
-        endpoints: { tao: "wss://unused" },
-        network: "finney" as const,
-      },
-      ownerPk,
-      agentNostrKey,
-      now: () => "2026-08-25T00:00:00Z",
-      ...over,
+    persona: "scout",
+    pair,
+    adapters: [adapter],
+    config: {
+      thresholds: { default: "0.01" },
+      consentChannel: "chan1",
+      personas: {},
+      endpoints: { tao: "wss://unused" },
+      network: "test",
     },
+    ownerPk,
+    agentNostrKey,
+    now: () => "2026-08-25T00:00:00Z",
   };
 }
 
@@ -81,17 +83,20 @@ beforeEach(() => {
 describe("tools", () => {
   it("walletAddress reports the agent address", async () => {
     const { walletAddress } = await import("../src/tools.js");
-    expect(walletAddress(deps().d, {})).toContain("5Agent");
+    const { adapter } = fakeAdapter(2_000_000_000n);
+    expect(walletAddress(baseDeps(adapter), {})).toContain("5Agent");
   });
 
   it("walletBalance formats the balance", async () => {
     const { walletBalance } = await import("../src/tools.js");
-    expect(await walletBalance(deps().d, {})).toContain("2 TAO");
+    const { adapter } = fakeAdapter(2_000_000_000n);
+    expect(await walletBalance(baseDeps(adapter), {})).toContain("2 TAO");
   });
 
   it("sends under threshold without consent and logs it", async () => {
     const { walletSend, walletHistory } = await import("../src/tools.js");
-    const { d, transfers } = deps();
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    const d = baseDeps(adapter);
     const out = await walletSend(d, { to: "5Dest", amount: "0.005", asset: "TAO" });
     expect(out).toContain("0xfeed");
     expect(transfers).toHaveLength(1);
@@ -101,7 +106,8 @@ describe("tools", () => {
   it("blocks over-threshold sends behind consent — approved path executes", async () => {
     const { walletSend } = await import("../src/tools.js");
     const { relay } = autoRelay(() => "✅");
-    const { d, transfers } = deps({ relay: async () => relay });
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    const d = { ...baseDeps(adapter), relay: async () => relay };
     const out = await walletSend(d, { to: "5Dest", amount: "0.5", asset: "TAO", memo: "chutes" });
     expect(out).toContain("0xfeed");
     expect(transfers).toHaveLength(1);
@@ -110,7 +116,8 @@ describe("tools", () => {
   it("the consent request carries the full recipient address", async () => {
     const { walletSend } = await import("../src/tools.js");
     const { relay, getRequest } = autoRelay(() => "✅");
-    const { d } = deps({ relay: async () => relay });
+    const { adapter } = fakeAdapter(2_000_000_000n);
+    const d = { ...baseDeps(adapter), relay: async () => relay };
     const long = "5E76cpgXAHSZKM7pRhYcbNnCXcuFpZzVN9F7G7G4";
     await walletSend(d, { to: long, amount: "0.5", asset: "TAO" });
     expect(getRequest()?.content).toContain(long);
@@ -119,7 +126,8 @@ describe("tools", () => {
   it("declined consent does not transfer", async () => {
     const { walletSend } = await import("../src/tools.js");
     const { relay } = autoRelay(() => "❌");
-    const { d, transfers } = deps({ relay: async () => relay });
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    const d = { ...baseDeps(adapter), relay: async () => relay };
     const out = await walletSend(d, { to: "5Dest", amount: "0.5", asset: "TAO" });
     expect(out.toLowerCase()).toContain("declined");
     expect(transfers).toHaveLength(0);
@@ -127,7 +135,8 @@ describe("tools", () => {
 
   it("insufficient balance errors before any consent round-trip", async () => {
     const { walletSend } = await import("../src/tools.js");
-    const { d, transfers } = deps();
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    const d = baseDeps(adapter);
     await expect(walletSend(d, { to: "5Dest", amount: "3", asset: "TAO" })).rejects.toThrow(/balance/i);
     expect(transfers).toHaveLength(0);
   });
@@ -138,7 +147,8 @@ describe("tools", () => {
     const { writeRootEntry } = await import("../src/store.js");
     const mnemonic = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
     writeRootEntry(mnemonic); // a root entry exists — the vulnerable path would read it
-    const { d, transfers } = deps();
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    const d = baseDeps(adapter);
     const out = await walletSend(d, { to: "root", amount: "0.005", asset: "TAO" });
     // none of the mnemonic's words appear anywhere in the response...
     for (const word of mnemonic.split(" ")) expect(out.toLowerCase()).not.toContain(word);
@@ -153,7 +163,8 @@ describe("tools", () => {
     const { relay } = autoRelay(() => "✅");
     const controller = new AbortController();
     controller.abort();
-    const { d, transfers } = deps({ relay: async () => relay, signal: controller.signal });
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    const d = { ...baseDeps(adapter), relay: async () => relay, signal: controller.signal };
     const out = await walletSend(d, { to: "5Dest", amount: "0.5", asset: "TAO" });
     expect(out.toLowerCase()).toContain("aborted");
     expect(transfers).toHaveLength(0);
@@ -161,7 +172,8 @@ describe("tools", () => {
 
   it("resolves a persona name to its derived address", async () => {
     const { walletSend } = await import("../src/tools.js");
-    const { d, transfers } = deps();
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    const d = baseDeps(adapter);
     // vault's address comes from the store — write a stored pair for it.
     process.env.FEZ_WALLET_STORE = "file";
     const { writeEntry } = await import("../src/store.js");
@@ -170,5 +182,36 @@ describe("tools", () => {
     writeEntry("vault", JSON.stringify(vaultPair));
     await walletSend(d, { to: "vault", amount: "0.005", asset: "TAO" });
     expect(transfers[0].to).toBe(vaultPair.address);
+  });
+});
+
+describe("cross-owner sends", () => {
+  it("sends to the resolved address, not the typed name", async () => {
+    const { adapter, transfers } = fakeAdapter(1_000_000_000n);
+    await walletSend(
+      { ...baseDeps(adapter), resolve: async () => ({ address: "5Chip", network: "test", via: "agent" }) },
+      { to: "@chip", amount: "0.001", asset: "TAO" }
+    );
+    expect(transfers[0].to).toBe("5Chip");
+  });
+
+  it("refuses a network mismatch before signing anything", async () => {
+    const { adapter, transfers } = fakeAdapter(1_000_000_000n);
+    await expect(
+      walletSend(
+        { ...baseDeps(adapter), resolve: async () => ({ address: "5Real", network: "finney", via: "agent" }) },
+        { to: "@chip", amount: "0.001", asset: "TAO" }
+      )
+    ).rejects.toThrow(/you're on test.*chip is on finney/i);
+    expect(transfers).toHaveLength(0);
+  });
+
+  it("allows a raw address, which carries no network to check", async () => {
+    const { adapter, transfers } = fakeAdapter(1_000_000_000n);
+    await walletSend(
+      { ...baseDeps(adapter), resolve: async () => ({ address: "5Raw", via: "raw" }) },
+      { to: "5Raw", amount: "0.001", asset: "TAO" }
+    );
+    expect(transfers[0].to).toBe("5Raw");
   });
 });

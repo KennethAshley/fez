@@ -7,6 +7,7 @@ import { appendLog, readLog } from "./log.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { buildConsentRequest, awaitDecision, type ConsentRelay } from "./consent.js";
 import { mirrorSpend, mirrorEndpoint } from "./storage-mirror.js";
+import type { Resolved } from "./resolve.js";
 
 export const CONSENT_TIMEOUT_MS = 600_000; // 10 minutes
 
@@ -20,6 +21,10 @@ export interface ToolDeps {
   ownerPk?: string;
   relay?: () => Promise<ConsentRelay>;
   agentNostrKey?: string;
+  /** Injected by mcp.ts's relay-backed resolver; defaults to resolveTo
+   * (local-only) when no relay is configured — the CLI and every
+   * pre-existing test never set this. */
+  resolve?: (to: string) => Promise<Resolved>;
   now?: () => string; // test seam; defaults to wall clock
   /** Cancellation from the MCP request (finding #6) — checked before the
    * transfer actually fires so a harness timeout can't leave a spend
@@ -71,7 +76,23 @@ export async function walletSend(
   const a = adapterFor(deps, undefined, args.asset);
   const decimals = a.assets.find((x) => x.symbol === args.asset)!.decimals;
   const amount = parseAmount(args.amount, decimals, args.asset);
-  const to = resolveTo(args.to);
+
+  // resolveTo stays as the local-only fallback for callers that inject no
+  // resolver (the CLI, and every existing test).
+  const resolved: Resolved = deps.resolve
+    ? await deps.resolve(args.to)
+    : { address: resolveTo(args.to), via: "local" };
+  const to = resolved.address;
+
+  // Before anything is signed: the guard that keeps a play session from
+  // touching real TAO. A raw address announces no network and cannot be
+  // checked — that is said out loud in the consent card rather than
+  // allowed to look safe.
+  if (resolved.network && resolved.network !== deps.config.network) {
+    throw new Error(
+      `you're on ${deps.config.network}, ${args.to} is on ${resolved.network} — nothing was sent`
+    );
+  }
 
   // The envelope speaks first — no consent round-trip for money that isn't there.
   const balance = await a.balance(a.address(deps.pair), args.asset);
