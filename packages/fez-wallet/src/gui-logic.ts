@@ -261,3 +261,21 @@ export function resolveNetwork(
 ): string {
   return prefs ?? mirrored ?? "finney";
 }
+
+/**
+ * A ledger row's timestamp. Entries store an ISO string, and printing it
+ * raw put "2026-08-27T17:01:37.089Z" in a table column — unreadable, and
+ * wide enough to wrap onto two lines. What you scan a ledger for is the
+ * day and the minute; the exact instant stays available on hover.
+ *
+ * Unparseable input comes back untouched rather than blank: the money
+ * moved either way, and a row that hides its own time is worse than one
+ * showing something odd.
+ */
+export function ledgerTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  const day = at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const time = at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${day} ${time}`;
+}

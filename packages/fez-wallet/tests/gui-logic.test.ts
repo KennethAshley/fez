@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor, panelEndpoint, resolveNetwork} from "../src/gui-logic.js";
+import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor, panelEndpoint, resolveNetwork, ledgerTime } from "../src/gui-logic.js";
 import {
   networkLabel,
   validThreshold,
@@ -366,5 +366,36 @@ describe("resolveNetwork — must match loadConfig's precedence exactly", () => 
 
   it("never lets the default override a known answer", () => {
     expect(resolveNetwork(undefined, "finney")).toBe("finney");
+  });
+});
+
+/**
+ * A ledger row printed its timestamp as the raw ISO string the entry was
+ * stored with — "2026-08-27T17:01:37.089Z" — which in a table column is
+ * both unreadable and wide enough to wrap onto two lines.
+ */
+describe("ledgerTime", () => {
+  it("reads as a date and a time, not an ISO string", () => {
+    const out = ledgerTime("2026-08-27T17:01:37.089Z");
+    expect(out).not.toContain("T");
+    expect(out).not.toContain("Z");
+    expect(out).not.toContain(".089");
+  });
+
+  it("keeps the day and the minute — the two things you scan a ledger for", () => {
+    const out = ledgerTime("2026-08-27T17:01:37.089Z");
+    expect(out).toMatch(/27/);
+    expect(out).toMatch(/01/);
+  });
+
+  it("stays short enough for a table column", () => {
+    expect(ledgerTime("2026-08-27T17:01:37.089Z").length).toBeLessThanOrEqual(16);
+  });
+
+  // A ledger that silently drops a row it cannot parse is worse than one
+  // that shows something odd: the money moved either way.
+  it("shows the original when it cannot parse one", () => {
+    expect(ledgerTime("not a date")).toBe("not a date");
+    expect(ledgerTime("")).toBe("");
   });
 });

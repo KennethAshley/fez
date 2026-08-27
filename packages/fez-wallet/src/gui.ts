@@ -18,6 +18,7 @@ import {
   isRenderableReceipt,
   panelEndpoint,
   resolveNetwork,
+  ledgerTime,
 } from "./gui-logic.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
 import type { SignedNostrEvent } from "./consent.js";
@@ -123,6 +124,40 @@ export default function activate(api: GuiExtensionApi): void {
   const Label = (text: string): El =>
     h("div", { style: sectionLabel }, text, h("span", { style: labelRule }));
   const mono = { fontFamily: "var(--font-mono, monospace)", fontSize: 12 };
+
+  /* The spend ledger's cells. `.wallet-ledger` was set as a className and
+     nothing anywhere styled it, so the table rendered with browser
+     defaults: centred bold headers, no padding, and — the visible fault —
+     no white-space rule, so a truncated address and a tx link still broke
+     across two lines. Every cell here holds an identifier that is wrong
+     when wrapped; memo is the only one that may give up its width. */
+  const th = {
+    textAlign: "left" as const,
+    fontFamily: "var(--font-mono, monospace)",
+    fontSize: 10.5,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    fontWeight: 400,
+    color: "var(--fg-dim, #999)",
+    padding: "0 10px 6px 0",
+    borderBottom: "1px solid var(--hairline, #333)",
+    whiteSpace: "nowrap" as const,
+  };
+  const td = {
+    fontSize: 12,
+    padding: "7px 10px 7px 0",
+    borderTop: "1px solid var(--hairline, #333)",
+    whiteSpace: "nowrap" as const,
+    verticalAlign: "middle" as const,
+  };
+  const tdDim = { ...td, color: "var(--fg-dim, #999)" };
+  const tdMono = { ...td, fontFamily: "var(--font-mono, monospace)", color: "var(--fg-dim, #999)" };
+  const memoBox = {
+    maxWidth: 110,
+    overflow: "hidden",
+    textOverflow: "ellipsis" as const,
+    whiteSpace: "nowrap" as const,
+  };
 
   function CopyButton({ text }: { text: string }): El {
     const [copied, setCopied] = useState(false);
@@ -712,13 +747,13 @@ export default function activate(api: GuiExtensionApi): void {
                 h(
                   "tr",
                   null,
-                  h("th", null, "time"),
-                  h("th", null, "agent"),
-                  h("th", null, "amount"),
-                  h("th", null, "to"),
-                  h("th", null, "memo"),
-                  h("th", null, "consent"),
-                  h("th", null, "tx")
+                  h("th", { style: th }, "time"),
+                  h("th", { style: th }, "agent"),
+                  h("th", { style: { ...th, textAlign: "right" as const } }, "amount"),
+                  h("th", { style: th }, "to"),
+                  h("th", { style: th }, "memo"),
+                  h("th", { style: th }, "consent"),
+                  h("th", { style: th }, "tx")
                 )
               ),
               h(
@@ -728,19 +763,44 @@ export default function activate(api: GuiExtensionApi): void {
                   h(
                     "tr",
                     { key: `${entry.txHash}-${i}` },
-                    h("td", null, entry.ts),
-                    h("td", null, entry.persona),
-                    h("td", null, `${entry.amount} ${entry.asset}`),
-                    h("td", { title: entry.to }, shortAddr(entry.to)),
-                    h("td", null, entry.memo ?? ""),
-                    h("td", null, entry.consent),
+                    // The exact instant stays on hover; the column shows
+                    // the day and the minute you actually scan for.
+                    h("td", { style: tdDim, title: entry.ts }, ledgerTime(entry.ts)),
+                    h("td", { style: td }, entry.persona),
+                    // The number is the point of the row: right-aligned so
+                    // the decimals line up down the column, and tabular so
+                    // the digits do not shift width between rows.
                     h(
                       "td",
-                      null,
+                      { style: { ...td, textAlign: "right" as const, fontVariantNumeric: "tabular-nums" } },
+                      `${entry.amount} ${entry.asset}`
+                    ),
+                    // Name the recipient when the address book knows it.
+                    // "quill" is what you actually recognise, it is far
+                    // shorter than base58, and the full address stays on
+                    // hover for the one time you need to check it.
+                    h(
+                      "td",
+                      { style: personaFor(entry.to, addresses) ? td : tdMono, title: entry.to },
+                      personaFor(entry.to, addresses) ?? shortAddr(entry.to)
+                    ),
+                    // The one column allowed to give up its width — every
+                    // other cell is an identifier that must stay whole.
+                    // The cap goes on an inner box, NOT the cell: a td's
+                    // max-width is advisory under `table-layout: auto`, and
+                    // the memo taking the width it wanted pushed the tx
+                    // link off the right edge of the panel.
+                    h("td", { style: td, title: entry.memo ?? "" }, h("div", { style: memoBox }, entry.memo ?? "")),
+                    h("td", { style: tdDim }, entry.consent),
+                    h(
+                      "td",
+                      { style: td },
                       h(
                         "button",
                         {
                           className: "skill-link",
+                          style: { whiteSpace: "nowrap" as const, fontFamily: "var(--font-mono, monospace)" },
+                          title: entry.txHash,
                           onClick: () => void api.openUrl(`https://taostats.io/transfer/${entry.txHash}`),
                         },
                         shortAddr(entry.txHash)
