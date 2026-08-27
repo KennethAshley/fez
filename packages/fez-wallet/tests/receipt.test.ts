@@ -62,6 +62,12 @@ describe("payment receipt", () => {
     expect(await verifyReceipt(p, lookup, { from: "5Payer", to: "5Payee" })).toBe("false");
   });
 
+  it("calls a payment made by a different payer false, even when to/raw match", async () => {
+    const p = parseReceipt(receipt())!;
+    const lookup = async () => ({ from: "5SomeoneElse", to: "5Payee", raw: 50_000_000n });
+    expect(await verifyReceipt(p, lookup, { from: "5Payer", to: "5Payee" })).toBe("false");
+  });
+
   it("calls a pruned block unverifiable, NOT false", async () => {
     const p = parseReceipt(receipt())!;
     expect(await verifyReceipt(p, async () => undefined, { from: "5Payer", to: "5Payee" })).toBe(
