@@ -132,6 +132,18 @@ describe("fetchAttachment", () => {
       if (url === "/away") return res.writeHead(302, { location: "http://evil.example/metadata" }).end();
       if (url === "/here") return res.writeHead(302, { location: "/shot.png" }).end();
       if (url === "/loop") return res.writeHead(302, { location: "/loop" }).end();
+      if (url === "/declared-huge.png") {
+        // Honest header, oversized: must be refused before a byte is read.
+        return res
+          .writeHead(200, { "content-type": "image/png", "content-length": String(20 * 1024 * 1024) })
+          .end(Buffer.alloc(64));
+      }
+      if (url === "/lying.png") {
+        // Chunked, no length, and it just keeps coming.
+        res.writeHead(200, { "content-type": "image/png" });
+        for (let i = 0; i < 12; i++) res.write(Buffer.alloc(1024 * 1024));
+        return res.end();
+      }
       const hit = BODIES[url];
       if (!hit) return res.writeHead(404).end();
       res.writeHead(200, { "content-type": hit[0] }).end(hit[1]);
@@ -172,6 +184,28 @@ describe("fetchAttachment", () => {
     expect(got.ok).toBe(false);
     if (got.ok) return;
     expect(got.reason).toMatch(/too large|8/i);
+  });
+
+  /**
+   * The cap has to bind before the bytes are in memory, not after. Reading
+   * the whole body and then measuring it means an allowlisted host — or
+   * one it legitimately redirects to — can make the agent buffer whatever
+   * it likes; the refusal comes only once the damage is done.
+   */
+  it("refuses an oversized body without buffering it, on the declared length", async () => {
+    const got = await fetchAttachment(`http://${host}/declared-huge.png`, { hosts: hosts() });
+    expect(got.ok).toBe(false);
+    if (got.ok) return;
+    expect(got.reason).toMatch(/too large/i);
+  });
+
+  it("stops reading a body that lies about its length", async () => {
+    // No content-length at all, and far more bytes than the cap: the read
+    // itself has to give up rather than trusting the header.
+    const got = await fetchAttachment(`http://${host}/lying.png`, { hosts: hosts() });
+    expect(got.ok).toBe(false);
+    if (got.ok) return;
+    expect(got.reason).toMatch(/too large/i);
   });
 
   it("refuses a type that is not media at all", async () => {

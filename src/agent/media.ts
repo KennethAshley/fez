@@ -155,6 +155,40 @@ export function attachmentNotice(items: Attachment[]): string | undefined {
 }
 
 /**
+ * Read a body, giving up the moment it passes the cap.
+ *
+ * `arrayBuffer()` would buffer the whole thing and let us measure it
+ * afterwards, which is a cap in name only: an allowlisted host — or one it
+ * legitimately redirects to — could hand the agent as many bytes as it
+ * liked and the refusal would arrive after they were already in memory.
+ * Content-length is checked first where it exists, but a body is free to
+ * omit or misstate it, so the read itself has to stop.
+ *
+ * Returns undefined when the cap is passed.
+ */
+async function readCapped(res: Response): Promise<Buffer | undefined> {
+  if (!res.body) return Buffer.alloc(0);
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_ATTACHMENT_BYTES) {
+        await reader.cancel().catch(() => {});
+        return undefined;
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
  * Follow redirects ourselves, checking the allowlist at every hop.
  *
  * `fetch` follows redirects by default, which quietly undoes the allowlist:
@@ -229,11 +263,16 @@ export async function fetchAttachment(
     if (!mime.startsWith("image/")) {
       return { ok: false, reason: `this is ${mime}, which is not something you can look at` };
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length === 0) return { ok: false, reason: "the file is empty" };
-    if (buf.length > MAX_ATTACHMENT_BYTES) {
-      return { ok: false, reason: `the image is too large to look at (${human(buf.length)}, limit 8.0 MB)` };
+    const declared = Number(res.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
+      // Refuse on the header, before a byte is read.
+      return { ok: false, reason: `the image is too large to look at (${human(declared)}, limit 8.0 MB)` };
     }
+    const buf = await readCapped(res);
+    if (!buf) {
+      return { ok: false, reason: `the image is too large to look at (over the 8.0 MB limit)` };
+    }
+    if (buf.length === 0) return { ok: false, reason: "the file is empty" };
     return { ok: true, data: buf.toString("base64"), mimeType: mime };
   } catch (err) {
     return { ok: false, reason: `couldn't be fetched (${err instanceof Error ? err.message : String(err)})` };
