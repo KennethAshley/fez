@@ -75,6 +75,15 @@ export interface GuiExtensionApi {
    * the headless stance.
    */
   storage: { get<T = unknown>(key: string): Promise<T | undefined> };
+  /**
+   * This extension's own preferences — the one part of its state file a
+   * gui part may write. Mirrored state (`storage`) stays read-only: the
+   * headless side rewrites it and a shared key would race.
+   */
+  prefs: {
+    get<T = unknown>(key: string): Promise<T | undefined>;
+    set(key: string, value: unknown): Promise<void>;
+  };
   /** Open a browser to `url`. */
   openUrl(url: string): Promise<void>;
   /** A card in Settings that configures this extension. `opts.source` ties it to a channel source for the rail. */

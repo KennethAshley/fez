@@ -69,6 +69,15 @@ export interface GuiExtensionApi {
    * the headless stance.
    */
   storage: { get<T = unknown>(key: string): Promise<T | undefined> };
+  /**
+   * This extension's own preferences — the one part of its state file a
+   * gui part may write. Mirrored state (`storage`) stays read-only: the
+   * headless side rewrites it and a shared key would race.
+   */
+  prefs: {
+    get<T = unknown>(key: string): Promise<T | undefined>;
+    set(key: string, value: unknown): Promise<void>;
+  };
   registerArtifactViewer: typeof registerArtifactViewer;
   /**
    * Agent personas, as files — LIST/READ/UPDATE plus the stable-key
@@ -791,6 +800,20 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
           } catch {
             return undefined;
           }
+        },
+      },
+      prefs: {
+        get: async <T = unknown>(key: string): Promise<T | undefined> => {
+          try {
+            const raw = await invoke<string>("extension_storage_read", { name });
+            const data = JSON.parse(raw) as { prefs?: Record<string, unknown> };
+            return data.prefs?.[key] as T | undefined;
+          } catch {
+            return undefined;
+          }
+        },
+        set: async (key: string, value: unknown): Promise<void> => {
+          await invoke("extension_storage_write", { name, key, value: JSON.stringify(value) });
         },
       },
       registerArtifactViewer: may("ui") ? registerArtifactViewer : (refuse("ui", "register an artifact viewer") as never),

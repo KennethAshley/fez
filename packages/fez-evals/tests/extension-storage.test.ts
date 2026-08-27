@@ -78,3 +78,31 @@ describe("extension storage", () => {
     expect(await fresh.get("c")).toBe(3);
   });
 });
+
+/**
+ * Inventory completeness, after Buzz's egress guard: this asserts over
+ * FUTURE code, not just today's. Any new Tauri command that writes the
+ * extension-data directory must go through the prefs-scoped helper, or
+ * the subtree scoping is not a rule — it is a habit.
+ */
+describe("extension-data write inventory", () => {
+  const libRs = fs.readFileSync(
+    path.join(__dirname, "../../fez-desktop/src-tauri/src/lib.rs"),
+    "utf-8"
+  );
+
+  it("has exactly one command writing extension-data", () => {
+    // Commands that name the directory AND write it.
+    const writers = libRs
+      .split("#[tauri::command]")
+      .slice(1)
+      .filter((body) => body.includes("extension-data") && /fs::write|write_all|OpenOptions/.test(body))
+      .map((body) => /fn\s+(\w+)/.exec(body)?.[1]);
+    expect(writers).toEqual(["extension_storage_write"]);
+  });
+
+  it("scopes that command to the prefs subtree", () => {
+    const body = libRs.split("fn extension_storage_write")[1].split("#[tauri::command]")[0];
+    expect(body).toContain("\"prefs\"");
+  });
+});
