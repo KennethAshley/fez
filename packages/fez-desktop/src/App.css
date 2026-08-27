@@ -840,10 +840,28 @@ select.ob-input:hover { border-color: var(--accent); }
 .stat-value.alert { color: var(--red); }
 .stat-label { font-size: 10.5px; color: var(--fg-dim); margin-top: 2px; }
 
-.pulse-section { background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px; padding: 12px 14px; }
+/* Sections are headings, not cards. The page was a stack of bordered
+   boxes on a ground a shade away from their own — the same nesting the
+   skills page shed. The heading rule does the separating. */
+.pulse-section { padding: 0 2px; margin-bottom: 22px; }
 .pulse-section-head {
   display: flex; align-items: baseline; gap: 12px; font-size: 11px; color: var(--fg-dim);
   text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;
+}
+/* A head that is only a label gets the app's divider grammar; heads
+   carrying a readout, legend or filters keep those in the same row. */
+.pulse-section-head > span:only-child { display: flex; align-items: center; gap: 8px; flex: 1; }
+.pulse-section-head > span:only-child::after {
+  content: ""; flex: 1; height: 1px; background: var(--hairline);
+}
+/* One of the cast, where a chart would otherwise draw an empty grid. */
+.pulse-empty { display: flex; align-items: center; gap: 12px; padding: 14px 2px 18px; }
+.pulse-empty-face { position: relative; line-height: 0; flex: none; }
+.pulse-empty-face .spr-a { animation: spr-frame-a 0.8s steps(1) infinite; }
+.pulse-empty-face .spr-b { animation: spr-frame-b 0.8s steps(1) infinite; }
+.pulse-empty-line { font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
+@media (prefers-reduced-motion: reduce) {
+  .pulse-empty-face .spr-a, .pulse-empty-face .spr-b { animation: none; }
 }
 .pulse-readout { flex: 1; text-transform: none; letter-spacing: 0; color: var(--fg); font-size: 11.5px; }
 .pulse-legend { display: flex; align-items: center; gap: 5px; text-transform: none; letter-spacing: 0; }
@@ -1422,11 +1440,11 @@ button.author:hover { text-decoration: underline; }
 
 @keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 .live-feed { max-height: 260px; overflow-y: auto; }
-.live-row { display: flex; align-items: center; gap: 8px; padding: 2px 4px; font-size: 12px; border-radius: 4px; }
+.live-row { display: flex; align-items: center; gap: 8px; padding: 2px 4px; font-size: 12px; }
 .live-row .pulse-time { width: 64px; min-width: 64px; }
-.live-row.thought .pulse-event-text { color: var(--fg-dim); font-style: italic; }
-.live-row.turn .pulse-event-text { color: var(--viz-ok); }
-.live-row.turn.failed .pulse-event-text { color: var(--viz-fail); }
+.live-row.lr-thought .pulse-event-text { color: var(--fg-dim); font-style: italic; }
+.live-row.lr-turn .pulse-event-text { color: var(--viz-ok); }
+.live-row.lr-turn.lr-failed .pulse-event-text { color: var(--viz-fail); }
 
 /* Buzz-parity: sidebar search, topbar members popover, composer actions */
 

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, ObserverEntry } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
+import { AnimatedSprite } from "./pixel-sprite";
+import { SPRITES } from "./sprites";
 
 /**
  * Pulse — the fleet observability surface, three altitudes on one page:
@@ -186,9 +188,23 @@ export default function PulseView({
     return { count, failed, cost: hasCost ? cost : undefined, tokens, activeNow };
   }, [turns, working, dayAgo, now]);
 
+  /**
+   * The window fits the data. A fixed fortnight drew thirteen empty
+   * columns beside one bar — which says nothing about shape, only that
+   * the workspace is young. We still never show LESS than a week (a
+   * chart that rescales on every turn is unreadable) and never more
+   * than the fortnight.
+   */
+  const spanDays = useMemo(() => {
+    const oldest = (turns ?? []).reduce((min, t) => Math.min(min, t.ts), Infinity);
+    if (!isFinite(oldest)) return 7;
+    const age = Math.ceil((now - oldest) / DAY_MS) + 1;
+    return Math.min(14, Math.max(7, age));
+  }, [turns, now]);
+
   const days14 = useMemo(() => {
     const out: { key: string; label: string; ok: number; failed: number; cost: number }[] = [];
-    for (let i = 13; i >= 0; i--) {
+    for (let i = spanDays - 1; i >= 0; i--) {
       const d = new Date(now - i * DAY_MS);
       out.push({ key: dayKey(d.getTime()), label: `${d.getMonth() + 1}/${d.getDate()}`, ok: 0, failed: 0, cost: 0 });
     }
@@ -201,7 +217,7 @@ export default function PulseView({
       out[i].cost += t.usage?.costUsd ?? 0;
     }
     return out;
-  }, [turns, now]);
+  }, [turns, now, spanDays]);
 
   const sparkByAgent = useMemo(() => {
     const map = new Map<string, number[]>();
@@ -210,11 +226,11 @@ export default function PulseView({
       const i = index.get(dayKey(t.ts));
       if (i === undefined) continue;
       let row = map.get(t.agent);
-      if (!row) map.set(t.agent, (row = new Array(14).fill(0)));
+      if (!row) map.set(t.agent, (row = new Array(spanDays).fill(0)));
       row[i]++;
     }
     return map;
-  }, [turns, days14]);
+  }, [turns, days14, spanDays]);
 
   const agentDays = useMemo(() => {
     const map = new Map<string, Map<string, number>>();
@@ -295,14 +311,23 @@ export default function PulseView({
           <div className="pane-empty">no agents known yet — cards appear as their metadata reaches your relay</div>
         )}
 
-        {/* ── 24h stat tiles ── */}
+        {/* ── the day's numbers ──
+            Five boxes for three facts, two of which read "—" whenever
+            the harness reports no price. A tile with no number is not a
+            tile; spend and tokens appear only once they exist. */}
         <div className="pulse-tiles">
           <StatTile label="turns · 24h" value={turns ? String(tiles.count) : "…"} />
           <StatTile label="failed" value={turns ? String(tiles.failed) : "…"} alert={tiles.failed > 0} />
-          <StatTile label="spend · 24h" value={turns ? (tiles.cost !== undefined ? `$${tiles.cost.toFixed(2)}` : "—") : "…"} />
-          <StatTile label="tokens · 24h" value={turns ? (tiles.tokens ? compact(tiles.tokens) : "—") : "…"} />
           <StatTile label="active now" value={String(tiles.activeNow)} />
+          {tiles.cost !== undefined && <StatTile label="spend · 24h" value={`$${tiles.cost.toFixed(2)}`} />}
+          {tiles.tokens > 0 && <StatTile label="tokens · 24h" value={compact(tiles.tokens)} />}
         </div>
+
+        {/* ── the thesis of the page, first ──
+            Who handed work to whom is the one view only fez can draw;
+            it used to sit fifth, under two charts that render mostly
+            empty in a young workspace. */}
+        <GraphSection client={client} turns={turns} messages={messages} roster={roster} now={now} range={range} channelFilter={channelFilter} channels={channels} filterControls={filterControls} />
 
         {/* ── live feed: the fleet's console, tailing itself ── */}
         <div className="pulse-section">
@@ -313,9 +338,12 @@ export default function PulseView({
           {liveFeed.length === 0 ? (
             <div className="pane-empty">quiet — this fills as agents think, run tools, and finish turns</div>
           ) : (
+            /* Type classes are namespaced: an unprefixed `turn` collided
+               with the transcript block's global .turn, so every finished
+               turn in this feed grew that block's rounded left border. */
             <div className="live-feed">
               {liveFeed.map(({ agent, entry }, i) => (
-                <div key={i} className={`live-row ${entry.type}${entry.status === "failed" ? " failed" : ""}`}>
+                <div key={i} className={`live-row lr-${entry.type}${entry.status === "failed" ? " lr-failed" : ""}`}>
                   <span className="pulse-time">
                     {new Date(entry.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </span>
@@ -332,10 +360,16 @@ export default function PulseView({
           )}
         </div>
 
-        {/* ── 14-day fleet chart ── */}
+        {/* ── fleet chart, over a window that fits the data ── */}
+        {(turns?.length ?? 0) === 0 ? (
+          <div className="pulse-section">
+            <div className="pulse-section-head"><span>turns</span></div>
+            <PulseEmpty who="chip" line="No turns recorded yet — this fills in as your agents work." />
+          </div>
+        ) : (
         <div className="pulse-section">
           <div className="pulse-section-head">
-            <span>turns · last 14 days</span>
+            <span>turns · last {spanDays} days</span>
             <span className="pulse-readout">
               {hovered
                 ? `${hovered.label} — ${hovered.ok + hovered.failed} turns${hovered.failed ? ` · ${hovered.failed} failed` : ""}${hovered.cost ? ` · $${hovered.cost.toFixed(2)}` : ""}`
@@ -362,6 +396,7 @@ export default function PulseView({
             ))}
           </div>
         </div>
+        )}
 
         {/* ── live agent cards ── */}
         <div className="pulse-grid">
@@ -399,7 +434,7 @@ export default function PulseView({
                   </div>
                 )}
                 {spark && (
-                  <div className="pulse-spark" title="turns per day, last 14 days">
+                  <div className="pulse-spark" title={`turns per day, last ${spanDays} days`}>
                     {spark.map((v, i) => (
                       <span key={i} className="pulse-spark-bar" style={{ height: `${Math.max(v > 0 ? 15 : 4, (v / sparkMax) * 100)}%`, opacity: v > 0 ? 1 : 0.35 }} />
                     ))}
@@ -416,9 +451,6 @@ export default function PulseView({
             );
           })}
         </div>
-
-        {/* ── orchestration graph ── */}
-        <GraphSection client={client} turns={turns} messages={messages} roster={roster} now={now} range={range} channelFilter={channelFilter} channels={channels} filterControls={filterControls} />
 
         {/* ── contribution heatmaps ── */}
         {(agentDays.size > 0 || (channelDays?.size ?? 0) > 0) && (
@@ -701,6 +733,23 @@ function GraphSection({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * An empty chart is not a chart. Rather than draw a grid of blanks and
+ * let it read as "nothing is working", one of the cast holds the space
+ * and says what would fill it — the same idiom empty search and empty
+ * docs use.
+ */
+function PulseEmpty({ who, line }: { who: keyof typeof SPRITES; line: string }) {
+  return (
+    <div className="pulse-empty">
+      <span className="pulse-empty-face">
+        <AnimatedSprite sprite={SPRITES[who]} scale={4} />
+      </span>
+      <span className="pulse-empty-line">{line}</span>
     </div>
   );
 }

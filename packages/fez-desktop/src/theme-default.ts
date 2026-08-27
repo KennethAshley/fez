@@ -40,6 +40,8 @@ export const BUILT_IN_DEFAULT = {
     "--phosphor": "#b8bb26",
     // Chart marks, CVD-validated against their ground — a pair, not
     // theme accents, so they are tuned per scheme rather than reused.
+    // (light's ok mark was #427b58, which FAILS the chroma floor on
+    // cream — it read gray. Gruvbox's own #79740e passes every check.)
     "--viz-ok": "#43a56c",
     "--viz-fail": "#fb4934",
     "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
@@ -63,7 +65,7 @@ export const BUILT_IN_DEFAULT = {
     "--bg-rail": "#eee0b7",
     "--hairline": "#d5c4a1",
     "--phosphor": "#79740e",
-    "--viz-ok": "#427b58",
+    "--viz-ok": "#79740e",
     "--viz-fail": "#9d0006",
     "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
   },
