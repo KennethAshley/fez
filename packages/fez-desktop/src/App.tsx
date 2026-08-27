@@ -918,11 +918,6 @@ function Shell({
             The relay-health dot rides along: it was never about the
             brand, and the workspace name still lives in the browse list
             and this row's tooltip. */}
-        {/* The rail's head, so the sidebar is banded like the main
-            column beside it — search sat straight on the nav with no
-            line, and the window read as having a header on one side
-            only. */}
-        <div className="rail-head">
         <button className="rail-search" title={`${client.state.workspace.name} · ${client.state.workspace.relay}`} onClick={() => setSearchOpen({ query: "" })}>
           <span
             className={connected ? (relayHealth.every((r) => r.connected) ? "dot on" : "dot partial") : "dot off"}
@@ -936,7 +931,6 @@ function Shell({
           <kbd className="rail-search-kbd">⌘K</kbd>
         </button>
         {!client.state.workspace.owner && <div className="workspace-unclaimed">unclaimed</div>}
-        </div>
         <div className="rail-scroll">
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           <span className="nav-glyph">▤</span> inbox
