@@ -311,7 +311,79 @@ export async function drainAbandonedTurn(
 /** How long to wait for an abandoned turn to finish before giving up. */
 const DRAIN_BUDGET_MS = 30_000;
 
-async function drivePrompt(
+/**
+ * Model-visible text left where the images were.
+ *
+ * Names the limit and points somewhere useful, rather than leaving the
+ * model to wonder why the screenshot it was told about is missing — the
+ * same shape as the audio/video notice fez-acp builds, and as Buzz's
+ * UNSUPPORTED_IMAGE_TOOL_MESSAGE.
+ */
+const UNSUPPORTED_IMAGE_NOTE =
+  "NOTE: an image was attached to this message, but the model behind you does not support image input, " +
+  "so it was removed and the turn continued without it. Do not describe or guess at the image. " +
+  "Say plainly that you can't see images and ask for a textual description if you need one.";
+
+/**
+ * Provider bodies meaning "this model cannot accept image input".
+ *
+ * Deliberately TIGHT — each phrase is a verbatim capability refusal, not a
+ * family of 400s. The asymmetry is the reason: dropping images for an error
+ * images did not cause mutates the turn for nothing and buries the real
+ * fault, while missing one costs a retry that was going to fail anyway.
+ * Buzz reached the same rule from the same failure
+ * (buzz-agent/src/llm.rs is_unsupported_image_input_error): without this
+ * arm the refusal is terminal, the image stays in the turn, and every
+ * retry fails identically until something gives up.
+ */
+export function isUnsupportedImageError(err: unknown): boolean {
+  const message = (err instanceof Error ? err.message : typeof err === "string" ? err : "").toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("no endpoints found that support image input") ||
+    message.includes("is not a multimodal model") ||
+    message.includes("does not support image input")
+  );
+}
+
+/**
+ * Drive one turn, and if the model refuses images, drive it again without
+ * them.
+ *
+ * The retry is not a fallback that hides the failure: the model is TOLD
+ * the image was dropped, so it answers honestly instead of pretending to
+ * have looked. One retry only — a second refusal is about something else.
+ */
+export async function drivePrompt(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ACP session updates are whatever the adapter sent; narrowing happens below.
+  session: { prompt(input: unknown): Promise<unknown>; nextUpdate(): Promise<any> },
+  command: string,
+  instruction: string,
+  onProgress?: (textSoFar: string) => void,
+  onUpdate?: (update: HarnessUpdate) => void,
+  signal?: AbortSignal,
+  timeouts: TimeoutOptions = ONE_SHOT_TIMEOUTS,
+  images?: PromptImage[]
+): Promise<string> {
+  try {
+    return await drivePromptOnce(session, command, instruction, onProgress, onUpdate, signal, timeouts, images);
+  } catch (err) {
+    if (!images || images.length === 0 || !isUnsupportedImageError(err)) throw err;
+    notice(`${command} refused ${images.length} image(s) — retrying without them`);
+    return drivePromptOnce(
+      session,
+      command,
+      `${instruction}\n\n${UNSUPPORTED_IMAGE_NOTE}`,
+      onProgress,
+      onUpdate,
+      signal,
+      timeouts,
+      undefined
+    );
+  }
+}
+
+async function drivePromptOnce(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ACP session updates are whatever the adapter sent; narrowing happens below.
   session: { prompt(input: unknown): Promise<unknown>; nextUpdate(): Promise<any> },
   command: string,
@@ -335,7 +407,15 @@ async function drivePrompt(
       : instruction;
   // Fire the prompt; drive completion through nextUpdate() rather than
   // awaiting prompt() directly so each update can reset the idle timer.
-  session.prompt(promptInput).catch(() => {});
+  // The rejection is KEPT, not discarded: a provider that refuses the
+  // request outright never sends an update, so swallowing it here turned
+  // every such failure into an idle timeout — which reads as "the agent
+  // went quiet" and is classified transient, so it was retried three times
+  // with the same rejected payload before failing with the wrong reason.
+  const promptFailed = new Promise<never>((_, reject) => {
+    session.prompt(promptInput).catch((err) => reject(err));
+  });
+  promptFailed.catch(() => {});
 
   const abortPromise = new Promise<never>((_, reject) => {
     const onAbort = () => {
@@ -372,7 +452,7 @@ async function drivePrompt(
 
     let message;
     try {
-      message = await Promise.race([session.nextUpdate(), idleTimeout, abortPromise]);
+      message = await Promise.race([session.nextUpdate(), idleTimeout, abortPromise, promptFailed]);
     } finally {
       clearTimeout(idleHandle!);
     }
