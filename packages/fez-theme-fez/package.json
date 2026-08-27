@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/theme-fez",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "The fez theme — the landing page's palette, worn by the app. Black ground, one amber source, monospace throughout.",
   "type": "module",
@@ -9,7 +9,9 @@
     "parts": {
       "gui": "dist/gui.js"
     },
-    "permissions": ["ui"]
+    "permissions": [
+      "ui"
+    ]
   },
   "scripts": {
     "build": "esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
