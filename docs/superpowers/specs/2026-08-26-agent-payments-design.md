@@ -242,10 +242,27 @@ by ownership and there is nothing to reconcile.
   and writes **only** under the file's `prefs` object. Nothing outside `prefs`
   is reachable from a webview, so the ledger cannot be touched no matter what
   a gui part does.
-- **`GuiApi.prefs: { get, set }`** — namespace-locked to the extension's own
-  stem in the loader, exactly as `storage.get` already is. Ungated, matching
-  the existing storage stance: an extension writing its own preferences needs
-  no permission to do so.
+- **`GuiApi.prefs: { get, set }`** — the loader fills in the extension's own
+  stem, as `storage.get` already does. Ungated, matching the existing storage
+  stance: an extension writing its own preferences needs no permission to do
+  so.
+
+  **What that is and is not.** It is a *correctness* guarantee: the CLI
+  rewrites the mirrored state file on every spend, and a panel writing the
+  same keys would race it and drop ledger rows. The `prefs` subtree makes that
+  impossible. It is **not** a security boundary — gui extensions run in the
+  page (`gui-extensions.ts:617` says so), `invoke` is a window global
+  (`@tauri-apps/api/core.js:202`) that the loader does not shadow, and an
+  extension that ignores the handed `api` reaches every Tauri command
+  regardless. Installing a gui extension is full trust of the session today.
+  That gap predates this spec and is tracked separately; it is recorded here
+  so the scoping is never mistaken for protection it does not provide.
+
+  Nothing crossing this seam is secret in any case: `network` and `threshold`
+  are policy, addresses are published to nostr by §2 on purpose, the ledger is
+  public on-chain and republished by §4. Keys never enter the webview. And
+  `threshold` governs how many cards you see, never how much can be lost — the
+  balance is the cap.
 
 Precedent: the webview already writes through `set_skill_secret`,
 `write_keymap`, `write_persona`. This is the generic form of what the app does
