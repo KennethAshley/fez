@@ -16,6 +16,7 @@ import {
   mergeThresholds,
   receiptLine,
   isRenderableReceipt,
+  panelEndpoint,
 } from "./gui-logic.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
 import type { SignedNostrEvent } from "./consent.js";
@@ -72,7 +73,7 @@ type AddressBook = { treasury?: string; personas?: Record<string, string> };
 
 export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
-  const { useState, useEffect, useCallback } = api.React;
+  const { useState, useEffect, useCallback, useRef } = api.React;
   const client = api.client as WalletClient;
   if (!client) return; // read:channels ungranted — nothing works without it
 
@@ -439,56 +440,101 @@ export default function activate(api: GuiExtensionApi): void {
   function WalletPanel(): El {
     const [addresses, setAddresses] = useState<AddressBook>({});
     const [endpoint, setEndpoint] = useState<string | undefined>(undefined);
-    const [log, setLog] = useState<SpendEntry[]>([]);
+    const [logs, setLogs] = useState<Partial<Record<Network, SpendEntry[]>>>({});
     const [balances, setBalances] = useState<Record<string, string>>({});
 
-    // The network selector and threshold below are the PREFERENCE
-    // (api.prefs) — what the person wants — not the mirrored `network`
-    // read elsewhere in this panel, which is what the wallet has actually
-    // adopted. Balances follow the mirrored endpoint, so switching here
-    // doesn't move any balance on screen: the effect shows up once the
-    // wallet side next mirrors (its next CLI/tool call), same as an
-    // endpoint change made by editing wallet.json directly used to.
+    // prefs IS the source of truth for both of these — the wallet reads it
+    // on every call — so the panel derives what it shows from the selection
+    // rather than waiting for some other process to mirror a consequence.
     const [network, setNetwork] = useState<string>("finney");
+    // `threshold` is what's saved; `draft` is what's typed. Free text is
+    // composed and saved deliberately (the repo's own settings pane batches
+    // relay/media behind one save); a select is a decision and applies at once.
     const [threshold, setThreshold] = useState<string>("0.01");
+    const [draft, setDraft] = useState<string>("0.01");
+    // No toast in GuiApi, so the confirmation lives in the panel. Buzz
+    // toasts every settings mutation; the point is the same — a write you
+    // cannot see is indistinguishable from one that didn't happen.
+    const [flash, setFlash] = useState<string | null>(null);
+    const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const say = useCallback((msg: string) => {
+      setFlash(msg);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlash(null), 2500);
+    }, []);
+    useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
 
     useEffect(() => {
       void api.prefs.get<string>("network").then((n) => setNetwork(n ?? "finney"));
-      void api.prefs
-        .get<Record<string, string>>("thresholds")
-        .then((t) => setThreshold(t?.default ?? "0.01"));
+      void api.prefs.get<Record<string, string>>("thresholds").then((t) => {
+        setThreshold(t?.default ?? "0.01");
+        setDraft(t?.default ?? "0.01");
+      });
+    }, []);
+
+    // An error sticks: it is not news that expires, and a `say` timer still
+    // in flight must not wipe it.
+    const complain = useCallback((msg: string) => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      setFlash(msg);
     }, []);
 
     const onNetwork = useCallback(async (next: string) => {
+      const previous = network;
       setNetwork(next);
-      await api.prefs.set("network", next);
-    }, []);
+      try {
+        await api.prefs.set("network", next);
+        say(`✓ now on ${networkLabel(next)}`);
+      } catch (err) {
+        // Put the selector back. A panel showing a network the wallet is not
+        // on is the same divergence the network guard exists to prevent —
+        // and here it would be self-inflicted, by a write that failed.
+        setNetwork(previous);
+        complain(`✗ not changed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, [network, say, complain]);
 
     // Read-modify-write, never write: `thresholds` holds per-persona
     // entries this panel neither shows nor owns (see mergeThresholds).
-    const onThreshold = useCallback(async (next: string) => {
-      setThreshold(next);
-      if (!validThreshold(next)) return;
-      const existing = await api.prefs.get<Record<string, string>>("thresholds");
-      await api.prefs.set("thresholds", mergeThresholds(existing, next));
-    }, []);
+    const saveThreshold = useCallback(async () => {
+      if (!validThreshold(draft) || draft === threshold) return;
+      try {
+        const existing = await api.prefs.get<Record<string, string>>("thresholds");
+        await api.prefs.set("thresholds", mergeThresholds(existing, draft));
+        setThreshold(draft);
+        say(`✓ threshold saved — ${draft} TAO`);
+      } catch (err) {
+        // The draft stays in the box and `threshold` is untouched, so the
+        // hint below still reads "unsaved — X is still in force". True.
+        complain(`✗ not saved: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, [draft, threshold, say, complain]);
 
     useEffect(() => {
       void (async () => {
         setAddresses(((await api.storage.get("addresses")) as AddressBook) ?? {});
         setEndpoint(await api.storage.get("endpoint"));
-        const logs = (await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>> | undefined;
-        const network = (await api.storage.get("network")) as Network | undefined;
-        setLog(logsFor(logs, network));
+        setLogs(((await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>>) ?? {});
       })();
     }, []);
 
+    // The chain the panel dials: derived from the selection, with a genuine
+    // override (local node / fork) still winning — same precedence loadConfig
+    // uses, so panel and wallet can never disagree about which chain is live.
+    const chainEndpoint = panelEndpoint(network as Network, endpoint);
+    // The ledger shown follows the selection too — flipping the network and
+    // still seeing the other chain's spends would be the same lie as balances.
+    const log = logsFor(logs, network as Network);
+
     useEffect(() => {
-      if (!endpoint) return;
+      if (!chainEndpoint) return;
       let dead = false;
+      // Blank first: leaving the previous chain's numbers on screen under a
+      // freshly-changed network label is the same wrong answer, worse dressed.
+      setBalances({});
       void (async () => {
         const { ApiPromise, WsProvider } = await import("@polkadot/api");
-        const chain = await ApiPromise.create({ provider: new WsProvider(endpoint), noInitWarn: true });
+        const chain = await ApiPromise.create({ provider: new WsProvider(chainEndpoint), noInitWarn: true });
         const rows: [string, string][] = [
           ...(addresses.treasury ? ([["treasury", addresses.treasury]] as [string, string][]) : []),
           ...Object.entries(addresses.personas ?? {}),
@@ -508,7 +554,7 @@ export default function activate(api: GuiExtensionApi): void {
       return () => {
         dead = true;
       };
-    }, [endpoint, JSON.stringify(addresses)]);
+    }, [chainEndpoint, JSON.stringify(addresses)]);
 
     const balanceRows: [string, string][] = [
       ...(addresses.treasury ? ([["treasury", addresses.treasury]] as [string, string][]) : []),
@@ -518,6 +564,7 @@ export default function activate(api: GuiExtensionApi): void {
     return h(
       "div",
       { className: "ext-panel" },
+      flash ? h("p", { className: "settings-hint" }, flash) : null,
       h("div", { className: "manage-section" }, "network"),
       h(
         "div",
@@ -529,7 +576,7 @@ export default function activate(api: GuiExtensionApi): void {
           h(
             "div",
             { className: "skill-desc" },
-            "which chain new payments go out on — takes effect once the wallet next mirrors it"
+            "which chain new payments go out on — applies immediately"
           )
         ),
         h(
@@ -559,22 +606,38 @@ export default function activate(api: GuiExtensionApi): void {
           { className: "skill-actions" },
           h("input", {
             type: "text",
-            value: threshold,
-            style: validThreshold(threshold) ? undefined : { borderColor: "var(--danger, #c00)", color: "var(--danger, #c00)" },
-            "aria-invalid": !validThreshold(threshold),
-            onChange: (e: { target: { value: string } }) => void onThreshold(e.target.value),
-          })
+            value: draft,
+            spellCheck: false,
+            style: validThreshold(draft) ? undefined : { borderColor: "var(--danger, #c00)", color: "var(--danger, #c00)" },
+            "aria-invalid": !validThreshold(draft),
+            onChange: (e: { target: { value: string } }) => setDraft(e.target.value),
+            // Enter saves, so the field behaves like the form it is.
+            onKeyDown: (e: { key: string }) => { if (e.key === "Enter") void saveThreshold(); },
+          }),
+          h(
+            "button",
+            {
+              className: "agent-action",
+              disabled: !validThreshold(draft) || draft === threshold,
+              onClick: () => void saveThreshold(),
+            },
+            "save"
+          )
         )
       ),
-      !validThreshold(threshold)
-        ? h("p", { className: "settings-hint" }, "not a valid TAO amount (up to 9 decimal places) — not saved")
-        : null,
+      !validThreshold(draft)
+        ? h("p", { className: "settings-hint" }, "not a valid TAO amount (up to 9 decimal places)")
+        : draft !== threshold
+          ? h("p", { className: "settings-hint" }, `unsaved — ${threshold} TAO is still in force`)
+          : null,
 
       h("div", { className: "manage-section" }, "balances"),
-      !endpoint
-        ? h("p", { className: "settings-hint" }, "no chain endpoint mirrored yet — send once from the agent side first")
-        : balanceRows.length === 0
-          ? h("p", { className: "settings-hint" }, "no addresses configured yet")
+      balanceRows.length === 0
+        ? h(
+            "p",
+            { className: "settings-hint" },
+            "no addresses yet — run fez-wallet init, then derive an agent"
+          )
           : h(
               "div",
               null,

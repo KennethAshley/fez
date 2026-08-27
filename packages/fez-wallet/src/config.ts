@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Network, WalletPrefs } from "./storage-mirror.js";
+import type { WalletPrefs } from "./storage-mirror.js";
+import { type Network, endpointFor, isNetworkOwnedEndpoint, networkFromEndpoint } from "./networks.js";
 
 export type { Network, WalletPrefs };
+export { endpointFor };
 
 export interface WalletConfig {
   thresholds: Record<string, string>; // TAO strings; "default" is the floor
@@ -21,33 +23,6 @@ const DEFAULTS: WalletConfig = {
   network: "finney",
   knownPayees: [],
 };
-
-const ENDPOINTS: Record<Network, string> = {
-  finney: "wss://entrypoint-finney.opentensor.ai:443",
-  test: "wss://test.finney.opentensor.ai:443",
-};
-
-export function endpointFor(network: Network): string {
-  return ENDPOINTS[network];
-}
-
-/** A recognised network endpoint is network-owned, never a user override:
- * whoever wrote it was naming a network, and the network's own home is
- * prefs. Only an endpoint no network maps to — a local node, a fork — is a
- * genuine override. Read and write sides share this one rule, so a
- * wallet.json written before the rule existed cannot outlive it. */
-function isNetworkOwnedEndpoint(url: string | undefined): boolean {
-  return url !== undefined && (Object.values(ENDPOINTS) as string[]).includes(url);
-}
-
-/** Which network does this URL name? The reverse of endpointFor. A wallet
- * written before prefs existed recorded its network ONLY as a pinned
- * endpoint, so that pin is the sole surviving record of the owner's intent —
- * reading it as "finney by default" silently moves such a wallet to mainnet,
- * and stripping it on save destroys the evidence that it was ever elsewhere. */
-function networkFromEndpoint(url: string | undefined): Network | undefined {
-  return (Object.entries(ENDPOINTS) as [Network, string][]).find(([, u]) => u === url)?.[0];
-}
 
 /** Sync merge into the prefs subtree. saveConfig needs this to migrate a
  * legacy pin in the same breath as stripping it; the async storage-mirror
@@ -189,10 +164,9 @@ export function migratePrefs(): void {
     moved.thresholds = onDisk.thresholds;
     delete onDisk.thresholds;
   }
-  const known = (Object.entries(ENDPOINTS) as [Network, string][])
-    .find(([, url]) => url === onDisk.endpoints?.tao);
+  const known = networkFromEndpoint(onDisk.endpoints?.tao);
   if (known) {
-    moved.network = known[0];
+    moved.network = known;
     delete onDisk.endpoints.tao;
     if (Object.keys(onDisk.endpoints).length === 0) delete onDisk.endpoints;
   }

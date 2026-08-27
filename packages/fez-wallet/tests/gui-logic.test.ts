@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor } from "../src/gui-logic.js";
+import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor, panelEndpoint} from "../src/gui-logic.js";
 import {
   networkLabel,
   validThreshold,
@@ -286,5 +286,43 @@ describe("receipt rendering", () => {
 
   it("renders nothing for an unexpected asset on the tao chain", () => {
     expect(receiptLine({ ...base, symbol: "USDC" } as never, "verified")).toBeUndefined();
+  });
+});
+
+describe("panelEndpoint — which chain the panel dials", () => {
+  const FINNEY = "wss://entrypoint-finney.opentensor.ai:443";
+  const TEST = "wss://test.finney.opentensor.ai:443";
+
+  it("derives from the selected network, not from what was last mirrored", () => {
+    // The bug: selector says test, mirrored endpoint still finney, balances
+    // kept reading mainnet until some other process happened to mirror.
+    expect(panelEndpoint("test", FINNEY)).toBe(TEST);
+    expect(panelEndpoint("finney", TEST)).toBe(FINNEY);
+  });
+
+  it("honours a genuine override, exactly as loadConfig does", () => {
+    // An unrecognised endpoint is a local node or a fork — the panel must
+    // not override it, or it would show a different chain than the wallet.
+    expect(panelEndpoint("test", "ws://127.0.0.1:9944")).toBe("ws://127.0.0.1:9944");
+    expect(panelEndpoint("finney", "ws://127.0.0.1:9944")).toBe("ws://127.0.0.1:9944");
+  });
+
+  it("works before anything has mirrored", () => {
+    expect(panelEndpoint("test", undefined)).toBe(TEST);
+    expect(panelEndpoint("finney", undefined)).toBe(FINNEY);
+  });
+});
+
+describe("panelEndpoint — a network it does not know", () => {
+  it("returns undefined rather than dialling nowhere", () => {
+    // prefs is a file; it can hold a hand-edit, or a value from a newer
+    // build. endpointFor would hand back undefined and the panel would
+    // construct WsProvider(undefined) — a crash screen, like the one a
+    // stale client method already cost us once.
+    expect(panelEndpoint("beta" as never, undefined)).toBeUndefined();
+  });
+
+  it("still honours a genuine override on an unknown network", () => {
+    expect(panelEndpoint("beta" as never, "ws://127.0.0.1:9944")).toBe("ws://127.0.0.1:9944");
   });
 });

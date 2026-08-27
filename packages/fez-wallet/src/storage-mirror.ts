@@ -27,7 +27,8 @@ function file(): string {
   return path.join(dir, `${STORAGE_NAME}.json`);
 }
 
-export type Network = "test" | "finney";
+import type { Network } from "./networks.js";
+export type { Network };
 
 export interface WalletPrefs {
   network?: Network;

@@ -1,5 +1,5 @@
+import { type Network, endpointForUnchecked, isNetworkOwnedEndpoint } from "./networks.js";
 /** Pure logic for the wallet gui part — node-testable, no React. */
-import type { Network } from "./storage-mirror.js";
 import type { SpendEntry } from "./log.js";
 import type { ParsedReceipt } from "./receipt.js";
 import { formatAmount } from "./chains/adapter.js";
@@ -217,4 +217,24 @@ export function requestStatus(
     if (DECLINE.has(r.content.trim())) return "declined";
   }
   return now - msgTs > WINDOW_S ? "expired" : "pending";
+}
+
+/**
+ * Which chain the panel should dial for balances.
+ *
+ * Derived from the SELECTED network, not from whatever was last mirrored:
+ * prefs is the source of truth, so a selector set to `test` means the wallet
+ * is on test from its next call onward, and a panel still reading the
+ * previously-mirrored endpoint just shows the wrong chain until some other
+ * process happens to write. The one exception mirrors loadConfig's rule
+ * exactly — an UNRECOGNISED mirrored endpoint is a local node or a fork,
+ * a genuine override the wallet itself will honour, so the panel must too.
+ */
+export function panelEndpoint(network: Network, mirrored: string | undefined): string | undefined {
+  if (mirrored !== undefined && !isNetworkOwnedEndpoint(mirrored)) return mirrored;
+  // `string | undefined`, not `string`: prefs is a file and can hold a
+  // hand-edit or a value from a newer build, in which case there is no
+  // endpoint to dial. Saying so in the type keeps the caller's guard
+  // visibly load-bearing rather than looking like dead code.
+  return endpointForUnchecked(network);
 }
