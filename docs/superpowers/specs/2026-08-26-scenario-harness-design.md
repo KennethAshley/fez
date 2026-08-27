@@ -32,9 +32,11 @@ path exists anywhere. Voice and video are a product gap, not merely a test gap.
 - Pass/fail is structural, never prose — deterministic under nondeterministic
   models.
 - The same scenarios run against stub agents (free, every push) and against the
-  real cast of claude-code, chutes, and pi (deliberate, before a release).
-- Cross-harness participation is measured directly: does a chutes-hosted model
-  obey fez's wire the way claude-code does?
+  real cast (deliberate, before a release). Two harnesses are registered today,
+  `claude-code` and `pi` (`src/agent/harness.ts:845,852`); chutes is an MCP tool
+  server, not a harness, and is out of scope by decision.
+- Cross-harness participation is measured directly: does a `pi`-backed agent
+  obey fez's wire the way a `claude-code`-backed one does?
 
 ## Non-Goals
 
@@ -194,8 +196,9 @@ targets two specific weaknesses:
 
 1. **Cross-harness depth propagation.** The cap holds only because every reply
    copies `depth: trigger + 1` (`agent.ts:1367`). An adapter that drops the tag
-   resets depth to 0 on every hop and the cap never trips. A chutes-hosted
-   model is the likeliest offender, which is why #5 and #11 overlap.
+   resets depth to 0 on every hop and the cap never trips. Any future harness
+   registered through `registerHarness` is a candidate offender, which is why #5
+   and #11 overlap.
 2. **Constant drift.** `MAX_CHAIN_DEPTH = 5` is a copy-pasted literal in four
    places — `agent.ts:92`, `packages/fez-orchestrator/src/orchestrator.ts:71`,
    `src/cli/tui.ts:126`, `packages/fez-workflows/src/workflows.ts:49` — with no
@@ -223,19 +226,19 @@ release. GUI = Playwright attaches.
 | 8 | `media-image` | agent posts image, blob resolves, renders | CI + GUI |
 | 9 | `media-degrade` | mp4 and wav degrade to labeled links | CI + GUI |
 | 10 | `doc-comments` | `DOC_COMMENT` thread with agents participating | CI |
-| 11 | `cross-harness-parity` | claude-code + chutes + pi, one room, one prompt | Live |
+| 11 | `cross-harness-parity` | claude-code + pi, one room, one prompt | Live |
 | 12 | `two-clients-one-room` | two subscribers must agree on order | CI + GUI |
 | 13 | `relay-drop-midturn` | relay dies while three agents hold in-flight turns | CI |
 
 Three carry most of the weight.
 
-**#11 `cross-harness-parity` is the centerpiece.** Three harnesses in one room,
-one prompt, identical invariants. Not "whose answer is better" — that is bench's
-question. This asks whether a chutes-hosted model *participates correctly*: does
-it p-tag its reply, thread it right, stay in its channel, finish inside the
-deadline. Expect failures here first: chutes models were never built to know
-fez's wire, so the adapter around them does all the protocol work, and it is the
-youngest code in the room.
+**#11 `cross-harness-parity` is the centerpiece.** Both registered harnesses in
+one room, one prompt, identical invariants. Not "whose answer is better" — that
+is bench's question. This asks whether each harness *participates correctly*:
+does it p-tag its reply, thread it right, stay in its channel, propagate the
+`depth` tag, finish inside the deadline. The two adapters share
+`acpHarness()` but differ in binary, env isolation, and turn lifecycle, and
+nothing today measures whether they behave identically in a group thread.
 
 **#5 `loop-bait` means different things per tier.** In CI, stubs are scripted to
 loop and the test asserts the detector fires — that tests the invariant. In
@@ -288,3 +291,6 @@ store directory into the next.
 1. Audio and video render path, plus voice capture. Launch gap, documented.
 2. A registry gate for `MAX_CHAIN_DEPTH`, if the drift risk below is accepted.
 3. Throughput and soak testing beyond this harness's ceiling.
+4. A chutes-backed harness, so decentralized inference can hold a seat in a
+   discussion rather than being a tool an agent calls mid-turn. Deferred by
+   decision on 2026-08-26; `registerHarness` is already the seam it would use.
