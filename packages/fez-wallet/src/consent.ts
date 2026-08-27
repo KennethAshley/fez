@@ -11,6 +11,7 @@ import type { Filter } from "nostr-tools";
 
 export const KIND_CHANNEL_MESSAGE = 47103; // matches src/protocol/kinds.ts
 export const KIND_REACTION = 7;
+export const KIND_AGENT_METADATA = 47000; // matches src/protocol/kinds.ts — the roster's name→pubkey source
 
 export type SignedNostrEvent = NostrEvent;
 
@@ -20,9 +21,20 @@ export interface ConsentRelay {
     filter: Filter,
     onEvent: (ev: SignedNostrEvent) => void
   ): () => void;
+  query(filter: Filter): Promise<SignedNostrEvent[]>;
 }
 
-const APPROVE = new Set(["✅", "+"]);
+/**
+ * Approval is ✅ and nothing else. NIP-25 defines "+" as the GENERIC like,
+ * which every stock nostr client puts behind a one-tap button — an owner
+ * acknowledging the card in a client that has no wallet UI would have been
+ * authorizing the spend. The card itself only ever asks for ✅.
+ *
+ * Decline stays wide on purpose: the sets are not symmetric because their
+ * failure modes are not. A stray decline costs a re-ask; a stray approval
+ * costs TAO.
+ */
+const APPROVE = new Set(["✅"]);
 const DECLINE = new Set(["❌", "-"]);
 
 export function buildConsentRequest(opts: {
@@ -128,6 +140,9 @@ export async function poolRelay(relayUrls: string[], authSecretHex?: string): Pr
     },
     subscribe(filter: Filter, onEvent) {
       return conn.subscribe([filter] as never, onEvent as never);
+    },
+    async query(filter: Filter) {
+      return (await conn.query([filter] as never)) as SignedNostrEvent[];
     },
   };
   relayPools.set(key, relay);

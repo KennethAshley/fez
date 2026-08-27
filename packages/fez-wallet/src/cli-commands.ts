@@ -1,9 +1,10 @@
 import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored } from "./derive.js";
 import { readEntry, writeEntry, readRootEntry, writeRootEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { loadConfig, saveConfig, assignEvmIndex } from "./config.js";
+import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, type Network } from "./config.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
-import { mirrorAddresses, mirrorEndpoint, mirrorSpend } from "./storage-mirror.js";
+import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs } from "./storage-mirror.js";
+import { migrateLog } from "./log.js";
 
 /**
  * The ceremony. This module is the ONLY place the "root" entry (the
@@ -47,7 +48,7 @@ export async function cmdInit(io: CliIo): Promise<void> {
   io.print("fund the treasury, then: fez-wallet derive <persona> && fez-wallet fund <persona> <amount>");
   await mirrorAddresses({ treasury: treasuryAddress });
   const config = loadConfig();
-  await mirrorEndpoint(config.endpoints.tao);
+  await mirrorEndpoint(config.endpoints.tao, config.network);
 }
 
 export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
@@ -63,6 +64,33 @@ export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
   await mirrorAddresses({ persona: { name: persona, address: pair.address } });
 }
 
+const NETWORKS: Network[] = ["test", "finney"];
+
+/** The only path that changes which chain the wallet talks to. An unknown
+ * network is rejected before ANY side effect — including the one-time
+ * migration — so `fez-wallet network mainnet` on a real disk with a legacy
+ * wallet.json never mutates anything on the way to throwing. Prefs write
+ * first; loadConfig() is re-read from disk afterward so what we print is
+ * what is now actually persisted, not what we assume. */
+export async function cmdNetwork(io: CliIo, next?: string): Promise<void> {
+  if (next !== undefined && !NETWORKS.includes(next as Network)) {
+    throw new Error(`unknown network "${next}" — expected one of: ${NETWORKS.join(", ")}`);
+  }
+  migratePrefs();
+  migrateLog();
+  if (!next) {
+    const c = loadConfig();
+    io.print(`network: ${c.network}${c.network === "finney" ? "" : "  ⚠️  play money"}`);
+    io.print(`endpoint: ${c.endpoints.tao}`);
+    return;
+  }
+  await mirrorPrefs({ network: next as Network });
+  const c = loadConfig();
+  await mirrorEndpoint(c.endpoints.tao, c.network);
+  io.print(`network: ${c.network}${c.network === "finney" ? "" : "  ⚠️  play money"}`);
+  io.print(`endpoint: ${c.endpoints.tao}`);
+}
+
 export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string, amount: string): Promise<void> {
   requireUsablePersonaName(persona);
   const mnemonic = requireRoot();
@@ -73,6 +101,7 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
   const parsed = parseAmount(amount, decimals, adapter.assets[0].symbol);
   const { txHash } = await adapter.transfer(treasuryPair(mnemonic), to, parsed);
   io.print(`funded ${persona} with ${formatAmount(parsed)} (tx ${txHash})`);
+  const config = loadConfig();
   await mirrorSpend({
     ts: new Date().toISOString(),
     persona: "treasury",
@@ -81,6 +110,7 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
     asset: adapter.assets[0].symbol,
     txHash,
     consent: "auto",
+    network: config.network,
   });
 }
 
@@ -90,7 +120,8 @@ export async function cmdStatus(io: CliIo, adapter: ChainAdapter): Promise<void>
   const asset = adapter.assets[0].symbol;
   const treasury = treasuryPair(mnemonic);
   await mirrorAddresses({ treasury: treasury.address });
-  await mirrorEndpoint(config.endpoints.tao);
+  await mirrorEndpoint(config.endpoints.tao, config.network);
+  io.print(`network: ${config.network}${config.network === "finney" ? "" : "  ⚠️  play money"}`);
   const tb = await adapter.balance(treasury.address, asset);
   io.print(`treasury  ${treasury.address}  ${formatAmount(tb)}`);
   for (const persona of Object.keys(config.personas).sort()) {

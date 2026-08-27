@@ -1,5 +1,6 @@
 import type { El, GuiClient, GuiExtensionApi } from "@fezchat/extension-api/gui";
 import type { SpendEntry } from "./log.js";
+import type { Network } from "./storage-mirror.js";
 import qrcode from "qrcode-generator";
 import {
   parseConsentRequest,
@@ -9,7 +10,15 @@ import {
   matchSpend,
   remainingText,
   extractAddresses,
+  logsFor,
+  networkLabel,
+  validThreshold,
+  mergeThresholds,
+  receiptLine,
+  isRenderableReceipt,
 } from "./gui-logic.js";
+import { parseReceipt, type ParsedReceipt } from "./receipt.js";
+import type { SignedNostrEvent } from "./consent.js";
 
 /** `toggleReaction`, `msgById` and `myReactionTo` aren't in the shared
  * GuiClient slice (extension-api types only what most gui parts need) —
@@ -23,6 +32,21 @@ interface WalletClient extends GuiClient {
    * owner whose ✅/❌ is authoritative. */
   myReactionTo(targetId: string, emoji: string): string | undefined;
   toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
+  /** Payment receipts (47040) e-tagging one message, verbatim (fez-client's
+   * own paymentReceiptsFor()) — the AUTHENTICATED connection the desktop
+   * already maintains. A bare relay pool was tried here first and reverted:
+   * fez's relays are membership-gated (NIP-42), and an anonymous pool
+   * connection gets silently refused reads on one — indistinguishable from
+   * "nobody has paid anyone yet". Only `client`'s own connection has
+   * already authenticated. */
+  paymentReceiptsFor(targetId: string): readonly SignedNostrEvent[];
+  /** Restates GuiClient's own `on` overload alongside the new one: TS
+   * does not merge a narrower override of an inherited method, it
+   * replaces it, so both signatures have to be spelled out here. */
+  on(event: "channelsChanged", handler: () => void): () => void;
+  /** Fires once a live receipt lands e-tagging `targetId`, so an
+   * already-open message can pick it up without a remount. */
+  on(event: "paymentReceipt", handler: (channelId: string, targetId: string) => void): () => void;
 }
 
 type AddressBook = { treasury?: string; personas?: Record<string, string> };
@@ -48,7 +72,7 @@ type AddressBook = { treasury?: string; personas?: Record<string, string> };
 
 export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
-  const { useState, useEffect } = api.React;
+  const { useState, useEffect, useCallback } = api.React;
   const client = api.client as WalletClient;
   if (!client) return; // read:channels ungranted — nothing works without it
 
@@ -186,7 +210,7 @@ export default function activate(api: GuiExtensionApi): void {
     channelId,
     msgTs,
   }: {
-    req: { persona: string; amount: string; to: string; memo?: string };
+    req: { persona: string; amount: string; to: string; memo?: string; notes?: string[] };
     msgId: string;
     channelId: string;
     msgTs: number;
@@ -219,8 +243,9 @@ export default function activate(api: GuiExtensionApi): void {
       let dead = false;
       let tries = 0;
       const look = async () => {
-        const log = ((await api.storage.get("log")) as SpendEntry[]) ?? [];
-        const hit = matchSpend(req, msgTs, log);
+        const logs = (await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>> | undefined;
+        const network = (await api.storage.get("network")) as Network | undefined;
+        const hit = matchSpend(req, msgTs, logsFor(logs, network));
         if (dead) return;
         if (hit) setSpend(hit);
         else if (++tries < 10) setTimeout(() => void look(), 3_000);
@@ -250,6 +275,13 @@ export default function activate(api: GuiExtensionApi): void {
         who ? h("strong", null, `@${who} · `) : null,
         h("span", { style: mono, title: req.to }, shortAddr(req.to)),
         req.memo ? ` — ${req.memo}` : ""
+      ),
+      // Whatever walletSend put above the 💸 line: "first payment to
+      // this agent", "network could not be checked …". The owner is
+      // approving on the strength of these, so they render in the card
+      // and not only in the raw bubble text.
+      ...(req.notes ?? []).map((note) =>
+        h("div", { key: note, style: { ...dim, marginTop: 4 } }, `⚠ ${note}`)
       ),
       status === "pending"
         ? h(
@@ -303,6 +335,56 @@ export default function activate(api: GuiExtensionApi): void {
         h("div", { style: { marginTop: 8 } }, h(AddressRow, { address: rcv.address }))
       );
     }
+  );
+
+  // ── payment receipts ─────────────────────────────────────────────
+  // The bolt under the message that earned it. registerMessageDecorator
+  // only ever sees a message's CONTENT, never its id, so there is no way
+  // to match "this bubble has a receipt" ahead of render time — the
+  // match predicate is unconditional, and ReceiptLine itself renders
+  // nothing for the (overwhelming) common case of a message nobody paid
+  // for. Receipt data comes from `client.paymentReceiptsFor()` — the
+  // desktop's own authenticated relay connection, subscribed to kind
+  // 47040 alongside messages/reactions/etc (fez-client's resubscribe()
+  // and loadChannelHistory()). An in-process SimplePool was tried here
+  // first and reverted: fez's relays are membership-gated (NIP-42) and
+  // silently withhold reads from an anonymous pool connection — a
+  // read that looks empty and a read that never happened are the same
+  // failure shape, which is exactly the trap this file must not repeat.
+  // Filtered to the receipts this panel can render HONESTLY: a 47040 names
+  // its own chain, and the line below prints TAO's 9 decimals. A receipt
+  // for anything else is dropped rather than misprinted by nine orders of
+  // magnitude (isRenderableReceipt).
+  const parseAll = (events: readonly SignedNostrEvent[]): ParsedReceipt[] =>
+    events
+      .map((e) => parseReceipt(e))
+      .filter((r): r is ParsedReceipt => r !== undefined && isRenderableReceipt(r));
+
+  function ReceiptLine({ msgId }: { msgId: string }): El {
+    const [receipts, setReceipts] = useState<ParsedReceipt[]>(() => parseAll(client.paymentReceiptsFor(msgId)));
+    useEffect(() => {
+      setReceipts(parseAll(client.paymentReceiptsFor(msgId)));
+      return client.on("paymentReceipt", (_channelId, targetId) => {
+        if (targetId === msgId) setReceipts(parseAll(client.paymentReceiptsFor(msgId)));
+      });
+    }, [msgId]);
+    if (receipts.length === 0) return null as never;
+    return h(
+      "div",
+      { style: { ...dim, marginTop: 4 } },
+      // A block we haven't fetched or couldn't reach is UNVERIFIABLE,
+      // never rendered as verified and never as false — this task wires
+      // the render only; actual chain verification (comparing the block
+      // named on the receipt against the chain) is a further round-trip
+      // this gui part does not make. Never claiming "verified" without
+      // having checked is exactly the ordering rule this exists to obey.
+      ...receipts.map((r, i) => h("div", { key: `${r.txHash}-${i}` }, receiptLine(r, "unverifiable") ?? ""))
+    );
+  }
+
+  api.registerMessageDecorator(
+    () => true,
+    ({ msgId }) => h(ReceiptLine, { msgId })
   );
 
   // ── address chips ────────────────────────────────────────────────
@@ -360,11 +442,44 @@ export default function activate(api: GuiExtensionApi): void {
     const [log, setLog] = useState<SpendEntry[]>([]);
     const [balances, setBalances] = useState<Record<string, string>>({});
 
+    // The network selector and threshold below are the PREFERENCE
+    // (api.prefs) — what the person wants — not the mirrored `network`
+    // read elsewhere in this panel, which is what the wallet has actually
+    // adopted. Balances follow the mirrored endpoint, so switching here
+    // doesn't move any balance on screen: the effect shows up once the
+    // wallet side next mirrors (its next CLI/tool call), same as an
+    // endpoint change made by editing wallet.json directly used to.
+    const [network, setNetwork] = useState<string>("finney");
+    const [threshold, setThreshold] = useState<string>("0.01");
+
+    useEffect(() => {
+      void api.prefs.get<string>("network").then((n) => setNetwork(n ?? "finney"));
+      void api.prefs
+        .get<Record<string, string>>("thresholds")
+        .then((t) => setThreshold(t?.default ?? "0.01"));
+    }, []);
+
+    const onNetwork = useCallback(async (next: string) => {
+      setNetwork(next);
+      await api.prefs.set("network", next);
+    }, []);
+
+    // Read-modify-write, never write: `thresholds` holds per-persona
+    // entries this panel neither shows nor owns (see mergeThresholds).
+    const onThreshold = useCallback(async (next: string) => {
+      setThreshold(next);
+      if (!validThreshold(next)) return;
+      const existing = await api.prefs.get<Record<string, string>>("thresholds");
+      await api.prefs.set("thresholds", mergeThresholds(existing, next));
+    }, []);
+
     useEffect(() => {
       void (async () => {
         setAddresses(((await api.storage.get("addresses")) as AddressBook) ?? {});
         setEndpoint(await api.storage.get("endpoint"));
-        setLog(((await api.storage.get("log")) as SpendEntry[]) ?? []);
+        const logs = (await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>> | undefined;
+        const network = (await api.storage.get("network")) as Network | undefined;
+        setLog(logsFor(logs, network));
       })();
     }, []);
 
@@ -403,6 +518,58 @@ export default function activate(api: GuiExtensionApi): void {
     return h(
       "div",
       { className: "ext-panel" },
+      h("div", { className: "manage-section" }, "network"),
+      h(
+        "div",
+        { className: "skill-row" },
+        h(
+          "div",
+          { className: "skill-main" },
+          h("span", { className: "skill-name" }, networkLabel(network)),
+          h(
+            "div",
+            { className: "skill-desc" },
+            "which chain new payments go out on — takes effect once the wallet next mirrors it"
+          )
+        ),
+        h(
+          "select",
+          {
+            className: "skill-actions",
+            value: network,
+            onChange: (e: { target: { value: string } }) => void onNetwork(e.target.value),
+          },
+          h("option", { value: "finney" }, "finney (mainnet)"),
+          h("option", { value: "test" }, "test — play money")
+        )
+      ),
+
+      h("div", { className: "manage-section" }, "consent threshold"),
+      h(
+        "div",
+        { className: "skill-row" },
+        h(
+          "div",
+          { className: "skill-main" },
+          h("span", { className: "skill-name" }, "auto-approve below"),
+          h("div", { className: "skill-desc" }, "spends at or under this amount skip the consent card")
+        ),
+        h(
+          "div",
+          { className: "skill-actions" },
+          h("input", {
+            type: "text",
+            value: threshold,
+            style: validThreshold(threshold) ? undefined : { borderColor: "var(--danger, #c00)", color: "var(--danger, #c00)" },
+            "aria-invalid": !validThreshold(threshold),
+            onChange: (e: { target: { value: string } }) => void onThreshold(e.target.value),
+          })
+        )
+      ),
+      !validThreshold(threshold)
+        ? h("p", { className: "settings-hint" }, "not a valid TAO amount (up to 9 decimal places) — not saved")
+        : null,
+
       h("div", { className: "manage-section" }, "balances"),
       !endpoint
         ? h("p", { className: "settings-hint" }, "no chain endpoint mirrored yet — send once from the agent side first")

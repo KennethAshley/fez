@@ -231,6 +231,8 @@ export const K = {
   USER_STATUS: 30315,
   BAN_LIST: 30047,
   ARTIFACT: 40300,
+  /** A payment, e-tagged to the message it paid for (spec §4). matches src/protocol/kinds.ts */
+  PAYMENT_RECEIPT: 47040,
 } as const;
 
 const DM_FUZZ_WINDOW_S = 2 * 86_400;
@@ -504,6 +506,9 @@ export interface ClientEvents {
   workflowRunsChanged: () => void;
   /** A typed artifact landed in a channel. */
   artifact: (channelId: string, artifact: Artifact) => void;
+  /** A payment receipt landed, e-tagging `targetId` — live only (backfill
+   * is read via paymentReceiptsFor() at mount, the same as reactions). */
+  paymentReceipt: (channelId: string, targetId: string) => void;
   /** Client-level announcements a view should surface (first-run bootstrap etc.). */
   notice: (text: string) => void;
   /** One of OWN reminders reached its time while this client was alive. */
@@ -572,6 +577,10 @@ export class FezClient {
   private artifactsByChannel = new Map<string, Artifact[]>();
   private seenArtifactIds = new Set<string>();
   private seenDocIds = new Set<string>();
+
+  // payment receipts (47040), keyed by the message they e-tag
+  private receiptsByTarget = new Map<string, WireEvent[]>();
+  private seenReceiptIds = new Set<string>();
 
   /** Armed reminder timers (id → timer); the client fires its OWN
    * reminders while alive — the desktop toasts them, the sentinel keeps
@@ -863,6 +872,13 @@ export class FezClient {
   }
   artifacts(channelId: string): readonly Artifact[] {
     return this.artifactsByChannel.get(channelId) ?? [];
+  }
+  /** Payment receipts (47040) e-tagging one message — the raw signed
+   * events, verbatim, same as fetchEvent(): a receipt is only worth
+   * anything if its signature still verifies, so nothing here should
+   * ever reconstruct one. */
+  paymentReceiptsFor(targetId: string): readonly WireEvent[] {
+    return this.receiptsByTarget.get(targetId) ?? [];
   }
   channelExhausted(channelId: string): boolean {
     return this.exhaustedChannels.has(channelId);
@@ -1737,11 +1753,12 @@ export class FezClient {
         for (const event of events) this.absorbArtifact(event);
       })
       .catch(() => {});
-    const [msgs, reactions, deletions, ops] = await Promise.all([
+    const [msgs, reactions, deletions, ops, receipts] = await Promise.all([
       this.wire.query([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
       this.wire.query([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
       this.wire.query([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
       this.wire.query([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
+      this.wire.query([{ kinds: [K.PAYMENT_RECEIPT], "#h": [channelId], limit: 300 }]),
     ]);
     const ordered = msgs
       .filter((e) => this.state.isMember(e.pubkey))
@@ -1757,6 +1774,7 @@ export class FezClient {
       this.handleMsgEdit(event);
     }
     for (const event of reactions.sort((a, b) => a.created_at - b.created_at)) this.handleReaction(event, false);
+    for (const event of receipts.sort((a, b) => a.created_at - b.created_at)) this.handleReceipt(event);
     for (const event of ops) {
       if (event.kind === K.MSG_PIN) this.handleMsgPin(event);
       else if (event.kind === K.MSG_BOOKMARK) this.handleMsgBookmark(event);
@@ -2124,7 +2142,7 @@ export class FezClient {
     if (channelIds.length > 0) {
       filters.push(
         {
-          kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK, K.ARTIFACT],
+          kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK, K.ARTIFACT, K.PAYMENT_RECEIPT],
           "#h": channelIds,
           since: Math.floor(Date.now() / 1000),
         },
@@ -2147,6 +2165,7 @@ export class FezClient {
       case K.MSG_BOOKMARK: return this.handleMsgBookmark(event);
       case K.DOC: return this.handleDocEvent(event);
       case K.ARTIFACT: return this.absorbArtifact(event);
+      case K.PAYMENT_RECEIPT: return this.handleReceipt(event);
       case K.AGENT_METADATA: return this.absorbName(event);
       case K.MESSAGE: return this.handleIncomingMessage(event);
       default: {
@@ -2421,6 +2440,25 @@ export class FezClient {
     if (list.length > 100) list.splice(0, list.length - 100);
     this.artifactsByChannel.set(channelId, list);
     this.emit("artifact", channelId, artifact);
+  }
+
+  /** A payment receipt (47040) — same shape rule as handleReaction:
+   * needs both the message it pays for (`e`) and the channel it was
+   * published into (`h`), and the author must be a workspace member.
+   * Verifying the receipt against the chain is NOT this client's job —
+   * it stores the signed event verbatim for a caller (fez-wallet's gui
+   * part) to parse and check on its own terms. */
+  private handleReceipt(event: WireEvent): void {
+    if (this.seenReceiptIds.has(event.id)) return;
+    const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+    const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+    if (!targetId || !channelId) return;
+    if (!this.state.isMember(event.pubkey)) return;
+    this.seenReceiptIds.add(event.id);
+    const list = this.receiptsByTarget.get(targetId) ?? [];
+    list.push(event);
+    this.receiptsByTarget.set(targetId, list);
+    this.emit("paymentReceipt", channelId, targetId);
   }
 
   private async handleObserverFrame(event: WireEvent): Promise<void> {

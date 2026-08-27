@@ -27,10 +27,23 @@ function file(): string {
   return path.join(dir, `${STORAGE_NAME}.json`);
 }
 
+export type Network = "test" | "finney";
+
+export interface WalletPrefs {
+  network?: Network;
+  thresholds?: Record<string, string>;
+}
+
 type State = {
   addresses?: { treasury?: string; personas?: Record<string, string> };
   endpoint?: string;
-  log?: SpendEntry[];
+  /** Which network the endpoint (and hence the ledger) is actually
+   * reading — mirrored alongside it so the gui part, which cannot read
+   * config.ts, still knows which `logs` entry is live rather than
+   * having to guess or show both at once. */
+  network?: Network;
+  logs?: Partial<Record<Network, SpendEntry[]>>;
+  prefs?: WalletPrefs;
   [k: string]: unknown;
 };
 
@@ -65,14 +78,30 @@ export function mirrorAddresses(u: { treasury?: string; persona?: { name: string
   });
 }
 
-export function mirrorEndpoint(endpoint: string): Promise<void> {
+export function mirrorEndpoint(endpoint: string, network: Network): Promise<void> {
   return update((s) => {
     s.endpoint = endpoint;
+    s.network = network;
   });
 }
 
 export function mirrorSpend(entry: SpendEntry): Promise<void> {
   return update((s) => {
-    s.log = [...(s.log ?? []), entry].slice(-MAX_LOG);
+    const logs = (s.logs ??= {});
+    logs[entry.network] = [...(logs[entry.network] ?? []), entry].slice(-MAX_LOG);
+  });
+}
+
+/** User preferences — the ONE subtree a gui part may write (spec §6).
+ * This node-side write goes through the same serialized queue as the
+ * ledger writes, so it cannot interleave with a spend FROM THIS PROCESS.
+ * The panel's own write does not come through here at all: it goes to
+ * the desktop's Rust command, which read-modify-writes the same file
+ * from another process. Subtree scoping keeps that write off the ledger
+ * keys; it cannot keep a concurrent whole-file write from losing an
+ * update. */
+export function mirrorPrefs(p: Partial<WalletPrefs>): Promise<void> {
+  return update((s) => {
+    s.prefs = { ...(s.prefs ?? {}), ...p };
   });
 }

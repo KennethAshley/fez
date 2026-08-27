@@ -55,14 +55,20 @@ allowlist.
 
 **Remote resolution** is: `@chip` → pubkey → address event.
 
-- Pubkey comes from the kind-`47000` agent announces visible in the channel
-  the wallet is configured against (`consentChannel`). The wallet already
-  holds `read:channels` and a NIP-42-authenticated relay connection
-  (`poolRelay`, `src/mcp.ts:76`).
-- **Name lookup is scoped to that channel's roster, and ambiguity is an
-  error.** Two owners may both run an agent called `chip`. When more than one
-  roster member announces the same name, the send fails and names the
-  candidates by npub; it never picks. A name is not an identity — the npub is.
+- Pubkey comes from the kind-`47000` agent announces on the relay. That query
+  is **unscoped**, and must stay that way: a 47000 announce carries no tags at
+  all (`fez-acp/src/agent.ts` publishes `tags: []`), so a `#h` filter matches
+  nothing and every `@name` falls silently through to a raw send. fez-client
+  reads the same kind unscoped — one relay, one workspace, one roster. The
+  wallet already holds `read:channels` and a NIP-42-authenticated relay
+  connection (`poolRelay`, `src/mcp.ts`).
+- The announces are deduped **by pubkey, newest `created_at` winning**: 47000
+  is a regular kind and an agent re-announces on every process start, so a
+  raw event list reports one agent as many (`roster.ts`).
+- **Name lookup runs over that roster, and ambiguity is an error.** Two owners
+  may both run an agent called `chip`. When more than one roster member
+  announces the same name, the send fails and names the candidates by npub; it
+  never picks. A name is not an identity — the npub is.
 - A leading `@` is optional and stripped; `@chip` and `chip` resolve alike,
   with the local store still winning (an agent you hold keys for is
   unambiguous).
@@ -123,6 +129,23 @@ derived from it and stops being the thing you edit:
 
 An explicit `endpoints.tao` still wins, for a local node or a fork. Flipped by
 `fez-wallet network <test\|finney>`; `fez-wallet network` prints the current one.
+
+**Explicit means *unrecognised*.** An endpoint that maps to one of the networks
+above is network-owned, not an override. `loadConfig` ignores it and derives
+from the active network; `saveConfig` strips it on write; the one-time
+migration turns it into that network. Otherwise the derived endpoint that
+`loadConfig` filled in would be written back by ordinary paths (`fez-wallet
+derive`, remembering a payee) and become a permanent pin — `network` would then
+move with the selector while the socket stayed put, and a session labelled
+`test` everywhere would spend real TAO.
+
+The rule has to hold on **read** as well as write, or it only protects files
+written after it shipped. Every `fez-wallet derive` before it wrote such a pin,
+and `migratePrefs` — the one thing that heals a pinned file — runs only from
+`fez-wallet network`. The panel's selector writes prefs through the Rust
+command and never reaches it, so a write-only rule would leave that exact
+mislabelled-mainnet spend alive in legacy state. Symmetric, migration is a
+tidy-up rather than the only thing standing between the owner and it.
 
 **Keys are untouched.** An SS58 is chain-agnostic; the same `//persona`
 account exists on both chains with different balances. What gets namespaced is
@@ -204,7 +227,10 @@ strength of the event alone.
 ## 5. Consent
 
 Unchanged: over-threshold sends post a `47103` request and wait for the
-owner's ✅ (`src/tools.ts:88`). One addition:
+owner's ✅ (`src/tools.ts:88`) — **✅ and nothing else**: NIP-25's `"+"` is the
+generic like that every stock nostr client puts behind a one-tap button, so
+accepting it would let an ack authorize a spend. Declines stay wide (`❌`,
+`-`): a stray decline costs a re-ask, a stray approval costs TAO. One addition:
 
 **A first payment to a given remote payee always shows a card, regardless of
 amount.** Approved once, that payee is remembered (`knownPayees` in
@@ -234,8 +260,9 @@ add a second, narrower channel beside it:
 
 Two names rather than a `storage.set`, because a single namespace with a merge
 rule is where the clobber bug lives: the CLI rewrites the mirrored state file
-on every spend, and a webview writing into the same keys would race it. Split
-by ownership and there is nothing to reconcile.
+on every spend, and a webview writing into the same keys would clobber it.
+Split by ownership and there is nothing to reconcile at the key level (the
+whole-file writes underneath are still two processes — see below).
 
 - **Rust `extension_storage_write(name, key, value)`** — mirrors the existing
   read command's name validation verbatim (first char alphanumeric, no `..`),
@@ -247,10 +274,15 @@ by ownership and there is nothing to reconcile.
   stance: an extension writing its own preferences needs no permission to do
   so.
 
-  **What that is and is not.** It is a *correctness* guarantee: the CLI
-  rewrites the mirrored state file on every spend, and a panel writing the
-  same keys would race it and drop ledger rows. The `prefs` subtree makes that
-  impossible. It is **not** a security boundary — gui extensions run in the
+  **What that is and is not.** It is a *correctness* guarantee about WHAT a
+  panel write can target: the CLI rewrites the mirrored state file on every
+  spend, and a panel writing the same keys would clobber ledger rows. The
+  `prefs` subtree means a panel write never aims at a CLI-owned key. It does
+  not make the two writers atomic with respect to each other — the Rust
+  command read-modify-writes the whole file, and so does the node side from a
+  different process, so a genuinely concurrent pair of writes can still lose
+  an update. Key-level collision is what the scoping prevents; a lost update
+  is not. It is **not** a security boundary — gui extensions run in the
   page (`gui-extensions.ts:617` says so), `invoke` is a window global
   (`@tauri-apps/api/core.js:202`) that the loader does not shadow, and an
   extension that ignores the handed `api` reaches every Tauri command
@@ -274,6 +306,12 @@ into prefs and live there only; `wallet.json` keeps what the CLI ceremony owns
 authoritative in two places, so there is no last-writer-wins question to get
 wrong. `fez-wallet network <n>` writes prefs through `storage-mirror.ts`,
 which already owns that file. Existing `thresholds` migrate on first read.
+
+**wallet.json is written stripped of everything derived.** `saveConfig` drops
+`network`, a recognised `endpoints.tao`, and any threshold prefs (or the
+defaults) already supply — otherwise the round-trip `loadConfig` → `saveConfig`
+would silently promote prefs-owned state into a wallet.json override, and the
+reset property below would be false.
 
 **Deleting the extension resets prefs to defaults** — `network: "finney"`,
 threshold `0.01`. Both defaults are the *conservative* end: a lost prefs file

@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses } from "../src/gui-logic.js";
+import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor } from "../src/gui-logic.js";
+import {
+  networkLabel,
+  validThreshold,
+  mergeThresholds,
+  receiptLine,
+  isRenderableReceipt,
+} from "../src/gui-logic.js";
+import type { SpendEntry } from "../src/log.js";
 
 const MSG = [
   "💸 **scout** wants to send **0.05 TAO**",
@@ -24,6 +32,43 @@ describe("parseConsentRequest", () => {
     expect(parseConsentRequest("hello 💸 world")).toBeUndefined();
     expect(parseConsentRequest("💸 **scout** wants to send **1 TAO**")).toBeUndefined(); // no footer
   });
+
+  it("still parses when walletSend prepends notes, and hands them back", () => {
+    const withNotes = [
+      "first payment to this agent",
+      "network could not be checked — this address publishes none (you are on test)",
+      ...MSG.split("\n"),
+    ].join("\n");
+    const req = parseConsentRequest(withNotes);
+    expect(req?.persona).toBe("scout");
+    expect(req?.to).toBe("5E76cpgX…F7G7G4");
+    expect(req?.notes).toEqual([
+      "first payment to this agent",
+      "network could not be checked — this address publishes none (you are on test)",
+    ]);
+  });
+
+  it("carries no notes key when there is nothing to warn about", () => {
+    expect(parseConsentRequest(MSG)).not.toHaveProperty("notes");
+  });
+});
+
+describe("mergeThresholds", () => {
+  it("keeps every per-persona threshold when the panel edits the default", () => {
+    expect(mergeThresholds({ default: "0.01", scout: "0.0001" }, "0.5")).toEqual({
+      default: "0.5",
+      scout: "0.0001",
+    });
+  });
+
+  it("works from nothing at all", () => {
+    expect(mergeThresholds(undefined, "0.5")).toEqual({ default: "0.5" });
+  });
+
+  it("never loosens a tighter persona threshold — the direction that costs money", () => {
+    const merged = mergeThresholds({ default: "0.01", scout: "0.0001" }, "10");
+    expect(merged.scout).toBe("0.0001");
+  });
 });
 
 describe("requestStatus", () => {
@@ -34,6 +79,10 @@ describe("requestStatus", () => {
   });
   it("owner ❌ declines; stale pending expires", () => {
     expect(requestStatus([{ content: "❌", authorPk: OWNER }], OWNER, 0, 30)).toBe("declined");
+    // The panel must not show "approved" for a reaction the wallet would
+    // not have spent on: "+" is the generic like, not consent.
+    expect(requestStatus([{ content: "+", authorPk: OWNER }], OWNER, 0, 30)).toBe("pending");
+    expect(requestStatus([{ content: "-", authorPk: OWNER }], OWNER, 0, 30)).toBe("declined");
     expect(requestStatus([], OWNER, 0, 601)).toBe("expired");
     expect(requestStatus([], OWNER, 0, 599)).toBe("pending");
   });
@@ -153,5 +202,89 @@ describe("extractAddresses", () => {
   it("caps at five per message", () => {
     const many = Array.from({ length: 6 }, (_, i) => `5${String.fromCharCode(65 + i)}${"x".repeat(44)}`).join(" ");
     expect(extractAddresses(many)).toHaveLength(5);
+  });
+});
+
+describe("logsFor", () => {
+  const testEntry: SpendEntry = {
+    ts: "1", persona: "scout", to: "5X", amount: "0.01", asset: "TAO",
+    txHash: "0xtest", consent: "auto", network: "test",
+  };
+  const finneyEntry: SpendEntry = {
+    ts: "2", persona: "scout", to: "5X", amount: "1", asset: "TAO",
+    txHash: "0xreal", consent: "auto", network: "finney",
+  };
+
+  it("returns only the given network's rows", () => {
+    const logs = { test: [testEntry], finney: [finneyEntry] };
+    expect(logsFor(logs, "test")).toEqual([testEntry]);
+    expect(logsFor(logs, "finney")).toEqual([finneyEntry]);
+  });
+
+  it("falls back to finney when no network is mirrored yet", () => {
+    const logs = { finney: [finneyEntry] };
+    expect(logsFor(logs, undefined)).toEqual([finneyEntry]);
+  });
+
+  it("reads a missing network as empty, never falling through to another chain's rows", () => {
+    const logs = { finney: [finneyEntry] };
+    expect(logsFor(logs, "test")).toEqual([]);
+  });
+
+  it("reads undefined logs as empty", () => {
+    expect(logsFor(undefined, "test")).toEqual([]);
+  });
+});
+
+describe("wallet panel logic", () => {
+  it("marks anything that is not mainnet", () => {
+    expect(networkLabel("test")).toMatch(/play money/i);
+    expect(networkLabel("finney")).not.toMatch(/play money/i);
+  });
+
+  it("accepts a plain decimal threshold", () => {
+    expect(validThreshold("0.05")).toBe(true);
+    expect(validThreshold("1")).toBe(true);
+  });
+
+  it("rejects anything that isn't one", () => {
+    expect(validThreshold("")).toBe(false);
+    expect(validThreshold("-1")).toBe(false);
+    expect(validThreshold("0.0000000001")).toBe(false); // more than 9 decimals
+    expect(validThreshold("abc")).toBe(false);
+  });
+});
+
+describe("receipt rendering", () => {
+  const base = { raw: 50_000_000n, symbol: "TAO", payer: "abc123def456", network: "test" as const, chain: "tao" };
+
+  it("shows the amount and who paid", () => {
+    expect(receiptLine(base as never, "verified")).toMatch(/0\.05 TAO/);
+  });
+
+  it("distinguishes unverifiable from false — they are not the same thing", () => {
+    const unver = receiptLine(base as never, "unverifiable");
+    const wrong = receiptLine(base as never, "false");
+    expect(unver).toMatch(/couldn't check/i);
+    expect(wrong).toMatch(/does not match/i);
+    expect(unver).not.toEqual(wrong);
+  });
+
+  it("does not decorate a verified receipt with a caveat", () => {
+    expect(receiptLine(base as never, "verified")).not.toMatch(/couldn't check|does not match/i);
+  });
+
+  // The line prints TAO's 9 decimals. A receipt tagged with another chain
+  // would be off by nine orders of magnitude, so it is not rendered at all
+  // — the panel has no adapter list to ask for the right decimals.
+  it("renders nothing for a chain whose decimals it does not know", () => {
+    const evm = { ...base, chain: "evm", symbol: "ETH", raw: 1_000_000_000_000_000_000n };
+    expect(receiptLine(evm as never, "unverifiable")).toBeUndefined();
+    expect(isRenderableReceipt(evm as never)).toBe(false);
+    expect(isRenderableReceipt(base as never)).toBe(true);
+  });
+
+  it("renders nothing for an unexpected asset on the tao chain", () => {
+    expect(receiptLine({ ...base, symbol: "USDC" } as never, "verified")).toBeUndefined();
   });
 });

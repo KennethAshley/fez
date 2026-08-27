@@ -10,6 +10,31 @@ export const TAO_DECIMALS = 9;
  * agent (and its harness timeout) could never recover from. */
 export const CONNECT_TIMEOUT_MS = 15_000;
 
+/** Ceiling on the wait between submission and inclusion. CONNECT_TIMEOUT_MS
+ * covers only the connect: once signAndSend has handed the extrinsic to the
+ * pool, a socket that dies leaves the callback that never comes, and the
+ * MCP call hangs until its harness kills it. Bittensor blocks every ~12s,
+ * so ten blocks is generous for inclusion and still finite. */
+export const IN_BLOCK_TIMEOUT_MS = 120_000;
+
+/**
+ * The failure a transfer timeout is: AMBIGUOUS, not failed. The extrinsic
+ * was already broadcast, so it may still be included after we stop
+ * listening — and an agent told "it failed" retries, which double-pays.
+ * The wallet already refuses to let a failed RECEIPT provoke a retried
+ * transfer; the transfer itself gets the same treatment. The wording is
+ * the safety mechanism here: it has to be readable by the agent as "do
+ * not retry", not as an error to paper over.
+ */
+export function ambiguousTransferError(to: string, timeoutMs: number): Error {
+  return new Error(
+    `transfer to ${to} was submitted but not confirmed within ${Math.round(timeoutMs / 1000)}s — ` +
+      "it MAY OR MAY NOT have landed on chain. This is NOT a failure: do not retry, and do not " +
+      "report it as unsent. Check the destination's balance and this address's recent transfers " +
+      "on chain first — a retry could pay twice."
+  );
+}
+
 /** A dispatch-level failure surfaced by signAndSend's callback — module
  * errors decode through the api's registry; anything else falls back to
  * its own toString(). */
@@ -34,12 +59,28 @@ export interface SubstrateApi {
         signAndSend(
           pair: unknown,
           callback: (result: {
-            status: { isInBlock: boolean };
+            status: { isInBlock: boolean; asInBlock: { toHex(): string } };
             dispatchError?: SubstrateDispatchError;
             txHash: { toHex(): string };
           }) => void
         ): Promise<() => void>;
       };
+    };
+  };
+  /** Used only by getTransfer — substrate has no by-hash extrinsic lookup,
+   * so verifying a receipt means fetching the block it landed in and
+   * scanning its extrinsics for the one that matches. */
+  rpc: {
+    chain: {
+      getBlock(hash: string): Promise<{
+        block: {
+          extrinsics: Array<{
+            hash: { toHex(): string };
+            signer: { toString(): string };
+            method: { args: unknown[] };
+          }>;
+        };
+      }>;
     };
   };
 }
@@ -95,7 +136,12 @@ async function connectApi(endpoint: string): Promise<SubstrateApi> {
   }
 }
 
-export function substrateAdapter(opts: { endpoint: string; apiFactory?: () => Promise<SubstrateApi> }): ChainAdapter {
+export function substrateAdapter(opts: {
+  endpoint: string;
+  apiFactory?: () => Promise<SubstrateApi>;
+  /** Test seam; defaults to IN_BLOCK_TIMEOUT_MS. */
+  inBlockTimeoutMs?: number;
+}): ChainAdapter {
   let apiPromise: Promise<SubstrateApi> | undefined;
   const api = () => {
     if (!apiPromise) {
@@ -140,28 +186,65 @@ export function substrateAdapter(opts: { endpoint: string; apiFactory?: () => Pr
       // with the decoded error — never a hash on the failure path.
       let unsub: (() => void) | undefined;
       let settled = false;
-      return new Promise<{ txHash: string }>((resolve, reject) => {
+      const timeoutMs = opts.inBlockTimeoutMs ?? IN_BLOCK_TIMEOUT_MS;
+      return new Promise<{ txHash: string; blockRef?: string }>((resolve, reject) => {
         const settle = (fn: () => void) => {
           if (settled) return;
           settled = true;
+          clearTimeout(timer);
           fn();
           unsub?.();
         };
+        // The wait between submission and inclusion is bounded too, and its
+        // failure is stated as ambiguous: the extrinsic is already out
+        // there, so "it failed" would be a lie that invites a second
+        // payment for the same thing.
+        const timer = setTimeout(() => settle(() => reject(ambiguousTransferError(to, timeoutMs))), timeoutMs);
         a.tx.balances
           .transferKeepAlive(to, amount.raw)
           .signAndSend(signer, (r) => {
             if (r.dispatchError) {
               settle(() => reject(new Error(`transfer failed: ${decodeDispatchError(a, r.dispatchError!)}`)));
             } else if (r.status.isInBlock) {
-              settle(() => resolve({ txHash: r.txHash.toHex() }));
+              // status.asInBlock is the block hash the transfer settled in
+              // — free at this point, and exactly what getTransfer needs
+              // to verify the receipt later without an indexer.
+              settle(() => resolve({ txHash: r.txHash.toHex(), blockRef: r.status.asInBlock.toHex() }));
             }
           })
           .then((u) => {
             unsub = u;
             if (settled) unsub(); // callback already fired before we got the unsub back
           })
-          .catch(reject);
+          // Through settle() so the in-block timer is cleared: a submission
+          // that never got off the ground must not leave a live timeout
+          // holding the process open for two minutes.
+          .catch((e) => settle(() => reject(e)));
       });
+    },
+    async getTransfer(blockRef: string, txHash: string) {
+      const a = await api();
+      try {
+        const block = await a.rpc.chain.getBlock(blockRef);
+        for (const ex of block.block.extrinsics) {
+          if (ex.hash.toHex() !== txHash) continue;
+          const [dest, value] = ex.method.args as [{ toString(): string }, { toString(): string }];
+          return {
+            from: ex.signer.toString(),
+            to: dest.toString(),
+            raw: BigInt(value.toString()),
+          };
+        }
+        // The block answered but doesn't hold this extrinsic (pruned
+        // content within a retained block, or a bad reference). Still
+        // unverifiable, never "invalid" — we have no way to tell a
+        // forged txHash from one the node simply can't show us anymore.
+        return undefined;
+      } catch {
+        // Pruned, unreachable, or a block this node never had. The caller
+        // must render this as unverifiable — not as a failed check.
+        return undefined;
+      }
     },
   };
 }

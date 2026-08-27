@@ -12,6 +12,11 @@ import { evmAdapter } from "./chains/evm.js";
 import { poolRelay } from "./consent.js";
 import { walletAddress, walletBalance, walletSend, walletHistory, type ToolDeps } from "./tools.js";
 import type { ChainAdapter } from "./chains/adapter.js";
+import type { WalletPair } from "./derive.js";
+import type { WalletConfig } from "./config.js";
+import { resolveRecipient } from "./resolve.js";
+import { rosterFilter, rosterFromEvents } from "./roster.js";
+import { createAddressAnnouncer } from "./announce.js";
 
 /**
  * fez-wallet, skill part — the calling agent's OWN allowance account.
@@ -53,6 +58,34 @@ function cachedSubstrateAdapter(endpoint: string): ChainAdapter {
 }
 const evm = evmAdapter(); // stateless stub — one instance is plenty
 
+/** Addressable, so republishing is a replace and needs no staleness
+ * bookkeeping. Failure is silent by design — an agent that cannot
+ * announce where to be paid must still be able to pay. Called unawaited
+ * from deps() (never at startup — that's the @polkadot handshake trap
+ * fez-bittensor already paid for) and guarded, per chain+network, to run
+ * at most once per process: a network flip mid-process has its own
+ * announce to make (announce.ts). */
+const announceAddress = createAddressAnnouncer();
+async function publishOwnAddress(
+  config: WalletConfig,
+  pair: WalletPair,
+  adapter: ChainAdapter,
+  relays: string[],
+  agentNostrKey: string | undefined
+) {
+  if (!relays.length || !agentNostrKey) return;
+  await announceAddress({
+    agentSecretHex: agentNostrKey,
+    chain: adapter.chain,
+    network: config.network,
+    address: adapter.address(pair),
+    publish: async (ev) => {
+      const relay = await poolRelay(relays, agentNostrKey);
+      await relay.publish(ev);
+    },
+  });
+}
+
 /** Deps are built lazily per call: config edits and newly derived keys
  * apply without restarting the agent, and startup stays instant for the
  * MCP handshake. `signal` carries the MCP request's AbortSignal through
@@ -64,18 +97,44 @@ async function deps(signal?: AbortSignal): Promise<ToolDeps> {
     throw new Error(`no wallet for "${persona}" — run: fez-wallet derive ${persona}`);
   }
   const config = loadConfig();
+  const pair = pairFromStored(stored);
   const relays = (process.env.FEZ_RELAY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const agentNostrKey = readAgentNostrKey(persona!);
+  const substrate = cachedSubstrateAdapter(config.endpoints.tao);
+
+  void publishOwnAddress(config, pair, substrate, relays, agentNostrKey);
+
   return {
     persona: persona!,
-    pair: pairFromStored(stored),
-    adapters: [cachedSubstrateAdapter(config.endpoints.tao), evm],
+    pair,
+    adapters: [substrate, evm],
     config,
     ownerPk: process.env.FEZ_AGENT_OWNER,
     agentNostrKey,
     // The agent's nostr key doubles as the NIP-42 auth identity —
     // membership-gated relays withhold reads from anonymous connections.
     relay: relays.length ? () => poolRelay(relays, agentNostrKey) : undefined,
+    // Name → address resolution needs a relay to read the roster and
+    // published address events from; with none configured this degrades
+    // to undefined, and walletSend falls back to its local-only resolveTo.
+    resolve: relays.length
+      ? async (to: string) => {
+          const relay = await poolRelay(relays, agentNostrKey);
+          return resolveRecipient(to, {
+            chain: "tao",
+            network: config.network,
+            // Unscoped by the kind's own shape — see roster.ts, and do
+            // not put the consent channel back into this filter.
+            roster: async () => rosterFromEvents(await relay.query(rosterFilter())),
+            addressEvents: (filter) => relay.query(filter),
+            localAddress: (n) => {
+              if (!isValidEntryName(n) || isReservedEntryName(n)) return undefined;
+              const stored = readEntry(n);
+              return stored ? pairFromStored(stored).address : undefined;
+            },
+          });
+        }
+      : undefined,
     signal,
   };
 }
@@ -111,10 +170,14 @@ server.registerTool(
       amount: z.string().describe("Decimal amount, e.g. '0.05'."),
       asset: z.string().describe("Asset symbol, e.g. 'TAO'."),
       memo: z.string().optional().describe("Short human-readable reason — shown in the consent request."),
+      for: z
+        .string()
+        .optional()
+        .describe("Id of the message this pays for — the payment shows under it in chat."),
     },
   },
-  async ({ to, amount, asset, memo }, extra) =>
-    text(await walletSend(await deps(extra.signal), { to, amount, asset, memo }))
+  async ({ to, amount, asset, memo, for: forEvent }, extra) =>
+    text(await walletSend(await deps(extra.signal), { to, amount, asset, memo, for: forEvent }))
 );
 
 server.registerTool(
@@ -123,7 +186,7 @@ server.registerTool(
     description: "Your recent transfers (from this machine's spend log).",
     inputSchema: { limit: z.number().optional().describe("Max rows (default 20).") },
   },
-  async ({ limit }) => text(walletHistory(await deps(), { limit }))
+  async ({ limit }) => text(await walletHistory(await deps(), { limit }))
 );
 
 await server.connect(new StdioServerTransport());

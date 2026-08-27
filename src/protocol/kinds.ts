@@ -36,6 +36,10 @@ export const KIND_AGENT_AUDIT = 47020;
  */
 export const KIND_TURN_METRIC = 47030;
 
+/** A payment, e-tagged to the message it paid for. Signed by the payer;
+ * verifiable by anyone against the block it names. */
+export const KIND_PAYMENT_RECEIPT = 47040;
+
 /**
  * Observer control — the reverse half of the observer stream (20004):
  * OWNER → agent commands as ephemeral NIP-44-encrypted frames. v1: {cmd:
@@ -223,6 +227,11 @@ export const KIND_WORKFLOW_RUN = 47200;
  * standing context) plus mem/... entries; value:null = tombstone.
  */
 export const KIND_AGENT_ENGRAM = 30174;
+
+/** Where an agent can be paid — addressable, d = "<chain>:<network>",
+ * content = the address. Published by the wallet extension and signed by
+ * the agent's own key. */
+export const KIND_AGENT_PAYMENT_ADDRESS = 30175;
 
 /**
  * Direct messages — NIP-17 (kind 14 rumor inside a kind 1059 NIP-59

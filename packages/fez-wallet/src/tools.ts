@@ -2,11 +2,15 @@ import type { WalletPair } from "./derive.js";
 import { pairFromStored } from "./derive.js";
 import { readEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { type WalletConfig, thresholdFor, loadConfig } from "./config.js";
+import { type WalletConfig, thresholdFor, loadConfig, rememberPayee, saveConfig } from "./config.js";
 import { appendLog, readLog } from "./log.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { buildConsentRequest, awaitDecision, type ConsentRelay } from "./consent.js";
 import { mirrorSpend, mirrorEndpoint } from "./storage-mirror.js";
+import type { Resolved } from "./resolve.js";
+import { buildReceipt, parseReceipt, KIND_PAYMENT_RECEIPT } from "./receipt.js";
+import { getPublicKey } from "nostr-tools/pure";
+import { hexToBytes } from "nostr-tools/utils";
 
 export const CONSENT_TIMEOUT_MS = 600_000; // 10 minutes
 
@@ -20,6 +24,10 @@ export interface ToolDeps {
   ownerPk?: string;
   relay?: () => Promise<ConsentRelay>;
   agentNostrKey?: string;
+  /** Injected by mcp.ts's relay-backed resolver; defaults to resolveTo
+   * (local-only) when no relay is configured — the CLI and every
+   * pre-existing test never set this. */
+  resolve?: (to: string) => Promise<Resolved>;
   now?: () => string; // test seam; defaults to wall clock
   /** Cancellation from the MCP request (finding #6) — checked before the
    * transfer actually fires so a harness timeout can't leave a spend
@@ -52,6 +60,22 @@ function resolveTo(to: string): string {
   return stored ? pairFromStored(stored).address : to;
 }
 
+/**
+ * One line, whatever the agent handed us. The consent card is a security
+ * surface: `memo` and `to` are agent-controlled and land inside a message
+ * the gui parses line-by-line, so a memo carrying newlines injects extra
+ * lines that render as the card's own NOTES — the slot the wallet uses for
+ * "network could not be checked". A forged "network verified: finney"
+ * sitting among genuine notes is dressing on a real amount and a real
+ * destination, and dressing is what a card is read for.
+ *
+ * Display only. The transfer still uses the verbatim address: an address
+ * with whitespace in it is not a valid SS58 and never reaches the chain.
+ */
+function oneLine(s: string): string {
+  return s.replace(/[\s\u0000-\u001f\u007f]+/g, " ").trim();
+}
+
 export function walletAddress(deps: ToolDeps, args: { chain?: string }): string {
   const a = adapterFor(deps, args.chain);
   return `${deps.persona} receive address (${a.chain}): ${a.address(deps.pair)}`;
@@ -66,12 +90,28 @@ export async function walletBalance(deps: ToolDeps, args: { chain?: string; asse
 
 export async function walletSend(
   deps: ToolDeps,
-  args: { to: string; amount: string; asset: string; memo?: string }
+  args: { to: string; amount: string; asset: string; memo?: string; for?: string }
 ): Promise<string> {
   const a = adapterFor(deps, undefined, args.asset);
   const decimals = a.assets.find((x) => x.symbol === args.asset)!.decimals;
   const amount = parseAmount(args.amount, decimals, args.asset);
-  const to = resolveTo(args.to);
+
+  // resolveTo stays as the local-only fallback for callers that inject no
+  // resolver (the CLI, and every existing test).
+  const resolved: Resolved = deps.resolve
+    ? await deps.resolve(args.to)
+    : { address: resolveTo(args.to), via: "local" };
+  const to = resolved.address;
+
+  // Before anything is signed: the guard that keeps a play session from
+  // touching real TAO. A raw address announces no network and cannot be
+  // checked — the consent card below says so in as many words (spec §8)
+  // rather than letting an unchecked destination look checked.
+  if (resolved.network && resolved.network !== deps.config.network) {
+    throw new Error(
+      `you're on ${deps.config.network}, ${args.to} is on ${resolved.network} — nothing was sent`
+    );
+  }
 
   // The envelope speaks first — no consent round-trip for money that isn't there.
   const balance = await a.balance(a.address(deps.pair), args.asset);
@@ -80,8 +120,14 @@ export async function walletSend(
   }
 
   const threshold = parseAmount(thresholdFor(deps.config, deps.persona), decimals, args.asset);
+  // The threshold answers "how much". A payee you have never paid raises
+  // "to whom", which no amount can answer — so the first payment to a
+  // given pubkey shows a card whatever its size, and only the first.
+  const newPayee =
+    resolved.payeePubkey !== undefined && !deps.config.knownPayees.includes(resolved.payeePubkey);
+  const needsConsent = amount.raw > threshold.raw || newPayee;
   let consent: "auto" | "approved" = "auto";
-  if (amount.raw > threshold.raw) {
+  if (needsConsent) {
     if (!deps.relay || !deps.ownerPk || !deps.agentNostrKey || !deps.config.consentChannel) {
       throw new Error(
         "this amount needs owner consent, but the consent channel is not configured (set consentChannel in wallet.json)"
@@ -96,8 +142,15 @@ export async function walletSend(
       // address: what the owner approves must be the address that gets
       // paid, verbatim. The gui card does the shortening for display.
       text: [
+        ...(newPayee ? ["first payment to this agent"] : []),
+        // Spec §8: an unknowable network is stated, never implied safe.
+        // Note lines sit ABOVE the 💸 line and the card renders them as
+        // its own notes (gui-logic's parseConsentRequest).
+        ...(resolved.network === undefined
+          ? [`network could not be checked — this address publishes none (you are on ${deps.config.network})`]
+          : []),
         `💸 **${deps.persona}** wants to send **${formatAmount(amount)}**`,
-        `to \`${to}\`${args.memo ? ` — ${args.memo}` : ""}`,
+        `to \`${oneLine(to)}\`${args.memo ? ` — ${oneLine(args.memo)}` : ""}`,
         `react ✅ to approve · ❌ to decline`,
       ].join("\n"),
     });
@@ -124,7 +177,7 @@ export async function walletSend(
     return "send declined (request was aborted) — nothing was transferred";
   }
 
-  const { txHash } = await a.transfer(deps.pair, to, amount);
+  const { txHash, blockRef } = await a.transfer(deps.pair, to, amount);
   const entry = {
     ts: deps.now ? deps.now() : new Date().toISOString(),
     persona: deps.persona,
@@ -134,21 +187,88 @@ export async function walletSend(
     txHash,
     memo: args.memo,
     consent,
+    network: deps.config.network,
   };
   appendLog(entry);
   void mirrorSpend(entry);
+  // Remembered only after money actually moved, and only on approval: a
+  // decline, a timeout, or a transfer that threw must never mark this
+  // pubkey known — that would spend the new-payee card on a payment that
+  // never happened and wave the NEXT one straight through.
+  if (consent === "approved" && resolved.payeePubkey) {
+    rememberPayee(deps.config, resolved.payeePubkey);
+    saveConfig(deps.config);
+  }
   if (!endpointMirrored) {
     endpointMirrored = true;
     const config = loadConfig();
-    void mirrorEndpoint(config.endpoints.tao);
+    void mirrorEndpoint(config.endpoints.tao, config.network);
   }
-  return `sent ${formatAmount(amount)} → ${to} (tx ${txHash}${consent === "approved" ? ", owner-approved" : ""})`;
+
+  let receiptNote = "";
+  if (args.for && deps.relay && deps.agentNostrKey) {
+    try {
+      const relay = await deps.relay();
+      await relay.publish(
+        buildReceipt({
+          agentSecretHex: deps.agentNostrKey,
+          forEvent: args.for,
+          payeePubkey: resolved.payeePubkey,
+          channelId: deps.config.consentChannel,
+          amount,
+          chain: a.chain,
+          network: deps.config.network,
+          txHash,
+          blockRef,
+          memo: args.memo,
+        })
+      );
+    } catch {
+      // The money moved; the note about it did not. Two separate facts,
+      // and a failed event must never provoke a retried transfer.
+      receiptNote = " (the receipt failed to publish — the transfer stands)";
+    }
+  }
+
+  return `sent ${formatAmount(amount)} → ${to} (tx ${txHash}${consent === "approved" ? ", owner-approved" : ""})${receiptNote}`;
 }
 
-export function walletHistory(deps: ToolDeps, args: { limit?: number }): string {
-  const rows = readLog(args.limit ?? 20).filter((r) => r.persona === deps.persona);
-  if (rows.length === 0) return "no transfers recorded.";
-  return rows
-    .map((r) => `- ${r.ts} · ${r.amount} ${r.asset} → ${r.to}${r.memo ? ` (${r.memo})` : ""} · ${r.consent} · ${r.txHash}`)
-    .join("\n");
+export async function walletHistory(deps: ToolDeps, args: { limit?: number }): Promise<string> {
+  const limit = args.limit ?? 20;
+  const rows = readLog(deps.config.network, limit)
+    .filter((r) => r.persona === deps.persona)
+    .map((r) => `- ${r.ts} · ${r.amount} ${r.asset} → ${r.to}${r.memo ? ` (${r.memo})` : ""} · ${r.consent} · ${r.txHash}`);
+
+  const inbound: string[] = [];
+  if (deps.relay && deps.agentNostrKey) {
+    try {
+      const relay = await deps.relay();
+      const me = getPublicKey(hexToBytes(deps.agentNostrKey));
+      const events = await relay.query({ kinds: [KIND_PAYMENT_RECEIPT], "#p": [me], limit });
+      for (const ev of events) {
+        const r = parseReceipt(ev);
+        if (!r || r.network !== deps.config.network) continue;
+        // A receipt names its own chain and asset, and the decimals have to
+        // come from THAT pair — rendering everything at TAO's 9 misprints
+        // an 18-decimal asset by nine orders of magnitude. A pair this
+        // wallet has no adapter for is skipped rather than guessed at: a
+        // wrong number in a wallet is a wrong number.
+        const decimals = deps.adapters
+          .find((x) => x.chain === r.chain)
+          ?.assets.find((s) => s.symbol === r.symbol)?.decimals;
+        if (decimals === undefined) continue;
+        // Not verified here: verification costs a chain round-trip per
+        // row. Unverified is stated, never implied — an inbound row is
+        // never counted as settled on the strength of the event alone.
+        inbound.push(
+          `- ${new Date(ev.created_at * 1000).toISOString()} · ${formatAmount({ raw: r.raw, decimals, symbol: r.symbol })} ← from ${r.payer.slice(0, 12)}… · (unverified)`
+        );
+      }
+    } catch {
+      // A relay that won't answer costs you the inbound half, not the call.
+    }
+  }
+
+  const all = [...rows, ...inbound];
+  return all.length ? all.join("\n") : "no transfers recorded.";
 }
