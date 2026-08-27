@@ -29,10 +29,15 @@ test("full happy path: welcome → harness → defaults → community(create) �
   // it waits out BrowserWire's connect timeout before falling back, so
   // this transition is slower than the others.
   await expect(page.getByText("Meet your starter team")).toBeVisible({ timeout: 15_000 });
-  // exact: true — getByText's default match is case-insensitive substring,
-  // and "fez" (lowercase) also appears in the lede copy and the "take me
-  // to fez" button; the team figcaptions are the literal uppercase ids.
-  for (const n of ["FEZ", "DRIFT", "QUILL"]) await expect(page.getByText(n, { exact: true })).toBeVisible();
+  // Assert the figures by accessible name, not by bare text: the step was
+  // redesigned to put the job inside the same <figcaption> as the name
+  // ("names alone made you guess what each one is for"), so a figcaption
+  // now reads "FEZyour guide" and no element has the exact text "FEZ".
+  // Naming the pair is also the stronger assertion — a member whose job
+  // label went missing used to pass.
+  for (const [id, job] of [["FEZ", "your guide"], ["DRIFT", "research"], ["QUILL", "writing"]]) {
+    await expect(page.getByRole("figure", { name: `${id} ${job}`, exact: true })).toBeVisible();
+  }
   await page.getByRole("button", { name: /take me to fez/i }).click();
 
   // The wizard's contract with the backend, asserted through the bridge:
