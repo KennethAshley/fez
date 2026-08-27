@@ -48,7 +48,9 @@ import {
   registerSystemPromptSection,
   composeSystemPrompt,
   MAX_CHAIN_DEPTH,
+  loadSettings,
 } from "@fezchat/protocol";
+import { allowedMediaHosts, fetchMessageMedia, unperceivedNotice, type MediaInTurn } from "./media.js";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -110,50 +112,37 @@ function extractArtifacts(reply: string): { text: string; artifacts: { type: str
   return { text, artifacts };
 }
 
-/** Media hosts the agent will fetch images from. Only the fez media server —
- * a message is UNTRUSTED text (anyone in the channel wrote it), so fetching
- * an arbitrary URL from it would be an SSRF hole (e.g. a link-local metadata
- * endpoint). Default matches the desktop uploader; FEZ_MEDIA_SERVER overrides. */
-function allowedMediaHosts(): Set<string> {
-  const hosts = new Set(["blossom.primal.net"]);
-  const env = process.env.FEZ_MEDIA_SERVER;
-  if (env) {
-    try {
-      hosts.add(new URL(env.includes("://") ? env : `https://${env}`).host);
-    } catch { /* malformed override — ignore */ }
+/**
+ * Everything the person attached to this turn, sorted by what the model can
+ * do with it. The allowlist is built from the SAME answer the uploader used
+ * — settings.json's mediaServer — plus the env spelling, so a workspace that
+ * moved off the default Blossom server doesn't quietly lose vision.
+ */
+async function turnMedia(content: string): Promise<MediaInTurn> {
+  const hosts = allowedMediaHosts({ settingsMediaServer: loadSettings().mediaServer, env: process.env });
+  const media = await fetchMessageMedia(content, { hosts });
+  if (media.images.length > 0) console.log(`🖼  ${media.images.length} image(s) attached to this turn`);
+  for (const host of media.skippedHosts) {
+    console.log(`🚫 not fetching media from ${host} — not the configured media server (settings.json mediaServer or FEZ_MEDIA_SERVER)`);
   }
-  return hosts;
+  if (media.unperceived.length > 0) {
+    console.log(`🔇 ${media.unperceived.length} attachment(s) this model can't perceive: ${media.unperceived.map((u) => u.mime).join(", ")}`);
+  }
+  return media;
 }
 
 /**
- * Pull images a person attached to a message and hand them to the model as
- * vision. fez uploads land as a Blossom share line ("📎 name (size) URL");
- * we take the http(s) URLs, fetch ONLY from an allowed media host, keep only
- * `image/*` responses under the size cap, and cap the count. Base64 + mime =
- * an ACP image block. Best-effort: an unreachable or oversized image is
- * simply skipped, never fatal to the turn.
+ * Fold "here is what you cannot perceive" into a prompt builder, so the
+ * admission travels with the prompt on every rebuild of it (a fresh session
+ * re-runs the builder, and the attachment is still just as unhearable).
  */
-async function fetchMessageImages(content: string): Promise<PromptImage[]> {
-  const MAX_IMAGES = 3;
-  const MAX_BYTES = 8 * 1024 * 1024;
-  const hosts = allowedMediaHosts();
-  const urls = [...content.matchAll(/https?:\/\/[^\s)]+/g)].map((m) => m[0]);
-  const images: PromptImage[] = [];
-  for (const url of urls) {
-    if (images.length >= MAX_IMAGES) break;
-    try {
-      if (!hosts.has(new URL(url).host)) continue;
-      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-      const mime = (res.headers.get("content-type") ?? "").split(";")[0].trim();
-      if (!res.ok || !mime.startsWith("image/")) continue;
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length === 0 || buf.length > MAX_BYTES) continue;
-      images.push({ data: buf.toString("base64"), mimeType: mime });
-    } catch {
-      /* unreachable, timed out, or too big — skip it */
-    }
-  }
-  return images;
+function withMediaNotice(
+  build: (fresh: boolean) => Promise<string>,
+  media: MediaInTurn
+): (fresh: boolean) => Promise<string> {
+  const notice = unperceivedNotice(media.unperceived);
+  if (!notice) return build;
+  return async (fresh: boolean) => `${await build(fresh)}\n\n${notice}`;
 }
 
 async function main() {
@@ -1501,11 +1490,18 @@ async function main() {
 
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = makeOnUpdate();
-        // Any image the person attached to this message goes to the model as
-        // vision (on top of the text, which still names the attachment).
-        const turnImages = await fetchMessageImages(event.content);
-        if (turnImages.length > 0) console.log(`🖼  ${turnImages.length} image(s) attached to this turn`);
-        const rawReply = await promptSession(`ch:${channelId}`, buildPrompt, publishDraft, onUpdate, turnController.signal, turnImages);
+        // Any image the person attached goes to the model as vision; audio
+        // and video come back as a stated absence, because the app plays
+        // them and the person will assume the agent took them in too.
+        const media = await turnMedia(event.content);
+        const rawReply = await promptSession(
+          `ch:${channelId}`,
+          withMediaNotice(buildPrompt, media),
+          publishDraft,
+          onUpdate,
+          turnController.signal,
+          media.images
+        );
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
@@ -1746,8 +1742,15 @@ async function main() {
       console.log(`✉️  DM from ${dm.senderPk.slice(0, 8)}… — invoking ${persona.harness}`);
       publishObserver({ type: "turn", status: "started" });
       const onUpdate = makeOnUpdate();
-      const dmImages = await fetchMessageImages(dm.text);
-      const reply = await promptSession(`dm:${convoKey}`, buildPrompt, undefined, onUpdate, turnController.signal, dmImages);
+      const dmMedia = await turnMedia(dm.text);
+      const reply = await promptSession(
+        `dm:${convoKey}`,
+        withMediaNotice(buildPrompt, dmMedia),
+        undefined,
+        onUpdate,
+        turnController.signal,
+        dmMedia.images
+      );
       if (!reply.trim()) throw new Error("harness returned an empty reply");
 
       await sendDmReply(replyTargets, reply, dm.depth + 1);

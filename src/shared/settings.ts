@@ -31,6 +31,14 @@ export interface FezSettings {
   /** Set once the first-run wizard has completed. */
   onboarded?: boolean;
   /**
+   * Blossom server for uploads — where this workspace's blobs live.
+   * fez-media has read it from here since it shipped; declaring it makes
+   * the file's real shape typed, and lets an agent build its media
+   * allowlist from the same answer the uploader used. A host missing from
+   * that allowlist doesn't error, it silently stops reaching the model.
+   */
+  mediaServer?: string;
+  /**
    * Extensions allowed to run scheduled tasks inside the sentinel —
    * written by install/link when a package declares fez.parts.background.
    * An allowlist rather than "load everything": a TUI extension loaded
