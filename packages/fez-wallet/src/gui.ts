@@ -17,6 +17,7 @@ import {
   receiptLine,
   isRenderableReceipt,
   panelEndpoint,
+  resolveNetwork,
 } from "./gui-logic.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
 import type { SignedNostrEvent } from "./consent.js";
@@ -446,7 +447,14 @@ export default function activate(api: GuiExtensionApi): void {
     // prefs IS the source of truth for both of these — the wallet reads it
     // on every call — so the panel derives what it shows from the selection
     // rather than waiting for some other process to mirror a consequence.
-    const [network, setNetwork] = useState<string>("finney");
+    // Precedence must match loadConfig exactly: prefs, then what the wallet
+    // last resolved (mirrored — already includes the legacy-pin inference
+    // loadConfig does), then the conservative default. Reading only prefs
+    // made the panel say finney on a wallet whose every payment went out on
+    // test, which is the divergence this whole feature exists to prevent.
+    const [prefsNetwork, setPrefsNetwork] = useState<string | undefined>(undefined);
+    const [mirroredNetwork, setMirroredNetwork] = useState<Network | undefined>(undefined);
+    const network = resolveNetwork(prefsNetwork, mirroredNetwork);
     // `threshold` is what's saved; `draft` is what's typed. Free text is
     // composed and saved deliberately (the repo's own settings pane batches
     // relay/media behind one save); a select is a decision and applies at once.
@@ -465,7 +473,7 @@ export default function activate(api: GuiExtensionApi): void {
     useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
 
     useEffect(() => {
-      void api.prefs.get<string>("network").then((n) => setNetwork(n ?? "finney"));
+      void api.prefs.get<string>("network").then((n) => setPrefsNetwork(n ?? undefined));
       void api.prefs.get<Record<string, string>>("thresholds").then((t) => {
         setThreshold(t?.default ?? "0.01");
         setDraft(t?.default ?? "0.01");
@@ -479,20 +487,34 @@ export default function activate(api: GuiExtensionApi): void {
       setFlash(msg);
     }, []);
 
-    const onNetwork = useCallback(async (next: string) => {
-      const previous = network;
-      setNetwork(next);
-      try {
-        await api.prefs.set("network", next);
-        say(`✓ now on ${networkLabel(next)}`);
-      } catch (err) {
-        // Put the selector back. A panel showing a network the wallet is not
-        // on is the same divergence the network guard exists to prevent —
-        // and here it would be self-inflicted, by a write that failed.
-        setNetwork(previous);
-        complain(`✗ not changed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }, [network, say, complain]);
+    // Writes are serialised and the UI settles on what actually persisted.
+    // Two overlapping changes used to be able to leave the selector showing
+    // one network while prefs held the other — and the direction that bites
+    // is the panel saying "play money" over a wallet on mainnet.
+    const writes = useRef<Promise<unknown>>(Promise.resolve());
+    const latest = useRef(0);
+
+    const onNetwork = useCallback((next: string) => {
+      const seq = ++latest.current;
+      setPrefsNetwork(next); // optimistic; reconciled below
+      writes.current = writes.current
+        .catch(() => {})
+        .then(async () => {
+          let failure: string | undefined;
+          try {
+            await api.prefs.set("network", next);
+          } catch (err) {
+            failure = err instanceof Error ? err.message : String(err);
+          }
+          // Only the newest change owns the UI, and it shows the persisted
+          // value rather than what it hoped to write.
+          if (seq !== latest.current) return;
+          const actual = await api.prefs.get<string>("network").catch(() => undefined);
+          setPrefsNetwork(actual ?? undefined);
+          if (failure) complain(`✗ not changed: ${failure}`);
+          else say(`✓ now on ${networkLabel(actual ?? next)}`);
+        });
+    }, [say, complain]);
 
     // Read-modify-write, never write: `thresholds` holds per-persona
     // entries this panel neither shows nor owns (see mergeThresholds).
@@ -515,6 +537,7 @@ export default function activate(api: GuiExtensionApi): void {
         setAddresses(((await api.storage.get("addresses")) as AddressBook) ?? {});
         setEndpoint(await api.storage.get("endpoint"));
         setLogs(((await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>>) ?? {});
+        setMirroredNetwork((await api.storage.get("network")) as Network | undefined);
       })();
     }, []);
 
@@ -532,9 +555,20 @@ export default function activate(api: GuiExtensionApi): void {
       // Blank first: leaving the previous chain's numbers on screen under a
       // freshly-changed network label is the same wrong answer, worse dressed.
       setBalances({});
+      // Held outside the async body so cleanup can disconnect a connection
+      // that resolves AFTER we stopped caring. ApiPromise.create does not
+      // reject on an unreachable endpoint — it retries forever — so a few
+      // network flips offline would otherwise pile up live WsProviders.
+      type Chain = {
+        disconnect(): Promise<unknown>;
+        query: { system: { account(addr: string): Promise<unknown> } };
+      };
+      let opened: Promise<Chain> | undefined;
       void (async () => {
         const { ApiPromise, WsProvider } = await import("@polkadot/api");
-        const chain = await ApiPromise.create({ provider: new WsProvider(chainEndpoint), noInitWarn: true });
+        opened = ApiPromise.create({ provider: new WsProvider(chainEndpoint), noInitWarn: true }) as unknown as Promise<Chain>;
+        const chain = await opened;
+        if (dead) { void chain.disconnect(); return; }
         const rows: [string, string][] = [
           ...(addresses.treasury ? ([["treasury", addresses.treasury]] as [string, string][]) : []),
           ...Object.entries(addresses.personas ?? {}),
@@ -553,6 +587,7 @@ export default function activate(api: GuiExtensionApi): void {
       })().catch(() => {});
       return () => {
         dead = true;
+        void opened?.then((c) => c.disconnect()).catch(() => {});
       };
     }, [chainEndpoint, JSON.stringify(addresses)]);
 
@@ -632,7 +667,13 @@ export default function activate(api: GuiExtensionApi): void {
           : null,
 
       h("div", { className: "manage-section" }, "balances"),
-      balanceRows.length === 0
+      !chainEndpoint
+        ? h(
+            "p",
+            { className: "settings-hint" },
+            `no endpoint for network "${network}" — prefs names a network this build doesn't know`
+          )
+        : balanceRows.length === 0
         ? h(
             "p",
             { className: "settings-hint" },

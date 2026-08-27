@@ -238,3 +238,21 @@ export function panelEndpoint(network: Network, mirrored: string | undefined): s
   // visibly load-bearing rather than looking like dead code.
   return endpointForUnchecked(network);
 }
+
+/**
+ * Which network the panel is showing. This MUST mirror loadConfig's
+ * precedence (config.ts): prefs, then what the wallet last resolved, then
+ * the conservative default.
+ *
+ * The middle leg is the one that is easy to drop and expensive to lose. A
+ * wallet written before prefs existed records its network only as a pinned
+ * endpoint; loadConfig infers from that pin, and the mirrored value IS that
+ * resolved answer. A panel reading prefs alone therefore labels such a
+ * wallet "finney (mainnet)" while every payment it makes goes out on test.
+ */
+export function resolveNetwork(
+  prefs: string | undefined,
+  mirrored: Network | undefined
+): string {
+  return prefs ?? mirrored ?? "finney";
+}

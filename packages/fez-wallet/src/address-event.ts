@@ -3,6 +3,7 @@ import { hexToBytes } from "nostr-tools/utils";
 import type { Filter } from "nostr-tools";
 import type { SignedNostrEvent } from "./consent.js";
 import type { Network } from "./storage-mirror.js";
+import { NETWORKS } from "./networks.js";
 
 /**
  * Where an agent can be paid. Signed by the AGENT's own nostr key —
@@ -14,7 +15,7 @@ import type { Network } from "./storage-mirror.js";
  */
 export const KIND_AGENT_PAYMENT_ADDRESS = 30175;
 
-const NETWORKS = new Set<Network>(["test", "finney"]);
+const KNOWN = new Set<Network>(NETWORKS);
 
 export function buildAddressEvent(opts: {
   agentSecretHex: string;
@@ -47,7 +48,7 @@ export function parseAddressEvent(
   const address = ev.content.trim();
   // An unknown network is refused rather than defaulted: defaulting here
   // would be the one place a mainnet address could pass as a testnet one.
-  if (!chain || !network || !NETWORKS.has(network) || !address) return undefined;
+  if (!chain || !network || !KNOWN.has(network) || !address) return undefined;
   return { chain, network, address };
 }
 

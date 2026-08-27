@@ -2,6 +2,7 @@ import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored }
 import { readEntry, writeEntry, readRootEntry, writeRootEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, type Network } from "./config.js";
+import { NETWORKS } from "./networks.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs } from "./storage-mirror.js";
 import { migrateLog } from "./log.js";
@@ -63,8 +64,6 @@ export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
   io.print(`${persona}: ${pair.address}`);
   await mirrorAddresses({ persona: { name: persona, address: pair.address } });
 }
-
-const NETWORKS: Network[] = ["test", "finney"];
 
 /** The only path that changes which chain the wallet talks to. An unknown
  * network is rejected before ANY side effect — including the one-time

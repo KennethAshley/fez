@@ -19,7 +19,7 @@ export interface WalletConfig {
 const DEFAULTS: WalletConfig = {
   thresholds: { default: "0.01" },
   personas: {},
-  endpoints: { tao: "wss://entrypoint-finney.opentensor.ai:443" },
+  endpoints: { tao: endpointFor("finney") },
   network: "finney",
   knownPayees: [],
 };

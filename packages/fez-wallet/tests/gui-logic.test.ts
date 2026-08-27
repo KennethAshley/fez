@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor, panelEndpoint} from "../src/gui-logic.js";
+import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor, panelEndpoint, resolveNetwork} from "../src/gui-logic.js";
 import {
   networkLabel,
   validThreshold,
@@ -324,5 +324,27 @@ describe("panelEndpoint — a network it does not know", () => {
 
   it("still honours a genuine override on an unknown network", () => {
     expect(panelEndpoint("beta" as never, "ws://127.0.0.1:9944")).toBe("ws://127.0.0.1:9944");
+  });
+});
+
+describe("resolveNetwork — must match loadConfig's precedence exactly", () => {
+  it("prefers prefs", () => {
+    expect(resolveNetwork("test", "finney")).toBe("test");
+    expect(resolveNetwork("finney", "test")).toBe("finney");
+  });
+
+  it("falls back to what the wallet last resolved, not straight to the default", () => {
+    // The mirrored value is loadConfig's own answer, inference included. A
+    // panel that skipped this said "finney (mainnet)" over a legacy wallet
+    // whose every payment went out on test.
+    expect(resolveNetwork(undefined, "test")).toBe("test");
+  });
+
+  it("defaults to finney only when nothing is known", () => {
+    expect(resolveNetwork(undefined, undefined)).toBe("finney");
+  });
+
+  it("never lets the default override a known answer", () => {
+    expect(resolveNetwork(undefined, "finney")).toBe("finney");
   });
 });
