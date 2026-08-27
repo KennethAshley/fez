@@ -1317,13 +1317,18 @@ function Shell({
               <span>channels in {client.state.workspace.name}</span>
               <button className="pane-close" onClick={() => setBrowse(false)}>✕</button>
             </div>
-            <input
-              className="search-input"
-              autoFocus
-              placeholder="filter channels…"
-              value={browse.filter}
-              onChange={(e) => setBrowse({ filter: e.target.value })}
-            />
+            {/* The same field the ⌘K overlay uses — bare, this input had
+                no ground and no edge, so it read as a heading. */}
+            <div className="search-head">
+              <span className="search-glyph">⌕</span>
+              <input
+                className="search-input"
+                autoFocus
+                placeholder="filter channels…"
+                value={browse.filter}
+                onChange={(e) => setBrowse({ filter: e.target.value })}
+              />
+            </div>
             <div className="search-results">
               {(() => {
                 const wanted = browse.filter.trim().toLowerCase();
@@ -1339,31 +1344,29 @@ function Shell({
                   const unread = unreads.get(channel.id) ?? 0;
                   const here = scope?.channelId === channel.id;
                   return (
-                    <div key={channel.id} className="browse-row">
+                    // The whole row opens the channel — hunting a small
+                    // "open" button in a browse list is fiddly, and the
+                    // row was already the thing you were pointing at.
+                    <button
+                      key={channel.id}
+                      className={here ? "browse-row here" : "browse-row"}
+                      onClick={() => {
+                        setBrowse(false);
+                        if (!here) void openChannel(channel.id);
+                      }}
+                    >
                       <span className="browse-name">
                         <span className="hash">#</span>{channel.name}
                         {muted.has(channel.id) && <span className="mute-mark" title="muted">✕</span>}
                         {unread > 0 && <span className="badge">{unread}</span>}
-                        <span className="community-id">
-                          {last
-                            ? ` · ${client.displayName(last.authorPk)}: ${last.content.replace(/\s+/g, " ").slice(0, 46)}`
-                            : " · nothing said yet"}
-                        </span>
                       </span>
-                      {here ? (
-                        <span className="role-tag installed-tag">you're here</span>
-                      ) : (
-                        <button
-                          className="agent-action"
-                          onClick={() => {
-                            setBrowse(false);
-                            void openChannel(channel.id);
-                          }}
-                        >
-                          open
-                        </button>
-                      )}
-                    </div>
+                      <span className="browse-last">
+                        {last
+                          ? `${client.displayName(last.authorPk)}: ${last.content.replace(/\s+/g, " ").slice(0, 60)}`
+                          : "nothing said yet"}
+                      </span>
+                      {here && <span className="browse-here">you're here</span>}
+                    </button>
                   );
                 });
               })()}

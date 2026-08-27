@@ -71,10 +71,13 @@ body {
    the top edge of the web content, which is flush against it. An inset
    shadow rather than a border so it costs no layout height and nothing
    below shifts by a pixel. */
+/* A real border, not an inset shadow: the rail and the topbar paint
+   opaque grounds, and an inset shadow renders BEHIND its children — so
+   the line the shell has always declared was covered up its whole life.
+   This one sits above everything, under the titlebar, full width. */
 .shell {
   display: flex; height: 100vh;
-  box-shadow: inset 0 1px 0 var(--bg2);
-  box-shadow: inset 0 1px 0 var(--hairline);
+  border-top: 1px solid var(--hairline);
 }
 
 /* ── left rail ─────────────────────────────────────────────────
@@ -471,7 +474,7 @@ select.ob-input:hover { border-color: var(--accent); }
 .conn-bar.warn { background: var(--yellow); color: var(--bg0); }
 
 /* ── ghost-town affordances ─────────────────────────────────── */
-.community-id { color: var(--bg2); font-size: 10px; }
+.community-id { color: var(--fg-dim); font-size: 10px; }
 .ghost { color: var(--fg-dim); margin-left: 4px; font-size: 11px; }
 .empty-room {
   background: var(--bg1); border: 1px dashed var(--bg2); border-radius: 8px;
@@ -2011,11 +2014,29 @@ button.author:hover { text-decoration: underline; }
 .fleet-history:hover { text-decoration: underline; }
 
 .browse-box .pane-head { border-bottom: 1px solid var(--bg2); }
-.browse-row .browse-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.browse-row .community-id { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.browse-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; border-bottom: 1px solid color-mix(in srgb, var(--bg2) 40%, transparent); }
+.browse-row {
+  display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  background: none; border: 0; color: var(--fg); font: inherit; cursor: pointer;
+  padding: 9px 16px; position: relative;
+}
+.browse-row:hover { background: color-mix(in srgb, var(--bg2) 55%, transparent); }
+.browse-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.browse-row .browse-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex: none; }
 .browse-name { font-weight: 600; }
-.browse-hint { padding: 10px 16px; }
+/* The last thing said, in the app's quiet mono — it used to be painted
+   with --bg2 (a SURFACE token) and was effectively invisible. */
+.browse-last {
+  flex: 1; min-width: 0; color: var(--fg-dim); font-family: var(--font-mono); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Where you already are wears the ember notch, like every other
+   "this one" in the app — not a chip that looks pressable. */
+.browse-row.here { cursor: default; }
+.browse-row.here::before {
+  content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; background: var(--brand);
+}
+.browse-here { flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim); }
+.browse-hint { padding: 12px 16px; border-top: 1px solid var(--hairline); }
 
 /* per-community manage shortcut */
 .community-add {
