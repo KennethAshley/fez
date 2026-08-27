@@ -189,26 +189,6 @@ export function isRenderableReceipt(r: ParsedReceipt): boolean {
 /** Three states, never two: a block we could not fetch is not a check
  * that failed, and collapsing them would call an honest receipt a lie.
  * `undefined` is a fourth thing entirely — "not ours to render". */
-export function receiptLine(
-  r: ParsedReceipt,
-  state: "verified" | "unverifiable" | "false"
-): string | undefined {
-  if (!isRenderableReceipt(r)) return undefined;
-  const amount = formatAmount({ raw: r.raw, decimals: 9, symbol: r.symbol });
-  const who = `${r.payer.slice(0, 8)}…`;
-  // `chain` and `network` are separate tags — test and finney are BOTH
-  // chain "tao", so the filter above passes play money through to the
-  // same line as real money. Qualify the amount, never the mainnet one:
-  // the badge means "not real", so its absence has to mean "real".
-  const money = r.network === "finney" ? "" : ` · ${networkLabel(r.network)}`;
-  const suffix =
-    state === "verified"
-      ? ""
-      : state === "unverifiable"
-        ? " · couldn't check this block"
-        : " · ⚠️ the chain does not match this receipt";
-  return `⚡ ${amount}${money} · ${who}${suffix}`;
-}
 
 export function requestStatus(
   reactions: { content: string; authorPk: string }[],
@@ -278,4 +258,39 @@ export function ledgerTime(iso: string): string {
   const day = at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const time = at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
   return `${day} ${time}`;
+}
+
+/**
+ * The amount, on its own, for a card that shows it as a headline rather
+ * than inside a sentence. A chain whose decimals this panel does not
+ * know renders NOTHING: printing TAO's 9 against an 18-decimal asset is
+ * wrong by nine orders of magnitude, and a missing row is honest where a
+ * wrong number is not.
+ */
+export function receiptAmount(r: ParsedReceipt): string | undefined {
+  if (!isRenderableReceipt(r)) return undefined;
+  return formatAmount({ raw: r.raw, decimals: 9, symbol: r.symbol });
+}
+
+/**
+ * The play-money badge. `chain` and `network` are separate tags on a
+ * 47040 — test and finney are BOTH chain "tao" — so nothing about the
+ * amount distinguishes them, and a testnet payment used to render
+ * identically to a real one. Mainnet is deliberately unlabelled: the
+ * badge means "not real", so its ABSENCE is what has to carry "real",
+ * and stamping "finney (mainnet)" on every honest payment would be the
+ * same bug wearing the opposite coat.
+ */
+export function playMoneyBadge(network: string): string | undefined {
+  return network === "finney" ? undefined : networkLabel(network);
+}
+
+/**
+ * Three states, never two: a block we could not fetch is not a check
+ * that failed, and collapsing them would call an honest receipt a lie.
+ */
+export function receiptStateText(state: "verified" | "unverifiable" | "false"): string {
+  if (state === "verified") return "verified on chain";
+  if (state === "unverifiable") return "couldn't check this block";
+  return "\u26a0 the chain does not match this receipt";
 }

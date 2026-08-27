@@ -4,8 +4,10 @@ import {
   networkLabel,
   validThreshold,
   mergeThresholds,
-  receiptLine,
   isRenderableReceipt,
+  receiptAmount,
+  playMoneyBadge,
+  receiptStateText,
 } from "../src/gui-logic.js";
 import type { SpendEntry } from "../src/log.js";
 
@@ -255,57 +257,21 @@ describe("wallet panel logic", () => {
   });
 });
 
-describe("receipt rendering", () => {
+describe("receipt rendering — the amount guard", () => {
   const base = { raw: 50_000_000n, symbol: "TAO", payer: "abc123def456", network: "test" as const, chain: "tao" };
 
-  it("shows the amount and who paid", () => {
-    expect(receiptLine(base as never, "verified")).toMatch(/0\.05 TAO/);
-  });
-
-  it("distinguishes unverifiable from false — they are not the same thing", () => {
-    const unver = receiptLine(base as never, "unverifiable");
-    const wrong = receiptLine(base as never, "false");
-    expect(unver).toMatch(/couldn't check/i);
-    expect(wrong).toMatch(/does not match/i);
-    expect(unver).not.toEqual(wrong);
-  });
-
-  it("does not decorate a verified receipt with a caveat", () => {
-    expect(receiptLine(base as never, "verified")).not.toMatch(/couldn't check|does not match/i);
-  });
-
-  // The line prints TAO's 9 decimals. A receipt tagged with another chain
-  // would be off by nine orders of magnitude, so it is not rendered at all
+  // The card prints TAO's 9 decimals. A receipt tagged with another chain
+  // would be off by nine orders of magnitude, so it renders nothing at all
   // — the panel has no adapter list to ask for the right decimals.
   it("renders nothing for a chain whose decimals it does not know", () => {
     const evm = { ...base, chain: "evm", symbol: "ETH", raw: 1_000_000_000_000_000_000n };
-    expect(receiptLine(evm as never, "unverifiable")).toBeUndefined();
+    expect(receiptAmount(evm as never)).toBeUndefined();
     expect(isRenderableReceipt(evm as never)).toBe(false);
     expect(isRenderableReceipt(base as never)).toBe(true);
   });
 
   it("renders nothing for an unexpected asset on the tao chain", () => {
-    expect(receiptLine({ ...base, symbol: "USDC" } as never, "verified")).toBeUndefined();
-  });
-
-  // `chain` and `network` are separate tags on a 47040: test and finney
-  // are both chain "tao". The panel already refuses to print an amount it
-  // cannot get the decimals for — printing play money as though it were
-  // real is the same class of lie about the same number.
-  it("says so when the payment was play money", () => {
-    const play = receiptLine({ ...base, network: "test" } as never, "verified");
-    expect(play).toMatch(/test/i);
-  });
-
-  it("does not label mainnet — its absence is what means real money", () => {
-    const real = receiptLine({ ...base, network: "finney" } as never, "verified");
-    expect(real).not.toMatch(/test|play money/i);
-  });
-
-  it("never renders a testnet payment identically to a real one", () => {
-    const real = receiptLine({ ...base, network: "finney" } as never, "verified");
-    const play = receiptLine({ ...base, network: "test" } as never, "verified");
-    expect(play).not.toEqual(real);
+    expect(receiptAmount({ ...base, symbol: "USDC" } as never)).toBeUndefined();
   });
 });
 
@@ -397,5 +363,63 @@ describe("ledgerTime", () => {
   it("shows the original when it cannot parse one", () => {
     expect(ledgerTime("not a date")).toBe("not a date");
     expect(ledgerTime("")).toBe("");
+  });
+});
+
+/**
+ * The card renders the amount as its headline rather than inside a
+ * sentence, so it needs the number on its own — under the same rule
+ * receiptLine obeys: TAO's 9 decimals, and nothing at all for a chain
+ * whose decimals this panel does not know.
+ */
+describe("receiptAmount", () => {
+  const base = { raw: 50_000_000n, symbol: "TAO", payer: "abc123def456", network: "finney" as const, chain: "tao" };
+
+  it("formats with TAO's decimals", () => {
+    expect(receiptAmount(base as never)).toBe("0.05 TAO");
+  });
+
+  it("refuses a chain whose decimals it does not know", () => {
+    const evm = { ...base, chain: "evm", symbol: "ETH", raw: 1_000_000_000_000_000_000n };
+    expect(receiptAmount(evm as never)).toBeUndefined();
+  });
+
+  it("agrees with what isRenderableReceipt admits — one rule, not two", () => {
+    const amount = receiptAmount(base as never);
+    expect(amount).toBeDefined();
+    expect(isRenderableReceipt(base as never)).toBe(true);
+  });
+});
+
+/**
+ * The card renders these two, so they are where the rules have to live —
+ * receiptLine used to hold them and nothing renders it any more. A test
+ * pinned to a function no surface calls guards nothing.
+ */
+describe("playMoneyBadge", () => {
+  it("names the network when the payment was play money", () => {
+    expect(playMoneyBadge("test")).toMatch(/play money/i);
+  });
+
+  it("is absent for mainnet — its absence is what carries 'real'", () => {
+    expect(playMoneyBadge("finney")).toBeUndefined();
+  });
+
+  it("never gives mainnet and testnet the same badge", () => {
+    expect(playMoneyBadge("test")).not.toEqual(playMoneyBadge("finney"));
+  });
+});
+
+describe("receiptStateText", () => {
+  it("keeps unverifiable and false distinct — they are not the same thing", () => {
+    const unver = receiptStateText("unverifiable");
+    const wrong = receiptStateText("false");
+    expect(unver).toMatch(/couldn't check/i);
+    expect(wrong).toMatch(/does not match/i);
+    expect(unver).not.toEqual(wrong);
+  });
+
+  it("does not decorate a verified receipt with a caveat", () => {
+    expect(receiptStateText("verified")).not.toMatch(/couldn't check|does not match/i);
   });
 });

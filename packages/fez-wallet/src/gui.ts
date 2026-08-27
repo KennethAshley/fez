@@ -14,7 +14,9 @@ import {
   networkLabel,
   validThreshold,
   mergeThresholds,
-  receiptLine,
+  receiptAmount,
+  playMoneyBadge,
+  receiptStateText,
   isRenderableReceipt,
   panelEndpoint,
   resolveNetwork,
@@ -159,20 +161,28 @@ export default function activate(api: GuiExtensionApi): void {
     whiteSpace: "nowrap" as const,
   };
 
-  function CopyButton({ text }: { text: string }): El {
+  function CopyButton({
+    text,
+    label = "copy",
+    title = "copy full address",
+  }: {
+    text: string;
+    label?: string;
+    title?: string;
+  }): El {
     const [copied, setCopied] = useState(false);
     return h(
       "button",
       {
         className: "skill-link",
-        title: "copy full address",
+        title,
         onClick: () => {
           void copyText(text);
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         },
       },
-      copied ? "copied ✓" : "copy"
+      copied ? "copied ✓" : label
     );
   }
 
@@ -408,14 +418,103 @@ export default function activate(api: GuiExtensionApi): void {
     if (receipts.length === 0) return null as never;
     return h(
       "div",
-      { style: { ...dim, marginTop: 4 } },
+      null,
+      ...receipts.map((r, i) => h(ReceiptCard, { key: `${r.txHash}-${i}`, r }))
+    );
+  }
+
+  /**
+   * A payment is the one message in a channel whose facts are signed and
+   * checkable, and it used to render as a dim one-liner underneath the
+   * agent's own prose about it — the trustworthy half small, the
+   * unverifiable half large. This is the receipt as the object: the
+   * amount as the headline, who it went to, and the transaction, with
+   * the agent's sentence left above as its caption.
+   */
+  function ReceiptCard({ r }: { r: ParsedReceipt }): El {
+    const amount = receiptAmount(r);
+    if (!amount) return null as never;
+    // Both rules live in gui-logic where they are tested — the card must
+    // not re-decide either of them inline.
+    const badge = playMoneyBadge(r.network);
+    const short = `${r.txHash.slice(0, 10)}…${r.txHash.slice(-6)}`;
+    return h(
+      "div",
+      // No border: the message bubble is already the container, and the
+      // app's rule is label-plus-hairline rather than a bordered card.
+      { style: { marginTop: 10, maxWidth: 440 } },
+      Label("payment"),
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 9 } },
+        h(
+          "span",
+          {
+            style: {
+              fontFamily: "var(--font-mono, monospace)",
+              fontSize: 19,
+              fontWeight: 600,
+              color: "var(--fg)",
+              fontVariantNumeric: "tabular-nums",
+            },
+          },
+          amount
+        ),
+        // Play money must never pass for real money. The badge is loud
+        // precisely because its ABSENCE is what carries "this was real".
+        badge
+          ? h(
+              "span",
+              {
+                style: {
+                  fontFamily: "var(--font-mono, monospace)",
+                  fontSize: 10.5,
+                  textTransform: "uppercase" as const,
+                  letterSpacing: "0.08em",
+                  color: "var(--yellow, #fabd2f)",
+                  border: "1px solid var(--yellow, #fabd2f)",
+                  borderRadius: 5,
+                  padding: "1px 6px",
+                },
+              },
+              badge
+            )
+          : null
+      ),
+      // Names, not pubkeys — displayName is what the rest of the app
+      // calls these same people. The payee is optional on a 47040.
+      h(
+        "div",
+        { style: { ...mono, color: "var(--fg-dim, #999)", marginTop: 6 } },
+        r.payee ? `to ${client.displayName(r.payee)} · from ${client.displayName(r.payer)}` : `from ${client.displayName(r.payer)}`
+      ),
+      r.memo ? h("div", { style: { fontSize: 12, color: "var(--fg-dim, #999)", marginTop: 4 } }, r.memo) : null,
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" } },
+        h("span", { style: { ...mono, fontSize: 11.5, color: "var(--fg-dim, #999)" }, title: r.txHash }, `tx ${short}`),
+        h(CopyButton, { text: r.txHash, label: "copy tx", title: "copy the full transaction hash" }),
+        h(
+          "button",
+          {
+            className: "skill-link",
+            style: { whiteSpace: "nowrap" as const },
+            onClick: () => void api.openUrl(`https://taostats.io/transfer/${r.txHash}`),
+          },
+          "↗ taostats"
+        )
+      ),
       // A block we haven't fetched or couldn't reach is UNVERIFIABLE,
-      // never rendered as verified and never as false — this task wires
+      // never rendered as verified and never as false — this part wires
       // the render only; actual chain verification (comparing the block
       // named on the receipt against the chain) is a further round-trip
       // this gui part does not make. Never claiming "verified" without
       // having checked is exactly the ordering rule this exists to obey.
-      ...receipts.map((r, i) => h("div", { key: `${r.txHash}-${i}` }, receiptLine(r, "unverifiable") ?? ""))
+      h(
+        "div",
+        { style: { ...mono, fontSize: 11.5, color: "var(--fg-dim, #999)", marginTop: 7 } },
+        `· ${receiptStateText("unverifiable")}`
+      )
     );
   }
 
