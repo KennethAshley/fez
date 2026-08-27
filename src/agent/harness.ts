@@ -131,6 +131,25 @@ const PROGRESS_THROTTLE_MS = 150;
  * chunks still concatenate.
  */
 const HARNESS_NOISE = /Retrying \(attempt \d+\/\d+, waiting \d+s\)\.\.\.|Retry finished, resuming\.?/g;
+/**
+ * Add one utterance to the turn's text.
+ *
+ * Chunks within a single utterance are a stream split at arbitrary
+ * points — often mid-word — so they must concatenate exactly. But an
+ * agent that speaks, calls a tool, and speaks again produces two
+ * utterances, and `text += chunk` ran them together with nothing
+ * between: "…to quill now.Sent — 0.005 TAO to quill". A tool call
+ * between two utterances is a paragraph boundary; `afterTool` says one
+ * happened, and only then is a break inserted.
+ */
+export function joinChunk(textSoFar: string, chunk: string, afterTool: boolean): string {
+  // Nothing said yet, nothing being said, or no tool in between: the
+  // old behavior, byte for byte.
+  if (!afterTool || !textSoFar.trim() || !chunk.trim()) return textSoFar + chunk;
+  // One break, never two — the utterance may already end in its own.
+  return `${textSoFar.replace(/\s+$/, "")}\n\n${chunk.replace(/^\s+/, "")}`;
+}
+
 function scrubNoise(text: string): string {
   return text.replace(HARNESS_NOISE, "").replace(/^[ \t]*\n/, "");
 }
@@ -322,7 +341,9 @@ const DRAIN_BUDGET_MS = 30_000;
  * still pass images, and the ACP content-block shape below is what carries
  * them.
  */
-async function drivePrompt(
+/** Exported for tests — the turn loop's assembled text is the thing
+ *  published to a channel, so it is worth asserting directly. */
+export async function drivePrompt(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ACP session updates are whatever the adapter sent; narrowing happens below.
   session: { prompt(input: unknown): Promise<unknown>; nextUpdate(): Promise<any> },
   command: string,
@@ -371,6 +392,9 @@ async function drivePrompt(
   const hardDeadline = Date.now() + maxMs;
   let text = "";
   let thought = "";
+  // Set by a tool call, cleared by the next thing actually said: the two
+  // utterances either side of a tool are separate paragraphs.
+  let afterTool = false;
   let lastProgressAt = 0;
   let lastThoughtAt = 0;
   let lastTextAt = 0;
@@ -405,7 +429,10 @@ async function drivePrompt(
 
     const { update } = message;
     if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
-      text += update.content.text;
+      text = joinChunk(text, update.content.text, afterTool);
+      // Only a chunk with something in it ends the break — a whitespace
+      // chunk landing first must not swallow it.
+      if (update.content.text.trim()) afterTool = false;
       // Own timestamp — sharing lastProgressAt let frequent tool-call
       // ticks starve text frames.
       const now = Date.now();
@@ -421,6 +448,10 @@ async function drivePrompt(
         onUpdate({ type: "thought", text: scrubNoise(thought) });
       }
     } else if (update.sessionUpdate === "tool_call") {
+      // A NEW call only — tool_call_update is the same action reporting
+      // progress, and treating those as boundaries would break a
+      // paragraph every time a running tool ticked.
+      afterTool = true;
       onUpdate?.({
         type: "tool",
         callId: update.toolCallId,
