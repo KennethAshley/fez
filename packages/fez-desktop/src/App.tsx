@@ -1309,6 +1309,7 @@ function Shell({
       {pane?.kind === "watch" && (
         <WatchPane
           agent={pane.agent}
+          agentPk={[...client.agents().entries()].find(([, name]) => name === pane.agent)?.[0]}
           entries={activityRef.current.get(pane.agent) ?? []}
           working={working.has(pane.agent)}
           onCancel={() => void cancelAgent(pane.agent)}
@@ -2412,12 +2413,14 @@ function DmView({
 
 function WatchPane({
   agent,
+  agentPk,
   entries,
   working,
   onCancel,
   onClose,
 }: {
   agent: string;
+  agentPk?: string;
   entries: ObserverEntry[];
   working: boolean;
   onCancel: () => void;
@@ -2429,17 +2432,32 @@ function WatchPane({
   });
   return (
     <aside className="pane">
-      <header className="pane-head">
-        <span>⚙ watching @{agent}</span>
+      {/* Identity gets a face here too: you are watching a character
+          work, not a process id. The creature carries the working
+          state — it wakes while the turn runs and stills when it ends. */}
+      <header className="pane-head watch-head">
+        <span className={working ? "watch-who working" : "watch-who"}>
+          {agentPk && <Avatar pk={agentPk} size={20} title={agent} />}
+          watching @{agent}
+        </span>
         <div className="pane-actions">
           {working && (
-            <button className="cancel" title="abort the in-flight turn (owner-signed)" onClick={onCancel}>⏹ cancel turn</button>
+            <button className="quiet-danger" title="abort the in-flight turn (owner-signed)" onClick={onCancel}>⏹ cancel turn</button>
           )}
           <button className="pane-close" onClick={onClose}>✕</button>
         </div>
       </header>
       <div className="pane-body">
-        <ActivityFeed entries={entries} emptyNote={`no activity yet — frames stream here while @${agent} works (encrypted to you)`} />
+        <ActivityFeed
+          entries={entries}
+          agent={agent}
+          agentPk={agentPk}
+          emptyNote={
+            working
+              ? `@${agent} is working — the first frames land here in a moment`
+              : `no activity yet — frames stream here while @${agent} works (encrypted to you)`
+          }
+        />
         <div ref={bottomRef} />
       </div>
     </aside>

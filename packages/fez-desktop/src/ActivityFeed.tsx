@@ -1,5 +1,8 @@
-import { Fragment, useMemo } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { ObserverEntry } from "@fezchat/client";
+import { SPRITES } from "./sprites";
+import { generateSprite } from "./sprite-gen";
+import { AnimatedSprite } from "./pixel-sprite";
 
 /**
  * The agent transcript — Buzz's agentSession surface (tool classifier,
@@ -22,7 +25,7 @@ type ToolItem = {
   diff?: { path: string; oldText?: string; newText: string };
 };
 type Item = ToolItem | { t: "thought"; text: string } | { t: "text"; text: string };
-type TurnGroup = { outcome?: string; items: Item[] };
+type TurnGroup = { outcome?: string; items: Item[]; firstTs?: number; lastTs?: number };
 
 const KIND_GLYPH: Record<string, string> = {
   read: "≡",
@@ -52,14 +55,17 @@ function fold(entries: ObserverEntry[]): TurnGroup[] {
   };
   for (const entry of entries) {
     if (entry.type === "turn") {
-      if (entry.status === "started") open();
+      if (entry.status === "started") open().firstTs = entry.ts;
       else if (current) {
         current.outcome = entry.status;
+        current.lastTs = entry.ts;
         current = undefined;
       }
       continue;
     }
     const group = current ?? open();
+    group.firstTs ??= entry.ts;
+    group.lastTs = entry.ts;
     const last = group.items.at(-1);
     if (entry.type === "tool") {
       // ACP patch semantics: updates carry only changed fields.
@@ -92,21 +98,115 @@ function fold(entries: ObserverEntry[]): TurnGroup[] {
   return groups;
 }
 
-export default function ActivityFeed({ entries, emptyNote }: { entries: ObserverEntry[]; emptyNote: string }) {
+/** mm:ss for anything under an hour; a bare `12s` reads better below a minute. */
+function fmtDur(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m < 60) return `${m}:${String(s).padStart(2, "0")}`;
+  return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * The live turn's clock. Two clocks are involved and only one of them is
+ * ours: the frames are stamped by the AGENT's machine, so an agent-vs-local
+ * subtraction would show whatever the skew is. Differences within the
+ * agent's own stream are sound, though — so the turn's run-so-far comes
+ * from its frames, and the local clock only measures the gap since the
+ * last frame landed here.
+ */
+function LiveElapsed({ baseMs }: { baseMs: number }) {
+  const [ms, setMs] = useState(baseMs);
+  useEffect(() => {
+    const landed = Date.now();
+    setMs(baseMs);
+    const id = window.setInterval(() => setMs(baseMs + (Date.now() - landed)), 1000);
+    return () => window.clearInterval(id);
+  }, [baseMs]);
+  return <span className="turn-elapsed">{fmtDur(ms)}</span>;
+}
+
+const OUTCOME_MARK: Record<string, string> = { done: "✓", failed: "✗", cancelled: "⊘" };
+
+/** What a collapsed turn did: a tally per tool kind, most-used first. */
+function tally(items: Item[]): { glyph: string; kind: string; n: number }[] {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    if (item.t !== "tool") continue;
+    const kind = item.kind ?? "tool";
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([kind, n]) => ({ glyph: KIND_GLYPH[kind] ?? "⚙", kind, n }));
+}
+
+export default function ActivityFeed({
+  entries,
+  emptyNote,
+  agent,
+  agentPk,
+}: {
+  entries: ObserverEntry[];
+  emptyNote: string;
+  /** Name of the watched agent — its creature holds the room while empty. */
+  agent?: string;
+  agentPk?: string;
+}) {
   const groups = useMemo(() => fold(entries), [entries]);
-  if (groups.length === 0) return <div className="pane-empty">{emptyNote}</div>;
+  if (groups.length === 0) {
+    const sprite = (agent && SPRITES[agent.toLowerCase()]) || (agentPk ? generateSprite(agentPk) : undefined);
+    return (
+      <div className="feed-empty">
+        {sprite && (
+          <span className="feed-empty-face">
+            <AnimatedSprite sprite={sprite} scale={4} />
+          </span>
+        )}
+        <div className="feed-empty-line">{emptyNote}</div>
+      </div>
+    );
+  }
   return (
     <>
       {groups.map((group, index) => {
         const live = index === groups.length - 1 && !group.outcome;
+        const kinds = tally(group.items);
         const tools = group.items.filter((item) => item.t === "tool").length;
+        // What it is doing RIGHT NOW: the call still in flight, else the
+        // most recent one — the head should never say only "working".
+        const running = live
+          ? ([...group.items].reverse().find((item) => item.t === "tool" && item.status === "in_progress") ??
+             [...group.items].reverse().find((item) => item.t === "tool")) as ToolItem | undefined
+          : undefined;
+        const doing = running?.title ?? running?.path?.split("/").at(-1);
+        const last = [...group.items].reverse().find((item) => item.t === "tool" && item.path) as ToolItem | undefined;
+        const dur = group.firstTs !== undefined && group.lastTs !== undefined ? group.lastTs - group.firstTs : undefined;
         return (
           <details key={index} className={`turn ${group.outcome ?? "live"}`} open={index === groups.length - 1}>
             <summary className="turn-head">
               <span className={`turn-status ${group.outcome ?? "live"}`}>
-                {live ? "▸ working" : `turn ${group.outcome ?? "…"}`}
+                {live ? "▸ working" : `${OUTCOME_MARK[group.outcome ?? ""] ?? "·"} turn ${group.outcome ?? "…"}`}
               </span>
-              {tools > 0 && <span className="turn-count">{tools} tool{tools === 1 ? "" : "s"}</span>}
+              {live && dur !== undefined && <LiveElapsed baseMs={dur} />}
+              {!live && dur !== undefined && dur > 0 && <span className="turn-elapsed">{fmtDur(dur)}</span>}
+              {live && doing && (
+                <span className="turn-doing">
+                  {running?.kind && <span className="turn-doing-kind">{KIND_GLYPH[running.kind] ?? "⚙"}</span>} {doing}
+                </span>
+              )}
+              {!live && kinds.length > 0 && (
+                <span className="turn-tally" title={kinds.map((k) => `${k.n} ${k.kind}`).join(" · ")}>
+                  {kinds.map((k) => (
+                    <span key={k.kind} className="turn-tally-item">
+                      <span className="turn-tally-glyph">{k.glyph}</span>{k.n}
+                    </span>
+                  ))}
+                </span>
+              )}
+              {!live && last?.path && <span className="turn-last">{last.path.split("/").at(-1)}</span>}
+              {live && tools > 0 && <span className="turn-count">{tools} tool{tools === 1 ? "" : "s"}</span>}
             </summary>
             {group.items.map((item, itemIndex) => (
               <Fragment key={itemIndex}>

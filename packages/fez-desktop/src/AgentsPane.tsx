@@ -634,7 +634,12 @@ function AgentDetail({
       <div className="pane-body">
         {tab === "activity" && (
           <>
-            <ActivityFeed entries={entries} emptyNote={`no activity this session — frames stream here while @${name} works (encrypted to you)`} />
+            <ActivityFeed
+              entries={entries}
+              agent={name}
+              agentPk={pk}
+              emptyNote={`no activity this session — frames stream here while @${name} works (encrypted to you)`}
+            />
             <div ref={bottomRef} />
           </>
         )}

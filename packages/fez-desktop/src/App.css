@@ -812,14 +812,85 @@ select.ob-input:hover { border-color: var(--accent); }
 .turn { margin-bottom: 10px; border-left: 2px solid var(--hairline); padding-left: 10px; }
 .turn.live { border-left-color: var(--phosphor); }
 .turn.failed { border-left-color: var(--red); }
+.turn.cancelled { border-left-color: var(--yellow); }
 .turn-head { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px; padding: 2px 0 4px; }
 .turn-head::-webkit-details-marker { display: none; }
-.turn-status { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--fg-dim); }
+.turn-status {
+  font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--fg-dim); white-space: nowrap; flex: none;
+}
 .turn-status.live { color: var(--phosphor); }
 .turn-status.failed { color: var(--red); }
+.turn-status.cancelled { color: var(--yellow); }
 .turn-status.done { color: var(--fg-dim); }
-.turn-count { font-family: var(--font-mono); font-size: 11px; color: var(--bg2); }
-.turn[open] .turn-count { color: var(--fg-dim); }
+/* Collapsed-only: an open turn lists its tools right below, so the
+   count would just be repeating itself. (It was --bg2 here — a SURFACE
+   token as text, i.e. unreadable against the pane.) */
+.turn-count { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
+.turn[open] > .turn-head .turn-count { display: none; }
+/* A turn head has to answer "how long" and "doing what" without being
+   opened. Everything after the status is secondary weight — the head
+   reads as one line, not a row of competing chips. */
+.turn-head > * { min-width: 0; }
+.turn-elapsed {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim);
+  font-variant-numeric: tabular-nums; flex: none;
+}
+.turn.live > .turn-head .turn-elapsed { color: color-mix(in srgb, var(--phosphor) 55%, var(--fg-dim)); }
+.turn-doing {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg);
+  flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.turn-doing-kind { color: var(--accent); font-weight: 700; }
+.turn-tally { display: flex; align-items: baseline; gap: 7px; flex: none; }
+.turn-tally-item { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.turn-tally-glyph { color: var(--accent); font-weight: 700; margin-right: 1px; }
+.turn-last {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* Shrinks before anything else in the head — the outcome and the
+     tally are the load-bearing parts; the filename is the nicety. */
+  flex: 0 1 auto; min-width: 0;
+}
+/* The live rail breathes; a finished one is just a hairline. */
+.turn.live { animation: turn-breathe 2.4s ease-in-out infinite; }
+@keyframes turn-breathe {
+  0%, 100% { border-left-color: color-mix(in srgb, var(--phosphor) 35%, var(--hairline)); }
+  50% { border-left-color: var(--phosphor); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn.live { animation: none; }
+}
+
+/* Empty transcript — the watched agent's own creature holds the room,
+   the same way scout holds an empty search. */
+.feed-empty { display: flex; align-items: center; gap: 12px; padding: 10px 0 4px; }
+.feed-empty-face { position: relative; line-height: 0; flex: none; }
+.feed-empty-face .spr-a { animation: spr-frame-a 0.8s steps(1) infinite; }
+.feed-empty-face .spr-b { animation: spr-frame-b 0.8s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .feed-empty-face .spr-a, .feed-empty-face .spr-b { animation: none; }
+}
+.feed-empty-line { font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
+
+/* ── the watcher pane ──────────────────────────────────────── */
+.watch-head { font-weight: 600; }
+.watch-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Watching means the creature is awake — the face carries the working
+   state, so no separate spinner glyph beside the name. */
+.watch-who.working .avatar-anim .spr-a { animation: spr-frame-a var(--spr-dur, 0.6s) steps(1) infinite; }
+.watch-who.working .avatar-anim .spr-b { animation: spr-frame-b var(--spr-dur, 0.6s) steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .watch-who.working .avatar-anim .spr-a, .watch-who.working .avatar-anim .spr-b { animation: none; }
+}
+/* Destructive but not shouting: a hairline button that commits to red
+   on hover, matching how the other secondary actions behave. */
+.quiet-danger {
+  background: none; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--hairline));
+  color: var(--red); font: inherit; font-family: var(--font-mono); font-size: 11px;
+  padding: 3px 9px; border-radius: 6px; cursor: pointer;
+}
+.quiet-danger:hover { background: var(--red); border-color: var(--red); color: var(--bg0); }
 .tool-kind { color: var(--accent); font-weight: 700; }
 .tool-line.failed { color: var(--red); }
 .tool-path { color: var(--fg-dim); }
