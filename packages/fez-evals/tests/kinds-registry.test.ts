@@ -55,6 +55,7 @@ const K_TO_REGISTRY: Record<string, string> = {
   MSG_BOOKMARK: "KIND_MSG_BOOKMARK",
   SCHEDULED: "KIND_SCHEDULED",
   REMINDER: "KIND_REMINDER",
+  REMINDER_V2: "KIND_REMINDER_V2",
   DOC: "KIND_DOC",
   DOC_COMMENT: "KIND_DOC_COMMENT",
   DOC_TASK: "KIND_DOC_TASK",
@@ -85,7 +86,7 @@ describe("kind registry", () => {
     }
     // Addressable state must be parameterized-replaceable so real relays
     // compact it (engrams, read state, thread summaries).
-    for (const name of ["KIND_AGENT_ENGRAM", "KIND_READ_STATE", "KIND_THREAD_SUMMARY"]) {
+    for (const name of ["KIND_AGENT_ENGRAM", "KIND_READ_STATE", "KIND_THREAD_SUMMARY", "KIND_REMINDER_V2"]) {
       expect(registryKinds[name], name).toBeGreaterThanOrEqual(30000);
       expect(registryKinds[name], name).toBeLessThan(40000);
     }

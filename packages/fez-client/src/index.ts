@@ -1,5 +1,16 @@
 export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
+export {
+  latestPerAddress,
+  shouldArm,
+  nextCreatedAt,
+  relativeWhen,
+  STALE_AFTER_S,
+  type ReminderRecord,
+  type ReminderBody,
+  type ReminderStatus,
+} from "./reminders.js";
 import type { Query } from "./query-lang.js";
+import { nextCreatedAt, type ReminderBody, type ReminderRecord } from "./reminders.js";
 
 /** One row of a `runQuery` result — a task, approval, page, mention or run,
  * normalized so any surface (doc-block, live tool, exported extension)
@@ -224,6 +235,7 @@ export const K = {
   MSG_BOOKMARK: 40005,
   SCHEDULED: 40006,
   REMINDER: 40007,
+  REMINDER_V2: 30176,
   READ_STATE: 30078,
   /** NIP-78 application data. Same kind as READ_STATE; the `d` tag separates them. */
   APP_DATA: 30078,
@@ -513,6 +525,12 @@ export interface ClientEvents {
   notice: (text: string) => void;
   /** One of OWN reminders reached its time while this client was alive. */
   reminderDue: (note: string) => void;
+  /**
+   * An own reminder was written — created, snoozed, completed or
+   * cancelled, here or on another device. A pane listing them can
+   * re-read instead of showing whatever was true when it mounted.
+   */
+  remindersChanged: () => void;
 }
 
 export { setStatePersistence, type StatePersistence };
@@ -1091,15 +1109,71 @@ export class FezClient {
    * NIP-ER for exactly this reason; the plaintext remind_at tag was a
    * leak). The sentinel runs with this same key and decrypts to arm.
    */
-  async setReminder(remindAt: number, note: string, aboutEventId?: string): Promise<void> {
+  /**
+   * Write one reminder at its address. Every action funnels here —
+   * creating, snoozing, completing and cancelling differ only in the
+   * body, because the event is replaceable and the relay keeps the
+   * newest at `(pubkey, kind, d)`.
+   *
+   * The due time is duplicated into a PUBLIC `due` tag. The body stays
+   * encrypted; a server can therefore learn WHEN without learning WHAT,
+   * which is the only shape in which anything but a live client could
+   * ever deliver these.
+   */
+  private async putReminder(
+    id: string,
+    body: ReminderBody,
+    previousCreatedAt?: number
+  ): Promise<void> {
+    const createdAt = nextCreatedAt(previousCreatedAt, Math.floor(Date.now() / 1000));
     await this.wire.publish({
-      kind: K.REMINDER,
-      tags: [["p", this.pubkey]],
-      content: await this.wire.encrypt(
-        this.pubkey,
-        JSON.stringify({ note, remind_at: remindAt, ...(aboutEventId ? { about: aboutEventId } : {}) })
-      ),
+      kind: K.REMINDER_V2,
+      created_at: createdAt,
+      tags: [
+        ["d", id],
+        ["due", String(body.remind_at ?? 0)],
+      ],
+      content: await this.wire.encrypt(this.pubkey, JSON.stringify(body)),
     });
+  }
+
+  /** A new reminder. Returns its address, which the edits need. */
+  async setReminder(remindAt: number, note: string, aboutEventId?: string): Promise<string> {
+    const id = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    await this.putReminder(id, {
+      note,
+      remind_at: remindAt,
+      status: "pending",
+      ...(aboutEventId ? { about: aboutEventId } : {}),
+    });
+    return id;
+  }
+
+  /** Push it out to a new time. Still pending — this is not a new reminder. */
+  async snoozeReminder(record: ReminderRecord, remindAt: number): Promise<void> {
+    await this.putReminder(
+      record.key,
+      { note: record.note, remind_at: remindAt, status: "pending", ...(record.about ? { about: record.about } : {}) },
+      record.createdAt
+    );
+  }
+
+  /** Done. Kept, and listed apart — you did the thing. */
+  async completeReminder(record: ReminderRecord): Promise<void> {
+    await this.putReminder(
+      record.key,
+      { note: record.note, remind_at: record.remindAt, status: "done", ...(record.about ? { about: record.about } : {}) },
+      record.createdAt
+    );
+  }
+
+  /** Abandoned. Gone from the list — you are not going to do the thing. */
+  async cancelReminder(record: ReminderRecord): Promise<void> {
+    await this.putReminder(
+      record.key,
+      { note: record.note, remind_at: record.remindAt, status: "cancelled", ...(record.about ? { about: record.about } : {}) },
+      record.createdAt
+    );
   }
 
   /**
@@ -1108,11 +1182,24 @@ export class FezClient {
    * only deliverer: the sentinel covers app-closed delivery from the
    * same relay-scheduled sealed event. Idempotent per event id.
    */
-  private async armReminder(event: { id: string; content: string }): Promise<void> {
-    if (this.reminderTimers.has(event.id)) return;
+  private async armReminder(event: { id: string; content: string; tags?: string[][] }): Promise<void> {
+    // A v2 reminder is keyed by its ADDRESS, not its event id: snoozing
+    // republishes the same address, and keying on the id would leave the
+    // old timer armed and fire at BOTH times.
+    const address = event.tags?.find((t) => t[0] === "d")?.[1];
+    const key = address ?? event.id;
     try {
-      const body = JSON.parse(await this.wire.decrypt(this.pubkey, event.content)) as { note?: string; remind_at?: number };
+      const body = JSON.parse(await this.wire.decrypt(this.pubkey, event.content)) as ReminderBody;
       if (typeof body.remind_at !== "number") return;
+      // Any write to the address supersedes the timer it had — a snooze
+      // moves it, done and cancelled clear it.
+      const held = this.reminderTimers.get(key);
+      if (held !== undefined) {
+        if (address === undefined) return; // legacy: first arm wins, as before
+        clearTimeout(held);
+        this.reminderTimers.delete(key);
+      }
+      if (body.status === "done" || body.status === "cancelled") return;
       const remindAt = body.remind_at;
       const note = body.note || "(reminder)";
       // setTimeout's ~24.9-day cap means a long delay gets clamped on
@@ -1123,14 +1210,14 @@ export class FezClient {
       const wake = () => {
         const remaining = remindAt * 1000 - Date.now();
         if (remaining > 1000) {
-          this.reminderTimers.set(event.id, setTimeout(wake, Math.min(remaining, MAX_TIMER_DELAY_MS)));
+          this.reminderTimers.set(key, setTimeout(wake, Math.min(remaining, MAX_TIMER_DELAY_MS)));
           return;
         }
-        this.reminderTimers.delete(event.id);
+        this.reminderTimers.delete(key);
         this.emit("reminderDue", note);
       };
       this.reminderTimers.set(
-        event.id,
+        key,
         setTimeout(wake, Math.min(Math.max(0, remindAt * 1000 - Date.now()), MAX_TIMER_DELAY_MS))
       );
     } catch { /* not decryptable/parsable — not ours or legacy-broken */ }
@@ -1836,8 +1923,11 @@ export class FezClient {
     // resubscribe()'s channel-set filters. New ones arm as they arrive;
     // an own-authored kind-5 e-tagging an armed id disarms it (the
     // reminder never fires — it does NOT get tombstoned by firing).
-    this.wire.subscribe([{ kinds: [K.REMINDER], authors: [this.pubkey] }], (e) => {
+    this.wire.subscribe([{ kinds: [K.REMINDER, K.REMINDER_V2], authors: [this.pubkey] }], (e) => {
       void this.armReminder(e);
+      // Fires for every write, including the ones that only change
+      // status — an open pane should not need closing to become true.
+      this.emit("remindersChanged");
     });
     this.wire.subscribe([{ kinds: [K.DELETION], authors: [this.pubkey] }], (e) => {
       for (const tag of e.tags) {
@@ -1862,7 +1952,7 @@ export class FezClient {
     // time hasn't passed yet.
     try {
       const [reminderEvents, ownDeletions] = await Promise.all([
-        this.wire.query([{ kinds: [K.REMINDER], authors: [this.pubkey] }]),
+        this.wire.query([{ kinds: [K.REMINDER, K.REMINDER_V2], authors: [this.pubkey] }]),
         this.wire.query([{ kinds: [K.DELETION], authors: [this.pubkey] }]),
       ]);
       const tombstoned = new Set<string>();

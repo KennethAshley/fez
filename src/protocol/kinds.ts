@@ -313,6 +313,25 @@ export const KIND_SCHEDULED = 40006;
 export const KIND_REMINDER = 40007;
 
 /**
+ * Reminder v2 — parameterized replaceable, addressed by its `d` tag.
+ *
+ * The v1 40007 above is a REGULAR event: every edit would be another row
+ * and cancelling needs a kind-5 tombstone, so snooze and complete have
+ * nowhere to live. Replaceable makes all three one operation — republish
+ * the address with a different `status` — and the relay keeps only the
+ * newest, so nothing accumulates.
+ *
+ * The due time rides a PUBLIC `due` tag while note/status/target stay
+ * NIP-44 self-encrypted. That is Buzz's split (their `not_before`): a
+ * relay can see WHEN a reminder is due without seeing WHAT it says,
+ * which is the precondition for anything but a live client delivering
+ * it. Nothing serves that yet in fez — the desktop's own timer does the
+ * work — but the tag costs nothing now and cannot be added later without
+ * rewriting every stored reminder.
+ */
+export const KIND_REMINDER_V2 = 30176;
+
+/**
  * Channel doc — the living document per channel (Buzz's canvas 40100,
  * fez-shaped as versioned markdown). Regular kind = free history; tags
  * ["h", channelId], ["c", communityId], ["base", parentVersionId]? for

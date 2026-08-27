@@ -169,3 +169,74 @@ describe("client reminder arming", () => {
     expect(handler).toHaveBeenCalledWith("just missed");
   });
 });
+
+/** A v2 reminder: replaceable, addressed by `d`, status in the body. */
+function reminderV2(id: string, address: string, note: string, remindAt: number, status = "pending"): WireEvent {
+  return {
+    id,
+    kind: K.REMINDER_V2,
+    pubkey: pk,
+    created_at: Math.floor(Date.now() / 1000),
+    content: JSON.stringify({ note, remind_at: remindAt, status }),
+    tags: [["d", address], ["due", String(remindAt)]],
+    sig: "",
+  };
+}
+
+/**
+ * Snooze republishes the SAME address. Arming keyed on the event id
+ * would leave the old timer running and fire at both the old time and
+ * the new one — a snoozed reminder going off anyway is worse than one
+ * that never fires, because you stop trusting the button.
+ */
+describe("v2 reminders arm by address", () => {
+  const soon = () => Math.floor(Date.now() / 1000) + 1;
+
+  it("fires a pending one", async () => {
+    vi.useFakeTimers();
+    const { wire, subs } = fakeWire();
+    const client = new FezClient(wire);
+    await client.start();
+    const handler = vi.fn();
+    client.on("reminderDue", handler as never);
+    subs.forEach((s) => s.onEvent(reminderV2("e1", "addr1", "ping", soon())));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(handler).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("a snooze moves the timer instead of adding a second one", async () => {
+    vi.useFakeTimers();
+    const { wire, subs } = fakeWire();
+    const client = new FezClient(wire);
+    await client.start();
+    const handler = vi.fn();
+    client.on("reminderDue", handler as never);
+    const now = Math.floor(Date.now() / 1000);
+    subs.forEach((s) => s.onEvent(reminderV2("e1", "addr1", "ping", now + 1)));
+    // Snoozed to +10s before the first one came due.
+    subs.forEach((s) => s.onEvent(reminderV2("e2", "addr1", "ping", now + 10)));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(handler, "the superseded time still fired").not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(handler).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("completing or cancelling disarms it", async () => {
+    for (const status of ["done", "cancelled"]) {
+      vi.useFakeTimers();
+      const { wire, subs } = fakeWire();
+      const client = new FezClient(wire);
+      await client.start();
+      const handler = vi.fn();
+      client.on("reminderDue", handler as never);
+      const now = Math.floor(Date.now() / 1000);
+      subs.forEach((s) => s.onEvent(reminderV2("e1", "addr1", "ping", now + 2)));
+      subs.forEach((s) => s.onEvent(reminderV2("e2", "addr1", "ping", now + 2, status)));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(handler, status).not.toHaveBeenCalled();
+      vi.useRealTimers();
+    }
+  });
+});

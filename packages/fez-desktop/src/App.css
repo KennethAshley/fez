@@ -1085,15 +1085,44 @@ button.author:hover { text-decoration: underline; }
   border-radius: 50%; background: var(--accent);
 }
 .remind-picker button { font-family: var(--font-mono); font-size: 12px; }
+/* The row is now a container: the note opens the message, the actions
+   sit beside it. */
 .reminder-row {
-  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
-  background: none; border: 0; color: var(--fg); font: inherit; padding: 7px 4px;
-  border-bottom: 1px solid color-mix(in srgb, var(--bg2) 40%, transparent); cursor: pointer;
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  color: var(--fg); padding: 7px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--bg2) 40%, transparent);
 }
+/* Time first, in its own fixed column: the list is read down that edge,
+   and the notes then start at one left margin instead of a ragged one. */
+.reminder-open {
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 92px 1fr; gap: 10px;
+  align-items: baseline; text-align: left; background: none; border: 0;
+  color: inherit; font: inherit; padding: 0; cursor: pointer;
+}
+.reminder-open:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+/* Snooze, done and cancel are secondary and rare — they appear on the
+   row you are pointing at, the idiom the agent pencil and kick use. */
+.reminder-actions { display: flex; gap: 4px; flex: none; opacity: 0; transition: opacity 110ms ease; }
+.reminder-row:hover .reminder-actions,
+.reminder-row:focus-within .reminder-actions { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .reminder-actions { transition: none; } }
 .reminder-row.dim { color: var(--fg-dim); }
-.reminder-when { font-family: var(--font-mono); font-size: 11px; color: var(--yellow); }
+.reminder-when {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* Under an hour is the only distinction that changes what you do, so it
+   is the only one that gets a colour — phosphor, the app's "live". */
+.reminder-when.soon { color: var(--phosphor); }
 .reminder-row.dim .reminder-when { color: var(--fg-dim); }
-.reminder-note { font-size: 13px; }
+.reminder-note { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Cancel is destructive and must not read as a peer of snooze and done —
+   the same quiet-until-hover treatment the watcher's cancel uses. */
+.reminder-drop {
+  background: none; border: 1px solid transparent; color: var(--fg-dim);
+  font: inherit; font-size: 11px; padding: 2px 6px; border-radius: 5px; cursor: pointer;
+}
+.reminder-drop:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--hairline)); }
 .docs-pane { width: 420px; min-width: 420px; }
 .doc-meta { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); margin-bottom: 8px; }
 .doc-old { color: var(--yellow); }
