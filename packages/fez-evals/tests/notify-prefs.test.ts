@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_NOTIFY, notifyAllows, readPrefs, soundFor, type NotifyPrefs } from "../../fez-desktop/src/notify-prefs.js";
+import { SOUND_NAMES } from "../../fez-desktop/src/sounds.js";
 
 /**
  * The gate in front of every native notification. Its failure mode is
@@ -102,9 +103,19 @@ describe("soundFor", () => {
     expect(soundFor(withSound(), "dm", [])).toBeUndefined();
   });
 
-  it("survives prefs saved before sound existed", () => {
+  // fez ships built-in voices now, so prefs written before sound existed
+  // pick up the defaults rather than staying mute — a shipped sound that
+  // nobody hears until they go and switch it on is not a shipped sound.
+  it("gives prefs saved before sound existed the default choices", () => {
     const old = readPrefs(JSON.stringify({ enabled: true, kinds: { dm: true } }));
     expect(old.sound).toBe(true);
-    expect(soundFor(old, "dm", catalog)).toBeUndefined(); // nothing chosen yet
+    expect(old.sounds.dm).toBe(DEFAULT_NOTIFY.sounds.dm);
+    expect(soundFor(old, "dm", [DEFAULT_NOTIFY.sounds.dm])).toBe(DEFAULT_NOTIFY.sounds.dm);
+  });
+
+  it("every default names a sound that actually exists", () => {
+    for (const kind of Object.keys(DEFAULT_NOTIFY.sounds) as (keyof typeof DEFAULT_NOTIFY.sounds)[]) {
+      expect(SOUND_NAMES, `default for ${kind}`).toContain(DEFAULT_NOTIFY.sounds[kind]);
+    }
   });
 });

@@ -532,28 +532,21 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         })}
 
         <div className="manage-section">sound</div>
-        {SOUND_NAMES.length === 0 ? (
-          // No files installed. Saying so beats a picker with nothing in
-          // it, and beats hiding the section as though sound were absent.
-          <Row
-            label="no sounds installed"
-            desc="fez ships no audio — sound files are licensed to a person, not to a repository. Drop .mp3 files into packages/fez-desktop/public/sounds/ and list them in src/sounds.ts, and a picker appears on every category above."
-            control={<span className="set-value">none</span>}
-          />
-        ) : (
-          <Row
-            label="play a sound"
-            desc="Alerts make a noise as well as a banner. Each category picks its own above; a category set to silent stays silent."
-            control={
-              <Toggle
-                on={notify.sound}
-                disabled={!notify.enabled}
-                onChange={(on) => setNotify({ ...notify, sound: on })}
-                label="play a sound"
-              />
-            }
-          />
-        )}
+        <Row
+          label="play a sound"
+          desc="Alerts make a noise as well as a banner. Each category picks its own above — set one to silent to mute just that one."
+          control={
+            <Toggle
+              on={notify.sound}
+              disabled={!notify.enabled}
+              onChange={(on) => setNotify({ ...notify, sound: on })}
+              label="play a sound"
+            />
+          }
+        />
+        <div className="set-diag">
+          built-in sounds are generated, not sampled — drop an .mp3 in public/sounds/ and list it in src/sounds.ts to use your own
+        </div>
 
         </>)}
         {section === "keyboard" && (<>

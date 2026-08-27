@@ -24,8 +24,9 @@ export interface NotifyPrefs {
   /** Master for sound. Independent of `enabled`: some people want the
    *  banner without the noise, and some want only the noise. */
   sound: boolean;
-  /** Which file each category plays. "" means that category is silent
-   *  even when sound is on — the default, since fez ships no sounds. */
+  /** Which sound each category plays. "" means silent even when sound
+   *  is on. Names come from sounds.ts — built-in voices, plus anything
+   *  supplied as a file. */
   sounds: Record<NotifyKind, string>;
 }
 
@@ -36,7 +37,16 @@ export const DEFAULT_NOTIFY: NotifyPrefs = {
   whileFocused: false,
   kinds: { dm: true, mention: true, needs_action: true, agent_error: true, thread_reply: true },
   sound: true,
-  sounds: { dm: "", mention: "", needs_action: "", agent_error: "", thread_reply: "" },
+  // Chosen so the categories are distinguishable WITHOUT looking: a pair
+  // rising means something arrived, a pair falling means something ended
+  // badly, and the fuller chord is the one that wants you to act.
+  sounds: {
+    dm: "chirp",
+    mention: "blip",
+    needs_action: "chord",
+    agent_error: "fall",
+    thread_reply: "blip",
+  },
 };
 
 /** Should this notification fire? */
