@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
-import { mediaServer } from "./upload";
+import { mediaServer, setMediaServer } from "./upload";
 import { createBackup, openBackup, sealText, downloadText } from "./backup";
 import type { BrowserWire } from "./wire";
 import { applyTheme, applyMode, currentTheme, currentMode, themeNames, themeFollowsScheme, resolvedScheme, guiExtensionStatus, extensionSettingsPanels } from "./gui-extensions";
@@ -134,7 +134,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
 
   const saveServers = () => {
     setRelays(relay);
-    localStorage.setItem("fez-media-server", media.trim());
+    setMediaServer(media);
     flash("✓ saved");
   };
 

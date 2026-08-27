@@ -16,6 +16,25 @@ export function mediaServer(): string {
   return localStorage.getItem("fez-media-server") ?? "https://blossom.primal.net";
 }
 
+/**
+ * The ONE way to change the media server — the same custody split
+ * relay.ts documents. localStorage is this webview's fast cache;
+ * ~/.fez/settings.json is what the rest of the system reads, and for
+ * media that "rest" includes every agent: an agent builds its fetch
+ * allowlist from settings.json's mediaServer, so a GUI that wrote only
+ * its own cache left agents refusing the very images being uploaded,
+ * without a word in any log the user would see.
+ */
+export function setMediaServer(url: string): void {
+  const trimmed = url.trim();
+  localStorage.setItem("fez-media-server", trimmed);
+  void import("@tauri-apps/api/core")
+    .then(({ invoke }) => invoke("write_media_server", { url: trimmed }))
+    .catch(() => {
+      /* outside tauri (tests) the cache is all there is */
+    });
+}
+
 export interface Uploaded {
   url: string;
   name: string;
