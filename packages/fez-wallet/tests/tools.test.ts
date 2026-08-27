@@ -8,11 +8,13 @@ import { walletSend } from "../src/tools.js";
 import type { ToolDeps } from "../src/tools.js";
 import type { ChainAdapter } from "../src/chains/adapter.js";
 import type { ConsentRelay, SignedNostrEvent } from "../src/consent.js";
-import { parseReceipt } from "../src/receipt.js";
+import { parseReceipt, buildReceipt } from "../src/receipt.js";
+import { hexToBytes } from "nostr-tools/utils";
 
 const ownerSk = generateSecretKey();
 const ownerPk = getPublicKey(ownerSk);
 const agentNostrKey = bytesToHex(generateSecretKey());
+const agentPubkey = getPublicKey(hexToBytes(agentNostrKey));
 const pair = { publicKeyHex: "aa", secretKeyHex: "bb", address: "5Agent" };
 
 function fakeAdapter(balanceRao: bigint) {
@@ -101,7 +103,7 @@ describe("tools", () => {
     const out = await walletSend(d, { to: "5Dest", amount: "0.005", asset: "TAO" });
     expect(out).toContain("0xfeed");
     expect(transfers).toHaveLength(1);
-    expect(walletHistory(d, {})).toContain("5Dest");
+    expect(await walletHistory(d, {})).toContain("5Dest");
   });
 
   it("blocks over-threshold sends behind consent — approved path executes", async () => {
@@ -274,5 +276,55 @@ describe("receipts", () => {
     );
     expect(transfers).toHaveLength(1);
     expect(out).toMatch(/receipt/i);
+  });
+});
+
+describe("wallet_history", () => {
+  it("shows inbound receipts p-tagging me, marked unverified until checked", async () => {
+    const { walletHistory } = await import("../src/tools.js");
+    const { adapter } = fakeAdapter(0n);
+    const incoming = buildReceipt({
+      agentSecretHex: bytesToHex(generateSecretKey()),
+      forEvent: "msg1",
+      payeePubkey: agentPubkey, // baseDeps' agent nostr pubkey
+      amount: { raw: 50_000_000n, decimals: 9, symbol: "TAO" },
+      chain: "tao",
+      network: "test",
+      txHash: "0xin",
+    });
+    const relay: ConsentRelay = {
+      publish: async () => {},
+      subscribe: () => () => {},
+      query: async () => [incoming],
+    };
+    const out = await walletHistory(
+      { ...baseDeps(adapter), agentNostrKey, relay: () => Promise.resolve(relay) },
+      { limit: 10 }
+    );
+    expect(out).toMatch(/0\.05 TAO/);
+    expect(out).toMatch(/unverified/i);
+  });
+
+  it("still works with no relay at all", async () => {
+    const { walletHistory } = await import("../src/tools.js");
+    const { adapter } = fakeAdapter(0n);
+    expect(await walletHistory({ ...baseDeps(adapter) }, { limit: 10 })).toEqual(expect.any(String));
+  });
+
+  it("still returns local rows when the relay throws", async () => {
+    const { walletSend, walletHistory } = await import("../src/tools.js");
+    const { adapter, transfers } = fakeAdapter(2_000_000_000n);
+    const d = baseDeps(adapter);
+    await walletSend(d, { to: "5Dest", amount: "0.005", asset: "TAO" });
+    expect(transfers).toHaveLength(1);
+    const throwing: ConsentRelay = {
+      publish: async () => {},
+      subscribe: () => () => {},
+      query: async () => {
+        throw new Error("relay unreachable");
+      },
+    };
+    const out = await walletHistory({ ...d, relay: () => Promise.resolve(throwing) }, { limit: 10 });
+    expect(out).toContain("5Dest");
   });
 });

@@ -197,7 +197,7 @@ server.registerTool(
     description: "Your recent transfers (from this machine's spend log).",
     inputSchema: { limit: z.number().optional().describe("Max rows (default 20).") },
   },
-  async ({ limit }) => text(walletHistory(await deps(), { limit }))
+  async ({ limit }) => text(await walletHistory(await deps(), { limit }))
 );
 
 await server.connect(new StdioServerTransport());

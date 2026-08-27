@@ -8,7 +8,9 @@ import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.j
 import { buildConsentRequest, awaitDecision, type ConsentRelay } from "./consent.js";
 import { mirrorSpend, mirrorEndpoint } from "./storage-mirror.js";
 import type { Resolved } from "./resolve.js";
-import { buildReceipt } from "./receipt.js";
+import { buildReceipt, parseReceipt, KIND_PAYMENT_RECEIPT } from "./receipt.js";
+import { getPublicKey } from "nostr-tools/pure";
+import { hexToBytes } from "nostr-tools/utils";
 
 export const CONSENT_TIMEOUT_MS = 600_000; // 10 minutes
 
@@ -194,10 +196,33 @@ export async function walletSend(
   return `sent ${formatAmount(amount)} → ${to} (tx ${txHash}${consent === "approved" ? ", owner-approved" : ""})${receiptNote}`;
 }
 
-export function walletHistory(deps: ToolDeps, args: { limit?: number }): string {
-  const rows = readLog(deps.config.network, args.limit ?? 20).filter((r) => r.persona === deps.persona);
-  if (rows.length === 0) return "no transfers recorded.";
-  return rows
-    .map((r) => `- ${r.ts} · ${r.amount} ${r.asset} → ${r.to}${r.memo ? ` (${r.memo})` : ""} · ${r.consent} · ${r.txHash}`)
-    .join("\n");
+export async function walletHistory(deps: ToolDeps, args: { limit?: number }): Promise<string> {
+  const limit = args.limit ?? 20;
+  const rows = readLog(deps.config.network, limit)
+    .filter((r) => r.persona === deps.persona)
+    .map((r) => `- ${r.ts} · ${r.amount} ${r.asset} → ${r.to}${r.memo ? ` (${r.memo})` : ""} · ${r.consent} · ${r.txHash}`);
+
+  const inbound: string[] = [];
+  if (deps.relay && deps.agentNostrKey) {
+    try {
+      const relay = await deps.relay();
+      const me = getPublicKey(hexToBytes(deps.agentNostrKey));
+      const events = await relay.query({ kinds: [KIND_PAYMENT_RECEIPT], "#p": [me], limit });
+      for (const ev of events) {
+        const r = parseReceipt(ev);
+        if (!r || r.network !== deps.config.network) continue;
+        // Not verified here: verification costs a chain round-trip per
+        // row. Unverified is stated, never implied — an inbound row is
+        // never counted as settled on the strength of the event alone.
+        inbound.push(
+          `- ${new Date(ev.created_at * 1000).toISOString()} · ${formatAmount({ raw: r.raw, decimals: 9, symbol: r.symbol })} ← from ${r.payer.slice(0, 12)}… · (unverified)`
+        );
+      }
+    } catch {
+      // A relay that won't answer costs you the inbound half, not the call.
+    }
+  }
+
+  const all = [...rows, ...inbound];
+  return all.length ? all.join("\n") : "no transfers recorded.";
 }
