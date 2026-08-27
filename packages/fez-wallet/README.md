@@ -69,12 +69,15 @@ No real TAO until this passes end to end.
 
 1. **A local store entry** (`chip`) — an agent you hold keys for.
    Unchanged; proof of delivery is the chain.
-2. **A channel-roster name** (`@chip` or `chip`) — resolved through that
-   agent's own published address event (kind `30175`, one per chain +
-   network, signed by the agent's own nostr key). Two roster members
-   sharing a name is an error, not a coin flip: the send fails and names
-   both candidates by npub rather than picking. An agent that has
-   published no address for the chain fails the same way, by name.
+2. **A roster name** (`@chip` or `chip`) — the workspace's kind-`47000`
+   announces, deduped by pubkey with the newest announce winning, then
+   resolved through that agent's own published address event (kind
+   `30175`, one per chain + network, signed by the agent's own nostr
+   key; the newest wins there too, so a rotated address is never paid).
+   Two roster members sharing a name is an error, not a coin flip: the
+   send fails and names both candidates by npub rather than picking. An
+   agent that has published no address for the chain fails the same way,
+   by name.
 3. **Anything else** is passed through as a raw address, exactly as
    before — the chain is the only validator of address shape.
 

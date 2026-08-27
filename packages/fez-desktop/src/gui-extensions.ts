@@ -72,13 +72,21 @@ export interface GuiExtensionApi {
   /**
    * This extension's own preferences — the one part of its state file a
    * gui part may write. Mirrored state (`storage`) stays read-only: the
-   * headless side rewrites it and a shared key would race.
+   * headless side rewrites it and a shared key would collide outright.
+   *
+   * What the scoping buys, exactly: a panel write targets only keys
+   * under `prefs`, so it can never aim at a CLI-owned key like the
+   * ledger. It does NOT make the write atomic against the CLI — the
+   * Rust command does its own whole-file read-modify-write from a
+   * different process than the node side's serialized queue, so two
+   * concurrent writers can still lose one update. Key-level collision is
+   * what is prevented; a lost update is not.
    *
    * This scoping is a correctness boundary, not a security one: gui
    * parts run in the page and can call any Tauri command directly
    * regardless of what this loader hands them, so it does not stop one
-   * extension from writing another's prefs — only from racing the CLI's
-   * own writes to the rest of the file.
+   * extension from writing another's prefs — only from aiming a write at
+   * the CLI's own keys elsewhere in the file.
    */
   prefs: {
     get<T = unknown>(key: string): Promise<T | undefined>;

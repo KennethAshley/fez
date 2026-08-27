@@ -442,10 +442,14 @@ fn extension_storage_read(name: String) -> Result<String, String> {
 /// `extension_storage_read` verbatim.
 ///
 /// Scoped to `prefs` on purpose: the CLI rewrites the rest of this file
-/// on every spend, so a webview writing those keys would race it and
-/// drop ledger rows. This is a correctness boundary — gui parts run in
-/// the page and can reach every command regardless, so it is not, and
-/// must not be described as, a security boundary.
+/// on every spend, so a webview writing those keys would clobber ledger
+/// rows outright. The scoping is what keeps a panel write from ever
+/// TARGETING a CLI-owned key; it does not serialize the two writers.
+/// This function read-modify-writes the whole file, and so does the node
+/// side, from a different process — two concurrent writes can still lose
+/// an update. This is a correctness boundary — gui parts run in the page
+/// and can reach every command regardless, so it is not, and must not be
+/// described as, a security boundary.
 #[tauri::command]
 fn extension_storage_write(name: String, key: String, value: String) -> Result<(), String> {
     let ok_first = name

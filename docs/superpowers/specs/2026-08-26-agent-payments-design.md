@@ -55,14 +55,20 @@ allowlist.
 
 **Remote resolution** is: `@chip` → pubkey → address event.
 
-- Pubkey comes from the kind-`47000` agent announces visible in the channel
-  the wallet is configured against (`consentChannel`). The wallet already
-  holds `read:channels` and a NIP-42-authenticated relay connection
-  (`poolRelay`, `src/mcp.ts:76`).
-- **Name lookup is scoped to that channel's roster, and ambiguity is an
-  error.** Two owners may both run an agent called `chip`. When more than one
-  roster member announces the same name, the send fails and names the
-  candidates by npub; it never picks. A name is not an identity — the npub is.
+- Pubkey comes from the kind-`47000` agent announces on the relay. That query
+  is **unscoped**, and must stay that way: a 47000 announce carries no tags at
+  all (`fez-acp/src/agent.ts` publishes `tags: []`), so a `#h` filter matches
+  nothing and every `@name` falls silently through to a raw send. fez-client
+  reads the same kind unscoped — one relay, one workspace, one roster. The
+  wallet already holds `read:channels` and a NIP-42-authenticated relay
+  connection (`poolRelay`, `src/mcp.ts`).
+- The announces are deduped **by pubkey, newest `created_at` winning**: 47000
+  is a regular kind and an agent re-announces on every process start, so a
+  raw event list reports one agent as many (`roster.ts`).
+- **Name lookup runs over that roster, and ambiguity is an error.** Two owners
+  may both run an agent called `chip`. When more than one roster member
+  announces the same name, the send fails and names the candidates by npub; it
+  never picks. A name is not an identity — the npub is.
 - A leading `@` is optional and stripped; `@chip` and `chip` resolve alike,
   with the local store still winning (an agent you hold keys for is
   unambiguous).
@@ -234,8 +240,9 @@ add a second, narrower channel beside it:
 
 Two names rather than a `storage.set`, because a single namespace with a merge
 rule is where the clobber bug lives: the CLI rewrites the mirrored state file
-on every spend, and a webview writing into the same keys would race it. Split
-by ownership and there is nothing to reconcile.
+on every spend, and a webview writing into the same keys would clobber it.
+Split by ownership and there is nothing to reconcile at the key level (the
+whole-file writes underneath are still two processes — see below).
 
 - **Rust `extension_storage_write(name, key, value)`** — mirrors the existing
   read command's name validation verbatim (first char alphanumeric, no `..`),
@@ -247,10 +254,15 @@ by ownership and there is nothing to reconcile.
   stance: an extension writing its own preferences needs no permission to do
   so.
 
-  **What that is and is not.** It is a *correctness* guarantee: the CLI
-  rewrites the mirrored state file on every spend, and a panel writing the
-  same keys would race it and drop ledger rows. The `prefs` subtree makes that
-  impossible. It is **not** a security boundary — gui extensions run in the
+  **What that is and is not.** It is a *correctness* guarantee about WHAT a
+  panel write can target: the CLI rewrites the mirrored state file on every
+  spend, and a panel writing the same keys would clobber ledger rows. The
+  `prefs` subtree means a panel write never aims at a CLI-owned key. It does
+  not make the two writers atomic with respect to each other — the Rust
+  command read-modify-writes the whole file, and so does the node side from a
+  different process, so a genuinely concurrent pair of writes can still lose
+  an update. Key-level collision is what the scoping prevents; a lost update
+  is not. It is **not** a security boundary — gui extensions run in the
   page (`gui-extensions.ts:617` says so), `invoke` is a window global
   (`@tauri-apps/api/core.js:202`) that the loader does not shadow, and an
   extension that ignores the handed `api` reaches every Tauri command
