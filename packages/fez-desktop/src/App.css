@@ -1166,8 +1166,8 @@ button.author:hover { text-decoration: underline; }
    them read as one set of tools. */
 .composer-tool { flex: none;
   display: grid; place-items: center;
-  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 14px;
-  width: 26px; height: 24px; border-radius: 6px; cursor: pointer;
+  background: none; border: 0; color: var(--fg-dim); font: inherit; font-size: 15px;
+  width: 30px; height: 28px; border-radius: 7px; cursor: pointer;
 }
 .composer-tool svg { width: 14px; height: 14px; }
 .composer-tool:hover {
@@ -1575,7 +1575,7 @@ button.author:hover { text-decoration: underline; }
 /* An agent mid-task says what it is doing instead of what it is. */
 .party-class.live { color: var(--phosphor); text-transform: none; letter-spacing: 0; }
 
-.composer-actions { display: flex; align-items: center; gap: 2px; padding: 4px 2px 0; }
+.composer-actions { display: flex; align-items: center; gap: 4px; padding: 6px 2px 0; }
 /* The link and paperclip are the only colour emoji in a toolbar of
    typographic glyphs (B I </> S ≔ ⒈ ❝ ▤ @ ☺ Aa), which is what made
    them read as foreign. Desaturating is the fix that survives: there is
@@ -1583,23 +1583,14 @@ button.author:hover { text-decoration: underline; }
 .emoji-glyph { filter: grayscale(1); opacity: 0.7; }
 .emoji-glyph:hover { opacity: 1; }
 .composer-tool.on { background: var(--bg2); color: var(--accent); }
-/* A filled 34px circle at full accent made this the heaviest object on
-   the screen — louder than the message it was replying to. It keeps the
-   tools' footprint now and earns its colour: an outline while there is
-   nothing to send, accent the moment there is. Accent and NOT ember —
-   ember is the selection mark everywhere else (rail, settings nav, the
-   segmented control) and must not pick up a second meaning here. */
 .composer-send {
-  margin-left: auto; background: none; border: 1px solid var(--hairline); color: var(--fg-dim);
-  font: inherit; font-size: 14px; font-weight: 600; width: 26px; height: 24px; border-radius: 6px; cursor: pointer;
+  margin-left: auto; background: var(--accent); border: 0; color: var(--bg0);
+  font: inherit; font-size: 16px; font-weight: 700; width: 34px; height: 32px; border-radius: 16px; cursor: pointer;
 }
-.composer-send:not(:disabled) {
-  background: var(--accent); border-color: var(--accent); color: var(--bg0); font-weight: 700;
-}
-/* Visible while idle, never vanishing: swapping it to --bg2 once made
-   the send button disappear into the composer, so it only existed after
-   you had already started typing. It is quiet here, not absent. */
-.composer-send:disabled { background: none; color: var(--fg-dim); opacity: 1; cursor: default; }
+/* Stays the primary colour when there is nothing to send — dimmed, not
+   greyed. Swapping to --bg2 made it disappear into the composer, so the
+   send button only existed once you were already typing. */
+.composer-send:disabled { background: var(--accent); color: var(--bg0); opacity: 0.4; cursor: default; }
 
 .agent-edit { margin-left: 4px; color: var(--fg-dim); padding: 3px 7px; border-radius: 6px; font-size: 14px; }
 .agent-edit:hover { color: var(--accent); background: var(--bg2); }
@@ -2375,10 +2366,7 @@ button.author:hover { text-decoration: underline; }
   background: var(--bg-rail);
   border: 1px solid var(--hairline);
   border-radius: 8px;
-  /* The frame's own inset only — the field inside now carries its own
-     padding, and paying for both stood an empty one-line composer up at
-     roughly the height of two. */
-  padding: 6px 6px 4px;
+  padding: 4px 10px 6px;
 }
 .composer:focus-within .composer-box { border-color: color-mix(in srgb, var(--fg) 28%, var(--bg2)); }
 .composer.dragging .composer-box { border-color: var(--accent); border-style: dashed; }
@@ -2395,13 +2383,7 @@ button.author:hover { text-decoration: underline; }
 .composer .composer-box textarea,
 .composer .composer-box textarea:focus,
 .composer .composer-box textarea.editing {
-  /* This is the line the two comments above were always asking for. It
-     said `background: none`, which is exactly the "uniform" they warn
-     against: the writing area came out the same tone as the toolbar and
-     the action row, so the composer read as one slab with a placeholder
-     floating in it and nothing showed you where the field was. */
-  background: var(--field, var(--bg0));
-  border: 0; box-shadow: none; border-radius: 6px; padding: 8px 10px;
+  background: none; border: 0; box-shadow: none; padding: 6px 2px;
   color: var(--yellow);
 }
 
