@@ -1,6 +1,6 @@
 # Agent payments — cross-owner TAO, testnet mode, zap-shaped receipts
 
-**Date:** 2026-08-26 · **Status:** draft for review · **Scope:** `@fezchat/wallet` only. No core protocol code changes beyond two kind constants; no service integration; no mining.
+**Date:** 2026-08-26 · **Status:** draft for review · **Scope:** `@fezchat/wallet`, plus two kind constants and one prefs write seam in core (§6). No service integration; no mining.
 
 ## Problem
 
@@ -111,12 +111,10 @@ do worse than redirect @chip's income.
 
 ## 3. Network mode
 
-```jsonc
-// ~/.fez/wallet.json
-{ "network": "test" }             // "test" | "finney"; default "finney"
-```
-
-`endpoints.tao` is derived from `network` and stops being the thing you edit:
+`network` is `"test"` or `"finney"`, default `"finney"`. It lives in the
+extension's prefs, not `wallet.json` — one home per field, see §6 — and is set
+either from the panel's selector or by `fez-wallet network`. The endpoint is
+derived from it and stops being the thing you edit:
 
 | network | endpoint |
 |---|---|
@@ -144,7 +142,7 @@ you would read for a real spend:
 payee's announced network differs from the sender's. This is the rule that
 keeps a testnet session from touching real TAO — and it generalises for free
 to service payees, which are mainnet-only. A raw address carries no network
-and cannot be guarded; that is stated in the error path (§7), not silently
+and cannot be guarded; that is stated in the error path (§8), not silently
 allowed to look safe.
 
 `fez-wallet status` and the GUI Wallet panel both display the active network.
@@ -217,11 +215,74 @@ The reasoning: the threshold answers *how much*, and a cross-owner send raises
 *to whom*, which no amount can answer. It is a one-time cost per counterparty,
 not a standing tax on tipping.
 
-## 6. Files
+## 6. Writable settings — a prefs seam, and the wallet panel
+
+Extensions already have writable storage: headless `StorageAccess` carries
+`set`/`delete`/`keys` (`packages/fez-extension-api/src/headless.ts:39`). The
+**webview** is the read-only half — `GuiApi.storage` exposes `get` alone
+(`gui.ts:77`) and Rust has `extension_storage_read` with no counterpart
+(`lib.rs:420`). The stance is deliberate and documented in place: *"Gui parts
+render state; the CLI/MCP/headless side owns writes."*
+
+That stance is right for **state** and wrong for **preferences**. Keep it, and
+add a second, narrower channel beside it:
+
+| surface | direction | holds |
+|---|---|---|
+| `api.storage` (unchanged) | CLI/headless → panel | mirrored state: addresses, endpoint, ledger. Panel reads. |
+| `api.prefs` (**new**) | panel → disk | user preferences the extension declares. Panel writes. |
+
+Two names rather than a `storage.set`, because a single namespace with a merge
+rule is where the clobber bug lives: the CLI rewrites the mirrored state file
+on every spend, and a webview writing into the same keys would race it. Split
+by ownership and there is nothing to reconcile.
+
+- **Rust `extension_storage_write(name, key, value)`** — mirrors the existing
+  read command's name validation verbatim (first char alphanumeric, no `..`),
+  and writes **only** under the file's `prefs` object. Nothing outside `prefs`
+  is reachable from a webview, so the ledger cannot be touched no matter what
+  a gui part does.
+- **`GuiApi.prefs: { get, set }`** — namespace-locked to the extension's own
+  stem in the loader, exactly as `storage.get` already is. Ungated, matching
+  the existing storage stance: an extension writing its own preferences needs
+  no permission to do so.
+
+Precedent: the webview already writes through `set_skill_secret`,
+`write_keymap`, `write_persona`. This is the generic form of what the app does
+bespokely five times over.
+
+**One home per field.** `network` and `thresholds` move out of `wallet.json`
+into prefs and live there only; `wallet.json` keeps what the CLI ceremony owns
+(persona indexes, `consentChannel`, an explicit endpoint override). Nothing is
+authoritative in two places, so there is no last-writer-wins question to get
+wrong. `fez-wallet network <n>` writes prefs through `storage-mirror.ts`,
+which already owns that file. Existing `thresholds` migrate on first read.
+
+**Deleting the extension resets prefs to defaults** — `network: "finney"`,
+threshold `0.01`. Both defaults are the *conservative* end: a lost prefs file
+can only make the wallet more cautious, never less. That is the property to
+preserve if these defaults are ever revisited.
+
+**The panel** (Settings → extensions → Wallet, `registerSettingsPanel`,
+`src/gui.ts:355`) gains:
+
+- a **network selector** — `test` / `finney`, writing `prefs.network`. The
+  panel already opens its own chain connection from the mirrored `endpoint`
+  (`src/gui.ts:376`), so balances re-read against the new chain as soon as the
+  wallet mirrors the derived endpoint back down. Non-`finney` is visually
+  marked here too (§3).
+- a **default threshold editor** — the number that decides which sends stop
+  for a card, which is the setting most worth having in reach.
+
+Ceremony does not move: `init`, `derive`, `fund` stay CLI-only, and no key
+material is readable or writable from the webview. The panel edits *policy*,
+never custody.
+
+## 7. Files
 
 | File | Change |
 |---|---|
-| `src/config.ts` | `network`, derived endpoint, `knownPayees` |
+| `src/config.ts` | derived endpoint, `knownPayees`; `network`/`thresholds` move to prefs (§6) |
 | `src/resolve.ts` | **new** — the fall-through chain; pure, injected lookups |
 | `src/address-event.ts` | **new** — build/publish/query kind 30175 |
 | `src/receipt.ts` | **new** — build/publish/verify kind 47040 |
@@ -231,15 +292,18 @@ not a standing tax on tipping.
 | `src/chains/adapter.ts` | `transfer` returns `blockRef?` |
 | `src/chains/substrate.ts` | return `asInBlock` hash |
 | `src/cli-commands.ts` | `fez-wallet network [test\|finney]` |
-| `src/gui.ts` | receipt decorator; network badge in the panel |
+| `src/gui.ts` | receipt decorator; network selector + threshold editor in the panel |
 | `src/mcp.ts` | wire the new deps |
 | `src/protocol/kinds.ts` (core) | `KIND_AGENT_PAYMENT_ADDRESS`, `KIND_PAYMENT_RECEIPT` |
+| `src-tauri/src/lib.rs` (core) | **new** `extension_storage_write`, prefs-scoped |
+| `src/gui-extensions.ts` (core) | `api.prefs` in the loader, namespace-locked |
+| `fez-extension-api/src/gui.ts` (core) | `prefs` on `GuiApi` |
 
 `resolve.ts`, `address-event.ts` and `receipt.ts` are pure modules with
 injected relay/chain access, testable without a relay or a chain —
 `tools.ts` stays the wiring, and does not grow a fourth responsibility.
 
-## 7. Errors
+## 8. Errors
 
 Every failure names the fix, and none of them fail silently:
 
@@ -253,23 +317,30 @@ Every failure names the fix, and none of them fail silently:
   publish. Money moving and the note about it are separate facts; never retry
   a transfer because an event failed.
 
-## 8. Testing
+## 9. Testing
 
 Unit (vitest, injected fakes — no relay, no chain): resolution order and
 fall-through, `@` handling, ambiguity, network guard, address-event
 round-trip, receipt build/verify including the tampered-receipt and
 pruned-block cases, per-network log routing, `knownPayees` promotion.
 
+For the prefs seam: name-traversal rejection and the invariant that a write
+can never touch anything outside `prefs` — assert directly that a gui write
+leaves a mirrored `log` untouched, since that is the whole reason for the
+split.
+
 **The gate is a two-machine testnet run**, in the shape of the existing README
 runbook: both wallets on `test`, both agents publishing addresses, a tip from
 one owner's agent to another's — card approved, transfer lands, bolt appears
 on *both* screens, both ledgers reconcile to the chain. Then the failure
-paths: an agent with no address, a network mismatch, an ignored card.
+paths: an agent with no address, a network mismatch, an ignored card. The
+panel is exercised in the same pass: flip the network from the selector and
+watch balances re-read against the other chain.
 
 Per repo convention, no real-TAO run until the testnet runbook passes end to
 end.
 
-## 9. Non-goals
+## 10. Non-goals
 
 - **Mining / registration.** `burnedRegister`, hotkeys under a coldkey,
   recurring burn and emissions — a different extrinsic family and a different
@@ -277,12 +348,18 @@ end.
   already gives the coldkey/hotkey shape it will want.
 - **Service integration.** Chutes and Hippius have no payment code today. The
   seam is written down (§1); neither package is touched.
-- **EVM.** The stub stays a stub.
+- **EVM.** The stub stays a stub here — but the decision about its shape is
+  made: **chains are adapters, capabilities are extensions.** EVM `send`/
+  `balance` fills in the existing `ChainAdapter` when it is real work, inside
+  this extension, because custody should have exactly one home and two
+  extensions reaching for one mnemonic is the failure mode worth designing
+  out. Anything richer — contracts, tokens, DeFi — becomes its own extension
+  that asks the wallet to sign rather than holding a key itself.
 - **Escrow, invoices, streaming payments.** A payment here is a transfer plus
   a note about it. The bazaar's labour market builds on receipts; it is not
   this spec.
 
-## 10. Risks
+## 11. Risks
 
 - **Block pruning** limits receipt verification to a window (§4). Mitigated by
   reporting unverifiable honestly rather than by adding an indexer.
