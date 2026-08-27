@@ -12,6 +12,8 @@ import { flash } from "./toast";
 import { relayRaw, setRelays } from "./relay";
 import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
+import { loadNotifyPrefs, saveNotifyPrefs } from "./notify";
+import { NOTIFY_KINDS, NOTIFY_LABELS, NOTIFY_UNBUILT, type NotifyPrefs } from "./notify-prefs";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -37,6 +39,7 @@ const SETTINGS_TABS = {
   profile: "profile",
   servers: "servers",
   appearance: "appearance",
+  notifications: "notifications",
   keyboard: "keyboard",
   skills: "secrets",
   agents: "agent defaults",
@@ -47,7 +50,7 @@ type SettingsSection = keyof typeof SETTINGS_TABS;
 // Buzz's grouped-nav decision: sections cluster by whose thing they
 // configure, not by feature age. Labels share the rail's divider grammar.
 const SETTINGS_GROUPS: { label: string; sections: SettingsSection[] }[] = [
-  { label: "you", sections: ["profile", "appearance", "keyboard", "backup"] },
+  { label: "you", sections: ["profile", "appearance", "notifications", "keyboard", "backup"] },
   { label: "workspace", sections: ["servers", "agents", "skills"] },
 ];
 
@@ -180,6 +183,37 @@ function Seg<T extends string>({
   );
 }
 
+/**
+ * A switch. The one control here that is a real toggle rather than a
+ * choice between named options — it reads as on or off at a glance and
+ * needs no label of its own, since the row already carries one.
+ */
+function Toggle({
+  on,
+  onChange,
+  disabled,
+  label,
+}: {
+  on: boolean;
+  onChange: (on: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      disabled={disabled}
+      className={on ? "toggle on" : "toggle"}
+      onClick={() => onChange(!on)}
+    >
+      <span className="toggle-knob" />
+    </button>
+  );
+}
+
 const MODES = [
   { value: "system", label: "system" },
   { value: "light", label: "light" },
@@ -197,6 +231,14 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   // the ember would stay on whatever was selected at mount.
   const [mode, setMode] = useState(currentMode());
   const [theme, setTheme] = useState(currentTheme());
+  // Written on every change rather than behind a save button: there is
+  // nothing to publish and nothing to relaunch, so a save button would
+  // only be a way to lose the change.
+  const [notify, setNotifyState] = useState(loadNotifyPrefs);
+  const setNotify = (next: NotifyPrefs) => {
+    setNotifyState(next);
+    saveNotifyPrefs(next);
+  };
   // Either a built-in section, or "ext:<panel name>" — every installed
   // extension gets its own row rather than hiding behind one called
   // "extensions" inside a group also called "extensions".
@@ -409,6 +451,56 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             {guiExtensionStatus().map((ext) => `${ext.name} ${ext.ok ? "✓" : `✗ (${ext.error})`}`).join(" · ")}
           </div>
         )}
+
+        </>)}
+        {section === "notifications" && (<>
+        <Head title="notifications" sub="Native alerts on this machine. Muting a channel already silences its mentions — this is everything else." />
+        <div className="manage-section">desktop alerts</div>
+        <Row
+          label="desktop alerts"
+          desc="The master switch. Off means fez never raises a native notification, whatever the categories below say."
+          control={<Toggle on={notify.enabled} onChange={(on) => setNotify({ ...notify, enabled: on })} label="desktop alerts" />}
+        />
+        <Row
+          label="alert while I'm looking"
+          desc="fez stays quiet about the window you already have open. Turn this on to be told anyway."
+          control={
+            <Toggle
+              on={notify.whileFocused}
+              disabled={!notify.enabled}
+              onChange={(on) => setNotify({ ...notify, whileFocused: on })}
+              label="alert while focused"
+            />
+          }
+        />
+
+        <div className="manage-section">what gets through</div>
+        {NOTIFY_KINDS.map((kind) => {
+          const unbuilt = NOTIFY_UNBUILT.has(kind);
+          return (
+            <Row
+              key={kind}
+              label={NOTIFY_LABELS[kind].label}
+              desc={
+                unbuilt
+                  ? `${NOTIFY_LABELS[kind].desc} Nothing sends this yet — the control is here so the list is the whole list.`
+                  : NOTIFY_LABELS[kind].desc
+              }
+              control={
+                unbuilt ? (
+                  <span className="set-value" style={{ color: "var(--fg-dim)" }}>not built yet</span>
+                ) : (
+                  <Toggle
+                    on={notify.kinds[kind]}
+                    disabled={!notify.enabled}
+                    onChange={(on) => setNotify({ ...notify, kinds: { ...notify.kinds, [kind]: on } })}
+                    label={NOTIFY_LABELS[kind].label}
+                  />
+                )
+              }
+            />
+          );
+        })}
 
         </>)}
         {section === "keyboard" && (<>

@@ -1828,6 +1828,28 @@ button.author:hover { text-decoration: underline; }
 .set-note { font-size: 12px; color: var(--fg-dim); }
 .set-note strong { color: var(--fg); font-weight: 600; }
 
+/* A switch. Track and knob, no words — the row's label already says
+   what it governs, and "on/off" printed inside a control that shows its
+   own state is the label doing the control's job twice. */
+.toggle {
+  position: relative; flex: none; width: 34px; height: 20px; padding: 0;
+  border: 1px solid var(--hairline); border-radius: 10px; cursor: pointer;
+  background: var(--bg2); transition: background 120ms ease, border-color 120ms ease;
+}
+.toggle-knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--fg-dim); transition: transform 120ms ease, background 120ms ease;
+}
+.toggle.on { background: var(--accent); border-color: var(--accent); }
+.toggle.on .toggle-knob { transform: translateX(14px); background: var(--bg0); }
+.toggle:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+/* Disabled by its master switch, not broken — dimmed as a group so the
+   reason is legible (the thing above it is off), never hidden. */
+.toggle:disabled { opacity: 0.4; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .toggle, .toggle-knob { transition: none; }
+}
+
 /* Diagnostics are not settings: lowest weight in the page, no head. */
 .set-diag { margin-top: 26px; font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-dim); }
 

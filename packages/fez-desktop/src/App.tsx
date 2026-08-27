@@ -494,6 +494,7 @@ function Shell({
       if (frame.type === "turn" && frame.status === "failed") {
         notifyEvent({
           key: `agent:${agent}`,
+          kind: "agent_error",
           title: `@${agent} hit an error`,
           body: frame.text ?? frame.title ?? "a turn failed",
           label: "agents",
@@ -518,13 +519,16 @@ function Shell({
     // Native notifications when the window isn't focused: @you in a
     // channel, or any live DM. Backfill/history never notifies.
     client.on("message", ((channelId: string, msg: Msg, meta?: { live?: boolean }) => {
-      if (!meta?.live || msg.authorPk === client.pubkey || document.hasFocus()) return;
+      // Focus is the GATE's call now (notify-prefs) — checking it here too
+      // would quietly outrank the "while focused" setting for mentions.
+      if (!meta?.live || msg.authorPk === client.pubkey) return;
       if (mutedRef.current.has(channelId)) return;
       const myName = client.displayName(client.pubkey);
       if (myName && new RegExp(`@${escapeRe(myName)}\\b`, "i").test(msg.content)) {
         const chName = client.state.workspace.channels.get(channelId)?.name;
         notifyEvent({
           key: `ch:${channelId}`,
+          kind: "mention",
           title: `${msg.authorName} mentioned you`,
           body: msg.content,
           label: chName ? `#${chName}` : "a channel",
@@ -533,9 +537,10 @@ function Shell({
       }
     }) as never);
     client.on("dmMessage", ((dm: { senderPk: string; text: string }, meta?: { live?: boolean }) => {
-      if (!meta?.live || dm.senderPk === client.pubkey || document.hasFocus()) return;
+      if (!meta?.live || dm.senderPk === client.pubkey) return;
       notifyEvent({
         key: `dm:${dm.senderPk}`,
+        kind: "dm",
         title: `${client.displayName(dm.senderPk)} (dm)`,
         body: dm.text,
         label: "DMs",
@@ -553,6 +558,7 @@ function Shell({
         if (!sentinel) {
           notifyEvent({
             key: `reminder:${note}`,
+            kind: "needs_action",
             title: "⏰ Reminder",
             body: note,
             label: "Reminders",
@@ -784,6 +790,7 @@ function Shell({
           const first = fresh[0];
           notifyEvent({
             key: "proposals",
+            kind: "needs_action",
             title: "fez — proposal awaiting review",
             body:
               first.kind === "description"

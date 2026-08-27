@@ -1,5 +1,17 @@
 import { isPermissionGranted, requestPermission, sendNotification, onAction } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { notifyAllows, readPrefs, type NotifyKind, type NotifyPrefs } from "./notify-prefs";
+
+/** Per machine, like the mute list — see notify-prefs.ts. */
+export const NOTIFY_KEY = "fez-notify";
+
+export function loadNotifyPrefs(): NotifyPrefs {
+  return readPrefs(localStorage.getItem(NOTIFY_KEY));
+}
+
+export function saveNotifyPrefs(prefs: NotifyPrefs): void {
+  localStorage.setItem(NOTIFY_KEY, JSON.stringify(prefs));
+}
 
 /**
  * Native (OS) notifications, coalesced, click-to-open.
@@ -82,8 +94,19 @@ interface Pending {
 const pending = new Map<string, Pending>();
 const WINDOW_MS = 1400;
 
-export function notifyEvent(opts: { key: string; title: string; body: string; label: string; target?: NotifTarget }): void {
-  if (typeof document !== "undefined" && document.hasFocus()) return;
+export function notifyEvent(opts: {
+  key: string;
+  title: string;
+  body: string;
+  label: string;
+  /** Which category this is, so the settings page can silence it alone. */
+  kind: NotifyKind;
+  target?: NotifTarget;
+}): void {
+  // The focus rule lives in the gate now rather than here: "only when
+  // unfocused" is a DEFAULT, not a law, and the settings page can lift it.
+  const focused = typeof document !== "undefined" && document.hasFocus();
+  if (!notifyAllows(readPrefs(localStorage.getItem(NOTIFY_KEY)), opts.kind, focused)) return;
   const prev = pending.get(opts.key);
   if (prev) clearTimeout(prev.timer);
   const count = (prev?.count ?? 0) + 1;
