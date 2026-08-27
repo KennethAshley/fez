@@ -224,6 +224,11 @@ export const KIND_WORKFLOW_RUN = 47200;
  */
 export const KIND_AGENT_ENGRAM = 30174;
 
+/** Where an agent can be paid — addressable, d = "<chain>:<network>",
+ * content = the address. Published by the wallet extension and signed by
+ * the agent's own key. */
+export const KIND_AGENT_PAYMENT_ADDRESS = 30175;
+
 /**
  * Direct messages — NIP-17 (kind 14 rumor inside a kind 1059 NIP-59
  * gift wrap), implemented in src/dm.ts. The decentralized standard,
