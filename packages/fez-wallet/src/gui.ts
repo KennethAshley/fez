@@ -11,6 +11,8 @@ import {
   remainingText,
   extractAddresses,
   logsFor,
+  networkLabel,
+  validThreshold,
 } from "./gui-logic.js";
 
 /** `toggleReaction`, `msgById` and `myReactionTo` aren't in the shared
@@ -50,7 +52,7 @@ type AddressBook = { treasury?: string; personas?: Record<string, string> };
 
 export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
-  const { useState, useEffect } = api.React;
+  const { useState, useEffect, useCallback } = api.React;
   const client = api.client as WalletClient;
   if (!client) return; // read:channels ungranted — nothing works without it
 
@@ -363,6 +365,33 @@ export default function activate(api: GuiExtensionApi): void {
     const [log, setLog] = useState<SpendEntry[]>([]);
     const [balances, setBalances] = useState<Record<string, string>>({});
 
+    // The network selector and threshold below are the PREFERENCE
+    // (api.prefs) — what the person wants — not the mirrored `network`
+    // read elsewhere in this panel, which is what the wallet has actually
+    // adopted. Balances follow the mirrored endpoint, so switching here
+    // doesn't move any balance on screen: the effect shows up once the
+    // wallet side next mirrors (its next CLI/tool call), same as an
+    // endpoint change made by editing wallet.json directly used to.
+    const [network, setNetwork] = useState<string>("finney");
+    const [threshold, setThreshold] = useState<string>("0.01");
+
+    useEffect(() => {
+      void api.prefs.get<string>("network").then((n) => setNetwork(n ?? "finney"));
+      void api.prefs
+        .get<Record<string, string>>("thresholds")
+        .then((t) => setThreshold(t?.default ?? "0.01"));
+    }, []);
+
+    const onNetwork = useCallback(async (next: string) => {
+      setNetwork(next);
+      await api.prefs.set("network", next);
+    }, []);
+
+    const onThreshold = useCallback(async (next: string) => {
+      setThreshold(next);
+      if (validThreshold(next)) await api.prefs.set("thresholds", { default: next });
+    }, []);
+
     useEffect(() => {
       void (async () => {
         setAddresses(((await api.storage.get("addresses")) as AddressBook) ?? {});
@@ -408,6 +437,58 @@ export default function activate(api: GuiExtensionApi): void {
     return h(
       "div",
       { className: "ext-panel" },
+      h("div", { className: "manage-section" }, "network"),
+      h(
+        "div",
+        { className: "skill-row" },
+        h(
+          "div",
+          { className: "skill-main" },
+          h("span", { className: "skill-name" }, networkLabel(network)),
+          h(
+            "div",
+            { className: "skill-desc" },
+            "which chain new payments go out on — takes effect once the wallet next mirrors it"
+          )
+        ),
+        h(
+          "select",
+          {
+            className: "skill-actions",
+            value: network,
+            onChange: (e: { target: { value: string } }) => void onNetwork(e.target.value),
+          },
+          h("option", { value: "finney" }, "finney (mainnet)"),
+          h("option", { value: "test" }, "test — play money")
+        )
+      ),
+
+      h("div", { className: "manage-section" }, "consent threshold"),
+      h(
+        "div",
+        { className: "skill-row" },
+        h(
+          "div",
+          { className: "skill-main" },
+          h("span", { className: "skill-name" }, "auto-approve below"),
+          h("div", { className: "skill-desc" }, "spends at or under this amount skip the consent card")
+        ),
+        h(
+          "div",
+          { className: "skill-actions" },
+          h("input", {
+            type: "text",
+            value: threshold,
+            style: validThreshold(threshold) ? undefined : { borderColor: "var(--danger, #c00)", color: "var(--danger, #c00)" },
+            "aria-invalid": !validThreshold(threshold),
+            onChange: (e: { target: { value: string } }) => void onThreshold(e.target.value),
+          })
+        )
+      ),
+      !validThreshold(threshold)
+        ? h("p", { className: "settings-hint" }, "not a valid TAO amount (up to 9 decimal places) — not saved")
+        : null,
+
       h("div", { className: "manage-section" }, "balances"),
       !endpoint
         ? h("p", { className: "settings-hint" }, "no chain endpoint mirrored yet — send once from the agent side first")

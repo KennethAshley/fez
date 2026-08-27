@@ -121,6 +121,20 @@ export function logsFor(
   return (logs ?? {})[network ?? "finney"] ?? [];
 }
 
+/** The panel's mainnet tell: anything that isn't finney gets "play money"
+ * stamped next to it, so the settings screen is never the place someone
+ * mistakes a testnet transfer for a real one. */
+export function networkLabel(network: string): string {
+  return network === "finney" ? "finney (mainnet)" : `${network} — play money`;
+}
+
+/** Same shape parseAmount accepts, checked before it reaches the wallet:
+ * a decimal with at most TAO's 9 places. */
+export function validThreshold(text: string): boolean {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(text.trim());
+  return !!m && (m[2]?.length ?? 0) <= 9;
+}
+
 export function requestStatus(
   reactions: { content: string; authorPk: string }[],
   ownerPk: string,

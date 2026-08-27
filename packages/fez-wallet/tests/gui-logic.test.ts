@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor } from "../src/gui-logic.js";
+import { networkLabel, validThreshold } from "../src/gui-logic.js";
 import type { SpendEntry } from "../src/log.js";
 
 const MSG = [
@@ -185,5 +186,24 @@ describe("logsFor", () => {
 
   it("reads undefined logs as empty", () => {
     expect(logsFor(undefined, "test")).toEqual([]);
+  });
+});
+
+describe("wallet panel logic", () => {
+  it("marks anything that is not mainnet", () => {
+    expect(networkLabel("test")).toMatch(/play money/i);
+    expect(networkLabel("finney")).not.toMatch(/play money/i);
+  });
+
+  it("accepts a plain decimal threshold", () => {
+    expect(validThreshold("0.05")).toBe(true);
+    expect(validThreshold("1")).toBe(true);
+  });
+
+  it("rejects anything that isn't one", () => {
+    expect(validThreshold("")).toBe(false);
+    expect(validThreshold("-1")).toBe(false);
+    expect(validThreshold("0.0000000001")).toBe(false); // more than 9 decimals
+    expect(validThreshold("abc")).toBe(false);
   });
 });
