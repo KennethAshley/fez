@@ -1563,6 +1563,8 @@ function ChannelView({
    * mention, so mentioning one is never "reached nobody". */
   localAgents: ReadonlySet<string>;
 }) {
+  /** agent → when its current turn began, for the elapsed readout. */
+  const turnStarts = useRef(new Map<string, number>());
   // Drafts persist per channel (Buzz's DraftsPanel decision, minimal
   // form): switching channels no longer eats half-typed messages.
   const [draft, setDraftState] = useState(() => localStorage.getItem(`fez-draft-${channelId}`) ?? "");
@@ -1651,9 +1653,43 @@ function ChannelView({
     ...artifactRows.map((a) => ({ ts: a.ts, artifact: a })),
   ].sort((a, b) => a.ts - b.ts);
   const now = Date.now();
+  // When each agent's current turn began. The working map only carries
+  // the LAST frame's timestamp, so elapsed has to be remembered here;
+  // an agent that goes quiet drops out and starts fresh next turn.
+  const turnStart = (agent: string, ts: number) => {
+    const seen = turnStarts.current.get(agent);
+    if (seen !== undefined && now - seen < 300_000) return seen;
+    turnStarts.current.set(agent, ts);
+    return ts;
+  };
   const liveDrafts = [...(drafts?.entries() ?? [])].filter(([, d]) => now - d.ts < 15_000);
   const draftsForRoot = (rootId: string) => liveDrafts.filter(([, d]) => d.rootId === rootId);
   const workingNow = [...working.entries()].filter(([, w]) => now - w.ts < 30_000);
+
+  // One turn per working agent, at whichever phase it has reached:
+  // streaming text wins over an activity line, an activity line over
+  // nothing. Drafts carry a pk; the working map carries a name, so the
+  // roster answers for the face.
+  const pkOfAgent = new Map([...client.agents().entries()].map(([pk, name]) => [name.toLowerCase(), pk]));
+  const draftByName = new Map(liveDrafts.filter(([, d]) => !d.rootId).map(([pk, d]) => [client.displayName(pk).toLowerCase(), { pk, d }]));
+  const liveTurns = workingNow.map(([agent, w]) => {
+    const writing = draftByName.get(agent.toLowerCase());
+    return {
+      agent,
+      pk: writing?.pk ?? pkOfAgent.get(agent.toLowerCase()),
+      phase: (writing ? "writing" : w.activity ? "acting" : "thinking") as LivePhase,
+      line: writing ? writing.d.content : w.activity,
+      since: turnStart(agent, w.ts),
+    };
+  });
+  // An agent streaming without a working frame still gets its turn.
+  for (const [pk, d] of liveDrafts) {
+    if (d.rootId) continue;
+    const name = client.displayName(pk);
+    if (liveTurns.some((t) => t.agent.toLowerCase() === name.toLowerCase())) continue;
+    liveTurns.push({ agent: name, pk, phase: "writing", line: d.content, since: turnStart(name, d.ts) });
+  }
+  const workingNames = new Set(liveTurns.map((t) => t.agent.toLowerCase()));
 
   // Anchored scroll (Buzz's policy): stick to the bottom only while the
   // reader is AT the bottom; scrolled-up positions survive new messages.
@@ -2022,19 +2058,29 @@ function ChannelView({
           );
         })}
         {threadRoot &&
-          draftsForRoot(threadRoot).map(([pk, d]) => <StreamingBubble key={pk} author={client.displayName(pk)} text={d.content} />)}
+          draftsForRoot(threadRoot).map(([pk, d]) => (
+            <LiveTurn key={pk} pk={pk} name={client.displayName(pk)} phase="writing" line={d.content} />
+          ))}
+        {/* The turns live INSIDE the timeline, in the row their message
+            will occupy — that adjacency is the whole point. */}
+        {!threadRoot &&
+          liveTurns.map((t) => (
+            <LiveTurn
+              key={t.agent}
+              pk={t.pk}
+              name={t.agent}
+              phase={t.phase}
+              line={t.line}
+              since={t.since}
+              onWatch={() => onWatch(t.agent)}
+            />
+          ))}
         <div ref={bottomRef} />
       </div>
-      {typing.length > 0 && <div className="typing">{typing.join(", ")} typing…</div>}
-      {workingNow.length > 0 && (
-        <div className="activity-strip">
-          {workingNow.map(([agent, w]) => (
-            <button key={agent} className="activity-chip" onClick={() => onWatch(agent)} title="open live activity">
-              <span className="working">⚙</span> {agent}
-              <span className="activity-headline shimmer">{w.activity}</span>
-            </button>
-          ))}
-        </div>
+      {/* A person typing is a different fact from an agent working:
+          theirs isn't observable, so it keeps the quiet line. */}
+      {typing.filter((who) => !workingNames.has(who.toLowerCase())).length > 0 && (
+        <div className="typing">{typing.filter((who) => !workingNames.has(who.toLowerCase())).join(", ")} typing…</div>
       )}
       {editing && (
         <div className="edit-banner">
@@ -2122,30 +2168,91 @@ function RootLiveArea({
   if (drafts.length === 0 && typing.length === 0) return null;
   return (
     <div className="root-live">
+      {/* Under a root message the turn runs compact — same object, one
+          line, so a thread preview never grows a second vocabulary. */}
       {drafts.map(([pk, d]) => (
-        <StreamingBubble key={pk} author={client.displayName(pk)} text={d.content} compact />
+        <LiveTurn key={pk} pk={pk} name={client.displayName(pk)} phase="writing" line={d.content} compact />
       ))}
       {typing.length > 0 && drafts.length === 0 && (
-        <div className="reply-line typing-line">
-          <span className="reply-arrow">↳</span> {typing.join(", ")} <span className="shimmer">replying…</span>
-        </div>
+        <LiveTurn name={typing.join(", ")} phase="thinking" line="" compact />
       )}
     </div>
   );
 }
 
-/** An agent's reply streaming in live — dim, cursor, replaced by the real message when it lands. */
-function StreamingBubble({ author, text, compact }: { author: string; text: string; compact?: boolean }) {
+/**
+ * An agent at work — one object where its message will land, evolving
+ * through the turn: thinking → acting → writing, then the real bubble.
+ *
+ * It replaces three unrelated treatments (an italic "typing…" line, a
+ * shimmering "replying…" line, and a pill strip above the composer) that
+ * each said the same fact in a different vocabulary and none of which
+ * showed the creature identifying the agent everywhere else. Because
+ * this grid IS .bubble's grid, the finish is a settle, not a pop.
+ */
+type LivePhase = "thinking" | "acting" | "writing";
+function LiveTurn({
+  pk,
+  name,
+  phase,
+  line,
+  since,
+  compact,
+  onWatch,
+}: {
+  pk?: string;
+  name: string;
+  phase: LivePhase;
+  line: string;
+  /** When this turn started — elapsed appears once it runs long. */
+  since?: number;
+  compact?: boolean;
+  onWatch?: () => void;
+}) {
+  const elapsed = since ? Math.floor((Date.now() - since) / 1000) : 0;
   return (
-    <div className={compact ? "stream compact" : "stream"}>
-      <span className="reply-arrow">↳</span> <span className="reply-author">{author}</span>{" "}
-      <span className="stream-text">
-        {compact ? text.replace(/\s+/g, " ").slice(-160) : text.slice(-800)}
-        <span className="cursor">▌</span>
+    <button
+      className={`live-turn ${phase}${compact ? " compact" : ""}`}
+      onClick={onWatch}
+      title={onWatch ? "open live activity" : undefined}
+    >
+      <span className="live-face">
+        {pk ? <Avatar pk={pk} size={30} title={name} quip={false} /> : <span className="live-face-blank" />}
       </span>
-    </div>
+      <span className="live-body">
+        <span className="live-head">
+          <span className="live-name">{name}</span>
+          {/* Nothing used to tell a fast agent from a stuck one. */}
+          {elapsed >= 20 && <span className="live-elapsed">{fmtElapsed(elapsed)}</span>}
+        </span>
+        <span className="live-line">
+          {phase === "thinking" ? (
+            <>
+              is thinking{" "}
+              <span className="live-dots">
+                <span>·</span>
+                <span>·</span>
+                <span>·</span>
+              </span>
+            </>
+          ) : phase === "acting" ? (
+            <>
+              <span className="live-mark">▸</span>
+              {line}
+            </>
+          ) : (
+            <>
+              {compact ? line.replace(/\s+/g, " ").slice(-160) : line.slice(-800)}
+              <span className="live-cursor">▌</span>
+            </>
+          )}
+        </span>
+      </span>
+    </button>
   );
 }
+
+const fmtElapsed = (s: number) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
 
 function DmView({
   client,

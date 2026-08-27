@@ -499,42 +499,50 @@ select.ob-input:hover { border-color: var(--accent); }
 .reply-arrow { color: var(--bg2); }
 .reply-author { color: var(--yellow); font-weight: 600; }
 .reply-count { color: var(--accent); }
-.typing-line { cursor: default; }
-.stream {
-  color: var(--fg-dim); font-size: 13px; padding: 2px 0; max-width: 720px;
-  border-left: 2px solid var(--phosphor);
-  padding-left: 8px; margin: 2px 0 6px;
-  animation: phosphor-pulse 1.6s ease-in-out infinite alternate;
+/* ── an agent at work ───────────────────────────────────────
+   One object, in the row its message will occupy, evolving through the
+   turn: thinking → acting → writing → settled. It replaced an italic
+   "typing…" line, a shimmering "replying…" line and a pill strip above
+   the composer — three vocabularies for one fact, none of which showed
+   the creature that names the agent everywhere else. The grid is
+   .bubble's grid, so the finish is a settle rather than a pop. */
+.live-turn {
+  display: grid; grid-template-columns: 30px minmax(0, 1fr); column-gap: 12px; align-items: start;
+  margin: 0 -10px; padding: 4px 10px; width: calc(100% + 20px);
+  background: none; border: 0; text-align: left; color: inherit; font: inherit; cursor: pointer;
 }
-.stream.compact { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stream-text {
-  font-style: italic;
-  color: color-mix(in srgb, var(--phosphor) 55%, var(--fg));
+.live-turn:hover .live-line { color: var(--fg); }
+.live-turn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; border-radius: 6px; }
+.live-face { position: relative; line-height: 0; width: 30px; margin-top: 3px; }
+.live-face-blank { display: block; width: 30px; height: 30px; }
+.live-face .spr-a { animation: spr-frame-a var(--beat, 0.9s) steps(1) infinite; }
+.live-face .spr-b { animation: spr-frame-b var(--beat, 0.9s) steps(1) infinite; }
+/* Thinking is a slower breath than working. */
+.live-turn.thinking .live-face { --beat: 1.4s; }
+.live-turn.acting .live-face, .live-turn.writing .live-face { --beat: 0.66s; }
+.live-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.live-head { display: flex; align-items: baseline; gap: 8px; }
+/* The same author type the settled message uses. */
+.live-name { font-weight: 600; font-size: 13px; color: var(--yellow); }
+.live-elapsed { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim); opacity: 0.8; }
+.live-line {
+  font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; color: var(--fg-dim);
+  overflow-wrap: anywhere;
 }
-.cursor {
-  animation: blink 1s steps(1) infinite; color: var(--accent);
-  color: var(--phosphor);
+.live-turn.compact .live-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-mark { color: var(--phosphor); margin-right: 6px; }
+.live-turn.writing .live-line { color: color-mix(in srgb, var(--phosphor) 40%, var(--fg)); font-style: italic; }
+.live-cursor { animation: blink 1s steps(1) infinite; color: var(--phosphor); }
+.live-dots span { animation: live-pip 1.2s ease-in-out infinite; opacity: 0.35; }
+.live-dots span:nth-child(2) { animation-delay: 0.18s; }
+.live-dots span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes live-pip { 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .live-face .spr-a, .live-face .spr-b, .live-dots span, .live-cursor { animation: none; }
 }
 
 @keyframes blink { 50% { opacity: 0; } }
 
-.activity-strip {
-  display: flex; gap: 8px; padding: 4px 18px 6px; flex-wrap: wrap;
-  position: relative; border-top: 1px solid var(--hairline);
-}
-.activity-chip {
-  display: flex; align-items: center; gap: 6px; background: var(--bg1);
-  border: 1px solid var(--bg2); border-radius: 14px; color: var(--fg); font: inherit;
-  font-size: 12px; padding: 3px 12px; cursor: pointer;
-  /* Full row, one line: the preview is the most information-dense pixel
-     in the app while an agent works, and capping it at 420px threw most
-     of it away. Clicking opens the watch pane with the whole transcript. */
-  flex: 1 1 100%; min-width: 0; max-width: 100%; text-align: left;
-}
-.activity-chip:hover { border-color: var(--accent); }
-.activity-headline {
-  color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .shimmer {
   background: linear-gradient(90deg, var(--fg-dim) 40%, var(--fg) 50%, var(--fg-dim) 60%);
   background-size: 200% 100%; background-clip: text;
@@ -775,25 +783,8 @@ select.ob-input:hover { border-color: var(--accent); }
 .bubble:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
 .reply-line, .reply-author, .reply-count { font-family: var(--font-mono); font-size: 12px; }
 
-/* ── THE LIVE WIRE (signature): agents streaming, in phosphor ── */
-.stream, .stream-text { font-family: var(--font-mono); font-size: 12.5px; }
-
-@keyframes phosphor-pulse {
-  from { border-left-color: var(--phosphor); }
-  to { border-left-color: color-mix(in srgb, var(--phosphor) 30%, var(--bg0)); }
-}
-.activity-strip::before {
-  content: ""; position: absolute; top: -1px; left: 0; right: 0; height: 1px;
-  background: linear-gradient(90deg, transparent 20%, var(--phosphor) 50%, transparent 80%);
-  background-size: 200% 100%;
-  animation: live-wire 2.6s linear infinite;
-}
-
-@keyframes live-wire {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
-}
-.activity-chip, .activity-headline { font-family: var(--font-mono); font-size: 12px; }
+/* The live wire retired with the pill strip it underlined: an agent at
+   work is now .live-turn, in the timeline where its message lands. */
 .working { color: var(--phosphor); }
 
 /* ── quiet scrollbars ── */
