@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, endpointFor, readPrefs, migratePrefs } from "../src/config.js";
+import { loadConfig, saveConfig, endpointFor, readPrefs, migratePrefs } from "../src/config.js";
 import { mirrorPrefs } from "../src/storage-mirror.js";
 import { tmpHome } from "./helpers.js";
 
@@ -209,5 +209,52 @@ describe("network preferences", () => {
   it("maps both networks to their endpoints", () => {
     expect(endpointFor("test")).toBe("wss://test.finney.opentensor.ai:443");
     expect(endpointFor("finney")).toBe("wss://entrypoint-finney.opentensor.ai:443");
+  });
+});
+
+describe("legacy pin must never silently change the network", () => {
+  beforeEach(() => tmpHome());
+
+  const legacy = (tao: string, extra: Record<string, unknown> = {}) =>
+    fs.writeFileSync(
+      path.join(process.env.FEZ_WALLET_HOME!, "wallet.json"),
+      JSON.stringify({ personas: { scout: { index: 0 } }, endpoints: { tao }, ...extra })
+    );
+
+  it("infers the network from a legacy pin when prefs say nothing", () => {
+    legacy("wss://test.finney.opentensor.ai:443");
+    const c = loadConfig();
+    expect(c.network).toBe("test");
+    expect(c.endpoints.tao).toContain("test.finney");
+  });
+
+  it("prefs still win over a legacy pin", async () => {
+    legacy("wss://test.finney.opentensor.ai:443");
+    await mirrorPrefs({ network: "finney" });
+    const c = loadConfig();
+    expect(c.network).toBe("finney");
+    expect(c.endpoints.tao).toContain("entrypoint-finney");
+  });
+
+  it("a save migrates the pin instead of destroying it", () => {
+    legacy("wss://test.finney.opentensor.ai:443");
+    // What `fez-wallet derive` does: load, mutate, save.
+    const c = loadConfig();
+    c.personas.quill = { index: 1 };
+    saveConfig(c);
+    // The pin is gone from wallet.json (correct) — but the intent survived.
+    expect(readPrefs().network).toBe("test");
+    expect(loadConfig().network).toBe("test");
+    expect(loadConfig().endpoints.tao).toContain("test.finney");
+  });
+
+  it("an unrecognised override is never inferred from, and still wins", () => {
+    legacy("ws://127.0.0.1:9944");
+    const c = loadConfig();
+    expect(c.network).toBe("finney");
+    expect(c.endpoints.tao).toBe("ws://127.0.0.1:9944");
+    saveConfig(c);
+    expect(readPrefs().network).toBeUndefined();
+    expect(loadConfig().endpoints.tao).toBe("ws://127.0.0.1:9944");
   });
 });

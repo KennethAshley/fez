@@ -40,6 +40,27 @@ function isNetworkOwnedEndpoint(url: string | undefined): boolean {
   return url !== undefined && (Object.values(ENDPOINTS) as string[]).includes(url);
 }
 
+/** Which network does this URL name? The reverse of endpointFor. A wallet
+ * written before prefs existed recorded its network ONLY as a pinned
+ * endpoint, so that pin is the sole surviving record of the owner's intent —
+ * reading it as "finney by default" silently moves such a wallet to mainnet,
+ * and stripping it on save destroys the evidence that it was ever elsewhere. */
+function networkFromEndpoint(url: string | undefined): Network | undefined {
+  return (Object.entries(ENDPOINTS) as [Network, string][]).find(([, u]) => u === url)?.[0];
+}
+
+/** Sync merge into the prefs subtree. saveConfig needs this to migrate a
+ * legacy pin in the same breath as stripping it; the async storage-mirror
+ * queue is for the gui/CLI paths that are already async. */
+function writePrefsSync(p: Partial<WalletPrefs>): void {
+  const file = prefsFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  let state: Record<string, unknown> = {};
+  try { state = JSON.parse(fs.readFileSync(file, "utf-8")); } catch { /* empty */ }
+  state.prefs = { ...(state.prefs as WalletPrefs ?? {}), ...p };
+  fs.writeFileSync(file, JSON.stringify(state, null, 2));
+}
+
 function configFile(): string {
   return path.join(process.env.FEZ_WALLET_HOME ?? path.join(os.homedir(), ".fez"), "wallet.json");
 }
@@ -66,7 +87,11 @@ export function loadConfig(): WalletConfig {
     onDisk = JSON.parse(fs.readFileSync(configFile(), "utf-8"));
   } catch { /* missing/corrupt reads as defaults */ }
   const prefs = readPrefs();
-  const network: Network = prefs.network ?? "finney";
+  // prefs first; then a legacy pin, which is the only record a pre-prefs
+  // wallet has of its network; only then the default. Inference applies
+  // solely when prefs are silent, so it can never override a live choice.
+  const network: Network =
+    prefs.network ?? networkFromEndpoint(onDisk.endpoints?.tao) ?? "finney";
   return {
     ...DEFAULTS,
     ...onDisk,
@@ -111,6 +136,22 @@ export function loadConfig(): WalletConfig {
  */
 export function saveConfig(c: WalletConfig): void {
   const prefs = readPrefs();
+
+  // Migrate before stripping. `derive` and the first-approved-payee write
+  // both land here holding an object loadConfig() built, and the strip below
+  // removes a recognised endpoint — which for a pre-prefs wallet is the only
+  // thing recording its network. Removing it without moving it first returned
+  // such a wallet to the finney default silently, mid-command: `fez-wallet
+  // derive quill` on a testnet wallet moved it to mainnet and said nothing.
+  if (prefs.network === undefined) {
+    let pinned: string | undefined;
+    try { pinned = JSON.parse(fs.readFileSync(configFile(), "utf-8")).endpoints?.tao; } catch { /* none */ }
+    const inferred = networkFromEndpoint(pinned);
+    if (inferred) {
+      writePrefsSync({ network: inferred });
+      prefs.network = inferred;
+    }
+  }
   const { network: _derivedNetwork, endpoints, thresholds, ...owned } = c;
   const persisted: Record<string, unknown> = { ...owned };
 
