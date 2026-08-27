@@ -47,6 +47,7 @@ import {
   UNTRUSTED_CONTENT_NOTICE,
   registerSystemPromptSection,
   composeSystemPrompt,
+  MAX_CHAIN_DEPTH,
 } from "@fezchat/protocol";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
@@ -88,8 +89,6 @@ export { piThinkingLevel };
  * and a circuit breaker pauses the agent after repeated consecutive
  * failures instead of burning budget against a broken setup.
  */
-/** Max agent-to-agent hops before an agent declines to respond — matches the TUI's local chain cap. */
-const MAX_CHAIN_DEPTH = 5;
 
 /**
  * Artifact fences — how an agent ships rich output from ANY harness
@@ -1249,11 +1248,12 @@ async function main() {
         return;
       }
 
-      // Agent-to-agent chain cap — mirrors the TUI's MAX_CHAIN_DEPTH for
-      // relay-dispatched agents. Human messages carry no depth tag
-      // (depth 0); each agent reply writes trigger-depth + 1. Without
-      // this, two respondTo=anyone agents naming each other would
-      // ping-pong harness turns forever.
+      // Agent-to-agent chain cap — the shared protocol limit, so the
+      // TUI, orchestrator, workflows, and summoner all count with the
+      // same ruler. Human messages carry no depth tag (depth 0); each
+      // agent reply writes trigger-depth + 1. Without this, two
+      // respondTo=anyone agents naming each other would ping-pong
+      // harness turns forever.
       const triggerDepth = Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0);
       if (triggerDepth >= MAX_CHAIN_DEPTH) {
         console.log(`⛔ Chain depth ${triggerDepth} ≥ ${MAX_CHAIN_DEPTH} — not responding (loop guard)`);

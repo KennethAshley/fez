@@ -12,6 +12,7 @@ import {
   KIND_REACTION,
   KIND_WORKFLOW_RUN,
   resolveRelays,
+  MAX_CHAIN_DEPTH,
 } from "@fezchat/protocol";
 import { Cron } from "croner";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
@@ -46,7 +47,6 @@ import { evalCondition, type ExprValue } from "./expr.js";
  *   FEZ_WORKFLOWS_DIR  definitions directory (default ~/.fez/workflows)
  *   FEZ_AGENT_OWNER    owner pubkey — the default approver and `from: owner`
  */
-const MAX_CHAIN_DEPTH = 5;
 const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 3_600_000;
 
 interface FezEvent {

@@ -32,6 +32,7 @@ export { KIND_HTTP_AUTH, buildNip98Header, verifyNip98Header, type Nip98Result, 
 export { FezTUI } from "./cli/tui.js";
 export { PackageManager, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
 export * from "./protocol/kinds.js";
+export { MAX_CHAIN_DEPTH } from "./protocol/limits.js";
 /** Trust primitives: what a tool call risks, and what an extension may do. */
 export { classifyCommand, classifyToolCall, type RiskLevel, type RiskVerdict } from "./agent/command-risk.js";
 export {

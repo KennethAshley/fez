@@ -11,6 +11,7 @@ import {
   ROSTER_D,
   KIND_REACTION,
   resolveRelays,
+  MAX_CHAIN_DEPTH,
 } from "@fezchat/protocol";
 import {
   isSmallTalk,
@@ -68,8 +69,6 @@ import { GUIDE_PERSONA, GUIDE_PERSONA_NAME } from "./guide-persona.js";
  *   FEZ_AGENT_RESPOND_TO      anyone | owner | allowlist:<pk,...> (default owner)
  *   FEZ_AGENT_OWNER           owner pubkey (owner mode + sibling gate)
  */
-const MAX_CHAIN_DEPTH = 5;
-
 interface KnownAgent {
   pubkey: string;
   name: string;

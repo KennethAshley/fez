@@ -4,6 +4,8 @@
  * the daemon — one policy, two hosts, no drift.
  */
 
+import { MAX_CHAIN_DEPTH } from "../protocol/limits.js";
+
 /**
  * A string safe to interpolate into a SHELL COMMAND — the repo/line an
  * agent is summoned onto reach a live terminal via herdr, so they are
@@ -85,7 +87,7 @@ export class SummonEngine {
     opts?: { cooldownMs?: number; maxChainDepth?: number; watchdogMs?: number }
   ) {
     this.cooldownMs = opts?.cooldownMs ?? 15_000;
-    this.maxChainDepth = opts?.maxChainDepth ?? 5;
+    this.maxChainDepth = opts?.maxChainDepth ?? MAX_CHAIN_DEPTH;
     this.watchdogMs = opts?.watchdogMs ?? 90_000;
   }
 

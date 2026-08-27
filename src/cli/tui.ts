@@ -90,6 +90,7 @@ class LinePrefix implements Component {
   }
 }
 import { CapabilityClient } from "../protocol/client.js";
+import { MAX_CHAIN_DEPTH } from "../protocol/limits.js";
 import { FezClient } from "../../packages/fez-client/dist/index.js";
 import { installNodeStatePersistence } from "../../packages/fez-client/dist/state-node.js";
 import { RelayConnection } from "../protocol/relay.js";
@@ -122,8 +123,6 @@ interface Message {
   reactions?: { emoji: string; by: string }[];
 }
 
-/** Caps agent-mentions-agent chains (e.g. @researcher -> @reviewer -> ...) so a mutual-mention loop can't run forever. */
-const MAX_CHAIN_DEPTH = 5;
 
 /**
  * Minimal Fez TUI — chat-first terminal interface.
