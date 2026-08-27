@@ -37,7 +37,6 @@ import {
   type DmRumor,
   type HarnessSession,
   type HarnessUpdate,
-  type PromptImage,
   type TimeoutOptions,
   resolveRelays,
   parseRespondTo,
@@ -48,9 +47,9 @@ import {
   registerSystemPromptSection,
   composeSystemPrompt,
   MAX_CHAIN_DEPTH,
-  loadSettings,
+  attachmentsOf,
+  attachmentNotice,
 } from "@fezchat/protocol";
-import { allowedMediaHosts, fetchMessageMedia, unperceivedNotice, type MediaInTurn } from "./media.js";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -113,34 +112,31 @@ function extractArtifacts(reply: string): { text: string; artifacts: { type: str
 }
 
 /**
- * Everything the person attached to this turn, sorted by what the model can
- * do with it. The allowlist is built from the SAME answer the uploader used
- * — settings.json's mediaServer — plus the env spelling, so a workspace that
- * moved off the default Blossom server doesn't quietly lose vision.
+ * The prompt line that tells an agent what came attached — and nothing
+ * more.
+ *
+ * Describing is free (imeta already carries type and size); LOOKING costs
+ * a fetch and a chunk of the turn's context, so the model spends that only
+ * by calling fez_view_attachment. fez used to fetch every image on every
+ * addressed turn, which meant a channel full of screenshots was billed to
+ * every agent in it whether or not anyone wanted them read.
  */
-async function turnMedia(content: string): Promise<MediaInTurn> {
-  const hosts = allowedMediaHosts({ settingsMediaServer: loadSettings().mediaServer, env: process.env });
-  const media = await fetchMessageMedia(content, { hosts });
-  if (media.images.length > 0) console.log(`🖼  ${media.images.length} image(s) attached to this turn`);
-  for (const host of media.skippedHosts) {
-    console.log(`🚫 not fetching media from ${host} — not the configured media server (settings.json mediaServer or FEZ_MEDIA_SERVER)`);
-  }
-  if (media.unperceived.length > 0) {
-    console.log(`🔇 ${media.unperceived.length} attachment(s) this model can't perceive: ${media.unperceived.map((u) => u.mime).join(", ")}`);
-  }
-  return media;
+function attachmentPrompt(event: { content: string; tags: string[][] }): string | undefined {
+  const attachments = attachmentsOf(event);
+  if (attachments.length === 0) return undefined;
+  console.log(`📎 ${attachments.length} attachment(s) offered to the model (fetched only if it asks)`);
+  return attachmentNotice(attachments);
 }
 
 /**
- * Fold "here is what you cannot perceive" into a prompt builder, so the
- * admission travels with the prompt on every rebuild of it (a fresh session
- * re-runs the builder, and the attachment is still just as unhearable).
+ * Fold a notice into a prompt builder, so it travels with the prompt on
+ * every rebuild — a fresh session re-runs the builder, and the attachment
+ * is still just as attached.
  */
-function withMediaNotice(
+function withNotice(
   build: (fresh: boolean) => Promise<string>,
-  media: MediaInTurn
+  notice: string | undefined
 ): (fresh: boolean) => Promise<string> {
-  const notice = unperceivedNotice(media.unperceived);
   if (!notice) return build;
   return async (fresh: boolean) => `${await build(fresh)}\n\n${notice}`;
 }
@@ -1028,20 +1024,20 @@ async function main() {
     buildPrompt: (fresh: boolean) => Promise<string>,
     onProgress: ((text: string) => void) | undefined,
     onUpdate: (update: HarnessUpdate) => void,
-    signal?: AbortSignal,
-    images?: PromptImage[]
+    signal?: AbortSignal
   ): Promise<string> {
-    // Images ride WITH the text as an ACP content-block array; a model
-    // without vision just ignores them. Text-only stays a bare string.
-    const withImages = (text: string): string | { text: string; images: PromptImage[] } =>
-      images && images.length > 0 ? { text, images } : text;
+    // Turns are text now. Images reach the model only when it calls
+    // fez_view_attachment, so nothing rides along with the prompt — see
+    // attachmentPrompt above for why. The harness still SUPPORTS prompt
+    // images (PromptInput, and the retry that drops them when a model
+    // refuses); fez-acp simply no longer sends any.
     if (!harness!.openSession) {
       return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal);
     }
     let pooled = await getSession(scope);
     try {
       const instruction = withHandoff(scope, await buildPrompt(!pooled.primed), !pooled.primed);
-      const reply = await pooled.session.prompt(withImages(instruction), onProgress, onUpdate, signal);
+      const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
       // An empty reply is a FAILED turn, not a publishable one (seen
       // live: pi provider flaked, harness emitted only retry noise, the
       // scrubbed remainder was "" — and an empty message still breaks
@@ -1059,7 +1055,7 @@ async function main() {
       console.log(`↻ transient harness error — recycling session, replaying once: ${err instanceof Error ? err.message : err}`);
       pooled = await getSession(scope);
       const reply = await pooled.session.prompt(
-        withImages(withHandoff(scope, await buildPrompt(true), true)),
+        withHandoff(scope, await buildPrompt(true), true),
         onProgress,
         onUpdate,
         signal
@@ -1490,17 +1486,12 @@ async function main() {
 
         publishObserver({ type: "turn", status: "started" });
         const onUpdate = makeOnUpdate();
-        // Any image the person attached goes to the model as vision; audio
-        // and video come back as a stated absence, because the app plays
-        // them and the person will assume the agent took them in too.
-        const media = await turnMedia(event.content);
         const rawReply = await promptSession(
           `ch:${channelId}`,
-          withMediaNotice(buildPrompt, media),
+          withNotice(buildPrompt, attachmentPrompt(event)),
           publishDraft,
           onUpdate,
-          turnController.signal,
-          media.images
+          turnController.signal
         );
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
@@ -1742,14 +1733,14 @@ async function main() {
       console.log(`✉️  DM from ${dm.senderPk.slice(0, 8)}… — invoking ${persona.harness}`);
       publishObserver({ type: "turn", status: "started" });
       const onUpdate = makeOnUpdate();
-      const dmMedia = await turnMedia(dm.text);
+      // A DM rumor carries no tags, so only URLs in the body are visible
+      // here — there is no imeta to describe them with.
       const reply = await promptSession(
         `dm:${convoKey}`,
-        withMediaNotice(buildPrompt, dmMedia),
+        withNotice(buildPrompt, attachmentPrompt({ content: dm.text, tags: [] })),
         undefined,
         onUpdate,
-        turnController.signal,
-        dmMedia.images
+        turnController.signal
       );
       if (!reply.trim()) throw new Error("harness returned an empty reply");
 

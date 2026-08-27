@@ -1,36 +1,37 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
-import { allowedMediaHosts, fetchMessageMedia, unperceivedNotice } from "../../fez-acp/src/media.js";
+import {
+  allowedMediaHosts,
+  attachmentsOf,
+  attachmentNotice,
+  fetchAttachment,
+} from "../../../src/agent/media.js";
 
 /**
- * What an agent can actually perceive when someone drops a file in a channel.
+ * What an agent knows about the files in a message, and what it costs to
+ * find out.
  *
- * Two failures this guards. First the silent one: the allowlist exists to stop
- * SSRF (a channel message is untrusted text, so fetching arbitrary URLs from it
- * would reach link-local metadata endpoints), but it defaulted to the public
- * Blossom server ONLY — so a person who pointed fez at their own media server
- * had every image silently stop reaching the model, with no log line, because
- * a disallowed host is a bare `continue`.
+ * Attachments are DESCRIBED for free and fetched only on request. The
+ * description comes from the NIP-92 imeta the sender already wrote — no
+ * network — so a channel full of screenshots costs a line of text each
+ * instead of megabytes of base64 on every addressed turn. The bytes are
+ * spent when the model decides it needs to look, by calling
+ * fez_view_attachment.
  *
- * Second the honest one: the model can see images and nothing else. Audio and
- * video have to come back as a stated absence, or the agent answers "what did
- * they say in this clip?" as though the clip were not there.
+ * The allowlist still guards every fetch: a channel message is untrusted
+ * text, so an arbitrary URL out of it is an SSRF hole whether a human or a
+ * model chose to follow it.
  */
+
+const imeta = (url: string, mime?: string, size?: number) =>
+  ["imeta", `url ${url}`, ...(mime ? [`m ${mime}`] : []), ...(size ? [`size ${size}`] : [])];
 
 describe("allowedMediaHosts", () => {
   it("always allows the default media server", () => {
     expect(allowedMediaHosts({})).toContain("blossom.primal.net");
   });
 
-  it("allows the server the user configured in settings.json", () => {
-    expect(allowedMediaHosts({ settingsMediaServer: "https://blobs.example.com" })).toContain("blobs.example.com");
-  });
-
-  it("allows a bare host with no scheme", () => {
-    expect(allowedMediaHosts({ settingsMediaServer: "blobs.example.com" })).toContain("blobs.example.com");
-  });
-
-  it("allows the env override too, so both spellings reach the model", () => {
+  it("unions the configured server with the env spelling", () => {
     const hosts = allowedMediaHosts({
       settingsMediaServer: "https://a.example",
       env: { FEZ_MEDIA_SERVER: "https://b.example" },
@@ -40,20 +41,73 @@ describe("allowedMediaHosts", () => {
   });
 
   it("ignores a malformed setting rather than throwing the turn away", () => {
-    expect(() => allowedMediaHosts({ settingsMediaServer: "::: not a url :::" })).not.toThrow();
-    expect(allowedMediaHosts({ settingsMediaServer: "::: not a url :::" })).toContain("blossom.primal.net");
+    expect(allowedMediaHosts({ settingsMediaServer: "::: nope :::" })).toContain("blossom.primal.net");
   });
 });
 
-describe("fetchMessageMedia", () => {
+describe("attachmentsOf", () => {
+  it("reads url, mime and size from imeta without touching the network", () => {
+    const found = attachmentsOf({
+      content: "📎 shot.png (2.3 MB) https://b.example/abc",
+      tags: [["h", "c1"], imeta("https://b.example/abc", "image/png", 2_400_000)],
+    });
+    expect(found).toEqual([{ url: "https://b.example/abc", mime: "image/png", size: 2_400_000 }]);
+  });
+
+  it("still finds a bare pasted URL that carries no imeta", () => {
+    const found = attachmentsOf({ content: "look https://b.example/x.png", tags: [] });
+    expect(found).toEqual([{ url: "https://b.example/x.png" }]);
+  });
+
+  it("does not list the same url twice when imeta and the body agree", () => {
+    const found = attachmentsOf({
+      content: "📎 a.png (1 KB) https://b.example/a.png",
+      tags: [imeta("https://b.example/a.png", "image/png", 1024)],
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0].mime).toBe("image/png");
+  });
+
+  it("finds nothing in a message that carries nothing", () => {
+    expect(attachmentsOf({ content: "just talking", tags: [["h", "c1"]] })).toEqual([]);
+  });
+});
+
+describe("attachmentNotice", () => {
+  it("is absent when there is nothing attached", () => {
+    expect(attachmentNotice([])).toBeUndefined();
+  });
+
+  it("names the tool for something the model could look at", () => {
+    const notice = attachmentNotice([{ url: "https://b.example/a", mime: "image/png", size: 1024 }]);
+    expect(notice).toMatch(/fez_view_attachment/);
+    expect(notice).toMatch(/https:\/\/b\.example\/a/);
+    expect(notice).toMatch(/image\/png/);
+  });
+
+  it("tells the truth about audio and video instead of offering the tool", () => {
+    const notice = attachmentNotice([{ url: "https://b.example/v", mime: "audio/mp4" }])!;
+    expect(notice).toMatch(/cannot|can't/i);
+    expect(notice).toMatch(/audio/);
+    // Offering a tool that returns "you can't hear this" wastes a turn.
+    expect(notice).not.toMatch(/fez_view_attachment.*https:\/\/b\.example\/v/);
+  });
+
+  it("offers the tool for an unknown type — only the fetch can say what it is", () => {
+    const notice = attachmentNotice([{ url: "https://b.example/hash" }])!;
+    expect(notice).toMatch(/fez_view_attachment/);
+  });
+});
+
+describe("fetchAttachment", () => {
   let server: http.Server;
   let host: string;
 
   const BODIES: Record<string, [string, Buffer]> = {
     "/shot.png": ["image/png", Buffer.from("fake png bytes")],
-    "/clip.mp4": ["video/mp4", Buffer.from("fake mp4 bytes")],
     "/voice.m4a": ["audio/mp4", Buffer.from("fake m4a bytes")],
-    "/notes.pdf": ["application/pdf", Buffer.from("fake pdf bytes")],
+    "/notes.pdf": ["application/pdf", Buffer.from("fake pdf")],
+    "/huge.png": ["image/png", Buffer.alloc(9 * 1024 * 1024)],
   };
 
   beforeAll(async () => {
@@ -71,45 +125,39 @@ describe("fetchMessageMedia", () => {
 
   const hosts = () => allowedMediaHosts({ settingsMediaServer: `http://${host}` });
 
-  it("hands images to the model as vision", async () => {
-    const out = await fetchMessageMedia(`look at this http://${host}/shot.png`, { hosts: hosts() });
-    expect(out.images).toHaveLength(1);
-    expect(out.images[0].mimeType).toBe("image/png");
-    expect(Buffer.from(out.images[0].data, "base64").toString()).toBe("fake png bytes");
+  it("returns the bytes for an image, classified by what the server served", async () => {
+    const got = await fetchAttachment(`http://${host}/shot.png`, { hosts: hosts() });
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.mimeType).toBe("image/png");
+    expect(Buffer.from(got.data, "base64").toString()).toBe("fake png bytes");
   });
 
-  it("reports audio and video as present but unperceived, never as absent", async () => {
-    const out = await fetchMessageMedia(
-      `📎 voice.m4a (70 KB) http://${host}/voice.m4a and http://${host}/clip.mp4`,
-      { hosts: hosts() }
-    );
-    expect(out.images).toHaveLength(0);
-    expect(out.unperceived.map((u) => u.mime).sort()).toEqual(["audio/mp4", "video/mp4"]);
+  it("refuses audio, and says why rather than returning bytes nobody can use", async () => {
+    const got = await fetchAttachment(`http://${host}/voice.m4a`, { hosts: hosts() });
+    expect(got.ok).toBe(false);
+    if (got.ok) return;
+    expect(got.reason).toMatch(/audio/);
   });
 
-  it("says nothing about formats that were never media", async () => {
-    const out = await fetchMessageMedia(`http://${host}/notes.pdf`, { hosts: hosts() });
-    expect(out.images).toHaveLength(0);
-    expect(out.unperceived).toHaveLength(0);
+  it("refuses a host outside the allowlist without fetching it", async () => {
+    const got = await fetchAttachment(`http://${host}/shot.png`, { hosts: allowedMediaHosts({}) });
+    expect(got.ok).toBe(false);
+    if (got.ok) return;
+    expect(got.reason).toMatch(/media server/i);
   });
 
-  it("never fetches a host outside the allowlist", async () => {
-    const out = await fetchMessageMedia(`http://127.0.0.1:1/shot.png`, {
-      hosts: allowedMediaHosts({}),
-    });
-    expect(out.images).toHaveLength(0);
-    expect(out.unperceived).toHaveLength(0);
-  });
-});
-
-describe("unperceivedNotice", () => {
-  it("is absent when there is nothing to admit", () => {
-    expect(unperceivedNotice([])).toBeUndefined();
+  it("refuses something too big to spend a turn's context on", async () => {
+    const got = await fetchAttachment(`http://${host}/huge.png`, { hosts: hosts() });
+    expect(got.ok).toBe(false);
+    if (got.ok) return;
+    expect(got.reason).toMatch(/too large|8/i);
   });
 
-  it("names the type and tells the agent to say so rather than guess", () => {
-    const notice = unperceivedNotice([{ url: "https://b.example/voice.m4a", mime: "audio/mp4" }]);
-    expect(notice).toMatch(/audio/);
-    expect(notice).toMatch(/cannot|can't/i);
+  it("refuses a type that is not media at all", async () => {
+    const got = await fetchAttachment(`http://${host}/notes.pdf`, { hosts: hosts() });
+    expect(got.ok).toBe(false);
+    if (got.ok) return;
+    expect(got.reason).toMatch(/application\/pdf/);
   });
 });

@@ -15,6 +15,9 @@ import {
   isValidSlug,
   mentionTags,
   KIND_AGENT_ENGRAM,
+  allowedMediaHosts,
+  fetchAttachment,
+  loadSettings,
 } from "@fezchat/protocol";
 
 /**
@@ -134,6 +137,33 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 // ── Server + tools ───────────────────────────────────────────────────────
 
 const server = new McpServer({ name: "fez", version: "0.1.0" });
+
+/**
+ * Look at an image someone attached.
+ *
+ * The deliberate half of fez's media story: a message names its
+ * attachments in the prompt for free, and the pixels are spent only when
+ * the model decides looking would help. Guarded by the workspace's media
+ * allowlist — a channel message is untrusted text, so following a URL out
+ * of it is an SSRF hole whether a person or a model chose to follow it.
+ *
+ * Every refusal explains itself, because the model is about to tell a
+ * person why it couldn't look, and "failed" is not a reason.
+ */
+server.registerTool(
+  "fez_view_attachment",
+  {
+    description:
+      "Look at an image attached to a message. The prompt lists attachment urls; pass one here to actually see it. Only call this when looking would change your answer — it is not free. Audio and video cannot be perceived at all.",
+    inputSchema: { url: z.string().describe("the attachment url, exactly as listed in the message") },
+  },
+  async ({ url }) => {
+    const hosts = allowedMediaHosts({ settingsMediaServer: loadSettings().mediaServer, env: process.env });
+    const got = await fetchAttachment(url, { hosts });
+    if (!got.ok) return text(`Can't show you that: ${got.reason}`);
+    return { content: [{ type: "image" as const, data: got.data, mimeType: got.mimeType }] };
+  }
+);
 
 server.registerTool(
   "fez_send_message",

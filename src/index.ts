@@ -33,6 +33,15 @@ export { FezTUI } from "./cli/tui.js";
 export { PackageManager, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
 export * from "./protocol/kinds.js";
 export { MAX_CHAIN_DEPTH } from "./protocol/limits.js";
+export {
+  allowedMediaHosts,
+  attachmentsOf,
+  attachmentNotice,
+  fetchAttachment,
+  MAX_ATTACHMENT_BYTES,
+  type Attachment,
+  type FetchedAttachment,
+} from "./agent/media.js";
 /** Trust primitives: what a tool call risks, and what an extension may do. */
 export { classifyCommand, classifyToolCall, type RiskLevel, type RiskVerdict } from "./agent/command-risk.js";
 export {
