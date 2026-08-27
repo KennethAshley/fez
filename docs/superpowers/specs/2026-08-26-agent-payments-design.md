@@ -278,6 +278,18 @@ Ceremony does not move: `init`, `derive`, `fund` stay CLI-only, and no key
 material is readable or writable from the webview. The panel edits *policy*,
 never custody.
 
+**Why fez is stricter here than Buzz, written down so it is not "fixed" later.**
+Buzz's desktop hands the raw nsec to its own frontend on request — a `get_nsec`
+command (`desktop/src-tauri/src/commands/identity.rs:191`) feeding a
+reveal-on-click, cleared-on-unmount, masked-by-default row
+(`NsecMaskedDisplay`). That is sound *there*: grepping `desktop/src/features`,
+**every line of JS in Buzz's webview is first-party Buzz**. fez loads
+third-party extension `gui.js` into the same webview, so a command that
+returns key material would be reachable by any installed extension. Same app
+shape, different threat model — and the reason our line sits where it does. A
+future reader citing Buzz's `get_nsec` as precedent is citing a codebase that
+has no untrusted code in its renderer.
+
 ## 7. Files
 
 | File | Change |
@@ -329,6 +341,16 @@ can never touch anything outside `prefs` — assert directly that a gui write
 leaves a mirrored `log` untouched, since that is the whole reason for the
 split.
 
+Plus an **inventory-completeness test**, the pattern Buzz uses for its relay
+egress guard (`desktop/src-tauri/src/egress_guard.rs`): rather than testing
+only today's write path, enumerate every Tauri command that writes under
+`~/.fez/extension-data` and assert each one routes through the prefs-scoped
+helper. A future command that writes that directory directly then **fails the
+build** until it is wired, instead of quietly becoming the hole the subtree
+scoping was meant to close. Buzz's version also documents its own exemption
+(raw nsec must transit pairing) in the guard itself; ours states that headless
+`StorageAccess` is deliberately unrestricted, because it is not the webview.
+
 **The gate is a two-machine testnet run**, in the shape of the existing README
 runbook: both wallets on `test`, both agents publishing addresses, a tip from
 one owner's agent to another's — card approved, transfer lands, bolt appears
@@ -368,6 +390,14 @@ end.
   is the identity.
 - **Testnet TAO acquisition** is a faucet with a proof-of-work step and is not
   automated here; the runbook documents it.
+- **fez has no secret redaction anywhere** — verified: zero hits for `redact`
+  across the desktop Rust and TS. Not an active exposure for this work (agent
+  stderr goes to a log file, not the UI, and nothing in the wallet panel
+  renders a secret), but `set_skill_secret` values ride in agent env, and Buzz
+  scrubs exactly that case out of anything it displays
+  (`managed_agents/backend.rs:345` — value-based longest-first, plus
+  shape-based prefixes). Adjacent gap, its own piece of work, recorded here so
+  it is not rediscovered.
 - **Sub-threshold auto-sends to raw addresses** remain possible by design
   (§1). The balance is the cap — an agent talked into a hex string can lose
   its allowance and nothing more. That is the property the whole wallet is
