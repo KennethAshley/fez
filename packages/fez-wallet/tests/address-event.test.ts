@@ -33,6 +33,12 @@ describe("address event", () => {
     expect(parseAddressEvent(tampered)).toBeUndefined();
   });
 
+  it("rejects an event with the wrong kind", () => {
+    const ev = buildAddressEvent({ agentSecretHex: sk, chain: "tao", network: "test", address: "5Dq6" });
+    const wrongKind = { ...ev, kind: 1 };
+    expect(parseAddressEvent(wrongKind)).toBeUndefined();
+  });
+
   it("filters by author, kind and d tag", () => {
     const pk = getPublicKey(generateSecretKey());
     expect(addressFilter([pk], "tao", "finney")).toEqual({
