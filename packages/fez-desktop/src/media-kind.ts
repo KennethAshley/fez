@@ -58,3 +58,28 @@ export function mediaKind(url: string, mime?: string): MediaKind | undefined {
   if (declared) return declared as MediaKind;
   return KIND_BY_EXT[extensionOf(url)];
 }
+
+/**
+ * Which urls in a message body deserve their own player, appended below
+ * the prose.
+ *
+ * Markdown media syntax is EXCLUDED, because the markdown renderer already
+ * drew it: `![](clip.mp4)` matched both the img component override and the
+ * bare-url sweep, so a posted video rendered two players stacked on top of
+ * each other (harmless-looking for images, which is why it survived; very
+ * obvious once the same URL became a <video>).
+ *
+ * Attachments the sender declared but never wrote into the body are added
+ * too — an imeta-only message would otherwise be an empty bubble.
+ */
+export function embedUrls(text: string, media?: { url: string; mime?: string }[]): string[] {
+  // Blank out ![alt](url) first; what the markdown renderer handles is not
+  // ours to append.
+  const prose = text.replace(/!\[[^\]]*\]\([^)]*\)/g, " ");
+  const shareLine = prose.match(MEDIA_LINE);
+  const urls = new Set([...(prose.match(PLAYABLE_URL) ?? []), ...(shareLine ? [shareLine[2]] : [])]);
+  for (const entry of media ?? []) {
+    if (mediaKind(entry.url, entry.mime) && !text.includes(`](${entry.url})`)) urls.add(entry.url);
+  }
+  return [...urls];
+}

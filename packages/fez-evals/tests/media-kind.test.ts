@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { MIME_BY_EXT } from "../../fez-media/src/blossom.js";
-import { mediaKind, PLAYABLE_URL } from "../../fez-desktop/src/media-kind.js";
+import { mediaKind, embedUrls, PLAYABLE_URL } from "../../fez-desktop/src/media-kind.js";
 
 /**
  * The renderer's media table is a deliberate dependency-light mirror of
@@ -73,5 +73,42 @@ describe("PLAYABLE_URL", () => {
 
   it("does not match a bare hash URL", () => {
     expect("https://blossom.example/abc123".match(PLAYABLE_URL)).toBeNull();
+  });
+});
+
+/**
+ * One url, one player. The markdown renderer draws `![](url)` itself, and
+ * the bare-url sweep used to append a SECOND element for the same url —
+ * invisible enough with images that it shipped, unmissable once a posted
+ * clip became two stacked <video> players.
+ */
+describe("embedUrls", () => {
+  it("does not append a player for media markdown already rendered", () => {
+    expect(embedUrls("look: ![](https://b.example/clip.mp4)")).toEqual([]);
+  });
+
+  it("still appends a player for a bare url in the prose", () => {
+    expect(embedUrls("look: https://b.example/clip.mp4")).toEqual(["https://b.example/clip.mp4"]);
+  });
+
+  it("appends the blob from fez-media's share line", () => {
+    expect(embedUrls("📎 clip.mp4 (2.0 MB) https://b.example/abc.mp4")).toEqual(["https://b.example/abc.mp4"]);
+  });
+
+  it("shows a declared attachment the body never mentioned", () => {
+    expect(embedUrls("here you go", [{ url: "https://b.example/hash", mime: "video/mp4" }])).toEqual([
+      "https://b.example/hash",
+    ]);
+  });
+
+  it("does not double a declared attachment that IS in the body as markdown", () => {
+    expect(
+      embedUrls("![](https://b.example/hash)", [{ url: "https://b.example/hash", mime: "image/png" }])
+    ).toEqual([]);
+  });
+
+  it("lists a url once even when the share line and the sweep both find it", () => {
+    const found = embedUrls("📎 a.png (1 KB) https://b.example/a.png https://b.example/a.png");
+    expect(found).toEqual(["https://b.example/a.png"]);
   });
 });

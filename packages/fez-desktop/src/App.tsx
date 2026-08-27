@@ -6,7 +6,7 @@ import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
 import { FezClient, setStatePersistence, type Artifact, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
-import { MEDIA_LINE, PLAYABLE_URL, mediaKind } from "./media-kind";
+import { embedUrls, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
@@ -3197,14 +3197,7 @@ function MdBody({
   media?: MediaAttachment[];
 }) {
   const context = useMemo(() => ({ tagged, onMention, media }), [tagged, onMention, media]);
-  const embeds = useMemo(() => {
-    const shareLine = text.match(MEDIA_LINE);
-    const urls = new Set([...(text.match(PLAYABLE_URL) ?? []), ...(shareLine ? [shareLine[2]] : [])]);
-    // Attachments the sender declared but never wrote into the body still
-    // belong on screen — an imeta-only message is otherwise an empty bubble.
-    for (const entry of media ?? []) if (mediaKind(entry.url, entry.mime)) urls.add(entry.url);
-    return [...urls];
-  }, [text, media]);
+  const embeds = useMemo(() => embedUrls(text, media), [text, media]);
   return (
     <MdContext.Provider value={context}>
       <ReactMarkdown remarkPlugins={MD_PLUGINS} components={MD_COMPONENTS}>
