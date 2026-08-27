@@ -1,6 +1,8 @@
 /** Pure logic for the wallet gui part — node-testable, no React. */
 import type { Network } from "./storage-mirror.js";
 import type { SpendEntry } from "./log.js";
+import type { ParsedReceipt } from "./receipt.js";
+import { formatAmount } from "./chains/adapter.js";
 
 export function parseConsentRequest(
   content: string
@@ -133,6 +135,20 @@ export function networkLabel(network: string): string {
 export function validThreshold(text: string): boolean {
   const m = /^(\d+)(?:\.(\d+))?$/.exec(text.trim());
   return !!m && (m[2]?.length ?? 0) <= 9;
+}
+
+/** Three states, never two: a block we could not fetch is not a check
+ * that failed, and collapsing them would call an honest receipt a lie. */
+export function receiptLine(r: ParsedReceipt, state: "verified" | "unverifiable" | "false"): string {
+  const amount = formatAmount({ raw: r.raw, decimals: 9, symbol: r.symbol });
+  const who = `${r.payer.slice(0, 8)}…`;
+  const suffix =
+    state === "verified"
+      ? ""
+      : state === "unverifiable"
+        ? " · couldn't check this block"
+        : " · ⚠️ the chain does not match this receipt";
+  return `⚡ ${amount} · ${who}${suffix}`;
 }
 
 export function requestStatus(

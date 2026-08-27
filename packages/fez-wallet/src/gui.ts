@@ -13,7 +13,10 @@ import {
   logsFor,
   networkLabel,
   validThreshold,
+  receiptLine,
 } from "./gui-logic.js";
+import { KIND_PAYMENT_RECEIPT, parseReceipt, type ParsedReceipt } from "./receipt.js";
+import type { SignedNostrEvent } from "./consent.js";
 
 /** `toggleReaction`, `msgById` and `myReactionTo` aren't in the shared
  * GuiClient slice (extension-api types only what most gui parts need) —
@@ -27,6 +30,16 @@ interface WalletClient extends GuiClient {
    * owner whose ✅/❌ is authoritative. */
   myReactionTo(targetId: string, emoji: string): string | undefined;
   toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
+  /** Every workspace known, one of them active (fez-client:1500) — the
+   * ONLY way this extension can name the relay to ask about a receipt.
+   * Payment receipts (47040) never enter fez-client's own subscription:
+   * resubscribe()'s live filter and loadChannelHistory()'s backfill both
+   * hardcode their kind lists, and 47040 is in neither — a gap this task
+   * cannot close from gui.ts alone (that filter lives in @fezchat/client,
+   * outside this task's files). Querying the relay directly, the same
+   * way this file already dials `@polkadot/api` straight for balances
+   * instead of going through `client`, is the only path that exists. */
+  workspaces(): { relay: string; name: string; active: boolean }[];
 }
 
 type AddressBook = { treasury?: string; personas?: Record<string, string> };
@@ -308,6 +321,64 @@ export default function activate(api: GuiExtensionApi): void {
         h("div", { style: { marginTop: 8 } }, h(AddressRow, { address: rcv.address }))
       );
     }
+  );
+
+  // ── payment receipts ─────────────────────────────────────────────
+  // The bolt under the message that earned it. registerMessageDecorator
+  // only ever sees a message's CONTENT, never its id, so there is no way
+  // to match "this bubble has a receipt" ahead of render time — the
+  // match predicate is unconditional, and ReceiptLine itself renders
+  // nothing for the (overwhelming) common case of a message nobody paid
+  // for. One query per bubble is wasteful but simple; a msgId cache
+  // keeps re-mounts (scrolling past the same message twice) from asking
+  // twice.
+  const receiptCache = new Map<string, ParsedReceipt[]>();
+  let pool: { querySync(relays: string[], filter: Record<string, unknown>): Promise<SignedNostrEvent[]> } | undefined;
+
+  async function receiptsFor(msgId: string): Promise<ParsedReceipt[]> {
+    const cached = receiptCache.get(msgId);
+    if (cached) return cached;
+    const relay = client.workspaces().find((w) => w.active)?.relay;
+    if (!relay) return [];
+    try {
+      pool ??= new (await import("nostr-tools/pool")).SimplePool();
+      const events = await pool.querySync([relay], { kinds: [KIND_PAYMENT_RECEIPT], "#e": [msgId], limit: 5 });
+      const receipts = events.map((e) => parseReceipt(e)).filter((r): r is ParsedReceipt => r !== undefined);
+      receiptCache.set(msgId, receipts);
+      return receipts;
+    } catch {
+      return []; // relay unreachable — no receipt shown, never a wrong one
+    }
+  }
+
+  function ReceiptLine({ msgId }: { msgId: string }): El {
+    const [receipts, setReceipts] = useState<ParsedReceipt[]>([]);
+    useEffect(() => {
+      let dead = false;
+      void receiptsFor(msgId).then((r) => {
+        if (!dead) setReceipts(r);
+      });
+      return () => {
+        dead = true;
+      };
+    }, [msgId]);
+    if (receipts.length === 0) return null as never;
+    return h(
+      "div",
+      { style: { ...dim, marginTop: 4 } },
+      // A block we haven't fetched or couldn't reach is UNVERIFIABLE,
+      // never rendered as verified and never as false — this task wires
+      // the render only; actual chain verification (comparing the block
+      // named on the receipt against the chain) is a further round-trip
+      // this gui part does not make. Never claiming "verified" without
+      // having checked is exactly the ordering rule this exists to obey.
+      ...receipts.map((r, i) => h("div", { key: `${r.txHash}-${i}` }, receiptLine(r, "unverifiable")))
+    );
+  }
+
+  api.registerMessageDecorator(
+    () => true,
+    ({ msgId }) => h(ReceiptLine, { msgId })
   );
 
   // ── address chips ────────────────────────────────────────────────

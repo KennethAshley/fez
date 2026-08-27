@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor } from "../src/gui-logic.js";
-import { networkLabel, validThreshold } from "../src/gui-logic.js";
+import { networkLabel, validThreshold, receiptLine } from "../src/gui-logic.js";
 import type { SpendEntry } from "../src/log.js";
 
 const MSG = [
@@ -205,5 +205,25 @@ describe("wallet panel logic", () => {
     expect(validThreshold("-1")).toBe(false);
     expect(validThreshold("0.0000000001")).toBe(false); // more than 9 decimals
     expect(validThreshold("abc")).toBe(false);
+  });
+});
+
+describe("receipt rendering", () => {
+  const base = { raw: 50_000_000n, symbol: "TAO", payer: "abc123def456", network: "test" as const };
+
+  it("shows the amount and who paid", () => {
+    expect(receiptLine(base as never, "verified")).toMatch(/0\.05 TAO/);
+  });
+
+  it("distinguishes unverifiable from false — they are not the same thing", () => {
+    const unver = receiptLine(base as never, "unverifiable");
+    const wrong = receiptLine(base as never, "false");
+    expect(unver).toMatch(/couldn't check/i);
+    expect(wrong).toMatch(/does not match/i);
+    expect(unver).not.toEqual(wrong);
+  });
+
+  it("does not decorate a verified receipt with a caveat", () => {
+    expect(receiptLine(base as never, "verified")).not.toMatch(/couldn't check|does not match/i);
   });
 });
