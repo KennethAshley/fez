@@ -60,6 +60,24 @@ describe("consent", () => {
     await expect(p).resolves.toBe("declined");
   });
 
+  // NIP-25's "+" is the GENERIC like: every stock nostr client puts it
+  // behind a one-tap button, and the card only ever asks for ✅. An owner
+  // acking the message must not be an owner authorizing the spend.
+  it("does NOT accept \"+\" — the generic like is not authorization", async () => {
+    const { relay, emit } = fakeRelay();
+    const p = awaitDecision(relay, "req1", ownerPk, 50);
+    emit(reaction("+", ownerPk, "req1"));
+    emit(reaction("👍", ownerPk, "req1"));
+    await expect(p).resolves.toBe("timeout");
+  });
+
+  it("still declines on the plain \"-\" — the sets are asymmetric on purpose", async () => {
+    const { relay, emit } = fakeRelay();
+    const p = awaitDecision(relay, "req1", ownerPk, 5000);
+    emit(reaction("-", ownerPk, "req1"));
+    await expect(p).resolves.toBe("declined");
+  });
+
   it("ignores non-owner reactions and times out", async () => {
     const { relay, emit } = fakeRelay();
     const p = awaitDecision(relay, "req1", ownerPk, 50);

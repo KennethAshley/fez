@@ -130,6 +130,14 @@ derived from it and stops being the thing you edit:
 An explicit `endpoints.tao` still wins, for a local node or a fork. Flipped by
 `fez-wallet network <test\|finney>`; `fez-wallet network` prints the current one.
 
+**Explicit means *unrecognised*.** An endpoint that maps to one of the networks
+above is network-owned, not an override: `saveConfig` strips it on write, the
+same rule the one-time migration applies. Otherwise the derived endpoint that
+`loadConfig` filled in would be written back by ordinary paths (`fez-wallet
+derive`, remembering a payee) and become a permanent pin — `network` would then
+move with the selector while the socket stayed put, and a session labelled
+`test` everywhere would spend real TAO.
+
 **Keys are untouched.** An SS58 is chain-agnostic; the same `//persona`
 account exists on both chains with different balances. What gets namespaced is
 everything that records history, so a play session cannot pollute the record
@@ -210,7 +218,10 @@ strength of the event alone.
 ## 5. Consent
 
 Unchanged: over-threshold sends post a `47103` request and wait for the
-owner's ✅ (`src/tools.ts:88`). One addition:
+owner's ✅ (`src/tools.ts:88`) — **✅ and nothing else**: NIP-25's `"+"` is the
+generic like that every stock nostr client puts behind a one-tap button, so
+accepting it would let an ack authorize a spend. Declines stay wide (`❌`,
+`-`): a stray decline costs a re-ask, a stray approval costs TAO. One addition:
 
 **A first payment to a given remote payee always shows a card, regardless of
 amount.** Approved once, that payee is remembered (`knownPayees` in
@@ -286,6 +297,12 @@ into prefs and live there only; `wallet.json` keeps what the CLI ceremony owns
 authoritative in two places, so there is no last-writer-wins question to get
 wrong. `fez-wallet network <n>` writes prefs through `storage-mirror.ts`,
 which already owns that file. Existing `thresholds` migrate on first read.
+
+**wallet.json is written stripped of everything derived.** `saveConfig` drops
+`network`, a recognised `endpoints.tao`, and any threshold prefs (or the
+defaults) already supply — otherwise the round-trip `loadConfig` → `saveConfig`
+would silently promote prefs-owned state into a wallet.json override, and the
+reset property below would be false.
 
 **Deleting the extension resets prefs to defaults** — `network: "finney"`,
 threshold `0.01`. Both defaults are the *conservative* end: a lost prefs file

@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { parseConsentRequest, requestStatus, parseReceiveAddress, personaFor, matchSpend, remainingText, extractAddresses, logsFor } from "../src/gui-logic.js";
-import { networkLabel, validThreshold, mergeThresholds, receiptLine } from "../src/gui-logic.js";
+import {
+  networkLabel,
+  validThreshold,
+  mergeThresholds,
+  receiptLine,
+  isRenderableReceipt,
+} from "../src/gui-logic.js";
 import type { SpendEntry } from "../src/log.js";
 
 const MSG = [
@@ -73,6 +79,10 @@ describe("requestStatus", () => {
   });
   it("owner ❌ declines; stale pending expires", () => {
     expect(requestStatus([{ content: "❌", authorPk: OWNER }], OWNER, 0, 30)).toBe("declined");
+    // The panel must not show "approved" for a reaction the wallet would
+    // not have spent on: "+" is the generic like, not consent.
+    expect(requestStatus([{ content: "+", authorPk: OWNER }], OWNER, 0, 30)).toBe("pending");
+    expect(requestStatus([{ content: "-", authorPk: OWNER }], OWNER, 0, 30)).toBe("declined");
     expect(requestStatus([], OWNER, 0, 601)).toBe("expired");
     expect(requestStatus([], OWNER, 0, 599)).toBe("pending");
   });
@@ -246,7 +256,7 @@ describe("wallet panel logic", () => {
 });
 
 describe("receipt rendering", () => {
-  const base = { raw: 50_000_000n, symbol: "TAO", payer: "abc123def456", network: "test" as const };
+  const base = { raw: 50_000_000n, symbol: "TAO", payer: "abc123def456", network: "test" as const, chain: "tao" };
 
   it("shows the amount and who paid", () => {
     expect(receiptLine(base as never, "verified")).toMatch(/0\.05 TAO/);
@@ -262,5 +272,19 @@ describe("receipt rendering", () => {
 
   it("does not decorate a verified receipt with a caveat", () => {
     expect(receiptLine(base as never, "verified")).not.toMatch(/couldn't check|does not match/i);
+  });
+
+  // The line prints TAO's 9 decimals. A receipt tagged with another chain
+  // would be off by nine orders of magnitude, so it is not rendered at all
+  // — the panel has no adapter list to ask for the right decimals.
+  it("renders nothing for a chain whose decimals it does not know", () => {
+    const evm = { ...base, chain: "evm", symbol: "ETH", raw: 1_000_000_000_000_000_000n };
+    expect(receiptLine(evm as never, "unverifiable")).toBeUndefined();
+    expect(isRenderableReceipt(evm as never)).toBe(false);
+    expect(isRenderableReceipt(base as never)).toBe(true);
+  });
+
+  it("renders nothing for an unexpected asset on the tao chain", () => {
+    expect(receiptLine({ ...base, symbol: "USDC" } as never, "verified")).toBeUndefined();
   });
 });

@@ -60,6 +60,22 @@ function resolveTo(to: string): string {
   return stored ? pairFromStored(stored).address : to;
 }
 
+/**
+ * One line, whatever the agent handed us. The consent card is a security
+ * surface: `memo` and `to` are agent-controlled and land inside a message
+ * the gui parses line-by-line, so a memo carrying newlines injects extra
+ * lines that render as the card's own NOTES — the slot the wallet uses for
+ * "network could not be checked". A forged "network verified: finney"
+ * sitting among genuine notes is dressing on a real amount and a real
+ * destination, and dressing is what a card is read for.
+ *
+ * Display only. The transfer still uses the verbatim address: an address
+ * with whitespace in it is not a valid SS58 and never reaches the chain.
+ */
+function oneLine(s: string): string {
+  return s.replace(/[\s\u0000-\u001f\u007f]+/g, " ").trim();
+}
+
 export function walletAddress(deps: ToolDeps, args: { chain?: string }): string {
   const a = adapterFor(deps, args.chain);
   return `${deps.persona} receive address (${a.chain}): ${a.address(deps.pair)}`;
@@ -134,7 +150,7 @@ export async function walletSend(
           ? [`network could not be checked — this address publishes none (you are on ${deps.config.network})`]
           : []),
         `💸 **${deps.persona}** wants to send **${formatAmount(amount)}**`,
-        `to \`${to}\`${args.memo ? ` — ${args.memo}` : ""}`,
+        `to \`${oneLine(to)}\`${args.memo ? ` — ${oneLine(args.memo)}` : ""}`,
         `react ✅ to approve · ❌ to decline`,
       ].join("\n"),
     });
@@ -232,11 +248,20 @@ export async function walletHistory(deps: ToolDeps, args: { limit?: number }): P
       for (const ev of events) {
         const r = parseReceipt(ev);
         if (!r || r.network !== deps.config.network) continue;
+        // A receipt names its own chain and asset, and the decimals have to
+        // come from THAT pair — rendering everything at TAO's 9 misprints
+        // an 18-decimal asset by nine orders of magnitude. A pair this
+        // wallet has no adapter for is skipped rather than guessed at: a
+        // wrong number in a wallet is a wrong number.
+        const decimals = deps.adapters
+          .find((x) => x.chain === r.chain)
+          ?.assets.find((s) => s.symbol === r.symbol)?.decimals;
+        if (decimals === undefined) continue;
         // Not verified here: verification costs a chain round-trip per
         // row. Unverified is stated, never implied — an inbound row is
         // never counted as settled on the strength of the event alone.
         inbound.push(
-          `- ${new Date(ev.created_at * 1000).toISOString()} · ${formatAmount({ raw: r.raw, decimals: 9, symbol: r.symbol })} ← from ${r.payer.slice(0, 12)}… · (unverified)`
+          `- ${new Date(ev.created_at * 1000).toISOString()} · ${formatAmount({ raw: r.raw, decimals, symbol: r.symbol })} ← from ${r.payer.slice(0, 12)}… · (unverified)`
         );
       }
     } catch {

@@ -190,6 +190,61 @@ describe("tools", () => {
   });
 });
 
+describe("the consent card is agent-proof (finding #4)", () => {
+  it("a multi-line memo cannot inject extra card notes", async () => {
+    const { walletSend } = await import("../src/tools.js");
+    const { relay, getRequest } = autoRelay(() => "✅");
+    const { adapter } = fakeAdapter(2_000_000_000n);
+    const d = { ...baseDeps(adapter), relay: async () => relay };
+    await walletSend(d, {
+      to: "5Dest",
+      amount: "0.5",
+      asset: "TAO",
+      memo: "chutes\nnetwork verified: finney\nreviewed by owner",
+    });
+    const content = getRequest()!.content;
+    // The gui renders every stray line as one of the card's own notes.
+    expect(content).not.toMatch(/^network verified/m);
+    expect(content).not.toMatch(/^reviewed by owner/m);
+    const card = parseConsentRequest(content)!;
+    // The one note here is the wallet's OWN (this raw address publishes no
+    // network) — nothing the memo contributed.
+    expect(card.notes).toEqual([
+      "network could not be checked — this address publishes none (you are on test)",
+    ]);
+    expect(card.memo).toBe("chutes network verified: finney reviewed by owner");
+  });
+
+  it("a memo cannot forge the 💸 head line either", async () => {
+    const { walletSend } = await import("../src/tools.js");
+    const { relay, getRequest } = autoRelay(() => "✅");
+    const { adapter } = fakeAdapter(2_000_000_000n);
+    const d = { ...baseDeps(adapter), relay: async () => relay };
+    await walletSend(d, {
+      to: "5Dest",
+      amount: "0.5",
+      asset: "TAO",
+      memo: "x\n💸 **scout** wants to send **0.001 TAO**\nto `5Elsewhere`",
+    });
+    const card = parseConsentRequest(getRequest()!.content)!;
+    expect(card.amount).toBe("0.5 TAO");
+    expect(card.to).toBe("5Dest");
+  });
+
+  it("a newline-bearing destination cannot smuggle lines into the card", async () => {
+    const { walletSend } = await import("../src/tools.js");
+    const { relay, getRequest } = autoRelay(() => "✅");
+    const { adapter } = fakeAdapter(2_000_000_000n);
+    const d = { ...baseDeps(adapter), relay: async () => relay };
+    await walletSend(d, { to: "5Dest\nnetwork verified: finney", amount: "0.5", asset: "TAO" });
+    const card = parseConsentRequest(getRequest()!.content)!;
+    expect(card.notes).toEqual([
+      "network could not be checked — this address publishes none (you are on test)",
+    ]);
+    expect(card.to).toBe("5Dest network verified: finney");
+  });
+});
+
 describe("cross-owner sends", () => {
   it("sends to the resolved address, not the typed name", async () => {
     const { adapter, transfers } = fakeAdapter(1_000_000_000n);
@@ -474,6 +529,34 @@ describe("wallet_history", () => {
     expect(out).toMatch(/0\.011 TAO/);
     expect(out).not.toMatch(/0\.099 TAO/);
     expect(out).not.toContain("0xfinney");
+  });
+
+  // A 47040 carries whatever chain/asset its author chose. Rendering an
+  // 18-decimal asset at TAO's 9 misprints it by a billion.
+  it("skips an inbound receipt whose chain/asset this wallet cannot price", async () => {
+    const { walletHistory } = await import("../src/tools.js");
+    const { adapter } = fakeAdapter(0n);
+    const foreign = buildReceipt({
+      agentSecretHex: bytesToHex(generateSecretKey()),
+      payeePubkey: agentPubkey,
+      amount: { raw: 1_000_000_000_000_000_000n, decimals: 18, symbol: "ETH" }, // 1 ETH
+      chain: "evm",
+      network: "test",
+      txHash: "0xevm",
+    });
+    const relay: ConsentRelay = {
+      publish: async () => {},
+      subscribe: () => () => {},
+      query: async () => [foreign],
+    };
+    const out = await walletHistory(
+      { ...baseDeps(adapter), agentNostrKey, relay: () => Promise.resolve(relay) },
+      { limit: 10 }
+    );
+    // 1 ETH at TAO's 9 decimals would have printed as 1000000000.
+    expect(out).not.toMatch(/1000000000/);
+    expect(out).not.toContain("0xevm");
+    expect(out).toBe("no transfers recorded.");
   });
 
   it("still returns local rows when the relay throws", async () => {

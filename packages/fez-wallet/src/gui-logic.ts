@@ -33,7 +33,12 @@ export function parseConsentRequest(
   };
 }
 
-const APPROVE = new Set(["✅", "+"]);
+/** ✅ ONLY — the same set consent.ts authorizes on, and for the same
+ * reason: NIP-25's "+" is the generic like, so a stock nostr client's
+ * like/ack button would move money. The panel must not show "approved"
+ * for a reaction the wallet would not have spent on. Decline stays wide:
+ * a stray decline costs nothing, a stray approval costs TAO. */
+const APPROVE = new Set(["✅"]);
 const DECLINE = new Set(["❌", "-"]);
 const WINDOW_S = 600;
 
@@ -172,9 +177,23 @@ export function validThreshold(text: string): boolean {
   return !!m && (m[2]?.length ?? 0) <= 9;
 }
 
+/** The only chain this panel knows the decimals for. A 47040 carries
+ * whatever `chain` its author put on it, and TAO's 9 decimals applied to
+ * an 18-decimal asset misprints the amount by nine orders of magnitude.
+ * The gui holds no adapter list to ask, so an unknown chain is not
+ * rendered at all — a missing row is honest, a wrong number is not. */
+export function isRenderableReceipt(r: ParsedReceipt): boolean {
+  return r.chain === "tao" && r.symbol === "TAO";
+}
+
 /** Three states, never two: a block we could not fetch is not a check
- * that failed, and collapsing them would call an honest receipt a lie. */
-export function receiptLine(r: ParsedReceipt, state: "verified" | "unverifiable" | "false"): string {
+ * that failed, and collapsing them would call an honest receipt a lie.
+ * `undefined` is a fourth thing entirely — "not ours to render". */
+export function receiptLine(
+  r: ParsedReceipt,
+  state: "verified" | "unverifiable" | "false"
+): string | undefined {
+  if (!isRenderableReceipt(r)) return undefined;
   const amount = formatAmount({ raw: r.raw, decimals: 9, symbol: r.symbol });
   const who = `${r.payer.slice(0, 8)}…`;
   const suffix =

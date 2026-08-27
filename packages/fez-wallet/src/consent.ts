@@ -24,7 +24,17 @@ export interface ConsentRelay {
   query(filter: Filter): Promise<SignedNostrEvent[]>;
 }
 
-const APPROVE = new Set(["✅", "+"]);
+/**
+ * Approval is ✅ and nothing else. NIP-25 defines "+" as the GENERIC like,
+ * which every stock nostr client puts behind a one-tap button — an owner
+ * acknowledging the card in a client that has no wallet UI would have been
+ * authorizing the spend. The card itself only ever asks for ✅.
+ *
+ * Decline stays wide on purpose: the sets are not symmetric because their
+ * failure modes are not. A stray decline costs a re-ask; a stray approval
+ * costs TAO.
+ */
+const APPROVE = new Set(["✅"]);
 const DECLINE = new Set(["❌", "-"]);
 
 export function buildConsentRequest(opts: {

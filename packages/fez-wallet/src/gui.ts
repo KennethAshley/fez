@@ -15,6 +15,7 @@ import {
   validThreshold,
   mergeThresholds,
   receiptLine,
+  isRenderableReceipt,
 } from "./gui-logic.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
 import type { SignedNostrEvent } from "./consent.js";
@@ -350,8 +351,14 @@ export default function activate(api: GuiExtensionApi): void {
   // silently withhold reads from an anonymous pool connection — a
   // read that looks empty and a read that never happened are the same
   // failure shape, which is exactly the trap this file must not repeat.
+  // Filtered to the receipts this panel can render HONESTLY: a 47040 names
+  // its own chain, and the line below prints TAO's 9 decimals. A receipt
+  // for anything else is dropped rather than misprinted by nine orders of
+  // magnitude (isRenderableReceipt).
   const parseAll = (events: readonly SignedNostrEvent[]): ParsedReceipt[] =>
-    events.map((e) => parseReceipt(e)).filter((r): r is ParsedReceipt => r !== undefined);
+    events
+      .map((e) => parseReceipt(e))
+      .filter((r): r is ParsedReceipt => r !== undefined && isRenderableReceipt(r));
 
   function ReceiptLine({ msgId }: { msgId: string }): El {
     const [receipts, setReceipts] = useState<ParsedReceipt[]>(() => parseAll(client.paymentReceiptsFor(msgId)));
@@ -371,7 +378,7 @@ export default function activate(api: GuiExtensionApi): void {
       // named on the receipt against the chain) is a further round-trip
       // this gui part does not make. Never claiming "verified" without
       // having checked is exactly the ordering rule this exists to obey.
-      ...receipts.map((r, i) => h("div", { key: `${r.txHash}-${i}` }, receiptLine(r, "unverifiable")))
+      ...receipts.map((r, i) => h("div", { key: `${r.txHash}-${i}` }, receiptLine(r, "unverifiable") ?? ""))
     );
   }
 

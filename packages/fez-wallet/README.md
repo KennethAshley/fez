@@ -21,11 +21,15 @@ tool.
 never from arguments). Sends over the per-agent threshold (default
 0.01 TAO) post a consent request (kind 47103) to `consentChannel` and
 wait up to 10 minutes for the owner's ✅ / ❌ reaction. Timeout declines.
+Only ✅ approves — NIP-25's generic `"+"` like does not, so acking the
+card in a stock nostr client never moves money.
 `thresholds` (and `network`) are preferences, not config — they live in
 the extension's prefs, changed from the CLI (`fez-wallet network`) or
 the Settings → Wallet panel, never by hand-editing `wallet.json`.
 `wallet.json` still holds what the CLI ceremony owns: persona indexes,
-`consentChannel`, an explicit endpoint override.
+`consentChannel`, an explicit endpoint override — and saving it strips
+everything else, so a derived endpoint or a prefs threshold can never
+turn into a wallet.json override the selector cannot move.
 
 ## Custody invariants
 
@@ -33,9 +37,11 @@ the Settings → Wallet panel, never by hand-editing `wallet.json`.
    may; `grep -rn '"root"' src | grep -v cli-commands` stays empty).
 2. Key selection only from `FEZ_AGENT_PERSONA` env.
 3. The allowance balance is the hard cap; thresholds only add prompts.
-4. A consent approval counts only when it e-tags the request AND is
-   signed by the workspace owner.
-5. The mnemonic is printed once, at init, and lives nowhere but the
+4. A consent approval counts only when it e-tags the request, is signed
+   by the workspace owner, AND is ✅ — never the generic `"+"` like.
+5. An address event counts only when the roster member signed it: the
+   relay's `authors` filter is advisory, and `FEZ_RELAY` is a list.
+6. The mnemonic is printed once, at init, and lives nowhere but the
    keychain.
 
 ## Networks
@@ -46,7 +52,8 @@ the Settings → Wallet panel, never by hand-editing `wallet.json`.
 
 Keys are the same on both chains; balances, history and the ledger are
 not. An explicit `endpoints.tao` in `wallet.json` still wins, for a local
-node or a fork.
+node or a fork — "explicit" meaning an endpoint no network maps to; one
+that does is network-owned and is dropped on write.
 
 ## Paying another owner's agent (two machines)
 
