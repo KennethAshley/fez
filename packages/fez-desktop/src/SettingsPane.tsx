@@ -38,7 +38,6 @@ const SETTINGS_TABS = {
   keyboard: "keyboard",
   skills: "secrets",
   agents: "agent defaults",
-  extensions: "extensions",
   backup: "backup & identity",
 } as const;
 type SettingsSection = keyof typeof SETTINGS_TABS;
@@ -48,7 +47,6 @@ type SettingsSection = keyof typeof SETTINGS_TABS;
 const SETTINGS_GROUPS: { label: string; sections: SettingsSection[] }[] = [
   { label: "you", sections: ["profile", "appearance", "keyboard", "backup"] },
   { label: "workspace", sections: ["servers", "agents", "skills"] },
-  { label: "extensions", sections: ["extensions"] },
 ];
 
 export default function SettingsPane({ client, wire, onClose }: { client: FezClient; wire: BrowserWire; onClose: () => void }) {
@@ -57,7 +55,12 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   const [relay, setRelay] = useState(relayRaw());
   const [media, setMedia] = useState(mediaServer());
   const [keyHex, setKeyHex] = useState<string>();
-  const [section, setSection] = useState<SettingsSection>("profile");
+  // Either a built-in section, or "ext:<panel name>" — every installed
+  // extension gets its own row rather than hiding behind one called
+  // "extensions" inside a group also called "extensions".
+  const [section, setSection] = useState<SettingsSection | `ext:${string}`>("profile");
+  const extPanels = extensionSettingsPanels().filter((panel) => !panel.source);
+  const openExt = section.startsWith("ext:") ? extPanels.find((p) => `ext:${p.name}` === section) : undefined;
 
   const saveProfile = async () => {
     try {
@@ -120,6 +123,20 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             ))}
           </div>
         ))}
+        {extPanels.length > 0 && (
+          <div className="settings-group">
+            <div className="community-name"><span className="community-label">extensions</span></div>
+            {extPanels.map((panel) => (
+              <button
+                key={panel.name}
+                className={section === `ext:${panel.name}` ? "settings-nav-item active" : "settings-nav-item"}
+                onClick={() => setSection(`ext:${panel.name}`)}
+              >
+                {panel.name}
+              </button>
+            ))}
+          </div>
+        )}
       </nav>
       <div className="settings-body">
       <div className="settings-col">
@@ -241,22 +258,19 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         </div>
 
         </>)}
-        {section === "extensions" && (<>
-        <div className="manage-section">extension settings</div>
         {/* Configuration lives HERE; the Extensions view is for finding,
             installing and removing. Panels that claim a channel source
             keep configuring from that source's rail group, where the
             thing they configure actually is. */}
-        {extensionSettingsPanels().filter((panel) => !panel.source).length === 0 && (
-          <div className="settings-hint">no installed extension has settings.</div>
-        )}
-        {extensionSettingsPanels().filter((panel) => !panel.source).map((panel) => (
-          <div key={panel.name} className="pulse-section ext-settings">
-            <div className="pulse-section-head"><span>{panel.name}</span></div>
-            <ExtensionPanel panel={panel} />
+        {openExt ? (
+          <div className="ext-settings">
+            <div className="manage-section">{openExt.name}</div>
+            <ExtensionPanel panel={openExt} />
           </div>
-        ))}
-        </>)}
+        ) : section.startsWith("ext:") ? (
+          // Removed while its page was open.
+          <div className="settings-hint">this extension is no longer loaded.</div>
+        ) : null}
         {section === "backup" && (<>
         <div className="manage-section">archive</div>
         <ArchiveExport client={client} wire={wire} account={ACCOUNT} onNotice={flash} />
