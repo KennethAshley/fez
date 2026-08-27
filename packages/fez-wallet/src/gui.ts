@@ -80,6 +80,22 @@ export default function activate(api: GuiExtensionApi): void {
     maxWidth: 440,
   };
   const dim = { opacity: 0.75, fontSize: 12 };
+  /** The host app's section-label grammar: mono caps, then a hairline
+   * running out to the edge. Built here because a gui part renders
+   * through h() and cannot reach App.css's classes. */
+  const sectionLabel = {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    fontFamily: "var(--font-mono, monospace)",
+    fontSize: 10.5,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase" as const,
+    color: "var(--fg-dim, #999)",
+  };
+  const labelRule = { flex: 1, height: 1, background: "var(--hairline, #333)" };
+  const Label = (text: string): El =>
+    h("div", { style: sectionLabel }, text, h("span", { style: labelRule }));
   const mono = { fontFamily: "var(--font-mono, monospace)", fontSize: 12 };
 
   function CopyButton({ text }: { text: string }): El {
@@ -224,7 +240,7 @@ export default function activate(api: GuiExtensionApi): void {
       h(
         "div",
         { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 } },
-        h("div", { style: { fontWeight: 600 } }, `💸 ${req.persona} → ${req.amount}`),
+        h("div", { style: { fontWeight: 600 } }, `${req.persona} → ${req.amount}`),
         countdown ? h("span", { style: dim }, countdown) : null
       ),
       h(
@@ -239,8 +255,8 @@ export default function activate(api: GuiExtensionApi): void {
         ? h(
             "div",
             { style: { marginTop: 8, display: "flex", gap: 8 } },
-            h("button", { onClick: react("✅") }, "Approve ✅"),
-            h("button", { onClick: react("❌") }, "Decline ❌")
+            h("button", { onClick: react("✅") }, "approve"),
+            h("button", { onClick: react("❌") }, "decline")
           )
         : h(
             "div",
@@ -271,19 +287,20 @@ export default function activate(api: GuiExtensionApi): void {
   // ── receive cards ────────────────────────────────────────────────
   api.registerMessageDecorator(
     (content) => parseReceiveAddress(content) !== undefined,
-    ({ content, msgId, authorName }) => {
+    ({ content, msgId }) => {
       const rcv = parseReceiveAddress(content);
       if (!rcv) return null as never;
-      // The card names its AUTHOR as the address owner — never a name
-      // parsed from text, so a message can't dress an address up as
-      // someone else's. It still must be a real message we can attribute.
+      // Attribution stays the BUBBLE's job — it names the real author,
+      // so a message still cannot dress an address up as someone
+      // else's, and the card no longer repeats the name above it. The
+      // message must exist for that attribution to mean anything.
       const msg = client.msgById(msgId);
       if (!msg) return null as never;
       return h(
         "div",
         { style: card },
-        h("div", { style: { fontWeight: 600 } }, `📥 ${authorName} · receive (${rcv.chain})`),
-        h("div", { style: { marginTop: 6 } }, h(AddressRow, { address: rcv.address }))
+        Label(`${rcv.chain} · receive`),
+        h("div", { style: { marginTop: 8 } }, h(AddressRow, { address: rcv.address }))
       );
     }
   );
