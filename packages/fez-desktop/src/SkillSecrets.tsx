@@ -280,9 +280,10 @@ export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => 
   const skills = Object.entries(useConfig().skills as Record<string, SkillConfig>);
   return (
     <>
+      {/* Where secrets live is the page head's line now; what survives
+          here is the part that changes how you USE the fields. */}
       <div className="settings-hint">
-        Secrets live in the macOS keychain, never in files — saving is write-only (nothing can read a value
-        back). Paste a whole .env blob into any field and it splits into rows. Agents and services pick up new
+        Paste a whole .env blob into any field and it splits into rows. Agents and services pick up new
         values on their next spawn.
       </div>
       <div className="env-skill">

@@ -1758,7 +1758,79 @@ button.author:hover { text-decoration: underline; }
 }
 
 .settings-body { flex: 1; min-width: 0; overflow-y: auto; }
-.settings-col { max-width: 680px; padding: 24px 36px 64px; font-size: 13px; }
+/* The cap holds the column; the MEASURE and the FIELD WIDTH are capped
+   separately below, because they want different numbers — 680 alone let
+   a description run tight at 48ch while a wss:// URL got a 608px input.
+   The left gutter keeps the column off the rail. */
+.settings-col { max-width: 680px; padding: 40px 36px 64px 72px; font-size: 13px; }
+
+/* ── a settings page: head, then rows ───────────────────────────────
+   Buzz's row structure, fez's skin — divider heads and hairlines group
+   the rows; there is no bordered card anywhere in here. */
+.set-head { margin-bottom: 26px; }
+.set-title {
+  font-family: var(--font-mono); font-size: 19px; font-weight: 600;
+  color: var(--fg); letter-spacing: -0.2px; margin: 0;
+}
+.set-sub { font-size: 12.5px; color: var(--fg-dim); margin-top: 5px; max-width: 52ch; }
+
+/* One setting is one row: meaning on the left, control right at a
+   predictable x. Short values sit alone out there, and that is the
+   trade — a common x is what makes the column scannable. */
+.set-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 28px;
+  align-items: center; padding: 13px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.set-row:last-child { border-bottom: 0; }
+.set-label { font-size: 13px; color: var(--fg); }
+.set-desc { font-size: 12px; color: var(--fg-dim); margin-top: 3px; max-width: 56ch; grid-column: 1; }
+.set-control { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
+.set-row:not(:has(.set-desc)) .set-control { grid-row: 1; }
+
+/* A wide control cannot sit in the right column without crushing the
+   description — it takes the full width beneath it instead, capped at
+   what actually goes in it rather than at the column. */
+.set-row.stacked { grid-template-columns: 1fr; }
+.set-row.stacked .set-control {
+  grid-column: 1; grid-row: auto; justify-self: stretch; margin-top: 9px; width: 100%;
+}
+.set-row.stacked .set-control .manage-input { width: 100%; max-width: 440px; }
+
+/* Few options: show them all rather than hide them behind a dropdown.
+   Selection is the ember, as everywhere — worn on the bottom edge here
+   because the run is horizontal. */
+.seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 7px; overflow: hidden; }
+.seg button {
+  position: relative; background: none; border: 0; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-dim); padding: 5px 13px;
+}
+.seg button + button { border-left: 1px solid var(--hairline); }
+.seg button:hover { color: var(--fg); background: color-mix(in srgb, var(--bg2) 45%, transparent); }
+.seg button.on { background: color-mix(in srgb, var(--bg2) 70%, transparent); color: var(--fg); font-weight: 600; }
+.seg button.on::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--brand);
+}
+.seg button:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+
+/* A row that reports rather than asks. */
+.set-value { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg); }
+.set-row .manage-select { min-width: 150px; }
+
+/* Actions end a section — they are not a row with a label nobody reads. */
+.set-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+.set-note { font-size: 12px; color: var(--fg-dim); }
+.set-note strong { color: var(--fg); font-weight: 600; }
+
+/* Diagnostics are not settings: lowest weight in the page, no head. */
+.set-diag { margin-top: 26px; font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-dim); }
+
+/* Narrow windows: the two columns stop being two. */
+@media (max-width: 900px) {
+  .settings-col { padding-left: 28px; padding-right: 24px; }
+  .set-row { grid-template-columns: 1fr; }
+  .set-control { grid-column: 1; grid-row: auto; justify-self: start; margin-top: 8px; }
+}
 
 
 /* ── extension panels: bare `code` reads as code ──────────────

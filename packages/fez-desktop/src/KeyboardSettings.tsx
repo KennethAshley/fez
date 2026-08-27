@@ -76,11 +76,10 @@ export function KeyboardSettings({ onNotice }: { onNotice: (text: string) => voi
 
   return (
     <>
-      <div className="manage-section">keyboard shortcuts</div>
-      <div className="settings-hint">
-        Click a shortcut to rebind it — press the keys you want, or Esc to cancel. Stored in{" "}
-        <code>~/.fez/keymap.json</code>, which you can also edit by hand.
-      </div>
+      {/* The page's own head names this section and says how to rebind;
+          repeating either here gave the page two titles. What survives
+          is the part the head cannot say — where the bindings live. */}
+      <div className="manage-section">shortcuts</div>
       <div className="keymap-table">
         {ids.map((id) => (
           <div key={id} className="keymap-row">
@@ -99,6 +98,7 @@ export function KeyboardSettings({ onNotice }: { onNotice: (text: string) => voi
           </div>
         ))}
       </div>
+      <div className="set-diag">stored in ~/.fez/keymap.json — editable by hand</div>
     </>
   );
 }

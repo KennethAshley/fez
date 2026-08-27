@@ -109,12 +109,94 @@ function FezCorner() {
   );
 }
 
+/**
+ * A settings page is a head and a list of rows — Buzz's structure, fez's
+ * skin. Three primitives make every section, so a page nobody has
+ * written yet still lands in the same shape as the rest.
+ */
+
+/** The page says where you are and what changing things here costs. */
+function Head({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div className="set-head">
+      <h1 className="set-title">{title}</h1>
+      <div className="set-sub">{sub}</div>
+    </div>
+  );
+}
+
+/**
+ * One setting, one row: label and description left, control right.
+ * `stacked` is for controls too wide for the right column (a relay URL,
+ * a password) — same row, control full-width beneath the description.
+ */
+function Row({
+  label,
+  desc,
+  control,
+  stacked,
+}: {
+  label: string;
+  desc?: React.ReactNode;
+  control: React.ReactNode;
+  stacked?: boolean;
+}) {
+  return (
+    <div className={stacked ? "set-row stacked" : "set-row"}>
+      <div className="set-label">{label}</div>
+      {desc !== undefined && <div className="set-desc">{desc}</div>}
+      <div className="set-control">{control}</div>
+    </div>
+  );
+}
+
+/**
+ * A handful of options, all visible. A dropdown makes you open it to
+ * learn what the choices even are, which for three of them is a worse
+ * deal than the width it saves.
+ */
+function Seg<T extends string>({
+  options,
+  value,
+  onPick,
+}: {
+  options: readonly { value: T; label: string }[];
+  value: T;
+  onPick: (value: T) => void;
+}) {
+  return (
+    <div className="seg" role="group">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          className={option.value === value ? "on" : undefined}
+          aria-pressed={option.value === value}
+          onClick={() => onPick(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const MODES = [
+  { value: "system", label: "system" },
+  { value: "light", label: "light" },
+  { value: "dark", label: "dark" },
+] as const;
+
 export default function SettingsPane({ client, wire, onClose }: { client: FezClient; wire: BrowserWire; onClose: () => void }) {
   const [name, setName] = useState(client.knownNames().get(client.pubkey) ?? "");
   const [status, setStatus] = useState(client.statusOf(client.pubkey) ?? "");
   const [relay, setRelay] = useState(relayRaw());
   const [media, setMedia] = useState(mediaServer());
   const [keyHex, setKeyHex] = useState<string>();
+  // The segmented control shows which one is picked, so the picked value
+  // has to be state — an uncontrolled defaultValue never re-renders and
+  // the ember would stay on whatever was selected at mount.
+  const [mode, setMode] = useState(currentMode());
+  const [theme, setTheme] = useState(currentTheme());
   // Either a built-in section, or "ext:<panel name>" — every installed
   // extension gets its own row rather than hiding behind one called
   // "extensions" inside a group also called "extensions".
@@ -208,137 +290,165 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
       <div className="settings-body">
       <div className="settings-col">
         {section === "profile" && (<>
-        <div className="manage-section">profile</div>
-        <div className="settings-field">
-          <label>display name</label>
-          <input className="manage-input" value={name} spellCheck={false} onChange={(e) => setName(e.target.value)} placeholder="your name" />
+        <Head title="profile" sub="How you appear to everyone on this relay. Both fields are public and signed by your key." />
+        <div className="manage-section">you</div>
+        <Row
+          stacked
+          label="display name"
+          desc="The name on your messages, your DMs and every roster you appear in."
+          control={
+            <input className="manage-input" value={name} spellCheck={false} onChange={(e) => setName(e.target.value)} placeholder="your name" />
+          }
+        />
+        <Row
+          stacked
+          label="status"
+          desc="A line under your name saying what you're up to. Leave it empty to clear it."
+          control={
+            <input className="manage-input" value={status} onChange={(e) => setStatus(e.target.value)} placeholder="what you're up to" />
+          }
+        />
+        <div className="set-actions">
+          <button className="agent-action" onClick={() => void saveProfile()}>publish</button>
+          <span className="set-note">published to the relay as a signed event</span>
         </div>
-        <div className="settings-field">
-          <label>status</label>
-          <input className="manage-input" value={status} onChange={(e) => setStatus(e.target.value)} placeholder="what you're up to (empty clears)" />
-        </div>
-        <button className="agent-action" onClick={() => void saveProfile()}>publish</button>
 
         </>)}
         {section === "servers" && (<>
+        <Head title="servers" sub="Where fez connects: the relay that holds this workspace, and where your files go." />
         <div className="manage-section">workspace</div>
+        <Row
+          label="current workspace"
+          desc={
+            client.state.workspace.owner
+              ? client.state.isOwner(client.pubkey)
+                ? "You own this one — you can rename it and manage who's in it."
+                : `Owned by ${client.displayName(client.state.workspace.owner)}.`
+              : "Unclaimed — nobody has taken ownership of this relay yet."
+          }
+          control={<span className="set-value">{client.state.workspace.name}</span>}
+        />
         {/* A relay IS a workspace, so changing this is not a setting in
             the ordinary sense — it moves you somewhere else. Saying so
-            is the whole lesson from the time it looked like data loss. */}
-        <div className="settings-field">
-          <label>current</label>
-          <div className="settings-hint" style={{ padding: "2px 0" }}>
-            <strong>{client.state.workspace.name}</strong>
-            {client.state.workspace.owner
-              ? client.state.isOwner(client.pubkey)
-                ? " · you own this workspace"
-                : ` · owned by ${client.displayName(client.state.workspace.owner)}`
-              : " · unclaimed (no owner set)"}
-          </div>
+            is the whole lesson from the time it looked like data loss,
+            and the description is where it belongs: a bordered callout
+            repeating it was a nested box the grammar already rejected. */}
+        <Row
+          stacked
+          label="relay"
+          desc="The relay is the workspace. Pointing fez at a different one takes you somewhere else entirely, with its own channels, members and name. Nothing is deleted — coming back restores it."
+          control={<input className="manage-input" value={relay} spellCheck={false} onChange={(e) => setRelay(e.target.value)} />}
+        />
+        <Row
+          stacked
+          label="media server"
+          desc="Blossom host for the images, video and file attachments you send."
+          control={<input className="manage-input" value={media} spellCheck={false} onChange={(e) => setMedia(e.target.value)} />}
+        />
+        <div className="set-actions">
+          <button className="agent-action" onClick={() => void saveServers()}>save</button>
+          {needsRelaunch ? (
+            <>
+              <span className="set-note">saved — still connected to <strong>{BOOT_RELAY}</strong></span>
+              {/* A reload IS the relaunch: every singleton (wire, client,
+                  boot promise) is webview module state, and a fresh page
+                  rebuilds them from what localStorage now says. */}
+              <button className="agent-action" onClick={() => window.location.reload()}>relaunch now</button>
+            </>
+          ) : (
+            <span className="set-note">applies on relaunch — the connection is built once at launch</span>
+          )}
         </div>
-        <div className="settings-field">
-          <label>relay (applies on relaunch)</label>
-          <input className="manage-input" value={relay} spellCheck={false} onChange={(e) => setRelay(e.target.value)} />
-          <div className="settings-hint">
-            The relay is the workspace. Pointing fez at a different one takes you to a
-            different place with its own channels, members and name — nothing here is
-            deleted, and coming back restores it.
-          </div>
-        </div>
-        <div className="settings-field">
-          <label>media server (Blossom)</label>
-          <input className="manage-input" value={media} spellCheck={false} onChange={(e) => setMedia(e.target.value)} />
-        </div>
-        <button className="agent-action" onClick={() => void saveServers()}>save</button>
-        {needsRelaunch && (
-          <div className="settings-field" style={{ marginTop: 8 }}>
-            <div className="settings-hint">
-              Saved, but the app is still connected to <code>{BOOT_RELAY}</code> — the
-              wire is built once at launch.
-            </div>
-            {/* A reload IS the relaunch: every singleton (wire, client,
-                boot promise) is webview module state, and a fresh page
-                rebuilds them from what localStorage now says. */}
-            <button className="agent-action" onClick={() => window.location.reload()}>
-              relaunch now
-            </button>
-          </div>
-        )}
 
         </>)}
         {section === "appearance" && (<>
-        <div className="manage-section">appearance</div>
-        <div className="settings-field">
-          <label>theme (extension theme packs appear here)</label>
-          <select
-            className="manage-select"
-            defaultValue={currentTheme()}
-            onChange={(e) => { applyTheme(e.target.value); flash("✓ theme applied"); }}
-          >
-            {["default", ...themeNames()].map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="settings-field">
-          <label>appearance</label>
-          <select
-            className="manage-select"
-            defaultValue={currentMode()}
-            onChange={(e) => { applyMode(e.target.value as "system" | "light" | "dark"); flash("✓ appearance applied"); }}
-          >
-            <option value="system">match system</option>
-            <option value="light">light</option>
-            <option value="dark">dark</option>
-          </select>
-          {/* Say plainly when the chosen theme has only one palette —
-              otherwise "match system" looks broken rather than
-              inapplicable. */}
-          <div className="settings-hint">
-            {themeFollowsScheme()
-              ? `Following your Mac — currently ${resolvedScheme()}. Changes when it does.`
-              : `"${currentTheme()}" ships a single palette, so it looks the same either way.`}
-          </div>
-        </div>
+        <Head title="appearance" sub="How fez looks on this machine. Nothing here leaves your computer." />
+        <div className="manage-section">theme</div>
+        {/* The readout belongs to the control it describes — "following
+            your Mac" was a fact about color mode, never a setting of its
+            own. Say plainly when the chosen theme has only one palette,
+            or "system" looks broken rather than inapplicable. */}
+        <Row
+          label="color mode"
+          desc={
+            !themeFollowsScheme(theme)
+              ? `"${theme}" ships a single palette, so it looks the same either way.`
+              : mode === "system"
+                ? `Following your Mac, currently ${resolvedScheme()}. Choose light or dark to hold one regardless.`
+                : `Held at ${mode}, whatever your Mac does at sunset.`
+          }
+          control={
+            <Seg
+              options={MODES}
+              value={mode}
+              onPick={(next) => { setMode(next); applyMode(next); }}
+            />
+          }
+        />
+        <Row
+          label="theme"
+          desc="The palette every surface is painted in. Theme packs you install appear here."
+          control={
+            <select
+              className="manage-select"
+              value={theme}
+              onChange={(e) => { setTheme(e.target.value); applyTheme(e.target.value); }}
+            >
+              {["default", ...themeNames()].map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          }
+        />
 
+        {/* Diagnostics, not settings: no section head over a single
+            read-only line, and the lowest weight on the page. */}
         {guiExtensionStatus().length > 0 && (
-          <div className="settings-hint">
-            gui extensions:{" "}
+          <div className="set-diag">
+            gui extensions loaded:{" "}
             {guiExtensionStatus().map((ext) => `${ext.name} ${ext.ok ? "✓" : `✗ (${ext.error})`}`).join(" · ")}
           </div>
         )}
 
         </>)}
         {section === "keyboard" && (<>
+        <Head title="keyboard" sub="Rebind any shortcut. Click a key to record a new one." />
         <KeyboardSettings onNotice={flash} />
         </>)}
         {section === "skills" && (<>
-        <div className="manage-section">secrets</div>
+        <Head title="secrets" sub="API keys for services and skills. They go straight into the macOS keychain, never into files — saving is write-only, so nothing can read a value back." />
         <SkillSecretsSection onNotice={flash} />
 
         </>)}
         {section === "agents" && (<>
-        <div className="manage-section">agent defaults</div>
-        <div className="settings-hint">
-          Each agent picks its own model when you create or edit it — Claude Code if you have it installed, or
-          any model from your Chutes account (add a key in <b>secrets → chutes</b>). Nothing to set globally.
-        </div>
+        <Head title="agent defaults" sub="There is nothing to set globally — every agent carries its own engine and model." />
+        <div className="manage-section">how agents choose</div>
+        <Row
+          label="model"
+          desc={<>Each agent picks its own when you create or edit it: Claude Code if you have it installed, or any model from your Chutes account (add a key in <b>secrets</b>).</>}
+          control={<span className="set-value">per agent</span>}
+        />
 
         </>)}
         {/* Configuration lives HERE; the Extensions view is for finding,
             installing and removing. Panels that claim a channel source
             keep configuring from that source's rail group, where the
             thing they configure actually is. */}
+        {/* fez supplies the head and the frame; the extension draws its
+            own controls below it. An installed page then reads as part
+            of the app rather than as a different application. */}
         {openExt ? (
           <div className="ext-settings">
-            <div className="manage-section">{openExt.name}</div>
+            <Head title={openExt.name} sub="Installed extension. Everything below is drawn by the extension itself." />
             <ExtensionPanel panel={openExt} />
           </div>
         ) : section.startsWith("ext:") ? (
-          // Removed while its page was open.
-          <div className="settings-hint">this extension is no longer loaded.</div>
+          <>
+            <Head title="extension" sub="This one is no longer loaded — it was removed while its page was open." />
+          </>
         ) : null}
         {section === "backup" && (<>
+        <Head title="backup & identity" sub="Your key is your account. Nobody can reissue it for you, so this page is the one that matters." />
         <div className="manage-section">archive</div>
         <ArchiveExport client={client} wire={wire} account={ACCOUNT} onNotice={flash} />
 
@@ -346,17 +456,20 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         <BackupFlow account={ACCOUNT} onNotice={flash} />
 
         <div className="manage-section">identity</div>
-        <div className="settings-hint">
-          Your key lives in the macOS keychain (service "fez-keys"). Anyone holding the backup IS you — reveal it
-          only to write it somewhere safe.
-        </div>
-        {!keyHex ? (
-          <button className="agent-action" onClick={() => void reveal()}>reveal backup key</button>
-        ) : (
-          <code className="ob-key" onClick={() => void navigator.clipboard.writeText(keyHex)} title="click to copy">
-            {keyHex}
-          </code>
-        )}
+        <Row
+          stacked
+          label="backup key"
+          desc={'Your key lives in the macOS keychain (service "fez-keys"). Anyone holding it IS you — reveal it only to write it down somewhere safe.'}
+          control={
+            !keyHex ? (
+              <button className="agent-action" onClick={() => void reveal()}>reveal backup key</button>
+            ) : (
+              <code className="ob-key" onClick={() => void navigator.clipboard.writeText(keyHex)} title="click to copy">
+                {keyHex}
+              </code>
+            )
+          }
+        />
         </>)}
       </div>
       </div>
@@ -413,30 +526,39 @@ function BackupFlow({ account, onNotice }: { account: string; onNotice: (text: s
 
   return (
     <>
-      <div className="settings-hint">
-        A passworded file that restores your identity on any machine (onboarding → "restore from backup").
+      <Row
+        stacked
+        label="backup password"
+        desc={'A passworded file that restores your identity on any machine (onboarding → "restore from backup"). At least 8 characters.'}
+        control={
+          <input
+            className="manage-input"
+            type="password"
+            value={password}
+            placeholder="backup password"
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        }
+      />
+      <Row
+        stacked
+        label="repeat it"
+        desc="Typed twice, because a password you mistyped protects a file you can never open."
+        control={
+          <input
+            className="manage-input"
+            type="password"
+            value={confirm}
+            placeholder="repeat it"
+            onChange={(e) => setConfirm(e.target.value)}
+          />
+        }
+      />
+      <div className="set-actions">
+        <button className="agent-action" disabled={busy} onClick={() => void create()}>
+          {busy ? "working…" : "create + download"}
+        </button>
       </div>
-      <div className="settings-field">
-        <input
-          className="manage-input"
-          type="password"
-          value={password}
-          placeholder="backup password (8+ chars)"
-          onChange={(e) => setPassword(e.target.value)}
-        />
-      </div>
-      <div className="settings-field">
-        <input
-          className="manage-input"
-          type="password"
-          value={confirm}
-          placeholder="repeat it"
-          onChange={(e) => setConfirm(e.target.value)}
-        />
-      </div>
-      <button className="agent-action" disabled={busy} onClick={() => void create()}>
-        {busy ? "working…" : "create + download"}
-      </button>
       {phase === "created" && (
         <VerifyRow busy={busy} onVerify={(file, pw) => void verify(file, pw)} />
       )}
@@ -450,21 +572,31 @@ function VerifyRow({ busy, onVerify }: { busy: boolean; onVerify: (file: File | 
   return (
     <>
       <div className="manage-section">verify it</div>
-      <div className="settings-field">
-        <input className="manage-input" type="file" accept=".json" onChange={(e) => setFile(e.target.files?.[0])} />
+      <Row
+        stacked
+        label="the file you just downloaded"
+        desc="A backup you never opened is a wish. This decrypts it and checks it restores this exact identity."
+        control={<input className="manage-input" type="file" accept=".json" onChange={(e) => setFile(e.target.files?.[0])} />}
+      />
+      <Row
+        stacked
+        label="the password again"
+        desc="Typed from memory, not pasted — that is what you are testing."
+        control={
+          <input
+            className="manage-input"
+            type="password"
+            value={password}
+            placeholder="the password again"
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        }
+      />
+      <div className="set-actions">
+        <button className="agent-action" disabled={busy || !file || !password} onClick={() => onVerify(file, password)}>
+          verify backup
+        </button>
       </div>
-      <div className="settings-field">
-        <input
-          className="manage-input"
-          type="password"
-          value={password}
-          placeholder="the password again"
-          onChange={(e) => setPassword(e.target.value)}
-        />
-      </div>
-      <button className="agent-action" disabled={busy || !file || !password} onClick={() => onVerify(file, password)}>
-        verify backup
-      </button>
     </>
   );
 }
@@ -530,26 +662,37 @@ function ArchiveExport({
 
   return (
     <>
-      <div className="settings-hint">
-        Everything that involves you — messages, DMs (still wrapped), docs, memberships — up to 500 recent events
-        per stream, sealed under a password. The relay could vanish; this file is your history.
+      <Row
+        stacked
+        label="archive password"
+        desc="Everything that involves you — messages, DMs (still wrapped), docs, memberships — up to 500 recent events per stream, sealed under this password. The relay could vanish; this file is your history."
+        control={
+          <input
+            className="manage-input"
+            type="password"
+            value={password}
+            placeholder="archive password (8+ chars)"
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        }
+      />
+      <Row
+        label="include identity key"
+        desc="The file alone can then rebuild everything, anywhere. Guard it exactly like the key."
+        control={
+          <input
+            type="checkbox"
+            checked={includeKey}
+            aria-label="include identity key"
+            onChange={(e) => setIncludeKey(e.target.checked)}
+          />
+        }
+      />
+      <div className="set-actions">
+        <button className="agent-action" disabled={!!busy} onClick={() => void exportArchive()}>
+          {busy || "export archive"}
+        </button>
       </div>
-      <div className="settings-field">
-        <input
-          className="manage-input"
-          type="password"
-          value={password}
-          placeholder="archive password (8+ chars)"
-          onChange={(e) => setPassword(e.target.value)}
-        />
-      </div>
-      <label className="settings-check">
-        <input type="checkbox" checked={includeKey} onChange={(e) => setIncludeKey(e.target.checked)} />
-        include identity key (file alone can then rebuild everything — guard it like the key)
-      </label>
-      <button className="agent-action" disabled={!!busy} onClick={() => void exportArchive()}>
-        {busy || "export archive"}
-      </button>
     </>
   );
 }
