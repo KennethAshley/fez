@@ -10,6 +10,8 @@ import { SkillSecretsSection } from "./SkillSecrets";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { flash } from "./toast";
 import { relayRaw, setRelays } from "./relay";
+import { AnimatedSprite } from "./pixel-sprite";
+import { SPRITES } from "./sprites";
 
 const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_ACCOUNT ?? "default";
 
@@ -48,6 +50,64 @@ const SETTINGS_GROUPS: { label: string; sections: SettingsSection[] }[] = [
   { label: "you", sections: ["profile", "appearance", "keyboard", "backup"] },
   { label: "workspace", sections: ["servers", "agents", "skills"] },
 ];
+
+/**
+ * The guide, sitting at the foot of the settings rail. Click him and he
+ * says something; keep clicking and he gets more aware of it, until the
+ * rest of the cast files past and he gives up on the bit.
+ *
+ * It is an easter egg, so the rules are: it costs nothing when ignored,
+ * it never blocks the page, and it holds still for anyone who asked the
+ * system for less motion.
+ */
+const FEZ_LINES = [
+  "ask me anything",
+  "settings are back up there",
+  "nothing to configure down here",
+  "still here",
+  "you found me",
+  "keep going, then",
+];
+const PARADE = ["scout", "quill", "drift", "loom", "vault", "chip"] as const;
+
+function FezCorner() {
+  const [clicks, setClicks] = useState(0);
+  const [parading, setParading] = useState(false);
+  useEffect(() => {
+    if (!parading) return;
+    const t = setTimeout(() => setParading(false), 5200);
+    return () => clearTimeout(t);
+  }, [parading]);
+  const line = clicks === 0 ? undefined : parading ? "…fine. everyone up." : FEZ_LINES[Math.min(clicks, FEZ_LINES.length) - 1];
+  return (
+    <div className="fez-corner">
+      {parading && (
+        <div className="fez-parade" aria-hidden>
+          {PARADE.map((who, i) => (
+            <span key={who} className="fez-parade-face" style={{ "--march": `${i * 0.42}s` } as React.CSSProperties}>
+              <AnimatedSprite sprite={SPRITES[who]} scale={3} />
+            </span>
+          ))}
+        </div>
+      )}
+      {line && <div className="fez-says">{line}</div>}
+      <button
+        /* Remount per poke so the tip animation replays — a class that
+           is already there does not restart a CSS animation. */
+        key={clicks}
+        className={clicks > 0 ? "fez-corner-btn poked" : "fez-corner-btn"}
+        title="fez"
+        onClick={() => {
+          const next = clicks + 1;
+          setClicks(next);
+          if (next > FEZ_LINES.length) setParading(true);
+        }}
+      >
+        <AnimatedSprite sprite={SPRITES.fez} scale={3} />
+      </button>
+    </div>
+  );
+}
 
 export default function SettingsPane({ client, wire, onClose }: { client: FezClient; wire: BrowserWire; onClose: () => void }) {
   const [name, setName] = useState(client.knownNames().get(client.pubkey) ?? "");
@@ -137,6 +197,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             ))}
           </div>
         )}
+        <FezCorner />
       </nav>
       <div className="settings-body">
       <div className="settings-col">

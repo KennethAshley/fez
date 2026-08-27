@@ -1634,6 +1634,51 @@ button.author:hover { text-decoration: underline; }
   background: var(--brand);
 }
 .settings-nav-item:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* ── the guide, at the foot of the rail ─────────────────────
+   An easter egg: it costs nothing when ignored, never blocks the page,
+   and holds still for anyone who asked the system for less motion. */
+.fez-corner { margin-top: auto; padding: 14px 10px 10px; position: relative; }
+.fez-corner-btn {
+  background: none; border: 0; padding: 0; cursor: pointer; line-height: 0;
+  border-radius: 6px;
+}
+.fez-corner-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+.fez-corner-btn:hover .spr-a { animation: spr-frame-a 0.6s steps(1) infinite; }
+.fez-corner-btn:hover .spr-b { animation: spr-frame-b 0.6s steps(1) infinite; }
+/* The hat-tip: one bounce per poke, replayed by the class toggling. */
+.fez-corner-btn.poked { animation: fez-tip 420ms ease-out; }
+@keyframes fez-tip {
+  30% { transform: translateY(-5px) rotate(-6deg); }
+  60% { transform: translateY(0) rotate(3deg); }
+  100% { transform: none; }
+}
+.fez-says {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim);
+  padding: 0 2px 6px; max-width: 180px; animation: fez-say 200ms ease-out;
+}
+@keyframes fez-say { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+/* The rest of the cast files past, each a beat behind the last. */
+.fez-parade {
+  position: absolute; left: 0; right: 0; bottom: 46px; height: 40px;
+  overflow: hidden; pointer-events: none;
+}
+.fez-parade-face {
+  position: absolute; bottom: 0; line-height: 0;
+  animation: fez-march 4.4s linear var(--march, 0s) both;
+}
+@keyframes fez-march {
+  from { transform: translateX(-40px); }
+  to { transform: translateX(240px); }
+}
+.fez-parade-face .spr-a { animation: spr-frame-a 0.42s steps(1) infinite; }
+.fez-parade-face .spr-b { animation: spr-frame-b 0.42s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .fez-corner-btn.poked, .fez-says, .fez-parade-face,
+  .fez-corner-btn:hover .spr-a, .fez-corner-btn:hover .spr-b,
+  .fez-parade-face .spr-a, .fez-parade-face .spr-b { animation: none; }
+  .fez-parade { display: none; }
+}
+
 .settings-body { flex: 1; min-width: 0; overflow-y: auto; }
 .settings-col { max-width: 680px; padding: 24px 36px 64px; font-size: 13px; }
 
