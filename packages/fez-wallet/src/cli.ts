@@ -2,7 +2,7 @@
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { loadConfig } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
-import { cmdInit, cmdDerive, cmdFund, cmdStatus } from "./cli-commands.js";
+import { cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork } from "./cli-commands.js";
 
 const io = { print: (l: string) => console.log(l) };
 const [cmd, ...rest] = process.argv.slice(2);
@@ -25,12 +25,16 @@ try {
     case "status":
       await cmdStatus(io, adapter());
       break;
+    case "network":
+      await cmdNetwork(io, rest[0]);
+      break;
     default:
       io.print("fez-wallet — per-agent allowance wallets");
       io.print("  init                    create the master wallet (once)");
       io.print("  derive <persona>        create an agent's allowance account");
       io.print("  fund <persona> <amt>    treasury → agent (TAO)");
       io.print("  status                  balances for treasury + all agents");
+      io.print("  network [test|finney]   show or switch which chain you're on");
       process.exitCode = cmd ? 1 : 0;
   }
   process.exit(process.exitCode ?? 0); // polkadot ws keeps the loop alive otherwise

@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 import type { ChainAdapter } from "../src/chains/adapter.js";
+import { cmdNetwork } from "../src/cli-commands.js";
+import { loadConfig } from "../src/config.js";
+import { tmpHome } from "./helpers.js";
 
 beforeEach(async () => {
   process.env.FEZ_WALLET_STORE = "file";
@@ -117,5 +120,33 @@ describe("cli ceremony", () => {
     await cmdInit(io);
     await expect(cmdDerive(io, "../x")).rejects.toThrow(/invalid persona name/i);
     await expect(cmdDerive(io, "a/b")).rejects.toThrow(/invalid persona name/i);
+  });
+});
+
+describe("fez-wallet network", () => {
+  beforeEach(() => tmpHome());
+
+  function io() {
+    const lines: string[] = [];
+    return { io: { print: (l: string) => lines.push(l) }, lines };
+  }
+
+  it("prints the current network when given no argument", async () => {
+    const { io: i, lines } = io();
+    await cmdNetwork(i);
+    expect(lines.join("\n")).toContain("finney");
+  });
+
+  it("switches the network and reports the endpoint", async () => {
+    const { io: i, lines } = io();
+    await cmdNetwork(i, "test");
+    expect(loadConfig().network).toBe("test");
+    expect(lines.join("\n")).toContain("wss://test.finney.opentensor.ai:443");
+  });
+
+  it("rejects an unknown network without changing anything", async () => {
+    const { io: i } = io();
+    await expect(cmdNetwork(i, "mainnet")).rejects.toThrow(/test.*finney/);
+    expect(loadConfig().network).toBe("finney");
   });
 });

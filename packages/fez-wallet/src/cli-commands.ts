@@ -1,9 +1,10 @@
 import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored } from "./derive.js";
 import { readEntry, writeEntry, readRootEntry, writeRootEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { loadConfig, saveConfig, assignEvmIndex } from "./config.js";
+import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, type Network } from "./config.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
-import { mirrorAddresses, mirrorEndpoint, mirrorSpend } from "./storage-mirror.js";
+import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs } from "./storage-mirror.js";
+import { migrateLog } from "./log.js";
 
 /**
  * The ceremony. This module is the ONLY place the "root" entry (the
@@ -63,6 +64,32 @@ export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
   await mirrorAddresses({ persona: { name: persona, address: pair.address } });
 }
 
+const NETWORKS: Network[] = ["test", "finney"];
+
+/** The only path that changes which chain the wallet talks to. Prefs
+ * write first; loadConfig() is re-read from disk afterward so what we
+ * print is what is now actually persisted, not what we assume. An
+ * unknown network throws before anything is written (invariant: no
+ * partial state). */
+export async function cmdNetwork(io: CliIo, next?: string): Promise<void> {
+  migratePrefs();
+  migrateLog();
+  if (!next) {
+    const c = loadConfig();
+    io.print(`network: ${c.network}${c.network === "finney" ? "" : "  ⚠️  play money"}`);
+    io.print(`endpoint: ${c.endpoints.tao}`);
+    return;
+  }
+  if (!NETWORKS.includes(next as Network)) {
+    throw new Error(`unknown network "${next}" — expected one of: ${NETWORKS.join(", ")}`);
+  }
+  await mirrorPrefs({ network: next as Network });
+  const c = loadConfig();
+  await mirrorEndpoint(c.endpoints.tao, c.network);
+  io.print(`network: ${c.network}${c.network === "finney" ? "" : "  ⚠️  play money"}`);
+  io.print(`endpoint: ${c.endpoints.tao}`);
+}
+
 export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string, amount: string): Promise<void> {
   requireUsablePersonaName(persona);
   const mnemonic = requireRoot();
@@ -93,6 +120,7 @@ export async function cmdStatus(io: CliIo, adapter: ChainAdapter): Promise<void>
   const treasury = treasuryPair(mnemonic);
   await mirrorAddresses({ treasury: treasury.address });
   await mirrorEndpoint(config.endpoints.tao, config.network);
+  io.print(`network: ${config.network}${config.network === "finney" ? "" : "  ⚠️  play money"}`);
   const tb = await adapter.balance(treasury.address, asset);
   io.print(`treasury  ${treasury.address}  ${formatAmount(tb)}`);
   for (const persona of Object.keys(config.personas).sort()) {
