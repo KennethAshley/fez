@@ -6,18 +6,7 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"],
-    // node_modules/@fezchat/extension-api is a worktree-setup symlink into
-    // the main checkout's copy of this sibling package (see repo worktree
-    // notes) — its dist predates this branch's api.prefs addition since
-    // main checkout stays on main. This override sends the type-only
-    // import at its worktree-local, freshly-built dist instead, without
-    // touching the main checkout or reinstalling node_modules.
-    "baseUrl": ".",
-    "paths": {
-      "@fezchat/extension-api": ["../fez-extension-api/dist/index.d.ts"],
-      "@fezchat/extension-api/gui": ["../fez-extension-api/dist/gui.d.ts"]
-    }
+    "types": ["node"]
   },
   "include": ["src", "tests"]
 }
