@@ -396,6 +396,49 @@ export default function SkillsView({
           )}
         </div>
 
+        {/* ── the install just finished, nothing declares it yet ──
+            Rendered OUTSIDE the tab switch, on purpose: the button that
+            reaches this offer (relay listing "install…") lives on the
+            "browse" tab, and "browse" is the default tab for Extensions.
+            Gating this on tab === "installed" put the offer where the
+            user installing from browse never sees it — a silent
+            regression versus the app-wide flash() toast it replaced.
+            Closes the loop the old toast punted on ("declare it in a
+            persona yourself"): the exact typed-from-memory step this
+            branch exists to delete. Does not force-switch tabs — that
+            would yank the view out from under someone mid-browse. */}
+        {justInstalled && (
+          <div className="manage-notice">
+            ✓ installed {justInstalled.name} — give it to?
+            <div className="skill-give">
+              {allAgents.map((agent) => {
+                const busy = givingBusy === agent;
+                return (
+                  <button
+                    key={agent}
+                    className="ext-filter"
+                    disabled={busy}
+                    onClick={() => {
+                      setGivingBusy(agent);
+                      void setSkillOnAgent(agent, justInstalled.name, justInstalled.source, true)
+                        .then((result) =>
+                          reportSkillWrite(result, agent, justInstalled.name, true, () => {
+                            reload();
+                            setAgentNonce((n) => n + 1);
+                          })
+                        )
+                        .finally(() => setGivingBusy(undefined));
+                    }}
+                  >
+                    @{agent}
+                  </button>
+                );
+              })}
+              <button className="ext-filter" onClick={() => setJustInstalled(undefined)}>not now</button>
+            </div>
+          </div>
+        )}
+
         {tab === "installed" && (
           <>
             {/* ── what your agents are missing ─────────────────────
@@ -462,49 +505,6 @@ export default function SkillsView({
                 "extensions" tab — this view finds, installs and removes;
                 configuring lives with the other settings. (Source-scoped
                 panels still configure from their channel rail group.) */}
-
-            {/* ── the install just finished, nothing declares it yet ──
-                Closes the loop the old toast punted on ("declare it in
-                a persona yourself"): the exact typed-from-memory step
-                this branch exists to delete. */}
-            {justInstalled && (
-              <div className="manage-notice">
-                ✓ installed {justInstalled.name} — give it to?
-                <div className="skill-give">
-                  {allAgents.map((agent) => (
-                    <button
-                      key={agent}
-                      className="ext-filter"
-                      onClick={() =>
-                        void setSkillOnAgent(agent, justInstalled.name, justInstalled.source, true).then((result) => {
-                          // setSkillOnAgent returns a discriminated SkillWriteResult
-                          // ("changed" | "already" | "unsafe" | "error"), NOT a boolean —
-                          // every one of those strings is truthy, so `if (result)` would
-                          // report success on failure. Switch on the value.
-                          if (result === "changed" || result === "already") {
-                            flash(
-                              result === "changed"
-                                ? `@${agent} gets "${justInstalled.name}" on next spawn`
-                                : `@${agent} already has "${justInstalled.name}"`
-                            );
-                            setAgentNonce((n) => n + 1);
-                          } else {
-                            flash(
-                              result === "unsafe"
-                                ? `@${agent}'s persona has no frontmatter block — fez can't edit it automatically`
-                                : `couldn't give "${justInstalled.name}" to @${agent} — check its persona file`
-                            );
-                          }
-                        })
-                      }
-                    >
-                      @{agent}
-                    </button>
-                  ))}
-                  <button className="ext-filter" onClick={() => setJustInstalled(undefined)}>not now</button>
-                </div>
-              </div>
-            )}
 
             {/* ── everything on this machine ───────────────────── */}
             <div className="skill-section">
@@ -605,31 +605,12 @@ export default function SkillsView({
                               const on = !has;
                               setGivingBusy(agent);
                               void setSkillOnAgent(agent, name, config?.source, on)
-                                .then((result) => {
-                                  if (result === "changed") {
-                                    flash(
-                                      on
-                                        ? `@${agent} gets "${name}" on next spawn`
-                                        : `@${agent} no longer has "${name}" — takes effect on next spawn`
-                                    );
+                                .then((result) =>
+                                  reportSkillWrite(result, agent, name, on, () => {
                                     reload();
                                     setAgentNonce((n) => n + 1);
-                                  } else if (result === "already") {
-                                    // Not a failure — the on-disk file was already in the target
-                                    // state (hand-edited, another window). Refresh corrects the checkmark.
-                                    flash(on ? `@${agent} already has "${name}"` : `@${agent} already doesn't have "${name}"`);
-                                    reload();
-                                    setAgentNonce((n) => n + 1);
-                                  } else if (result === "unsafe") {
-                                    flash(`✗ @${agent}'s persona has no frontmatter block, so fez can't edit it automatically`);
-                                  } else {
-                                    flash(
-                                      on
-                                        ? `✗ couldn't give "${name}" to @${agent} — check its persona file`
-                                        : `✗ couldn't remove "${name}" from @${agent} — check its persona file`
-                                    );
-                                  }
-                                })
+                                  })
+                                )
                                 .finally(() => setGivingBusy(undefined));
                             }}
                           >
@@ -871,6 +852,35 @@ async function setSkillOnAgent(agent: string, skill: string, source: string | un
     return "changed";
   } catch {
     return "error";
+  }
+}
+
+/**
+ * Turn a `setSkillOnAgent` outcome into the flash + refresh the human
+ * sees — the one switch both call sites (the post-install offer and the
+ * "give to…" toggle) share. "changed" and "already" are BOTH
+ * non-failures and both refresh: an "already" means the UI's view was
+ * stale (hand-edited file, another window), not a repeat success or a
+ * failure, so refreshing corrects what's shown rather than reporting
+ * anything went wrong. "unsafe" names the actual reason nothing was
+ * written (no frontmatter block); "error" is the only genuine failure.
+ * Collapsing these four into fewer cost two review rounds on Task 6.
+ */
+function reportSkillWrite(result: SkillWriteResult, agent: string, skill: string, on: boolean, refresh: () => void) {
+  if (result === "changed") {
+    flash(on ? `@${agent} gets "${skill}" on next spawn` : `@${agent} no longer has "${skill}" — takes effect on next spawn`);
+    refresh();
+  } else if (result === "already") {
+    flash(on ? `@${agent} already has "${skill}"` : `@${agent} already doesn't have "${skill}"`);
+    refresh();
+  } else if (result === "unsafe") {
+    flash(`✗ @${agent}'s persona has no frontmatter block, so fez can't edit it automatically`);
+  } else {
+    flash(
+      on
+        ? `✗ couldn't give "${skill}" to @${agent} — check its persona file`
+        : `✗ couldn't remove "${skill}" from @${agent} — check its persona file`
+    );
   }
 }
 
