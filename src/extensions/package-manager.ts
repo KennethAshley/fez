@@ -852,13 +852,15 @@ export class PackageManager {
     // before any part install or settings write — this loop only writes.
     for (const [cmd, rel] of Object.entries(bin)) {
       // Preserve the manifest's own relative path in the package dir, and
-      // ALSO land a canonical bin/<cmd> copy there when the manifest
-      // didn't already put it under bin/ — one predictable spot to chmod
-      // and to symlink from, whatever the package called its source file.
+      // ALWAYS also land a canonical packages/<base>/bin/<cmd> copy there
+      // — named after the COMMAND, never the source's own basename — one
+      // predictable spot to chmod and to symlink from, whatever the
+      // package called its source file (mirrors the Rust installer,
+      // package_install.rs, which never special-cases a source already
+      // living under bin/).
       const dest = await this.materializeIntoPackage(name, rel);
-      const underBin = rel.split(/[\\/]/)[0] === "bin";
-      const canonical = underBin ? dest : path.join(this.packageDir(name), "bin", cmd);
-      if (!underBin) await this.copyFileEnsuringDir(dest, canonical);
+      const canonical = path.join(this.packageDir(name), "bin", cmd);
+      if (dest !== canonical) await this.copyFileEnsuringDir(dest, canonical);
       await fs.chmod(canonical, 0o755); // chmod the PACKAGE file — the symlink inherits
       this.linkIndex(canonical, path.join(binDir, cmd));
       console.log(chalk.dim(`   Installed ~/.fez/bin/${cmd}`));

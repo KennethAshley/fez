@@ -52,7 +52,11 @@ beforeAll(() => {
       version: "0.0.1",
       private: true,
       type: "module",
-      bin: { "tidy-tool": "dist/tool.js" },
+      // "clix" -> "bin/index.js" mirrors the Rust fixture_tar exactly: a
+      // bin source path that already lives under bin/ but under a
+      // basename ("index.js") that differs from the command ("clix") —
+      // the shape that used to make the CLI skip renaming to the command.
+      bin: { "tidy-tool": "dist/tool.js", clix: "bin/index.js" },
       fez: {
         type: "extension",
         permissions: ["commands", "ui", "publish", "bogus:nonsense"],
@@ -70,6 +74,8 @@ beforeAll(() => {
   for (const f of ["headless.js", "gui.js", "relay.js", "ws.js", "tool.js", "mcp.js"]) {
     fs.writeFileSync(path.join(pkgDir, "dist", f), `export default () => {}; // v1 ${f}\n`);
   }
+  fs.mkdirSync(path.join(pkgDir, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(pkgDir, "bin", "index.js"), "#!/usr/bin/env node\n");
   git(pkgDir, "init -q");
   git(pkgDir, "add -A");
   git(pkgDir, "commit -q -m v1");
@@ -118,14 +124,19 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
       expect(fs.existsSync(path.join(pkgRoot, rel)), rel).toBe(true);
     }
 
-    const binPath = path.join(pkgRoot, "bin", "tidy-tool");
-    expect(fs.existsSync(binPath), binPath).toBe(true);
-    expect(fs.statSync(binPath).mode & 0o777, "packages/tidy/bin/tidy-tool must be 0755").toBe(0o755);
+    // "clix" is declared as "bin/index.js" — a source path already under
+    // bin/ with a basename that differs from the command. The canonical
+    // copy must still land at packages/tidy/bin/clix, not bin/index.js.
+    for (const cmd of ["tidy-tool", "clix"]) {
+      const binPath = path.join(pkgRoot, "bin", cmd);
+      expect(fs.existsSync(binPath), binPath).toBe(true);
+      expect(fs.statSync(binPath).mode & 0o777, `packages/tidy/bin/${cmd} must be 0755`).toBe(0o755);
+    }
 
     for (const [dir, file] of [
       ["extensions", "tidy.js"], ["gui-extensions", "tidy.js"],
       ["relay-extensions", "tidy.js"], ["workspace-providers", "tidy.js"],
-      ["bin", "tidy-tool"],
+      ["bin", "tidy-tool"], ["bin", "clix"],
     ] as const) {
       const p = at(dir, file);
       expect(fs.lstatSync(p).isSymbolicLink(), `${dir}/${file} must be a symlink`).toBe(true);
