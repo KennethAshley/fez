@@ -332,6 +332,21 @@ describe("resolving a declared skill against the machine catalog", () => {
         expect(impl.resolveInstalledSkill(catalog, { name: "github" })).toBeUndefined();
       });
 
+      /**
+       * `catalog["constructor"]` is truthy on any plain object. A persona
+       * declaring it would have been reported healthy — no missing
+       * warning, no badge — while getting no tool at all: the exact
+       * silent failure this resolver exists to remove. Both mirrors run
+       * this, so the guard cannot be fixed on one side only.
+       */
+      test.each(["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"])(
+        "a prototype key (%s) is not an installed skill",
+        (name) => {
+          expect(impl.resolveInstalledSkill(catalog, { name })).toBeUndefined();
+          expect(impl.resolveInstalledSkill(catalog, { name, source: "npm:@fezchat/nope" })).toBeUndefined();
+        }
+      );
+
       test("a declared source for something not installed stays unresolved", () => {
         expect(
           impl.resolveInstalledSkill(catalog, { name: "obsidian", source: "npm:@fezchat/obsidian" })

@@ -1561,9 +1561,23 @@ fn read_skills() -> Result<String, String> {
     Ok(value.get("mcpServers").cloned().unwrap_or(serde_json::json!({})).to_string())
 }
 
+/// A settings.json mcpServers key. Deliberately the same shape the GUI's
+/// skill-attach.ts enforces before writing one into a persona: npm's own
+/// name grammar plus `@` and `/` for scoped names. A skill name can
+/// arrive from a relay listing (a stranger's string), and a name
+/// carrying `]` and a newline is a frontmatter injection one hop later —
+/// so it is refused here too, and never reaches settings.json either.
+fn valid_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '/' | '-'))
+}
+
 #[tauri::command]
 fn write_skill(name: String, config_json: String) -> Result<(), String> {
-    if name.is_empty() || name.len() > 64 {
+    if !valid_skill_name(&name) {
         return Err("bad skill name".to_string());
     }
     let config: serde_json::Value = serde_json::from_str(&config_json).map_err(|e| format!("bad config: {e}"))?;

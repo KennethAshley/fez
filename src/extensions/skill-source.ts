@@ -184,8 +184,13 @@ export function resolveInstalledSkill(
   catalog: Record<string, SkillEntry>,
   declared: { name: string; source?: string }
 ): { key: string; entry: SkillEntry } | undefined {
-  const direct = catalog[declared.name];
-  if (direct) return { key: declared.name, entry: direct };
+  // `hasOwnProperty`, not a bare lookup: a persona declaring
+  // "constructor" or "toString" would otherwise resolve against
+  // Object.prototype and report itself healthy while getting no tool at
+  // all — a silent failure inside the module built to remove them.
+  if (Object.prototype.hasOwnProperty.call(catalog, declared.name)) {
+    return { key: declared.name, entry: catalog[declared.name] };
+  }
   if (!declared.source) return undefined;
 
   for (const [key, entry] of Object.entries(catalog)) {

@@ -24,6 +24,27 @@ import { parseSkillEntries, formatSkillEntries } from "@fezchat/client";
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const LINE = /^mcpServers:\s*\[([^\]]*)\]/m;
 
+/**
+ * The choke point for names that arrive from OFF THIS MACHINE.
+ *
+ * A relay listing's `name` is a stranger's string, and these functions
+ * are the first thing on this branch that carries one into a PERSONA
+ * file — previously it stopped at settings.json, where a strange key is
+ * inert. Frontmatter is not inert: a name containing `]` and a newline
+ * closes the `mcpServers: [...]` list and opens whatever key it likes.
+ * The 22-character `x]<newline>aliases: [admin, ceo` passes a non-empty
+ * length check, renders invisibly in HTML, and hands the persona two
+ * more names to answer to. `respondTo:`, `owner:` and `workdir:` are
+ * reachable the same way.
+ *
+ * So the SHAPE is allowed, not the escapes: npm's own name grammar plus
+ * `@` and `/` for scoped names. No newline, no `]`, no `,`, no `=` —
+ * the characters the line's own syntax is made of. A refusal returns
+ * `undefined` like every other "not safe to edit" here, so the caller's
+ * existing "unsafe" branch reports it instead of writing.
+ */
+const SAFE_NAME = /^[A-Za-z0-9._@/-]{1,64}$/;
+
 /** This file's own newline convention, so an inserted line never mixes with it. */
 function newlineOf(content: string): string {
   return content.includes("\r\n") ? "\r\n" : "\n";
@@ -67,6 +88,7 @@ function writeLine(content: string, names: string[], sources: Record<string, str
 
 /** Add a skill. `source` makes the persona portable; omit it for hand-rolled skills. */
 export function attachSkill(content: string, skill: string, source?: string): string | undefined {
+  if (!SAFE_NAME.test(skill)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
   const { names, sources } = parseLine(content);
   if (names.includes(skill)) return undefined;
@@ -76,8 +98,32 @@ export function attachSkill(content: string, skill: string, source?: string): st
 
 /** Remove a skill, preserving every survivor's recorded source. */
 export function detachSkill(content: string, skill: string): string | undefined {
+  if (!SAFE_NAME.test(skill)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
   const { names, sources } = parseLine(content);
   if (!names.includes(skill)) return undefined;
   return writeLine(content, names.filter((n) => n !== skill), sources);
+}
+
+/**
+ * Record where an ALREADY-DECLARED skill comes from, turning
+ * `mcpServers: [web-search]` into `[web-search=npm:@brave/…]`.
+ *
+ * Lives here rather than in SkillsView so there is exactly ONE persona
+ * writer with these safety properties: frontmatter-scoped matching, a
+ * literal splice instead of `String.replace(needle, replacement)` (which
+ * honors `$&` in the replacement even for a plain-string needle, so a
+ * url source containing `$&` would splice the matched line back into
+ * the file), and the same name guard as attach/detach.
+ *
+ * Undefined means "nothing to write": no frontmatter, no such
+ * declaration, or that source is already recorded.
+ */
+export function rememberSkillSource(content: string, skill: string, source: string): string | undefined {
+  if (!SAFE_NAME.test(skill)) return undefined;
+  if (!FRONTMATTER.test(content)) return undefined;
+  const { names, sources } = parseLine(content);
+  if (!names.includes(skill)) return undefined;
+  if (sources[skill] === source) return undefined;
+  return writeLine(content, names, { ...sources, [skill]: source });
 }
