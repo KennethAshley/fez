@@ -35,10 +35,13 @@ export const PERM_LABEL: Record<string, string> = {
   "read:agents": "see agent activity",
   personas: "read & edit agent personas",
   background: "run background tasks",
+  // Said as what it costs you, not as what the API is called: the point a
+  // reader needs is that this outlives the window they grant it in.
+  processes: "run its own programs on your machine",
   "network:relay": "talk to your relay",
 };
 
-export const SENSITIVE = new Set(["publish", "personas", "background"]);
+export const SENSITIVE = new Set(["publish", "personas", "background", "processes"]);
 
 const REPO = "https://github.com/KennethAshley/fez";
 /** De-scope and drop a `fez-` prefix so @fezchat/git, git, and fez-git all match. */

@@ -50,5 +50,6 @@ export type FezPermission =
   | "background"
   | "system-prompt"
   | "personas"
+  | "processes"
   | "network:relay"
   | `network:${string}`;

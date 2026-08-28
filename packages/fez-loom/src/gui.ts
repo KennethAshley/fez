@@ -116,16 +116,31 @@ export default function activate(api: GuiApi): void {
 
     return h(
       "div",
-      { className: "tools-scroll" },
+      // The app's page grammar, so a kept-tools gallery sits at the same
+      // measure as every other page instead of running the window's width.
+      { className: "fez-page wide tools-scroll" },
       h(
         "div",
-        { className: "tools-head" },
-        h("h2", null, "▣ tools"),
-        h("p", { className: "settings-hint" }, "Tools you kept — reopen any in the pane. Ask @loom to build one, then ★ it."),
-        status && h("p", { className: "settings-hint" }, status)
+        { className: "page-head" },
+        h("h2", { className: "page-title" }, "Tools"),
+        h("div", { className: "page-sub" },
+          "Tools you kept. Open one in the pane, or ask @loom to build another."),
+        h("div", { className: "page-rule" },
+          // Nothing when the page is empty: the block below says so once,
+          // at full size. The rule still draws — it is the column's edge.
+          tools.length === 0 ? null : h("span", { className: "page-fact" }, `${tools.length} kept`),
+          status ? h("span", { className: "page-fact" }, status) : null
+        )
       ),
       tools.length === 0
-        ? h("div", { className: "pane-empty" }, "no kept tools yet — build one with @loom, open it, and hit ★")
+        ? h(
+            "div",
+            { className: "page-empty" },
+            h("div", { className: "page-empty-line" }, "You haven't kept a tool yet."),
+            h("div", { className: "page-empty-how" },
+              "Ask @loom in any channel to build one — a chart, a tracker, a small app. ",
+              "Open what it makes, and hit ★ to keep it here.")
+          )
         : h(
             "div",
             { className: "tools-grid" },
