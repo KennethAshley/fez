@@ -938,7 +938,7 @@ fn install_package(name: String) -> Result<String, String> {
         obj_entry(obj, "extensionPermissions").insert(base_owned.clone(), serde_json::json!(perms));
         // Version and bins are no longer cached here — they live in
         // packages/<base>/package.json, read back by installed_version and
-        // (Task 6) extension_may_spawn.
+        // extension_may_spawn.
         if wants_background {
             let list = obj
                 .entry("backgroundExtensions")
@@ -1957,7 +1957,8 @@ fn spawn_extension_agent(
     if agent_is_alive_bin(&name, Some(&bin)) {
         return Err(format!("{name} is already running — recall it first"));
     }
-    extension_may_spawn(&settings_value(), &extension, &bin)?;
+    let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
+    extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
     spawn_tracked_process(name, &bin, checked_env(env)?, vec![], None, None)
 }
 
@@ -1971,18 +1972,24 @@ fn settings_value() -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
-/// Whether `extension` may start `bin`, decided from what install_package
-/// recorded: `extensionPermissions` and `extensionBins`.
+/// Whether `extension` may start `bin`: the `processes` grant from
+/// settings.json, the `bin` claim from the package's own manifest.
 ///
 /// `extension` arrives from the webview and is NOT trustworthy — a gui part
 /// runs in the page and can invoke this command directly, naming whichever
 /// extension it likes. Both checks therefore live here rather than in the
 /// loader that hands out the capability. The named extension must itself hold
-/// `processes`, and `bin` must be one IT installed, so claiming to be someone
-/// else buys nothing that extension could not already do. What no caller can
-/// reach, whatever it claims to be, is a binary no installed package shipped.
+/// `processes` — that's the user's grant, and settings.json is where it
+/// belongs. But whether it SHIPPED `bin` is not a grant anyone makes; it's a
+/// fact about the package on disk, so it's read from `manifest` (the
+/// package's own `package.json`, loaded by the caller via
+/// `installed_manifest`) rather than from a settings cache anyone could
+/// hand-edit. Claiming to be someone else buys nothing that extension could
+/// not already do. What no caller can reach, whatever it claims to be, is a
+/// binary no installed package's manifest lists.
 fn extension_may_spawn(
     settings: &serde_json::Value,
+    manifest: Option<&serde_json::Value>,
     extension: &str,
     bin: &str,
 ) -> Result<(), String> {
@@ -1994,13 +2001,13 @@ fn extension_may_spawn(
     if !holds_processes {
         return Err(format!("{extension} was not granted `processes`"));
     }
-    let shipped_it = settings
-        .pointer("/extensionBins")
-        .and_then(|v| v.get(extension))
-        .and_then(|v| v.as_array())
-        .is_some_and(|a| a.iter().any(|b| b.as_str() == Some(bin)));
+    let manifest = manifest.ok_or_else(|| format!("{extension} has no installed package"))?;
+    let shipped_it = manifest
+        .get("bin")
+        .and_then(|v| v.as_object())
+        .is_some_and(|m| m.contains_key(bin));
     if !shipped_it {
-        return Err(format!("{extension} did not install a bin called {bin}"));
+        return Err(format!("{extension}'s package does not ship a bin called {bin}"));
     }
     Ok(())
 }
