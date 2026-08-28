@@ -29,13 +29,25 @@ const PART_DIRS: [(&str, &str); 4] = [
 /// move happens; treating the bare dir as "done" would let a crash (or one
 /// failed rename) mid-name leave a package.json-less dir that every future
 /// run skips forever, silently losing that name's facts once the caller
-/// clears `extensionBins`/`extensionVersions` on `Ok`. A half-moved name is
-/// instead resumed: each per-item move first checks whether the flat path
-/// is already a symlink (a prior partial run got that one done) and skips
-/// re-renaming it, so a retry finishes the remaining items and writes
-/// package.json. A name with no flat files at all (a settings orphan — e.g.
-/// a grant left behind after a manual `rm -rf`) is skipped too, but
-/// reported in the returned log rather than silently dropped.
+/// clears `extensionBins`/`extensionVersions` on `Ok`.
+///
+/// A per-item move has THREE possible states on entry, not two: still flat
+/// (a real file, untouched), fully moved (the flat path is now a symlink
+/// into the package dir), or moved-but-unlinked (`rename` landed the file in
+/// the package dir but a crash struck before the back-symlink was created —
+/// the flat path is simply gone, neither file nor symlink). "Present" for
+/// deciding whether an item needs (re)processing is therefore `flat path
+/// exists OR its package-dir destination exists` — checking the flat path
+/// alone would drop a moved-but-unlinked item out of consideration entirely
+/// (its flat path is gone), losing its manifest entry and its access path
+/// for good the moment `package.json` gets written for the *other* items and
+/// the name is marked done. Each of the three states is handled explicitly:
+/// still-flat renames then symlinks; fully-moved is left alone; moved-but-
+/// unlinked just (re)creates the symlink — `link_index` is naturally
+/// idempotent here since it removes any stale entry first. A name with no
+/// flat files and no package-dir files at all (a settings orphan — e.g. a
+/// grant left behind after a manual `rm -rf`) is skipped, but reported in
+/// the returned log rather than silently dropped.
 ///
 /// The reconstructed manifest's `fez.permissions` is capped at exactly the
 /// granted list — a reconstructed manifest must never claim MORE than what
@@ -54,8 +66,16 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
             continue; // fully migrated (or a fresh install) — the manifest is the completion marker, not just the dir
         }
 
-        let found_parts: Vec<(&str, &str)> =
-            PART_DIRS.into_iter().filter(|(_, dir)| home.join(dir).join(format!("{name}.js")).exists()).collect();
+        // "Present" is flat-exists OR already-landed-in-the-package-dir —
+        // not flat-exists alone, or a moved-but-unlinked item (rename done,
+        // symlink crashed before it happened) falls out of consideration.
+        let found_parts: Vec<(&str, &str)> = PART_DIRS
+            .into_iter()
+            .filter(|(part_key, dir)| {
+                home.join(dir).join(format!("{name}.js")).exists()
+                    || pkg_dir.join("dist").join(format!("{part_key}.js")).exists()
+            })
+            .collect();
         let bin_cmds: Vec<String> = settings
             .pointer(&format!("/extensionBins/{name}"))
             .and_then(|v| v.as_array())
@@ -63,7 +83,10 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
             .unwrap_or_default();
         let found_bins: Vec<String> = bin_cmds
             .into_iter()
-            .filter(|cmd| safe_bin_name(cmd) && home.join("bin").join(cmd).exists())
+            .filter(|cmd| {
+                safe_bin_name(cmd)
+                    && (home.join("bin").join(cmd).exists() || pkg_dir.join("bin").join(cmd).exists())
+            })
             .collect();
 
         if found_parts.is_empty() && found_bins.is_empty() {
@@ -77,15 +100,22 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
         for (part_key, dir) in &found_parts {
             let flat = home.join(dir).join(format!("{name}.js"));
             let dest = pkg_dir.join("dist").join(format!("{part_key}.js"));
-            // A flat path that's already a symlink was moved by a prior
-            // partial run — resume by leaving it, not by re-renaming a
-            // symlink onto its own target.
-            let already_moved = std::fs::symlink_metadata(&flat).map(|m| m.file_type().is_symlink()).unwrap_or(false);
-            if !already_moved {
+            let flat_is_symlink = std::fs::symlink_metadata(&flat).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+            if flat_is_symlink {
+                // Fully done already (prior run finished this one) — nothing to move.
+                log.push(format!("{name}: {dir}/{name}.js already migrated — verified"));
+            } else if flat.exists() {
+                // Still flat — the normal move.
                 std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
                 std::fs::rename(&flat, &dest).map_err(|e| e.to_string())?;
                 link_index(&dest, &flat)?;
                 log.push(format!("{name}: {dir}/{name}.js → packages/{name}/dist/{part_key}.js (migrated)"));
+            } else {
+                // Flat path is gone but dest exists: rename already
+                // happened, a crash struck before the back-symlink did.
+                // link_index is idempotent (removes any stale entry first).
+                link_index(&dest, &flat)?;
+                log.push(format!("{name}: {dir}/{name}.js symlink restored (rename had already landed)"));
             }
             parts_json.insert(part_key.to_string(), serde_json::json!(format!("dist/{part_key}.js")));
         }
@@ -94,12 +124,17 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
         for cmd in &found_bins {
             let flat = home.join("bin").join(cmd);
             let dest = pkg_dir.join("bin").join(cmd);
-            let already_moved = std::fs::symlink_metadata(&flat).map(|m| m.file_type().is_symlink()).unwrap_or(false);
-            if !already_moved {
+            let flat_is_symlink = std::fs::symlink_metadata(&flat).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+            if flat_is_symlink {
+                log.push(format!("{name}: bin/{cmd} already migrated — verified"));
+            } else if flat.exists() {
                 std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
                 std::fs::rename(&flat, &dest).map_err(|e| e.to_string())?;
                 link_index(&dest, &flat)?;
                 log.push(format!("{name}: bin/{cmd} → packages/{name}/bin/{cmd} (migrated)"));
+            } else {
+                link_index(&dest, &flat)?;
+                log.push(format!("{name}: bin/{cmd} symlink restored (rename had already landed)"));
             }
             bin_json.insert(cmd.clone(), serde_json::json!(format!("bin/{cmd}")));
         }
@@ -230,6 +265,36 @@ mod tests {
         assert!(pkg_dir.join("dist/headless.js").exists());
         let link = home.path().join("extensions").join("tidy.js");
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    }
+
+    #[test]
+    fn a_moved_but_unlinked_item_is_recorded_not_lost() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("extensions")).unwrap();
+        // Simulate a crash landing between `rename` succeeding and
+        // `link_index` creating the back-symlink: the file already sits in
+        // the package dir, but gui-extensions/tidy.js was never replaced —
+        // it simply does not exist (neither a file nor a symlink).
+        let pkg_dir = home.path().join("packages").join("tidy");
+        std::fs::create_dir_all(pkg_dir.join("dist")).unwrap();
+        std::fs::write(pkg_dir.join("dist").join("gui.js"), "gui").unwrap();
+        assert!(!home.path().join("gui-extensions").exists());
+        // A second part that never got touched at all — still fully flat.
+        std::fs::write(home.path().join("extensions").join("tidy.js"), "headless").unwrap();
+
+        let settings = serde_json::json!({ "extensionPermissions": { "tidy": ["ui"] } });
+        migrate_flat_installs(home.path(), &settings).unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(pkg_dir.join("package.json")).unwrap()).unwrap();
+        // Both parts present — the moved-but-unlinked one wasn't dropped,
+        // and the name was NOT misclassified as a settings orphan.
+        assert_eq!(manifest.pointer("/fez/parts/gui"), Some(&serde_json::json!("dist/gui.js")));
+        assert_eq!(manifest.pointer("/fez/parts/headless"), Some(&serde_json::json!("dist/headless.js")));
+        // The back-symlink for the moved-but-unlinked item is (re)created.
+        let link = home.path().join("gui-extensions").join("tidy.js");
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(std::fs::canonicalize(&link).unwrap().ends_with("dist/gui.js"));
     }
 
     #[test]
