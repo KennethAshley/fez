@@ -249,6 +249,22 @@ export class PackageManager {
     return real.slice(packagesPrefix.length).split(path.sep)[0];
   }
 
+  /**
+   * The manifest a package was installed with, read back verbatim from
+   * packages/<base>/package.json — the package dir's own record, never
+   * settings. Undefined when there's no package dir: a package whose
+   * manifest had no `fez` key (writePackageManifest never ran), or one
+   * installed before Task 1-2 and not yet migrated (Task 7).
+   */
+  installedManifest(base: string): (FezManifest & { name: string; version: string }) | undefined {
+    try {
+      const content = fsSync.readFileSync(path.join(this.packageDir(base), "package.json"), "utf-8");
+      return JSON.parse(content) as FezManifest & { name: string; version: string };
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The load index: a flat entry pointing into the package dir. Symlink
    *  first; copy when the filesystem refuses — the package dir stays the
    *  record either way. */
@@ -592,7 +608,11 @@ export class PackageManager {
   }
 
   private async runUninstallHook(pkg: FezPackage): Promise<void> {
-    const manifest = await this.readManifest(pkg.name);
+    // Prefer the package dir's own manifest — the record of what THIS
+    // install actually did — over readManifest's source-fetch copy, which
+    // can be stale or already gone.
+    const installed = this.installedManifest(pkg.name);
+    const manifest = installed ?? (await this.readManifest(pkg.name));
 
     const integrations = manifest?.fez?.integrations;
 
@@ -602,16 +622,82 @@ export class PackageManager {
     if (integrations?.pi) {
       await this.removePiIntegration(pkg.name);
     }
-    // Unconditional: every part removal is force:true, so a package that
-    // never had a given part is a no-op — and a package whose manifest is
-    // unreadable at uninstall time still gets its known locations cleaned.
-    await this.removeParts(pkg.name, manifest);
+
+    if (installed) {
+      // The package dir is the source of truth: delete exactly the index
+      // entries ITS manifest named, each only if this package still owns
+      // it (binOwner's symlink-into-own-dir rule), then drop the package
+      // dir itself last.
+      await this.removeOwnedIndexEntries(pkg.name, installed);
+      await this.removeSettingsEntries(pkg.name);
+      await fs.rm(this.packageDir(pkg.name), { recursive: true, force: true });
+    } else {
+      // No package dir: this install predates the packages/<name>/ +
+      // symlink-index layout (Tasks 1-2) and hasn't been migrated onto it
+      // yet. Fall back to the old name-guess sweep — retire this branch
+      // once Task 7's migration has run against every existing install.
+      await this.removeParts(pkg.name, manifest);
+    }
+
     if (pkg.installedPersonas?.length) {
       const personasDir = this.home("personas");
       for (const id of pkg.installedPersonas) {
         await fs.rm(path.join(personasDir, `${id}.md`), { force: true });
         console.log(chalk.dim(`   Removed persona ${id}`));
       }
+    }
+  }
+
+  /**
+   * Delete exactly the flat-dir entries THIS package's own manifest named
+   * — never guessed from its name alone — each only if the package still
+   * owns it. binOwner's ownership rule (symlink whose realpath resolves
+   * into packages/<name>/) isn't really bin-specific, so it doubles as
+   * the check for every index dir, not just bin/.
+   */
+  private async removeOwnedIndexEntries(name: string, manifest: FezManifest): Promise<void> {
+    const parts = manifest.fez?.parts;
+    // installFezExtension writes extensions/<name><ext of its entry>, and
+    // that entry is either the legacy top-level `extension.entry` or
+    // `parts.headless` — same destination either way.
+    const headlessEntry = manifest.fez?.extension?.entry ?? parts?.headless;
+    if (headlessEntry) {
+      const ext = path.extname(headlessEntry) || ".js";
+      await this.removeIfOwned(name, this.home("extensions", `${name}${ext}`));
+    }
+    if (parts?.gui) await this.removeIfOwned(name, this.home("gui-extensions", `${name}.js`));
+    if (parts?.relay) await this.removeIfOwned(name, this.home("relay-extensions", `${name}.js`));
+    if (parts?.workspace) await this.removeIfOwned(name, this.home("workspace-providers", `${name}.js`));
+    for (const cmd of Object.keys(manifest.bin ?? {})) {
+      await this.removeIfOwned(name, this.home("bin", cmd));
+    }
+  }
+
+  /** Delete an index entry iff this package still owns it; a foreign or
+   *  already-absent entry is left alone. */
+  private async removeIfOwned(name: string, entryPath: string): Promise<void> {
+    if (this.binOwner(entryPath) === name) {
+      await fs.rm(entryPath, { force: true });
+    }
+  }
+
+  /**
+   * The settings-side of remove: drop the backgroundExtensions membership
+   * and the recorded permission grant. The mcpServers skill entry is
+   * deliberately left — the user may have filled env values, and a
+   * persona may still declare it.
+   */
+  private async removeSettingsEntries(name: string): Promise<void> {
+    const settings = this.settings.load() as {
+      backgroundExtensions?: string[];
+      extensionPermissions?: Record<string, string[]>;
+    };
+    if (settings.backgroundExtensions?.includes(name)) {
+      this.settings.save({ backgroundExtensions: settings.backgroundExtensions.filter((n) => n !== name) });
+    }
+    if (settings.extensionPermissions && name in settings.extensionPermissions) {
+      const { [name]: _dropped, ...rest } = settings.extensionPermissions;
+      this.settings.save({ extensionPermissions: rest });
     }
   }
 
@@ -861,11 +947,15 @@ export class PackageManager {
   }
 
   /**
-   * Remove everything an install placed — the mirror of installParts +
+   * LEGACY FALLBACK — only reached when a package has no packages/<name>/
+   * dir (an install that predates Tasks 1-2, not yet migrated). Guesses
+   * every location from the name/extension convention instead of reading
+   * what the manifest actually declared, the mirror of installParts +
    * installBins + installFezExtension. This was dead code once (defined,
    * called from nowhere), which meant `fez remove` left gui/relay/
    * workspace parts and bins behind while the desktop's uninstall cleaned
-   * them; the two paths must stay equivalent.
+   * them; the two paths must stay equivalent. Retire this branch once
+   * Task 7's migration has run against every existing install.
    */
   private async removeParts(name: string, manifest: FezManifest | null): Promise<void> {
     await this.removeFezExtension(name); // headless part / legacy extension entry
@@ -882,17 +972,7 @@ export class PackageManager {
         await fs.rm(binPath, { force: true });
       }
     }
-    const settings = this.settings.load() as {
-      backgroundExtensions?: string[];
-      extensionPermissions?: Record<string, string[]>;
-    };
-    if (settings.backgroundExtensions?.includes(name)) {
-      this.settings.save({ backgroundExtensions: settings.backgroundExtensions.filter((n) => n !== name) });
-    }
-    if (settings.extensionPermissions && name in settings.extensionPermissions) {
-      const { [name]: _dropped, ...rest } = settings.extensionPermissions;
-      this.settings.save({ extensionPermissions: rest });
-    }
+    await this.removeSettingsEntries(name);
     // the skill definition stays: the user may have filled env values and
     // personas may still declare it — removing it silently would break them
   }

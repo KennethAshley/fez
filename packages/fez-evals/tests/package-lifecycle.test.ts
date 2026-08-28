@@ -233,3 +233,23 @@ describe("bin ownership — the flat namespace stops colliding silently", () => 
     expect(fs.existsSync(at("extensions", "clash-bg.js"))).toBe(false);
   });
 });
+
+describe("remove/update are driven by the package dir, not guesses", () => {
+  test("remove is driven by the package dir and deletes it last", async () => {
+    await pm.install(`git:${pkgDir}`);
+    await pm.remove("tidy");
+    expect(fs.existsSync(at("packages", "tidy"))).toBe(false);
+    // and every index entry that resolved into it is gone
+    for (const [dir, f] of [["extensions","tidy.js"],["gui-extensions","tidy.js"],["relay-extensions","tidy.js"],["workspace-providers","tidy.js"],["bin","tidy-tool"]] as const) {
+      expect(fs.existsSync(at(dir, f)), `${dir}/${f}`).toBe(false);
+    }
+  });
+
+  test("version comes from the package dir, not from settings", async () => {
+    await pm.install(`git:${pkgDir}`);
+    expect(pm.installedManifest("tidy")?.version).toBe("0.0.1");
+    const s = settings.load() as Record<string, unknown>;
+    expect(s.extensionVersions).toBeUndefined();
+    expect(s.extensionBins).toBeUndefined();
+  });
+});
