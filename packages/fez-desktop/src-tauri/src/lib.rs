@@ -2351,6 +2351,7 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
         ("fez-relay", false),
         ("fez-sentinel", false),
         ("fez-agent", false),
+        ("fez-mcp", false),
     ] {
         if !required && !src.join(name).exists() {
             continue;

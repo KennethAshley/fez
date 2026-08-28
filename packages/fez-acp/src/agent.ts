@@ -60,6 +60,7 @@ import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
+import { fezMcpLaunch } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
@@ -239,12 +240,15 @@ async function main() {
   // DMs, search, memory, docs) as a stdio MCP server signed with the
   // agent's own key — Buzz hands its agents the `buzz` CLI; this is the
   // fez-native equivalent, attached automatically, declared by nobody.
-  const fezMcpPath = fileURLToPath(new URL("../../fez-mcp/dist/server.js", import.meta.url));
-  if (fs.existsSync(fezMcpPath)) {
+  // Resolution and launch live in mcp-path.ts: the compiled binary can
+  // reach neither the repo path nor a script runtime, and getting this
+  // wrong is invisible — the agent runs fine and just has no tools.
+  const fezMcp = fezMcpLaunch({ importMetaUrl: import.meta.url, execPath: process.execPath, exists: fs.existsSync });
+  if (fezMcp.launch) {
     mcpServers.push({
       name: "fez",
-      command: process.execPath,
-      args: [fezMcpPath],
+      command: fezMcp.launch.command,
+      args: fezMcp.launch.args,
       env: [
         { name: "FEZ_AGENT_PERSONA", value: personaId },
         { name: "FEZ_RELAY", value: relayUrls.join(",") },
@@ -254,9 +258,9 @@ async function main() {
           : []),
       ],
     });
-    console.log("🔧 fez tools attached (fez-mcp)");
+    console.log(`🔧 fez tools attached (${fezMcp.launch.args[0] ?? fezMcp.launch.command})`);
   } else {
-    console.warn("⚠️  fez-mcp not built — agents run without fez_* tools (npm run build in packages/fez-mcp)");
+    console.warn(`⚠️  fez-mcp not found — agents run without fez_* tools. Looked at: ${fezMcp.tried.join(", ")}`);
   }
 
   // ── Per-persona working directory. Turns run HERE, not wherever `fez

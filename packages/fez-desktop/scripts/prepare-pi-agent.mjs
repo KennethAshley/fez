@@ -29,7 +29,7 @@ const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+svc5`;
+const BUNDLE_VERSION = `${PI_VERSION}+svc6`;
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
@@ -104,7 +104,7 @@ fs.mkdirSync(WORK, { recursive: true });
 // managed Claude adapter refused every claude-code persona on a machine
 // where the desktop had just verified Claude READY). FORCE=1 re-runs
 // the assembly; FORCE_ALL=1 rebuilds even the pinned externals.
-const OWN = new Set(["fez-relay", "fez-agent"]);
+const OWN = new Set(["fez-relay", "fez-agent", "fez-mcp"]);
 const reuse = (name) =>
   !OWN.has(name) && !process.env.FORCE_ALL && fs.existsSync(path.join(OUT, `${name}${EXE}`));
 
@@ -166,6 +166,23 @@ if (!reuse("fez-agent")) {
   console.log("  (fez-agent: reusing existing binary)");
 }
 
+// 3c. fez-mcp — the fez_* tool server, as its OWN binary. In dev the
+// agent runs packages/fez-mcp/dist/server.js with its own runtime; the
+// compiled fez-agent can do neither (import.meta.url points into bun's
+// virtual filesystem, and process.execPath IS fez-agent), so the bundle
+// ships a sibling binary the agent launches directly (mcp-path.ts).
+// Compiled WITHOUT --external: a sibling has no node_modules to resolve.
+console.log(`\n▶ compiling fez-mcp…`);
+if (!reuse("fez-mcp")) {
+  const mcpPkg = path.resolve(HERE, "..", "..", "fez-mcp");
+  run(
+    `bun build --compile ${JSON.stringify(path.join(mcpPkg, "src", "server.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-mcp${EXE}`))}`,
+    mcpPkg
+  );
+} else {
+  console.log("  (fez-mcp: reusing existing binary)");
+}
+
 // 4. Assemble pi-agent/ — binaries + required assets + VERSION.
 console.log(`\n▶ assembling ${path.relative(path.resolve(HERE, "..", ".."), OUT)}…`);
 const stage = path.join(WORK, "stage");
@@ -176,6 +193,7 @@ copyExec(from("pi") ?? path.join(codingAgent, "dist", `pi${EXE}`), path.join(sta
 copyExec(from("pi-acp") ?? path.join(WORK, `pi-acp${EXE}`), path.join(stage, `pi-acp${EXE}`));
 copyExec(from("fez-relay") ?? path.join(WORK, `fez-relay${EXE}`), path.join(stage, `fez-relay${EXE}`));
 copyExec(from("fez-agent") ?? path.join(WORK, `fez-agent${EXE}`), path.join(stage, `fez-agent${EXE}`));
+copyExec(from("fez-mcp") ?? path.join(WORK, `fez-mcp${EXE}`), path.join(stage, `fez-mcp${EXE}`));
 const themeSrc = codingAgent ? path.join(codingAgent, "dist", "theme") : path.join(OUT, "theme");
 for (const f of fs.readdirSync(themeSrc)) fs.copyFileSync(path.join(themeSrc, f), path.join(stage, "theme", f));
 const wasmSrc = codingAgent ? path.join(codingAgent, "dist", "photon_rs_bg.wasm") : path.join(OUT, "photon_rs_bg.wasm");
