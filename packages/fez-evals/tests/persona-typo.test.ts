@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validatePersonaFile, nearestKnownKey } from "@fezchat/protocol";
+import { validatePersonaFile, nearestKnownKey, KNOWN_EXTRA_KEYS } from "@fezchat/protocol";
 import * as mirror from "../../fez-client/dist/index.js";
 
 /**
@@ -58,4 +58,17 @@ describe("the browser mirror agrees with the CLI", () => {
       expect(mirror.nearestKnownKey(key)).toBe(nearestKnownKey(key));
     });
   }
+
+  // The sample-key checks above only prove the matcher agrees on the keys
+  // sampled — a key added to KNOWN_EXTRA_KEYS and never mirrored into
+  // persona-keys.ts would stay green there unless the sample table
+  // happened to exercise it. This diffs the two FULL lists instead, so
+  // adding a key on one side and forgetting the other side is a red test,
+  // not a silent gap. Built from KNOWN_EXTRA_KEYS (exported) plus the same
+  // four literals parseFrontmatter reads directly, so this also proves
+  // those four haven't drifted from what the parser actually reads.
+  it("the two key lists are identical — this is what makes the mirror a mirror", () => {
+    const canonical = ["harness", "aliases", "mcpServers", "description", ...KNOWN_EXTRA_KEYS];
+    expect([...mirror.ALL_KNOWN_KEYS].sort()).toEqual([...canonical].sort());
+  });
 });
