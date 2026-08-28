@@ -1903,8 +1903,15 @@ fn runner_status() -> bool {
     pid_alive(&std::path::PathBuf::from(home).join(".fez").join("sentinel.pid")).is_some()
 }
 
+fn default_bin() -> String {
+    "fez-agent".to_string()
+}
+fn is_default_bin(b: &String) -> bool {
+    b == "fez-agent"
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct SpawnedAgent {
+pub(crate) struct SpawnedAgent {
     persona: String,
     channels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1912,6 +1919,12 @@ struct SpawnedAgent {
     #[serde(skip_serializing_if = "Option::is_none")]
     line: Option<String>,
     pid: u32,
+    /// Which binary in ~/.fez/bin this row spawned. Liveness name-checks the
+    /// process, so a row that does not say what it started reads as dead the
+    /// moment it is not fez-agent. Absent on rows written before anything but
+    /// agents was spawned — all of which were fez-agent.
+    #[serde(default = "default_bin", skip_serializing_if = "is_default_bin")]
+    pub(crate) bin: String,
 }
 
 fn agents_registry_path() -> std::path::PathBuf {
@@ -1952,6 +1965,13 @@ fn raw_pid_alive(pid: u32) -> bool {
 /// command line, not just comm) so the ~/.fez/bin/fez-agent path still
 /// matches on a substring.
 fn pid_is_fez_agent(pid: u32) -> bool {
+    pid_runs_bin(pid, "fez-agent")
+}
+
+/// Is this pid still running the binary we started under it? A recycled pid
+/// running something else is not our process, which is the whole reason this
+/// checks the command line rather than trusting `kill -0`.
+fn pid_runs_bin(pid: u32, bin: &str) -> bool {
     if !raw_pid_alive(pid) {
         return false;
     }
@@ -1959,7 +1979,7 @@ fn pid_is_fez_agent(pid: u32) -> bool {
         .args(["-p", &pid.to_string(), "-o", "command="])
         .output()
         .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).contains("fez-agent"))
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains(bin))
         .unwrap_or(false)
 }
 
@@ -2026,9 +2046,6 @@ pub(crate) fn spawn_agent_process(
     repo: Option<String>,
     base_branch: Option<String>,
 ) -> Result<u32, String> {
-    if !valid_persona_name(&persona) {
-        return Err(format!("invalid persona name: {persona}"));
-    }
     if let Some(r) = &repo {
         if !safe_work(r) {
             return Err(format!("unsafe repo name refused: {r}"));
@@ -2039,53 +2056,129 @@ pub(crate) fn spawn_agent_process(
             return Err(format!("unsafe branch name refused: {b}"));
         }
     }
-    // One summoner per machine: a live sentinel (TUI world, opt-in
-    // fleet daemon) owns spawning. Checked in the PRIMITIVE so every
-    // policy caller inherits it — the TS summoner's own check is the
-    // first gate, this is the one nothing can bypass.
+    // One summoner per machine: a live sentinel (TUI world, opt-in fleet
+    // daemon) owns spawning AGENTS. Checked here rather than in the shared
+    // primitive because it is a fact about summoning, not about spawning —
+    // a miner has nothing to do with it (see spawn_bazaar_miner).
     if runner_status() {
         return Ok(0);
     }
+    let mut env = vec![
+        ("FEZ_AGENT_PERSONA".to_string(), persona.clone()),
+        ("FEZ_AGENT_CHANNELS".to_string(), channels.join(",")),
+        ("FEZ_AGENT_OWNER".to_string(), owner),
+        ("FEZ_RELAY".to_string(), relays),
+    ];
+    if let Some(r) = &repo {
+        env.push(("FEZ_AGENT_REPO".to_string(), r.clone()));
+        if let Some(b) = &base_branch {
+            env.push(("FEZ_AGENT_BASE_BRANCH".to_string(), b.clone()));
+        }
+    }
+    spawn_tracked_process(persona, "fez-agent", env, channels, repo, base_branch)
+}
+
+/// Send an agent to the bazaar: run the miner that signs as it.
+///
+/// The miner ships with the @fezchat/bazaar extension and lands in ~/.fez/bin
+/// like any other package bin, so this spawns a name rather than a path we
+/// bundled. It is handed a PROFILE, never a secret — the miner resolves the
+/// agent's own key from fez's key store exactly as fez-agent does, which is
+/// what keeps agent keys out of the desktop entirely.
+///
+/// Deliberately does NOT defer to a live sentinel. The sentinel owns agent
+/// summoning; mining is not summoning, and a miner that inherited that gate
+/// would silently do nothing and report success.
+#[tauri::command]
+fn spawn_bazaar_miner(profile: String, relay: Option<String>) -> Result<u32, String> {
+    if agent_is_alive(&profile) {
+        return Err(format!("{profile} is already running — recall it first"));
+    }
+    let env = miner_env(&profile, relay.as_deref())?;
+    spawn_tracked_process(profile, "fez-bazaar-miner", env, vec![], None, None)
+}
+
+/// The miner's environment, validated. Separate from the command so the rules
+/// can be tested without spawning anything — and so it is obvious that a
+/// PROFILE goes in and no secret does: the miner resolves the agent's own key
+/// from fez's key store, which is why the desktop never handles one.
+pub(crate) fn miner_env(
+    profile: &str,
+    relay: Option<&str>,
+) -> Result<Vec<(String, String)>, String> {
+    if !valid_persona_name(profile) {
+        return Err(format!("invalid name: {profile}"));
+    }
+    let mut env = vec![("BAZAAR_PROFILE".to_string(), profile.to_string())];
+    if let Some(r) = relay {
+        // Anything else would be handed to the miner as its relay and fail far
+        // from here, or reach somewhere nobody intended.
+        if !r.starts_with("wss://") && !r.starts_with("ws://") {
+            return Err(format!("not a relay url: {r}"));
+        }
+        env.push(("BAZAAR_RELAY".to_string(), r.to_string()));
+    }
+    Ok(env)
+}
+
+/// THE spawn primitive: validation, env, detached spawn, reap thread, and the
+/// pid registry, in one place. Every policy caller goes through here — nothing
+/// reaches Command::spawn directly, which is the point.
+///
+/// `bin` names a file in ~/.fez/bin rather than a path, so a package that
+/// ships an executable can be spawned without the desktop knowing anything
+/// about it beyond its name.
+fn spawn_tracked_process(
+    name: String,
+    bin: &str,
+    env: Vec<(String, String)>,
+    channels: Vec<String>,
+    repo: Option<String>,
+    base_branch: Option<String>,
+) -> Result<u32, String> {
+    // The name becomes a registry key and a log FILENAME, so it is validated
+    // here — in the primitive — where no caller can skip it.
+    if !valid_persona_name(&name) {
+        return Err(format!("invalid name: {name}"));
+    }
     let home = std::env::var("HOME").unwrap_or_default();
-    let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-agent");
-    if !bin.exists() {
-        return Err("fez-agent isn't bundled in this build".to_string());
+    let bin_path = std::path::PathBuf::from(&home).join(".fez").join("bin").join(bin);
+    if !bin_path.exists() {
+        return Err(format!("{bin} isn't installed — nothing at ~/.fez/bin/{bin}"));
     }
     let log_dir = std::path::PathBuf::from(&home).join(".fez").join("logs");
     std::fs::create_dir_all(&log_dir).map_err(|e| format!("logs dir: {e}"))?;
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_dir.join(format!("{persona}.log")))
-        .map_err(|e| format!("agent log: {e}"))?;
-    let log_err = log.try_clone().map_err(|e| format!("agent log: {e}"))?;
-    let mut cmd = Command::new(&bin);
-    cmd.env("FEZ_AGENT_PERSONA", &persona)
-        .env("FEZ_AGENT_CHANNELS", channels.join(","))
-        .env("FEZ_AGENT_OWNER", &owner)
-        .env("FEZ_RELAY", &relays)
-        .stdout(log)
-        .stderr(log_err);
-    if let Some(r) = &repo {
-        cmd.env("FEZ_AGENT_REPO", r);
-        if let Some(b) = &base_branch {
-            cmd.env("FEZ_AGENT_BASE_BRANCH", b);
-        }
+        .open(log_dir.join(format!("{name}.log")))
+        .map_err(|e| format!("log: {e}"))?;
+    let log_err = log.try_clone().map_err(|e| format!("log: {e}"))?;
+    let mut cmd = Command::new(&bin_path);
+    for (k, v) in &env {
+        cmd.env(k, v);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("spawn fez-agent: {e}"))?;
+    cmd.stdout(log).stderr(log_err);
+    let mut child = cmd.spawn().map_err(|e| format!("spawn {bin}: {e}"))?;
     let pid = child.id();
     // Reap it: an unwaited Child that exits becomes a ZOMBIE, and `kill -0`
-    // succeeds on a zombie — so a dead agent kept reading as "alive" until
-    // the whole app quit, suppressing the engine's 90s watchdog and making
-    // the persona unsummonable. This thread's only job is the wait();
-    // nothing here needs the exit status.
+    // succeeds on a zombie — so a dead process kept reading as "alive" until
+    // the whole app quit, suppressing the engine's 90s watchdog and making the
+    // name unspawnable. This thread's only job is the wait().
     std::thread::spawn(move || {
         let _ = child.wait();
     });
     let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut rows: Vec<SpawnedAgent> =
-        load_agents_registry().into_iter().filter(|r| r.persona != persona).collect();
-    rows.push(SpawnedAgent { persona, channels, repo, line: base_branch, pid });
+        load_agents_registry().into_iter().filter(|r| r.persona != name).collect();
+    rows.push(SpawnedAgent {
+        persona: name,
+        channels,
+        repo,
+        line: base_branch,
+        pid,
+        bin: bin.to_string(),
+    });
     save_agents_registry(&rows);
     Ok(pid)
 }
@@ -2134,7 +2227,7 @@ pub(crate) fn agent_is_alive(persona: &str) -> bool {
     }
     let registry_alive = load_agents_registry()
         .iter()
-        .any(|r| r.persona == persona && pid_is_fez_agent(r.pid));
+        .any(|r| r.persona == persona && pid_runs_bin(r.pid, &r.bin));
     registry_alive || sentinel_agent_alive(&persona)
 }
 
@@ -2263,7 +2356,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, spawn_bazaar_miner])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {

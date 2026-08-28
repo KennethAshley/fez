@@ -34,4 +34,40 @@ mod tests {
         assert!(crate::spawn_agent_process("../evil".into(), vec![], "aabb".into(), "ws://x".into(), None, None).is_err());
         assert!(crate::spawn_agent_process("a b".into(), vec![], "aabb".into(), "ws://x".into(), None, None).is_err());
     }
+
+    // The name becomes a registry key AND a log filename, so it is validated
+    // for every caller — a miner is not a second door in.
+    #[test]
+    fn a_miner_name_is_validated_like_a_persona() {
+        assert!(crate::miner_env("../evil", None).is_err());
+        assert!(crate::miner_env("a b", None).is_err());
+        assert!(crate::miner_env("ember", None).is_ok());
+    }
+
+    #[test]
+    fn a_miner_relay_must_be_a_relay_url() {
+        assert!(crate::miner_env("ember", Some("http://evil")).is_err());
+        assert!(crate::miner_env("ember", Some("file:///etc/passwd")).is_err());
+        assert!(crate::miner_env("ember", Some("wss://bazaar.fez.chat")).is_ok());
+    }
+
+    // A profile goes in; a secret never does. The miner resolves the agent's
+    // own key, which is what keeps agent keys out of the desktop entirely.
+    #[test]
+    fn the_miner_env_carries_a_name_and_no_secret() {
+        let env = crate::miner_env("quill", Some("wss://bazaar.fez.chat")).unwrap();
+        assert!(env.iter().any(|(k, v)| k == "BAZAAR_PROFILE" && v == "quill"));
+        assert!(!env.iter().any(|(k, _)| k.contains("SECRET") || k.contains("KEY")));
+    }
+
+    // A row written before miners existed has no `bin`, and every one of them
+    // was fez-agent. Reading it back must not make a live agent look dead.
+    #[test]
+    fn a_registry_row_without_a_bin_reads_as_an_agent() {
+        let row: crate::SpawnedAgent = serde_json::from_str(
+            r#"{"persona":"scout","channels":["general"],"pid":123}"#,
+        )
+        .expect("old rows must still parse");
+        assert_eq!(row.bin, "fez-agent");
+    }
 }
