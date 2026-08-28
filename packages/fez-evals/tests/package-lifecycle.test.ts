@@ -168,16 +168,23 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
     }
   });
 
-  test("the skill entry's relative args resolve to real files in the installed package", () => {
+  test("the skill entry's relative args resolve into the installed package dir, not the source-fetch area", () => {
     // A package manifest says `args: ["dist/mcp.js"]` relative to ITSELF;
     // copied verbatim into settings it can never spawn (no cwd travels
     // with it — found live: fez-wallet's skill was uncallable by every
-    // agent). Install must absolutize args that name package files.
+    // agent). Install must absolutize args that name package files —
+    // and, like every other part, materialize the .js INTO packages/<base>/
+    // rather than pointing at the source-fetch dir, so the CLI and the
+    // Rust installer produce the identical mcpServers arg.
     const s = settings.load() as { mcpServers?: Record<string, { args?: string[] }> };
     const arg = s.mcpServers?.tidy?.args?.[0] ?? "";
     expect(path.isAbsolute(arg)).toBe(true);
     expect(fs.existsSync(arg)).toBe(true);
     expect(arg.endsWith(path.join("dist", "mcp.js"))).toBe(true);
+    // The strengthened assertion: a future divergence (e.g. resolving
+    // against the source-fetch dir again) must fail here even though the
+    // weaker absolute+exists+endsWith checks above would still pass.
+    expect(fs.realpathSync(arg).startsWith(fs.realpathSync(at("packages", "tidy")))).toBe(true);
   });
 
   test("install records the declared permission grant (parity with fez link)", () => {
@@ -223,6 +230,27 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
   });
 });
 
+describe("materializeIntoPackage refuses a traversal path", () => {
+  test("a manifest part that escapes the package is refused, nothing written outside packages/<base>", async () => {
+    const evilDir = path.join(tmp, "evil");
+    fs.mkdirSync(evilDir, { recursive: true });
+    fs.writeFileSync(path.join(evilDir, "package.json"), JSON.stringify({
+      name: "@fezchat/evil", version: "0.0.1", private: true, type: "module",
+      fez: { type: "extension", parts: { gui: "../evil.js" } },
+    }));
+    fs.writeFileSync(path.join(tmp, "evil.js"), "haha\n"); // outside evilDir, one level up
+    git(evilDir, "init -q"); git(evilDir, "add -A"); git(evilDir, "commit -q -m v1");
+
+    await expect(pm.install(`git:${evilDir}`)).rejects.toThrow(/escapes the package/);
+    // nothing landed outside the package dir (mirrors the Rust traversal
+    // test in package_install.rs, which makes the same assertion — a
+    // manifest-write-before-parts phantom packages/evil/ dir is a
+    // separate, deferred concern, not what this guard is about)
+    expect(fs.existsSync(at("gui-extensions", "evil.js"))).toBe(false);
+    expect(fs.existsSync(at("packages", "evil", "evil.js"))).toBe(false);
+  });
+});
+
 describe("bin ownership — the flat namespace stops colliding silently", () => {
   test("a second package shipping the same command is refused, naming the owner", async () => {
     const clashDir = path.join(tmp, "clash");
@@ -238,6 +266,9 @@ describe("bin ownership — the flat namespace stops colliding silently", () => 
     await expect(pm.install(`git:${clashDir}`)).rejects.toThrow(/tidy-tool.*tidy/);
     // the loser must not have half-installed the bin
     expect(fs.realpathSync(at("bin", "tidy-tool")).includes(path.join("packages", "tidy"))).toBe(true);
+    // ...nor left a phantom packages/clash/ behind (the manifest write now
+    // happens AFTER the collision check, not before it)
+    expect(fs.existsSync(at("packages", "clash"))).toBe(false);
   });
 
   test("removing one package never deletes a bin another still owns", async () => {

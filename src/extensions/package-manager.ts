@@ -542,16 +542,14 @@ export class PackageManager {
   private async runInstallHook(name: string, manifest: FezManifest | null): Promise<void> {
     if (!manifest || !manifest.fez) return;
 
-    // The package dir is the source of truth from here on: the manifest
-    // as installed, verbatim, before anything else touches it.
-    await this.writePackageManifest(name, manifest);
-
-    // Bin-collision check FIRST, before any part is installed or any
-    // settings key written. installParts can persist a settings write on
-    // its own (parts.background: true adds to backgroundExtensions) —
-    // checking this late, inside installBins, let a manifest combining
-    // that with a colliding bin name write settings and THEN throw,
-    // leaving a half-finished trace behind the refusal.
+    // Bin-collision check FIRST, before the package dir even exists —
+    // installParts can persist a settings write on its own (parts.background:
+    // true adds to backgroundExtensions), and writePackageManifest below
+    // creates packages/<name>/package.json. Checking this any later let a
+    // manifest combining a colliding bin name with those write settings or
+    // a phantom package dir and THEN throw, leaving a half-finished trace
+    // behind the refusal — installedManifest() reported it "installed"
+    // while the registry never recorded it.
     if (manifest.bin) {
       const binDir = this.home("bin");
       for (const cmd of Object.keys(manifest.bin)) {
@@ -561,6 +559,10 @@ export class PackageManager {
         }
       }
     }
+
+    // The package dir is the source of truth from here on: the manifest
+    // as installed, verbatim, before anything else touches it.
+    await this.writePackageManifest(name, manifest);
 
     const pkg = this.packages.get(name);
     const integrations = manifest.fez.integrations;
@@ -883,7 +885,6 @@ export class PackageManager {
     },
     provenance: { manifestName?: string; description?: string; source?: string } = {}
   ): Promise<void> {
-    const pkgDir = this.getContentDir(this.packages.get(name)!);
     if (parts.headless) {
       await this.installFezExtension(name, { entry: parts.headless });
     }
@@ -935,11 +936,12 @@ export class PackageManager {
       const settings = this.settings.load() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
       // keep env VALUES the user already filled in; the package supplies names
       const mergedEnv = { ...(parts.skill.env ?? {}), ...(settings.mcpServers?.[name]?.env ?? {}) };
+      const skill = await this.materializeSkillArgs(name, parts.skill);
       this.settings.save({
         mcpServers: {
           ...settings.mcpServers,
           [name]: skillEntryFor(
-            { ...resolveSkillArgs(parts.skill, pkgDir), ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+            { ...skill, ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
             provenance
           ),
         },
@@ -989,7 +991,21 @@ export class PackageManager {
   private async writePackageManifest(name: string, manifest: FezManifest): Promise<void> {
     const dir = this.packageDir(name);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(path.join(dir, "package.json"), JSON.stringify(manifest, null, 2), "utf-8");
+    await this.writeAtomic(path.join(dir, "package.json"), JSON.stringify(manifest, null, 2));
+  }
+
+  /**
+   * Write `data` to `path` so a reader only ever observes a complete file,
+   * never a torn one — mirrors Rust's `write_atomic` in package_install.rs.
+   * package.json's mere existence is what installedManifest()/the desktop
+   * migration treat as "this package is installed"; a same-directory
+   * `.tmp` sibling + rename keeps that observation atomic (and on one
+   * filesystem, so the rename itself is atomic).
+   */
+  private async writeAtomic(filePath: string, data: string): Promise<void> {
+    const tmp = `${filePath}.tmp`;
+    await fs.writeFile(tmp, data, "utf-8");
+    await fs.rename(tmp, filePath);
   }
 
   /** Plain copy, creating the destination's parent dirs as needed. */
@@ -1004,12 +1020,51 @@ export class PackageManager {
    * the absolute destination — the flat dirs symlink to this, never to
    * the source-fetch area, so the package dir is the one place a part's
    * real bytes live.
+   *
+   * A manifest path must stay inside the package dir: absolute paths and
+   * `..` segments are refused rather than guessed at, before anything is
+   * written (mirrors Rust's `materialize` in package_install.rs — a
+   * hostile manifest gets a clean error, not a write outside
+   * packages/<base>/).
    */
-  private async materializeIntoPackage(name: string, rel: string): Promise<string> {
+  private async materializeIntoPackage(name: string, rel: string, ctx = "part"): Promise<string> {
+    if (path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) {
+      throw new Error(`${ctx} path ${rel} escapes the package — refusing`);
+    }
     const src = path.join(this.getContentDir(this.packages.get(name)!), rel);
     const dest = path.join(this.packageDir(name), rel);
     await this.copyFileEnsuringDir(src, dest);
     return dest;
+  }
+
+  /**
+   * A skill's relative `.js` args, materialized into packages/<base>/ and
+   * absolutized to that path — mirrors Rust's skill handling in
+   * package_install.rs exactly, so both installers write the same
+   * mcpServers arg. Before this, the CLI resolved args against the
+   * source-fetch dir (getContentDir) instead: the package dir held one
+   * set of files, settings.json pointed at another. Only bare relative
+   * `.js` args are touched; an already-absolute arg, a bare command
+   * (`node`, `npx`), or a flag passes through untouched. An arg that
+   * escapes the package or is missing from the source falls back to its
+   * original (unresolved) value rather than failing the whole install —
+   * same as Rust's `if let Ok(dest) = materialize(...) { .. } else` fallback.
+   */
+  private async materializeSkillArgs<T extends { args?: string[] }>(name: string, skill: T): Promise<T> {
+    if (!skill.args?.length) return skill;
+    const args = await Promise.all(
+      skill.args.map(async (arg) => {
+        if (arg.endsWith(".js") && !path.isAbsolute(arg)) {
+          try {
+            return await this.materializeIntoPackage(name, arg, "skill");
+          } catch {
+            return arg;
+          }
+        }
+        return arg;
+      })
+    );
+    return { ...skill, args };
   }
 
   private getInstallDir(pkg: FezPackage): string {
