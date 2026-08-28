@@ -1,6 +1,7 @@
 use nostr::JsonUtil as _;
 mod managed_agents;
 mod managed_node;
+mod package_install;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -560,62 +561,6 @@ fn obj_entry<'a>(
     v.as_object_mut().unwrap()
 }
 
-/// Read one file out of an in-memory npm tarball. Entries are prefixed
-/// with "package/"; `rel` is the path within the package ("package.json",
-/// "dist/gui.js").
-fn tar_read(tar_bytes: &[u8], rel: &str) -> Option<Vec<u8>> {
-    let mut archive = tar::Archive::new(tar_bytes);
-    for entry in archive.entries().ok()? {
-        let mut entry = entry.ok()?;
-        let path = entry.path().ok()?.into_owned();
-        if path.strip_prefix("package").ok() == Some(std::path::Path::new(rel)) {
-            let mut buf = Vec::new();
-            std::io::Read::read_to_end(&mut entry, &mut buf).ok()?;
-            return Some(buf);
-        }
-    }
-    None
-}
-
-/// List `<dir>/*.md` files in an npm tarball (which prefixes paths with
-/// "package/"), as (id, content) where id is the lowercased basename —
-/// for persona packs.
-fn tar_list_md(tar_bytes: &[u8], dir: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let mut archive = tar::Archive::new(tar_bytes);
-    let entries = match archive.entries() {
-        Ok(e) => e,
-        Err(_) => return out,
-    };
-    let prefix = format!("{dir}/");
-    for entry in entries {
-        let mut entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let rel = match entry
-            .path()
-            .ok()
-            .and_then(|p| p.strip_prefix("package").ok().map(|r| r.to_path_buf()))
-        {
-            Some(r) => r,
-            None => continue,
-        };
-        let rel_str = rel.to_string_lossy().to_string();
-        let name = match rel.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if rel_str.starts_with(&prefix) && name.ends_with(".md") {
-            let mut buf = String::new();
-            if std::io::Read::read_to_string(&mut entry, &mut buf).is_ok() {
-                out.push((name.trim_end_matches(".md").to_lowercase(), buf));
-            }
-        }
-    }
-    out
-}
-
 /// Which agent harnesses are actually installed — the ACP bridges each one
 /// speaks through (claude-code → claude-agent-acp, pi → pi-acp). A GUI app
 /// gets a stripped PATH, so we look in the real install dirs (homebrew,
@@ -950,7 +895,7 @@ fn install_package(name: String) -> Result<String, String> {
     }
 
     // 3. Read package.json (npm tarballs prefix every path with "package/").
-    let pkg_bytes = tar_read(&tar_bytes, "package.json").ok_or("no package.json in tarball")?;
+    let pkg_bytes = package_install::tar_read(&tar_bytes, "package.json").ok_or("no package.json in tarball")?;
     let pkg: serde_json::Value =
         serde_json::from_slice(&pkg_bytes).map_err(|e| format!("bad package.json: {e}"))?;
 
@@ -965,115 +910,29 @@ fn install_package(name: String) -> Result<String, String> {
         return Err(format!("{name} {err}"));
     }
 
-    // 4. De-scoped basename is the file/extension name: @fezchat/kanban → kanban.
-    let base = name.rsplit('/').next().unwrap_or(&name).trim_start_matches('@');
-    let parts = pkg.pointer("/fez/parts");
+    // 4-5c+7. Place the tarball's parts into ~/.fez/packages/<base>/ and
+    // index them into the flat dirs — see package_install for the layout
+    // (shared with the CLI's PackageManager).
     let home = fez_home()?;
-    let mut installed: Vec<String> = Vec::new();
-
-    // 5. Copy each code part to its directory (mirrors the CLI's installParts).
-    for (part_key, dir) in [
-        ("gui", "gui-extensions"),
-        ("headless", "extensions"),
-        ("relay", "relay-extensions"),
-        ("workspace", "workspace-providers"),
-    ] {
-        let rel = match parts.and_then(|p| p.get(part_key)).and_then(|v| v.as_str()) {
-            Some(r) => r,
-            None => continue,
-        };
-        let bytes =
-            tar_read(&tar_bytes, rel).ok_or_else(|| format!("{part_key} part {rel} missing from tarball"))?;
-        let dest_dir = home.join(dir);
-        std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-        std::fs::write(dest_dir.join(format!("{base}.js")), bytes).map_err(|e| e.to_string())?;
-        installed.push(format!("{part_key} → ~/.fez/{dir}/{base}.js"));
+    let outcome = package_install::install_from_tarball(&name, &tar_bytes, latest, &home)?;
+    if outcome.installed.is_empty() {
+        return Err(format!(
+            "{name}@{latest} has no installable gui/headless/relay/workspace/persona part"
+        ));
     }
 
-    // 5b. Skill part → an MCP server in settings.json. A relative .js entry
-    // is copied out of the tarball and made absolute; a bare command (e.g.
-    // `npx <public-server>`) passes through. A skill whose args point at an
-    // absolute path we didn't write is left as-is (a pre-fix publish) — it
-    // won't resolve, but we don't guess.
-    let mut skill_entry: Option<serde_json::Value> = None;
-    if let Some(skill) = parts.and_then(|p| p.get("skill")) {
-        let mut entry = skill.clone();
-        if let Some(args) = skill.get("args").and_then(|v| v.as_array()) {
-            let mut new_args: Vec<serde_json::Value> = Vec::new();
-            for a in args {
-                if let Some(s) = a.as_str() {
-                    if s.ends_with(".js") && !s.starts_with('/') {
-                        if let Some(bytes) = tar_read(&tar_bytes, s) {
-                            let skill_dir = home.join("skills").join(base);
-                            let _ = std::fs::create_dir_all(&skill_dir);
-                            let fname = std::path::Path::new(s)
-                                .file_name()
-                                .and_then(|f| f.to_str())
-                                .unwrap_or("mcp.js");
-                            let dest = skill_dir.join(fname);
-                            if std::fs::write(&dest, bytes).is_ok() {
-                                new_args.push(serde_json::json!(dest.to_string_lossy()));
-                                continue;
-                            }
-                        }
-                    }
-                }
-                new_args.push(a.clone());
-            }
-            if let Some(obj) = entry.as_object_mut() {
-                obj.insert("args".to_string(), serde_json::json!(new_args));
-            }
-        }
-        installed.push(format!("skill → settings.json mcpServers/{base}"));
-        skill_entry = Some(entry);
-    }
-
-    // 5c. npm's own bin map → ~/.fez/bin, chmod 0755 (mirrors the CLI's
-    // installBins). This was CLI-only once: a gallery-installed
-    // @fezchat/git arrived without its credential helper or fez-adopt,
-    // and everything resolving ~/.fez/bin by absolute path found nothing.
-    // Installed names are recorded in settings so uninstall can remove
-    // exactly these files (the desktop has no package dir to re-read).
-    let mut installed_bins: Vec<String> = Vec::new();
-    if let Some(bins) = pkg.get("bin").and_then(|v| v.as_object()) {
-        let bin_dir = home.join("bin");
-        std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
-        for (cmd, rel) in bins {
-            // the command name becomes a filename in ~/.fez/bin — refuse
-            // anything that could escape it
-            if cmd.is_empty() || cmd.contains('/') || cmd.contains("..") {
-                continue;
-            }
-            let rel = match rel.as_str() {
-                Some(r) => r,
-                None => continue,
-            };
-            let bytes =
-                tar_read(&tar_bytes, rel).ok_or_else(|| format!("bin {rel} missing from tarball"))?;
-            let dest = bin_dir.join(cmd);
-            std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
-            }
-            installed.push(format!("bin → ~/.fez/bin/{cmd}"));
-            installed_bins.push(cmd.clone());
-        }
-    }
-
-    // 6. Record granted permissions + background opt-in in settings.json.
-    let perms: Vec<String> = pkg
-        .pointer("/fez/permissions")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    let wants_background = parts
-        .and_then(|p| p.get("background"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let base_owned = base.to_string();
+    // 6. Record granted permissions + background opt-in in settings.json —
+    // fed from the outcome; install_from_tarball never touches settings.
+    let installed_bins: Vec<String> = outcome
+        .installed
+        .iter()
+        .filter_map(|s| s.strip_prefix("bin → ~/.fez/bin/").map(String::from))
+        .collect();
+    let base_owned = outcome.base.clone();
     let version = latest.to_string();
+    let skill_entry = outcome.skill_entry.clone();
+    let perms = outcome.perms.clone();
+    let wants_background = outcome.wants_background;
     update_settings(move |json| {
         // update_settings guarantees an object; the members do NOT come
         // with that guarantee (hand-edited files) — obj_entry resets a
@@ -1102,39 +961,7 @@ fn install_package(name: String) -> Result<String, String> {
         }
     })?;
 
-    // 7. Persona pack — mirror the CLI's installPersonaPack: copy each
-    // <dir>/*.md into ~/.fez/personas so an extension can ship its agents
-    // (an @loom, @scout, @chip) the same way it ships skills. Skip a
-    // persona that already exists (never clobber one the user may have
-    // edited); a minimal `harness:` check keeps a broken file out. Owner
-    // isn't stamped — the sentinel resolves it from the workspace.
-    if pkg.pointer("/fez/personas").is_some() {
-        let dir = pkg
-            .pointer("/fez/personas/dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or("personas");
-        let personas_dir = home.join("personas");
-        std::fs::create_dir_all(&personas_dir).ok();
-        for (id, content) in tar_list_md(&tar_bytes, dir) {
-            if !content.contains("harness:") {
-                continue; // not a valid persona — skip quietly
-            }
-            let dest = personas_dir.join(format!("{id}.md"));
-            if dest.exists() {
-                continue; // keep the user's copy
-            }
-            if std::fs::write(&dest, &content).is_ok() {
-                installed.push(format!("persona @{id} → ~/.fez/personas/{id}.md"));
-            }
-        }
-    }
-
-    if installed.is_empty() {
-        return Err(format!(
-            "{name}@{latest} has no installable gui/headless/relay/workspace/persona part"
-        ));
-    }
-    Ok(format!("installed {name}@{latest}: {}", installed.join(", ")))
+    Ok(format!("installed {name}@{latest}: {}", outcome.installed.join(", ")))
 }
 
 /// The recorded installed version per extension (settings.json), as JSON.
