@@ -26,9 +26,19 @@ const CASES: [string, ReturnType<typeof classifyTurnError>][] = [
   ["API Error: 529 overloaded_error", "transient"],
   ["rate limit exceeded, retry later", "transient"],
   ["claude-agent-acp exited with code 1", "transient"],
+  // 5xx from a provider is a server-side blip, not a verdict on the
+  // prompt — before prompt rejections were surfaced these self-healed
+  // via the idle-timeout path, and classifying them fatal regressed a
+  // one-blip 503 into a permanently failed turn with an observer alert.
+  ["Request failed with status 503", "transient"],
+  ["502 Bad Gateway", "transient"],
+  ["API Error: 500 internal server error", "transient"],
+  ["Service Unavailable", "transient"],
+  ["upstream temporarily unavailable", "transient"],
   // fatal — surfaced immediately
   ["persona file is malformed", "fatal"],
   ["something unexpected exploded", "fatal"],
+  ["processed 502 items and found a malformed record", "fatal"], // a number is not a status
 ];
 
 describe("classifyTurnError", () => {

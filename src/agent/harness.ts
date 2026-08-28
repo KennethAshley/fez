@@ -803,7 +803,12 @@ export function classifyTurnError(err: unknown): TurnErrorKind {
   if (err instanceof Error && err.name === "AbortError") return "aborted";
   const message = err instanceof Error ? err.message : String(err);
   if (/Re-authenticate|API Error: 401|oauth|authenticat|logged in/i.test(message)) return "auth";
-  if (/timed? ?out|went silent|hard deadline|ECONNREFUSED|ECONNRESET|ENOTFOUND|EPIPE|socket|network|overloaded|529|rate.?limit|exited (with|before)|empty reply/i.test(message)) {
+  // 5xx is matched with CONTEXT (a status/error prefix or the named
+  // phrase), never as a bare number — "processed 502 items" is not a
+  // gateway error. 500/502/503 are server-side blips that self-healed
+  // under the old idle-timeout path; classifying them fatal turned a
+  // one-blip 503 into a permanently failed turn.
+  if (/timed? ?out|went silent|hard deadline|ECONNREFUSED|ECONNRESET|ENOTFOUND|EPIPE|socket|network|overloaded|529|rate.?limit|exited (with|before)|empty reply|bad gateway|internal server error|service unavailable|temporar(?:il)?y unavailable|status\s*50[023]|API Error:\s*50[023]/i.test(message)) {
     return "transient";
   }
   // Say what we could not classify. Prompt rejections used to be swallowed
