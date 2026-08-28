@@ -7,6 +7,7 @@ import ActivityFeed from "./ActivityFeed";
 import Avatar from "./Avatar";
 import HoverCard from "./HoverCard";
 import PersonaEditor from "./PersonaEditor";
+import AgentProfile from "./AgentProfile";
 import BenchProposals from "./BenchProposals";
 import { ModelPicker } from "./ModelPicker";
 import { useConfig } from "./config-store";
@@ -288,6 +289,9 @@ export default function AgentsPane({
   onDm,
   onHistory,
   onClose,
+  initialEdit,
+  initialCreate,
+  onPersonaWritten,
 }: {
   client: FezClient;
   wire: BrowserWire;
@@ -297,10 +301,18 @@ export default function AgentsPane({
   onDm: (agentPk: string) => void;
   onHistory: () => void;
   onClose: () => void;
+  /** Opened straight onto one agent, from the roster page. */
+  initialEdit?: string;
+  initialCreate?: boolean;
+  /** The roster page re-reads on this; a saved persona must not leave
+      the page showing what it read before the edit. */
+  onPersonaWritten?: () => void;
 }) {
   const [selected, setSelected] = useState<string>(); // agent pk
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(!!initialCreate);
   const [editingPersona, setEditingPersona] = useState<string>();
+  // Opening an agent shows who it is; the form is a mode you choose.
+  const [viewingPersona] = useState<string | undefined>(initialEdit);
   // Persona files on disk — includes agents that have never spawned
   // (no 47000 metadata yet), which would otherwise be invisible here.
   const [localPersonas, setLocalPersonas] = useState<string[]>([]);
@@ -351,7 +363,7 @@ export default function AgentsPane({
   return (
     <aside className="pane">
       <header className="pane-head">
-        {current || creating || editingPersona || reviewing ? (
+        {current || creating || editingPersona || viewingPersona || reviewing ? (
           <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); setEditingPersona(undefined); setReviewing(undefined); }}>
             ← agents
           </button>
@@ -359,7 +371,7 @@ export default function AgentsPane({
           <span>@ agents</span>
         )}
         <span className="pane-actions">
-          {!current && !creating && !editingPersona && !reviewing && (
+          {!current && !creating && !editingPersona && !viewingPersona && !reviewing && (
             <button className="agent-action" onClick={() => setCreating(true)}>+ new agent</button>
           )}
           <button className="pane-close" onClick={onClose}>✕</button>
@@ -370,8 +382,19 @@ export default function AgentsPane({
           name={reviewing}
           onDone={() => {
             setReviewing(undefined);
-            setPersonaNonce((n) => n + 1);
+            setPersonaNonce((n) => n + 1); onPersonaWritten?.();
           }}
+        />
+      )}
+      {viewingPersona && !editingPersona && (
+        <AgentProfile
+          name={viewingPersona}
+          pk={[...client.agents().entries()].find(([, n]) => n.toLowerCase() === viewingPersona.toLowerCase())?.[0]}
+          online={(() => {
+            const hit = [...client.agents().entries()].find(([, n]) => n.toLowerCase() === viewingPersona.toLowerCase());
+            return !!hit && client.isOnline(hit[0]);
+          })()}
+          onEdit={() => setEditingPersona(viewingPersona)}
         />
       )}
       {editingPersona && (
@@ -380,7 +403,7 @@ export default function AgentsPane({
           client={client}
           onDone={(changed) => {
             setEditingPersona(undefined);
-            if (changed) setPersonaNonce((n) => n + 1);
+            if (changed) setPersonaNonce((n) => n + 1); onPersonaWritten?.();
           }}
         />
       )}
@@ -388,11 +411,11 @@ export default function AgentsPane({
         <CreateAgentForm
           onDone={() => {
             setCreating(false);
-            setPersonaNonce((n) => n + 1);
+            setPersonaNonce((n) => n + 1); onPersonaWritten?.();
           }}
         />
       )}
-      {!current && !creating && !editingPersona && !reviewing && (
+      {!current && !creating && !editingPersona && !viewingPersona && !reviewing && (
         <div className="pane-body">
           <FleetSummary client={client} wire={wire} working={working} onHistory={onHistory} />
           <BenchProposals />

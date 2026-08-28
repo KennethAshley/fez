@@ -4,6 +4,8 @@ import type { FezClient } from "@fezchat/client";
 import { parseSkillEntries, formatSkillEntries, nearestKnownKey } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
 import SkillPicker from "./SkillPicker";
+import Avatar from "./Avatar";
+import { hasFace } from "./agent-face";
 
 /**
  * Persona editor — Buzz's AgentConfigPanel against fez's contract: the
@@ -131,16 +133,44 @@ export default function PersonaEditor({
 
   return (
     <div className="pane-body">
-      <div className="settings-hint">
-        Editing <b>@{name}</b> — changes apply on its next spawn (a running agent finishes its turn on the old
-        persona).
+      <div className="edit-id">
+        {hasFace(name) ? (
+          <Avatar pk="" title={name} size={40} />
+        ) : (
+          <span className="agent-egg small" aria-hidden>◌</span>
+        )}
+        <span className="edit-id-name">editing @{name}</span>
       </div>
+
+      <div className="manage-section">identity</div>
       <div className="settings-field">
-        <label>name (the @mention — renaming gives the agent a NEW key identity on next spawn)</label>
+        <label>name</label>
         <input className="manage-input" value={newName} spellCheck={false} onChange={(e) => setNewName(e.target.value)} />
+        {newName.trim() && newName.trim() !== name && (
+          <div className="field-consequence">
+            Renaming mints a new key, so @{newName.trim()} spawns as a different identity with a different face.
+          </div>
+        )}
       </div>
       <div className="settings-field">
-        <label>channels it serves (comma-separated)</label>
+        <label>description</label>
+        <input className="manage-input" value={field("description")} onChange={(e) => update("description", e.target.value)} />
+        <div className="field-note">@fez routes on this — verb phrases route better than nouns.</div>
+      </div>
+      <div className="settings-field">
+        <label>aliases</label>
+        <input
+          className="manage-input"
+          value={listToText(field("aliases"))}
+          spellCheck={false}
+          placeholder="comma-separated"
+          onChange={(e) => update("aliases", textToList(e.target.value))}
+        />
+      </div>
+
+      <div className="manage-section">runtime</div>
+      <div className="settings-field">
+        <label>channels it serves</label>
         <input
           className="manage-input"
           value={listToText(field("channels"))}
@@ -194,20 +224,13 @@ export default function PersonaEditor({
         </>
       )}
       <div className="settings-field">
-        <label>description (helps @fez route to it)</label>
-        <input className="manage-input" value={field("description")} onChange={(e) => update("description", e.target.value)} />
+        <label>access</label>
+        <AccessPicker client={client} value={field("respondTo")} onChange={(value) => update("respondTo", value)} />
+        <div className="field-note">Who may trigger this agent.</div>
       </div>
+
+      <div className="manage-section">skills</div>
       <div className="settings-field">
-        <label>aliases (comma-separated)</label>
-        <input
-          className="manage-input"
-          value={listToText(field("aliases"))}
-          spellCheck={false}
-          onChange={(e) => update("aliases", textToList(e.target.value))}
-        />
-      </div>
-      <div className="settings-field">
-        <label>skills</label>
         <SkillPicker
           value={parseSkillEntries(splitList(field("mcpServers"))).names}
           sources={parseSkillEntries(splitList(field("mcpServers"))).sources}
@@ -216,12 +239,8 @@ export default function PersonaEditor({
           }
         />
       </div>
+      <div className="manage-section">prompt</div>
       <div className="settings-field">
-        <label>access — who may trigger this agent (applies on next spawn)</label>
-        <AccessPicker client={client} value={field("respondTo")} onChange={(value) => update("respondTo", value)} />
-      </div>
-      <div className="settings-field">
-        <label>system prompt</label>
         <textarea className="doc-textarea persona-prompt" value={body} spellCheck={false} onChange={(e) => setBody(e.target.value)} />
       </div>
       {keyWarnings.length > 0 && (
@@ -232,12 +251,19 @@ export default function PersonaEditor({
         </div>
       )}
       {state !== "idle" && state !== "saving" && <div className="ob-error">{state}</div>}
-      <div className="agent-actions">
-        <button className="agent-action" disabled={state === "saving"} onClick={() => void save()}>
-          {state === "saving" ? "saving…" : "save"}
-        </button>
-        <button className="agent-action" onClick={() => onDone(false)}>cancel</button>
-        <button className={armedDelete ? "agent-action armed-delete" : "agent-action"} onClick={() => void remove()}>
+      <div className="edit-commit">
+        <div className="agent-actions">
+          <button className="agent-action primary" disabled={state === "saving"} onClick={() => void save()}>
+            {state === "saving" ? "saving…" : "save"}
+          </button>
+          <button className="agent-action" onClick={() => onDone(false)}>cancel</button>
+        </div>
+        <div className="field-note">
+          Changes apply on the next spawn — a running agent finishes its turn on the persona it started with.
+        </div>
+      </div>
+      <div className="edit-danger">
+        <button className={armedDelete ? "agent-action armed-delete" : "agent-action danger"} onClick={() => void remove()}>
           {armedDelete ? "really delete?" : "delete persona"}
         </button>
       </div>

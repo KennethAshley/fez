@@ -28,3 +28,24 @@ export function agentSkillHealth(
   }
   return { missing, local };
 }
+
+/**
+ * The same walk, kept in declaration order and flagged per skill —
+ * what the roster's skill strip renders.
+ *
+ * `agentSkillHealth` answers "is this agent broken"; this answers "what
+ * can this agent do, and which of those actually work here". They share
+ * the walk deliberately: two readers of one persona that disagreed
+ * about the same skill is the bug this branch spent a review round on.
+ */
+export function agentSkillStrip(
+  personaContent: string,
+  catalog: Record<string, SkillEntry>
+): { name: string; missing?: boolean; local?: boolean }[] {
+  return declaredSkills(personaContent).map((declared) => {
+    const hit = resolveInstalledSkill(catalog, declared);
+    if (!hit) return { name: declared.name, missing: true };
+    if (machineLocalPath(hit.entry)) return { name: declared.name, local: true };
+    return { name: declared.name };
+  });
+}

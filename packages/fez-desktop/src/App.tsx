@@ -13,6 +13,7 @@ import { bindMention, describeMentionProblems, splitMentions, type MentionBindin
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
+import AgentsPage from "./AgentsPage";
 import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
 import PulseView from "./PulseView";
@@ -82,11 +83,12 @@ type MainView =
   | { kind: "wiki" }
   | { kind: "ext"; name: string }
   | { kind: "extensions" }
+  | { kind: "agents" }
   | { kind: "skills" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
-  | { kind: "agents" }
+  | { kind: "agents"; edit?: string; create?: boolean }
   | { kind: "memory" }
   | { kind: "manage" }
   | { kind: "profile"; pk: string }
@@ -361,6 +363,9 @@ function Shell({
   const render = useForceRender();
   const [view, setView] = useState<MainView>({ kind: "channel" });
   const [pane, setPane] = useState<SidePane>();
+  // Bumped when the agents pane writes a persona, so the roster page
+  // re-reads rather than showing what it read before the edit.
+  const [agentsNonce, setAgentsNonce] = useState(0);
   // Extensions' window into the watch pane (gui-extensions.openWatch):
   // parked here because the pane is component state and the registry is
   // module state — the seam pattern every other extension surface uses.
@@ -732,7 +737,7 @@ function Shell({
       setPane(undefined);
       if (t.kind === "channel") void openChannel(t.id);
       else if (t.kind === "dm") openDm(t.convoKey);
-      else if (t.kind === "agent") setPane({ kind: "agents" });
+      else if (t.kind === "agent") setView({ kind: "agents" });
       else if (t.kind === "proposals") setView({ kind: "pulse" });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -750,7 +755,7 @@ function Shell({
         openDocs: () => {
           if (scope) setPane({ kind: "docs", channelId: scope.channelId });
         },
-        openAgents: () => setPane({ kind: "agents" }),
+        openAgents: () => setView({ kind: "agents" }),
         openDm,
         goHome: () => setView({ kind: "home" }),
         goPulse: () => setView({ kind: "pulse" }),
@@ -1107,7 +1112,7 @@ function Shell({
               </button>
             ))}
             {working.size > 3 && (
-              <button className="rail-live-row more" onClick={() => setPane({ kind: "agents" })}>
+              <button className="rail-live-row more" onClick={() => setView({ kind: "agents" })}>
                 +{working.size - 3} more working
               </button>
             )}
@@ -1118,7 +1123,7 @@ function Shell({
             not a destination alongside inbox and docs. */}
         <button
           className={pane?.kind === "agents" ? "channel active home-link" : "channel home-link"}
-          onClick={() => setPane(pane?.kind === "agents" ? undefined : { kind: "agents" })}
+          onClick={() => setView({ kind: "agents" })}
         >
           <span className="nav-glyph">⚉</span> agents
           {benchPending > 0 && <span className="badge">{benchPending}</span>}
@@ -1136,7 +1141,7 @@ function Shell({
                   [
                     ["panes", [
                       ["~", "profile", () => setPane({ kind: "profile", pk: client.pubkey })],
-                      ["⚉", "agents", () => setPane({ kind: "agents" })],
+                      ["⚉", "agents", () => setView({ kind: "agents" })],
                       ["◈", "memory", () => setPane({ kind: "memory" })],
                       ["$", "costs", () => setPane({ kind: "costs" })],
                       ["◷", "reminders", () => setPane({ kind: "reminders" })],
@@ -1216,7 +1221,7 @@ function Shell({
           working={working}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
           onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
-          onAgents={() => setPane({ kind: "agents" })}
+          onAgents={() => setView({ kind: "agents" })}
           onSearch={() => setSearchOpen({ query: "" })}
           onNotice={(text) => { setBanner(text); setTimeout(() => setBanner(undefined), 6000); }}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
@@ -1257,6 +1262,14 @@ function Shell({
           activity={activityRef.current}
           working={working}
           onWatch={(agent) => setPane({ kind: "watch", agent })}
+        />
+      )}
+      {view.kind === "agents" && (
+        <AgentsPage
+          client={client}
+          nonce={agentsNonce}
+          onOpen={(name) => setPane({ kind: "agents", edit: name })}
+          onCreate={() => setPane({ kind: "agents", create: true })}
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
@@ -1500,6 +1513,9 @@ function Shell({
           onDm={(pk) => openDm(pk)}
           onHistory={() => { setPane(undefined); setView({ kind: "pulse" }); }}
           onClose={() => setPane(undefined)}
+          initialEdit={pane.edit}
+          initialCreate={pane.create}
+          onPersonaWritten={() => setAgentsNonce((n) => n + 1)}
         />
       )}
       {searchOpen && (
