@@ -624,6 +624,7 @@ select.ob-input:hover { border-color: var(--accent); }
 .agent-name { font-weight: 600; }
 .agent-stack { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
 .agent-hint { color: var(--fg-dim); font-size: 11px; font-family: var(--font-mono); }
+.agent-warn { font-size: 0.85em; opacity: 0.8; }
 /* The pencil is a secondary action — the rail's leave-button idiom:
    present on hover or keyboard focus, invisible the rest of the time. */
 /* margin-left:auto used to come from .agent-sub, which an online agent

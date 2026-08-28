@@ -9,6 +9,8 @@ import HoverCard from "./HoverCard";
 import PersonaEditor from "./PersonaEditor";
 import BenchProposals from "./BenchProposals";
 import { ModelPicker } from "./ModelPicker";
+import { useConfig } from "./config-store";
+import { agentSkillHealth } from "./agent-skill-health";
 
 /**
  * The agents surface — Buzz's biggest pane, fez-shaped. Roster of every
@@ -282,10 +284,21 @@ export default function AgentsPane({
   const [drafts, setDrafts] = useState<string[]>([]);
   const [reviewing, setReviewing] = useState<string>();
   const [personaNonce, setPersonaNonce] = useState(0);
+  const [health, setHealth] = useState<Record<string, { missing: string[]; local: string[] }>>({});
+  const { skills } = useConfig();
   useEffect(() => {
-    void invoke<string[]>("list_personas").then(setLocalPersonas).catch(() => setLocalPersonas([]));
+    void (async () => {
+      const names = await invoke<string[]>("list_personas").catch(() => [] as string[]);
+      setLocalPersonas(names);
+      const next: Record<string, { missing: string[]; local: string[] }> = {};
+      for (const agent of names) {
+        const content = await invoke<string>("read_persona", { name: agent }).catch(() => "");
+        if (content) next[agent] = agentSkillHealth(content, skills);
+      }
+      setHealth(next);
+    })();
     void invoke<string[]>("list_persona_drafts").then(setDrafts).catch(() => setDrafts([]));
-  }, [personaNonce]);
+  }, [skills, personaNonce]);
   // An agent that announces (kind-47000) mid-session — like a freshly
   // summoned @loom — must appear without a remount. presenceChanged fires
   // when a new agent name lands, so the roster recomputes live.
@@ -388,6 +401,18 @@ export default function AgentsPane({
                 </HoverCard>
                 {active && <span className="working">⚙</span>}
                 {sub && <span className="agent-sub">{sub}</span>}
+                {(() => {
+                  const agentHealth = localName ? health[localName] : undefined;
+                  return agentHealth?.missing.length ? (
+                    <span className="agent-warn" title="declared but not installed here">
+                      ⚠ missing: {agentHealth.missing.join(", ")}
+                    </span>
+                  ) : agentHealth?.local.length ? (
+                    <span className="agent-warn" title="these skills point into a local directory">
+                      ⚠ {agentHealth.local.length} skill{agentHealth.local.length > 1 ? "s" : ""} won't work on another machine
+                    </span>
+                  ) : null;
+                })()}
                 {localName && (
                   <span
                     className="agent-edit"
@@ -417,6 +442,15 @@ export default function AgentsPane({
                       <span className="agent-hint">
                         {invited === name ? "✓ on the roster — mention to wake" : `mention @${name} to summon · click to edit`}
                       </span>
+                      {health[name]?.missing.length ? (
+                        <span className="agent-warn" title="declared but not installed here">
+                          ⚠ missing: {health[name].missing.join(", ")}
+                        </span>
+                      ) : health[name]?.local.length ? (
+                        <span className="agent-warn" title="these skills point into a local directory">
+                          ⚠ {health[name].local.length} skill{health[name].local.length > 1 ? "s" : ""} won't work on another machine
+                        </span>
+                      ) : null}
                     </span>
                   </button>
                   {/* The stable-key invite: on the roster BEFORE first
