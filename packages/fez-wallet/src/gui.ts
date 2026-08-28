@@ -36,6 +36,9 @@ interface WalletClient extends GuiClient {
    * person viewing the wallet's consent card in their own client IS the
    * owner whose ✅/❌ is authoritative. */
   myReactionTo(targetId: string, emoji: string): string | undefined;
+  /** WHEN that reaction was placed (seconds) — requestStatus only counts
+   * a decision made inside the consent window. */
+  myReactionTimeTo(targetId: string, emoji: string): number | undefined;
   toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
   /** Payment receipts (47040) e-tagging one message, verbatim (fez-client's
    * own paymentReceiptsFor()) — the AUTHENTICATED connection the desktop
@@ -267,11 +270,14 @@ export default function activate(api: GuiExtensionApi): void {
     const [spend, setSpend] = useState<{ txHash: string } | undefined>(undefined);
 
     const react = (emoji: string) => () => void client.toggleReaction(channelId, msgId, emoji);
-    const approved = client.myReactionTo(msgId, "✅") !== undefined;
-    const declined = client.myReactionTo(msgId, "❌") !== undefined;
-    const reactions: { content: string; authorPk: string }[] = [
-      ...(approved ? [{ content: "✅", authorPk: client.pubkey }] : []),
-      ...(declined ? [{ content: "❌", authorPk: client.pubkey }] : []),
+    // The TIME of each reaction rides along: requestStatus only counts a
+    // decision made inside the consent window, so a late ✅ renders as
+    // expired instead of "waiting for a transfer" the wallet refused.
+    const approvedTs = client.myReactionTimeTo(msgId, "✅");
+    const declinedTs = client.myReactionTimeTo(msgId, "❌");
+    const reactions: { content: string; authorPk: string; ts: number }[] = [
+      ...(approvedTs !== undefined ? [{ content: "✅", authorPk: client.pubkey, ts: approvedTs }] : []),
+      ...(declinedTs !== undefined ? [{ content: "❌", authorPk: client.pubkey, ts: declinedTs }] : []),
     ];
     const status = requestStatus(reactions, client.pubkey, msgTs, now);
 

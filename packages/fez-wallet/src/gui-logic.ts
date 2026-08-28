@@ -191,13 +191,19 @@ export function isRenderableReceipt(r: ParsedReceipt): boolean {
  * `undefined` is a fourth thing entirely — "not ours to render". */
 
 export function requestStatus(
-  reactions: { content: string; authorPk: string }[],
+  reactions: { content: string; authorPk: string; ts: number }[],
   ownerPk: string,
   msgTs: number,
   now: number
 ): "pending" | "approved" | "declined" | "expired" {
   for (const r of reactions) {
     if (r.authorPk !== ownerPk) continue;
+    // Only decisions made INSIDE the consent window count. The wallet's
+    // awaitDecision stopped listening when it closed and returned
+    // "declined (timed out)" — it will transfer nothing — so reading a
+    // late ✅ as approved leaves the card at "waiting for the transfer
+    // to land…" forever, on a spend the wallet already refused.
+    if (r.ts - msgTs > WINDOW_S) continue;
     if (APPROVE.has(r.content.trim())) return "approved";
     if (DECLINE.has(r.content.trim())) return "declined";
   }

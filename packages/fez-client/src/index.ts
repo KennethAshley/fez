@@ -562,7 +562,7 @@ export class FezClient {
 
   // reactions
   private reactionsByTarget = new Map<string, Map<string, Set<string>>>();
-  private reactionIndex = new Map<string, { targetId: string; emoji: string; authorPk: string }>();
+  private reactionIndex = new Map<string, { targetId: string; emoji: string; authorPk: string; ts: number }>();
 
   // ops
   private pinsByChannel = new Map<string, Map<string, PinInfo>>();
@@ -1003,6 +1003,17 @@ export class FezClient {
   myReactionTo(targetId: string, emoji: string): string | undefined {
     for (const [reactionId, entry] of this.reactionIndex) {
       if (entry.targetId === targetId && entry.emoji === emoji && entry.authorPk === this.pubkey) return reactionId;
+    }
+    return undefined;
+  }
+
+  /** WHEN my reaction was placed (seconds), not just whether. The wallet's
+   * consent card needs the time: a decision after the consent window
+   * closed approves nothing, and rendering it as a decision misreports
+   * what the wallet actually did. */
+  myReactionTimeTo(targetId: string, emoji: string): number | undefined {
+    for (const entry of this.reactionIndex.values()) {
+      if (entry.targetId === targetId && entry.emoji === emoji && entry.authorPk === this.pubkey) return entry.ts;
     }
     return undefined;
   }
@@ -2322,7 +2333,7 @@ export class FezClient {
     let who = byEmoji.get(emoji);
     if (!who) byEmoji.set(emoji, (who = new Set()));
     who.add(this.displayName(event.pubkey));
-    this.reactionIndex.set(event.id, { targetId, emoji, authorPk: event.pubkey });
+    this.reactionIndex.set(event.id, { targetId, emoji, authorPk: event.pubkey, ts: event.created_at });
     this.emit("reaction", channelId, targetId);
 
     // Status reactions open jobs (👀 accepted / 💬 working) — live only:

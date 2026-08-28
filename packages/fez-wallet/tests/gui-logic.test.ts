@@ -76,17 +76,29 @@ describe("mergeThresholds", () => {
 describe("requestStatus", () => {
   const OWNER = "aa".repeat(32);
   it("owner ✅ approves; stranger ✅ doesn't", () => {
-    expect(requestStatus([{ content: "✅", authorPk: OWNER }], OWNER, 0, 30)).toBe("approved");
-    expect(requestStatus([{ content: "✅", authorPk: "bb".repeat(32) }], OWNER, 0, 30)).toBe("pending");
+    expect(requestStatus([{ content: "✅", authorPk: OWNER, ts: 30 }], OWNER, 0, 30)).toBe("approved");
+    expect(requestStatus([{ content: "✅", authorPk: "bb".repeat(32), ts: 30 }], OWNER, 0, 30)).toBe("pending");
   });
   it("owner ❌ declines; stale pending expires", () => {
-    expect(requestStatus([{ content: "❌", authorPk: OWNER }], OWNER, 0, 30)).toBe("declined");
+    expect(requestStatus([{ content: "❌", authorPk: OWNER, ts: 30 }], OWNER, 0, 30)).toBe("declined");
     // The panel must not show "approved" for a reaction the wallet would
     // not have spent on: "+" is the generic like, not consent.
-    expect(requestStatus([{ content: "+", authorPk: OWNER }], OWNER, 0, 30)).toBe("pending");
-    expect(requestStatus([{ content: "-", authorPk: OWNER }], OWNER, 0, 30)).toBe("declined");
+    expect(requestStatus([{ content: "+", authorPk: OWNER, ts: 30 }], OWNER, 0, 30)).toBe("pending");
+    expect(requestStatus([{ content: "-", authorPk: OWNER, ts: 30 }], OWNER, 0, 30)).toBe("declined");
     expect(requestStatus([], OWNER, 0, 601)).toBe("expired");
     expect(requestStatus([], OWNER, 0, 599)).toBe("pending");
+  });
+  it("a decision placed after the window does not resurrect an expired request", () => {
+    // The wallet's awaitDecision stopped listening when the window closed
+    // and returned "declined (timed out)" — it will transfer nothing. A
+    // card reading a late ✅ as approved sits at "waiting for the transfer
+    // to land…" forever, telling the owner money is in flight on a spend
+    // the wallet already refused.
+    expect(requestStatus([{ content: "✅", authorPk: OWNER, ts: 700 }], OWNER, 0, 800)).toBe("expired");
+    expect(requestStatus([{ content: "❌", authorPk: OWNER, ts: 700 }], OWNER, 0, 800)).toBe("expired");
+  });
+  it("a decision made inside the window still stands after it closes", () => {
+    expect(requestStatus([{ content: "✅", authorPk: OWNER, ts: 30 }], OWNER, 0, 800)).toBe("approved");
   });
 });
 
