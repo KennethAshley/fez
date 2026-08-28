@@ -87,6 +87,74 @@ export function wellKnownSource(name: string): string | undefined {
 }
 
 /**
+ * A settings.json mcpServers entry, plus the provenance recorded at
+ * install time. All three extra fields are optional: a hand-rolled
+ * skill (`fez skill add --command …`) has none of them and stays a
+ * first-class citizen — local names are a category, not a legacy.
+ */
+export interface SkillEntry extends SkillSpec {
+  /** Canonical id, from the installed package's own package.json name. */
+  package?: string;
+  /** The spec that reinstalls it — feeds the `name=source` form. */
+  source?: string;
+  /** One line for a picker. */
+  description?: string;
+}
+
+/**
+ * The package a source spec names, or undefined when it doesn't name one.
+ *
+ * Runs the same PACKAGE grammar the runners do, so a spec that would be
+ * refused at install can never match an installed entry here either —
+ * otherwise `npm:../../etc/passwd` could alias its way onto a real skill.
+ * A url names no package; its identity IS the url, matched at step 2.
+ */
+export function packageFromSource(source: string | undefined): string | undefined {
+  if (!source) return undefined;
+  for (const scheme of ["npm:", "uvx:", "pipx:"]) {
+    if (source.startsWith(scheme)) {
+      const pkg = source.slice(scheme.length);
+      return PACKAGE.test(pkg) ? pkg : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Find the catalog entry a declared skill means. Trust order:
+ *
+ *  1. the LOCAL KEY — this machine's own answer for that name, already
+ *     approved by a human. Never overridden by a package match.
+ *  2. the declared SOURCE, matched verbatim — covers hosted (url) skills,
+ *     which name no package.
+ *  3. the PACKAGE the source names — the fix. `fez install
+ *     npm:@fezchat/wallet` keys it "wallet" and `fez link` keys it
+ *     "fez-wallet"; a persona declaring either source resolves to
+ *     whichever one this machine happens to have.
+ *
+ * Undefined means genuinely not installed. The caller reports the gap;
+ * it never installs on the persona's say-so.
+ */
+export function resolveInstalledSkill(
+  catalog: Record<string, SkillEntry>,
+  declared: { name: string; source?: string }
+): { key: string; entry: SkillEntry } | undefined {
+  const direct = catalog[declared.name];
+  if (direct) return { key: declared.name, entry: direct };
+  if (!declared.source) return undefined;
+
+  for (const [key, entry] of Object.entries(catalog)) {
+    if (entry.source && entry.source === declared.source) return { key, entry };
+  }
+  const pkg = packageFromSource(declared.source);
+  if (!pkg) return undefined;
+  for (const [key, entry] of Object.entries(catalog)) {
+    if (entry.package && entry.package === pkg) return { key, entry };
+  }
+  return undefined;
+}
+
+/**
  * `[web-search=npm:@brave/x, github]` → names plus the sources declared
  * for them. Splits on the FIRST `=` only: a spec is itself full of
  * colons and slashes, and `npm:@scope/pkg` must survive intact.

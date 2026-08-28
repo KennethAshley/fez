@@ -8,7 +8,10 @@ import {
   parseSkillEntries,
   validatePersonaFile,
   SOURCE_SCHEMES,
+  resolveInstalledSkill,
+  packageFromSource,
 } from "@fezchat/protocol";
+import * as proto from "@fezchat/protocol";
 import * as mirror from "../../fez-client/dist/index.js";
 
 /**
@@ -280,4 +283,76 @@ describe("@fezchat/client mirror agrees with the canonical parser", () => {
     expect(line).toBe("web-search=npm:@brave/brave-search-mcp-server, github, fez-kanban=npm:@fezchat/kanban");
     expect(parseSkillEntries(line.split(",").map((s) => s.trim()))).toEqual({ names, sources });
   });
+});
+
+describe("resolving a declared skill against the machine catalog", () => {
+  // The catalog a machine ends up with depends on how things were
+  // installed: `fez install npm:@fezchat/wallet` writes the key
+  // "wallet", `fez link packages/fez-wallet` writes "fez-wallet".
+  const catalog = {
+    "fez-wallet": {
+      command: "node",
+      args: ["/Users/someone/Projects/fez/packages/fez-wallet/dist/mcp.js"],
+      package: "@fezchat/wallet",
+      source: "npm:@fezchat/wallet",
+    },
+    "web-search": {
+      command: "npx",
+      args: ["-y", "@brave/brave-search-mcp-server"],
+      package: "@brave/brave-search-mcp-server",
+      source: "npm:@brave/brave-search-mcp-server",
+    },
+    // A hand-rolled skill: `fez skill add`, no package behind it.
+    scratch: { command: "node", args: ["/opt/scratch/mcp.js"] },
+  };
+
+  for (const [label, impl] of [["protocol", proto], ["mirror", mirror]] as const) {
+    describe(label, () => {
+      test("an exact key match wins, even with no metadata", () => {
+        expect(impl.resolveInstalledSkill(catalog, { name: "scratch" })?.key).toBe("scratch");
+      });
+
+      test("the local key wins over a package match", () => {
+        // Both could match; step 1 must not be skipped.
+        expect(
+          impl.resolveInstalledSkill(catalog, { name: "web-search", source: "npm:@fezchat/wallet" })?.key
+        ).toBe("web-search");
+      });
+
+      test("THE BUG: a package installed under a different local name still resolves", () => {
+        // @scout declares `wallet=npm:@fezchat/wallet`; this machine
+        // linked it, so the key is "fez-wallet". Before this resolver
+        // that was a silent miss.
+        expect(
+          impl.resolveInstalledSkill(catalog, { name: "wallet", source: "npm:@fezchat/wallet" })?.key
+        ).toBe("fez-wallet");
+      });
+
+      test("a bare name that matches nothing stays unresolved", () => {
+        expect(impl.resolveInstalledSkill(catalog, { name: "github" })).toBeUndefined();
+      });
+
+      test("a declared source for something not installed stays unresolved", () => {
+        expect(
+          impl.resolveInstalledSkill(catalog, { name: "obsidian", source: "npm:@fezchat/obsidian" })
+        ).toBeUndefined();
+      });
+
+      test("packageFromSource reads the package out of every runner scheme", () => {
+        expect(impl.packageFromSource("npm:@fezchat/wallet")).toBe("@fezchat/wallet");
+        expect(impl.packageFromSource("uvx:browser-use-mcp")).toBe("browser-use-mcp");
+        expect(impl.packageFromSource("pipx:mcp-server-git")).toBe("mcp-server-git");
+      });
+
+      test("a url has no package name — identity is the url, matched at step 2", () => {
+        expect(impl.packageFromSource("https://mcp.example.com/sse")).toBeUndefined();
+        expect(impl.packageFromSource(undefined)).toBeUndefined();
+      });
+
+      test("a malformed package name is refused, not passed to a runner", () => {
+        expect(impl.packageFromSource("npm:../../etc/passwd")).toBeUndefined();
+        expect(impl.packageFromSource("npm:-rf")).toBeUndefined();
+      });
+    });
+  }
 });
