@@ -136,6 +136,14 @@ export default function activate(api: GuiApi): void {
         ? h(
             "div",
             { className: "page-empty" },
+            // The frame a kept tool will occupy, drawn empty — the room
+            // holds its shape before anyone lives in it.
+            h(
+              "div",
+              { className: "tool-card ghost" },
+              h("div", { className: "tool-card-preview" }, h("span", { className: "tool-ghost-glyph" }, "▣")),
+              h("div", { className: "tool-card-meta" }, h("span", { className: "tool-card-sub" }, "your first tool lives here"))
+            ),
             h("div", { className: "page-empty-line" }, "You haven't kept a tool yet."),
             h("div", { className: "page-empty-how" },
               "Ask @loom in any channel to build one — a chart, a tracker, a small app. ",
@@ -144,39 +152,50 @@ export default function activate(api: GuiApi): void {
         : h(
             "div",
             { className: "tools-grid" },
-            tools.map((t: KeptTool) =>
-              h(
+            tools.map((t: KeptTool) => {
+              const home = t.channelId ? client.state.workspace.channels.get(t.channelId)?.name : undefined;
+              const woven = new Date(t.ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+              return h(
                 "div",
-                { key: t.id, className: "tool-tile" },
+                { key: t.id, className: "tool-card" },
                 h(
                   "button",
-                  { className: "tool-tile-open", title: "open in the pane", onClick: () => api.openTool(toolArtifact(t)) },
-                  h("span", { className: "tool-tile-icon" }, "▣"),
-                  h("span", { className: "tool-tile-title" }, t.title),
+                  { className: "tool-card-open", title: "open in the pane", onClick: () => api.openTool(toolArtifact(t)) },
                   h(
-                    "span",
-                    { className: "tool-tile-date" },
-                    new Date(t.ts * 1000).toLocaleDateString([], { month: "short", day: "numeric" })
+                    "div",
+                    { className: "tool-card-preview" },
+                    // The tool itself, running at quarter scale — the same
+                    // sandbox the pane grants, nothing more. Pointer events
+                    // stop at the container; the whole card is one button.
+                    h("iframe", {
+                      className: "tool-card-live",
+                      sandbox: "allow-scripts",
+                      srcDoc: t.content,
+                      tabIndex: -1,
+                      "aria-hidden": true,
+                      title: "",
+                    })
+                  ),
+                  h(
+                    "div",
+                    { className: "tool-card-meta" },
+                    h("span", { className: "tool-card-title" }, t.title),
+                    h("span", { className: "tool-card-sub" }, home ? `woven ${woven} · #${home}` : `woven ${woven}`)
                   )
                 ),
                 h(
-                  "button",
-                  { className: "tool-tile-forget", style: { right: 48 }, title: "share into its channel", onClick: () => void share(t) },
-                  "⇪"
-                ),
-                h(
-                  "button",
-                  {
-                    className: "tool-tile-forget",
-                    style: { right: 26 },
-                    title: "export as a publishable fez extension",
-                    onClick: () => void doExport(t),
-                  },
-                  "⤓"
-                ),
-                h("button", { className: "tool-tile-forget", title: "forget this tool", onClick: () => unkeepTool(t.id) }, "✕")
-              )
-            )
+                  "div",
+                  { className: "tool-card-actions" },
+                  h("button", { className: "tool-card-act", title: "share into its channel", onClick: () => void share(t) }, "⇪"),
+                  h(
+                    "button",
+                    { className: "tool-card-act", title: "export as a publishable fez extension", onClick: () => void doExport(t) },
+                    "⤓"
+                  ),
+                  h("button", { className: "tool-card-act danger", title: "forget this tool", onClick: () => unkeepTool(t.id) }, "✕")
+                )
+              );
+            })
           )
     );
   }
