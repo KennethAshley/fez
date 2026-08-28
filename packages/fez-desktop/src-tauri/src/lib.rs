@@ -2105,7 +2105,9 @@ fn spawn_extension_agent(
     name: String,
     env: Vec<(String, String)>,
 ) -> Result<u32, String> {
-    if agent_is_alive(&name) {
+    // Scoped to THIS bin: "drift" the chat agent must not block sending
+    // "drift" the miner — one name, two domains, two processes.
+    if agent_is_alive_bin(&name, Some(&bin)) {
         return Err(format!("{name} is already running — recall it first"));
     }
     extension_may_spawn(&settings_value(), &extension, &bin)?;
@@ -2240,19 +2242,26 @@ fn spawn_tracked_process(
 }
 
 /// The decision half of kill_agent, split from disk and signals so the rule
-/// is testable. Two rules: the signal is gated on the row's OWN bin — the
+/// is testable. Three rules: the signal is gated on the row's OWN bin — the
 /// registry holds more than fez-agent now (extension bins like
 /// fez-bazaar-miner), and a name-check against "fez-agent" let a live miner
-/// dodge the kill while its row was deleted, orphaning it — and a live
-/// process that REFUSED the signal keeps its row, because deleting it would
-/// hide a process we failed to stop and invite a double-spawn on top of it.
+/// dodge the kill while its row was deleted, orphaning it. A live process
+/// that REFUSED the signal keeps its row, because deleting it would hide a
+/// process we failed to stop and invite a double-spawn on top of it. And a
+/// caller that says WHICH bin it means can only ever reach its own row —
+/// one name can live in two domains ("drift" the chat agent and "drift"
+/// the miner profile), and an unscoped kill from the bazaar panel found
+/// the chat agent's row, passed its correct bin check, and killed the
+/// workspace agent instead of the miner.
 pub(crate) fn kill_decision(
     rows: Vec<SpawnedAgent>,
     persona: &str,
+    bin: Option<&str>,
     runs: impl Fn(&SpawnedAgent) -> bool,
-    signal: impl Fn(u32) -> bool,
+    mut signal: impl FnMut(u32) -> bool,
 ) -> (bool, Option<Vec<SpawnedAgent>>) {
-    let Some(row) = rows.iter().find(|r| r.persona == persona) else {
+    let matches = |r: &SpawnedAgent| r.persona == persona && bin.is_none_or(|b| r.bin == b);
+    let Some(row) = rows.iter().find(|r| matches(r)) else {
         return (false, None);
     };
     // Never signal a pid whose command doesn't match — a reused pid across
@@ -2263,15 +2272,16 @@ pub(crate) fn kill_decision(
     if alive && !killed {
         return (false, None);
     }
-    (killed, Some(rows.into_iter().filter(|r| r.persona != persona).collect()))
+    (killed, Some(rows.into_iter().filter(|r| !matches(r)).collect()))
 }
 
 #[tauri::command]
-fn kill_agent(persona: String) -> Result<bool, String> {
+fn kill_agent(persona: String, bin: Option<String>) -> Result<bool, String> {
     let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (killed, rest) = kill_decision(
         load_agents_registry(),
         &persona,
+        bin.as_deref(),
         |r| pid_runs_bin(r.pid, &r.bin),
         |pid| {
             std::process::Command::new("/bin/kill")
@@ -2295,21 +2305,29 @@ fn kill_agent(persona: String) -> Result<bool, String> {
 /// desktop can't tell them apart from "nothing is running" and
 /// double-spawns on top of them.
 #[tauri::command]
-fn agent_alive(persona: String) -> bool {
-    agent_is_alive(&persona)
+fn agent_alive(persona: String, bin: Option<String>) -> bool {
+    agent_is_alive_bin(&persona, bin.as_deref())
 }
 
 /// Crate-internal liveness (the command above is just its Tauri face) —
 /// registry pid (name-checked) OR a sentinel-style process for the persona.
 pub(crate) fn agent_is_alive(persona: &str) -> bool {
-    let persona = persona.to_string();
-    if !valid_persona_name(&persona) {
+    agent_is_alive_bin(persona, None)
+}
+
+/// Liveness, optionally scoped to one binary. One persona name can live in
+/// two domains ("drift" the chat agent and "drift" the miner), and a caller
+/// asking "is MY drift running" must not get the other one's yes. The
+/// sentinel spawns only fez-agent bodies, so its processes count only when
+/// that is the bin being asked about (or no bin was named).
+pub(crate) fn agent_is_alive_bin(persona: &str, bin: Option<&str>) -> bool {
+    if !valid_persona_name(persona) {
         return false;
     }
     let registry_alive = load_agents_registry()
         .iter()
-        .any(|r| r.persona == persona && pid_runs_bin(r.pid, &r.bin));
-    registry_alive || sentinel_agent_alive(&persona)
+        .any(|r| r.persona == persona && bin.is_none_or(|b| r.bin == b) && pid_runs_bin(r.pid, &r.bin));
+    registry_alive || (bin.is_none_or(|b| b == "fez-agent") && sentinel_agent_alive(persona))
 }
 
 #[tauri::command]

@@ -893,8 +893,10 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
                 name: opts.name,
                 env: Object.entries(opts.env ?? {}),
               }),
-            stop: (agent: string) => invoke<boolean>("kill_agent", { persona: agent }),
-            isRunning: (agent: string) => invoke<boolean>("agent_alive", { persona: agent }),
+            // `bin` scopes both to the caller's own processes — "drift"
+            // the miner must never stop "drift" the chat agent.
+            stop: (agent: string, bin?: string) => invoke<boolean>("kill_agent", { persona: agent, bin: bin ?? null }),
+            isRunning: (agent: string, bin?: string) => invoke<boolean>("agent_alive", { persona: agent, bin: bin ?? null }),
           }
         : undefined,
       personas: may("personas")

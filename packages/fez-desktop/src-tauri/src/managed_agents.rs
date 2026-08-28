@@ -119,6 +119,7 @@ mod tests {
         let (killed, rest) = crate::kill_decision(
             rows,
             "miner",
+            None,
             |r| crate::pid_runs_bin(r.pid, &r.bin),
             |p| std::process::Command::new("/bin/kill")
                 .arg(p.to_string())
@@ -137,7 +138,7 @@ mod tests {
     #[test]
     fn a_live_row_that_refused_the_signal_is_kept() {
         let rows = vec![row("miner", "fez-bazaar-miner", 4242)];
-        let (killed, rest) = crate::kill_decision(rows, "miner", |_| true, |_| false);
+        let (killed, rest) = crate::kill_decision(rows, "miner", None, |_| true, |_| false);
         assert!(!killed);
         assert!(rest.is_none(), "the registry must not change");
     }
@@ -147,10 +148,46 @@ mod tests {
     #[test]
     fn a_stale_row_is_dropped_without_a_signal() {
         let rows = vec![row("miner", "fez-bazaar-miner", 4242)];
-        let (killed, rest) = crate::kill_decision(rows, "miner", |_| false, |_| {
+        let (killed, rest) = crate::kill_decision(rows, "miner", None, |_| false, |_| {
             panic!("must not signal a pid that is not running our bin")
         });
         assert!(!killed);
         assert_eq!(rest.expect("stale row must be dropped").len(), 0);
+    }
+
+    // One name, two domains: "drift" is a chat agent AND a miner profile.
+    // The registry is keyed by persona, so an unscoped kill from the bazaar
+    // panel found the CHAT agent's row, passed its (correct!) bin check,
+    // and killed the workspace agent instead of the miner. A caller that
+    // says which bin it means can only ever reach its own row.
+    #[test]
+    fn a_bin_scoped_kill_never_touches_the_same_name_in_another_domain() {
+        let rows = vec![row("drift", "fez-agent", 100), row("drift", "fez-bazaar-miner", 200)];
+        let mut signalled: Vec<u32> = Vec::new();
+        let (killed, rest) = crate::kill_decision(
+            rows,
+            "drift",
+            Some("fez-bazaar-miner"),
+            |_| true,
+            |pid| { signalled.push(pid); true },
+        );
+        assert!(killed);
+        assert_eq!(signalled, vec![200], "only the miner's pid may be signalled");
+        let rest = rest.expect("the miner row must be removed");
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].bin, "fez-agent", "the chat agent's row must survive");
+    }
+
+    // No matching bin, no action: the panel asking to recall a miner this
+    // machine never spawned must be a clean no-op, not a fallback to
+    // whatever row happens to share the name.
+    #[test]
+    fn a_bin_scoped_kill_with_no_matching_row_does_nothing() {
+        let rows = vec![row("drift", "fez-agent", 100)];
+        let (killed, rest) = crate::kill_decision(rows, "drift", Some("fez-bazaar-miner"), |_| true, |_| {
+            panic!("no signal without a matching row")
+        });
+        assert!(!killed);
+        assert!(rest.is_none());
     }
 }

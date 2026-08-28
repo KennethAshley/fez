@@ -175,10 +175,16 @@ export interface GuiExtensionApi {
   agents?: {
     /** Start `bin` as an agent called `name`; resolves to its pid. */
     spawn(bin: string, opts: { name: string; env?: Record<string, string> }): Promise<number>;
-    /** Stop it. True when something was actually running. */
-    stop(name: string): Promise<boolean>;
-    /** Whether an agent by that name is running right now. */
-    isRunning(name: string): Promise<boolean>;
+    /**
+     * Stop it. True when something was actually running. Pass the bin you
+     * spawned with: one name can live in two domains ("drift" the chat
+     * agent and "drift" the miner), and an unscoped stop reaches whichever
+     * row shares the name — including a process some other feature owns.
+     */
+    stop(name: string, bin?: string): Promise<boolean>;
+    /** Whether an agent by that name — running YOUR bin, when given — is
+     *  up right now. Same scoping rule as stop. */
+    isRunning(name: string, bin?: string): Promise<boolean>;
   };
 
   /**
