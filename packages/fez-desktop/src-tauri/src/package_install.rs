@@ -431,6 +431,37 @@ pub(crate) fn remove_installed(base: &str, home: &Path) -> Result<Vec<String>, S
     Ok(removed)
 }
 
+/// GUI extension parts, sourced from `packages/*/` rather than the
+/// `gui-extensions/` symlink index — one package dir per name, its own
+/// manifest says whether it has a gui part. A dir with no `fez.parts.gui`
+/// or an unreadable bundle is skipped, not an error: a package that
+/// legitimately has no GUI part is not a broken install.
+pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir(home.join("packages")) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let manifest = match installed_manifest(&name, home) {
+            Some(m) => m,
+            None => continue,
+        };
+        let rel = match manifest.pointer("/fez/parts/gui").and_then(|v| v.as_str()) {
+            Some(r) => r,
+            None => continue,
+        };
+        if let Ok(code) = std::fs::read_to_string(home.join("packages").join(&name).join(rel)) {
+            out.push((name, code));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,5 +677,17 @@ mod tests {
         std::fs::create_dir_all(home.path().join("evil")).unwrap();
         std::fs::write(home.path().join("evil").join("package.json"), r#"{"name":"evil"}"#).unwrap();
         assert!(installed_manifest("../evil", home.path()).is_none());
+    }
+
+    #[test]
+    fn gui_loader_reads_the_manifest_gui_part_from_the_package_dir() {
+        let home = tempfile::tempdir().unwrap();
+        // fixture_tar already declares fez.parts.gui = "dist/gui.js"
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        let found = gui_parts(home.path());               // the new pure scanner
+        assert!(found.iter().any(|(name, code)| name == "tidy" && code.contains("export default")));
+        // it is read from the package dir, and does NOT depend on gui-extensions/
+        std::fs::remove_dir_all(home.path().join("gui-extensions")).ok();
+        assert!(gui_parts(home.path()).iter().any(|(n, _)| n == "tidy"), "must not depend on the symlink dir");
     }
 }
