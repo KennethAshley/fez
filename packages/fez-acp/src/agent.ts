@@ -59,6 +59,7 @@ import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
+import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
 import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
@@ -450,29 +451,27 @@ async function main() {
   const myPubkey = client.getPubkey();
 
   // ── NIP-AE memory: the agent's `core` engram feeds every turn's
-  // standing context; a missing core becomes an onboarding nudge (the
-  // agent interviews its owner and writes its own identity). A FAILED
-  // fetch injects nothing new — a relay blip must not read as amnesia
-  // and invite the agent to overwrite real memory (spec's rule; the
-  // last good section is reused instead). Requires an owner: memory is
+  // standing context. How it lands in prompts lives in memory-prompt.ts
+  // (three states, and why "none" and "unknown" must never be confused:
+  // a FAILED fetch must not read as amnesia and invite the agent to
+  // overwrite real memory — spec's rule). Requires an owner: memory is
   // scoped to the (agent, owner) pair.
   const memConvKey = owner ? conversationKey(Uint8Array.from(Buffer.from(agentKeyHex, "hex")), owner) : undefined;
-  const MEM_NUDGE = `No core memory found. Create one now with the shell command: fez mem set core "<your identity, rules, and goals>" — it persists across sessions. Ask your user about yourself if unsure.`;
-  let memCache: { section: string | null; at: number } = { section: null, at: 0 };
-  async function coreMemorySection(): Promise<string | null> {
-    if (!owner || !memConvKey) return null;
-    if (Date.now() - memCache.at < 30_000) return memCache.section;
+  let memCache: { state: CoreMemoryState; at: number } = { state: "unknown", at: 0 };
+  async function coreMemoryState(): Promise<CoreMemoryState> {
+    if (!owner || !memConvKey) return "unknown";
+    if (Date.now() - memCache.at < 30_000) return memCache.state;
     try {
       const events = await relay.query([{ kinds: [KIND_AGENT_ENGRAM], authors: [myPubkey], "#p": [owner] }]);
       const core = engramHeads(events as never, myPubkey, owner, memConvKey).get("core");
       memCache = {
-        section: `[Agent Memory — core]\n${core ? core.body.profile : MEM_NUDGE}`,
+        state: core?.body.profile ? { core: core.body.profile } : "none",
         at: Date.now(),
       };
     } catch {
-      /* keep the previous section (possibly null) */
+      /* outage: keep the previous answer — "unknown" until proven otherwise */
     }
-    return memCache.section;
+    return memCache.state;
   }
 
   const channels = channelSpecs.length > 0 ? await resolveChannels(relay, channelSpecs, relayUrls.join(", ")) : [];
@@ -1396,8 +1395,15 @@ async function main() {
           : undefined;
 
         const buildPrompt = async (fresh: boolean): Promise<string> => {
+          const memory = memoryPromptParts(await coreMemoryState());
           if (!fresh) {
             return [
+              // Core rides EVERY turn, not just the fresh prompt: the
+              // harness compacts its own context, and a compaction that
+              // drops your identity is how an agent quietly becomes
+              // nobody mid-session (Buzz injects per-turn for the same
+              // reason). A few lines per turn — core is kept small.
+              ...(memory.turnPreamble ? [memory.turnPreamble] : []),
               docFraming ?? `New message in the channel from ${who(event.pubkey)}: ${event.content}`,
               ...(steering.length > 0
                 ? [
@@ -1410,10 +1416,9 @@ async function main() {
                 : `Reply to it. The conventions from the start of this session still apply. Be concise — this is chat.`,
             ].join("\n\n");
           }
-          const memorySection = await coreMemorySection();
           return [
             persona.systemPrompt ?? "",
-            ...(memorySection ? [memorySection] : []),
+            ...(memory.section ? [memory.section] : []),
             `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
             `- Artifacts: to ship rich output (a web page, a data table, a report), put it in a fenced block starting \`\`\`artifact:html title="My page" (types: html, markdown, table = JSON array of objects, image = data: URI) — capable clients render it inline; keep it under ~30KB. Plain prose never needs this.`,
             `- Live tools: for a UI that reads and KEEPS reading relay data (a board, a dashboard, a tally), use \`\`\`artifact:live — body-level HTML with a script that calls window.fez.query(q) (Promise of rows) or window.fez.subscribe(q, cb) (re-fires on change, returns an unsubscribe). q is the fez query language, e.g. "open approvals", "pages this week", "open tasks". It's READ-ONLY and NO network is allowed — data comes only through window.fez. Never invent data: an empty result means show "nothing yet", not a made-up row.`,
@@ -1457,11 +1462,7 @@ async function main() {
                   `- No repository: your persona declares repo "${repoUnavailable}", but no workspace provider is installed here — you have NO checkout and NO files to edit. If the task needs the repo, say plainly that the repo isn't available in this session and stop; never pretend to read, edit, or commit files.`,
                 ]
               : []),
-            ...(memorySection
-              ? [
-                  `- Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" (identity/rules/goals — a rewrite, not an append), fez mem set mem/<topic> "<note>" for individual facts, fez mem get <slug> / fez mem list to recall.`,
-                ]
-              : []),
+            memory.convention,
             `- Fez tools: you have fez_* MCP tools — fez_send_message, fez_read_channel, fez_send_dm, fez_search, fez_mem_set/get/list, fez_doc_get/append, fez_list_agents. Prefer them over \`fez\` shell commands.`,
             `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
             `Recent messages:`,
@@ -1472,6 +1473,10 @@ async function main() {
                   ...steering,
                 ]
               : []),
+            // Next to the trigger, as work for THIS turn — the ambient
+            // system-section version of this instruction was ignored for
+            // weeks by every agent (memory-prompt.ts has the story).
+            ...(memory.firstTurnTask ? [memory.firstTurnTask] : []),
             docFraming ?? `Reply to the last message that addressed you. Be concise — this is chat.`,
           ].filter(Boolean).join("\n\n");
         };
@@ -1718,27 +1723,29 @@ async function main() {
     const turnStartedAt = Date.now();
     try {
       const buildPrompt = async (fresh: boolean): Promise<string> => {
+        const memory = memoryPromptParts(await coreMemoryState());
         if (!fresh) {
-          return `New private message from ${dm.senderPk.slice(0, 8)}: ${dm.text}\n\nReply to it. Be concise — this is chat.`;
+          return [
+            // Same rule as the channel path: core rides every turn so a
+            // harness-side compaction can't drop the agent's identity.
+            ...(memory.turnPreamble ? [memory.turnPreamble] : []),
+            `New private message from ${dm.senderPk.slice(0, 8)}: ${dm.text}\n\nReply to it. Be concise — this is chat.`,
+          ].join("\n\n");
         }
         const groupNote =
           replyTargets.length > 1
             ? `This is a GROUP conversation with ${replyTargets.length + 1} participants (${replyTargets.map((pk) => pk.slice(0, 8)).join(", ")} and you) — your reply is delivered to everyone in it.`
             : undefined;
-        const memorySection = await coreMemorySection();
         return [
           persona.systemPrompt ?? "",
-          ...(memorySection ? [memorySection] : []),
+          ...(memory.section ? [memory.section] : []),
           groupNote ?? "",
           `Fez tools: you have fez_* MCP tools (send/read channels, DMs, search, memory, docs) — prefer them over \`fez\` shell commands.`,
           `You are @${personaId}, in a PRIVATE direct-message conversation — only the participants can read it. This session is ONGOING — later messages arrive as new turns in the same conversation. Reply to them directly; @names summon nobody here, and there is no channel audience. If a task needs a tool or data source you don't have, say so plainly instead of improvising.`,
-          ...(memorySection
-            ? [
-                `Memory: your [Agent Memory — core] above persists across sessions; chat context does not. Update it via shell when you learn something durable: fez mem set core "<full revised profile>" or fez mem set mem/<topic> "<note>".`,
-              ]
-            : []),
+          memory.convention,
           `Conversation so far:`,
           ...(dmRecent.get(convoKey) ?? []),
+          ...(memory.firstTurnTask ? [memory.firstTurnTask] : []),
           `Reply to the last message. Be concise — this is chat.`,
         ].filter(Boolean).join("\n\n");
       };
