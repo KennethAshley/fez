@@ -79,6 +79,25 @@ pub(crate) struct InstallOutcome {
     pub base: String,
 }
 
+/// Write `bytes` to `path` so a reader (or the "am I done" existence check
+/// both `install_from_tarball` and Task 7's `migrate_flat_installs` use)
+/// only ever observes a complete file, never a torn one. A crash mid a
+/// plain `std::fs::write` can leave a truncated/invalid file sitting at the
+/// target path — and for `package.json` specifically, that file's mere
+/// existence IS the completion marker, so a torn one gets treated as done
+/// forever, with every reader (`installed_manifest`'s
+/// `serde_json::from_slice(..).ok()`) silently seeing `None`. Writing to a
+/// same-directory `.tmp` sibling first and `rename`-ing over the target
+/// avoids that: POSIX rename is atomic, so the target is either the old
+/// file or the new one, never a partial write of either. Same directory
+/// keeps the rename on one filesystem (a cross-filesystem rename isn't
+/// atomic and can fail outright).
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
+}
+
 /// The load index: a flat entry pointing into the package dir. Symlink
 /// first; copy when the filesystem refuses — the package dir stays the
 /// record either way (mirrors the CLI's `linkIndex`). `pub(crate)` so
@@ -135,8 +154,11 @@ pub(crate) fn install_from_tarball(
     std::fs::create_dir_all(&pkg_dir).map_err(|e| e.to_string())?;
 
     // The manifest as installed, verbatim — the package dir's own record
-    // (mirrors the CLI's writePackageManifest).
-    std::fs::write(pkg_dir.join("package.json"), &pkg_bytes).map_err(|e| e.to_string())?;
+    // (mirrors the CLI's writePackageManifest). Atomic: package.json's mere
+    // existence is what Task 7's migration (and any reader via
+    // `installed_manifest`) treats as "this package is fully installed" —
+    // a torn write from a mid-write crash must never be observable there.
+    write_atomic(&pkg_dir.join("package.json"), &pkg_bytes).map_err(|e| e.to_string())?;
 
     let mut installed: Vec<String> = Vec::new();
 
@@ -453,6 +475,23 @@ mod tests {
         assert!(!home.path().join("gui-extensions").join("tidy.js").exists());
         assert!(!home.path().join("bin").join("tidy-tool").exists());
         assert!(home.path().join("bin").join("keep-me").exists());
+    }
+
+    // Pins the property migration and install both rely on: the target path
+    // is either fully absent/old, or fully the new bytes — never a torn
+    // write in between — and no ".tmp" sibling is left behind afterward.
+    #[test]
+    fn write_atomic_leaves_no_torn_file_and_no_tmp_leftover() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("package.json");
+        write_atomic(&target, b"{\"a\":1}").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"{\"a\":1}");
+        assert!(!dir.path().join("package.tmp").exists());
+
+        // A second write over an existing target is still all-or-nothing.
+        write_atomic(&target, b"{\"a\":2}").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"{\"a\":2}");
+        assert!(!dir.path().join("package.tmp").exists());
     }
 
     #[test]

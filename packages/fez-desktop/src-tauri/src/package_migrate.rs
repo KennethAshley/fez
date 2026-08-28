@@ -6,7 +6,7 @@
 //! (reuses its `link_index`/`safe_bin_name` rather than re-deriving them),
 //! so a migrated install is indistinguishable from a fresh one afterward.
 
-use crate::package_install::{link_index, safe_bin_name};
+use crate::package_install::{link_index, safe_bin_name, write_atomic};
 use std::path::Path;
 
 const PART_DIRS: [(&str, &str); 4] = [
@@ -160,8 +160,14 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
         if !bin_json.is_empty() {
             manifest["bin"] = serde_json::Value::Object(bin_json);
         }
-        std::fs::write(pkg_dir.join("package.json"), serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+        // Atomic: this write's completion is the "already migrated" marker
+        // the top of this loop checks — a torn write must never be
+        // observable, or the name is stuck "done" forever with no manifest.
+        write_atomic(
+            &pkg_dir.join("package.json"),
+            serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?.as_bytes(),
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     Ok(log)
