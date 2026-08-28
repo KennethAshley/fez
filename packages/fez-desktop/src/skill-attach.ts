@@ -45,6 +45,40 @@ const LINE = /^mcpServers:\s*\[([^\]]*)\]/m;
  */
 const SAFE_NAME = /^[A-Za-z0-9._@/-]{1,64}$/;
 
+/**
+ * The other half of the same line, and the same trust boundary.
+ *
+ * A SOURCE is structural too, and this is easy to miss because it looks
+ * like free text: `mcpServers: [name=source, name2=source2]` is made of
+ * `=`, `,` and `]`, and the whole thing is ONE frontmatter line, so a
+ * newline ends it. A source of `https://x/…\nowner: attacker` writes a
+ * real `owner:` key into whatever persona it is spliced into —
+ * `respondTo:` and `aliases:` are the same trick.
+ *
+ * Nothing upstream catches this. `parseSkillSource` builds a `URL` for
+ * the https branch and WHATWG parsing STRIPS raw CR/LF, so that payload
+ * parses successfully; `formatSkillEntries` then writes the original
+ * string, not `url.toString()`. And `LINE`'s `[^\]]*` spans newlines, so
+ * a poisoned line reads back as a source and gets re-offered to every
+ * other agent — now durably, since sources persist to settings.json.
+ *
+ * So the rule is round-trip, not shape: whatever is written here must
+ * parse back as the same single source. `parseSkillSource` still owns
+ * which schemes RESOLVE; a source it cannot resolve is allowed to sit in
+ * a persona as an unresolvable hint, it just may not restructure the
+ * file. Whitespace at either end is refused because the reader trims it
+ * away (so it would not round-trip), and the length cap is far above any
+ * real source — `PACKAGE`'s own grammar is much shorter.
+ */
+const SOURCE_STRUCTURAL = /[\r\n\],=]/;
+const MAX_SOURCE = 256;
+
+function safeSource(source: string): boolean {
+  if (!source || source.length > MAX_SOURCE) return false;
+  if (source !== source.trim()) return false;
+  return !SOURCE_STRUCTURAL.test(source);
+}
+
 /** This file's own newline convention, so an inserted line never mixes with it. */
 function newlineOf(content: string): string {
   return content.includes("\r\n") ? "\r\n" : "\n";
@@ -67,6 +101,14 @@ export function declaredSkills(content: string): { name: string; source?: string
 function writeLine(content: string, names: string[], sources: Record<string, string>): string | undefined {
   const fm = FRONTMATTER.exec(content);
   if (!fm) return undefined;
+  // Last line of defence: this is the single splice point, and the
+  // sources reaching it are not all arguments — detach carries the
+  // SURVIVORS' sources straight off the existing line. If the file on
+  // disk is already poisoned (hand edit, approved draft,
+  // `persona.update`), rewriting it would re-bless the injection, so
+  // refuse the whole write. `undefined` is this module's "not safe to
+  // edit", so callers report it instead of throwing.
+  if (Object.values(sources).some((source) => !safeSource(source))) return undefined;
   const rendered = `mcpServers: [${formatSkillEntries(names, sources)}]`;
   const line = LINE.exec(fm[0]);
 
@@ -89,6 +131,9 @@ function writeLine(content: string, names: string[], sources: Record<string, str
 /** Add a skill. `source` makes the persona portable; omit it for hand-rolled skills. */
 export function attachSkill(content: string, skill: string, source?: string): string | undefined {
   if (!SAFE_NAME.test(skill)) return undefined;
+  // `source` is optional and an empty one has always meant "no source",
+  // so the guard applies to the sources that will actually be written.
+  if (source && !safeSource(source)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
   const { names, sources } = parseLine(content);
   if (names.includes(skill)) return undefined;
@@ -114,13 +159,14 @@ export function detachSkill(content: string, skill: string): string | undefined 
  * literal splice instead of `String.replace(needle, replacement)` (which
  * honors `$&` in the replacement even for a plain-string needle, so a
  * url source containing `$&` would splice the matched line back into
- * the file), and the same name guard as attach/detach.
+ * the file), and the same name and source guards as attach.
  *
  * Undefined means "nothing to write": no frontmatter, no such
  * declaration, or that source is already recorded.
  */
 export function rememberSkillSource(content: string, skill: string, source: string): string | undefined {
   if (!SAFE_NAME.test(skill)) return undefined;
+  if (!safeSource(source)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
   const { names, sources } = parseLine(content);
   if (!names.includes(skill)) return undefined;
