@@ -66,6 +66,7 @@ pub(crate) fn tar_list_md(tar_bytes: &[u8], dir: &str) -> Vec<(String, String)> 
 
 /// Everything an install produced, for the caller (the Tauri command) to
 /// fold into settings.json. This module never writes settings itself.
+#[derive(Debug)]
 pub(crate) struct InstallOutcome {
     /// Human-readable "what happened" lines, also mined by the caller for
     /// bin command names (`"bin → ~/.fez/bin/<cmd>"`).
@@ -94,8 +95,14 @@ fn link_index(target: &Path, link_path: &Path) -> Result<(), String> {
 
 /// Copy a manifest-relative file out of the tarball into the package dir at
 /// that same relative path (mirrors the CLI's `materializeIntoPackage`) and
-/// return the absolute destination — the flat dirs symlink to this.
+/// return the absolute destination — the flat dirs symlink to this. A
+/// manifest path must stay inside the package dir: absolute paths and `..`
+/// segments are refused rather than guessed at (a hostile manifest gets a
+/// clean error, not a write outside `packages/<base>/`).
 fn materialize(tar_bytes: &[u8], pkg_dir: &Path, rel: &str, missing_ctx: &str) -> Result<PathBuf, String> {
+    if rel.starts_with('/') || Path::new(rel).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(format!("{missing_ctx} path {rel} escapes the package — refusing"));
+    }
     let bytes = tar_read(tar_bytes, rel).ok_or_else(|| format!("{missing_ctx} {rel} missing from tarball"))?;
     let dest = pkg_dir.join(rel);
     if let Some(parent) = dest.parent() {
@@ -190,17 +197,16 @@ pub(crate) fn install_from_tarball(
                 None => continue,
             };
             let dest = materialize(tar_bytes, &pkg_dir, rel, "bin")?;
-            let under_bin = rel.split(['\\', '/']).next() == Some("bin");
-            let canonical = if under_bin {
-                dest
-            } else {
-                let canonical = pkg_dir.join("bin").join(cmd);
-                if let Some(parent) = canonical.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                std::fs::copy(&dest, &canonical).map_err(|e| e.to_string())?;
-                canonical
-            };
+            // Always land a canonical packages/<base>/bin/<cmd> copy — the
+            // manifest's own rel path (e.g. "bin/index.js") only happens to
+            // match `cmd` when the source file is itself named after the
+            // command, which is not the common npm shape. The symlink index
+            // always targets this canonical copy, never `dest` directly.
+            let canonical = pkg_dir.join("bin").join(cmd);
+            if let Some(parent) = canonical.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(&dest, &canonical).map_err(|e| e.to_string())?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -258,13 +264,16 @@ mod tests {
         };
         add(&mut b, "package/package.json", r#"{
           "name": "@fezchat/tidy", "version": "0.0.1",
-          "bin": {"tidy-tool": "dist/tool.js"},
+          "bin": {"tidy-tool": "dist/tool.js", "clix": "bin/index.js"},
           "fez": {"type": "extension", "permissions": ["ui"],
-                  "parts": {"gui": "dist/gui.js", "headless": "dist/headless.js"}}
+                  "parts": {"gui": "dist/gui.js", "headless": "dist/headless.js",
+                            "skill": {"command": "node", "args": ["dist/mcp.js"]}}}
         }"#);
         add(&mut b, "package/dist/gui.js", "export default 1;\n");
         add(&mut b, "package/dist/headless.js", "export default 2;\n");
         add(&mut b, "package/dist/tool.js", "#!/usr/bin/env node\n");
+        add(&mut b, "package/bin/index.js", "#!/usr/bin/env node\n");
+        add(&mut b, "package/dist/mcp.js", "export default 3;\n");
         b.into_inner().unwrap()
     }
 
@@ -274,14 +283,59 @@ mod tests {
         let out = install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
         assert_eq!(out.base, "tidy");
         let pkg = home.path().join("packages").join("tidy");
+        let pkg_real = std::fs::canonicalize(&pkg).unwrap();
         assert!(pkg.join("package.json").exists());
         assert!(pkg.join("dist/gui.js").exists());
         assert!(pkg.join("bin/tidy-tool").exists());
-        for (dir, f) in [("gui-extensions","tidy.js"), ("extensions","tidy.js"), ("bin","tidy-tool")] {
+        for (dir, f) in [("gui-extensions","tidy.js"), ("extensions","tidy.js"), ("bin","tidy-tool"), ("bin","clix")] {
             let p = home.path().join(dir).join(f);
             let md = std::fs::symlink_metadata(&p).unwrap();
             assert!(md.file_type().is_symlink(), "{dir}/{f} must be a symlink");
-            assert!(std::fs::canonicalize(&p).unwrap().starts_with(&std::fs::canonicalize(&pkg).unwrap()));
+            assert!(std::fs::canonicalize(&p).unwrap().starts_with(&pkg_real));
         }
+
+        // A bin entry shaped "clix": "bin/index.js" — a source file that
+        // does NOT already sit at bin/<cmd> — must still land a canonical
+        // packages/<base>/bin/clix copy, chmod 0755.
+        let clix = pkg.join("bin/clix");
+        assert!(clix.exists());
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&clix).unwrap().permissions().mode() & 0o777, 0o755);
+
+        // Skill relocation: the .js arg is materialized into the package
+        // dir and absolutized there, replacing the old ~/.fez/skills/<base>/
+        // copy destination outright.
+        let skill = out.skill_entry.expect("skill part should produce an entry");
+        let arg0 = skill["args"][0].as_str().unwrap();
+        assert!(Path::new(arg0).is_absolute());
+        assert!(std::fs::canonicalize(arg0).unwrap().starts_with(&pkg_real), "skill arg must resolve into the package dir");
+        assert!(Path::new(arg0).exists());
+        assert!(!home.path().join("skills").exists(), "skills/ must not be written anymore");
+    }
+
+    #[test]
+    fn a_manifest_path_that_escapes_the_package_is_refused() {
+        let mut b = tar::Builder::new(Vec::new());
+        let mut h = tar::Header::new_gnu();
+        let data = r#"{
+          "name": "@fezchat/evil", "version": "0.0.1",
+          "fez": {"type": "extension", "parts": {"gui": "../evil.js"}}
+        }"#;
+        h.set_size(data.len() as u64); h.set_mode(0o644); h.set_cksum();
+        b.append_data(&mut h, "package/package.json", data.as_bytes()).unwrap();
+        let mut h2 = tar::Header::new_gnu();
+        let evil = "haha\n";
+        h2.set_size(evil.len() as u64); h2.set_mode(0o644); h2.set_cksum();
+        b.append_data(&mut h2, "evil.js", evil.as_bytes()).unwrap();
+        let tar_bytes = b.into_inner().unwrap();
+
+        let home = tempfile::tempdir().unwrap();
+        let err = install_from_tarball("@fezchat/evil", &tar_bytes, "0.0.1", home.path())
+            .expect_err("a traversal path must be refused, not silently written");
+        assert!(err.contains("escapes"), "unexpected error: {err}");
+        // Nothing landed outside the package dir.
+        assert!(!home.path().join("evil.js").exists());
+        // ...nor was the package dir itself left holding a partial write.
+        assert!(!home.path().join("packages").join("evil").join("evil.js").exists());
     }
 }
