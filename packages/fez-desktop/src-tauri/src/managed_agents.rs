@@ -35,29 +35,58 @@ mod tests {
         assert!(crate::spawn_agent_process("a b".into(), vec![], "aabb".into(), "ws://x".into(), None, None).is_err());
     }
 
-    // The name becomes a registry key AND a log filename, so it is validated
-    // for every caller — a miner is not a second door in.
-    #[test]
-    fn a_miner_name_is_validated_like_a_persona() {
-        assert!(crate::miner_env("../evil", None).is_err());
-        assert!(crate::miner_env("a b", None).is_err());
-        assert!(crate::miner_env("ember", None).is_ok());
+    fn settings() -> serde_json::Value {
+        serde_json::json!({
+            "extensionPermissions": {
+                "bazaar": ["ui", "processes"],
+                "polls": ["ui", "publish"],
+            },
+            "extensionBins": {
+                "bazaar": ["fez-bazaar-miner"],
+                "polls": ["fez-polls-helper"],
+            },
+        })
     }
 
     #[test]
-    fn a_miner_relay_must_be_a_relay_url() {
-        assert!(crate::miner_env("ember", Some("http://evil")).is_err());
-        assert!(crate::miner_env("ember", Some("file:///etc/passwd")).is_err());
-        assert!(crate::miner_env("ember", Some("wss://bazaar.fez.chat")).is_ok());
+    fn an_extension_may_start_a_bin_it_shipped() {
+        assert!(crate::extension_may_spawn(&settings(), "bazaar", "fez-bazaar-miner").is_ok());
     }
 
-    // A profile goes in; a secret never does. The miner resolves the agent's
-    // own key, which is what keeps agent keys out of the desktop entirely.
+    // The grant is what makes the difference, and it is checked here rather
+    // than in the loader — the loader's decision is not binding on a caller
+    // that invokes the command directly.
     #[test]
-    fn the_miner_env_carries_a_name_and_no_secret() {
-        let env = crate::miner_env("quill", Some("wss://bazaar.fez.chat")).unwrap();
-        assert!(env.iter().any(|(k, v)| k == "BAZAAR_PROFILE" && v == "quill"));
-        assert!(!env.iter().any(|(k, _)| k.contains("SECRET") || k.contains("KEY")));
+    fn an_extension_without_processes_may_start_nothing() {
+        assert!(crate::extension_may_spawn(&settings(), "polls", "fez-polls-helper").is_err());
+    }
+
+    // Claiming someone else's name is possible from the page. It buys only
+    // what that extension could already do, and nothing at all if it has no
+    // such bin.
+    #[test]
+    fn a_bin_another_package_shipped_is_still_refused() {
+        assert!(crate::extension_may_spawn(&settings(), "bazaar", "fez-polls-helper").is_err());
+    }
+
+    #[test]
+    fn a_bin_nobody_installed_is_unreachable_under_any_name() {
+        assert!(crate::extension_may_spawn(&settings(), "bazaar", "sh").is_err());
+        assert!(crate::extension_may_spawn(&settings(), "bazaar", "/bin/sh").is_err());
+        assert!(crate::extension_may_spawn(&serde_json::json!({}), "bazaar", "fez-bazaar-miner").is_err());
+    }
+
+    // Env says what the daemon does, never how it loads.
+    #[test]
+    fn loader_variables_are_refused() {
+        let deny = ["DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "NODE_OPTIONS", "PATH", "path"];
+        for k in deny {
+            assert!(
+                crate::checked_env(vec![(k.to_string(), "x".into())]).is_err(),
+                "{k} should be refused"
+            );
+        }
+        assert!(crate::checked_env(vec![("BAZAAR_RELAY".into(), "wss://x".into())]).is_ok());
     }
 
     // A row written before miners existed has no `bin`, and every one of them

@@ -154,6 +154,34 @@ export interface GuiExtensionApi {
    */
   exportTool(files: { slug: string; guiJs: string; pkgJson: string; readme: string }): Promise<string>;
   /**
+   * Run a binary THIS package ships — the `bin` map npm already copies to
+   * ~/.fez/bin at install. Gated behind the sensitive `processes`
+   * permission, because a spawned process outlives the panel that started
+   * it and keeps running after fez quits.
+   *
+   * You name a bin, never a path: the host resolves it inside ~/.fez/bin,
+   * and refuses any name your own package did not install. That refusal is
+   * enforced in Rust against what install recorded, not here — a gui part
+   * runs in the page and can invoke the command directly, so a check in
+   * this loader would not bind anyone. What no caller can reach, whatever
+   * it claims to be, is a binary no installed package shipped.
+   *
+   * Pass what the process should DO in `env`. Names that change how it
+   * loads code rather than what it does — PATH, LD_*, DYLD_*, NODE_OPTIONS
+   * — are refused. Secrets do not belong here either: a spawned agent
+   * resolves its own key from fez's key store, which is what keeps agent
+   * keys out of the desktop entirely.
+   */
+  agents?: {
+    /** Start `bin` as an agent called `name`; resolves to its pid. */
+    spawn(bin: string, opts: { name: string; env?: Record<string, string> }): Promise<number>;
+    /** Stop it. True when something was actually running. */
+    stop(name: string): Promise<boolean>;
+    /** Whether an agent by that name is running right now. */
+    isRunning(name: string): Promise<boolean>;
+  };
+
+  /**
    * Read and edit agent personas — sensitive (`personas` permission),
    * because a persona is an agent's programming. Absent when ungranted.
    */

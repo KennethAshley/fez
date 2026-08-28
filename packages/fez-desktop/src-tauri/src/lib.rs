@@ -2059,7 +2059,7 @@ pub(crate) fn spawn_agent_process(
     // One summoner per machine: a live sentinel (TUI world, opt-in fleet
     // daemon) owns spawning AGENTS. Checked here rather than in the shared
     // primitive because it is a fact about summoning, not about spawning —
-    // a miner has nothing to do with it (see spawn_bazaar_miner).
+    // a miner has nothing to do with it (see spawn_extension_agent).
     if runner_status() {
         return Ok(0);
     }
@@ -2078,45 +2078,95 @@ pub(crate) fn spawn_agent_process(
     spawn_tracked_process(persona, "fez-agent", env, channels, repo, base_branch)
 }
 
-/// Send an agent to the bazaar: run the miner that signs as it.
+/// Run a binary an extension shipped, as a tracked agent.
 ///
-/// The miner ships with the @fezchat/bazaar extension and lands in ~/.fez/bin
-/// like any other package bin, so this spawns a name rather than a path we
-/// bundled. It is handed a PROFILE, never a secret — the miner resolves the
-/// agent's own key from fez's key store exactly as fez-agent does, which is
-/// what keeps agent keys out of the desktop entirely.
+/// A package's `bin` map is copied to ~/.fez/bin at install, so an extension
+/// that ships a daemon already has it on disk — what was missing was any way
+/// for its gui part to start it. This is that way, and it is deliberately not
+/// about any one extension: the bazaar miner is only its first caller.
+///
+/// It is handed a NAME, never a secret. The binary resolves the agent's own
+/// key from fez's key store exactly as fez-agent does, which is what keeps
+/// agent keys out of the desktop entirely.
 ///
 /// Deliberately does NOT defer to a live sentinel. The sentinel owns agent
-/// summoning; mining is not summoning, and a miner that inherited that gate
-/// would silently do nothing and report success.
+/// summoning; running a package's own daemon is not summoning, and one that
+/// inherited that gate would silently do nothing and report success.
 #[tauri::command]
-fn spawn_bazaar_miner(profile: String, relay: Option<String>) -> Result<u32, String> {
-    if agent_is_alive(&profile) {
-        return Err(format!("{profile} is already running — recall it first"));
+fn spawn_extension_agent(
+    extension: String,
+    bin: String,
+    name: String,
+    env: Vec<(String, String)>,
+) -> Result<u32, String> {
+    if agent_is_alive(&name) {
+        return Err(format!("{name} is already running — recall it first"));
     }
-    let env = miner_env(&profile, relay.as_deref())?;
-    spawn_tracked_process(profile, "fez-bazaar-miner", env, vec![], None, None)
+    extension_may_spawn(&settings_value(), &extension, &bin)?;
+    spawn_tracked_process(name, &bin, checked_env(env)?, vec![], None, None)
 }
 
-/// The miner's environment, validated. Separate from the command so the rules
-/// can be tested without spawning anything — and so it is obvious that a
-/// PROFILE goes in and no secret does: the miner resolves the agent's own key
-/// from fez's key store, which is why the desktop never handles one.
-pub(crate) fn miner_env(
-    profile: &str,
-    relay: Option<&str>,
-) -> Result<Vec<(String, String)>, String> {
-    if !valid_persona_name(profile) {
-        return Err(format!("invalid name: {profile}"));
+/// ~/.fez/settings.json as a value, or {} — the same file install_package
+/// wrote the grants and bin names into.
+fn settings_value() -> serde_json::Value {
+    fez_home()
+        .ok()
+        .and_then(|h| std::fs::read_to_string(h.join("settings.json")).ok())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// Whether `extension` may start `bin`, decided from what install_package
+/// recorded: `extensionPermissions` and `extensionBins`.
+///
+/// `extension` arrives from the webview and is NOT trustworthy — a gui part
+/// runs in the page and can invoke this command directly, naming whichever
+/// extension it likes. Both checks therefore live here rather than in the
+/// loader that hands out the capability. The named extension must itself hold
+/// `processes`, and `bin` must be one IT installed, so claiming to be someone
+/// else buys nothing that extension could not already do. What no caller can
+/// reach, whatever it claims to be, is a binary no installed package shipped.
+fn extension_may_spawn(
+    settings: &serde_json::Value,
+    extension: &str,
+    bin: &str,
+) -> Result<(), String> {
+    let holds_processes = settings
+        .pointer("/extensionPermissions")
+        .and_then(|v| v.get(extension))
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| a.iter().any(|p| p.as_str() == Some("processes")));
+    if !holds_processes {
+        return Err(format!("{extension} was not granted `processes`"));
     }
-    let mut env = vec![("BAZAAR_PROFILE".to_string(), profile.to_string())];
-    if let Some(r) = relay {
-        // Anything else would be handed to the miner as its relay and fail far
-        // from here, or reach somewhere nobody intended.
-        if !r.starts_with("wss://") && !r.starts_with("ws://") {
-            return Err(format!("not a relay url: {r}"));
+    let shipped_it = settings
+        .pointer("/extensionBins")
+        .and_then(|v| v.get(extension))
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| a.iter().any(|b| b.as_str() == Some(bin)));
+    if !shipped_it {
+        return Err(format!("{extension} did not install a bin called {bin}"));
+    }
+    Ok(())
+}
+
+/// Environment names that change how a process loads code rather than what it
+/// does. The extension supplies env for its own binary, so this is not about
+/// protecting it from itself: the spawned process inherits the desktop's
+/// environment, and these turn "start my daemon" into "run other code inside
+/// it". PATH is here for the same reason one level down — the daemon's own
+/// subprocesses resolve through it.
+const ENV_LOADER_VARS: [&str; 4] = ["LD_", "DYLD_", "NODE_OPTIONS", "BUN_"];
+
+fn checked_env(env: Vec<(String, String)>) -> Result<Vec<(String, String)>, String> {
+    for (k, _) in &env {
+        if k.is_empty() || k.contains('=') || k.contains('\0') {
+            return Err(format!("not an environment name: {k}"));
         }
-        env.push(("BAZAAR_RELAY".to_string(), r.to_string()));
+        let upper = k.to_ascii_uppercase();
+        if upper == "PATH" || ENV_LOADER_VARS.iter().any(|p| upper.starts_with(p)) {
+            return Err(format!("{k} changes how the process loads code, not what it does"));
+        }
     }
     Ok(env)
 }
@@ -2356,7 +2406,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, spawn_bazaar_miner])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {
