@@ -10,7 +10,7 @@ import FindSource from "./FindSource";
 import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
 import { useConfig, bumpConfig } from "./config-store";
-import { attachSkill, detachSkill } from "./skill-attach";
+import { attachSkill, detachSkill, declaredSkills } from "./skill-attach";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -550,22 +550,31 @@ export default function SkillsView({
                             className={has ? "ext-filter active" : "ext-filter"}
                             disabled={busy}
                             onClick={() => {
+                              const on = !has;
                               setGivingBusy(agent);
-                              void setSkillOnAgent(agent, name, config?.source, !has)
-                                .then((ok) => {
-                                  if (ok) {
+                              void setSkillOnAgent(agent, name, config?.source, on)
+                                .then((result) => {
+                                  if (result === "changed") {
                                     flash(
-                                      has
-                                        ? `@${agent} no longer has "${name}" — takes effect on next spawn`
-                                        : `@${agent} gets "${name}" on next spawn`
+                                      on
+                                        ? `@${agent} gets "${name}" on next spawn`
+                                        : `@${agent} no longer has "${name}" — takes effect on next spawn`
                                     );
                                     reload();
                                     setAgentNonce((n) => n + 1);
+                                  } else if (result === "already") {
+                                    // Not a failure — the on-disk file was already in the target
+                                    // state (hand-edited, another window). Refresh corrects the checkmark.
+                                    flash(on ? `@${agent} already has "${name}"` : `@${agent} already doesn't have "${name}"`);
+                                    reload();
+                                    setAgentNonce((n) => n + 1);
+                                  } else if (result === "unsafe") {
+                                    flash(`✗ @${agent}'s persona has no frontmatter block, so fez can't edit it automatically`);
                                   } else {
                                     flash(
-                                      has
-                                        ? `✗ couldn't remove "${name}" from @${agent} — check its persona file`
-                                        : `✗ couldn't give "${name}" to @${agent} — check its persona file`
+                                      on
+                                        ? `✗ couldn't give "${name}" to @${agent} — check its persona file`
+                                        : `✗ couldn't remove "${name}" from @${agent} — check its persona file`
                                     );
                                   }
                                 })
@@ -786,18 +795,30 @@ async function rememberSource(agent: string, skill: string, source: string): Pro
 }
 
 /**
+ * "changed" | "already" | "unsafe" | "error" — attachSkill/detachSkill
+ * collapse "no change needed" and "not safe to edit" into one `undefined`
+ * (by design: callers just skip the write either way), but a caller that
+ * reports outcomes to a human needs to tell those apart, plus the genuine
+ * failure case. So this checks current state itself before delegating,
+ * rather than trying to reverse-engineer which `undefined` it got back.
+ */
+type SkillWriteResult = "changed" | "already" | "unsafe" | "error";
+
+/**
  * Give a skill to an agent, or take it back. The write is the same one
  * the persona editor performs — one line, everything else verbatim.
  */
-async function setSkillOnAgent(agent: string, skill: string, source: string | undefined, on: boolean): Promise<boolean> {
+async function setSkillOnAgent(agent: string, skill: string, source: string | undefined, on: boolean): Promise<SkillWriteResult> {
   try {
     const content = await invoke<string>("read_persona", { name: agent });
+    const has = declaredSkills(content).some((d) => d.name === skill);
+    if (has === on) return "already"; // the on-disk file already matches — the UI's view was stale
     const next = on ? attachSkill(content, skill, source) : detachSkill(content, skill);
-    if (!next) return false; // already in the desired state
+    if (!next) return "unsafe"; // no frontmatter block to edit
     await invoke("update_persona", { name: agent, content: next });
-    return true;
+    return "changed";
   } catch {
-    return false;
+    return "error";
   }
 }
 
