@@ -923,13 +923,7 @@ fn install_package(name: String) -> Result<String, String> {
 
     // 6. Record granted permissions + background opt-in in settings.json —
     // fed from the outcome; install_from_tarball never touches settings.
-    let installed_bins: Vec<String> = outcome
-        .installed
-        .iter()
-        .filter_map(|s| s.strip_prefix("bin → ~/.fez/bin/").map(String::from))
-        .collect();
     let base_owned = outcome.base.clone();
-    let version = latest.to_string();
     let skill_entry = outcome.skill_entry.clone();
     let perms = outcome.perms.clone();
     let wants_background = outcome.wants_background;
@@ -942,11 +936,9 @@ fn install_package(name: String) -> Result<String, String> {
             obj_entry(obj, "mcpServers").insert(base_owned.clone(), entry);
         }
         obj_entry(obj, "extensionPermissions").insert(base_owned.clone(), serde_json::json!(perms));
-        // Record the version so the gallery can offer updates later.
-        obj_entry(obj, "extensionVersions").insert(base_owned.clone(), serde_json::json!(version));
-        if !installed_bins.is_empty() {
-            obj_entry(obj, "extensionBins").insert(base_owned.clone(), serde_json::json!(installed_bins));
-        }
+        // Version and bins are no longer cached here — they live in
+        // packages/<base>/package.json, read back by installed_version and
+        // (Task 6) extension_may_spawn.
         if wants_background {
             let list = obj
                 .entry("backgroundExtensions")
@@ -964,17 +956,31 @@ fn install_package(name: String) -> Result<String, String> {
     Ok(format!("installed {name}@{latest}: {}", outcome.installed.join(", ")))
 }
 
-/// The recorded installed version per extension (settings.json), as JSON.
+/// The installed version per extension, as JSON. The package dir
+/// (`packages/<base>/package.json`, via `installed_version`) is the source
+/// of truth; settings.json's old `extensionVersions` cache is kept only as
+/// a fallback for installs from before this layout that haven't been
+/// migrated yet (Task 7) — where both know a name, the package dir wins.
 #[tauri::command]
 fn read_extension_versions() -> Result<String, String> {
-    let path = fez_home()?.join("settings.json");
-    let raw = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string());
+    let home = fez_home()?;
+    let raw = std::fs::read_to_string(home.join("settings.json")).unwrap_or_else(|_| "{}".to_string());
     let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
-    Ok(parsed
+    let mut versions = parsed
         .get("extensionVersions")
+        .and_then(|v| v.as_object())
         .cloned()
-        .unwrap_or(serde_json::json!({}))
-        .to_string())
+        .unwrap_or_default();
+    if let Ok(entries) = std::fs::read_dir(home.join("packages")) {
+        for entry in entries.flatten() {
+            if let Some(base) = entry.file_name().to_str() {
+                if let Some(v) = package_install::installed_version(base, &home) {
+                    versions.insert(base.to_string(), serde_json::json!(v));
+                }
+            }
+        }
+    }
+    Ok(serde_json::Value::Object(versions).to_string())
 }
 
 /// Registry detail for an extension's page — version, description, README.
@@ -1088,19 +1094,33 @@ fn remove_extension(name: String) -> Result<String, String> {
     let home = fez_home()?;
     let candidates = [name.clone(), format!("fez-{name}"), name.trim_start_matches("fez-").to_string()];
     let mut removed: Vec<String> = Vec::new();
-    for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers"] {
-        for cand in &candidates {
-            let file = home.join(dir).join(format!("{cand}.js"));
-            if file.exists() && std::fs::remove_file(&file).is_ok() {
-                removed.push(format!("{dir}/{cand}.js"));
+
+    // Modern path: packages/<base>/package.json is the package's own record
+    // of what it installed — remove exactly that, deleting each flat-index
+    // entry only if this package still owns it, then the package dir
+    // itself. `Err` from every candidate means none has a package dir —
+    // fall back to the legacy name-guess sweep below (installs from before
+    // this layout, until Task 7's migration retires it).
+    let modern = candidates
+        .iter()
+        .find_map(|cand| package_install::remove_installed(cand, &home).ok());
+    if let Some(list) = modern {
+        removed.extend(list);
+    } else {
+        for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers"] {
+            for cand in &candidates {
+                let file = home.join(dir).join(format!("{cand}.js"));
+                if file.exists() && std::fs::remove_file(&file).is_ok() {
+                    removed.push(format!("{dir}/{cand}.js"));
+                }
             }
         }
-    }
-    // The skill part lives in its own dir, and a matching mcpServers entry.
-    for cand in &candidates {
-        let skill_dir = home.join("skills").join(cand);
-        if skill_dir.exists() && std::fs::remove_dir_all(&skill_dir).is_ok() {
-            removed.push(format!("skills/{cand}"));
+        // The skill part lives in its own dir, and a matching mcpServers entry.
+        for cand in &candidates {
+            let skill_dir = home.join("skills").join(cand);
+            if skill_dir.exists() && std::fs::remove_dir_all(&skill_dir).is_ok() {
+                removed.push(format!("skills/{cand}"));
+            }
         }
     }
     // Drop the recorded permission grant + background opt-in, and collect

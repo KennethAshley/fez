@@ -252,6 +252,86 @@ pub(crate) fn install_from_tarball(
     Ok(InstallOutcome { installed, skill_entry, perms, wants_background, base })
 }
 
+/// The manifest a package was installed with, read back verbatim from
+/// `packages/<base>/package.json` — the package dir's own record, never
+/// settings. `None` when there's no package dir: a name nothing installed,
+/// or an install that predates this layout and hasn't been migrated yet
+/// (Task 7).
+pub(crate) fn installed_manifest(base: &str, home: &Path) -> Option<serde_json::Value> {
+    let content = std::fs::read(home.join("packages").join(base).join("package.json")).ok()?;
+    serde_json::from_slice(&content).ok()
+}
+
+/// The version a package was installed with, from its own manifest.
+pub(crate) fn installed_version(base: &str, home: &Path) -> Option<String> {
+    installed_manifest(base, home)?.get("version")?.as_str().map(String::from)
+}
+
+/// Delete an index entry iff `base` still owns it — a symlink whose
+/// canonicalized target resolves under the canonicalized `packages/<base>/`
+/// (mirrors the CLI's `binOwner`/`removeIfOwned`). A regular file (legacy
+/// layout, or a copy-fallback), a broken symlink, or one that resolves
+/// somewhere else entirely is left alone. Both sides get canonicalized —
+/// on macOS `/var` is itself a symlink to `/private/var`, so a
+/// tempdir-rooted `home` resolves the entry there while an un-canonicalized
+/// `packages` dir still reads `/var/...`, and a prefix check across that
+/// mismatch would silently treat every package as unowned.
+fn remove_if_owned(entry: &Path, base: &str, packages_dir: &Path) -> bool {
+    let is_symlink = std::fs::symlink_metadata(entry).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+    if !is_symlink {
+        return false;
+    }
+    let (Ok(real), Ok(real_packages)) = (std::fs::canonicalize(entry), std::fs::canonicalize(packages_dir)) else {
+        return false;
+    };
+    let owner = real.strip_prefix(&real_packages).ok().and_then(|rest| rest.components().next());
+    if owner.map(|c| c.as_os_str() == base) != Some(true) {
+        return false;
+    }
+    std::fs::remove_file(entry).is_ok()
+}
+
+/// The modern side of remove: read `packages/<base>/package.json` back for
+/// the exact index entries THIS install named — never guessed from `base`
+/// alone — delete each only if `base` still owns it, then drop the package
+/// dir itself last (index entries must go first: they're symlinks INTO the
+/// package dir, so dropping it first would leave them broken and
+/// unremovable-as-owned). `Err` when there's no package dir — the caller
+/// falls back to the legacy name-guess sweep.
+pub(crate) fn remove_installed(base: &str, home: &Path) -> Result<Vec<String>, String> {
+    let manifest = installed_manifest(base, home).ok_or("no package dir")?;
+    let packages_dir = home.join("packages");
+    let mut removed = Vec::new();
+
+    let parts = manifest.pointer("/fez/parts");
+    for (part_key, dir) in [
+        ("gui", "gui-extensions"),
+        ("headless", "extensions"),
+        ("relay", "relay-extensions"),
+        ("workspace", "workspace-providers"),
+    ] {
+        if parts.and_then(|p| p.get(part_key)).is_none() {
+            continue;
+        }
+        let entry = home.join(dir).join(format!("{base}.js"));
+        if remove_if_owned(&entry, base, &packages_dir) {
+            removed.push(format!("{dir}/{base}.js"));
+        }
+    }
+    if let Some(bins) = manifest.get("bin").and_then(|v| v.as_object()) {
+        for cmd in bins.keys() {
+            let entry = home.join("bin").join(cmd);
+            if remove_if_owned(&entry, base, &packages_dir) {
+                removed.push(format!("bin/{cmd}"));
+            }
+        }
+    }
+
+    std::fs::remove_dir_all(packages_dir.join(base)).map_err(|e| e.to_string())?;
+    removed.push(format!("packages/{base}"));
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,5 +417,29 @@ mod tests {
         assert!(!home.path().join("evil.js").exists());
         // ...nor was the package dir itself left holding a partial write.
         assert!(!home.path().join("packages").join("evil").join("evil.js").exists());
+    }
+
+    #[test]
+    fn remove_deletes_the_dir_and_only_its_own_index_entries() {
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        // a foreign symlink sharing the bin dir must survive
+        let other = home.path().join("packages").join("other").join("bin");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("keep-me"), "x").unwrap();
+        std::os::unix::fs::symlink(other.join("keep-me"), home.path().join("bin").join("keep-me")).unwrap();
+
+        remove_installed("tidy", home.path()).unwrap();
+        assert!(!home.path().join("packages").join("tidy").exists());
+        assert!(!home.path().join("gui-extensions").join("tidy.js").exists());
+        assert!(!home.path().join("bin").join("tidy-tool").exists());
+        assert!(home.path().join("bin").join("keep-me").exists());
+    }
+
+    #[test]
+    fn version_reads_from_the_package_dir() {
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        assert_eq!(installed_version("tidy", home.path()).as_deref(), Some("0.0.1"));
     }
 }
