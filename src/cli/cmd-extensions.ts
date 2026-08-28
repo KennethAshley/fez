@@ -201,6 +201,7 @@ program
     const pkgDir = path.resolve(dir);
     let manifest: {
       name?: string;
+      description?: string;
       scripts?: Record<string, string>;
       /** npm's bin map — honored like install: copied to ~/.fez/bin. */
       bin?: Record<string, string>;
@@ -277,12 +278,17 @@ program
       const settings = loadSettings() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
       const existing = settings.mcpServers?.[name];
       const mergedEnv = { ...(parts.skill.env ?? {}), ...(existing?.env ?? {}) };
+      const { skillEntryFor } = await import("../extensions/package-manager.js");
       saveSettings({
         mcpServers: {
           ...settings.mcpServers,
           // Relative args ("dist/mcp.js") resolve against the LINKED dir —
           // same rule as install, or the spawner has no way to find them.
-          [name]: { ...resolveSkillArgs(parts.skill, pkgDir), ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+          // No `source`: a linked directory is not a spec anyone can fetch.
+          [name]: skillEntryFor(
+            { ...resolveSkillArgs(parts.skill, pkgDir), ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+            { manifestName: manifest.name, description: manifest.description }
+          ),
         },
       } as never);
       console.log(chalk.green(`✓ skill "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn`));

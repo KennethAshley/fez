@@ -6,6 +6,7 @@ import { existsSync } from "fs";
 import path from "path";
 import os from "os";
 import chalk from "chalk";
+import { type SkillEntry, type SkillSpec } from "./skill-source.js";
 
 /**
  * Where settings reads/writes go. Injectable so the install/remove/update
@@ -30,6 +31,9 @@ export interface FezPackage {
 }
 
 export interface FezManifest {
+  /** package.json's own name/description — used to record skill provenance. */
+  name?: string;
+  description?: string;
   /**
    * npm's own bin map. Honored on install: each entry is copied to
    * ~/.fez/bin, so an extension can ship executables (a git credential
@@ -151,6 +155,28 @@ export function resolveSkillArgs<T extends { args?: string[] }>(skill: T, pkgDir
     return abs.startsWith(root + path.sep) && existsSync(abs) ? abs : arg;
   });
   return { ...skill, args };
+}
+
+/**
+ * The one place that decides what an install writes into
+ * settings.json's mcpServers. Provenance is what makes a persona
+ * portable: `package` is the canonical id (identical on every machine
+ * however the package arrived), `source` is the spec that refetches it,
+ * `description` is what a picker renders.
+ *
+ * Every field is omitted rather than written empty — a hand-rolled
+ * skill's entry must stay exactly as small as it was.
+ */
+export function skillEntryFor(
+  spec: SkillSpec & { env?: Record<string, string> },
+  opts: { manifestName?: string; description?: string; source?: string }
+): SkillEntry {
+  return {
+    ...spec,
+    ...(opts.manifestName ? { package: opts.manifestName } : {}),
+    ...(opts.source ? { source: opts.source } : {}),
+    ...(opts.description ? { description: opts.description } : {}),
+  };
 }
 
 export class PackageManager {
@@ -439,6 +465,7 @@ export class PackageManager {
   private async runInstallHook(name: string, manifest: FezManifest | null): Promise<void> {
     if (!manifest?.fez) return;
 
+    const pkg = this.packages.get(name);
     const integrations = manifest.fez.integrations;
 
     // Claude Code integration
@@ -458,7 +485,14 @@ export class PackageManager {
 
     // Multi-part package: skill + headless + gui from one install
     if (manifest.fez.parts) {
-      await this.installParts(name, manifest.fez.parts);
+      await this.installParts(name, manifest.fez.parts, {
+        manifestName: manifest.name,
+        description: manifest.description,
+        // pkg.source is the resolved spec — "npm:@fezchat/wallet". A git
+        // install has no runner scheme, so it records no source and
+        // resolves by package alone.
+        source: pkg?.source?.startsWith("npm:") ? pkg.source : undefined,
+      });
     }
     if (manifest.bin) {
       await this.installBins(name, manifest.bin);
@@ -671,7 +705,8 @@ export class PackageManager {
       relay?: string;
       workspace?: string;
       background?: boolean;
-    }
+    },
+    provenance: { manifestName?: string; description?: string; source?: string } = {}
   ): Promise<void> {
     const pkgDir = this.getContentDir(this.packages.get(name)!);
     if (parts.headless) {
@@ -725,7 +760,10 @@ export class PackageManager {
       this.settings.save({
         mcpServers: {
           ...settings.mcpServers,
-          [name]: { ...resolveSkillArgs(parts.skill, pkgDir), ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+          [name]: skillEntryFor(
+            { ...resolveSkillArgs(parts.skill, pkgDir), ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+            provenance
+          ),
         },
       });
       console.log(chalk.dim(`   Defined skill "${name}" in ~/.fez/settings.json`));

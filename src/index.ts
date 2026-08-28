@@ -30,7 +30,7 @@ export { mentionedNames, mentionTags } from "./agent/mentions.js";
 export { makeChannels, cleanSource, type ChannelsAccess, type ChannelSpec, type ChannelRef } from "./protocol/channels.js";
 export { KIND_HTTP_AUTH, buildNip98Header, verifyNip98Header, type Nip98Result, type VerifyOptions } from "./protocol/nip98.js";
 export { FezTUI } from "./cli/tui.js";
-export { PackageManager, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
+export { PackageManager, skillEntryFor, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
 export * from "./protocol/kinds.js";
 export { MAX_CHAIN_DEPTH } from "./protocol/limits.js";
 export {
