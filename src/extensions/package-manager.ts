@@ -530,6 +530,22 @@ export class PackageManager {
     // as installed, verbatim, before anything else touches it.
     await this.writePackageManifest(name, manifest);
 
+    // Bin-collision check FIRST, before any part is installed or any
+    // settings key written. installParts can persist a settings write on
+    // its own (parts.background: true adds to backgroundExtensions) —
+    // checking this late, inside installBins, let a manifest combining
+    // that with a colliding bin name write settings and THEN throw,
+    // leaving a half-finished trace behind the refusal.
+    if (manifest.bin) {
+      const binDir = this.home("bin");
+      for (const cmd of Object.keys(manifest.bin)) {
+        const owner = this.binOwner(path.join(binDir, cmd));
+        if (owner && owner !== name) {
+          throw new Error(`bin "${cmd}" is already installed by ${owner} — refusing`);
+        }
+      }
+    }
+
     const pkg = this.packages.get(name);
     const integrations = manifest.fez.integrations;
 
@@ -746,16 +762,8 @@ export class PackageManager {
     if (!pkg) return;
     const binDir = this.home("bin");
     await fs.mkdir(binDir, { recursive: true });
-    // Check EVERY bin before writing any — a collision must abort the
-    // whole install before a single symlink moves, let alone before the
-    // settings writes later in the hook chain. Naming the current owner
-    // is the point: "already installed" alone sends someone guessing.
-    for (const cmd of Object.keys(bin)) {
-      const owner = this.binOwner(path.join(binDir, cmd));
-      if (owner && owner !== name) {
-        throw new Error(`bin "${cmd}" is already installed by ${owner} — refusing`);
-      }
-    }
+    // The collision check already ran at the top of runInstallHook,
+    // before any part install or settings write — this loop only writes.
     for (const [cmd, rel] of Object.entries(bin)) {
       // Preserve the manifest's own relative path in the package dir, and
       // ALSO land a canonical bin/<cmd> copy there when the manifest

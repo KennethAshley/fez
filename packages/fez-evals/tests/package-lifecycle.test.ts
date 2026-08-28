@@ -208,4 +208,28 @@ describe("bin ownership — the flat namespace stops colliding silently", () => 
     expect(fs.existsSync(at("bin", "tidy-tool"))).toBe(false);       // its own: gone
     expect(fs.existsSync(at("bin", "shared-cmd"))).toBe(true);       // the other's: untouched
   });
+
+  test("a collision refuses before any part install or settings write lands", async () => {
+    await pm.install(`git:${pkgDir}`); // tidy owns tidy-tool again
+
+    // A manifest that both wants a settings write (parts.background) AND
+    // a headless part AND a colliding bin — the settings write and the
+    // part file must never land ahead of the refusal.
+    const clashBgDir = path.join(tmp, "clash-bg");
+    fs.mkdirSync(path.join(clashBgDir, "dist"), { recursive: true });
+    fs.writeFileSync(path.join(clashBgDir, "package.json"), JSON.stringify({
+      name: "@fezchat/clash-bg", version: "0.0.1", private: true, type: "module",
+      bin: { "tidy-tool": "dist/tool.js" },
+      fez: { type: "extension", parts: { headless: "dist/headless.js", background: true } },
+    }));
+    fs.writeFileSync(path.join(clashBgDir, "dist", "tool.js"), "export default 1;\n");
+    fs.writeFileSync(path.join(clashBgDir, "dist", "headless.js"), "export default () => {};\n");
+    git(clashBgDir, "init -q"); git(clashBgDir, "add -A"); git(clashBgDir, "commit -q -m v1");
+
+    await expect(pm.install(`git:${clashBgDir}`)).rejects.toThrow(/tidy-tool.*tidy/);
+
+    const s = settings.load() as { backgroundExtensions?: string[] };
+    expect(s.backgroundExtensions ?? []).not.toContain("clash-bg");
+    expect(fs.existsSync(at("extensions", "clash-bg.js"))).toBe(false);
+  });
 });
