@@ -1412,6 +1412,7 @@ button.author:hover { text-decoration: underline; }
 .skill-section .skill-row:focus-within .skill-actions { opacity: 1; }
 .ext-missing .skill-row .skill-actions { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .skill-section .skill-row .skill-actions { transition: none; } }
+.skill-give { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 0 2px; }
 .publish-form { display: flex; gap: 6px; align-items: center; }
 
 /* SkillPicker — the persona editor's skills checklist. */

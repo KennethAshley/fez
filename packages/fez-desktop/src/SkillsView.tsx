@@ -10,6 +10,7 @@ import FindSource from "./FindSource";
 import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
 import { useConfig, bumpConfig } from "./config-store";
+import { attachSkill, detachSkill } from "./skill-attach";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -40,6 +41,8 @@ interface SkillConfig {
   type?: string;
   url?: string;
   env?: Record<string, string>;
+  /** Install provenance (Task 2) — the portable `name=source` form for a persona that gains this skill. */
+  source?: string;
 }
 
 interface Listing {
@@ -138,6 +141,12 @@ export default function SkillsView({
   const [installs, setInstalls] = useState<Map<string, number>>(new Map());
   const [copied, setCopied] = useState<string>();
   const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[]; sources: Record<string, string> }[]>([]);
+  const [givingTo, setGivingTo] = useState<string>();
+  const [allAgents, setAllAgents] = useState<string[]>([]);
+  // Bumped after a write to a persona (give/take a skill) so the
+  // agentDeps effect below re-reads the files it doesn't otherwise
+  // watch — reload() alone only refreshes the config store, not this.
+  const [agentNonce, setAgentNonce] = useState(0);
 
   /**
    * One row per thing THIS ENVIRONMENT can see. The machine also holds
@@ -210,6 +219,7 @@ export default function SkillsView({
     void (async () => {
       try {
         const names = await invoke<string[]>("list_personas");
+        setAllAgents(names);
         const deps: { agent: string; skills: string[]; sources: Record<string, string> }[] = [];
         for (const agent of names) {
           const content = await invoke<string>("read_persona", { name: agent }).catch(() => "");
@@ -260,7 +270,7 @@ export default function SkillsView({
       } catch { /* index unreachable — relay-local counts stand */ }
       setInstalls(merged);
     })();
-  }, [wire, reload]);
+  }, [wire, reload, agentNonce]);
 
   const runsLine = (skill: SkillConfig | Listing) =>
     skill.url ?? [skill.command, ...(skill.args ?? [])].join(" ");
@@ -518,9 +528,40 @@ export default function SkillsView({
                           >
                             ↗ list on relay
                           </button>
+                          <button className="mini" onClick={() => setGivingTo(givingTo === name ? undefined : name)}>
+                            give to…
+                          </button>
                           <button className="mini" title="remove from this machine" onClick={() => void invoke("remove_skill", { name }).then(reload)}>✕</button>
                         </>
                       )}
+                    </div>
+                  )}
+                  {givingTo === name && (
+                    <div className="skill-give">
+                      {allAgents.map((agent) => {
+                        const has = wanted.includes(agent);
+                        return (
+                          <button
+                            key={agent}
+                            className={has ? "ext-filter active" : "ext-filter"}
+                            onClick={() =>
+                              void setSkillOnAgent(agent, name, config?.source, !has).then((ok) => {
+                                if (ok) {
+                                  flash(
+                                    has
+                                      ? `@${agent} no longer has "${name}" — takes effect on next spawn`
+                                      : `@${agent} gets "${name}" on next spawn`
+                                  );
+                                  reload();
+                                  setAgentNonce((n) => n + 1);
+                                }
+                              })
+                            }
+                          >
+                            @{agent} {has ? "✓" : ""}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -724,6 +765,22 @@ async function rememberSource(agent: string, skill: string, source: string): Pro
     const rewritten = content.replace(line[0], `mcpServers: [${formatSkillEntries(names, sources)}]`);
     if (rewritten === content) return false;
     await invoke("update_persona", { name: agent, content: rewritten });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Give a skill to an agent, or take it back. The write is the same one
+ * the persona editor performs — one line, everything else verbatim.
+ */
+async function setSkillOnAgent(agent: string, skill: string, source: string | undefined, on: boolean): Promise<boolean> {
+  try {
+    const content = await invoke<string>("read_persona", { name: agent });
+    const next = on ? attachSkill(content, skill, source) : detachSkill(content, skill);
+    if (!next) return false; // already in the desired state
+    await invoke("update_persona", { name: agent, content: next });
     return true;
   } catch {
     return false;
