@@ -3508,3 +3508,67 @@ button.ob-brain:active { transform: translateY(1px); }
    read across. */
 .notify-controls { display: flex; align-items: center; gap: 8px; }
 .notify-controls .manage-select { min-width: 110px; font-size: 12px; padding: 4px 6px; }
+
+/* ══ the page grammar ══════════════════════════════════════════════
+   Settings worked out what a page of content looks like here — a
+   measured column, a head that names it, rows with their control at a
+   predictable x. Nothing else adopted it, so docs, tools and every
+   extension nav view invented their own padding and ran edge to edge.
+   On a 2560pt display that put a miner's name 1500px from its score.
+
+   These classes are the settings column generalised, and they are
+   PUBLIC: extension gui parts render into this same document (they
+   already borrow .settings-hint and .manage-input), so a nav view can
+   look native by using the app's vocabulary instead of imitating it
+   inline. Renaming anything here breaks third-party packages. */
+:root {
+  /* Two measures, because the content does two different things. Prose
+     is read line by line and wants a comfortable line length; a roster
+     is compared row to row and needs its columns near enough to
+     associate a name with its number. One number cannot do both. */
+  --measure-read: 680px;
+  --measure-scan: 1100px;
+}
+
+/* The column is LEFT-ANCHORED, not centred. The rail is the app's
+   spine; a centred column drifts away from it as the window grows and
+   stops looking attached to anything. Padding is settings' own, so a
+   page's first line sits at the same y whatever its width. */
+.fez-page {
+  max-width: var(--measure-read);
+  padding: 40px 36px 64px 72px;
+  font-size: 13px;
+}
+.fez-page.wide { max-width: var(--measure-scan); }
+
+.page-head { margin-bottom: 22px; }
+/* Mono for the title, sans for the prose under it — the inversion of
+   the usual pairing, and the app's voice since the TUI. */
+.page-title {
+  font-family: var(--font-mono); font-size: 19px; font-weight: 600;
+  color: var(--fg); letter-spacing: -0.2px; margin: 0;
+}
+.page-sub { font-size: 12.5px; color: var(--fg-dim); margin-top: 5px; max-width: 56ch; }
+
+/* The measure rule: a hairline the exact width of the column, ending
+   in the one live fact this page has. It draws the column's edge on a
+   screen far wider than the column, and it carries data rather than
+   decorating — the horizontal partner to the ember notch. */
+.page-rule {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  margin-top: 14px; padding-bottom: 7px;
+  border-bottom: 1px solid var(--hairline);
+}
+.page-fact {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim);
+  white-space: nowrap;
+}
+a.page-fact { text-decoration: none; }
+a.page-fact:hover { color: var(--fg); }
+
+/* An empty page is an invitation, not an apology. It gets the room's
+   own voice at full size and one thing to do — never a grey italic
+   line that reads as an error nobody bothered to write. */
+.page-empty { padding: 6px 0 0; max-width: 52ch; }
+.page-empty-line { font-size: 13px; color: var(--fg); }
+.page-empty-how { font-size: 12.5px; color: var(--fg-dim); margin-top: 6px; line-height: 1.6; }
