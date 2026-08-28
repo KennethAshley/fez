@@ -54,6 +54,30 @@ interface TurnRec {
 }
 
 /**
+ * One agent's `agentSkillHealth` result, rendered as the single badge a
+ * row can show. Missing beats local — a skill that resolves to nothing
+ * is the worse of the two, and the exclusivity `agentSkillHealth` already
+ * enforces means at most one of these branches ever has anything to say.
+ */
+function SkillHealthBadge({ health }: { health?: { missing: string[]; local: string[] } }) {
+  if (health?.missing.length) {
+    return (
+      <span className="agent-warn" title="declared but not installed here">
+        ⚠ missing: {health.missing.join(", ")}
+      </span>
+    );
+  }
+  if (health?.local.length) {
+    return (
+      <span className="agent-warn" title="these skills point into a local directory">
+        ⚠ {health.local.length} skill{health.local.length > 1 ? "s" : ""} won't work on another machine
+      </span>
+    );
+  }
+  return null;
+}
+
+/**
  * The fleet at a glance — what the pane shows when no single agent is
  * selected.
  *
@@ -287,17 +311,25 @@ export default function AgentsPane({
   const [health, setHealth] = useState<Record<string, { missing: string[]; local: string[] }>>({});
   const { skills } = useConfig();
   useEffect(() => {
+    let cancelled = false;
     void (async () => {
       const names = await invoke<string[]>("list_personas").catch(() => [] as string[]);
-      setLocalPersonas(names);
+      const contents = await Promise.all(
+        names.map((agent) => invoke<string>("read_persona", { name: agent }).catch(() => ""))
+      );
+      if (cancelled) return;
       const next: Record<string, { missing: string[]; local: string[] }> = {};
-      for (const agent of names) {
-        const content = await invoke<string>("read_persona", { name: agent }).catch(() => "");
+      names.forEach((agent, i) => {
+        const content = contents[i];
         if (content) next[agent] = agentSkillHealth(content, skills);
-      }
+      });
+      setLocalPersonas(names);
       setHealth(next);
     })();
     void invoke<string[]>("list_persona_drafts").then(setDrafts).catch(() => setDrafts([]));
+    return () => {
+      cancelled = true;
+    };
   }, [skills, personaNonce]);
   // An agent that announces (kind-47000) mid-session — like a freshly
   // summoned @loom — must appear without a remount. presenceChanged fires
@@ -401,18 +433,7 @@ export default function AgentsPane({
                 </HoverCard>
                 {active && <span className="working">⚙</span>}
                 {sub && <span className="agent-sub">{sub}</span>}
-                {(() => {
-                  const agentHealth = localName ? health[localName] : undefined;
-                  return agentHealth?.missing.length ? (
-                    <span className="agent-warn" title="declared but not installed here">
-                      ⚠ missing: {agentHealth.missing.join(", ")}
-                    </span>
-                  ) : agentHealth?.local.length ? (
-                    <span className="agent-warn" title="these skills point into a local directory">
-                      ⚠ {agentHealth.local.length} skill{agentHealth.local.length > 1 ? "s" : ""} won't work on another machine
-                    </span>
-                  ) : null;
-                })()}
+                <SkillHealthBadge health={localName ? health[localName] : undefined} />
                 {localName && (
                   <span
                     className="agent-edit"
@@ -442,15 +463,7 @@ export default function AgentsPane({
                       <span className="agent-hint">
                         {invited === name ? "✓ on the roster — mention to wake" : `mention @${name} to summon · click to edit`}
                       </span>
-                      {health[name]?.missing.length ? (
-                        <span className="agent-warn" title="declared but not installed here">
-                          ⚠ missing: {health[name].missing.join(", ")}
-                        </span>
-                      ) : health[name]?.local.length ? (
-                        <span className="agent-warn" title="these skills point into a local directory">
-                          ⚠ {health[name].local.length} skill{health[name].local.length > 1 ? "s" : ""} won't work on another machine
-                        </span>
-                      ) : null}
+                      <SkillHealthBadge health={health[name]} />
                     </span>
                   </button>
                   {/* The stable-key invite: on the roster BEFORE first
