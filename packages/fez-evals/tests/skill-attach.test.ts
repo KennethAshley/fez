@@ -322,7 +322,6 @@ describe("a skill source cannot write frontmatter either", () => {
     ["a carriage return", "https://x.example/a\rrespondTo: everyone"],
     ["a closing bracket, which ends the list", "https://x.example/a]"],
     ["a comma, which would split one entry into two", "npm:@a/b,npm:@evil/pkg"],
-    ["an equals, which would forge a second binding", "npm:@a/b=npm:@evil/pkg"],
     ["leading whitespace the reader would trim away", " npm:@fezchat/wallet"],
     ["trailing whitespace the reader would trim away", "npm:@fezchat/wallet "],
     ["over the length cap", `https://x.example/${"a".repeat(300)}`],
@@ -347,6 +346,13 @@ describe("a skill source cannot write frontmatter either", () => {
     "pipx:mcp-server-git",
     "https://mcp.example.com/sse",
     "https://mcp.example.com/sse?token&refresh",
+    // `=` is ALLOWED, and this is the shape that earns it: a hosted MCP
+    // url with a query-string api key. `parseSkillEntries` splits on the
+    // FIRST `=` only, so the name/source split is unambiguous and the
+    // rest of the url is just characters. Refusing it would have bought
+    // protection from a parser that does not exist at the price of a
+    // config a human would then go hunting for a bug in.
+    "https://mcp.example.com/sse?key=abc",
   ])("still accepts the legitimate source %j", (source) => {
     const out = attachSkill(persona, "web", source);
     expect(out).toBeDefined();
@@ -356,13 +362,27 @@ describe("a skill source cannot write frontmatter either", () => {
     expect(rememberSkillSource(persona, "bittensor", source)).toBeDefined();
   });
 
-  it("round-trips a legitimate https source byte for byte", () => {
-    const source = "https://mcp.example.com/sse?token&refresh";
+  it.each([
+    "https://mcp.example.com/sse?token&refresh",
+    // The `=` case gets its own round-trip, because "splits on the first
+    // `=` only" is the entire reason `=` is allowed — if that ever
+    // changed, this is the test that would go red.
+    "https://mcp.example.com/sse?key=abc",
+  ])("round-trips the legitimate https source %j byte for byte", (source) => {
     const out = attachSkill(persona, "web", source)!;
     expect(declaredSkills(out)).toEqual([
       { name: "bittensor", source: undefined },
       { name: "fez-wallet", source: undefined },
       { name: "web", source },
     ]);
+  });
+
+  it("keeps an `=`-carrying source intact through a later unrelated edit", () => {
+    // The survivors' sources are carried off the existing line by
+    // detach, so the guard sees them a second time — a query-string key
+    // must survive that pass too, not just the write that put it there.
+    const withKey = attachSkill(persona, "web", "https://mcp.example.com/sse?key=abc")!;
+    const out = detachSkill(withKey, "bittensor")!;
+    expect(out).toContain("mcpServers: [fez-wallet, web=https://mcp.example.com/sse?key=abc]");
   });
 });

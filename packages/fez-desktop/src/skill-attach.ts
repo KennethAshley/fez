@@ -49,11 +49,12 @@ const SAFE_NAME = /^[A-Za-z0-9._@/-]{1,64}$/;
  * The other half of the same line, and the same trust boundary.
  *
  * A SOURCE is structural too, and this is easy to miss because it looks
- * like free text: `mcpServers: [name=source, name2=source2]` is made of
- * `=`, `,` and `]`, and the whole thing is ONE frontmatter line, so a
- * newline ends it. A source of `https://x/…\nowner: attacker` writes a
- * real `owner:` key into whatever persona it is spliced into —
- * `respondTo:` and `aliases:` are the same trick.
+ * like free text: `mcpServers: [name=source, name2=source2]` separates
+ * entries with `,`, closes with `]`, and the whole thing is ONE
+ * frontmatter line, so a newline ends it. A source of
+ * `https://x/…\nowner: attacker` writes a real `owner:` key into
+ * whatever persona it is spliced into — `respondTo:` and `aliases:` are
+ * the same trick.
  *
  * Nothing upstream catches this. `parseSkillSource` builds a `URL` for
  * the https branch and WHATWG parsing STRIPS raw CR/LF, so that payload
@@ -69,8 +70,17 @@ const SAFE_NAME = /^[A-Za-z0-9._@/-]{1,64}$/;
  * file. Whitespace at either end is refused because the reader trims it
  * away (so it would not round-trip), and the length cap is far above any
  * real source — `PACKAGE`'s own grammar is much shorter.
+ *
+ * `=` is deliberately ALLOWED, even though it separates name from
+ * source: `parseSkillEntries` splits on the FIRST `=` only, so
+ * `https://mcp.example.com/sse?key=abc` round-trips intact today. That
+ * is an ordinary hosted-MCP url with a query-string api key, and
+ * refusing it would send someone hunting for a bug in their own config
+ * to buy protection from a parser that does not exist. If
+ * `parseSkillEntries` ever starts splitting on every `=`, THAT change is
+ * where the guard belongs.
  */
-const SOURCE_STRUCTURAL = /[\r\n\],=]/;
+const SOURCE_STRUCTURAL = /[\r\n\],]/;
 const MAX_SOURCE = 256;
 
 function safeSource(source: string): boolean {
