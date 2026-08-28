@@ -1198,10 +1198,24 @@ Render it above the installed list:
           key={agent}
           className="ext-filter"
           onClick={() =>
-            void setSkillOnAgent(agent, justInstalled.name, justInstalled.source, true).then((ok) => {
-              if (ok) {
-                flash(`@${agent} gets "${justInstalled.name}" on next spawn`);
+            void setSkillOnAgent(agent, justInstalled.name, justInstalled.source, true).then((result) => {
+              // setSkillOnAgent returns a discriminated SkillWriteResult
+              // ("changed" | "already" | "unsafe" | "error"), NOT a boolean —
+              // every one of those strings is truthy, so `if (result)` would
+              // report success on failure. Switch on the value.
+              if (result === "changed" || result === "already") {
+                flash(
+                  result === "changed"
+                    ? `@${agent} gets "${justInstalled.name}" on next spawn`
+                    : `@${agent} already has "${justInstalled.name}"`
+                );
                 setAgentNonce((n) => n + 1);
+              } else {
+                flash(
+                  result === "unsafe"
+                    ? `@${agent}'s persona has no frontmatter block — fez can't edit it automatically`
+                    : `couldn't give "${justInstalled.name}" to @${agent} — check its persona file`
+                );
               }
             })
           }
