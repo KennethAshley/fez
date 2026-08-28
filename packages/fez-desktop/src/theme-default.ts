@@ -38,6 +38,8 @@ export const BUILT_IN_DEFAULT = {
     "--bg-rail": "#17191a",
     "--hairline": "#32302f",
     "--phosphor": "#b8bb26",
+    "--measure-read": "680px",
+    "--measure-scan": "1100px",
     // Chart marks, CVD-validated against their ground — a pair, not
     // theme accents, so they are tuned per scheme rather than reused.
     // (light's ok mark was #427b58, which FAILS the chroma floor on
@@ -65,6 +67,8 @@ export const BUILT_IN_DEFAULT = {
     "--bg-rail": "#eee0b7",
     "--hairline": "#d5c4a1",
     "--phosphor": "#79740e",
+    "--measure-read": "680px",
+    "--measure-scan": "1100px",
     "--viz-ok": "#79740e",
     "--viz-fail": "#9d0006",
     "--font-mono": 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',

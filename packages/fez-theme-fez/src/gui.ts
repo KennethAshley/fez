@@ -83,6 +83,8 @@ export default function activate(api: ThemeApi): void {
       // everywhere in this app now, and an agent working must not read
       // as an agent selected.
       "--phosphor": "#b8bb26",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       // CVD-validated against #282828 (deutan ΔE 8.5, contrast pass).
       "--viz-ok": "#43a56c",
       "--viz-fail": "#fb4934",
@@ -117,6 +119,8 @@ export default function activate(api: ThemeApi): void {
       "--bg-rail": "#f2e5bc",
       "--hairline": "#d5c4a1",
       "--phosphor": "#79740e",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       // CVD-validated against #fbf1c7 (deutan ΔE 10.0, contrast pass).
       "--viz-ok": "#79740e",
       "--viz-fail": "#9d0006",

@@ -59,6 +59,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#ff5555",
       "--yellow": "#f1fa8c",
       "--phosphor": "#50fa7b",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#bd93f9", green: "#50fa7b", red: "#ff5555" }),
     },
     light: {
@@ -77,6 +79,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#cb3a2a",
       "--yellow": "#846e15",
       "--phosphor": "#14710a",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#644ac9", green: "#14710a", red: "#cb3a2a" }),
     },
   });
@@ -98,6 +102,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#bf616a",
       "--yellow": "#ebcb8b",
       "--phosphor": "#a3be8c",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#88c0d0", green: "#a3be8c", red: "#bf616a" }),
     },
     light: {
@@ -118,6 +124,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#a54049", // derived: nord11 darkened
       "--yellow": "#8a6f2e", // derived: nord13 darkened
       "--phosphor": "#5e7a4a",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#5e81ac", green: "#5e7a4a", red: "#a54049" }),
     },
   });
@@ -139,6 +147,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#f38ba8",
       "--yellow": "#f9e2af",
       "--phosphor": "#a6e3a1",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#cba6f7", green: "#a6e3a1", red: "#f38ba8" }),
     },
     light: {
@@ -156,6 +166,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#d20f39",
       "--yellow": "#df8e1d",
       "--phosphor": "#40a02b",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#8839ef", green: "#40a02b", red: "#d20f39" }),
     },
   });
@@ -177,6 +189,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#dc322f",
       "--yellow": "#b58900",
       "--phosphor": "#859900",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#268bd2", green: "#859900", red: "#dc322f" }),
     },
     light: {
@@ -194,6 +208,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#dc322f",
       "--yellow": "#b58900",
       "--phosphor": "#859900",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#268bd2", green: "#859900", red: "#dc322f" }),
     },
   });
@@ -215,6 +231,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#e06c75",
       "--yellow": "#e5c07b",
       "--phosphor": "#98c379",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#61afef", green: "#98c379", red: "#e06c75" }),
     },
     light: {
@@ -232,6 +250,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#e45649",
       "--yellow": "#c18401",
       "--phosphor": "#50a14f",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#4078f2", green: "#50a14f", red: "#e45649" }),
     },
   });
@@ -253,6 +273,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#f7768e",
       "--yellow": "#e0af68",
       "--phosphor": "#9ece6a",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#7aa2f7", green: "#9ece6a", red: "#f7768e" }),
     },
     light: {
@@ -270,6 +292,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#f52a65",
       "--yellow": "#8c6c3e",
       "--phosphor": "#587539",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#2e7de9", green: "#587539", red: "#f52a65" }),
     },
   });
@@ -291,6 +315,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#f85149",
       "--yellow": "#d29922",
       "--phosphor": "#3fb950",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#58a6ff", green: "#3fb950", red: "#f85149" }),
     },
     light: {
@@ -308,6 +334,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#cf222e",
       "--yellow": "#9a6700",
       "--phosphor": "#1a7f37",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#0969da", green: "#1a7f37", red: "#cf222e" }),
     },
   });
@@ -330,7 +358,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#31748f", // pine
       "--red": "#eb6f92", // love
       "--yellow": "#f6c177", // gold
-      "--phosphor": "#9ccfd8", // foam
+      "--phosphor": "#9ccfd8",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // foam
       ...common({ accent: "#ebbcba", green: "#31748f", red: "#eb6f92" }),
     },
     light: {
@@ -347,7 +377,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#286983", // pine
       "--red": "#b4637a", // love
       "--yellow": "#ea9d34", // gold
-      "--phosphor": "#56949f", // foam
+      "--phosphor": "#56949f",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // foam
       ...common({ accent: "#d7827e", green: "#286983", red: "#b4637a" }),
     },
   });
@@ -368,7 +400,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#a7c080",
       "--red": "#e67e80",
       "--yellow": "#dbbc7f",
-      "--phosphor": "#83c092", // aqua
+      "--phosphor": "#83c092",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // aqua
       ...common({ accent: "#a7c080", green: "#a7c080", red: "#e67e80" }),
     },
     light: {
@@ -385,7 +419,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#8da101",
       "--red": "#f85552",
       "--yellow": "#dfa000",
-      "--phosphor": "#35a77c", // aqua
+      "--phosphor": "#35a77c",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // aqua
       ...common({ accent: "#8da101", green: "#8da101", red: "#f85552" }),
     },
   });
@@ -410,6 +446,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#fd5c5c", // derived: status red kept apart from the pink accent
       "--yellow": "#e6db74",
       "--phosphor": "#a6e22e",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#f92672", green: "#a6e22e", red: "#fd5c5c" }),
     },
     light: {
@@ -427,6 +465,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#c7434b",
       "--yellow": "#9d8a00",
       "--phosphor": "#6b9500",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#d81b60", green: "#6b9500", red: "#c7434b" }),
     },
   });
@@ -447,7 +487,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#c5e478",
       "--red": "#ef5350",
       "--yellow": "#f78c6c",
-      "--phosphor": "#7fdbca", // the owl's cyan
+      "--phosphor": "#7fdbca",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // the owl's cyan
       ...common({ accent: "#82aaff", green: "#c5e478", red: "#ef5350" }),
     },
     light: {
@@ -466,6 +508,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#e64d49",
       "--yellow": "#daaa01",
       "--phosphor": "#0c969b",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#994cc3", green: "#2aa298", red: "#e64d49" }),
     },
   });
@@ -487,6 +531,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#d95757",
       "--yellow": "#ffb454",
       "--phosphor": "#aad94c",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#e6b450", green: "#aad94c", red: "#d95757" }),
     },
     light: {
@@ -504,6 +550,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#e65050",
       "--yellow": "#a37a00", // derived: #f2ae49 darkened for paper
       "--phosphor": "#86b300",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#e6820c", green: "#86b300", red: "#e65050" }),
     },
   });
@@ -525,6 +573,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#f07178",
       "--yellow": "#ffcb6b",
       "--phosphor": "#c3e88d",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#c792ea", green: "#c3e88d", red: "#f07178" }),
     },
     light: {
@@ -543,6 +593,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#e53935",
       "--yellow": "#f6a434",
       "--phosphor": "#91b859",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#7c4dff", green: "#91b859", red: "#e53935" }),
     },
   });
@@ -564,6 +616,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#f43e5c", // derived: status red kept apart from the coral
       "--yellow": "#fab795",
       "--phosphor": "#59e1e3",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#e95678", green: "#29d398", red: "#f43e5c" }),
     },
     light: {
@@ -581,7 +635,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#0e9e6e", // derived: terminal green darkened for paper
       "--red": "#d6335f", // derived
       "--yellow": "#c67432", // derived: #f77d26 darkened for paper
-      "--phosphor": "#0f9fa1", // derived: cyan darkened
+      "--phosphor": "#0f9fa1",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // derived: cyan darkened
       ...common({ accent: "#e84a72", green: "#0e9e6e", red: "#d6335f" }),
     },
   });
@@ -602,7 +658,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#72f1b8",
       "--red": "#fe4450",
       "--yellow": "#fede5d",
-      "--phosphor": "#36f9f6", // the glow
+      "--phosphor": "#36f9f6",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // the glow
       ...common({ accent: "#ff7edb", green: "#72f1b8", red: "#fe4450" }),
     },
     light: {
@@ -622,6 +680,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#d1244a",
       "--yellow": "#9a7b00",
       "--phosphor": "#0f8f8c",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#c9256e", green: "#0b8a5f", red: "#d1244a" }),
     },
   });
@@ -643,6 +703,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#ff628c",
       "--yellow": "#ff9d00",
       "--phosphor": "#2affdf",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#ffc600", green: "#3ad900", red: "#ff628c" }),
     },
     light: {
@@ -662,6 +724,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#d6336c",
       "--yellow": "#a66b00",
       "--phosphor": "#0d8f7a",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#b78a00", green: "#2b8a00", red: "#d6336c" }),
     },
   });
@@ -683,6 +747,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#cc9393",
       "--yellow": "#e0cf9f",
       "--phosphor": "#8cd0d3",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#f0dfaf", green: "#7f9f7f", red: "#cc9393" }),
     },
     light: {
@@ -702,6 +768,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#a05656",
       "--yellow": "#8a7a3a",
       "--phosphor": "#4a8f8f",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#8f7f3f", green: "#5f7f5f", red: "#a05656" }),
     },
   });
@@ -723,6 +791,8 @@ export default function activate(api: ThemeApi): void {
       "--red": "#c34043", // autumnRed
       "--yellow": "#e6c384", // carpYellow
       "--phosphor": "#98bb6c",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px",
       ...common({ accent: "#7e9cd8", green: "#98bb6c", red: "#c34043" }),
     },
     light: {
@@ -740,7 +810,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#6f894e", // lotusGreen
       "--red": "#c84053", // lotusRed
       "--yellow": "#de9800", // lotusYellow3
-      "--phosphor": "#597b75", // lotusAqua
+      "--phosphor": "#597b75",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // lotusAqua
       ...common({ accent: "#4d699b", green: "#6f894e", red: "#c84053" }),
     },
   });
@@ -763,7 +835,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#879a39", // green-400
       "--red": "#d14d41", // red-400
       "--yellow": "#d0a215", // yellow-400
-      "--phosphor": "#3aa99f", // cyan-400
+      "--phosphor": "#3aa99f",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // cyan-400
       ...common({ accent: "#4385be", green: "#879a39", red: "#d14d41" }),
     },
     light: {
@@ -780,7 +854,9 @@ export default function activate(api: ThemeApi): void {
       "--green": "#66800b", // green-600
       "--red": "#af3029", // red-600
       "--yellow": "#ad8301", // yellow-600
-      "--phosphor": "#24837b", // cyan-600
+      "--phosphor": "#24837b",
+      "--measure-read": "680px",
+      "--measure-scan": "1100px", // cyan-600
       ...common({ accent: "#205ea6", green: "#66800b", red: "#af3029" }),
     },
   });
