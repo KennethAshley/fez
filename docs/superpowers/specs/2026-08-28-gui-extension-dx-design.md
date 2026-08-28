@@ -35,16 +35,25 @@ fez's runtime is **Obsidian-shaped**, not VS Code-shaped:
 | Manifest | `package.json` | separate `manifest.json` | `package.json` `fez` block |
 | Part code | compiled, `main` → entry | one bundled `main.js` | one bundled `gui.js` |
 | Host API | `vscode` (injected, not bundled) | `obsidian` (injected) | `api` (injected) |
-| UI rendering | **isolated webview** | **in-process into app DOM** | **in-process into host React** |
-| Styling | webview's own CSS | **global `styles.css` + app CSS variables** | inline styles + theme tokens |
+| UI rendering | **isolated webview** | **host gives a DOM node; plugin owns its framework** | **host gives a DOM node; extension owns its framework** (this spec) |
+| Styling | webview's own CSS | **global `styles.css` + app CSS variables** | host utility stylesheet + theme tokens |
 
 fez sits in Obsidian's column on every row that matters: in-process
-rendering, an injected host module, one bundled part. The webview /
-`.vsix` / isolation traits of VS Code were declined deliberately
-(in-process was chosen over sandboxing). So Obsidian is the model to
-follow, with one sensible VS Code borrow already in place: the manifest
-lives in `package.json` (an extension is a normal npm package), which is
-better for distribution.
+(not sandboxed), an injected host module, one bundled part, and — with
+this spec's pivot — the same rendering contract: **the host hands the
+extension a DOM element and the extension mounts whatever it wants into
+it.** The webview / `.vsix` / isolation traits of VS Code were declined
+deliberately. So Obsidian is the model to follow, with one sensible VS
+Code borrow already in place: the manifest lives in `package.json` (an
+extension is a normal npm package), which is better for distribution.
+
+The previous fez rendering model — extensions returned React elements
+that the host rendered *into its own React tree* — is what this spec
+changes. That inline model forced a single shared React and awkward
+machinery to route the extension's JSX into the host's React instance.
+Obsidian's node-handoff model has no such constraint: simpler to
+implement, and more familiar to write against (a standard React app),
+so this spec adopts it (§3).
 
 The consequence that drives the styling design: Obsidian's answer to
 "how do third-party plugins style themselves in one shared document" is
@@ -100,34 +109,65 @@ part"; the GUI loader reads that key and ignores the rest. The
 separation is preserved conceptually; the physical `gui-extensions/`
 directory is what goes away.
 
-### 3. Authoring — JSX / TSX
+### 3. Authoring — the mount model (own framework, standard JSX)
 
-Extensions author views in normal TSX, compiled against the **host's**
-React — no bundled React, so bundles stay tiny and there is never a
-second React fighting the host's hooks.
+The host hands the extension a DOM element; the extension mounts its own
+UI into it. This is Obsidian's contract, and it makes an extension a
+**completely standard React app** — no shared React, no shim, no
+fez-specific build config.
 
-Mechanism (the automatic JSX runtime, pointed at an injected React):
+The API shifts from "return elements the host renders" to "mount into
+this node." A view registration's third argument changes shape:
 
-- `@fezchat/extension-api` ships a `jsx-runtime` entry exporting `jsx`,
-  `jsxs`, `Fragment` that delegate to the host's React
-  `createElement` / `Fragment`. The host's React is not available when
-  the shim's module evaluates (only at `activate(api)`), but `jsx()` is
-  only *called* during render, which is after activation — so the shim
-  resolves React lazily: the host publishes its React runtime on a
-  known global before loading any extension, and the shim reads it
-  inside `jsx`/`jsxs`.
-- An extension's `tsconfig.json` sets
-  `"jsxImportSource": "@fezchat/extension-api"`. The build emits
-  `_jsx("div", …)` importing from the shim; the shim resolves to the
-  host React at render time. The shim is ~15 lines and tiny to bundle;
-  React is external.
-- `h()` becomes an implementation detail an author never types.
-- Classic-runtime fallback if the automatic runtime is fiddly under
-  esbuild: `jsxFactory` pointed at the same injected-React global. Same
-  result, uglier config.
+```ts
+// before — the host renders the returned elements in its own tree:
+registerNavView(name, opts, render: () => El): void
 
-`registerNavView` and the rest of the `api` surface do **not** change —
-this is purely how the returned elements are authored.
+// after — the host gives a container; the extension mounts and returns a disposer:
+type Dispose = () => void;
+registerNavView(name, opts, mount: (host: HTMLElement) => Dispose | void): void
+```
+
+The extension's default export is still `activate(api)`; inside it,
+`mount` is where the extension owns everything:
+
+```tsx
+// standard React, standard JSX, standard tooling — nothing fez-specific
+import { createRoot } from "react-dom/client";
+export default function activate(api) {
+  api.registerNavView("Bazaar", { glyph: "◈", label: "Bazaar" }, (host) => {
+    const root = createRoot(host);
+    root.render(<BazaarView api={api} />);
+    return () => root.unmount();   // host calls this on hide/uninstall
+  });
+}
+```
+
+What this buys, and why it's the pivot:
+
+- **No shared React, no shim, no `jsxImportSource` config.** The
+  extension bundles its own React (or Preact, or Svelte, or nothing —
+  its choice) and renders into the host's node. There is no single-React
+  constraint because the host's React and the extension's React never
+  touch. An author writes exactly the React app they'd write anywhere.
+- **`api` arrives as an argument** (`activate(api)`, passed into the
+  component as a prop) — not a global, not a side channel.
+- **Independent roots = contained failure.** Each view is its own React
+  root on its own node; an extension that throws during render corrupts
+  only its own subtree, not the host's tree. The old inline model could
+  take the host's render down with it.
+- **Bundle cost is the extension's call.** Its own React is ~40KB
+  gzipped; Preact is ~4KB; vanilla is nothing. Views mount lazily (only
+  when shown), so an installed-but-unopened extension costs nothing at
+  boot. The host MAY additionally expose React as a build-time external
+  for size-conscious authors who opt in (§ open questions) — but the
+  default is bring-your-own, which is what keeps the tooling standard.
+
+The registration surfaces that return UI (`registerNavView`,
+`registerThreadView`, `registerSettingsPanel`, `registerPageView`,
+`registerBlockRenderer`, `registerArtifactAction`) all move from
+`() => El` to `(host: HTMLElement) => Dispose | void`. `activate(api)`
+and the non-UI surface of `api` are unchanged.
 
 ### 4. Styling — a fez Tailwind preset wired to the theme tokens
 
@@ -163,9 +203,17 @@ stylesheet)**:
   shares one document.
 - **No Shadow DOM, no webview.** Style isolation was the only thing those
   would have added, and it is incoherent with an in-process host that
-  already grants `api.client` directly — hardening the CSS boundary while
-  the JS boundary is open. In-process + trusted + shared design system is
-  the Obsidian posture, and it matches every other choice here.
+  already grants `api.client` directly. In-process + trusted + shared
+  design system is the Obsidian posture, and it matches every other
+  choice here. Because the extension mounts into a plain host node in the
+  same light DOM, the theme tokens on `:root` and the host utility
+  stylesheet both apply to it with no plumbing — inherited custom
+  properties reach any descendant, and a global stylesheet is global.
+- **An extension may still ship its own CSS.** Since the mount model
+  makes each extension self-contained, an author who wants styling beyond
+  the shared utilities writes a CSS Module (default) or bundles their own
+  stylesheet and injects it in `mount`. The host layer is the shared
+  default, not a cage.
 
 Inline styles keep working, so existing extensions do not break; adopting
 utilities/CSS-Modules is an opt-in upgrade.
@@ -178,26 +226,30 @@ no docs:
 ```
 <name>/
   package.json          name, fez block (parts.gui: "dist/view.js"),
-                        minFezVersion, a build script, the preset as a dev dep
-  tsconfig.json         jsxImportSource: "@fezchat/extension-api"
-  src/view.tsx          activate(api): registerNavView + a component that
-                        USES the tokens (bg-fez-surface, text-fez-fg,
-                        hover:) and the capability-guard pattern
-                        (api.client absent-when-ungranted, degrade with a
-                        message — never assume)
+                        minFezVersion, a build script; react + react-dom
+                        as normal deps; the preset as a dev dep
+  tsconfig.json         standard React JSX — nothing fez-specific
+  src/view.tsx          activate(api): registerNavView with a mount(host)
+                        callback that createRoot()s a component; the
+                        component USES the tokens (bg-fez-surface,
+                        text-fez-fg, hover:) and the capability-guard
+                        pattern (api.client absent-when-ungranted,
+                        degrade with a message — never assume)
   src/styles.module.css optional starter CSS module
   README.md
 ```
 
-The stub is where an author learns the two rules that are otherwise
-learned by crashing: colors come from the `fez-*` utilities (never bare
-hex), and `api.*` capabilities are absent-when-ungranted (guard, don't
-assert).
+The stub is where an author learns the two rules otherwise learned by
+crashing: colors come from the `fez-*` utilities (never bare hex), and
+`api.*` capabilities are absent-when-ungranted (guard, don't assert). It
+is otherwise an ordinary React app — `import React`, standard JSX,
+standard build — which is the whole point.
 
 `fez pack` (build only, in this spec): bundle `src/view.tsx` →
-`dist/view.js` via esbuild (IIFE, JSX through the shim, React external),
-process any CSS Module. Manifest derivation, hashing, and signing are
-`extension-format-dx`, not here.
+`dist/view.js` via esbuild (IIFE, standard JSX, the extension's own React
+bundled — or external if the author opts in), process any CSS Module.
+Manifest derivation, hashing, and signing are `extension-format-dx`, not
+here.
 
 ### 6. Migration
 
@@ -215,12 +267,14 @@ Install (unchanged from extension-packages, minus one symlink):
 **no `gui-extensions` symlink is created.**
 
 Load:
-`list_gui_extensions scans packages/*/ → reads each manifest → for a
-gui part, returns (name, bundle source, styles) → the desktop frontend
-evaluates the IIFE and calls activate(api) → the extension's TSX renders
-through the jsx-runtime shim into the host React tree → the host's fez
-utility stylesheet + the theme tokens on :root style it → any CSS Module
-is injected on activate.`
+`list_gui_extensions scans packages/*/ → reads each manifest → for a gui
+part, returns (name, bundle source, styles) → the desktop frontend
+evaluates the IIFE and calls activate(api) → when a view is shown the
+host creates a container node and calls the extension's mount(host) → the
+extension mounts its OWN React root into that node and returns a disposer
+→ the host's fez utility stylesheet + the theme tokens on :root style it
+(same light DOM) → any CSS Module is injected on mount → on hide/uninstall
+the host calls the disposer, which unmounts the extension's root.`
 
 Theme change: the themes system rewrites the `--fg`/`--bg1`/… tokens on
 `:root`; every `fez-*` utility resolves to the new value on the next
@@ -228,11 +282,21 @@ paint. Extensions do nothing.
 
 ## What deliberately does not change
 
-- `registerNavView` and the rest of the `api` surface.
-- In-process rendering into the host React tree (no isolation).
+- `activate(api)` as the part's entry, and the non-UI surface of `api`.
+- In-process (no sandbox, no webview) — the extension runs in the host
+  document, it just mounts into a host-provided node rather than
+  rendering into the host's React tree.
 - One bundled part file per surface.
 - The package directory as source of truth, and grants in `settings.json`.
 - Every non-GUI loader, and the `bin/` symlinks.
+
+**Does change:** the UI-returning registration callbacks move from
+`() => El` to `(host: HTMLElement) => Dispose | void`, and the single
+shared-React constraint is gone (each extension owns its React). The four
+existing gui extensions register through the old shape and must be
+adapted — but that adaptation is small (wrap today's returned element in
+a `createRoot(host).render(...)`), and inline styling still works
+throughout.
 
 ## Non-goals
 
@@ -247,19 +311,24 @@ paint. Extensions do nothing.
 
 ## Open questions
 
-1. **jsx-runtime React handoff** — a global (`globalThis.__fezReact`) the
-   host sets before loading extensions, vs. the loader passing React into
-   each extension's IIFE scope. The global is simplest and the shim reads
-   it lazily; the IIFE-scope form is cleaner but changes the load
-   signature. Lean: global, since render is always post-activate.
+1. **Bundled React vs. host-provided external.** Default is
+   bring-your-own (keeps the tooling standard, no shim). Should the host
+   ALSO offer React as an opt-in build-time external for authors who want
+   the smaller bundle? If so, that external is a normal module the host
+   resolves when it evaluates the bundle — the extension still writes
+   standard `import`s and standard JSX; only its build config marks
+   `react`/`react-dom` external. Lean: ship bring-your-own first, add the
+   optional external later if bundle size becomes a real complaint. And
+   consider recommending **Preact** in the scaffold as the small default,
+   since it's ~4KB and drop-in for this use.
 2. **Safelist breadth for the shipped utility stylesheet** — too small
    frustrates authors, too large bloats the always-loaded CSS. Start from
    the utilities the existing four gui extensions actually use, plus the
    obvious layout/spacing/typography set, and grow it from real
    extensions.
-3. **CSS Module injection lifetime** — inject-on-activate / remove-on-
-   deactivate vs. inject-once-and-leave. Hashed names make leaving it
-   harmless; removing it is tidier. Minor.
+3. **CSS Module injection lifetime** — inject-on-mount / remove-on-unmount
+   vs. inject-once-and-leave. Hashed names make leaving it harmless;
+   removing it on the disposer is tidier. Minor.
 4. **Whether `fez create` is a new CLI verb or part of `fez pack`'s
    package** — naming only; decide when the CLI surface is touched.
 
@@ -269,13 +338,15 @@ paint. Extensions do nothing.
   each manifest's `gui` part; `gui-extensions/` symlinks are gone and the
   migration removes existing ones, with no window where the GUI loses its
   extensions.
-- An author can write a GUI extension in TSX, style it with `fez-*`
-  Tailwind utilities that follow the live theme, use a CSS Module for
-  custom styling, and never type `h()` or a bare hex color.
+- An author can write a GUI extension as a standard React app that
+  `mount`s into the host node, style it with `fez-*` Tailwind utilities
+  that follow the live theme, use a CSS Module for custom styling, and
+  never type `h()`, a bare hex color, or any fez-specific build config.
 - `fez create` emits a scaffold that builds and loads with the token
-  utilities and the capability guard already in place.
-- The four existing gui extensions (bazaar, wallet, loom, themes) still
-  load and render (inline styles keep working); at least one is migrated
-  to TSX + utilities as the reference.
+  utilities, the mount pattern, and the capability guard already in place.
+- The four existing gui extensions (bazaar, wallet, loom, themes) are
+  adapted to the `mount(host)` callback and still render (inline styles
+  keep working); at least one is migrated to the full pattern (mount +
+  utilities) as the reference.
 - The pattern is proven on GUI and documented well enough that converting
   a second surface later is a mechanical follow-on.
