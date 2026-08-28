@@ -223,6 +223,38 @@ describe("v2 reminders arm by address", () => {
     vi.useRealTimers();
   });
 
+  it("a long-past reminder replayed by the live subscription does not re-toast", async () => {
+    // Relays replay stored events through the subscription on every
+    // (re)connect, and nothing tombstones a reminder when it fires — so
+    // without a staleness guard on the LIVE path (the hydrate filter
+    // alone), yesterday's reminder re-toasts on every reconnect forever.
+    vi.useFakeTimers();
+    const { wire, subs } = fakeWire();
+    const client = new FezClient(wire);
+    await client.start();
+    const handler = vi.fn();
+    client.on("reminderDue", handler as never);
+    const past = Math.floor(Date.now() / 1000) - 3600;
+    subs.forEach((s) => s.onEvent(reminderEvent("rem7", "yesterday v1", past)));
+    subs.forEach((s) => s.onEvent(reminderV2("e9", "addr9", "yesterday v2", past)));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(handler).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("a just-missed reminder (<=60s late) from the subscription still fires", async () => {
+    vi.useFakeTimers();
+    const { wire, subs } = fakeWire();
+    const client = new FezClient(wire);
+    await client.start();
+    const handler = vi.fn();
+    client.on("reminderDue", handler as never);
+    subs.forEach((s) => s.onEvent(reminderV2("e10", "addr10", "just missed", Math.floor(Date.now() / 1000) - 30)));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(handler).toHaveBeenCalledWith("just missed");
+    vi.useRealTimers();
+  });
+
   it("completing or cancelling disarms it", async () => {
     for (const status of ["done", "cancelled"]) {
       vi.useFakeTimers();

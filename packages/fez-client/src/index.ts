@@ -10,7 +10,7 @@ export {
   type ReminderStatus,
 } from "./reminders.js";
 import type { Query } from "./query-lang.js";
-import { nextCreatedAt, type ReminderBody, type ReminderRecord } from "./reminders.js";
+import { nextCreatedAt, STALE_AFTER_S, type ReminderBody, type ReminderRecord } from "./reminders.js";
 
 /** One row of a `runQuery` result — a task, approval, page, mention or run,
  * normalized so any surface (doc-block, live tool, exported extension)
@@ -1201,6 +1201,12 @@ export class FezClient {
         this.reminderTimers.delete(key);
       }
       if (body.status === "done" || body.status === "cancelled") return;
+      // Firing never tombstones a reminder (completing is the user's act),
+      // so staleness is the refire guard — and it must sit HERE, on the one
+      // arming path, because relays replay stored events through the live
+      // subscription on every (re)connect, not only through hydrate. A
+      // just-missed one (≤60s late) still fires; older history stays silent.
+      if (body.remind_at * 1000 < Date.now() - STALE_AFTER_S * 1000) return;
       const remindAt = body.remind_at;
       const note = body.note || "(reminder)";
       // setTimeout's ~24.9-day cap means a long delay gets clamped on
@@ -1962,16 +1968,9 @@ export class FezClient {
       }
       for (const event of reminderEvents) {
         if (tombstoned.has(event.id)) continue;
-        // Without a sentinel, nothing tombstones a reminder once it
-        // fires — so hydrating unconditionally re-emitted EVERY past
-        // reminder on every launch. A just-missed one (<=60s late)
-        // still deserves to fire; anything further past is stale and
-        // should stay silent instead of re-toasting forever. Live
-        // subscription arrivals (below) are untouched by this filter.
-        try {
-          const body = JSON.parse(await this.wire.decrypt(this.pubkey, event.content)) as { remind_at?: number };
-          if (typeof body.remind_at === "number" && body.remind_at * 1000 < Date.now() - 60_000) continue;
-        } catch { /* not decryptable/parsable — let armReminder's own handling apply */ }
+        // Staleness lives in armReminder itself (one arming path): a
+        // long-past reminder stays silent whether it arrives here or as a
+        // relay replay through the live subscription.
         void this.armReminder(event);
       }
     } catch { /* live stream fills in */ }

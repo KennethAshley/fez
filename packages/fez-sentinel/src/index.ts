@@ -22,6 +22,7 @@ import {
   isSafeWork,
   parseSealed,
 } from "@fezchat/protocol";
+import { decodeReminderV2 } from "./reminders-v2.js";
 
 /**
  * fez-sentinel — the always-on half of fez, extracted from the TUI so
@@ -413,11 +414,12 @@ async function main() {
   // immediately on hydrate.
   const KIND_SCHEDULED = 40006;
   const KIND_REMINDER = 40007;
+  const KIND_REMINDER_V2 = 30176;
   const KIND_CHANNEL_MSG = 47103;
   const armedTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const firedIntents = new Set<string>();
 
-  type IntentEvent = { id: string; kind: number; content: string; tags: string[][] };
+  type IntentEvent = { id: string; kind: number; content: string; tags: string[][]; created_at?: number };
 
   // Reminders (40007) arrive NIP-44 self-encrypted — note, fire time, and
   // subject in the ciphertext (they're private data on a public relay).
@@ -500,15 +502,56 @@ async function main() {
     console.log(`⏲ armed ${intent.kind === KIND_SCHEDULED ? "scheduled message" : "reminder"} (fires in ${Math.round(delayMs / 1000)}s)`);
   }
 
-  relay.subscribe([{ kinds: [KIND_SCHEDULED, KIND_REMINDER], authors: [myPubkey], since: sessionStartS }], (event) =>
-    armIntent(event)
+  // ── v2 reminders (30176): replaceable at (pubkey, kind, d), status in
+  // the encrypted body — so the timer is keyed by ADDRESS and every newer
+  // write supersedes it: a snooze moves it, done/cancelled clears it.
+  // Firing never tombstones a v2 (completing is the USER's act), so
+  // staleness is the refire guard on BOTH deliverers — mirror fez-client
+  // reminders.ts STALE_AFTER_S: ≤60s late still fires, older stays silent.
+  const V2_STALE_MS = 60_000;
+  function armReminderV2(event: IntentEvent): void {
+    const r = decodeReminderV2(event, (c) => client.decryptFrom(myPubkey, c));
+    if (!r) return;
+    const key = `v2:${r.address}`;
+    const held = armedTimers.get(key);
+    if (held !== undefined) {
+      clearTimeout(held);
+      armedTimers.delete(key);
+    }
+    if (!r.live || r.at * 1000 < Date.now() - V2_STALE_MS) return;
+    // Chunked like fireIntent: setTimeout's ~24.9-day cap would fire a
+    // longer delay early, so recompute and re-arm until it's really due.
+    const fire = () => {
+      const remaining = r.at * 1000 - Date.now();
+      if (remaining > 1000) {
+        armedTimers.set(key, setTimeout(fire, Math.min(remaining, 2 ** 31 - 1)));
+        return;
+      }
+      armedTimers.delete(key);
+      deliver("⏰ reminder", r.note);
+      console.log(`⏰ fired reminder: ${r.note.slice(0, 60)}`);
+    };
+    const delayMs = Math.min(Math.max(0, r.at * 1000 - Date.now()), 2 ** 31 - 1);
+    armedTimers.set(key, setTimeout(fire, delayMs));
+    console.log(`⏲ armed reminder (fires in ${Math.round(delayMs / 1000)}s)`);
+  }
+
+  relay.subscribe(
+    [{ kinds: [KIND_SCHEDULED, KIND_REMINDER, KIND_REMINDER_V2], authors: [myPubkey], since: sessionStartS }],
+    (event) => (event.kind === KIND_REMINDER_V2 ? armReminderV2(event) : armIntent(event))
   );
   const [intents, tombstones] = await Promise.all([
-    relay.query([{ kinds: [KIND_SCHEDULED, KIND_REMINDER], authors: [myPubkey] }]),
+    relay.query([{ kinds: [KIND_SCHEDULED, KIND_REMINDER, KIND_REMINDER_V2], authors: [myPubkey] }]),
     relay.query([{ kinds: [5], authors: [myPubkey] }]),
   ]);
   const dead = new Set(tombstones.flatMap((t) => t.tags.filter((x) => x[0] === "e").map((x) => x[1])));
-  for (const intent of intents) if (!dead.has(intent.id)) armIntent(intent);
+  // Oldest first, so if a relay hands back more than one write per v2
+  // address the newest lands last and owns the timer. Kind-5 tombstones
+  // are a v1 concept — a v2 is "deleted" by a status write, not an id.
+  for (const intent of intents.sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0))) {
+    if (intent.kind === KIND_REMINDER_V2) armReminderV2(intent);
+    else if (!dead.has(intent.id)) armIntent(intent);
+  }
 
   // ── extension background tasks ────────────────────────────────────────
   // The sentinel is the only always-on, key-holding host, so it's where
