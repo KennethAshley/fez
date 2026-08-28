@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
+import { parseSkillEntries, formatSkillEntries } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
+import SkillPicker from "./SkillPicker";
 
 /**
  * Persona editor — Buzz's AgentConfigPanel against fez's contract: the
@@ -40,6 +42,8 @@ const textToList = (text: string) => {
   const items = text.split(",").map((s) => s.trim()).filter(Boolean);
   return items.length ? `[${items.join(", ")}]` : "";
 };
+const splitList = (raw: string) =>
+  raw.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean);
 
 export default function PersonaEditor({
   name,
@@ -190,12 +194,13 @@ export default function PersonaEditor({
         />
       </div>
       <div className="settings-field">
-        <label>skills / mcpServers (comma-separated)</label>
-        <input
-          className="manage-input"
-          value={listToText(field("mcpServers"))}
-          spellCheck={false}
-          onChange={(e) => update("mcpServers", textToList(e.target.value))}
+        <label>skills</label>
+        <SkillPicker
+          value={parseSkillEntries(splitList(field("mcpServers"))).names}
+          sources={parseSkillEntries(splitList(field("mcpServers"))).sources}
+          onChange={(names, sources) =>
+            update("mcpServers", names.length ? `[${formatSkillEntries(names, sources)}]` : "")
+          }
         />
       </div>
       <div className="settings-field">

@@ -1413,6 +1413,13 @@ button.author:hover { text-decoration: underline; }
 .ext-missing .skill-row .skill-actions { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .skill-section .skill-row .skill-actions { transition: none; } }
 .publish-form { display: flex; gap: 6px; align-items: center; }
+
+/* SkillPicker — the persona editor's skills checklist. */
+.skill-picker { display: flex; flex-direction: column; gap: 2px; }
+.skill-pick { display: flex; align-items: baseline; gap: 8px; padding: 4px 2px; cursor: pointer; }
+.skill-pick-name { font-weight: 500; }
+.skill-pick-desc { opacity: 0.7; font-size: 0.9em; }
+.skill-pick.missing .skill-pick-name { text-decoration: line-through; opacity: 0.6; }
 .publish-form .manage-input { width: 180px; font-size: 11px; padding: 4px 8px; }
 .publish-what { font-size: 11px; color: var(--fg-dim); max-width: 260px; line-height: 1.45; }
 
