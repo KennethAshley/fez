@@ -94,7 +94,6 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
     await pm.install(`git:${pkgDir}`);
 
     expect(fs.existsSync(at("extensions", "tidy.js"))).toBe(true);
-    expect(fs.existsSync(at("gui-extensions", "tidy.js"))).toBe(true);
     expect(fs.existsSync(at("relay-extensions", "tidy.js"))).toBe(true);
     expect(fs.existsSync(at("workspace-providers", "tidy.js"))).toBe(true);
     expect(fs.existsSync(at("bin", "tidy-tool"))).toBe(true);
@@ -107,12 +106,19 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
     expect(s.mcpServers?.tidy).toBeDefined();
   });
 
+  test("install no longer creates the gui-extensions symlink (the loader reads packages/*/)", () => {
+    expect(fs.existsSync(at("gui-extensions", "tidy.js"))).toBe(false);
+    // the other surface symlinks and the package dir gui part remain
+    expect(fs.existsSync(at("extensions", "tidy.js"))).toBe(true);
+    expect(fs.existsSync(at("packages", "tidy", "dist", "gui.js"))).toBe(true);
+  });
+
   // THE LAYOUT CONTRACT — must match the `mod tests` in
   // packages/fez-desktop/src-tauri/src/package_install.rs exactly.
   // packages/<base>/package.json         the manifest, as installed
   // packages/<base>/dist/<part>.js       real part files (gui/headless/relay/workspace)
   // packages/<base>/bin/<cmd>            real binaries (0755)
-  // <flat dir>/<base>.js  -> symlink into packages/<base>/   (gui-extensions/extensions/relay-extensions/workspace-providers)
+  // <flat dir>/<base>.js  -> symlink into packages/<base>/   (extensions/relay-extensions/workspace-providers — NOT gui, the loader reads packages/*/ + the manifest directly)
   // bin/<cmd>             -> symlink into packages/<base>/
   test("the golden layout — every line of the contract, against the tidy fixture", () => {
     const pkgRoot = at("packages", "tidy");
@@ -134,7 +140,7 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
     }
 
     for (const [dir, file] of [
-      ["extensions", "tidy.js"], ["gui-extensions", "tidy.js"],
+      ["extensions", "tidy.js"],
       ["relay-extensions", "tidy.js"], ["workspace-providers", "tidy.js"],
       ["bin", "tidy-tool"], ["bin", "clix"],
     ] as const) {
@@ -142,6 +148,7 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
       expect(fs.lstatSync(p).isSymbolicLink(), `${dir}/${file} must be a symlink`).toBe(true);
       expect(fs.realpathSync(p).startsWith(fs.realpathSync(pkgRoot)), `${dir}/${file} must resolve into packages/tidy`).toBe(true);
     }
+    expect(fs.existsSync(at("gui-extensions", "tidy.js")), "gui must not get a flat symlink").toBe(false);
   });
 
   test("install keeps the package: one dir with the manifest and the real files", () => {
@@ -157,7 +164,7 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
 
   test("the flat directories are an index pointing INTO the package dir", () => {
     for (const [dir, file] of [
-      ["extensions", "tidy.js"], ["gui-extensions", "tidy.js"],
+      ["extensions", "tidy.js"],
       ["relay-extensions", "tidy.js"], ["workspace-providers", "tidy.js"],
       ["bin", "tidy-tool"],
     ] as const) {

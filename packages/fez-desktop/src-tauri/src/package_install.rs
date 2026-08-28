@@ -212,7 +212,10 @@ pub(crate) fn install_from_tarball(
 
     let mut installed: Vec<String> = Vec::new();
 
-    // Code parts: materialize into the package dir, index with a symlink.
+    // Code parts: materialize into the package dir. gui is loaded straight
+    // from the package dir via the manifest (the webview's loader, gui_parts
+    // above) — it gets no flat symlink. The other three still get one, same
+    // as before.
     for (part_key, dir) in [
         ("gui", "gui-extensions"),
         ("headless", "extensions"),
@@ -224,6 +227,10 @@ pub(crate) fn install_from_tarball(
             None => continue,
         };
         let dest = materialize(tar_bytes, &pkg_dir, rel, part_key)?;
+        if part_key == "gui" {
+            installed.push(format!("gui → packages/{base}/{rel}"));
+            continue;
+        }
         let link_path = home.join(dir).join(format!("{base}.js"));
         link_index(&dest, &link_path)?;
         installed.push(format!("{part_key} → ~/.fez/{dir}/{base}.js"));
@@ -462,6 +469,30 @@ pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String)> {
     out
 }
 
+/// Every extension with a headless and/or gui part, keyed by package name —
+/// the desktop UI's installed-extension list (lib.rs's `list_local_extensions`
+/// tauri command is a thin wrapper over this). Headless still comes from the
+/// flat `extensions/` symlink index — unaffected by this task; gui comes
+/// from `gui_parts` (packages/*/ + each manifest's `fez.parts.gui`), not the
+/// `gui-extensions/` symlink dir, which install no longer populates.
+pub(crate) fn local_extensions(home: &Path) -> Vec<(String, Vec<String>)> {
+    let mut map: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    if let Ok(entries) = std::fs::read_dir(home.join("extensions")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("js") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    map.entry(stem.to_string()).or_default().push("headless".to_string());
+                }
+            }
+        }
+    }
+    for (name, _) in gui_parts(home) {
+        map.entry(name).or_default().push("gui".to_string());
+    }
+    map.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,7 +522,7 @@ mod tests {
     // packages/<base>/package.json         the manifest, as installed
     // packages/<base>/dist/<part>.js       real part files (gui/headless/relay/workspace)
     // packages/<base>/bin/<cmd>            real binaries (0755)
-    // <flat dir>/<base>.js  -> symlink into packages/<base>/   (gui-extensions/extensions/relay-extensions/workspace-providers)
+    // <flat dir>/<base>.js  -> symlink into packages/<base>/   (extensions/relay-extensions/workspace-providers — NOT gui, the loader reads packages/*/ + the manifest directly)
     // bin/<cmd>             -> symlink into packages/<base>/
     #[test]
     fn installs_into_a_package_dir_with_a_symlink_index() {
@@ -511,12 +542,14 @@ mod tests {
         assert!(pkg.join("dist/headless.js").exists());
 
         // <flat dir>/<base>.js and bin/<cmd> -> symlinks into packages/<base>/.
-        for (dir, f) in [("gui-extensions","tidy.js"), ("extensions","tidy.js"), ("bin","tidy-tool"), ("bin","clix")] {
+        // gui gets none — the loader reads packages/*/ + the manifest directly.
+        for (dir, f) in [("extensions","tidy.js"), ("bin","tidy-tool"), ("bin","clix")] {
             let p = home.path().join(dir).join(f);
             let md = std::fs::symlink_metadata(&p).unwrap();
             assert!(md.file_type().is_symlink(), "{dir}/{f} must be a symlink");
             assert!(std::fs::canonicalize(&p).unwrap().starts_with(&pkg_real));
         }
+        assert!(!home.path().join("gui-extensions").join("tidy.js").exists(), "gui must not get a flat symlink");
 
         // packages/<base>/bin/<cmd> — every declared bin, real and chmod 0755.
         // "clix": "bin/index.js" in particular — a source file that does NOT
@@ -677,6 +710,33 @@ mod tests {
         std::fs::create_dir_all(home.path().join("evil")).unwrap();
         std::fs::write(home.path().join("evil").join("package.json"), r#"{"name":"evil"}"#).unwrap();
         assert!(installed_manifest("../evil", home.path()).is_none());
+    }
+
+    // The loader (Task 1) reads packages/*/ + the manifest directly, so
+    // gui-extensions/<base>.js is dead weight install no longer needs to
+    // create — install must still materialize the gui part INTO the
+    // package dir (gui_parts and the webview loader both depend on that).
+    #[test]
+    fn install_creates_no_gui_extensions_symlink() {
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        assert!(!home.path().join("gui-extensions").join("tidy.js").exists());
+        assert!(home.path().join("packages").join("tidy").join("dist").join("gui.js").exists());
+    }
+
+    // list_local_extensions (lib.rs) must keep reporting a gui extension
+    // even though install no longer leaves a gui-extensions symlink behind
+    // — it has to read gui presence from packages/*/ instead, same source
+    // gui_parts already uses.
+    #[test]
+    fn local_extensions_reports_gui_from_the_package_dir_with_no_symlink() {
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        assert!(!home.path().join("gui-extensions").join("tidy.js").exists());
+        let found = local_extensions(home.path());
+        let tidy = found.iter().find(|(name, _)| name == "tidy").expect("tidy must be reported");
+        assert!(tidy.1.contains(&"gui".to_string()), "must report the gui part: {:?}", tidy.1);
+        assert!(tidy.1.contains(&"headless".to_string()), "must still report the headless part: {:?}", tidy.1);
     }
 
     #[test]

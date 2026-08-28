@@ -889,11 +889,11 @@ export class PackageManager {
       await this.installFezExtension(name, { entry: parts.headless });
     }
     if (parts.gui) {
-      const guiDir = this.home("gui-extensions");
-      await fs.mkdir(guiDir, { recursive: true });
+      // Materialize only — no flat symlink. The webview's loader reads
+      // packages/<name>/dist/gui.js straight from the manifest, so
+      // gui-extensions/<name>.js is dead weight nothing loads through.
       const dest = await this.materializeIntoPackage(name, parts.gui);
-      this.linkIndex(dest, path.join(guiDir, `${name}.js`));
-      console.log(chalk.dim(`   Created ~/.fez/gui-extensions/${name}.js`));
+      console.log(chalk.dim(`   Created ${dest}`));
     }
     if (parts.relay) {
       // A fourth place, same shape as the others. It only does anything
