@@ -1,5 +1,5 @@
 import { unixNow } from "../shared/time.js";
-import { bytesToHex, hexToBytes } from "../shared/codec.js";
+import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import {
   type Event,
   type UnsignedEvent,

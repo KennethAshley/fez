@@ -1,5 +1,5 @@
 import { unixNow } from "../shared/time.js";
-import { hexToBytes } from "../shared/codec.js";
+import { hexToBytes } from "nostr-tools/utils";
 import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey, nip44 } from "nostr-tools";
 import { RelayConnection } from "./relay.js";
 import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";

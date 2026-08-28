@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import fs from "fs/promises";
 import { generateSecretKey, getPublicKey } from "nostr-tools";
-import { bytesToHex } from "../shared/codec.js";
+import { bytesToHex } from "nostr-tools/utils";
 
 export function registerIdentityCommands(program: Command): void {
 // ─── keygen ─────────────────────────────────────────────────────────────────
