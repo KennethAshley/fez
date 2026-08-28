@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextStep, prevStep } from "../../fez-desktop/src/onboarding-steps.js";
+import { nextStep, prevStep, identityPlan } from "../../fez-desktop/src/onboarding-steps.js";
 
 describe("onboarding step order", () => {
   it("walks the locked order forward", () => {
@@ -12,5 +12,31 @@ describe("onboarding step order", () => {
     expect(prevStep("defaults" as never)).toBe("harness");
     expect(prevStep("team" as never)).toBe("profile");
     expect(prevStep("welcome" as never)).toBe("welcome");
+  });
+});
+
+/**
+ * "Get started" must be safe to click twice. set_identity REFUSES to
+ * overwrite (an existing identity is never silently replaced from the
+ * GUI), so backing out of the harness step and starting again used to
+ * error every time — the wizard's main path soft-locked. The plan:
+ * keep what this wizard already holds, adopt what the keychain holds,
+ * and mint only when there is truly nothing.
+ */
+describe("identityPlan", () => {
+  it("keeps the key this wizard already made", () => {
+    expect(identityPlan("ab".repeat(32), undefined)).toEqual({ action: "keep" });
+  });
+
+  it("adopts a stored identity instead of minting a colliding second one", () => {
+    expect(identityPlan(undefined, "AB".repeat(32) + "\n")).toEqual({
+      action: "adopt",
+      hex: "ab".repeat(32),
+    });
+  });
+
+  it("mints only when nothing is held or stored", () => {
+    expect(identityPlan(undefined, undefined)).toEqual({ action: "mint" });
+    expect(identityPlan(undefined, "not a key")).toEqual({ action: "mint" });
   });
 });

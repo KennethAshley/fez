@@ -31,3 +31,22 @@ export function prevStep(s: Step): Step {
   const i = ORDER.indexOf(s);
   return i > 0 ? ORDER[i - 1] : s;
 }
+
+/**
+ * What "get started" should do about identity. set_identity REFUSES to
+ * overwrite (an existing identity is never silently replaced from the
+ * GUI), so the button must be safe to click twice: backing out of the
+ * harness step and starting again used to mint a second key, collide
+ * with the first, and error the wizard's main path into a dead end.
+ * Keep what the wizard already holds; adopt what the keychain holds;
+ * mint only when there is truly nothing.
+ */
+export function identityPlan(
+  held: string | undefined,
+  stored: string | undefined
+): { action: "keep" } | { action: "adopt"; hex: string } | { action: "mint" } {
+  if (held) return { action: "keep" };
+  const hex = stored?.trim().toLowerCase();
+  if (hex && /^[0-9a-f]{64}$/.test(hex)) return { action: "adopt", hex };
+  return { action: "mint" };
+}

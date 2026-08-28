@@ -7,7 +7,7 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, relayRaw, setRelays } from "./relay";
-import { type Step, nextStep, prevStep } from "./onboarding-steps";
+import { type Step, nextStep, prevStep, identityPlan } from "./onboarding-steps";
 import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
 import { generateSprite } from "./sprite-gen";
@@ -128,10 +128,20 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
     setError(undefined);
     setBusy(true);
     try {
-      const secret = generateSecretKey();
-      const hex = bytesToHex(secret);
-      await invoke("set_identity", { hex, account: ACCOUNT });
-      setKeyHex(hex);
+      // Safe to click twice: set_identity refuses to overwrite, so a
+      // "back" from the harness step followed by "get started" again
+      // must reuse the identity that exists (in this wizard's state or
+      // already in the keychain) rather than minting a colliding second
+      // key and erroring the main path into a dead end (identityPlan).
+      const stored = await invoke<string>("get_identity", { account: ACCOUNT }).catch(() => undefined);
+      const plan = identityPlan(keyHex, stored);
+      if (plan.action === "adopt") {
+        setKeyHex(plan.hex);
+      } else if (plan.action === "mint") {
+        const hex = bytesToHex(generateSecretKey());
+        await invoke("set_identity", { hex, account: ACCOUNT });
+        setKeyHex(hex);
+      }
       // Buzz's harness page, fez-sized: one step that gives @fez a brain
       // before it ever speaks — so the first greeting is a working guide,
       // not an apology. The local-relay claim moves to CommunityStep's
