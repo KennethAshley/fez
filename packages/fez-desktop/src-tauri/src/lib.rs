@@ -1153,8 +1153,7 @@ fn remove_extension(name: String) -> Result<String, String> {
         }
     })?;
     for cmd in &bins_to_remove {
-        // same filename rule as install: never a path, only a name
-        if cmd.is_empty() || cmd.contains('/') || cmd.contains("..") {
+        if !package_install::safe_bin_name(cmd) {
             continue;
         }
         let file = home.join("bin").join(cmd);
@@ -2002,10 +2001,15 @@ fn extension_may_spawn(
         return Err(format!("{extension} was not granted `processes`"));
     }
     let manifest = manifest.ok_or_else(|| format!("{extension} has no installed package"))?;
-    let shipped_it = manifest
-        .get("bin")
-        .and_then(|v| v.as_object())
-        .is_some_and(|m| m.contains_key(bin));
+    // A bin map KEY is attacker-controlled JSON, stored verbatim from the
+    // package's own package.json — presence in the map is not enough. It
+    // must also be a bare filename (package_install::safe_bin_name), the
+    // same rule install applies before materializing bins: PathBuf::join
+    // silently discards the base on an absolute key and walks out of
+    // ~/.fez/bin on a traversal one, so an unchecked "declared" is a spawn
+    // primitive for any path on disk.
+    let shipped_it = package_install::safe_bin_name(bin)
+        && manifest.get("bin").and_then(|v| v.as_object()).is_some_and(|m| m.contains_key(bin));
     if !shipped_it {
         return Err(format!("{extension}'s package does not ship a bin called {bin}"));
     }

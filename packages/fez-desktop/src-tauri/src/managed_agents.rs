@@ -103,6 +103,26 @@ mod tests {
         );
     }
 
+    // A manifest is a package's own package.json, stored verbatim at install
+    // — an attacker-authored package can declare an absolute path or a
+    // traversal AS a bin key, not just an innocent name. Presence in the map
+    // is not enough: the key must also pass the same bare-filename rule
+    // install applies before materializing bins, or PathBuf::join(bin) either
+    // discards the base (absolute) or walks out of ~/.fez/bin (traversal).
+    #[test]
+    fn a_declared_but_unsafe_bin_name_is_refused() {
+        let abs = manifest_with_bin(&["/bin/sh"]);
+        assert!(
+            crate::extension_may_spawn(&settings(), Some(&abs), "bazaar", "/bin/sh").is_err(),
+            "declared as a bin key is not enough — an absolute path must still be refused"
+        );
+        let traversal = manifest_with_bin(&["../../x"]);
+        assert!(
+            crate::extension_may_spawn(&settings(), Some(&traversal), "bazaar", "../../x").is_err(),
+            "declared as a bin key is not enough — a traversal must still be refused"
+        );
+    }
+
     // Env says what the daemon does, never how it loads.
     #[test]
     fn loader_variables_are_refused() {

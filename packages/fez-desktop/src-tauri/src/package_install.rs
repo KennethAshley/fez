@@ -189,7 +189,7 @@ pub(crate) fn install_from_tarball(
     // ~/.fez/bin/<cmd> (mirrors the CLI's installBins).
     if let Some(bins) = pkg.get("bin").and_then(|v| v.as_object()) {
         for (cmd, rel) in bins {
-            if cmd.is_empty() || cmd.contains('/') || cmd.contains("..") {
+            if !safe_bin_name(cmd) {
                 continue;
             }
             let rel = match rel.as_str() {
@@ -252,12 +252,29 @@ pub(crate) fn install_from_tarball(
     Ok(InstallOutcome { installed, skill_entry, perms, wants_background, base })
 }
 
+/// A bin map KEY is trusted only as far as this: a bare filename, never a
+/// path. The map itself comes from a package's `package.json`, stored
+/// verbatim at install — an attacker-authored package can declare
+/// `"/bin/sh"` or `"../../x"` as a key just as easily as an honest one, and
+/// `PathBuf::join` on an absolute component discards the base entirely
+/// rather than erroring. Every site that turns a bin key into a real path
+/// (installing it, removing it, or — Task 6 — deciding whether an extension
+/// may spawn it) must pass the key through this first.
+pub(crate) fn safe_bin_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && !name.contains("..")
+}
+
 /// The manifest a package was installed with, read back verbatim from
 /// `packages/<base>/package.json` — the package dir's own record, never
 /// settings. `None` when there's no package dir: a name nothing installed,
-/// or an install that predates this layout and hasn't been migrated yet
-/// (Task 7).
+/// an install that predates this layout and hasn't been migrated yet (Task
+/// 7), or `base` isn't a shape a package dir was ever named with (the
+/// caller may be handing this a webview-supplied string, same guard
+/// `remove_extension`/`package_info` apply before touching disk).
 pub(crate) fn installed_manifest(base: &str, home: &Path) -> Option<serde_json::Value> {
+    if base.is_empty() || base.len() > 128 || !base.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')) {
+        return None;
+    }
     let content = std::fs::read(home.join("packages").join(base).join("package.json")).ok()?;
     serde_json::from_slice(&content).ok()
 }
@@ -441,5 +458,19 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
         assert_eq!(installed_version("tidy", home.path()).as_deref(), Some("0.0.1"));
+    }
+
+    // `base` can arrive straight from the webview (spawn_extension_agent's
+    // `extension`), same as `remove_extension`/`package_info` guard before
+    // touching disk — a traversal-shaped name must not resolve outside
+    // packages/, even if some other `../../evil/package.json` happens to
+    // exist.
+    #[test]
+    fn a_traversal_shaped_base_reads_no_manifest() {
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        std::fs::create_dir_all(home.path().join("evil")).unwrap();
+        std::fs::write(home.path().join("evil").join("package.json"), r#"{"name":"evil"}"#).unwrap();
+        assert!(installed_manifest("../evil", home.path()).is_none());
     }
 }
