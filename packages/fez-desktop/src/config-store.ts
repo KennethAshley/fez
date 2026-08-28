@@ -15,8 +15,19 @@ import { loadKeymap, DEFAULT_KEYMAP, type ActionId } from "./keymap";
  * `fez-keymap-changed` (already done across the app) or calling bumpConfig().
  */
 export interface AppConfig {
-  /** settings.json mcpServers — installed skills + their env. */
-  skills: Record<string, { command?: string; args?: string[]; url?: string; env?: Record<string, string> }>;
+  /** settings.json mcpServers — installed skills, their env, and install provenance. */
+  skills: Record<
+    string,
+    {
+      command?: string;
+      args?: string[];
+      url?: string;
+      env?: Record<string, string>;
+      package?: string;
+      source?: string;
+      description?: string;
+    }
+  >;
   /** settings.json extensionPermissions — granted perms per extension. */
   grants: Record<string, string[]>;
   /** settings.json extensionVersions — installed version per extension. */
