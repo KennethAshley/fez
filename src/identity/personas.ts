@@ -194,6 +194,44 @@ export const KNOWN_EXTRA_KEYS = new Set([
 const MAX_BODY_BYTES = 256 * 1024; // Buzz's persona body bound
 const MAX_FRONTMATTER_BYTES = 64 * 1024;
 
+/** The frontmatter keys the parser reads directly, plus every extra key a fez consumer knows. */
+const ALL_KNOWN_KEYS = ["harness", "aliases", "mcpServers", "description", ...KNOWN_EXTRA_KEYS];
+
+function editDistance(a: string, b: string): number {
+  const rows = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array<number>(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) rows[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      rows[i][j] = Math.min(
+        rows[i - 1][j] + 1,
+        rows[i][j - 1] + 1,
+        rows[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+  return rows[a.length][b.length];
+}
+
+/**
+ * The known key an unknown one was probably reaching for, or undefined.
+ *
+ * Distance 2 catches the realistic typo (`mcpServer` → `mcpServers` is
+ * 1) without claiming a match for a short custom key that happens to sit
+ * near a known one — hence the length floor. Advisory only: the key is
+ * still kept in `extra`, because extensions own keys fez has never heard
+ * of and a rejection would break them.
+ */
+export function nearestKnownKey(key: string): string | undefined {
+  if (key.length < 4) return undefined;
+  let best: { key: string; distance: number } | undefined;
+  for (const known of ALL_KNOWN_KEYS) {
+    if (known === key) return undefined;
+    const distance = editDistance(key.toLowerCase(), known.toLowerCase());
+    if (distance <= 2 && (!best || distance < best.distance)) best = { key: known, distance };
+  }
+  return best?.key;
+}
+
 export interface PersonaValidation {
   errors: string[];
   warnings: string[];
@@ -241,7 +279,12 @@ export function validatePersonaFile(raw: string, id: string, knownHarnesses?: st
   }
   for (const key of Object.keys(parsed.extra)) {
     if (!KNOWN_EXTRA_KEYS.has(key)) {
-      warnings.push(`unknown frontmatter key "${key}" — no fez consumer reads it (typo? extensions that own it can ignore this)`);
+      const near = nearestKnownKey(key);
+      warnings.push(
+        near
+          ? `unknown frontmatter key "${key}" — did you mean "${near}"? As written, nothing reads it.`
+          : `unknown frontmatter key "${key}" — no fez consumer reads it (typo? extensions that own it can ignore this)`
+      );
     }
   }
   // A source that doesn't parse is worse than no source: it LOOKS like

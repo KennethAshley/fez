@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
-import { parseSkillEntries, formatSkillEntries } from "@fezchat/client";
+import { parseSkillEntries, formatSkillEntries, nearestKnownKey } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
 import SkillPicker from "./SkillPicker";
 
@@ -69,6 +69,19 @@ export default function PersonaEditor({
       })
       .catch((err) => setState(String(err)));
   }, [name]);
+
+  // Advisory only — a near-miss key (`mcpServer` for `mcpServers`) is
+  // called out but never blocks the save; extensions own keys fez has
+  // never heard of, same rule the CLI's validatePersonaFile follows.
+  const keyWarnings = useMemo(
+    () =>
+      (front ?? [])
+        .map((line) => /^([\w-]+):/.exec(line)?.[1])
+        .filter((k): k is string => !!k)
+        .map((k) => ({ key: k, near: nearestKnownKey(k) }))
+        .filter((w): w is { key: string; near: string } => !!w.near),
+    [front]
+  );
 
   if (!front) {
     return (
@@ -211,6 +224,13 @@ export default function PersonaEditor({
         <label>system prompt</label>
         <textarea className="doc-textarea persona-prompt" value={body} spellCheck={false} onChange={(e) => setBody(e.target.value)} />
       </div>
+      {keyWarnings.length > 0 && (
+        <div className="settings-hint">
+          {keyWarnings.map((w) => (
+            <div key={w.key}>⚠ "{w.key}" — did you mean "{w.near}"? As written, nothing reads it.</div>
+          ))}
+        </div>
+      )}
       {state !== "idle" && state !== "saving" && <div className="ob-error">{state}</div>}
       <div className="agent-actions">
         <button className="agent-action" disabled={state === "saving"} onClick={() => void save()}>
