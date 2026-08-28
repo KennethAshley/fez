@@ -99,4 +99,58 @@ mod tests {
         .expect("old rows must still parse");
         assert_eq!(row.bin, "fez-agent");
     }
+
+    fn row(persona: &str, bin: &str, pid: u32) -> crate::SpawnedAgent {
+        serde_json::from_str(&format!(
+            r#"{{"persona":"{persona}","channels":[],"pid":{pid},"bin":"{bin}"}}"#
+        ))
+        .expect("row must parse")
+    }
+
+    // The registry holds more than fez-agent now: a recalled miner runs
+    // fez-bazaar-miner, and a name-check against "fez-agent" let it dodge the
+    // kill while its row was deleted — an orphan the UI could no longer see
+    // or stop. The signal must be gated on the row's OWN bin.
+    #[test]
+    fn kill_signals_a_row_whose_bin_is_not_fez_agent() {
+        let child = std::process::Command::new("/bin/sleep").arg("60").spawn().expect("spawn sleep");
+        let pid = child.id();
+        let rows = vec![row("miner", "sleep", pid)];
+        let (killed, rest) = crate::kill_decision(
+            rows,
+            "miner",
+            |r| crate::pid_runs_bin(r.pid, &r.bin),
+            |p| std::process::Command::new("/bin/kill")
+                .arg(p.to_string())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false),
+        );
+        let mut child = child;
+        let _ = child.wait(); // reap
+        assert!(killed, "a live sleep row must be signalled");
+        assert_eq!(rest.expect("registry must change").len(), 0);
+    }
+
+    // A live process that refused the signal keeps its row: deleting it would
+    // hide a process we failed to stop, and the next spawn would double it.
+    #[test]
+    fn a_live_row_that_refused_the_signal_is_kept() {
+        let rows = vec![row("miner", "fez-bazaar-miner", 4242)];
+        let (killed, rest) = crate::kill_decision(rows, "miner", |_| true, |_| false);
+        assert!(!killed);
+        assert!(rest.is_none(), "the registry must not change");
+    }
+
+    // A stale row (pid gone or recycled to some other command) is dropped
+    // without any signal being sent at a pid we no longer own.
+    #[test]
+    fn a_stale_row_is_dropped_without_a_signal() {
+        let rows = vec![row("miner", "fez-bazaar-miner", 4242)];
+        let (killed, rest) = crate::kill_decision(rows, "miner", |_| false, |_| {
+            panic!("must not signal a pid that is not running our bin")
+        });
+        assert!(!killed);
+        assert_eq!(rest.expect("stale row must be dropped").len(), 0);
+    }
 }

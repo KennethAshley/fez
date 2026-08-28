@@ -1971,21 +1971,13 @@ fn raw_pid_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// pid_alive_named's story again, for the agent registry: rows persist
-/// across reboots, macOS reuses low pids, and a bare `kill -0` believes
+/// Is this pid still running the binary we started under it? Rows persist
+/// across reboots and macOS reuses low pids, and a bare `kill -0` believes
 /// any process wearing the pid — a reused pid made agent_alive a false
-/// positive (the persona looked running when it wasn't) and made
-/// kill_agent SIGTERM an innocent, unrelated process. `command=` (full
-/// command line, not just comm) so the ~/.fez/bin/fez-agent path still
-/// matches on a substring.
-fn pid_is_fez_agent(pid: u32) -> bool {
-    pid_runs_bin(pid, "fez-agent")
-}
-
-/// Is this pid still running the binary we started under it? A recycled pid
-/// running something else is not our process, which is the whole reason this
-/// checks the command line rather than trusting `kill -0`.
-fn pid_runs_bin(pid: u32, bin: &str) -> bool {
+/// positive and made kill_agent SIGTERM an innocent, unrelated process.
+/// `command=` (full command line, not just comm) so the ~/.fez/bin/<bin>
+/// path still matches on a substring.
+pub(crate) fn pid_runs_bin(pid: u32, bin: &str) -> bool {
     if !raw_pid_alive(pid) {
         return false;
     }
@@ -2247,31 +2239,56 @@ fn spawn_tracked_process(
     Ok(pid)
 }
 
-#[tauri::command]
-fn kill_agent(persona: String) -> Result<bool, String> {
-    let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let rows = load_agents_registry();
-    let hit = rows.iter().find(|r| r.persona == persona).cloned();
+/// The decision half of kill_agent, split from disk and signals so the rule
+/// is testable. Two rules: the signal is gated on the row's OWN bin — the
+/// registry holds more than fez-agent now (extension bins like
+/// fez-bazaar-miner), and a name-check against "fez-agent" let a live miner
+/// dodge the kill while its row was deleted, orphaning it — and a live
+/// process that REFUSED the signal keeps its row, because deleting it would
+/// hide a process we failed to stop and invite a double-spawn on top of it.
+pub(crate) fn kill_decision(
+    rows: Vec<SpawnedAgent>,
+    persona: &str,
+    runs: impl Fn(&SpawnedAgent) -> bool,
+    signal: impl Fn(u32) -> bool,
+) -> (bool, Option<Vec<SpawnedAgent>>) {
+    let Some(row) = rows.iter().find(|r| r.persona == persona) else {
+        return (false, None);
+    };
     // Never signal a pid whose command doesn't match — a reused pid across
     // a reboot belongs to some unrelated process, and a bare kill -0 (or
     // worse, a real kill) can't tell the difference.
-    let killed = match &hit {
-        Some(row) if pid_is_fez_agent(row.pid) => std::process::Command::new("/bin/kill")
-            .arg(row.pid.to_string())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false),
-        _ => false,
-    };
-    if hit.is_some() {
-        let rest: Vec<SpawnedAgent> = rows.into_iter().filter(|r| r.persona != persona).collect();
+    let alive = runs(row);
+    let killed = alive && signal(row.pid);
+    if alive && !killed {
+        return (false, None);
+    }
+    (killed, Some(rows.into_iter().filter(|r| r.persona != persona).collect()))
+}
+
+#[tauri::command]
+fn kill_agent(persona: String) -> Result<bool, String> {
+    let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (killed, rest) = kill_decision(
+        load_agents_registry(),
+        &persona,
+        |r| pid_runs_bin(r.pid, &r.bin),
+        |pid| {
+            std::process::Command::new("/bin/kill")
+                .arg(pid.to_string())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        },
+    );
+    if let Some(rest) = rest {
         save_agents_registry(&rest);
     }
     Ok(killed)
 }
 
 /// Alive if EITHER our own registry says so (name-checked pid, not a
-/// bare kill -0 — see pid_is_fez_agent) OR a sentinel-spawned process for
+/// bare kill -0 — see pid_runs_bin) OR a sentinel-spawned process for
 /// this persona exists (see sentinel_agent_alive). The second check is
 /// the reverse split-brain fix: a dead sentinel's detached agents keep
 /// running with nothing in the desktop's registry, and without this the
