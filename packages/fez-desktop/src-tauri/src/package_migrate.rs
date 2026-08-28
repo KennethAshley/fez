@@ -24,10 +24,17 @@ const PART_DIRS: [(&str, &str); 4] = [
 /// `extensionBins`/`extensionVersions` itself once this returns `Ok`, so
 /// settings-mutation stays out of this testable core.
 ///
-/// Idempotent: a name whose `packages/<name>/` already exists (a prior
-/// migration, or a fresh install) is skipped outright — a second run
-/// changes nothing. A name with no flat files at all (a settings orphan —
-/// e.g. a grant left behind after a manual `rm -rf`) is skipped too, but
+/// Idempotent AND resumable. "Done" is `packages/<name>/package.json`
+/// existing — not just the dir — because the dir is created before any
+/// move happens; treating the bare dir as "done" would let a crash (or one
+/// failed rename) mid-name leave a package.json-less dir that every future
+/// run skips forever, silently losing that name's facts once the caller
+/// clears `extensionBins`/`extensionVersions` on `Ok`. A half-moved name is
+/// instead resumed: each per-item move first checks whether the flat path
+/// is already a symlink (a prior partial run got that one done) and skips
+/// re-renaming it, so a retry finishes the remaining items and writes
+/// package.json. A name with no flat files at all (a settings orphan — e.g.
+/// a grant left behind after a manual `rm -rf`) is skipped too, but
 /// reported in the returned log rather than silently dropped.
 ///
 /// The reconstructed manifest's `fez.permissions` is capped at exactly the
@@ -43,8 +50,8 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
 
     for (name, granted) in perms_map {
         let pkg_dir = packages_dir.join(name);
-        if pkg_dir.exists() {
-            continue; // already migrated, or never flat to begin with
+        if pkg_dir.join("package.json").exists() {
+            continue; // fully migrated (or a fresh install) — the manifest is the completion marker, not just the dir
         }
 
         let found_parts: Vec<(&str, &str)> =
@@ -70,22 +77,31 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
         for (part_key, dir) in &found_parts {
             let flat = home.join(dir).join(format!("{name}.js"));
             let dest = pkg_dir.join("dist").join(format!("{part_key}.js"));
-            std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
-            std::fs::rename(&flat, &dest).map_err(|e| e.to_string())?;
-            link_index(&dest, &flat)?;
+            // A flat path that's already a symlink was moved by a prior
+            // partial run — resume by leaving it, not by re-renaming a
+            // symlink onto its own target.
+            let already_moved = std::fs::symlink_metadata(&flat).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+            if !already_moved {
+                std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+                std::fs::rename(&flat, &dest).map_err(|e| e.to_string())?;
+                link_index(&dest, &flat)?;
+                log.push(format!("{name}: {dir}/{name}.js → packages/{name}/dist/{part_key}.js (migrated)"));
+            }
             parts_json.insert(part_key.to_string(), serde_json::json!(format!("dist/{part_key}.js")));
-            log.push(format!("{name}: {dir}/{name}.js → packages/{name}/dist/{part_key}.js (migrated)"));
         }
 
         let mut bin_json = serde_json::Map::new();
         for cmd in &found_bins {
             let flat = home.join("bin").join(cmd);
             let dest = pkg_dir.join("bin").join(cmd);
-            std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
-            std::fs::rename(&flat, &dest).map_err(|e| e.to_string())?;
-            link_index(&dest, &flat)?;
+            let already_moved = std::fs::symlink_metadata(&flat).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+            if !already_moved {
+                std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+                std::fs::rename(&flat, &dest).map_err(|e| e.to_string())?;
+                link_index(&dest, &flat)?;
+                log.push(format!("{name}: bin/{cmd} → packages/{name}/bin/{cmd} (migrated)"));
+            }
             bin_json.insert(cmd.clone(), serde_json::json!(format!("bin/{cmd}")));
-            log.push(format!("{name}: bin/{cmd} → packages/{name}/bin/{cmd} (migrated)"));
         }
 
         let version = settings
@@ -177,6 +193,43 @@ mod tests {
         let log = migrate_flat_installs(home.path(), &settings).unwrap();
         assert!(!home.path().join("packages").join("ghost").exists());
         assert!(log.iter().any(|l| l.contains("ghost") && l.contains("orphan")));
+    }
+
+    #[test]
+    fn a_partially_migrated_name_is_resumed_not_locked_out() {
+        let home = tempfile::tempdir().unwrap();
+        for d in ["gui-extensions", "extensions"] {
+            std::fs::create_dir_all(home.path().join(d)).unwrap();
+        }
+        // Simulate a crash mid-migration: pkg_dir exists, one part already
+        // moved + symlinked back, but package.json was never written (the
+        // old "pkg_dir.exists()" marker would treat this as done forever).
+        let pkg_dir = home.path().join("packages").join("tidy");
+        std::fs::create_dir_all(pkg_dir.join("dist")).unwrap();
+        std::fs::write(pkg_dir.join("dist").join("gui.js"), "gui").unwrap();
+        std::os::unix::fs::symlink(
+            pkg_dir.join("dist").join("gui.js"),
+            home.path().join("gui-extensions").join("tidy.js"),
+        )
+        .unwrap();
+        // second part still flat — the part of the move that never happened
+        std::fs::write(home.path().join("extensions").join("tidy.js"), "headless").unwrap();
+
+        let settings = serde_json::json!({
+            "extensionPermissions": { "tidy": ["ui"] },
+            "extensionVersions": { "tidy": "0.2.0" },
+        });
+        migrate_flat_installs(home.path(), &settings).unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(pkg_dir.join("package.json")).unwrap()).unwrap();
+        assert_eq!(manifest.pointer("/fez/reconstructed"), Some(&serde_json::json!(true)));
+        assert_eq!(manifest.pointer("/version"), Some(&serde_json::json!("0.2.0")));
+        assert_eq!(manifest.pointer("/fez/parts/gui"), Some(&serde_json::json!("dist/gui.js")));
+        assert_eq!(manifest.pointer("/fez/parts/headless"), Some(&serde_json::json!("dist/headless.js")));
+        assert!(pkg_dir.join("dist/headless.js").exists());
+        let link = home.path().join("extensions").join("tidy.js");
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
     }
 
     #[test]
