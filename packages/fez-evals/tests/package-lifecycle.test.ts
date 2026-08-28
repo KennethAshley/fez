@@ -101,6 +101,30 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
     expect(s.mcpServers?.tidy).toBeDefined();
   });
 
+  test("install keeps the package: one dir with the manifest and the real files", () => {
+    const pkgRoot = at("packages", "tidy");
+    const manifest = JSON.parse(fs.readFileSync(path.join(pkgRoot, "package.json"), "utf-8"));
+    expect(manifest.name).toBe("@fezchat/tidy");
+    expect(manifest.version).toBe("0.0.1");
+    // the real artifacts live IN the package dir
+    for (const rel of ["dist/headless.js", "dist/gui.js", "dist/relay.js", "dist/ws.js", "bin/tidy-tool"]) {
+      expect(fs.existsSync(path.join(pkgRoot, rel)), rel).toBe(true);
+    }
+  });
+
+  test("the flat directories are an index pointing INTO the package dir", () => {
+    for (const [dir, file] of [
+      ["extensions", "tidy.js"], ["gui-extensions", "tidy.js"],
+      ["relay-extensions", "tidy.js"], ["workspace-providers", "tidy.js"],
+      ["bin", "tidy-tool"],
+    ] as const) {
+      const p = at(dir, file);
+      const st = fs.lstatSync(p);
+      expect(st.isSymbolicLink(), `${dir}/${file} must be a symlink`).toBe(true);
+      expect(fs.realpathSync(p).includes(path.join("packages", "tidy")), `${dir}/${file} must resolve into packages/tidy`).toBe(true);
+    }
+  });
+
   test("the skill entry's relative args resolve to real files in the installed package", () => {
     // A package manifest says `args: ["dist/mcp.js"]` relative to ITSELF;
     // copied verbatim into settings it can never spawn (no cwd travels

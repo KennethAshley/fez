@@ -2,7 +2,7 @@ import { fezHomeAt } from "../shared/fez-home.js";
 import { loadSettings, saveSettings } from "../shared/settings.js";
 import { execSync } from "child_process";
 import fs from "fs/promises";
-import { existsSync } from "fs";
+import fsSync, { existsSync } from "fs";
 import path from "path";
 import os from "os";
 import chalk from "chalk";
@@ -199,6 +199,30 @@ export class PackageManager {
   /** ~/.fez/<segments> under the (possibly injected) home. */
   private home(...segments: string[]): string {
     return fezHomeAt(this.base, ...segments);
+  }
+
+  /**
+   * The package's canonical home: ~/.fez/packages/<base> (de-scoped —
+   * `@fezchat/tidy` → `tidy`). This is separate from the npm/git
+   * source-fetch dirs (getInstallDir/getContentDir) which stay put; this
+   * is where the REAL files an install writes end up living, with the
+   * flat dirs (extensions, bin, ...) becoming a symlink index into it.
+   */
+  packageDir(base: string): string {
+    return this.home("packages", base);
+  }
+
+  /** The load index: a flat entry pointing into the package dir. Symlink
+   *  first; copy when the filesystem refuses — the package dir stays the
+   *  record either way. */
+  private linkIndex(target: string, linkPath: string): void {
+    fsSync.mkdirSync(path.dirname(linkPath), { recursive: true });
+    fsSync.rmSync(linkPath, { force: true });
+    try {
+      fsSync.symlinkSync(target, linkPath);
+    } catch {
+      fsSync.copyFileSync(target, linkPath);
+    }
   }
 
   async init(): Promise<void> {
@@ -463,7 +487,11 @@ export class PackageManager {
   }
 
   private async runInstallHook(name: string, manifest: FezManifest | null): Promise<void> {
-    if (!manifest?.fez) return;
+    if (!manifest || !manifest.fez) return;
+
+    // The package dir is the source of truth from here on: the manifest
+    // as installed, verbatim, before anything else touches it.
+    await this.writePackageManifest(name, manifest);
 
     const pkg = this.packages.get(name);
     const integrations = manifest.fez.integrations;
@@ -652,16 +680,14 @@ export class PackageManager {
     const extensionsDir = this.home("extensions");
     await fs.mkdir(extensionsDir, { recursive: true });
 
-    const pkgDir = this.getContentDir(this.packages.get(name)!);
-
     if (config.entry) {
       // Preserve the entry's real extension — a bundled package ships a .js
       // entry that plain `node` can import; renaming it .ts would misstate
       // what it is (loadExtensions accepts .ts/.js/.mjs either way).
       const ext = path.extname(config.entry) || ".js";
-      const src = path.join(pkgDir, config.entry);
-      const dest = path.join(extensionsDir, `${name}${ext}`);
-      await fs.copyFile(src, dest);
+      const dest = await this.materializeIntoPackage(name, config.entry);
+      const linkPath = path.join(extensionsDir, `${name}${ext}`);
+      this.linkIndex(dest, linkPath);
       console.log(chalk.dim(`   Created ~/.fez/extensions/${name}${ext}`));
     }
   }
@@ -681,13 +707,19 @@ export class PackageManager {
   private async installBins(name: string, bin: Record<string, string>): Promise<void> {
     const pkg = this.packages.get(name);
     if (!pkg) return;
-    const pkgDir = this.getContentDir(pkg);
     const binDir = this.home("bin");
     await fs.mkdir(binDir, { recursive: true });
     for (const [cmd, rel] of Object.entries(bin)) {
-      const target = path.join(binDir, cmd);
-      await fs.copyFile(path.join(pkgDir, rel), target);
-      await fs.chmod(target, 0o755);
+      // Preserve the manifest's own relative path in the package dir, and
+      // ALSO land a canonical bin/<cmd> copy there when the manifest
+      // didn't already put it under bin/ — one predictable spot to chmod
+      // and to symlink from, whatever the package called its source file.
+      const dest = await this.materializeIntoPackage(name, rel);
+      const underBin = rel.split(/[\\/]/)[0] === "bin";
+      const canonical = underBin ? dest : path.join(this.packageDir(name), "bin", cmd);
+      if (!underBin) await this.copyFileEnsuringDir(dest, canonical);
+      await fs.chmod(canonical, 0o755); // chmod the PACKAGE file — the symlink inherits
+      this.linkIndex(canonical, path.join(binDir, cmd));
       console.log(chalk.dim(`   Installed ~/.fez/bin/${cmd}`));
     }
     if (!(process.env.PATH ?? "").split(":").includes(binDir)) {
@@ -715,7 +747,8 @@ export class PackageManager {
     if (parts.gui) {
       const guiDir = this.home("gui-extensions");
       await fs.mkdir(guiDir, { recursive: true });
-      await fs.copyFile(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
+      const dest = await this.materializeIntoPackage(name, parts.gui);
+      this.linkIndex(dest, path.join(guiDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/gui-extensions/${name}.js`));
     }
     if (parts.relay) {
@@ -726,7 +759,8 @@ export class PackageManager {
       // deliberately two acts.
       const relayDir = this.home("relay-extensions");
       await fs.mkdir(relayDir, { recursive: true });
-      await fs.copyFile(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
+      const dest = await this.materializeIntoPackage(name, parts.relay);
+      this.linkIndex(dest, path.join(relayDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/relay-extensions/${name}.js`));
       console.log(chalk.dim("   Start the relay with --extensions to load it."));
     }
@@ -742,7 +776,8 @@ export class PackageManager {
       // one agent would be the worst kind of half-working.
       const wsDir = this.home("workspace-providers");
       await fs.mkdir(wsDir, { recursive: true });
-      await fs.copyFile(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
+      const dest = await this.materializeIntoPackage(name, parts.workspace);
+      this.linkIndex(dest, path.join(wsDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/workspace-providers/${name}.js`));
       console.log(chalk.dim("   Personas can now set `repo:` to work from a checkout."));
     }
@@ -804,6 +839,33 @@ export class PackageManager {
     for (const ext of [".ts", ".js", ".mjs"]) {
       await fs.rm(this.home("extensions", `${name}${ext}`), { force: true });
     }
+  }
+
+  /** Write the manifest as installed, verbatim, to packages/<base>/package.json. */
+  private async writePackageManifest(name: string, manifest: FezManifest): Promise<void> {
+    const dir = this.packageDir(name);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "package.json"), JSON.stringify(manifest, null, 2), "utf-8");
+  }
+
+  /** Plain copy, creating the destination's parent dirs as needed. */
+  private async copyFileEnsuringDir(src: string, dest: string): Promise<void> {
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.copyFile(src, dest);
+  }
+
+  /**
+   * Copy a manifest-relative file (e.g. "dist/gui.js") from the fetched
+   * source into the package dir, preserving that relative path. Returns
+   * the absolute destination — the flat dirs symlink to this, never to
+   * the source-fetch area, so the package dir is the one place a part's
+   * real bytes live.
+   */
+  private async materializeIntoPackage(name: string, rel: string): Promise<string> {
+    const src = path.join(this.getContentDir(this.packages.get(name)!), rel);
+    const dest = path.join(this.packageDir(name), rel);
+    await this.copyFileEnsuringDir(src, dest);
+    return dest;
   }
 
   private getInstallDir(pkg: FezPackage): string {
