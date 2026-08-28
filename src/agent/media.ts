@@ -82,11 +82,18 @@ export function allowedMediaHosts(opts: {
  *
  * imeta is the good source — the sender declared the type and size — and
  * it is the ONLY source that can describe a content-addressed blob, whose
- * URL is a bare sha256 with no extension to read. Bare URLs in the body are
- * listed too, undescribed, because an agent pasting a link is still
- * offering something to look at.
+ * URL is a bare sha256 with no extension to read. Bare URLs in the body
+ * count only when they point at an allowed MEDIA host: a pasted blob link
+ * is an offer to look, but an ordinary hyperlink (docs, a PR, an article)
+ * is prose — fez_view_attachment refuses every non-media host, so listing
+ * one as "an attachment you have NOT seen" sends the model to a
+ * guaranteed refusal and has agents telling users they can't see plain
+ * links. No allowlist (undefined) means no bare URLs at all.
  */
-export function attachmentsOf(event: { content: string; tags: string[][] }): Attachment[] {
+export function attachmentsOf(
+  event: { content: string; tags: string[][] },
+  allowedBareHosts?: Set<string>
+): Attachment[] {
   const byUrl = new Map<string, Attachment>();
   for (const tag of event.tags) {
     if (tag[0] !== "imeta") continue;
@@ -105,6 +112,8 @@ export function attachmentsOf(event: { content: string; tags: string[][] }): Att
     });
   }
   for (const match of event.content.matchAll(/https?:\/\/[^\s)]+/g)) {
+    const host = hostOf(match[0]);
+    if (!host || !allowedBareHosts?.has(host)) continue;
     if (!byUrl.has(match[0])) byUrl.set(match[0], { url: match[0] });
   }
   return [...byUrl.values()];

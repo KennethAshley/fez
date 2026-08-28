@@ -50,6 +50,8 @@ import {
   MAX_CHAIN_DEPTH,
   attachmentsOf,
   attachmentNotice,
+  allowedMediaHosts,
+  loadSettings,
 } from "@fezchat/protocol";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
@@ -123,7 +125,14 @@ function extractArtifacts(reply: string): { text: string; artifacts: { type: str
  * every agent in it whether or not anyone wanted them read.
  */
 function attachmentPrompt(event: { content: string; tags: string[][] }): string | undefined {
-  const attachments = attachmentsOf(event);
+  // Bare body links count only when they point at the workspace's own
+  // media hosts — the same allowlist fez_view_attachment enforces — so
+  // nothing is offered here that the tool would then refuse to fetch.
+  let hosts: Set<string> | undefined;
+  try {
+    hosts = allowedMediaHosts({ settingsMediaServer: loadSettings().mediaServer, env: process.env });
+  } catch { /* settings unavailable — imeta attachments still count */ }
+  const attachments = attachmentsOf(event, hosts);
   if (attachments.length === 0) return undefined;
   console.log(`📎 ${attachments.length} attachment(s) offered to the model (fetched only if it asks)`);
   return attachmentNotice(attachments);

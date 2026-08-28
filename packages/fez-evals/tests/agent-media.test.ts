@@ -54,9 +54,29 @@ describe("attachmentsOf", () => {
     expect(found).toEqual([{ url: "https://b.example/abc", mime: "image/png", size: 2_400_000 }]);
   });
 
-  it("still finds a bare pasted URL that carries no imeta", () => {
-    const found = attachmentsOf({ content: "look https://b.example/x.png", tags: [] });
+  it("finds a bare pasted URL when its host is the workspace's media server", () => {
+    const found = attachmentsOf({ content: "look https://b.example/x.png", tags: [] }, new Set(["b.example"]));
     expect(found).toEqual([{ url: "https://b.example/x.png" }]);
+  });
+
+  it("an ordinary web link is a link, not an attachment", () => {
+    // The view tool only fetches allowlisted media hosts, so offering a
+    // docs page or a PR as an "attachment you have NOT seen" sends the
+    // model to a guaranteed refusal — and agents telling users they
+    // "can't see" plain hyperlinks.
+    const found = attachmentsOf(
+      { content: "see https://docs.example/page and https://github.com/x/pr/1", tags: [] },
+      new Set(["b.example"])
+    );
+    expect(found).toEqual([]);
+  });
+
+  it("without an allowlist, bare urls stay links and only imeta counts", () => {
+    const found = attachmentsOf({
+      content: "https://elsewhere.example/x.png",
+      tags: [imeta("https://b.example/abc", "image/png", 10)],
+    });
+    expect(found).toEqual([{ url: "https://b.example/abc", mime: "image/png", size: 10 }]);
   });
 
   it("does not list the same url twice when imeta and the body agree", () => {
