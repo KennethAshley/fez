@@ -198,7 +198,7 @@ export function routerBody(
   };
 }
 
-const nameAlt = (names: string[]) => names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+const nameAlt = (names: string[]) => names.map(escapeRe).join("|");
 
 /**
  * Explicit actor: the asker NAMED who should act ("have researcher dig
