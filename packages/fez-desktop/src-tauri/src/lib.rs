@@ -915,12 +915,11 @@ fn install_package(name: String) -> Result<String, String> {
     // index them into the flat dirs — see package_install for the layout
     // (shared with the CLI's PackageManager).
     let home = fez_home()?;
+    // The emptiness check (no installable gui/headless/relay/workspace/
+    // persona part) and the bin-collision refusal both now live INSIDE
+    // install_from_tarball, before any write — a refused install must
+    // leave nothing on disk, not an orphan packages/<base>/package.json.
     let outcome = package_install::install_from_tarball(&name, &tar_bytes, latest, &home)?;
-    if outcome.installed.is_empty() {
-        return Err(format!(
-            "{name}@{latest} has no installable gui/headless/relay/workspace/persona part"
-        ));
-    }
 
     // 6. Record granted permissions + background opt-in in settings.json —
     // fed from the outcome; install_from_tarball never touches settings.

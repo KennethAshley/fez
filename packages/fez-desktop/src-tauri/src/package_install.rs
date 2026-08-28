@@ -133,6 +133,24 @@ fn materialize(tar_bytes: &[u8], pkg_dir: &Path, rel: &str, missing_ctx: &str) -
     Ok(dest)
 }
 
+/// Whether a manifest declares anything install_from_tarball would
+/// actually place on disk — checked BEFORE any write, so a package with
+/// none of these can be refused with nothing left behind. Reads the
+/// tarball for personas (tar_list_md doesn't write anything) but never
+/// materializes a part just to check for its existence.
+fn has_installable_content(pkg: &serde_json::Value, tar_bytes: &[u8]) -> bool {
+    let parts = pkg.pointer("/fez/parts");
+    let has_code_or_skill_part = ["gui", "headless", "relay", "workspace", "skill"]
+        .iter()
+        .any(|k| parts.and_then(|p| p.get(k)).is_some());
+    let has_bin = pkg.get("bin").and_then(|v| v.as_object()).is_some_and(|m| !m.is_empty());
+    let has_persona = pkg.pointer("/fez/personas").is_some_and(|_| {
+        let dir = pkg.pointer("/fez/personas/dir").and_then(|v| v.as_str()).unwrap_or("personas");
+        tar_list_md(tar_bytes, dir).iter().any(|(_, content)| content.contains("harness:"))
+    });
+    has_code_or_skill_part || has_bin || has_persona
+}
+
 /// Place an already-fetched, already-gated npm tarball into
 /// `~/.fez/packages/<base>/` and index it into the flat dirs. Does NOT
 /// touch settings.json — the caller feeds the returned `InstallOutcome`
@@ -140,7 +158,7 @@ fn materialize(tar_bytes: &[u8], pkg_dir: &Path, rel: &str, missing_ctx: &str) -
 pub(crate) fn install_from_tarball(
     name: &str,
     tar_bytes: &[u8],
-    _version: &str,
+    version: &str,
     home: &Path,
 ) -> Result<InstallOutcome, String> {
     let pkg_bytes = tar_read(tar_bytes, "package.json").ok_or("no package.json in tarball")?;
@@ -150,6 +168,38 @@ pub(crate) fn install_from_tarball(
     // De-scoped basename is the file/extension name: @fezchat/kanban → kanban.
     let base = name.rsplit('/').next().unwrap_or(name).trim_start_matches('@').to_string();
     let parts = pkg.pointer("/fez/parts");
+
+    // Emptiness check BEFORE any write — this used to run in lib.rs
+    // AFTER install_from_tarball had already written packages/<base>/package.json,
+    // leaving an orphan dir that read_extension_versions surfaced as a
+    // phantom row for a package that installed nothing.
+    if !has_installable_content(&pkg, tar_bytes) {
+        return Err(format!(
+            "{name}@{version} has no installable gui/headless/relay/workspace/persona part"
+        ));
+    }
+
+    // Bin-collision check BEFORE any write, mirroring the CLI's binOwner
+    // check (installBins in package-manager.ts): a second package
+    // claiming a command name already owned by another package must be
+    // refused, naming the owner — not silently steal ~/.fez/bin/<cmd> via
+    // link_index's remove_file + symlink. Checking this before the
+    // package dir is even created keeps a refused install from leaving a
+    // phantom packages/<base>/ behind.
+    if let Some(bins) = pkg.get("bin").and_then(|v| v.as_object()) {
+        let packages_dir = home.join("packages");
+        for cmd in bins.keys() {
+            if !safe_bin_name(cmd) {
+                continue;
+            }
+            if let Some(owner) = bin_owner(&home.join("bin").join(cmd), &packages_dir) {
+                if owner != base {
+                    return Err(format!("bin \"{cmd}\" is already installed by {owner} — refusing"));
+                }
+            }
+        }
+    }
+
     let pkg_dir = home.join("packages").join(&base);
     std::fs::create_dir_all(&pkg_dir).map_err(|e| e.to_string())?;
 
@@ -308,25 +358,33 @@ pub(crate) fn installed_version(base: &str, home: &Path) -> Option<String> {
     installed_manifest(base, home)?.get("version")?.as_str().map(String::from)
 }
 
-/// Delete an index entry iff `base` still owns it — a symlink whose
-/// canonicalized target resolves under the canonicalized `packages/<base>/`
-/// (mirrors the CLI's `binOwner`/`removeIfOwned`). A regular file (legacy
-/// layout, or a copy-fallback), a broken symlink, or one that resolves
-/// somewhere else entirely is left alone. Both sides get canonicalized —
-/// on macOS `/var` is itself a symlink to `/private/var`, so a
-/// tempdir-rooted `home` resolves the entry there while an un-canonicalized
-/// `packages` dir still reads `/var/...`, and a prefix check across that
-/// mismatch would silently treat every package as unowned.
-fn remove_if_owned(entry: &Path, base: &str, packages_dir: &Path) -> bool {
+/// The package that owns a flat-dir entry (bin, gui-extensions, ...), or
+/// `None` if nobody does — mirrors the CLI's `binOwner`. Ownership is
+/// structural, never by name: a symlink whose canonicalized target
+/// resolves under the canonicalized `packages_dir` is owned by the first
+/// path component under it; a regular file (legacy layout, or a
+/// copy-fallback), a broken symlink, or one that resolves somewhere else
+/// entirely is unowned. Both sides get canonicalized — on macOS `/var` is
+/// itself a symlink to `/private/var`, so a tempdir-rooted `home` resolves
+/// the entry there while an un-canonicalized `packages` dir still reads
+/// `/var/...`, and a prefix check across that mismatch would silently
+/// treat every package as unowned. Shared by the pre-install collision
+/// check and `remove_if_owned` — one ownership rule, not two.
+fn bin_owner(entry: &Path, packages_dir: &Path) -> Option<String> {
     let is_symlink = std::fs::symlink_metadata(entry).map(|m| m.file_type().is_symlink()).unwrap_or(false);
     if !is_symlink {
-        return false;
+        return None;
     }
-    let (Ok(real), Ok(real_packages)) = (std::fs::canonicalize(entry), std::fs::canonicalize(packages_dir)) else {
-        return false;
-    };
-    let owner = real.strip_prefix(&real_packages).ok().and_then(|rest| rest.components().next());
-    if owner.map(|c| c.as_os_str() == base) != Some(true) {
+    let real = std::fs::canonicalize(entry).ok()?;
+    let real_packages = std::fs::canonicalize(packages_dir).ok()?;
+    let owner = real.strip_prefix(&real_packages).ok()?.components().next()?;
+    Some(owner.as_os_str().to_string_lossy().into_owned())
+}
+
+/// Delete an index entry iff `base` still owns it (see `bin_owner`). A
+/// foreign or already-absent entry is left alone.
+fn remove_if_owned(entry: &Path, base: &str, packages_dir: &Path) -> bool {
+    if bin_owner(entry, packages_dir).as_deref() != Some(base) {
         return false;
     }
     std::fs::remove_file(entry).is_ok()
@@ -449,6 +507,64 @@ mod tests {
         assert!(std::fs::canonicalize(arg0).unwrap().starts_with(&pkg_real), "skill arg must resolve into the package dir");
         assert!(Path::new(arg0).exists());
         assert!(!home.path().join("skills").exists(), "skills/ must not be written anymore");
+    }
+
+    fn fixture_tar_clash() -> Vec<u8> {
+        let mut b = tar::Builder::new(Vec::new());
+        let add = |b: &mut tar::Builder<Vec<u8>>, path: &str, data: &str| {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(data.len() as u64); h.set_mode(0o644); h.set_cksum();
+            b.append_data(&mut h, path, data.as_bytes()).unwrap();
+        };
+        add(&mut b, "package/package.json", r#"{
+          "name": "@fezchat/clash", "version": "0.0.1",
+          "bin": {"tidy-tool": "dist/tool.js"},
+          "fez": {"type": "extension"}
+        }"#);
+        add(&mut b, "package/dist/tool.js", "#!/usr/bin/env node\n");
+        b.into_inner().unwrap()
+    }
+
+    // The Rust mirror of the CLI's "a second package shipping the same
+    // command is refused, naming the owner" — before this, install_from_tarball
+    // had no ownership check at all: a second package silently stole
+    // ~/.fez/bin/<cmd> from its owner via link_index's remove_file + symlink.
+    #[test]
+    fn a_second_package_shipping_the_same_bin_is_refused_naming_the_owner() {
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        let err = install_from_tarball("@fezchat/clash", &fixture_tar_clash(), "0.0.1", home.path())
+            .expect_err("a second package claiming an already-owned bin must be refused");
+        assert!(err.contains("tidy-tool"), "unexpected error: {err}");
+        assert!(err.contains("tidy"), "error must name the owner: {err}");
+        // the loser must not have written anything — refusal happens BEFORE
+        // any package-dir or flat write, mirroring the CLI's ordering
+        assert!(!home.path().join("packages").join("clash").exists());
+        // the first package's symlink still resolves into its own dir
+        let p = home.path().join("bin").join("tidy-tool");
+        let pkg_real = std::fs::canonicalize(home.path().join("packages").join("tidy")).unwrap();
+        assert!(std::fs::canonicalize(&p).unwrap().starts_with(&pkg_real));
+    }
+
+    // The emptiness check must fire BEFORE install_from_tarball writes
+    // anything — previously lib.rs checked outcome.installed.is_empty()
+    // AFTER install_from_tarball had already written packages/<base>/package.json,
+    // leaving an orphan dir read_extension_versions would surface as a
+    // phantom row.
+    #[test]
+    fn no_installable_part_is_refused_before_any_write() {
+        let mut b = tar::Builder::new(Vec::new());
+        let mut h = tar::Header::new_gnu();
+        let data = r#"{"name": "@fezchat/empty", "version": "0.0.1", "fez": {"type": "extension"}}"#;
+        h.set_size(data.len() as u64); h.set_mode(0o644); h.set_cksum();
+        b.append_data(&mut h, "package/package.json", data.as_bytes()).unwrap();
+        let tar_bytes = b.into_inner().unwrap();
+
+        let home = tempfile::tempdir().unwrap();
+        let err = install_from_tarball("@fezchat/empty", &tar_bytes, "0.0.1", home.path())
+            .expect_err("a package with no installable part must be refused");
+        assert!(err.contains("no installable"), "unexpected error: {err}");
+        assert!(!home.path().join("packages").join("empty").exists(), "nothing should be written on refusal");
     }
 
     #[test]
