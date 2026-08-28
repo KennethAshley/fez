@@ -46,7 +46,9 @@ describe("publishing to a relay set", () => {
     await conn.connect();
     const e = event("fan-out");
     await conn.publish(e);
-    expect([A.has(e.id), B.has(e.id), C.has(e.id)]).toEqual([true, true, true]);
+    // publish resolves on the FIRST acceptance; the fan-out guarantee is
+    // that every relay still gets it, not that they all had it by then.
+    await waitFor(() => A.has(e.id) && B.has(e.id) && C.has(e.id), 5000, "fan-out to all three");
     conn.disconnect();
   });
 
@@ -74,7 +76,8 @@ describe("publishing to a relay set", () => {
     expect(C.has(e.id)).toBe(false);
     // reported, not swallowed — the user's event IS published, but the
     // operator disagreement is real and someone should be able to see it
-    expect(errors.join(" ")).toMatch(/1\/2 relays/);
+    // (asynchronously: publish resolved on A's acceptance before C's verdict)
+    await waitFor(() => /1\/2 relays/.test(errors.join(" ")), 5000, "partial-reject report");
     C.blockedKinds.delete(41999);
     conn.disconnect();
   });

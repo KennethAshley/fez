@@ -436,10 +436,36 @@ export class RelayConnection {
   }
 
   /**
+   * Wait briefly for at least one relay before answering a query.
+   *
+   * A client's first queries run the instant it is constructed — the
+   * socket is a millisecond away from ready and indistinguishable from
+   * "offline" if you only look at connection state. Answering those
+   * with an empty result is answering a question about the relay
+   * without asking it, and the caller can't tell "nothing there" from
+   * "asked too early". That mistake once emptied a real user's client
+   * of every community it belonged to. Dials the down relays itself:
+   * the watchdog may be idle (no subscriptions yet), and the pool only
+   * connects on demand.
+   */
+  private async whenConnected(timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!this.closed && this.connectedUrls().size === 0) {
+      if (Date.now() >= deadline) return;
+      await Promise.race([
+        Promise.allSettled(this.urls.map((url) => this.ensureConnectedAndAuthed(url))),
+        sleep(1000),
+      ]);
+      await sleep(100);
+    }
+  }
+
+  /**
    * Query events (one-shot). Returns a promise with results.
    * See subscribe() above for why this issues one querySync() per filter.
    */
   async query(filters: Filter[], timeoutMs = 5000): Promise<Event[]> {
+    await this.whenConnected();
     // The UNION across the relay set, deduped by id. An event that only
     // ever reached one relay is still an event that happened — dropping
     // it because the others don't have it would make the set weaker than
@@ -476,7 +502,6 @@ export class RelayConnection {
   async publish(event: Event): Promise<void> {
     let errors: unknown[] = [];
     for (let attempt = 0; attempt <= PUBLISH_RETRY_DELAYS_MS.length; attempt++) {
-      const results = await Promise.allSettled(this.pool.publish(this.urls, event));
       // A fulfilled promise is NOT an acceptance. nostr-tools returns
       // connection failures as a resolved STRING ("connection failure:
       // …") rather than rejecting, so counting fulfilments reports a
@@ -485,26 +510,39 @@ export class RelayConnection {
       // host, all of which "succeeded" in single-digit milliseconds.
       // For a system whose entire promise is that a signed event was
       // recorded somewhere, that is the worst possible lie to tell.
-      const accepted = results.filter((r) => r.status === "fulfilled" && !isFailureValue(r.value)).length;
-      errors = results.flatMap((r) =>
-        r.status === "rejected" ? [r.reason] : isFailureValue(r.value) ? [new Error(String(r.value))] : []
-      );
-
-      if (accepted > 0) {
-        if (errors.length > 0) {
-          this.options.onError?.(
-            new Error(
-              `event ${event.id.slice(0, 8)} reached ${accepted}/${this.urls.length} relays: ${errors
-                .map(errText)
-                .join("; ")}`
-            )
-          );
-        }
+      const sends = this.pool.publish(this.urls, event);
+      const settled = Promise.allSettled(sends);
+      try {
+        // First acceptance wins: the event exists the moment ONE relay
+        // records it. Waiting for every relay to settle instead hands
+        // the slowest (or an unreachable) relay the latency of every
+        // publish — the GUI's send button hung on it. The stragglers
+        // keep sending; their failures are reported below.
+        await Promise.any(
+          sends.map(async (send) => {
+            const value = await send;
+            if (isFailureValue(value)) throw new Error(String(value));
+          })
+        );
+        void settled.then((results) => {
+          const late = collectPublishErrors(results);
+          if (late.length > 0) {
+            this.options.onError?.(
+              new Error(
+                `event ${event.id.slice(0, 8)} reached ${results.length - late.length}/${this.urls.length} relays: ${late
+                  .map(errText)
+                  .join("; ")}`
+              )
+            );
+          }
+        });
         return;
+      } catch {
+        // Nobody took it. Only an outage is worth retrying.
+        errors = collectPublishErrors(await settled);
+        if (!errors.some(isTransientPublishError)) break;
+        if (attempt < PUBLISH_RETRY_DELAYS_MS.length) await sleep(PUBLISH_RETRY_DELAYS_MS[attempt]);
       }
-      // Nobody took it. Only an outage is worth retrying.
-      if (!errors.some(isTransientPublishError)) break;
-      if (attempt < PUBLISH_RETRY_DELAYS_MS.length) await sleep(PUBLISH_RETRY_DELAYS_MS[attempt]);
     }
     const detail = errors.map(errText).join("; ") || "no relay accepted the event";
     throw new Error(`publish failed on all ${this.urls.length} relay(s): ${detail}`);
@@ -513,6 +551,12 @@ export class RelayConnection {
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function collectPublishErrors(results: PromiseSettledResult<string>[]): unknown[] {
+  return results.flatMap((r) =>
+    r.status === "rejected" ? [r.reason] : isFailureValue(r.value) ? [new Error(String(r.value))] : []
+  );
 }
 
 /**
