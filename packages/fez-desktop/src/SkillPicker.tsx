@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { machineLocalPath } from "@fezchat/client";
+import { machineLocalPath, resolveInstalledSkill } from "@fezchat/client";
 import { useConfig } from "./config-store";
 
 /**
@@ -21,9 +21,15 @@ export default function SkillPicker({
 }) {
   const { skills } = useConfig();
 
-  // Installed skills, plus anything the persona names that isn't
-  // installed — a dead reference must stay VISIBLE and removable, not
+  // Installed skills, plus anything the persona names that isn't a
+  // catalog key — a dead reference must stay VISIBLE and removable, not
   // silently vanish from the list that is supposed to explain the agent.
+  //
+  // Whether such a row is actually DEAD is the resolver's call, not a
+  // key lookup's: `wallet=npm:@fezchat/wallet` on a machine that keyed
+  // that package "fez-wallet" resolves fine and the agent spawns with
+  // it, so striking it through as "not installed" made this editor
+  // contradict the spawn path.
   const rows = useMemo(() => {
     const installed = Object.entries(skills).map(([name, config]) => ({
       name,
@@ -33,10 +39,19 @@ export default function SkillPicker({
       missing: false,
     }));
     const known = new Set(installed.map((r) => r.name));
-    const dangling = value
+    const declared = value
       .filter((name) => !known.has(name))
-      .map((name) => ({ name, description: undefined, source: sources[name], local: false, missing: true }));
-    return [...installed, ...dangling].sort((a, b) => a.name.localeCompare(b.name));
+      .map((name) => {
+        const hit = resolveInstalledSkill(skills, { name, source: sources[name] });
+        return {
+          name,
+          description: hit?.entry.description,
+          source: sources[name] ?? hit?.entry.source,
+          local: !!machineLocalPath(hit?.entry),
+          missing: !hit,
+        };
+      });
+    return [...installed, ...declared].sort((a, b) => a.name.localeCompare(b.name));
   }, [skills, value, sources]);
 
   const toggle = (name: string, source: string | undefined, on: boolean) => {

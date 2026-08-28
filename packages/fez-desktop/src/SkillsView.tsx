@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient, WireEvent } from "@fezchat/client";
-import { parseSkillEntries, parseSkillSource, describeSkillSpec, wellKnownSource, formatSkillEntries, machineLocalPath } from "@fezchat/client";
+import { parseSkillSource, describeSkillSpec, wellKnownSource, machineLocalPath, resolveInstalledSkill, packageFromSource } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
 import { EnvKeyStatus } from "./SkillSecrets";
@@ -10,7 +10,7 @@ import FindSource from "./FindSource";
 import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
 import { useConfig, bumpConfig } from "./config-store";
-import { attachSkill, detachSkill, declaredSkills } from "./skill-attach";
+import { attachSkill, detachSkill, declaredSkills, rememberSkillSource } from "./skill-attach";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -43,6 +43,8 @@ interface SkillConfig {
   env?: Record<string, string>;
   /** Install provenance (Task 2) — the portable `name=source` form for a persona that gains this skill. */
   source?: string;
+  /** Canonical package id, so a persona declaring this package under ANY local name still resolves. */
+  package?: string;
   /** One line for a picker (Task 5) — carried from the listing at install time. */
   description?: string;
 }
@@ -185,7 +187,18 @@ export default function SkillsView({
           name,
           parts,
           config: installed[name],
-          wanted: agentDeps.filter((dep) => dep.skills.includes(name)).map((dep) => dep.agent),
+          // Through the resolver, not `includes(name)`: @scout declaring
+          // `wallet=npm:@fezchat/wallet` on a machine that keyed the same
+          // package "fez-wallet" DOES want this row. A raw key lookup
+          // showed no ✓, so clicking "give to…" appended a second
+          // declaration of a package the agent already had.
+          wanted: agentDeps
+            .filter((dep) =>
+              dep.skills.some(
+                (skill) => resolveInstalledSkill(installed, { name: skill, source: dep.sources[skill] })?.key === name
+              )
+            )
+            .map((dep) => dep.agent),
         };
       })
       // EXTENSIONS = renders in this app (has a gui part). SKILLS = a
@@ -211,7 +224,11 @@ export default function SkillsView({
     () =>
       agentDeps.flatMap((dep) =>
         dep.skills
-          .filter((skill) => !installed[skill])
+          // The resolver, so this section agrees with the spawn path:
+          // a declared name that resolves under a different local key is
+          // NOT missing, and listing it here contradicted the agent's own
+          // health badge.
+          .filter((skill) => !resolveInstalledSkill(installed, { name: skill, source: dep.sources[skill] }))
           .map((skill) => {
             const source = dep.sources[skill] ?? wellKnownSource(skill);
             const config = source ? parseSkillSource(source) : undefined;
@@ -235,12 +252,18 @@ export default function SkillsView({
         const deps: { agent: string; skills: string[]; sources: Record<string, string> }[] = [];
         for (const agent of names) {
           const content = await invoke<string>("read_persona", { name: agent }).catch(() => "");
-          const match = content.match(/^mcpServers:\s*\[([^\]]*)\]/m);
-          const entries = match ? match[1].split(",").map((skill) => skill.trim()).filter(Boolean) : [];
           // `web-search=npm:@brave/…` — the name the prompt sees, plus
-          // where it comes from. parseSkillEntries is the same splitter
-          // the CLI uses, mirrored into @fezchat/client for exactly this.
-          const { names: skills, sources } = parseSkillEntries(entries);
+          // where it comes from. declaredSkills is the SAME reader the
+          // write path uses, and it is scoped to the frontmatter block:
+          // a whole-file regex here (which this was) would disagree with
+          // the writer on a persona whose BODY contains a look-alike
+          // `mcpServers: [...]` line, so the ✓ and the write would
+          // describe different files.
+          const declared = declaredSkills(content);
+          const skills = declared.map((d) => d.name);
+          const sources = Object.fromEntries(
+            declared.filter((d) => d.source).map((d) => [d.name, d.source as string])
+          );
           if (skills.length > 0) deps.push({ agent, skills, sources });
         }
         setAgentDeps(deps);
@@ -283,6 +306,23 @@ export default function SkillsView({
       setInstalls(merged);
     })();
   }, [wire, reload, agentNonce]);
+
+  /**
+   * The name THIS agent uses for a catalog key, or undefined when it
+   * doesn't declare it at all. `wanted` now counts an agent that reached
+   * this skill under a different name, so taking it back has to remove
+   * the name actually written in that persona — otherwise the ✓ appears
+   * and the un-toggle silently does nothing.
+   */
+  const declaredNameFor = useCallback(
+    (agent: string, key: string): string | undefined => {
+      const dep = agentDeps.find((d) => d.agent === agent);
+      return dep?.skills.find(
+        (skill) => resolveInstalledSkill(installed, { name: skill, source: dep.sources[skill] })?.key === key
+      );
+    },
+    [agentDeps, installed]
+  );
 
   const runsLine = (skill: SkillConfig | Listing) =>
     skill.url ?? [skill.command, ...(skill.args ?? [])].join(" ");
@@ -604,7 +644,10 @@ export default function SkillsView({
                             onClick={() => {
                               const on = !has;
                               setGivingBusy(agent);
-                              void setSkillOnAgent(agent, name, config?.source, on)
+                              // Giving uses this machine's key; taking back
+                              // uses whatever name that agent wrote.
+                              const target = on ? name : declaredNameFor(agent, name) ?? name;
+                              void setSkillOnAgent(agent, target, config?.source, on)
                                 .then((result) =>
                                   reportSkillWrite(result, agent, name, on, () => {
                                     reload();
@@ -812,15 +855,9 @@ function PublishForm({
 async function rememberSource(agent: string, skill: string, source: string): Promise<boolean> {
   try {
     const content = await invoke<string>("read_persona", { name: agent });
-    const line = content.match(/^mcpServers:\s*\[([^\]]*)\]/m);
-    if (!line) return false;
-    const entries = line[1].split(",").map((s) => s.trim()).filter(Boolean);
-    const { names, sources } = parseSkillEntries(entries);
-    if (!names.includes(skill)) return false;
-    sources[skill] = source;
-    const rewritten = content.replace(line[0], `mcpServers: [${formatSkillEntries(names, sources)}]`);
-    if (rewritten === content) return false;
-    await invoke("update_persona", { name: agent, content: rewritten });
+    const next = rememberSkillSource(content, skill, source);
+    if (!next) return false;
+    await invoke("update_persona", { name: agent, content: next });
     return true;
   } catch {
     return false;
@@ -892,6 +929,12 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
   const install = async () => {
     const missing = (target.envKeys ?? []).filter((key) => !env[key]?.trim());
     if (missing.length > 0) return setError(`fill in: ${missing.join(", ")}`);
+    // Provenance, when there is any — the whole point of the branch.
+    // `write_skill` REPLACES the entry, so an omitted `source` here does
+    // not merely miss a field: it drops whatever the CLI recorded when
+    // the same skill was installed from a terminal. Both fields are
+    // omitted rather than written empty, matching skillEntryFor.
+    const pkg = packageFromSource(target.source);
     const config: SkillConfig = {
       ...(target.url
         ? { type: "http", url: target.url }
@@ -900,6 +943,8 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
             ...(target.args?.length ? { args: target.args } : {}),
             ...(target.envKeys?.length ? { env } : {}),
           }),
+      ...(target.source ? { source: target.source } : {}),
+      ...(pkg ? { package: pkg } : {}),
       ...(target.description ? { description: target.description } : {}),
     };
     try {
