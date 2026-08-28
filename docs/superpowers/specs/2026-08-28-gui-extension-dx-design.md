@@ -227,14 +227,14 @@ no docs:
 <name>/
   package.json          name, fez block (parts.gui: "dist/view.js"),
                         minFezVersion, a build script; react + react-dom
-                        as normal deps; the preset as a dev dep
+                        + @fezchat/ui as normal deps; the preset as a dev dep
   tsconfig.json         standard React JSX — nothing fez-specific
   src/view.tsx          activate(api): registerNavView with a mount(host)
-                        callback that createRoot()s a component; the
-                        component USES the tokens (bg-fez-surface,
-                        text-fez-fg, hover:) and the capability-guard
-                        pattern (api.client absent-when-ungranted,
-                        degrade with a message — never assume)
+                        callback that createRoot()s a component built from
+                        @fezchat/ui (<Page>/<PageHeader>/<Row>) so it is
+                        on-brand by default; `fez-*` utilities for custom
+                        bits; the capability-guard pattern (api.client
+                        absent-when-ungranted, degrade with a message)
   src/styles.module.css optional starter CSS module
   README.md
 ```
@@ -259,6 +259,72 @@ delete a now-dead `gui-extensions/<name>.js` symlink if present. Because
 the new loader reads `packages/*/`, nothing needs the symlink after the
 same release ships. Idempotent, and it touches only the `gui-extensions`
 surface.
+
+### 7. Keeping the look — the fez UI kit
+
+The mount model grants an author their own framework and styles, which is
+freedom to look *foreign* — VS Code webviews read as a stranger's iframe
+for exactly this reason. fez avoids that not by restricting authors but by
+making the on-brand path the *lazy* one: the app's own visual vocabulary
+is extracted into a shared component library extensions compose from, so
+matching the app is less work than diverging from it.
+
+**The grammar to extract** (inventoried from the merged `App.css`, ~3,900
+lines):
+
+- *Tokens* (`:root`, already the theme system's output): `--bg0/1/2`,
+  `--bg-mine`, `--bg-rail`, `--fg`, `--fg-dim`, `--accent`, `--brand`,
+  `--green`/`--red`/`--yellow`, `--hairline`, `--field`, `--font-mono`,
+  plus the measures `--measure-read`/`--measure-scan` and
+  `--phosphor`/`--tint`. This is the palette + typography the Tailwind
+  preset (§4) already maps to `fez-*` utilities.
+- *Shell primitives:* `.fez-page` / `.page-head` / `.page-title` /
+  `.page-sub` / `.page-rule` / `.page-fact` / `.page-empty` (+ `-line`,
+  `-how`) — the page-with-a-header-and-a-rule every view opens with.
+- *Form primitives:* `.settings-field` / `.settings-hint` /
+  `.settings-group` / `.manage-input` / `.manage-row` /
+  `.manage-section` / `.field-note` / `.field-consequence` — the
+  row-with-label-and-control grammar a settings pane is built from.
+- *Identity + content primitives:* `.avatar` (already a real component,
+  `Avatar.tsx`), the pubkey-sprite (`pixel-sprite.tsx`), `.agent-egg`,
+  `.skill-chip`, `.pill`, `.badge`, `.empty-room`.
+- *Idioms* (documented in the CSS itself — the app's signature moves):
+  the **ember notch** (a square-cornered pixel on an item's left edge
+  marking the active/leading one — "rows sit muted, the chosen one is
+  lit"); **hover = neutral ground, active = quiet ground + notch**;
+  **identity gets a face** (every agent/human is an avatar or a
+  pubkey-generated sprite, never a raw hex); **the cast holds empty
+  rooms** (an empty state is a full-voice prompt, not a grey italic line).
+
+**`@fezchat/ui`** is these primitives as React components — `<Page>`,
+`<PageHeader title subtitle fact>`, `<Field label hint>`, `<Row active>`,
+`<Chip>`, `<Avatar pk>`, `<EmptyState>` — each rendering the *same*
+classes and tokens the host uses. An extension built from them looks
+identical to the app because it renders the identical DOM, and it follows
+every theme change for free (the classes resolve to the live tokens). The
+idioms are baked in: `<PageHeader>` carries the rule, `<Row active>` draws
+the ember notch, `<Avatar pk>` generates the sprite, `<EmptyState>` speaks
+in the app's voice. Change a component once and every extension updates —
+the design grammar stops being tribal knowledge in `App.tsx`.
+
+This is the cohesion mechanism and the ease mechanism in one: an author
+writes `<Page><PageHeader title="Your miners" /><Row>…</Row></Page>`
+instead of reinventing layout and guessing at spacing — the on-brand
+output is the *least* code. The `fez-*` utilities (§4) cover whatever the
+components don't, so custom composition still lands in the palette. Only
+an author who deliberately brings their own everything can look off-brand,
+and the gallery can curate for design the way any marketplace does.
+
+**Boundary:** the library extracts the *reusable* primitives — shell,
+form, identity, the idioms — **not** the per-view styles. The large
+`skill-`/`agent-`/`pulse-`/`tool-`/`doc-` class families are specific to
+their views and stay in the app; an extension's own view-specific styling
+is its business, via `fez-*` utilities or a CSS Module. The kit is the
+shared shell and vocabulary, not a mandate on every pixel.
+
+**Precedent already in-tree:** `Avatar.tsx` is exactly this pattern — a
+shared component every surface renders identity through. `@fezchat/ui`
+formalizes and grows what Avatar started.
 
 ## Data flow
 
@@ -342,8 +408,14 @@ throughout.
   `mount`s into the host node, style it with `fez-*` Tailwind utilities
   that follow the live theme, use a CSS Module for custom styling, and
   never type `h()`, a bare hex color, or any fez-specific build config.
-- `fez create` emits a scaffold that builds and loads with the token
-  utilities, the mount pattern, and the capability guard already in place.
+- `fez create` emits a scaffold built from `@fezchat/ui` (so its default
+  output is on-brand) with the token utilities, the mount pattern, and the
+  capability guard already in place.
+- `@fezchat/ui` ships the shell/form/identity primitives and the app's
+  idioms (the ember notch, identity-gets-a-face, the empty-room voice) as
+  composable components; an extension built from it is visually
+  indistinguishable from a built-in view and follows every theme, and the
+  app's design grammar lives in one library rather than in `App.tsx`.
 - The four existing gui extensions (bazaar, wallet, loom, themes) are
   adapted to the `mount(host)` callback and still render (inline styles
   keep working); at least one is migrated to the full pattern (mount +
