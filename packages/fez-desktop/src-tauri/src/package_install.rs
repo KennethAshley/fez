@@ -398,6 +398,12 @@ mod tests {
         b.into_inner().unwrap()
     }
 
+    // THE LAYOUT CONTRACT — must match packages/fez-evals/tests/package-lifecycle.test.ts exactly.
+    // packages/<base>/package.json         the manifest, as installed
+    // packages/<base>/dist/<part>.js       real part files (gui/headless/relay/workspace)
+    // packages/<base>/bin/<cmd>            real binaries (0755)
+    // <flat dir>/<base>.js  -> symlink into packages/<base>/   (gui-extensions/extensions/relay-extensions/workspace-providers)
+    // bin/<cmd>             -> symlink into packages/<base>/
     #[test]
     fn installs_into_a_package_dir_with_a_symlink_index() {
         let home = tempfile::tempdir().unwrap(); // add tempfile dev-dep if absent
@@ -405,9 +411,17 @@ mod tests {
         assert_eq!(out.base, "tidy");
         let pkg = home.path().join("packages").join("tidy");
         let pkg_real = std::fs::canonicalize(&pkg).unwrap();
-        assert!(pkg.join("package.json").exists());
+
+        // packages/<base>/package.json — the manifest, as installed (and it parses).
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(pkg.join("package.json")).unwrap()).unwrap();
+        assert_eq!(manifest["name"], "@fezchat/tidy");
+
+        // packages/<base>/dist/<part>.js — real part files.
         assert!(pkg.join("dist/gui.js").exists());
-        assert!(pkg.join("bin/tidy-tool").exists());
+        assert!(pkg.join("dist/headless.js").exists());
+
+        // <flat dir>/<base>.js and bin/<cmd> -> symlinks into packages/<base>/.
         for (dir, f) in [("gui-extensions","tidy.js"), ("extensions","tidy.js"), ("bin","tidy-tool"), ("bin","clix")] {
             let p = home.path().join(dir).join(f);
             let md = std::fs::symlink_metadata(&p).unwrap();
@@ -415,13 +429,16 @@ mod tests {
             assert!(std::fs::canonicalize(&p).unwrap().starts_with(&pkg_real));
         }
 
-        // A bin entry shaped "clix": "bin/index.js" — a source file that
-        // does NOT already sit at bin/<cmd> — must still land a canonical
-        // packages/<base>/bin/clix copy, chmod 0755.
-        let clix = pkg.join("bin/clix");
-        assert!(clix.exists());
+        // packages/<base>/bin/<cmd> — every declared bin, real and chmod 0755.
+        // "clix": "bin/index.js" in particular — a source file that does NOT
+        // already sit at bin/<cmd> — must still land a canonical
+        // packages/<base>/bin/clix copy, not a copy under its source basename.
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&clix).unwrap().permissions().mode() & 0o777, 0o755);
+        for cmd in ["tidy-tool", "clix"] {
+            let p = pkg.join("bin").join(cmd);
+            assert!(p.exists(), "packages/tidy/bin/{cmd} must exist");
+            assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o755, "{cmd} must be 0755");
+        }
 
         // Skill relocation: the .js arg is materialized into the package
         // dir and absolutized there, replacing the old ~/.fez/skills/<base>/

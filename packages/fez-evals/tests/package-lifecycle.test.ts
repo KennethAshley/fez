@@ -101,6 +101,38 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
     expect(s.mcpServers?.tidy).toBeDefined();
   });
 
+  // THE LAYOUT CONTRACT — must match the `mod tests` in
+  // packages/fez-desktop/src-tauri/src/package_install.rs exactly.
+  // packages/<base>/package.json         the manifest, as installed
+  // packages/<base>/dist/<part>.js       real part files (gui/headless/relay/workspace)
+  // packages/<base>/bin/<cmd>            real binaries (0755)
+  // <flat dir>/<base>.js  -> symlink into packages/<base>/   (gui-extensions/extensions/relay-extensions/workspace-providers)
+  // bin/<cmd>             -> symlink into packages/<base>/
+  test("the golden layout — every line of the contract, against the tidy fixture", () => {
+    const pkgRoot = at("packages", "tidy");
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(pkgRoot, "package.json"), "utf-8"));
+    expect(manifest.name).toBe("@fezchat/tidy");
+
+    for (const rel of ["dist/headless.js", "dist/gui.js", "dist/relay.js", "dist/ws.js"]) {
+      expect(fs.existsSync(path.join(pkgRoot, rel)), rel).toBe(true);
+    }
+
+    const binPath = path.join(pkgRoot, "bin", "tidy-tool");
+    expect(fs.existsSync(binPath), binPath).toBe(true);
+    expect(fs.statSync(binPath).mode & 0o777, "packages/tidy/bin/tidy-tool must be 0755").toBe(0o755);
+
+    for (const [dir, file] of [
+      ["extensions", "tidy.js"], ["gui-extensions", "tidy.js"],
+      ["relay-extensions", "tidy.js"], ["workspace-providers", "tidy.js"],
+      ["bin", "tidy-tool"],
+    ] as const) {
+      const p = at(dir, file);
+      expect(fs.lstatSync(p).isSymbolicLink(), `${dir}/${file} must be a symlink`).toBe(true);
+      expect(fs.realpathSync(p).startsWith(fs.realpathSync(pkgRoot)), `${dir}/${file} must resolve into packages/tidy`).toBe(true);
+    }
+  });
+
   test("install keeps the package: one dir with the manifest and the real files", () => {
     const pkgRoot = at("packages", "tidy");
     const manifest = JSON.parse(fs.readFileSync(path.join(pkgRoot, "package.json"), "utf-8"));
