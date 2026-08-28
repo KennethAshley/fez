@@ -81,8 +81,10 @@ pub(crate) struct InstallOutcome {
 
 /// The load index: a flat entry pointing into the package dir. Symlink
 /// first; copy when the filesystem refuses — the package dir stays the
-/// record either way (mirrors the CLI's `linkIndex`).
-fn link_index(target: &Path, link_path: &Path) -> Result<(), String> {
+/// record either way (mirrors the CLI's `linkIndex`). `pub(crate)` so
+/// Task 7's migration (`package_migrate.rs`) reuses this instead of
+/// re-deriving symlink-vs-copy fallback logic.
+pub(crate) fn link_index(target: &Path, link_path: &Path) -> Result<(), String> {
     if let Some(parent) = link_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }

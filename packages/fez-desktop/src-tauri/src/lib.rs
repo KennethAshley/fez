@@ -2,6 +2,7 @@ use nostr::JsonUtil as _;
 mod managed_agents;
 mod managed_node;
 mod package_install;
+mod package_migrate;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -2312,6 +2313,34 @@ pub fn run() {
                     }
                 });
             }
+            // Task 7: an install from before the package-dir layout has no
+            // packages/<name>/ at all — just flat files and settings.json
+            // facts. Reconstruct one per name on first boot after upgrade;
+            // once that succeeds, extensionBins/extensionVersions are dead
+            // weight (the package dir is now the source of truth for both),
+            // so drop them here — settings-mutation is this hook's job, not
+            // migrate_flat_installs's.
+            std::thread::spawn(|| {
+                let Ok(home) = fez_home() else { return };
+                let raw = std::fs::read_to_string(home.join("settings.json")).unwrap_or_else(|_| "{}".to_string());
+                let settings: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
+                match package_migrate::migrate_flat_installs(&home, &settings) {
+                    Ok(log) => {
+                        for line in &log {
+                            println!("migrate: {line}");
+                        }
+                        if let Err(e) = update_settings(|json| {
+                            if let Some(obj) = json.as_object_mut() {
+                                obj.remove("extensionBins");
+                                obj.remove("extensionVersions");
+                            }
+                        }) {
+                            eprintln!("migrate: couldn't clear legacy settings: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("migrate_flat_installs: {e}"),
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent])
