@@ -43,6 +43,8 @@ interface SkillConfig {
   env?: Record<string, string>;
   /** Install provenance (Task 2) — the portable `name=source` form for a persona that gains this skill. */
   source?: string;
+  /** One line for a picker (Task 5) — carried from the listing at install time. */
+  description?: string;
 }
 
 interface Listing {
@@ -83,6 +85,8 @@ interface InstallTarget {
   provenance: string;
   source?: string;
   rememberIn?: string;
+  /** Carried into the written entry so the picker (Task 5) has a line to show. */
+  description?: string;
 }
 
 /**
@@ -106,6 +110,7 @@ const fromListing = (listing: Listing): InstallTarget => ({
   envKeys: listing.envKeys,
   authorPk: listing.authorPk,
   provenance: "listed on your relay — a recommendation from a pubkey, not a guarantee",
+  description: listing.description,
 });
 
 /**
@@ -150,6 +155,10 @@ export default function SkillsView({
   // agentDeps effect below re-reads the files it doesn't otherwise
   // watch — reload() alone only refreshes the config store, not this.
   const [agentNonce, setAgentNonce] = useState(0);
+  // Set right after a fresh install with nothing declaring it yet — the
+  // offer to give it to an agent. Cleared by picking one or by "not now";
+  // either way it does not survive past this one install.
+  const [justInstalled, setJustInstalled] = useState<{ name: string; source?: string }>();
 
   /**
    * One row per thing THIS ENVIRONMENT can see. The machine also holds
@@ -454,6 +463,49 @@ export default function SkillsView({
                 configuring lives with the other settings. (Source-scoped
                 panels still configure from their channel rail group.) */}
 
+            {/* ── the install just finished, nothing declares it yet ──
+                Closes the loop the old toast punted on ("declare it in
+                a persona yourself"): the exact typed-from-memory step
+                this branch exists to delete. */}
+            {justInstalled && (
+              <div className="manage-notice">
+                ✓ installed {justInstalled.name} — give it to?
+                <div className="skill-give">
+                  {allAgents.map((agent) => (
+                    <button
+                      key={agent}
+                      className="ext-filter"
+                      onClick={() =>
+                        void setSkillOnAgent(agent, justInstalled.name, justInstalled.source, true).then((result) => {
+                          // setSkillOnAgent returns a discriminated SkillWriteResult
+                          // ("changed" | "already" | "unsafe" | "error"), NOT a boolean —
+                          // every one of those strings is truthy, so `if (result)` would
+                          // report success on failure. Switch on the value.
+                          if (result === "changed" || result === "already") {
+                            flash(
+                              result === "changed"
+                                ? `@${agent} gets "${justInstalled.name}" on next spawn`
+                                : `@${agent} already has "${justInstalled.name}"`
+                            );
+                            setAgentNonce((n) => n + 1);
+                          } else {
+                            flash(
+                              result === "unsafe"
+                                ? `@${agent}'s persona has no frontmatter block — fez can't edit it automatically`
+                                : `couldn't give "${justInstalled.name}" to @${agent} — check its persona file`
+                            );
+                          }
+                        })
+                      }
+                    >
+                      @{agent}
+                    </button>
+                  ))}
+                  <button className="ext-filter" onClick={() => setJustInstalled(undefined)}>not now</button>
+                </div>
+              </div>
+            )}
+
             {/* ── everything on this machine ───────────────────── */}
             <div className="skill-section">
               <div className="manage-section">{only === "extensions" ? "installed" : "defined here"}</div>
@@ -726,7 +778,7 @@ export default function SkillsView({
                     )
                   );
               } else {
-                flash(`✓ "${done.name}" installed — declare it in a persona (mcpServers) and it loads on next spawn`);
+                setJustInstalled({ name: done.name, source: done.source });
               }
             }}
           />
@@ -830,13 +882,16 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
   const install = async () => {
     const missing = (target.envKeys ?? []).filter((key) => !env[key]?.trim());
     if (missing.length > 0) return setError(`fill in: ${missing.join(", ")}`);
-    const config: SkillConfig = target.url
-      ? { type: "http", url: target.url }
-      : {
-          command: target.command,
-          ...(target.args?.length ? { args: target.args } : {}),
-          ...(target.envKeys?.length ? { env } : {}),
-        };
+    const config: SkillConfig = {
+      ...(target.url
+        ? { type: "http", url: target.url }
+        : {
+            command: target.command,
+            ...(target.args?.length ? { args: target.args } : {}),
+            ...(target.envKeys?.length ? { env } : {}),
+          }),
+      ...(target.description ? { description: target.description } : {}),
+    };
     try {
       await invoke("write_skill", { name: target.name, configJson: JSON.stringify(config) });
       // The receipt: +1 on the listing's install count, signed by you —
