@@ -143,6 +143,9 @@ export default function SkillsView({
   const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[]; sources: Record<string, string> }[]>([]);
   const [givingTo, setGivingTo] = useState<string>();
   const [allAgents, setAllAgents] = useState<string[]>([]);
+  // Which agent's toggle is mid-write, so a double-click can't fire the
+  // read/attach-or-detach/write sequence twice while the first is in flight.
+  const [givingBusy, setGivingBusy] = useState<string>();
   // Bumped after a write to a persona (give/take a skill) so the
   // agentDeps effect below re-reads the files it doesn't otherwise
   // watch — reload() alone only refreshes the config store, not this.
@@ -540,23 +543,34 @@ export default function SkillsView({
                     <div className="skill-give">
                       {allAgents.map((agent) => {
                         const has = wanted.includes(agent);
+                        const busy = givingBusy === agent;
                         return (
                           <button
                             key={agent}
                             className={has ? "ext-filter active" : "ext-filter"}
-                            onClick={() =>
-                              void setSkillOnAgent(agent, name, config?.source, !has).then((ok) => {
-                                if (ok) {
-                                  flash(
-                                    has
-                                      ? `@${agent} no longer has "${name}" — takes effect on next spawn`
-                                      : `@${agent} gets "${name}" on next spawn`
-                                  );
-                                  reload();
-                                  setAgentNonce((n) => n + 1);
-                                }
-                              })
-                            }
+                            disabled={busy}
+                            onClick={() => {
+                              setGivingBusy(agent);
+                              void setSkillOnAgent(agent, name, config?.source, !has)
+                                .then((ok) => {
+                                  if (ok) {
+                                    flash(
+                                      has
+                                        ? `@${agent} no longer has "${name}" — takes effect on next spawn`
+                                        : `@${agent} gets "${name}" on next spawn`
+                                    );
+                                    reload();
+                                    setAgentNonce((n) => n + 1);
+                                  } else {
+                                    flash(
+                                      has
+                                        ? `✗ couldn't remove "${name}" from @${agent} — check its persona file`
+                                        : `✗ couldn't give "${name}" to @${agent} — check its persona file`
+                                    );
+                                  }
+                                })
+                                .finally(() => setGivingBusy(undefined));
+                            }}
                           >
                             @{agent} {has ? "✓" : ""}
                           </button>
