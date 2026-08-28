@@ -312,7 +312,10 @@ export default function AgentsPane({
   const [creating, setCreating] = useState(!!initialCreate);
   const [editingPersona, setEditingPersona] = useState<string>();
   // Opening an agent shows who it is; the form is a mode you choose.
-  const [viewingPersona] = useState<string | undefined>(initialEdit);
+  // The setter is load-bearing: "← agents" clears every mode, and a
+  // state with no setter made that button a no-op on the profile view —
+  // the roster and "+ new agent" were unreachable until the pane closed.
+  const [viewingPersona, setViewingPersona] = useState<string | undefined>(initialEdit);
   // Persona files on disk — includes agents that have never spawned
   // (no 47000 metadata yet), which would otherwise be invisible here.
   const [localPersonas, setLocalPersonas] = useState<string[]>([]);
@@ -364,7 +367,7 @@ export default function AgentsPane({
     <aside className="pane">
       <header className="pane-head">
         {current || creating || editingPersona || viewingPersona || reviewing ? (
-          <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); setEditingPersona(undefined); setReviewing(undefined); }}>
+          <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); setEditingPersona(undefined); setViewingPersona(undefined); setReviewing(undefined); }}>
             ← agents
           </button>
         ) : (
