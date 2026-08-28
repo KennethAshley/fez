@@ -10,13 +10,13 @@ import { useConfig } from "./config-store";
  * Standalone by design: an agent-creation flow should be able to drop
  * this in unchanged.
  *
- * The list is split by what the reader came to find out. An agent's own
- * state — what is broken, what it has — is always open, because that is
- * the answer to "what is this agent". The machine's catalogue is a
- * different question ("give it something new"), it grows without bound
- * as the marketplace fills, and it stays closed until asked for: eleven
- * skills already pushed the prompt field off the pane, and fifty would
- * bury the form.
+ * Two different questions, two different shapes. What this agent CARRIES
+ * is an inventory — you already know what web-search does, so it reads as
+ * chips you can drop, four to a pane-width instead of one per line. What
+ * this MACHINE has is a catalogue you shop from: it needs descriptions,
+ * it grows without bound as the marketplace fills, and it stays behind a
+ * disclosure with its own scroll — eleven skills rendered as rows once
+ * pushed the prompt clean off the pane, and fifty would bury the form.
  */
 interface Row {
   name: string;
@@ -27,7 +27,7 @@ interface Row {
 }
 
 /** Past this many, scanning the catalogue by eye stops working. */
-const FILTER_AT = 12;
+const FILTER_AT = 8;
 
 export default function SkillPicker({
   value,
@@ -91,22 +91,42 @@ export default function SkillPicker({
     }
   };
 
+  /** Carried: a thing the agent has, and the one action is to take it away.
+      Same chip the agent card and profile draw — `editable` only adds the
+      drop button — so a skill looks like itself everywhere it is named. */
+  const chip = (r: Row) => (
+    <span
+      key={r.name}
+      className={`skill-chip editable${r.missing ? " missing" : r.local ? " local" : ""}`}
+      title={r.description}
+    >
+      {r.name}
+      <button
+        type="button"
+        className="skill-chip-drop"
+        aria-label={`remove ${r.name}`}
+        onClick={() => toggle(r.name, r.source, false)}
+      >
+        ×
+      </button>
+    </span>
+  );
+
+  /** Catalogue: a thing you are deciding about, so it keeps its description. */
   const row = (r: Row) => (
-    <label key={r.name} className={r.missing ? "skill-pick missing" : "skill-pick"}>
+    <label key={r.name} className="skill-pick">
       <input
         type="checkbox"
         checked={value.includes(r.name)}
         onChange={(e) => toggle(r.name, r.source, e.target.checked)}
       />
-      <span className="skill-pick-name">{r.name}</span>
-      {r.description && <span className="skill-pick-desc">{r.description}</span>}
-      {r.missing && <span className="role-tag missing-tag">not installed</span>}
+      <span className="skill-pick-text">
+        <span className="skill-pick-name">{r.name}</span>
+        {r.description && <span className="skill-pick-desc">{r.description}</span>}
+      </span>
       {r.local && (
-        <span
-          className="role-tag"
-          title="points into a local directory — won't work on another machine"
-        >
-          local
+        <span className="skill-pick-mark" title="points into a local directory — won't work on another machine">
+          ·local
         </span>
       )}
     </label>
@@ -126,42 +146,48 @@ export default function SkillPicker({
   return (
     <div className="skill-picker">
       {broken.length > 0 && (
-        <>
-          <div className="skill-pick-heading">declared, but not installed here</div>
-          {broken.map(row)}
-        </>
+        <div className="skill-broken">
+          <div className="skill-broken-head">declared, but not installed here</div>
+          <div className="skill-strip left">{broken.map(chip)}</div>
+          <div className="field-note">This agent spawns without them until you install them in the Skills tab.</div>
+        </div>
       )}
 
-      {attached.length > 0 && (
+      {attached.length > 0 ? (
         <>
-          <div className="skill-pick-heading">attached</div>
-          {attached.map(row)}
+          {/* Only when the broken block is above it: on its own, the chips
+              ARE the answer to "skills" and a label just repeats it. */}
+          {broken.length > 0 && <div className="skill-carried-head">carried</div>}
+          <div className="skill-strip left">{attached.map(chip)}</div>
         </>
-      )}
-
-      {broken.length === 0 && attached.length === 0 && (
-        <div className="settings-hint">No skills yet — open the list below to give it one.</div>
+      ) : (
+        broken.length === 0 && (
+          <div className="skill-empty">
+            Carries nothing yet — it can still talk, it just can't touch anything.
+          </div>
+        )
       )}
 
       {available.length > 0 && (
         <details className="skill-pick-more">
-          <summary className="skill-pick-heading">
-            available on this machine ({available.length})
+          <summary>
+            <span className="skill-pick-more-label">add a skill</span>
+            <span className="skill-pick-more-count">{available.length} on this machine</span>
           </summary>
-          {available.length > FILTER_AT && (
-            <input
-              className="manage-input skill-pick-filter"
-              value={query}
-              placeholder="filter"
-              spellCheck={false}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          )}
-          {shown.length === 0 ? (
-            <div className="settings-hint">Nothing matches “{query}”.</div>
-          ) : (
-            shown.map(row)
-          )}
+          <div className="skill-pick-drawer">
+            {available.length > FILTER_AT && (
+              <input
+                className="manage-input skill-pick-filter"
+                value={query}
+                placeholder="filter"
+                spellCheck={false}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            )}
+            <div className="skill-pick-list">
+              {shown.length === 0 ? <div className="settings-hint">Nothing matches “{query}”.</div> : shown.map(row)}
+            </div>
+          </div>
         </details>
       )}
     </div>

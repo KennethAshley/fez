@@ -61,6 +61,10 @@ export default function PersonaEditor({
   const [state, setState] = useState<"idle" | "saving" | string>("idle");
   const [armedDelete, setArmedDelete] = useState(false);
   const [newName, setNewName] = useState(name);
+  // What was on disk. The commit bar is sticky now, so it is always in
+  // view whether or not there is anything to commit — which makes "is
+  // there anything to commit" a thing the bar has to be able to say.
+  const [saved, setSaved] = useState<{ front: string; body: string }>();
 
   useEffect(() => {
     void invoke<string>("read_persona", { name })
@@ -68,6 +72,7 @@ export default function PersonaEditor({
         const parsed = parsePersona(content);
         setFront(parsed.front);
         setBody(parsed.body);
+        setSaved({ front: parsed.front.join("\n"), body: parsed.body });
       })
       .catch((err) => setState(String(err)));
   }, [name]);
@@ -131,143 +136,173 @@ export default function PersonaEditor({
   const setBrain = (s: { harness: string; provider: string; model: string }) =>
     setFront(setField(setField(setField(front, "harness", s.harness), "provider", s.provider), "model", s.model));
 
+  const dirty = !saved || saved.front !== front.join("\n") || saved.body !== body || newName.trim() !== name;
+  const skillNames = parseSkillEntries(splitList(field("mcpServers"))).names;
+  const promptWords = body.trim() ? body.trim().split(/\s+/).length : 0;
+
   return (
-    <div className="pane-body">
-      <div className="edit-id">
-        {hasFace(name) ? (
-          <Avatar pk="" title={name} size={40} />
-        ) : (
-          <span className="agent-egg small" aria-hidden>◌</span>
-        )}
-        <span className="edit-id-name">editing @{name}</span>
-      </div>
+    <>
+      <div className="pane-body edit-body">
+        <div className="edit-id">
+          {hasFace(name) ? (
+            <Avatar pk="" title={name} size={44} />
+          ) : (
+            <span className="agent-egg small" aria-hidden>◌</span>
+          )}
+          <span className="edit-id-text">
+            <span className="edit-id-kind">editing persona</span>
+            <span className="edit-id-name">@{name}</span>
+          </span>
+        </div>
 
-      <div className="manage-section">identity</div>
-      <div className="settings-field">
-        <label>name</label>
-        <input className="manage-input" value={newName} spellCheck={false} onChange={(e) => setNewName(e.target.value)} />
-        {newName.trim() && newName.trim() !== name && (
-          <div className="field-consequence">
-            Renaming mints a new key, so @{newName.trim()} spawns as a different identity with a different face.
-          </div>
-        )}
-      </div>
-      <div className="settings-field">
-        <label>description</label>
-        <input className="manage-input" value={field("description")} onChange={(e) => update("description", e.target.value)} />
-        <div className="field-note">@fez routes on this — verb phrases route better than nouns.</div>
-      </div>
-      <div className="settings-field">
-        <label>aliases</label>
-        <input
-          className="manage-input"
-          value={listToText(field("aliases"))}
-          spellCheck={false}
-          placeholder="comma-separated"
-          onChange={(e) => update("aliases", textToList(e.target.value))}
-        />
-      </div>
-
-      <div className="manage-section">runtime</div>
-      <div className="settings-field">
-        <label>channels it serves</label>
-        <input
-          className="manage-input"
-          value={listToText(field("channels"))}
-          placeholder="general, lab"
-          onChange={(e) => update("channels", textToList(e.target.value))}
-        />
-      </div>
-      {field("harness") !== "router" && (
-        <ModelPicker
-          value={{ harness: field("harness"), provider: field("provider"), model: field("model") }}
-          onChange={setBrain}
-        />
-      )}
-      {field("harness") === "router" && (
-        <>
-          <div className="manage-section">router — @fez's brain</div>
-          <div className="settings-field">
-            <label>endpoint url (any OpenAI-compatible: a hosted router, ollama, llama.cpp, or a cloud model)</label>
-            <input
-              className="manage-input"
-              value={field("url")}
-              spellCheck={false}
-              placeholder="https://your-router/v1"
-              onChange={(e) => update("url", e.target.value)}
-            />
-          </div>
-          <div className="settings-field">
-            <label>bearer key</label>
-            <div className="settings-hint">
-              The endpoint's key is a secret — set <code>FEZ_ORCHESTRATOR_KEY</code> in Settings → Skills &amp;
-              Secrets (or <code>~/.fez/.env</code> for the CLI). Keys live in one place, never in the persona.
+        <div className="manage-section">identity</div>
+        <div className="settings-field">
+          <label>name</label>
+          <input className="manage-input" value={newName} spellCheck={false} onChange={(e) => setNewName(e.target.value)} />
+          {newName.trim() && newName.trim() !== name && (
+            <div className="field-consequence">
+              Renaming mints a new key, so @{newName.trim()} spawns as a different identity with a different face.
             </div>
-          </div>
-          <div className="settings-field">
-            <label>request shape</label>
-            <select className="manage-select" value={field("profile") || "tools"} onChange={(e) => update("profile", e.target.value)}>
-              <option value="tools">tools — any capable model (default)</option>
-              <option value="minimal">minimal — a restricted tiny router</option>
-            </select>
-          </div>
-          <div className="settings-field">
-            <label>fallback guide (answers when no specialist fits)</label>
-            <input
-              className="manage-input"
-              value={field("fallback") || "fez-guide"}
-              spellCheck={false}
-              placeholder="fez-guide"
-              onChange={(e) => update("fallback", e.target.value)}
-            />
-          </div>
-        </>
-      )}
-      <div className="settings-field">
-        <label>access</label>
-        <AccessPicker client={client} value={field("respondTo")} onChange={(value) => update("respondTo", value)} />
-        <div className="field-note">Who may trigger this agent.</div>
-      </div>
+          )}
+        </div>
+        <div className="settings-field">
+          <label>description</label>
+          <input className="manage-input" value={field("description")} onChange={(e) => update("description", e.target.value)} />
+          <div className="field-note">@fez routes on this — verb phrases route better than nouns.</div>
+        </div>
+        <div className="settings-field">
+          <label>aliases</label>
+          <input
+            className="manage-input"
+            value={listToText(field("aliases"))}
+            spellCheck={false}
+            placeholder="comma-separated"
+            onChange={(e) => update("aliases", textToList(e.target.value))}
+          />
+        </div>
 
-      <div className="manage-section">skills</div>
-      <div className="settings-field">
+        <div className="manage-section">runtime</div>
+        <div className="settings-field">
+          <label>channels it serves</label>
+          <input
+            className="manage-input"
+            value={listToText(field("channels"))}
+            placeholder="general, lab"
+            onChange={(e) => update("channels", textToList(e.target.value))}
+          />
+        </div>
+        {field("harness") !== "router" && (
+          <ModelPicker
+            value={{ harness: field("harness"), provider: field("provider"), model: field("model") }}
+            onChange={setBrain}
+          />
+        )}
+        {field("harness") === "router" && (
+          <>
+            <div className="manage-section">router — @fez&apos;s brain</div>
+            <div className="settings-field">
+              <label>endpoint url</label>
+              <input
+                className="manage-input"
+                value={field("url")}
+                spellCheck={false}
+                placeholder="https://your-router/v1"
+                onChange={(e) => update("url", e.target.value)}
+              />
+              <div className="field-note">
+                Any OpenAI-compatible endpoint: a hosted router, ollama, llama.cpp, or a cloud model.
+              </div>
+            </div>
+            <div className="settings-field">
+              <label>bearer key</label>
+              <div className="field-note">
+                The endpoint&apos;s key is a secret — set <code>FEZ_ORCHESTRATOR_KEY</code> in Settings → Skills &amp;
+                Secrets (or <code>~/.fez/.env</code> for the CLI). Keys live in one place, never in the persona.
+              </div>
+            </div>
+            <div className="settings-field">
+              <label>request shape</label>
+              <select className="manage-select" value={field("profile") || "tools"} onChange={(e) => update("profile", e.target.value)}>
+                <option value="tools">tools — any capable model (default)</option>
+                <option value="minimal">minimal — a restricted tiny router</option>
+              </select>
+            </div>
+            <div className="settings-field">
+              <label>fallback guide</label>
+              <input
+                className="manage-input"
+                value={field("fallback") || "fez-guide"}
+                spellCheck={false}
+                placeholder="fez-guide"
+                onChange={(e) => update("fallback", e.target.value)}
+              />
+              <div className="field-note">Answers when no specialist fits.</div>
+            </div>
+          </>
+        )}
+        <div className="settings-field">
+          <label>access</label>
+          <AccessPicker client={client} value={field("respondTo")} onChange={(value) => update("respondTo", value)} />
+        </div>
+
+        <div className="manage-section">skills</div>
         <SkillPicker
-          value={parseSkillEntries(splitList(field("mcpServers"))).names}
+          value={skillNames}
           sources={parseSkillEntries(splitList(field("mcpServers"))).sources}
           onChange={(names, sources) =>
             update("mcpServers", names.length ? `[${formatSkillEntries(names, sources)}]` : "")
           }
         />
-      </div>
-      <div className="manage-section">prompt</div>
-      <div className="settings-field">
-        <textarea className="doc-textarea persona-prompt" value={body} spellCheck={false} onChange={(e) => setBody(e.target.value)} />
-      </div>
-      {keyWarnings.length > 0 && (
-        <div className="settings-hint">
-          {keyWarnings.map((w) => (
-            <div key={w.key}>⚠ "{w.key}" — did you mean "{w.near}"? As written, nothing reads it.</div>
-          ))}
+
+        <div className="manage-section">
+          prompt
+          {promptWords > 0 && <span className="section-fact">{promptWords} words</span>}
         </div>
-      )}
-      {state !== "idle" && state !== "saving" && <div className="ob-error">{state}</div>}
-      <div className="edit-commit">
-        <div className="agent-actions">
-          <button className="agent-action primary" disabled={state === "saving"} onClick={() => void save()}>
+        <textarea
+          className="doc-textarea persona-prompt"
+          value={body}
+          spellCheck={false}
+          placeholder="Tell it who it is, what it is for, and when to hand a task to someone else."
+          onChange={(e) => setBody(e.target.value)}
+        />
+
+        {keyWarnings.length > 0 && (
+          <div className="settings-hint">
+            {keyWarnings.map((w) => (
+              <div key={w.key}>⚠ &quot;{w.key}&quot; — did you mean &quot;{w.near}&quot;? As written, nothing reads it.</div>
+            ))}
+          </div>
+        )}
+
+        <div className="edit-danger">
+          <button className={armedDelete ? "agent-action armed-delete" : "agent-action danger"} onClick={() => void remove()}>
+            {armedDelete ? "really delete @" + name + "?" : "delete persona"}
+          </button>
+        </div>
+      </div>
+
+      {/* The commit row was the last thing in a 1100px scroll: you edited
+          the name at the top and then had to go looking for save. It is
+          the pane's floor now, always in view, and it says whether there
+          is anything to commit rather than sitting bright and idle. */}
+      <div className="edit-foot">
+        {state !== "idle" && state !== "saving" && <div className="ob-error">{state}</div>}
+        <div className="edit-foot-row">
+          <button className="agent-action primary" disabled={!dirty || state === "saving"} onClick={() => void save()}>
             {state === "saving" ? "saving…" : "save"}
           </button>
-          <button className="agent-action" onClick={() => onDone(false)}>cancel</button>
+          <button className="agent-action" onClick={() => onDone(false)}>
+            {dirty ? "discard" : "close"}
+          </button>
+          {dirty && <span className="edit-dirty">unsaved</span>}
         </div>
-        <div className="field-note">
-          Changes apply on the next spawn — a running agent finishes its turn on the persona it started with.
-        </div>
+        {dirty && (
+          <div className="field-note">
+            Applies on the next spawn — a running agent finishes its turn on the persona it started with.
+          </div>
+        )}
       </div>
-      <div className="edit-danger">
-        <button className={armedDelete ? "agent-action armed-delete" : "agent-action danger"} onClick={() => void remove()}>
-          {armedDelete ? "really delete?" : "delete persona"}
-        </button>
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -300,13 +335,25 @@ function AccessPicker({
     onChange(`allowlist:${next.join(",")}`);
   };
 
+  // The option text used to carry the explanation ("owner — you + your
+  // attested agents (default)") and a 340px pane clipped it mid-word. The
+  // options name the modes; the note underneath explains the one you
+  // picked, which is the only one you needed explained.
+  const explain =
+    mode === "anyone"
+      ? "Every member of the channels it serves can trigger it."
+      : mode === "allowlist"
+        ? "Only the people ticked below can trigger it."
+        : "You and your attested agents can trigger it. This is the default.";
+
   return (
     <>
       <select className="manage-select" value={mode} onChange={(e) => setMode(e.target.value)}>
-        <option value="owner">owner — you + your attested agents (default)</option>
+        <option value="owner">owner</option>
         <option value="anyone">anyone in the channel</option>
-        <option value="allowlist">allowlist — only people I pick</option>
+        <option value="allowlist">allowlist</option>
       </select>
+      <div className="field-note">{explain}</div>
       {mode === "allowlist" && (
         <div className="access-picker">
           {known.length === 0 && <span className="settings-hint">no known names — edit the frontmatter respondTo directly with pubkeys</span>}
