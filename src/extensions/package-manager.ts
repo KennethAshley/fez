@@ -212,6 +212,43 @@ export class PackageManager {
     return this.home("packages", base);
   }
 
+  /**
+   * The package that owns a flat-dir entry (bin, extensions, ...), or
+   * undefined if nobody does. Ownership is structural, never by name: a
+   * symlink whose realpath resolves under packages/<name>/ is owned by
+   * <name>; a regular file (the pre-package-dir layout, or a filesystem
+   * that fell back to a copy) is legacy and owned by nobody, and neither
+   * is a symlink that resolves somewhere else entirely. This is what lets
+   * install refuse a collision and remove touch only its own — a second
+   * package shipping the same command name can never overwrite or delete
+   * the first's silently.
+   */
+  binOwner(binPath: string): string | undefined {
+    let st: fsSync.Stats;
+    try {
+      st = fsSync.lstatSync(binPath);
+    } catch {
+      return undefined;
+    }
+    if (!st.isSymbolicLink()) return undefined;
+    let real: string;
+    let realPackagesDir: string;
+    try {
+      // Both sides realpath'd: on macOS /var is itself a symlink to
+      // /private/var, so os.tmpdir()-rooted fixtures resolve their bin
+      // symlink to /private/var/... while the un-realpath'd packages dir
+      // still reads /var/... — a prefix check across that mismatch always
+      // misses, silently treating every package as unowned.
+      real = fsSync.realpathSync(binPath);
+      realPackagesDir = fsSync.realpathSync(this.home("packages"));
+    } catch {
+      return undefined;
+    }
+    const packagesPrefix = realPackagesDir + path.sep;
+    if (!real.startsWith(packagesPrefix)) return undefined;
+    return real.slice(packagesPrefix.length).split(path.sep)[0];
+  }
+
   /** The load index: a flat entry pointing into the package dir. Symlink
    *  first; copy when the filesystem refuses — the package dir stays the
    *  record either way. */
@@ -709,6 +746,16 @@ export class PackageManager {
     if (!pkg) return;
     const binDir = this.home("bin");
     await fs.mkdir(binDir, { recursive: true });
+    // Check EVERY bin before writing any — a collision must abort the
+    // whole install before a single symlink moves, let alone before the
+    // settings writes later in the hook chain. Naming the current owner
+    // is the point: "already installed" alone sends someone guessing.
+    for (const cmd of Object.keys(bin)) {
+      const owner = this.binOwner(path.join(binDir, cmd));
+      if (owner && owner !== name) {
+        throw new Error(`bin "${cmd}" is already installed by ${owner} — refusing`);
+      }
+    }
     for (const [cmd, rel] of Object.entries(bin)) {
       // Preserve the manifest's own relative path in the package dir, and
       // ALSO land a canonical bin/<cmd> copy there when the manifest
@@ -818,7 +865,14 @@ export class PackageManager {
     await fs.rm(this.home("relay-extensions", `${name}.js`), { force: true });
     await fs.rm(this.home("workspace-providers", `${name}.js`), { force: true });
     for (const cmd of Object.keys(manifest?.bin ?? {})) {
-      await fs.rm(this.home("bin", cmd), { force: true });
+      const binPath = this.home("bin", cmd);
+      // Only delete a bin this package still owns — another package may
+      // have taken the name since (refused by installBins going forward,
+      // but pre-existing installs predate that check), and a hand-planted
+      // or foreign symlink is never this package's to remove.
+      if (this.binOwner(binPath) === name) {
+        await fs.rm(binPath, { force: true });
+      }
     }
     const settings = this.settings.load() as {
       backgroundExtensions?: string[];

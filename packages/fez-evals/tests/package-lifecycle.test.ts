@@ -179,3 +179,33 @@ describe("package lifecycle — install places, remove cleans, update refreshes"
     expect(s.mcpServers?.tidy).toBeDefined();
   });
 });
+
+describe("bin ownership — the flat namespace stops colliding silently", () => {
+  test("a second package shipping the same command is refused, naming the owner", async () => {
+    const clashDir = path.join(tmp, "clash");
+    fs.mkdirSync(path.join(clashDir, "dist"), { recursive: true });
+    fs.writeFileSync(path.join(clashDir, "package.json"), JSON.stringify({
+      name: "@fezchat/clash", version: "0.0.1", private: true, type: "module",
+      bin: { "tidy-tool": "dist/tool.js" }, fez: { type: "extension" },
+    }));
+    fs.writeFileSync(path.join(clashDir, "dist", "tool.js"), "export default 1;\n");
+    git(clashDir, "init -q"); git(clashDir, "add -A"); git(clashDir, "commit -q -m v1");
+
+    await pm.install(`git:${pkgDir}`); // tidy owns tidy-tool again
+    await expect(pm.install(`git:${clashDir}`)).rejects.toThrow(/tidy-tool.*tidy/);
+    // the loser must not have half-installed the bin
+    expect(fs.realpathSync(at("bin", "tidy-tool")).includes(path.join("packages", "tidy"))).toBe(true);
+  });
+
+  test("removing one package never deletes a bin another still owns", async () => {
+    // simulate a foreign owner: hand-plant a symlink into a different package dir
+    const foreign = at("packages", "other", "bin");
+    fs.mkdirSync(foreign, { recursive: true });
+    fs.writeFileSync(path.join(foreign, "shared-cmd"), "x");
+    fs.symlinkSync(path.join(foreign, "shared-cmd"), at("bin", "shared-cmd"));
+
+    await pm.remove("tidy");
+    expect(fs.existsSync(at("bin", "tidy-tool"))).toBe(false);       // its own: gone
+    expect(fs.existsSync(at("bin", "shared-cmd"))).toBe(true);       // the other's: untouched
+  });
+});
