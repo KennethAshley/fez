@@ -258,9 +258,19 @@ export class SummonEngine {
   private async inviteToWorkspace(agentPubkey: string): Promise<void> {
     const rosters = await this.host.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
     const latest = rosters.sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0)).at(-1);
-    const ptags = latest?.tags.filter((t) => t[0] === "p") ?? [];
+    // No roster seen means the QUERY failed, not that the workspace has no
+    // members — BrowserWire.query resolves [] whenever no socket is OPEN. A
+    // 47102 built from that blip would hold only the new agent and, being
+    // newer, would replace the real roster on the relay: the owner-less wipe
+    // FezClient.publishRoster guards against at its own write site. Refuse;
+    // the next summon retries against a live socket.
+    if (!latest) throw new Error("roster query returned nothing — refusing a write that would wipe the members");
+    const ptags = latest.tags.filter((t) => t[0] === "p");
     if (ptags.some((t) => t[1] === agentPubkey)) return;
     ptags.push(["p", agentPubkey, "bot"]);
+    // Same rule as publishRoster: the owner is ALWAYS on their own roster,
+    // whatever the stored event says.
+    if (!ptags.some((t) => t[1] === this.host.ownerPubkey)) ptags.unshift(["p", this.host.ownerPubkey, "owner"]);
     await this.host.publish({
       kind: KIND_MEMBERSHIP,
       tags: [["d", ROSTER_D], ...ptags],

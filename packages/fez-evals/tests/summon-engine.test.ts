@@ -95,15 +95,17 @@ describe("SummonEngine — channel messages", () => {
 
 describe("SummonEngine — completion paths", () => {
   it("announcement of a pending persona publishes attestation + roster invite", async () => {
-    const { host, published, spawned } = makeHost();
+    // The roster query must return a real roster for the invite to build on:
+    // an empty result reads as a failed query and publishes nothing (see the
+    // roster-safety tests below).
+    const { host, published, spawned } = makeHost({ query: rosterQuery([["p", OWNER, "owner"]]) });
     const engine = new SummonEngine(host);
     await engine.handleEvent(msg(OWNER, "@scout go"));
     expect(spawned).toHaveLength(1);
     await engine.handleEvent({ kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] });
     const kinds = published.map((p) => p.kind).sort();
-    // pre-invite (at spawn) and the announce path both run; with the mock
-    // roster query returning [], both may publish — the assertion is that
-    // attestation and roster invite happened at all, not their count.
+    // pre-invite (at spawn) and the announce path both run; both may publish
+    // — the assertion is that attestation and roster invite happened at all.
     expect(kinds).toContain(47006);
     expect(kinds).toContain(47102);
   });
@@ -156,6 +158,45 @@ describe("SummonEngine — completion paths", () => {
     await engine.handleEvent(msg(OWNER, "@scout ping"));
     expect(spawned).toHaveLength(0);
     expect(restarts).toHaveLength(0);
+  });
+
+  it("an empty roster query publishes no roster at all", async () => {
+    // BrowserWire.query resolves [] whenever no socket is OPEN, so an empty
+    // result means the QUERY failed, not that the workspace is empty. A 47102
+    // minted from that blip would hold only the new agent and, being newer,
+    // replace the real roster — the owner-less wipe publishRoster guards.
+    const { host, published } = makeHost();
+    const engine = new SummonEngine(host);
+    await engine.handleEvent(msg(OWNER, "@scout go"));
+    await engine.handleEvent({ kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] });
+    expect(published.filter((p) => p.kind === 47102)).toHaveLength(0);
+    expect(published.map((p) => p.kind)).toContain(47006); // attestation still lands
+  });
+
+  const rosterQuery = (ptags: string[][]) => async (filters: object[]) => {
+    const f = filters[0] as { kinds?: number[] };
+    if (f.kinds?.includes(47102)) {
+      return [{ kind: 47102, pubkey: OWNER, created_at: 100, content: "", tags: [["d", "roster"], ...ptags] } as SummonEvent];
+    }
+    return [];
+  };
+
+  it("the roster invite carries every existing member forward", async () => {
+    const { host, published } = makeHost({ query: rosterQuery([["p", OWNER, "owner"], ["p", SIBLING, "member"]]) });
+    const engine = new SummonEngine(host);
+    await engine.handleEvent(msg(OWNER, "@scout go"));
+    await engine.handleEvent({ kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] });
+    const roster = published.find((p) => p.kind === 47102)!;
+    expect(roster.tags.filter((t) => t[0] === "p").map((t) => t[1])).toEqual([OWNER, SIBLING, SCOUT_PK]);
+  });
+
+  it("the owner is restored even when the stored roster lost them", async () => {
+    const { host, published } = makeHost({ query: rosterQuery([["p", SIBLING, "member"]]) });
+    const engine = new SummonEngine(host);
+    await engine.handleEvent(msg(OWNER, "@scout go"));
+    await engine.handleEvent({ kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] });
+    const roster = published.find((p) => p.kind === 47102)!;
+    expect(roster.tags.filter((t) => t[0] === "p").map((t) => t[1])).toContain(OWNER);
   });
 
   it("work context: repo channel + ⑂ thread root resolve to {repo, line}; hostile strings degrade", async () => {
