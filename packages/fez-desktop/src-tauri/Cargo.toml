@@ -38,3 +38,6 @@ hex = "0.4.3"
 # to a live sentinel instead of double-spawning.
 libc = "0.2"
 
+[dev-dependencies]
+tempfile = "3"
+

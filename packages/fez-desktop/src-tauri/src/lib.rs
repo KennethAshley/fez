@@ -1,6 +1,8 @@
 use nostr::JsonUtil as _;
 mod managed_agents;
 mod managed_node;
+mod package_install;
+mod package_migrate;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -560,62 +562,6 @@ fn obj_entry<'a>(
     v.as_object_mut().unwrap()
 }
 
-/// Read one file out of an in-memory npm tarball. Entries are prefixed
-/// with "package/"; `rel` is the path within the package ("package.json",
-/// "dist/gui.js").
-fn tar_read(tar_bytes: &[u8], rel: &str) -> Option<Vec<u8>> {
-    let mut archive = tar::Archive::new(tar_bytes);
-    for entry in archive.entries().ok()? {
-        let mut entry = entry.ok()?;
-        let path = entry.path().ok()?.into_owned();
-        if path.strip_prefix("package").ok() == Some(std::path::Path::new(rel)) {
-            let mut buf = Vec::new();
-            std::io::Read::read_to_end(&mut entry, &mut buf).ok()?;
-            return Some(buf);
-        }
-    }
-    None
-}
-
-/// List `<dir>/*.md` files in an npm tarball (which prefixes paths with
-/// "package/"), as (id, content) where id is the lowercased basename —
-/// for persona packs.
-fn tar_list_md(tar_bytes: &[u8], dir: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let mut archive = tar::Archive::new(tar_bytes);
-    let entries = match archive.entries() {
-        Ok(e) => e,
-        Err(_) => return out,
-    };
-    let prefix = format!("{dir}/");
-    for entry in entries {
-        let mut entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let rel = match entry
-            .path()
-            .ok()
-            .and_then(|p| p.strip_prefix("package").ok().map(|r| r.to_path_buf()))
-        {
-            Some(r) => r,
-            None => continue,
-        };
-        let rel_str = rel.to_string_lossy().to_string();
-        let name = match rel.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if rel_str.starts_with(&prefix) && name.ends_with(".md") {
-            let mut buf = String::new();
-            if std::io::Read::read_to_string(&mut entry, &mut buf).is_ok() {
-                out.push((name.trim_end_matches(".md").to_lowercase(), buf));
-            }
-        }
-    }
-    out
-}
-
 /// Which agent harnesses are actually installed — the ACP bridges each one
 /// speaks through (claude-code → claude-agent-acp, pi → pi-acp). A GUI app
 /// gets a stripped PATH, so we look in the real install dirs (homebrew,
@@ -950,7 +896,7 @@ fn install_package(name: String) -> Result<String, String> {
     }
 
     // 3. Read package.json (npm tarballs prefix every path with "package/").
-    let pkg_bytes = tar_read(&tar_bytes, "package.json").ok_or("no package.json in tarball")?;
+    let pkg_bytes = package_install::tar_read(&tar_bytes, "package.json").ok_or("no package.json in tarball")?;
     let pkg: serde_json::Value =
         serde_json::from_slice(&pkg_bytes).map_err(|e| format!("bad package.json: {e}"))?;
 
@@ -965,115 +911,22 @@ fn install_package(name: String) -> Result<String, String> {
         return Err(format!("{name} {err}"));
     }
 
-    // 4. De-scoped basename is the file/extension name: @fezchat/kanban → kanban.
-    let base = name.rsplit('/').next().unwrap_or(&name).trim_start_matches('@');
-    let parts = pkg.pointer("/fez/parts");
+    // 4-5c+7. Place the tarball's parts into ~/.fez/packages/<base>/ and
+    // index them into the flat dirs — see package_install for the layout
+    // (shared with the CLI's PackageManager).
     let home = fez_home()?;
-    let mut installed: Vec<String> = Vec::new();
+    // The emptiness check (no installable gui/headless/relay/workspace/
+    // persona part) and the bin-collision refusal both now live INSIDE
+    // install_from_tarball, before any write — a refused install must
+    // leave nothing on disk, not an orphan packages/<base>/package.json.
+    let outcome = package_install::install_from_tarball(&name, &tar_bytes, latest, &home)?;
 
-    // 5. Copy each code part to its directory (mirrors the CLI's installParts).
-    for (part_key, dir) in [
-        ("gui", "gui-extensions"),
-        ("headless", "extensions"),
-        ("relay", "relay-extensions"),
-        ("workspace", "workspace-providers"),
-    ] {
-        let rel = match parts.and_then(|p| p.get(part_key)).and_then(|v| v.as_str()) {
-            Some(r) => r,
-            None => continue,
-        };
-        let bytes =
-            tar_read(&tar_bytes, rel).ok_or_else(|| format!("{part_key} part {rel} missing from tarball"))?;
-        let dest_dir = home.join(dir);
-        std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-        std::fs::write(dest_dir.join(format!("{base}.js")), bytes).map_err(|e| e.to_string())?;
-        installed.push(format!("{part_key} → ~/.fez/{dir}/{base}.js"));
-    }
-
-    // 5b. Skill part → an MCP server in settings.json. A relative .js entry
-    // is copied out of the tarball and made absolute; a bare command (e.g.
-    // `npx <public-server>`) passes through. A skill whose args point at an
-    // absolute path we didn't write is left as-is (a pre-fix publish) — it
-    // won't resolve, but we don't guess.
-    let mut skill_entry: Option<serde_json::Value> = None;
-    if let Some(skill) = parts.and_then(|p| p.get("skill")) {
-        let mut entry = skill.clone();
-        if let Some(args) = skill.get("args").and_then(|v| v.as_array()) {
-            let mut new_args: Vec<serde_json::Value> = Vec::new();
-            for a in args {
-                if let Some(s) = a.as_str() {
-                    if s.ends_with(".js") && !s.starts_with('/') {
-                        if let Some(bytes) = tar_read(&tar_bytes, s) {
-                            let skill_dir = home.join("skills").join(base);
-                            let _ = std::fs::create_dir_all(&skill_dir);
-                            let fname = std::path::Path::new(s)
-                                .file_name()
-                                .and_then(|f| f.to_str())
-                                .unwrap_or("mcp.js");
-                            let dest = skill_dir.join(fname);
-                            if std::fs::write(&dest, bytes).is_ok() {
-                                new_args.push(serde_json::json!(dest.to_string_lossy()));
-                                continue;
-                            }
-                        }
-                    }
-                }
-                new_args.push(a.clone());
-            }
-            if let Some(obj) = entry.as_object_mut() {
-                obj.insert("args".to_string(), serde_json::json!(new_args));
-            }
-        }
-        installed.push(format!("skill → settings.json mcpServers/{base}"));
-        skill_entry = Some(entry);
-    }
-
-    // 5c. npm's own bin map → ~/.fez/bin, chmod 0755 (mirrors the CLI's
-    // installBins). This was CLI-only once: a gallery-installed
-    // @fezchat/git arrived without its credential helper or fez-adopt,
-    // and everything resolving ~/.fez/bin by absolute path found nothing.
-    // Installed names are recorded in settings so uninstall can remove
-    // exactly these files (the desktop has no package dir to re-read).
-    let mut installed_bins: Vec<String> = Vec::new();
-    if let Some(bins) = pkg.get("bin").and_then(|v| v.as_object()) {
-        let bin_dir = home.join("bin");
-        std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
-        for (cmd, rel) in bins {
-            // the command name becomes a filename in ~/.fez/bin — refuse
-            // anything that could escape it
-            if cmd.is_empty() || cmd.contains('/') || cmd.contains("..") {
-                continue;
-            }
-            let rel = match rel.as_str() {
-                Some(r) => r,
-                None => continue,
-            };
-            let bytes =
-                tar_read(&tar_bytes, rel).ok_or_else(|| format!("bin {rel} missing from tarball"))?;
-            let dest = bin_dir.join(cmd);
-            std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
-            }
-            installed.push(format!("bin → ~/.fez/bin/{cmd}"));
-            installed_bins.push(cmd.clone());
-        }
-    }
-
-    // 6. Record granted permissions + background opt-in in settings.json.
-    let perms: Vec<String> = pkg
-        .pointer("/fez/permissions")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    let wants_background = parts
-        .and_then(|p| p.get("background"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let base_owned = base.to_string();
-    let version = latest.to_string();
+    // 6. Record granted permissions + background opt-in in settings.json —
+    // fed from the outcome; install_from_tarball never touches settings.
+    let base_owned = outcome.base.clone();
+    let skill_entry = outcome.skill_entry.clone();
+    let perms = outcome.perms.clone();
+    let wants_background = outcome.wants_background;
     update_settings(move |json| {
         // update_settings guarantees an object; the members do NOT come
         // with that guarantee (hand-edited files) — obj_entry resets a
@@ -1083,11 +936,9 @@ fn install_package(name: String) -> Result<String, String> {
             obj_entry(obj, "mcpServers").insert(base_owned.clone(), entry);
         }
         obj_entry(obj, "extensionPermissions").insert(base_owned.clone(), serde_json::json!(perms));
-        // Record the version so the gallery can offer updates later.
-        obj_entry(obj, "extensionVersions").insert(base_owned.clone(), serde_json::json!(version));
-        if !installed_bins.is_empty() {
-            obj_entry(obj, "extensionBins").insert(base_owned.clone(), serde_json::json!(installed_bins));
-        }
+        // Version and bins are no longer cached here — they live in
+        // packages/<base>/package.json, read back by installed_version and
+        // extension_may_spawn.
         if wants_background {
             let list = obj
                 .entry("backgroundExtensions")
@@ -1102,52 +953,34 @@ fn install_package(name: String) -> Result<String, String> {
         }
     })?;
 
-    // 7. Persona pack — mirror the CLI's installPersonaPack: copy each
-    // <dir>/*.md into ~/.fez/personas so an extension can ship its agents
-    // (an @loom, @scout, @chip) the same way it ships skills. Skip a
-    // persona that already exists (never clobber one the user may have
-    // edited); a minimal `harness:` check keeps a broken file out. Owner
-    // isn't stamped — the sentinel resolves it from the workspace.
-    if pkg.pointer("/fez/personas").is_some() {
-        let dir = pkg
-            .pointer("/fez/personas/dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or("personas");
-        let personas_dir = home.join("personas");
-        std::fs::create_dir_all(&personas_dir).ok();
-        for (id, content) in tar_list_md(&tar_bytes, dir) {
-            if !content.contains("harness:") {
-                continue; // not a valid persona — skip quietly
-            }
-            let dest = personas_dir.join(format!("{id}.md"));
-            if dest.exists() {
-                continue; // keep the user's copy
-            }
-            if std::fs::write(&dest, &content).is_ok() {
-                installed.push(format!("persona @{id} → ~/.fez/personas/{id}.md"));
+    Ok(format!("installed {name}@{latest}: {}", outcome.installed.join(", ")))
+}
+
+/// The installed version per extension, as JSON. The package dir
+/// (`packages/<base>/package.json`, via `installed_version`) is the source
+/// of truth; settings.json's old `extensionVersions` cache is kept only as
+/// a fallback for installs from before this layout that haven't been
+/// migrated yet (Task 7) — where both know a name, the package dir wins.
+#[tauri::command]
+fn read_extension_versions() -> Result<String, String> {
+    let home = fez_home()?;
+    let raw = std::fs::read_to_string(home.join("settings.json")).unwrap_or_else(|_| "{}".to_string());
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
+    let mut versions = parsed
+        .get("extensionVersions")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    if let Ok(entries) = std::fs::read_dir(home.join("packages")) {
+        for entry in entries.flatten() {
+            if let Some(base) = entry.file_name().to_str() {
+                if let Some(v) = package_install::installed_version(base, &home) {
+                    versions.insert(base.to_string(), serde_json::json!(v));
+                }
             }
         }
     }
-
-    if installed.is_empty() {
-        return Err(format!(
-            "{name}@{latest} has no installable gui/headless/relay/workspace/persona part"
-        ));
-    }
-    Ok(format!("installed {name}@{latest}: {}", installed.join(", ")))
-}
-
-/// The recorded installed version per extension (settings.json), as JSON.
-#[tauri::command]
-fn read_extension_versions() -> Result<String, String> {
-    let path = fez_home()?.join("settings.json");
-    let raw = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string());
-    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
-    Ok(parsed
-        .get("extensionVersions")
-        .cloned()
-        .unwrap_or(serde_json::json!({}))
-        .to_string())
+    Ok(serde_json::Value::Object(versions).to_string())
 }
 
 /// Registry detail for an extension's page — version, description, README.
@@ -1261,19 +1094,33 @@ fn remove_extension(name: String) -> Result<String, String> {
     let home = fez_home()?;
     let candidates = [name.clone(), format!("fez-{name}"), name.trim_start_matches("fez-").to_string()];
     let mut removed: Vec<String> = Vec::new();
-    for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers"] {
-        for cand in &candidates {
-            let file = home.join(dir).join(format!("{cand}.js"));
-            if file.exists() && std::fs::remove_file(&file).is_ok() {
-                removed.push(format!("{dir}/{cand}.js"));
+
+    // Modern path: packages/<base>/package.json is the package's own record
+    // of what it installed — remove exactly that, deleting each flat-index
+    // entry only if this package still owns it, then the package dir
+    // itself. `Err` from every candidate means none has a package dir —
+    // fall back to the legacy name-guess sweep below (installs from before
+    // this layout, until Task 7's migration retires it).
+    let modern = candidates
+        .iter()
+        .find_map(|cand| package_install::remove_installed(cand, &home).ok());
+    if let Some(list) = modern {
+        removed.extend(list);
+    } else {
+        for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers"] {
+            for cand in &candidates {
+                let file = home.join(dir).join(format!("{cand}.js"));
+                if file.exists() && std::fs::remove_file(&file).is_ok() {
+                    removed.push(format!("{dir}/{cand}.js"));
+                }
             }
         }
-    }
-    // The skill part lives in its own dir, and a matching mcpServers entry.
-    for cand in &candidates {
-        let skill_dir = home.join("skills").join(cand);
-        if skill_dir.exists() && std::fs::remove_dir_all(&skill_dir).is_ok() {
-            removed.push(format!("skills/{cand}"));
+        // The skill part lives in its own dir, and a matching mcpServers entry.
+        for cand in &candidates {
+            let skill_dir = home.join("skills").join(cand);
+            if skill_dir.exists() && std::fs::remove_dir_all(&skill_dir).is_ok() {
+                removed.push(format!("skills/{cand}"));
+            }
         }
     }
     // Drop the recorded permission grant + background opt-in, and collect
@@ -1306,8 +1153,7 @@ fn remove_extension(name: String) -> Result<String, String> {
         }
     })?;
     for cmd in &bins_to_remove {
-        // same filename rule as install: never a path, only a name
-        if cmd.is_empty() || cmd.contains('/') || cmd.contains("..") {
+        if !package_install::safe_bin_name(cmd) {
             continue;
         }
         let file = home.join("bin").join(cmd);
@@ -2110,7 +1956,8 @@ fn spawn_extension_agent(
     if agent_is_alive_bin(&name, Some(&bin)) {
         return Err(format!("{name} is already running — recall it first"));
     }
-    extension_may_spawn(&settings_value(), &extension, &bin)?;
+    let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
+    extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
     spawn_tracked_process(name, &bin, checked_env(env)?, vec![], None, None)
 }
 
@@ -2124,18 +1971,24 @@ fn settings_value() -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
-/// Whether `extension` may start `bin`, decided from what install_package
-/// recorded: `extensionPermissions` and `extensionBins`.
+/// Whether `extension` may start `bin`: the `processes` grant from
+/// settings.json, the `bin` claim from the package's own manifest.
 ///
 /// `extension` arrives from the webview and is NOT trustworthy — a gui part
 /// runs in the page and can invoke this command directly, naming whichever
 /// extension it likes. Both checks therefore live here rather than in the
 /// loader that hands out the capability. The named extension must itself hold
-/// `processes`, and `bin` must be one IT installed, so claiming to be someone
-/// else buys nothing that extension could not already do. What no caller can
-/// reach, whatever it claims to be, is a binary no installed package shipped.
+/// `processes` — that's the user's grant, and settings.json is where it
+/// belongs. But whether it SHIPPED `bin` is not a grant anyone makes; it's a
+/// fact about the package on disk, so it's read from `manifest` (the
+/// package's own `package.json`, loaded by the caller via
+/// `installed_manifest`) rather than from a settings cache anyone could
+/// hand-edit. Claiming to be someone else buys nothing that extension could
+/// not already do. What no caller can reach, whatever it claims to be, is a
+/// binary no installed package's manifest lists.
 fn extension_may_spawn(
     settings: &serde_json::Value,
+    manifest: Option<&serde_json::Value>,
     extension: &str,
     bin: &str,
 ) -> Result<(), String> {
@@ -2147,13 +2000,18 @@ fn extension_may_spawn(
     if !holds_processes {
         return Err(format!("{extension} was not granted `processes`"));
     }
-    let shipped_it = settings
-        .pointer("/extensionBins")
-        .and_then(|v| v.get(extension))
-        .and_then(|v| v.as_array())
-        .is_some_and(|a| a.iter().any(|b| b.as_str() == Some(bin)));
+    let manifest = manifest.ok_or_else(|| format!("{extension} has no installed package"))?;
+    // A bin map KEY is attacker-controlled JSON, stored verbatim from the
+    // package's own package.json — presence in the map is not enough. It
+    // must also be a bare filename (package_install::safe_bin_name), the
+    // same rule install applies before materializing bins: PathBuf::join
+    // silently discards the base on an absolute key and walks out of
+    // ~/.fez/bin on a traversal one, so an unchecked "declared" is a spawn
+    // primitive for any path on disk.
+    let shipped_it = package_install::safe_bin_name(bin)
+        && manifest.get("bin").and_then(|v| v.as_object()).is_some_and(|m| m.contains_key(bin));
     if !shipped_it {
-        return Err(format!("{extension} did not install a bin called {bin}"));
+        return Err(format!("{extension}'s package does not ship a bin called {bin}"));
     }
     Ok(())
 }
@@ -2454,6 +2312,34 @@ pub fn run() {
                     }
                 });
             }
+            // Task 7: an install from before the package-dir layout has no
+            // packages/<name>/ at all — just flat files and settings.json
+            // facts. Reconstruct one per name on first boot after upgrade;
+            // once that succeeds, extensionBins/extensionVersions are dead
+            // weight (the package dir is now the source of truth for both),
+            // so drop them here — settings-mutation is this hook's job, not
+            // migrate_flat_installs's.
+            std::thread::spawn(|| {
+                let Ok(home) = fez_home() else { return };
+                let raw = std::fs::read_to_string(home.join("settings.json")).unwrap_or_else(|_| "{}".to_string());
+                let settings: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
+                match package_migrate::migrate_flat_installs(&home, &settings) {
+                    Ok(log) => {
+                        for line in &log {
+                            println!("migrate: {line}");
+                        }
+                        if let Err(e) = update_settings(|json| {
+                            if let Some(obj) = json.as_object_mut() {
+                                obj.remove("extensionBins");
+                                obj.remove("extensionVersions");
+                            }
+                        }) {
+                            eprintln!("migrate: couldn't clear legacy settings: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("migrate_flat_installs: {e}"),
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent])

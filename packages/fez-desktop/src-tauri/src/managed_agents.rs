@@ -41,16 +41,27 @@ mod tests {
                 "bazaar": ["ui", "processes"],
                 "polls": ["ui", "publish"],
             },
-            "extensionBins": {
-                "bazaar": ["fez-bazaar-miner"],
-                "polls": ["fez-polls-helper"],
-            },
         })
+    }
+
+    // The bin claim comes from the package's own manifest now, never
+    // settings — anyone can hand-edit settings.json, nobody can hand-edit
+    // what a package actually shipped.
+    fn manifest_with_bin(bins: &[&str]) -> serde_json::Value {
+        let map: serde_json::Map<String, serde_json::Value> =
+            bins.iter().map(|b| ((*b).to_string(), serde_json::json!(format!("dist/{b}.js")))).collect();
+        serde_json::json!({ "name": "x", "bin": map })
     }
 
     #[test]
     fn an_extension_may_start_a_bin_it_shipped() {
-        assert!(crate::extension_may_spawn(&settings(), "bazaar", "fez-bazaar-miner").is_ok());
+        assert!(crate::extension_may_spawn(
+            &settings(),
+            Some(&manifest_with_bin(&["fez-bazaar-miner"])),
+            "bazaar",
+            "fez-bazaar-miner"
+        )
+        .is_ok());
     }
 
     // The grant is what makes the difference, and it is checked here rather
@@ -58,22 +69,58 @@ mod tests {
     // that invokes the command directly.
     #[test]
     fn an_extension_without_processes_may_start_nothing() {
-        assert!(crate::extension_may_spawn(&settings(), "polls", "fez-polls-helper").is_err());
+        assert!(crate::extension_may_spawn(
+            &settings(),
+            Some(&manifest_with_bin(&["fez-polls-helper"])),
+            "polls",
+            "fez-polls-helper"
+        )
+        .is_err());
     }
 
     // Claiming someone else's name is possible from the page. It buys only
-    // what that extension could already do, and nothing at all if it has no
-    // such bin.
+    // what that extension could already do, and nothing at all if its own
+    // manifest has no such bin.
     #[test]
     fn a_bin_another_package_shipped_is_still_refused() {
-        assert!(crate::extension_may_spawn(&settings(), "bazaar", "fez-polls-helper").is_err());
+        assert!(crate::extension_may_spawn(
+            &settings(),
+            Some(&manifest_with_bin(&["fez-bazaar-miner"])),
+            "bazaar",
+            "fez-polls-helper"
+        )
+        .is_err());
     }
 
     #[test]
     fn a_bin_nobody_installed_is_unreachable_under_any_name() {
-        assert!(crate::extension_may_spawn(&settings(), "bazaar", "sh").is_err());
-        assert!(crate::extension_may_spawn(&settings(), "bazaar", "/bin/sh").is_err());
-        assert!(crate::extension_may_spawn(&serde_json::json!({}), "bazaar", "fez-bazaar-miner").is_err());
+        let manifest = manifest_with_bin(&["fez-bazaar-miner"]);
+        assert!(crate::extension_may_spawn(&settings(), Some(&manifest), "bazaar", "sh").is_err());
+        assert!(crate::extension_may_spawn(&settings(), Some(&manifest), "bazaar", "/bin/sh").is_err());
+        assert!(
+            crate::extension_may_spawn(&settings(), None, "bazaar", "fez-bazaar-miner").is_err(),
+            "no package dir, no spawn"
+        );
+    }
+
+    // A manifest is a package's own package.json, stored verbatim at install
+    // — an attacker-authored package can declare an absolute path or a
+    // traversal AS a bin key, not just an innocent name. Presence in the map
+    // is not enough: the key must also pass the same bare-filename rule
+    // install applies before materializing bins, or PathBuf::join(bin) either
+    // discards the base (absolute) or walks out of ~/.fez/bin (traversal).
+    #[test]
+    fn a_declared_but_unsafe_bin_name_is_refused() {
+        let abs = manifest_with_bin(&["/bin/sh"]);
+        assert!(
+            crate::extension_may_spawn(&settings(), Some(&abs), "bazaar", "/bin/sh").is_err(),
+            "declared as a bin key is not enough — an absolute path must still be refused"
+        );
+        let traversal = manifest_with_bin(&["../../x"]);
+        assert!(
+            crate::extension_may_spawn(&settings(), Some(&traversal), "bazaar", "../../x").is_err(),
+            "declared as a bin key is not enough — a traversal must still be refused"
+        );
     }
 
     // Env says what the daemon does, never how it loads.

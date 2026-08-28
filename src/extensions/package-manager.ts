@@ -2,7 +2,7 @@ import { fezHomeAt } from "../shared/fez-home.js";
 import { loadSettings, saveSettings } from "../shared/settings.js";
 import { execSync } from "child_process";
 import fs from "fs/promises";
-import { existsSync } from "fs";
+import fsSync, { existsSync } from "fs";
 import path from "path";
 import os from "os";
 import chalk from "chalk";
@@ -199,6 +199,83 @@ export class PackageManager {
   /** ~/.fez/<segments> under the (possibly injected) home. */
   private home(...segments: string[]): string {
     return fezHomeAt(this.base, ...segments);
+  }
+
+  /**
+   * The package's canonical home: ~/.fez/packages/<base> (de-scoped —
+   * `@fezchat/tidy` → `tidy`). This is separate from the npm/git
+   * source-fetch dirs (getInstallDir/getContentDir) which stay put; this
+   * is where the REAL files an install writes end up living, with the
+   * flat dirs (extensions, bin, ...) becoming a symlink index into it.
+   */
+  packageDir(base: string): string {
+    return this.home("packages", base);
+  }
+
+  /**
+   * The package that owns a flat-dir entry (bin, extensions, ...), or
+   * undefined if nobody does. Ownership is structural, never by name: a
+   * symlink whose realpath resolves under packages/<name>/ is owned by
+   * <name>; a regular file (the pre-package-dir layout, or a filesystem
+   * that fell back to a copy) is legacy and owned by nobody, and neither
+   * is a symlink that resolves somewhere else entirely. This is what lets
+   * install refuse a collision and remove touch only its own — a second
+   * package shipping the same command name can never overwrite or delete
+   * the first's silently.
+   */
+  binOwner(binPath: string): string | undefined {
+    let st: fsSync.Stats;
+    try {
+      st = fsSync.lstatSync(binPath);
+    } catch {
+      return undefined;
+    }
+    if (!st.isSymbolicLink()) return undefined;
+    let real: string;
+    let realPackagesDir: string;
+    try {
+      // Both sides realpath'd: on macOS /var is itself a symlink to
+      // /private/var, so os.tmpdir()-rooted fixtures resolve their bin
+      // symlink to /private/var/... while the un-realpath'd packages dir
+      // still reads /var/... — a prefix check across that mismatch always
+      // misses, silently treating every package as unowned.
+      real = fsSync.realpathSync(binPath);
+      realPackagesDir = fsSync.realpathSync(this.home("packages"));
+    } catch {
+      return undefined;
+    }
+    const packagesPrefix = realPackagesDir + path.sep;
+    if (!real.startsWith(packagesPrefix)) return undefined;
+    return real.slice(packagesPrefix.length).split(path.sep)[0];
+  }
+
+  /**
+   * The manifest a package was installed with, read back verbatim from
+   * packages/<base>/package.json — the package dir's own record, never
+   * settings. Undefined when there's no package dir: a package whose
+   * manifest had no `fez` key (writePackageManifest never ran), or one
+   * installed before Task 1-2 and not yet migrated (Task 7).
+   */
+  installedManifest(base: string): (FezManifest & { name: string; version: string }) | undefined {
+    try {
+      const content = fsSync.readFileSync(path.join(this.packageDir(base), "package.json"), "utf-8");
+      return JSON.parse(content) as FezManifest & { name: string; version: string };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The load index: a flat entry pointing into the package dir. Symlink
+   *  first; copy when the filesystem refuses — the package dir stays the
+   *  record either way. */
+  private linkIndex(target: string, linkPath: string): void {
+    fsSync.mkdirSync(path.dirname(linkPath), { recursive: true });
+    fsSync.rmSync(linkPath, { force: true });
+    try {
+      fsSync.symlinkSync(target, linkPath);
+    } catch {
+      fsSync.copyFileSync(target, linkPath);
+    }
   }
 
   async init(): Promise<void> {
@@ -463,7 +540,29 @@ export class PackageManager {
   }
 
   private async runInstallHook(name: string, manifest: FezManifest | null): Promise<void> {
-    if (!manifest?.fez) return;
+    if (!manifest || !manifest.fez) return;
+
+    // Bin-collision check FIRST, before the package dir even exists —
+    // installParts can persist a settings write on its own (parts.background:
+    // true adds to backgroundExtensions), and writePackageManifest below
+    // creates packages/<name>/package.json. Checking this any later let a
+    // manifest combining a colliding bin name with those write settings or
+    // a phantom package dir and THEN throw, leaving a half-finished trace
+    // behind the refusal — installedManifest() reported it "installed"
+    // while the registry never recorded it.
+    if (manifest.bin) {
+      const binDir = this.home("bin");
+      for (const cmd of Object.keys(manifest.bin)) {
+        const owner = this.binOwner(path.join(binDir, cmd));
+        if (owner && owner !== name) {
+          throw new Error(`bin "${cmd}" is already installed by ${owner} — refusing`);
+        }
+      }
+    }
+
+    // The package dir is the source of truth from here on: the manifest
+    // as installed, verbatim, before anything else touches it.
+    await this.writePackageManifest(name, manifest);
 
     const pkg = this.packages.get(name);
     const integrations = manifest.fez.integrations;
@@ -511,7 +610,11 @@ export class PackageManager {
   }
 
   private async runUninstallHook(pkg: FezPackage): Promise<void> {
-    const manifest = await this.readManifest(pkg.name);
+    // Prefer the package dir's own manifest — the record of what THIS
+    // install actually did — over readManifest's source-fetch copy, which
+    // can be stale or already gone.
+    const installed = this.installedManifest(pkg.name);
+    const manifest = installed ?? (await this.readManifest(pkg.name));
 
     const integrations = manifest?.fez?.integrations;
 
@@ -521,16 +624,82 @@ export class PackageManager {
     if (integrations?.pi) {
       await this.removePiIntegration(pkg.name);
     }
-    // Unconditional: every part removal is force:true, so a package that
-    // never had a given part is a no-op — and a package whose manifest is
-    // unreadable at uninstall time still gets its known locations cleaned.
-    await this.removeParts(pkg.name, manifest);
+
+    if (installed) {
+      // The package dir is the source of truth: delete exactly the index
+      // entries ITS manifest named, each only if this package still owns
+      // it (binOwner's symlink-into-own-dir rule), then drop the package
+      // dir itself last.
+      await this.removeOwnedIndexEntries(pkg.name, installed);
+      await this.removeSettingsEntries(pkg.name);
+      await fs.rm(this.packageDir(pkg.name), { recursive: true, force: true });
+    } else {
+      // No package dir: this install predates the packages/<name>/ +
+      // symlink-index layout (Tasks 1-2) and hasn't been migrated onto it
+      // yet. Fall back to the old name-guess sweep — retire this branch
+      // once Task 7's migration has run against every existing install.
+      await this.removeParts(pkg.name, manifest);
+    }
+
     if (pkg.installedPersonas?.length) {
       const personasDir = this.home("personas");
       for (const id of pkg.installedPersonas) {
         await fs.rm(path.join(personasDir, `${id}.md`), { force: true });
         console.log(chalk.dim(`   Removed persona ${id}`));
       }
+    }
+  }
+
+  /**
+   * Delete exactly the flat-dir entries THIS package's own manifest named
+   * — never guessed from its name alone — each only if the package still
+   * owns it. binOwner's ownership rule (symlink whose realpath resolves
+   * into packages/<name>/) isn't really bin-specific, so it doubles as
+   * the check for every index dir, not just bin/.
+   */
+  private async removeOwnedIndexEntries(name: string, manifest: FezManifest): Promise<void> {
+    const parts = manifest.fez?.parts;
+    // installFezExtension writes extensions/<name><ext of its entry>, and
+    // that entry is either the legacy top-level `extension.entry` or
+    // `parts.headless` — same destination either way.
+    const headlessEntry = manifest.fez?.extension?.entry ?? parts?.headless;
+    if (headlessEntry) {
+      const ext = path.extname(headlessEntry) || ".js";
+      await this.removeIfOwned(name, this.home("extensions", `${name}${ext}`));
+    }
+    if (parts?.gui) await this.removeIfOwned(name, this.home("gui-extensions", `${name}.js`));
+    if (parts?.relay) await this.removeIfOwned(name, this.home("relay-extensions", `${name}.js`));
+    if (parts?.workspace) await this.removeIfOwned(name, this.home("workspace-providers", `${name}.js`));
+    for (const cmd of Object.keys(manifest.bin ?? {})) {
+      await this.removeIfOwned(name, this.home("bin", cmd));
+    }
+  }
+
+  /** Delete an index entry iff this package still owns it; a foreign or
+   *  already-absent entry is left alone. */
+  private async removeIfOwned(name: string, entryPath: string): Promise<void> {
+    if (this.binOwner(entryPath) === name) {
+      await fs.rm(entryPath, { force: true });
+    }
+  }
+
+  /**
+   * The settings-side of remove: drop the backgroundExtensions membership
+   * and the recorded permission grant. The mcpServers skill entry is
+   * deliberately left — the user may have filled env values, and a
+   * persona may still declare it.
+   */
+  private async removeSettingsEntries(name: string): Promise<void> {
+    const settings = this.settings.load() as {
+      backgroundExtensions?: string[];
+      extensionPermissions?: Record<string, string[]>;
+    };
+    if (settings.backgroundExtensions?.includes(name)) {
+      this.settings.save({ backgroundExtensions: settings.backgroundExtensions.filter((n) => n !== name) });
+    }
+    if (settings.extensionPermissions && name in settings.extensionPermissions) {
+      const { [name]: _dropped, ...rest } = settings.extensionPermissions;
+      this.settings.save({ extensionPermissions: rest });
     }
   }
 
@@ -652,16 +821,14 @@ export class PackageManager {
     const extensionsDir = this.home("extensions");
     await fs.mkdir(extensionsDir, { recursive: true });
 
-    const pkgDir = this.getContentDir(this.packages.get(name)!);
-
     if (config.entry) {
       // Preserve the entry's real extension — a bundled package ships a .js
       // entry that plain `node` can import; renaming it .ts would misstate
       // what it is (loadExtensions accepts .ts/.js/.mjs either way).
       const ext = path.extname(config.entry) || ".js";
-      const src = path.join(pkgDir, config.entry);
-      const dest = path.join(extensionsDir, `${name}${ext}`);
-      await fs.copyFile(src, dest);
+      const dest = await this.materializeIntoPackage(name, config.entry);
+      const linkPath = path.join(extensionsDir, `${name}${ext}`);
+      this.linkIndex(dest, linkPath);
       console.log(chalk.dim(`   Created ~/.fez/extensions/${name}${ext}`));
     }
   }
@@ -681,13 +848,23 @@ export class PackageManager {
   private async installBins(name: string, bin: Record<string, string>): Promise<void> {
     const pkg = this.packages.get(name);
     if (!pkg) return;
-    const pkgDir = this.getContentDir(pkg);
     const binDir = this.home("bin");
     await fs.mkdir(binDir, { recursive: true });
+    // The collision check already ran at the top of runInstallHook,
+    // before any part install or settings write — this loop only writes.
     for (const [cmd, rel] of Object.entries(bin)) {
-      const target = path.join(binDir, cmd);
-      await fs.copyFile(path.join(pkgDir, rel), target);
-      await fs.chmod(target, 0o755);
+      // Preserve the manifest's own relative path in the package dir, and
+      // ALWAYS also land a canonical packages/<base>/bin/<cmd> copy there
+      // — named after the COMMAND, never the source's own basename — one
+      // predictable spot to chmod and to symlink from, whatever the
+      // package called its source file (mirrors the Rust installer,
+      // package_install.rs, which never special-cases a source already
+      // living under bin/).
+      const dest = await this.materializeIntoPackage(name, rel);
+      const canonical = path.join(this.packageDir(name), "bin", cmd);
+      if (dest !== canonical) await this.copyFileEnsuringDir(dest, canonical);
+      await fs.chmod(canonical, 0o755); // chmod the PACKAGE file — the symlink inherits
+      this.linkIndex(canonical, path.join(binDir, cmd));
       console.log(chalk.dim(`   Installed ~/.fez/bin/${cmd}`));
     }
     if (!(process.env.PATH ?? "").split(":").includes(binDir)) {
@@ -708,14 +885,14 @@ export class PackageManager {
     },
     provenance: { manifestName?: string; description?: string; source?: string } = {}
   ): Promise<void> {
-    const pkgDir = this.getContentDir(this.packages.get(name)!);
     if (parts.headless) {
       await this.installFezExtension(name, { entry: parts.headless });
     }
     if (parts.gui) {
       const guiDir = this.home("gui-extensions");
       await fs.mkdir(guiDir, { recursive: true });
-      await fs.copyFile(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
+      const dest = await this.materializeIntoPackage(name, parts.gui);
+      this.linkIndex(dest, path.join(guiDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/gui-extensions/${name}.js`));
     }
     if (parts.relay) {
@@ -726,7 +903,8 @@ export class PackageManager {
       // deliberately two acts.
       const relayDir = this.home("relay-extensions");
       await fs.mkdir(relayDir, { recursive: true });
-      await fs.copyFile(path.join(pkgDir, parts.relay), path.join(relayDir, `${name}.js`));
+      const dest = await this.materializeIntoPackage(name, parts.relay);
+      this.linkIndex(dest, path.join(relayDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/relay-extensions/${name}.js`));
       console.log(chalk.dim("   Start the relay with --extensions to load it."));
     }
@@ -742,7 +920,8 @@ export class PackageManager {
       // one agent would be the worst kind of half-working.
       const wsDir = this.home("workspace-providers");
       await fs.mkdir(wsDir, { recursive: true });
-      await fs.copyFile(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
+      const dest = await this.materializeIntoPackage(name, parts.workspace);
+      this.linkIndex(dest, path.join(wsDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/workspace-providers/${name}.js`));
       console.log(chalk.dim("   Personas can now set `repo:` to work from a checkout."));
     }
@@ -757,11 +936,12 @@ export class PackageManager {
       const settings = this.settings.load() as { mcpServers?: Record<string, { env?: Record<string, string> }> };
       // keep env VALUES the user already filled in; the package supplies names
       const mergedEnv = { ...(parts.skill.env ?? {}), ...(settings.mcpServers?.[name]?.env ?? {}) };
+      const skill = await this.materializeSkillArgs(name, parts.skill);
       this.settings.save({
         mcpServers: {
           ...settings.mcpServers,
           [name]: skillEntryFor(
-            { ...resolveSkillArgs(parts.skill, pkgDir), ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
+            { ...skill, ...(Object.keys(mergedEnv).length ? { env: mergedEnv } : {}) },
             provenance
           ),
         },
@@ -771,11 +951,15 @@ export class PackageManager {
   }
 
   /**
-   * Remove everything an install placed — the mirror of installParts +
+   * LEGACY FALLBACK — only reached when a package has no packages/<name>/
+   * dir (an install that predates Tasks 1-2, not yet migrated). Guesses
+   * every location from the name/extension convention instead of reading
+   * what the manifest actually declared, the mirror of installParts +
    * installBins + installFezExtension. This was dead code once (defined,
    * called from nowhere), which meant `fez remove` left gui/relay/
    * workspace parts and bins behind while the desktop's uninstall cleaned
-   * them; the two paths must stay equivalent.
+   * them; the two paths must stay equivalent. Retire this branch once
+   * Task 7's migration has run against every existing install.
    */
   private async removeParts(name: string, manifest: FezManifest | null): Promise<void> {
     await this.removeFezExtension(name); // headless part / legacy extension entry
@@ -783,19 +967,16 @@ export class PackageManager {
     await fs.rm(this.home("relay-extensions", `${name}.js`), { force: true });
     await fs.rm(this.home("workspace-providers", `${name}.js`), { force: true });
     for (const cmd of Object.keys(manifest?.bin ?? {})) {
-      await fs.rm(this.home("bin", cmd), { force: true });
+      const binPath = this.home("bin", cmd);
+      // Only delete a bin this package still owns — another package may
+      // have taken the name since (refused by installBins going forward,
+      // but pre-existing installs predate that check), and a hand-planted
+      // or foreign symlink is never this package's to remove.
+      if (this.binOwner(binPath) === name) {
+        await fs.rm(binPath, { force: true });
+      }
     }
-    const settings = this.settings.load() as {
-      backgroundExtensions?: string[];
-      extensionPermissions?: Record<string, string[]>;
-    };
-    if (settings.backgroundExtensions?.includes(name)) {
-      this.settings.save({ backgroundExtensions: settings.backgroundExtensions.filter((n) => n !== name) });
-    }
-    if (settings.extensionPermissions && name in settings.extensionPermissions) {
-      const { [name]: _dropped, ...rest } = settings.extensionPermissions;
-      this.settings.save({ extensionPermissions: rest });
-    }
+    await this.removeSettingsEntries(name);
     // the skill definition stays: the user may have filled env values and
     // personas may still declare it — removing it silently would break them
   }
@@ -804,6 +985,86 @@ export class PackageManager {
     for (const ext of [".ts", ".js", ".mjs"]) {
       await fs.rm(this.home("extensions", `${name}${ext}`), { force: true });
     }
+  }
+
+  /** Write the manifest as installed, verbatim, to packages/<base>/package.json. */
+  private async writePackageManifest(name: string, manifest: FezManifest): Promise<void> {
+    const dir = this.packageDir(name);
+    await fs.mkdir(dir, { recursive: true });
+    await this.writeAtomic(path.join(dir, "package.json"), JSON.stringify(manifest, null, 2));
+  }
+
+  /**
+   * Write `data` to `path` so a reader only ever observes a complete file,
+   * never a torn one — mirrors Rust's `write_atomic` in package_install.rs.
+   * package.json's mere existence is what installedManifest()/the desktop
+   * migration treat as "this package is installed"; a same-directory
+   * `.tmp` sibling + rename keeps that observation atomic (and on one
+   * filesystem, so the rename itself is atomic).
+   */
+  private async writeAtomic(filePath: string, data: string): Promise<void> {
+    const tmp = `${filePath}.tmp`;
+    await fs.writeFile(tmp, data, "utf-8");
+    await fs.rename(tmp, filePath);
+  }
+
+  /** Plain copy, creating the destination's parent dirs as needed. */
+  private async copyFileEnsuringDir(src: string, dest: string): Promise<void> {
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.copyFile(src, dest);
+  }
+
+  /**
+   * Copy a manifest-relative file (e.g. "dist/gui.js") from the fetched
+   * source into the package dir, preserving that relative path. Returns
+   * the absolute destination — the flat dirs symlink to this, never to
+   * the source-fetch area, so the package dir is the one place a part's
+   * real bytes live.
+   *
+   * A manifest path must stay inside the package dir: absolute paths and
+   * `..` segments are refused rather than guessed at, before anything is
+   * written (mirrors Rust's `materialize` in package_install.rs — a
+   * hostile manifest gets a clean error, not a write outside
+   * packages/<base>/).
+   */
+  private async materializeIntoPackage(name: string, rel: string, ctx = "part"): Promise<string> {
+    if (path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) {
+      throw new Error(`${ctx} path ${rel} escapes the package — refusing`);
+    }
+    const src = path.join(this.getContentDir(this.packages.get(name)!), rel);
+    const dest = path.join(this.packageDir(name), rel);
+    await this.copyFileEnsuringDir(src, dest);
+    return dest;
+  }
+
+  /**
+   * A skill's relative `.js` args, materialized into packages/<base>/ and
+   * absolutized to that path — mirrors Rust's skill handling in
+   * package_install.rs exactly, so both installers write the same
+   * mcpServers arg. Before this, the CLI resolved args against the
+   * source-fetch dir (getContentDir) instead: the package dir held one
+   * set of files, settings.json pointed at another. Only bare relative
+   * `.js` args are touched; an already-absolute arg, a bare command
+   * (`node`, `npx`), or a flag passes through untouched. An arg that
+   * escapes the package or is missing from the source falls back to its
+   * original (unresolved) value rather than failing the whole install —
+   * same as Rust's `if let Ok(dest) = materialize(...) { .. } else` fallback.
+   */
+  private async materializeSkillArgs<T extends { args?: string[] }>(name: string, skill: T): Promise<T> {
+    if (!skill.args?.length) return skill;
+    const args = await Promise.all(
+      skill.args.map(async (arg) => {
+        if (arg.endsWith(".js") && !path.isAbsolute(arg)) {
+          try {
+            return await this.materializeIntoPackage(name, arg, "skill");
+          } catch {
+            return arg;
+          }
+        }
+        return arg;
+      })
+    );
+    return { ...skill, args };
   }
 
   private getInstallDir(pkg: FezPackage): string {

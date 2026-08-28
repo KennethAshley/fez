@@ -30,7 +30,7 @@ export interface AppConfig {
   >;
   /** settings.json extensionPermissions — granted perms per extension. */
   grants: Record<string, string[]>;
-  /** settings.json extensionVersions — installed version per extension. */
+  /** Installed version per extension — read_extension_versions scans packages/<base>/package.json for each installed dir, falling back to settings.json extensionVersions for anything not yet on that layout. */
   versions: Record<string, string>;
   /** Installed extension code parts, by name → part kinds (from ~/.fez dirs). */
   localParts: Record<string, string[]>;
