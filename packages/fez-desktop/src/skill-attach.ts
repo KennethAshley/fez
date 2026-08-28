@@ -1,4 +1,4 @@
-import { parseSkillEntries, formatSkillEntries } from "@fezchat/client";
+import { parseSkillEntries, formatSkillEntries, safeSkillName, safeSkillSource } from "@fezchat/client";
 
 /**
  * Editing the one frontmatter line that binds an agent to its skills.
@@ -42,8 +42,12 @@ const LINE = /^mcpServers:\s*\[([^\]]*)\]/m;
  * the characters the line's own syntax is made of. A refusal returns
  * `undefined` like every other "not safe to edit" here, so the caller's
  * existing "unsafe" branch reports it instead of writing.
+ *
+ * The rules themselves now live in @fezchat/client next to the
+ * formatter (safeSkillName/safeSkillSource), because this module turned
+ * out not to be the only persona writer: the agent editor and the CLI's
+ * serialize write the same line and must refuse the same strings.
  */
-const SAFE_NAME = /^[A-Za-z0-9._@/-]{1,64}$/;
 
 /**
  * The other half of the same line, and the same trust boundary.
@@ -80,15 +84,6 @@ const SAFE_NAME = /^[A-Za-z0-9._@/-]{1,64}$/;
  * `parseSkillEntries` ever starts splitting on every `=`, THAT change is
  * where the guard belongs.
  */
-const SOURCE_STRUCTURAL = /[\r\n\],]/;
-const MAX_SOURCE = 256;
-
-function safeSource(source: string): boolean {
-  if (!source || source.length > MAX_SOURCE) return false;
-  if (source !== source.trim()) return false;
-  return !SOURCE_STRUCTURAL.test(source);
-}
-
 /** This file's own newline convention, so an inserted line never mixes with it. */
 function newlineOf(content: string): string {
   return content.includes("\r\n") ? "\r\n" : "\n";
@@ -118,7 +113,7 @@ function writeLine(content: string, names: string[], sources: Record<string, str
   // `persona.update`), rewriting it would re-bless the injection, so
   // refuse the whole write. `undefined` is this module's "not safe to
   // edit", so callers report it instead of throwing.
-  if (Object.values(sources).some((source) => !safeSource(source))) return undefined;
+  if (Object.values(sources).some((source) => !safeSkillSource(source))) return undefined;
   const rendered = `mcpServers: [${formatSkillEntries(names, sources)}]`;
   const line = LINE.exec(fm[0]);
 
@@ -140,10 +135,10 @@ function writeLine(content: string, names: string[], sources: Record<string, str
 
 /** Add a skill. `source` makes the persona portable; omit it for hand-rolled skills. */
 export function attachSkill(content: string, skill: string, source?: string): string | undefined {
-  if (!SAFE_NAME.test(skill)) return undefined;
+  if (!safeSkillName(skill)) return undefined;
   // `source` is optional and an empty one has always meant "no source",
   // so the guard applies to the sources that will actually be written.
-  if (source && !safeSource(source)) return undefined;
+  if (source && !safeSkillSource(source)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
   const { names, sources } = parseLine(content);
   if (names.includes(skill)) return undefined;
@@ -153,7 +148,7 @@ export function attachSkill(content: string, skill: string, source?: string): st
 
 /** Remove a skill, preserving every survivor's recorded source. */
 export function detachSkill(content: string, skill: string): string | undefined {
-  if (!SAFE_NAME.test(skill)) return undefined;
+  if (!safeSkillName(skill)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
   const { names, sources } = parseLine(content);
   if (!names.includes(skill)) return undefined;
@@ -175,8 +170,8 @@ export function detachSkill(content: string, skill: string): string | undefined 
  * declaration, or that source is already recorded.
  */
 export function rememberSkillSource(content: string, skill: string, source: string): string | undefined {
-  if (!SAFE_NAME.test(skill)) return undefined;
-  if (!safeSource(source)) return undefined;
+  if (!safeSkillName(skill)) return undefined;
+  if (!safeSkillSource(source)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
   const { names, sources } = parseLine(content);
   if (!names.includes(skill)) return undefined;

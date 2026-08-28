@@ -2,7 +2,7 @@ import { fezHome, fezHomeAt } from "../shared/fez-home.js";
 import fs from "fs/promises";
 import path from "path";
 import { notice } from "../cli/notices.js";
-import { parseSkillSource, SOURCE_SCHEMES } from "../extensions/skill-source.js";
+import { parseSkillSource, safeSkillName, safeSkillSource, SOURCE_SCHEMES } from "../extensions/skill-source.js";
 
 /**
  * A named agent identity a user has configured — references a harness
@@ -132,7 +132,27 @@ function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; m
   };
 }
 
-function serialize(harness: string, aliases: string[], mcpServers: string[], systemPrompt: string): string {
+/**
+ * Render a persona file. `aliases:` and `mcpServers:` are each ONE
+ * frontmatter line built out of `,` and `]`, so an entry carrying that
+ * structure (or a newline) would write real keys into the file — the
+ * injection fez-desktop's skill-attach refuses with the same rules
+ * (safeSkillName/safeSkillSource in skill-source.ts). Throwing beats
+ * filtering: a caller that asked for an entry we will not write should
+ * hear so, not get a persona quietly missing a skill.
+ */
+export function serializePersona(harness: string, aliases: string[], mcpServers: string[], systemPrompt: string): string {
+  for (const entry of mcpServers) {
+    const eq = entry.indexOf("=");
+    const name = (eq === -1 ? entry : entry.slice(0, eq)).trim();
+    const source = eq === -1 ? "" : entry.slice(eq + 1).trim();
+    if (!safeSkillName(name) || (source && !safeSkillSource(source))) {
+      throw new Error(`unsafe skill entry refused: ${JSON.stringify(entry)}`);
+    }
+  }
+  for (const alias of aliases) {
+    if (/[\r\n\],]/.test(alias)) throw new Error(`unsafe alias refused: ${JSON.stringify(alias)}`);
+  }
   const aliasLine = aliases.length > 0 ? `aliases: [${aliases.join(", ")}]\n` : "";
   const mcpServersLine = mcpServers.length > 0 ? `mcpServers: [${mcpServers.join(", ")}]\n` : "";
   return `---\nharness: ${harness}\n${aliasLine}${mcpServersLine}---\n${systemPrompt}\n`;
@@ -374,7 +394,7 @@ export async function createPersona(input: {
   const aliases = input.aliases ?? [];
   const mcpServers = input.mcpServers ?? [];
   const systemPrompt = input.systemPrompt ?? "";
-  await fs.writeFile(filePath, serialize(input.harness, aliases, mcpServers, systemPrompt), "utf-8");
+  await fs.writeFile(filePath, serializePersona(input.harness, aliases, mcpServers, systemPrompt), "utf-8");
 
   const persona = await loadOne(filePath);
   if (!persona) throw new Error(`Failed to write persona "${input.id}"`);

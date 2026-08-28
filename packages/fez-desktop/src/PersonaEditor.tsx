@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
-import { parseSkillEntries, formatSkillEntries, nearestKnownKey } from "@fezchat/client";
+import { parseSkillEntries, formatSkillEntries, safeSkillEntries, nearestKnownKey } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
 import SkillPicker from "./SkillPicker";
 import Avatar from "./Avatar";
@@ -249,9 +249,17 @@ export default function PersonaEditor({
         <SkillPicker
           value={skillNames}
           sources={parseSkillEntries(splitList(field("mcpServers"))).sources}
-          onChange={(names, sources) =>
-            update("mcpServers", names.length ? `[${formatSkillEntries(names, sources)}]` : "")
-          }
+          onChange={(names, sources) => {
+            // Same refusal as skill-attach's writers: a name or source
+            // carrying the line's own structure (`]`, `,`, a newline)
+            // would splice real frontmatter keys into this persona, so a
+            // poisoned entry makes the whole toggle a no-op rather than
+            // a write. The picker only offers installed catalog entries,
+            // so a refusal here means settings.json itself is carrying a
+            // stranger's string.
+            if (!safeSkillEntries(names, sources)) return;
+            update("mcpServers", names.length ? `[${formatSkillEntries(names, sources)}]` : "");
+          }}
         />
 
         <div className="manage-section">

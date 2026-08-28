@@ -371,3 +371,44 @@ describe("resolving a declared skill against the machine catalog", () => {
     });
   }
 });
+
+/**
+ * The write-side guards for the one frontmatter line skills live on.
+ * `mcpServers: [name=source, …]` is built out of `,`, `]` and the
+ * newline, so a NAME or SOURCE carrying those characters restructures
+ * the file it lands in — `x]\naliases: [admin` hands a persona extra
+ * names, `https://x/sse\nowner: attacker` writes a real key. These
+ * rules used to live only in fez-desktop's skill-attach, which made the
+ * agent editor and the CLI writer unguarded second and third writers.
+ */
+describe("skill entry write guards", () => {
+  for (const [label, impl] of [["protocol", proto], ["mirror", mirror]] as const) {
+    describe(label, () => {
+      test("names allow npm grammar and refuse the line's own structure", () => {
+        expect(impl.safeSkillName("web-search")).toBe(true);
+        expect(impl.safeSkillName("@fezchat/wallet")).toBe(true);
+        expect(impl.safeSkillName("x]\naliases: [admin, ceo")).toBe(false);
+        expect(impl.safeSkillName("a,b")).toBe(false);
+        expect(impl.safeSkillName("name=source")).toBe(false);
+        expect(impl.safeSkillName("")).toBe(false);
+        expect(impl.safeSkillName("a".repeat(65))).toBe(false);
+      });
+
+      test("sources refuse structure but keep = so hosted-MCP urls survive", () => {
+        expect(impl.safeSkillSource("npm:@fezchat/wallet")).toBe(true);
+        expect(impl.safeSkillSource("https://mcp.example.com/sse?key=abc")).toBe(true);
+        expect(impl.safeSkillSource("https://x/sse\nowner: attacker")).toBe(false);
+        expect(impl.safeSkillSource("a]b")).toBe(false);
+        expect(impl.safeSkillSource("a,b")).toBe(false);
+        expect(impl.safeSkillSource(" padded ")).toBe(false);
+        expect(impl.safeSkillSource("s".repeat(257))).toBe(false);
+      });
+
+      test("safeSkillEntries judges the whole line a writer is about to render", () => {
+        expect(impl.safeSkillEntries(["a", "b"], { b: "npm:x" })).toBe(true);
+        expect(impl.safeSkillEntries(["x]\nowner: me"], {})).toBe(false);
+        expect(impl.safeSkillEntries(["a"], { a: "npm:x\nowner: me" })).toBe(false);
+      });
+    });
+  }
+});

@@ -222,3 +222,39 @@ export function installHint(name: string, source: string | undefined): string {
   }
   return `${name} — declared ${source}; install it with: fez skill add ${name} --from ${source}`;
 }
+
+/**
+ * The write-side guards for the `mcpServers: [name=source, …]` line.
+ * It is ONE frontmatter line built out of `=`, `,` and `]`, so a name or
+ * source carrying those characters (or a newline) restructures whatever
+ * persona file it is written into: `x]\naliases: [admin` hands the agent
+ * extra names to answer to, `https://x/sse\nowner: attacker` writes a real
+ * key. WHATWG URL parsing strips raw CR/LF, so `parseSkillSource`
+ * validating a source is no protection — the payload parses fine.
+ *
+ * Every persona writer must apply these: fez-desktop's skill-attach, the
+ * agent editor, and the CLI's serialize were three writers and only the
+ * first was guarded. For a NAME the SHAPE is allowed (npm's grammar plus
+ * `@` and `/`); for a SOURCE the rule is round-trip — no structure, no
+ * edge-whitespace — with `=` deliberately allowed so a hosted-MCP url
+ * with a query-string key survives (`parseSkillEntries` splits on the
+ * FIRST `=` only). Mirrored in @fezchat/client's copy of this module.
+ */
+const SAFE_SKILL_NAME = /^[A-Za-z0-9._@/-]{1,64}$/;
+const SOURCE_STRUCTURAL = /[\r\n\],]/;
+const MAX_SKILL_SOURCE = 256;
+
+export function safeSkillName(name: string): boolean {
+  return SAFE_SKILL_NAME.test(name);
+}
+
+export function safeSkillSource(source: string): boolean {
+  if (!source || source.length > MAX_SKILL_SOURCE) return false;
+  if (source !== source.trim()) return false;
+  return !SOURCE_STRUCTURAL.test(source);
+}
+
+/** Judge the whole line a writer is about to render. */
+export function safeSkillEntries(names: string[], sources: Record<string, string>): boolean {
+  return names.every((name) => safeSkillName(name) && (!sources[name] || safeSkillSource(sources[name])));
+}
