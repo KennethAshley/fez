@@ -61,7 +61,7 @@ export { SummonEngine, summonMentions, isSafeWork, type SummonEvent, type WorkCo
 export { findPersona, listPersonas, validatePersonaFile, mergeDefaults, parseSkillEntries, KNOWN_EXTRA_KEYS, type Persona, type PersonaValidation } from "./identity/personas.js";
 /** Where a declared skill comes from — see skill-source.ts on why a bare name resolves to nothing. */
 export { parseSkillSource, describeSkillSpec, wellKnownSource, installHint, machineLocalPath, resolveInstalledSkill, packageFromSource, SOURCE_SCHEMES, type SkillSpec, type SkillEntry } from "./extensions/skill-source.js";
-export { findMcpServer, registerMcpServer, loadMcpServersFromSettings } from "./extensions/mcp-servers.js";
+export { findMcpServer, registerMcpServer, loadMcpServersFromSettings, resolveDeclaredSkills } from "./extensions/mcp-servers.js";
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./identity/keys.js";
 /** A background process needs the PATH a person has, not the one launchd gives it. */
 export { adoptUserPath, whichBinary } from "./shared/user-path.js";

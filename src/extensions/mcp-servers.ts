@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type { McpServer } from "@agentclientprotocol/sdk";
+import { resolveInstalledSkill, type SkillEntry } from "./skill-source.js";
 
 /**
  * Named MCP servers ("skills") personas can opt into via their
@@ -140,4 +141,31 @@ function keychainSecret(skill: string, key: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Split what a persona declared into what this machine can provide and
+ * what it can't. The gap is returned rather than swallowed: a spawn
+ * proceeds without the skill and the agent is told to say so, which is
+ * the honest failure mode — a confidently wrong answer is the bad one.
+ *
+ * `name` on a resolved entry is what the PERSONA declared, never the
+ * local catalog key. The agent's tool namespace is the persona's
+ * vocabulary; this machine's filing system stays private to it.
+ */
+export function resolveDeclaredSkills(
+  catalog: Record<string, SkillEntry>,
+  declared: { name: string; source?: string }[]
+): {
+  resolved: { name: string; key: string; entry: SkillEntry }[];
+  missing: { name: string; source?: string }[];
+} {
+  const resolved: { name: string; key: string; entry: SkillEntry }[] = [];
+  const missing: { name: string; source?: string }[] = [];
+  for (const decl of declared) {
+    const hit = resolveInstalledSkill(catalog, decl);
+    if (hit) resolved.push({ name: decl.name, key: hit.key, entry: hit.entry });
+    else missing.push({ name: decl.name, source: decl.source });
+  }
+  return { resolved, missing };
 }

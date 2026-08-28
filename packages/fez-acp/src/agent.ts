@@ -10,6 +10,7 @@ import {
   findMcpServer,
   installHint,
   wellKnownSource,
+  resolveDeclaredSkills,
   invokeWithRetry,
   KIND_AGENT_ENGRAM,
   registerBuiltinHarnesses,
@@ -197,28 +198,31 @@ async function main() {
   // signal otherwise is a confidently wrong answer).
   // Headless skill resolution: agents don't run the TUI's extension
   // host, so declared skills resolve from settings.json's mcpServers.
+  let catalog: Record<string, never> = {};
   try {
     const proto = (await import("@fezchat/protocol")) as unknown as {
-      loadSettings: () => { mcpServers?: Record<string, Record<string, unknown>> };
+      loadSettings: () => { mcpServers?: Record<string, never> };
       loadMcpServersFromSettings: (entries?: Record<string, Record<string, unknown>>) => void;
     };
-    proto.loadMcpServersFromSettings(proto.loadSettings().mcpServers);
+    catalog = proto.loadSettings().mcpServers ?? {};
+    proto.loadMcpServersFromSettings(catalog as never);
   } catch { /* settings unavailable — registry stays as-is */ }
 
-  const missingSkills = persona.mcpServers.filter((name) => !findMcpServer(name));
-  if (missingSkills.length > 0) {
+  const declared = persona.mcpServers.map((name) => ({ name, source: persona.mcpSources?.[name] }));
+  const { resolved, missing } = resolveDeclaredSkills(catalog, declared);
+  const missingSkills = missing.map((m) => m.name);
+  if (missing.length > 0) {
     // Declaring a source does NOT install it — a persona file arrives
     // from whoever wrote it, and running what it names would make
     // installing a persona arbitrary code execution. So we print the
-    // one-line install and carry on without the skill, exactly as we
-    // already did for a name with no source at all.
+    // one-line install and carry on without the skill.
     console.warn(`⚠️  Skills declared but not loadable here — the agent will disclose the gap when relevant:`);
-    for (const name of missingSkills) {
-      console.warn(`   ${installHint(name, persona.mcpSources?.[name] ?? wellKnownSource(name))}`);
+    for (const m of missing) {
+      console.warn(`   ${installHint(m.name, m.source ?? wellKnownSource(m.name))}`);
     }
   }
-  const mcpServers = persona.mcpServers
-    .map((name) => findMcpServer(name))
+  const mcpServers = resolved
+    .map((r) => findMcpServer(r.key))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
 
   // fez-mcp: EVERY persona gets first-class fez tools (send/read channels,
@@ -706,7 +710,7 @@ async function main() {
         // Only RESOLVED skills go on the wire — the router picks agents
         // by these, and advertising a skill this process can't load
         // routes work to an agent that must then refuse it.
-        skills: persona.mcpServers.filter((name) => findMcpServer(name)),
+        skills: resolved.map((r) => r.name),
         aliases: persona.aliases,
         // The working context, like a shell prompt: clients render
         // "researcher ⑂ researcher/work" so nobody has to ask an agent
