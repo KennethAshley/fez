@@ -769,6 +769,11 @@ let baseline:
     }
   | undefined;
 
+// Companion CSS is 100% extension-owned — core never injects any — so
+// unlike the registries above this needs no baseline snapshot: a reload
+// can simply dispose everything and let the fresh load re-inject.
+const styleDisposers = new Map<string, Dispose>();
+
 function captureBaseline(): void {
   if (baseline) return; // core-only, once
   baseline = {
@@ -799,6 +804,24 @@ function restoreBaseline(): void {
   navViews.length = baseline.navViews;
   artifactActions.length = baseline.artifactActions;
   for (const k of [...themes.keys()]) if (!baseline.themes.includes(k)) themes.delete(k);
+  for (const dispose of styleDisposers.values()) dispose();
+  styleDisposers.clear();
+}
+
+/**
+ * A gui part's companion CSS (a hashed CSS Module `fez pack` emitted) is
+ * injected once, keyed by extension name, and removed on dispose. Hashed
+ * class names mean it cannot collide with the host or another extension,
+ * so this is a plain document-level <style> — no Shadow DOM needed.
+ */
+export function injectExtensionStyles(name: string, css: string): Dispose {
+  const sel = `style[data-fez-ext="${CSS.escape(name)}"]`;
+  document.head.querySelector(sel)?.remove(); // replace, don't stack
+  const el = document.createElement("style");
+  el.setAttribute("data-fez-ext", name);
+  el.textContent = css;
+  document.head.appendChild(el);
+  return () => el.remove();
 }
 
 /** Unload every extension and load the current set fresh — for install/uninstall/update without a relaunch. */
@@ -823,6 +846,10 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
   } catch { /* no grants recorded — everything falls back to the legacy grant */ }
 
   for (const [name, code] of files) {
+    // Task 6 extends the Rust scan's tuple with a 3rd `styles` element
+    // (compiled CSS Module output from `fez pack`); until then every
+    // extension's styles is undefined and injection is a no-op.
+    const styles: string | undefined = undefined;
     const granted = grants[name] ?? LEGACY_GRANT;
     const may = (permission: string) => granted.includes(permission);
     const hosts = granted.filter((g) => g.startsWith("network:")).map((g) => g.slice("network:".length));
@@ -943,6 +970,7 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       const activate = mod.default ?? mod.activate;
       if (typeof activate !== "function") throw new Error("no default export / activate()");
       activate(api);
+      if (styles) styleDisposers.set(name, injectExtensionStyles(name, styles));
       loaded.push(name);
       status.push({ name, ok: true });
       console.log(`🧩 gui extension loaded: ${name}`);
