@@ -51,6 +51,7 @@ import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
 import { EMOJI, searchEmoji } from "./emoji";
 import "./App.css";
+import "./fez-utilities.css";
 
 /**
  * fez-desktop — the GUI over the same headless brain as the TUI (#30).
