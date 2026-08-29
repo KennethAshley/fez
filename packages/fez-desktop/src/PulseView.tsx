@@ -3,8 +3,8 @@ import type { FezClient, ObserverEntry } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
 import { compact, dayKey } from "./format";
-import { AnimatedSprite } from "./pixel-sprite";
-import { SPRITES } from "./sprites";
+import { AnimatedSprite } from "@fezchat/ui";
+import { SPRITES } from "@fezchat/ui";
 
 /**
  * Pulse — the fleet observability surface, three altitudes on one page:

@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { ObserverEntry } from "@fezchat/client";
-import { SPRITES } from "./sprites";
-import { generateSprite } from "./sprite-gen";
-import { AnimatedSprite } from "./pixel-sprite";
+import { SPRITES } from "@fezchat/ui";
+import { generateSprite } from "@fezchat/ui";
+import { AnimatedSprite } from "@fezchat/ui";
 
 /**
  * The agent transcript — Buzz's agentSession surface (tool classifier,

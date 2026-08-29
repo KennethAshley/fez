@@ -1,4 +1,4 @@
-import type { Sprite } from "./sprites";
+import type { Sprite } from "./sprites.js";
 
 /**
  * The site's pixel-sprite renderer, worn by the desktop (classes come

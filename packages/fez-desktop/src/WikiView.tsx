@@ -22,8 +22,8 @@ import { MountPoint } from "./MountPoint";
 import type { MountRender } from "./mount-result";
 import QueryBlock from "./QueryBlock";
 import SlashMenu, { caretPosition, slashAt, type SlashState } from "./SlashMenu";
-import { AnimatedSprite } from "./pixel-sprite";
-import { SPRITES } from "./sprites";
+import { AnimatedSprite } from "@fezchat/ui";
+import { SPRITES } from "@fezchat/ui";
 import type { BlockMenuItem } from "./gui-extensions";
 
 /**

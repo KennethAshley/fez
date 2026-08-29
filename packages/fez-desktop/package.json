@@ -16,6 +16,7 @@
   "dependencies": {
     "@fezchat/artifact-viewers": "file:../fez-artifact-viewers",
     "@fezchat/client": "file:../fez-client",
+    "@fezchat/ui": "file:../fez-ui",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.4",

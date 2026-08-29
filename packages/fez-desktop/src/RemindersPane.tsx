@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { latestPerAddress, relativeWhen, type FezClient, type ReminderRecord } from "@fezchat/client";
-import { AnimatedSprite } from "./pixel-sprite";
-import { SPRITES } from "./sprites";
+import { AnimatedSprite } from "@fezchat/ui";
+import { SPRITES } from "@fezchat/ui";
 import type { BrowserWire } from "./wire";
 import { toast } from "./toast";
 

@@ -1,4 +1,4 @@
-import { SPRITES } from "./sprites";
+import { SPRITES } from "@fezchat/ui";
 
 /**
  * Does this agent have a face yet?

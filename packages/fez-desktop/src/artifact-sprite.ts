@@ -1,4 +1,4 @@
-import type { Sprite } from "./sprites";
+import type { Sprite } from "@fezchat/ui";
 
 /**
  * name → relic. Extensions get the artifact cousin of the pubkey

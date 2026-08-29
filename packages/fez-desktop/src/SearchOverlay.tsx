@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, WireEvent } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
-import { AnimatedSprite } from "./pixel-sprite";
-import { SPRITES } from "./sprites";
+import { AnimatedSprite } from "@fezchat/ui";
+import { SPRITES } from "@fezchat/ui";
 
 /**
  * ⌘K search — Buzz's topbar search as a command-palette overlay. The

@@ -8,9 +8,9 @@ import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, relayRaw, setRelays } from "./relay";
 import { type Step, nextStep, prevStep, identityPlan } from "./onboarding-steps";
-import { AnimatedSprite } from "./pixel-sprite";
-import { SPRITES } from "./sprites";
-import { generateSprite } from "./sprite-gen";
+import { AnimatedSprite } from "@fezchat/ui";
+import { SPRITES } from "@fezchat/ui";
+import { generateSprite } from "@fezchat/ui";
 import { buildFezPersonaMd, buildStarterPersonaMd, STARTER_TEAM } from "./welcome-core";
 
 export { nextStep, prevStep };

@@ -4,7 +4,7 @@ import type { FezClient } from "@fezchat/client";
 import { PERM_LABEL, SENSITIVE, norm, catalogEntry, installExtension } from "./extensions-catalog";
 import { flash } from "./toast";
 import { generateArtifact } from "./artifact-sprite";
-import { AnimatedSprite } from "./pixel-sprite";
+import { AnimatedSprite } from "@fezchat/ui";
 
 // @fez offers an install by putting `fez:install @fezchat/<name>` in its
 // message. Only the official @fezchat scope is honored — a stray marker

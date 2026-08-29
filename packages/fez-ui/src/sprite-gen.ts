@@ -1,4 +1,4 @@
-import type { Sprite } from "./sprites";
+import type { Sprite } from "./sprites.js";
 
 /**
  * pk → familiar. Every pubkey grows its own Qud-style creature,

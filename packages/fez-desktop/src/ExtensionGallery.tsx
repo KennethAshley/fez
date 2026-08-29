@@ -8,7 +8,7 @@ import { reloadGuiExtensions } from "./gui-extensions";
 import { CATALOG, PERM_LABEL, SENSITIVE, norm, githubUrl, npmUrl, type CatalogEntry } from "./extensions-catalog";
 import { useConfig } from "./config-store";
 import { generateArtifact } from "./artifact-sprite";
-import { AnimatedSprite } from "./pixel-sprite";
+import { AnimatedSprite } from "@fezchat/ui";
 
 /**
  * The install gallery — discover the official fez extensions and install
