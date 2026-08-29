@@ -48,11 +48,12 @@ function relayHostnames(): string[] {
 
 /**
  * The GUI extension loader — the desktop half of the multi-part package
- * contract. `fez install`/`fez link` drops a package's gui part into
- * ~/.fez/gui-extensions/<name>.js; at boot each file is imported as an
- * ES module (blob URL — same-origin, no server) and its default export
- * (or `activate`) is called with the GUI api. Extensions bundle their
- * own code but use api.React so there's exactly one React in the page.
+ * contract. `fez install`/`fez link` materializes a package's gui part
+ * into ~/.fez/packages/<name>/ (its manifest's fez.parts.gui names the
+ * file within); at boot each is imported as an ES module (blob URL —
+ * same-origin, no server) and its default export (or `activate`) is
+ * called with the GUI api. Extensions bundle their own code but use
+ * api.React so there's exactly one React in the page.
  *
  * v1 surface: registerArtifactViewer (the "obsidian extensions" seam),
  * registerTheme (CSS-variable packs), and the headless client.
