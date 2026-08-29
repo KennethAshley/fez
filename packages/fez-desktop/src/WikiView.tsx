@@ -621,12 +621,23 @@ export default function WikiView({ client }: { client: FezClient }) {
   // memoized with useCallback. Cleared whenever the open page changes, so
   // it doesn't grow across an entire session of browsing many pages.
   //
-  // ponytail: doesn't invalidate on selPage/homeChannel resolving AFTER
-  // the block's first render (e.g. selPage loading async) — narrow, and
-  // the same risk any memoization here would carry. Revisit if a
-  // mount-form block renderer actually hits it.
+  // Caching `handler` alone isn't enough: react-markdown calls handler's
+  // BODY fresh on every WikiView re-render even though its TYPE is now
+  // stable (that's normal function-component behavior), so the `render`
+  // passed to MountPoint would still be a new closure each time unless
+  // it's ALSO cached — keyed on `raw` (the block's actual content), one
+  // level down, so a same-content re-render reuses it and only a real
+  // content change produces a new one.
+  //
+  // No residual staleness on selPage/homeChannel resolving async: docKey's
+  // own tail is `selPage?.channelId ?? homeChannel()` — the EXACT same
+  // expression the cached mountRender resolves channelId from below. Any
+  // change that would give a block a different channelId also changes
+  // docKey, which clears both caches above before the block is asked for
+  // again.
   const docKeyRef = React.useRef<string | undefined>(undefined);
   const codeHandlers = React.useRef(new Map<string, (props: React.ComponentPropsWithoutRef<"code">) => React.ReactNode>());
+  const mountRenders = React.useRef(new Map<string, MountRender>());
   const docKey = sel
     ? `${sel.kind}:${sel.kind === "wiki" ? sel.slug : sel.channelId}:${
         sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : ""
@@ -635,6 +646,7 @@ export default function WikiView({ client }: { client: FezClient }) {
   if (docKeyRef.current !== docKey) {
     docKeyRef.current = docKey;
     codeHandlers.current = new Map();
+    mountRenders.current = new Map();
   }
   const codeHandlerFor = (blockText: string) => {
     let handler = codeHandlers.current.get(blockText);
@@ -650,17 +662,26 @@ export default function WikiView({ client }: { client: FezClient }) {
         if (blockRender && sel) {
           const body = String(children ?? "").replace(/\n$/, "");
           const infoLine = blockText.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang;
-          const mountRender: MountRender = (host) =>
-            blockRender(
-              {
-                info: infoLine.trim().slice(3 + (lang?.length ?? 0)).trim(),
-                body,
-                raw: `${infoLine}\n${body}\n\`\`\``,
-                channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
-                slug: sel.kind === "wiki" ? sel.slug : undefined,
-              },
-              host
-            );
+          const raw = `${infoLine}\n${body}\n\`\`\``;
+          // docKey is already folded into `raw`'s cache being cleared
+          // wholesale on a doc-identity change (above), so a plain
+          // `raw` key can't collide across pages the way it could if
+          // this cache outlived the doc it was built for.
+          let mountRender = mountRenders.current.get(raw);
+          if (!mountRender) {
+            mountRender = (host) =>
+              blockRender(
+                {
+                  info: infoLine.trim().slice(3 + (lang?.length ?? 0)).trim(),
+                  body,
+                  raw,
+                  channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
+                  slug: sel.kind === "wiki" ? sel.slug : undefined,
+                },
+                host
+              );
+            mountRenders.current.set(raw, mountRender);
+          }
           return <MountPoint render={mountRender} />;
         }
         return <code className={className} {...rest}>{children}</code>;
