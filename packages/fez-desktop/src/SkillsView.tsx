@@ -103,7 +103,7 @@ interface InstallTarget {
 const PART_WHERE: Record<string, { where: string; what: string }> = {
   skill: { where: "settings.json → mcpServers", what: "your agents call it" },
   headless: { where: "~/.fez/extensions", what: "background work in the TUI" },
-  gui: { where: "~/.fez/gui-extensions", what: "renders in this app" },
+  gui: { where: "~/.fez/packages/<name>", what: "renders in this app" },
 };
 
 const fromListing = (listing: Listing): InstallTarget => ({
