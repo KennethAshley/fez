@@ -5,12 +5,18 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scaffold } from "../../../src/cli/scaffold.js";
 import { packExtension } from "../../../src/cli/pack.js";
+import { isGuiOnlyCreate } from "../../../src/cli/cmd-extensions.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "../../..");
 
 let dir: string;
-beforeAll(async () => { dir = await scaffold("my-tool", mkdtempSync(join(tmpdir(), "fez-create-"))); });
+beforeAll(async () => {
+  // scaffold's 2nd arg is the EXACT output dir — same --dir semantics
+  // `fez create` uses on every branch, not a parent to append the name to.
+  dir = join(mkdtempSync(join(tmpdir(), "fez-create-")), "my-tool");
+  await scaffold("my-tool", dir);
+});
 
 describe("fez create", () => {
   it("emits a package with a gui part, tsconfig, a TSX view and a README", () => {
@@ -47,5 +53,29 @@ describe("fez create", () => {
 
     const out = await packExtension(dir);
     expect(existsSync(out.js)).toBe(true);
+  });
+});
+
+describe("fez create — routing between the two scaffolders", () => {
+  // Guards the riskiest part of Task 7's change: `create` reuses ONE
+  // commander verb for both scaffolders (a second `.command("create")`
+  // throws — commander refuses duplicate names). A future edit to the
+  // routing condition could silently send the no-flag default (the old
+  // multi-surface scaffolder's documented behavior) into the new
+  // gui-only scaffold, or vice versa.
+  it("bare `create <name>` (no flags) is NOT gui-only — stays on the old multi-surface scaffolder", () => {
+    expect(isGuiOnlyCreate([])).toBe(false);
+  });
+  it("`--gui` alone IS gui-only — routes to the new @fezchat/ui scaffold", () => {
+    expect(isGuiOnlyCreate(["gui"])).toBe(true);
+  });
+  it("`--headless --gui` together is NOT gui-only", () => {
+    expect(isGuiOnlyCreate(["headless", "gui"])).toBe(false);
+  });
+  it("`--gui --relay` together is NOT gui-only", () => {
+    expect(isGuiOnlyCreate(["gui", "relay"])).toBe(false);
+  });
+  it("`--relay` alone is NOT gui-only", () => {
+    expect(isGuiOnlyCreate(["relay"])).toBe(false);
   });
 });

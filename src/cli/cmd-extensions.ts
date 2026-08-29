@@ -9,6 +9,19 @@ import { fezHome, fezHomeAt } from "../shared/fez-home.js";
 import nodeFs from "node:fs";
 
 /**
+ * `fez create <name>` routes to the on-brand @fezchat/ui scaffold
+ * (Task 7's `./scaffold.js`) only when GUI is the ONLY surface asked
+ * for — the one invocation shape that unambiguously means "just a GUI
+ * extension." Every other combination, including the no-flags default
+ * (`["headless","gui"]`), keeps going through the older multi-surface
+ * scaffolder (`../extensions/scaffold.js`). Extracted so the routing
+ * rule has its own test independent of the CLI action/commander.
+ */
+export function isGuiOnlyCreate(picked: readonly string[]): boolean {
+  return picked.length === 1 && picked[0] === "gui";
+}
+
+/**
  * Materialize a linked package's gui part into ~/.fez/packages/<name>/ —
  * the same shape `fez install` produces (the desktop's loader reads
  * packages/<name>/package.json + fez.parts.gui; it stopped reading the
@@ -211,9 +224,12 @@ program
     // (default headless+gui, or a relay/workspace part) still goes through
     // the general multi-surface scaffolder below; those parts have no
     // @fezchat/ui equivalent yet.
-    if (picked.length === 1 && picked[0] === "gui") {
+    if (isGuiOnlyCreate(picked)) {
       const { scaffold: scaffoldGui } = await import("./scaffold.js");
-      const dir = await scaffoldGui(name, options.dir ?? process.cwd());
+      // Same `--dir` semantics as the other branch below: an exact output
+      // dir when given, else `./<name>` — never a parent to append <name> to.
+      const dir = options.dir ?? path.join(process.cwd(), name);
+      await scaffoldGui(name, dir);
       console.log(chalk.green(`✅ ${name} — gui (built from @fezchat/ui)`));
       console.log(chalk.dim(`   ${path.relative(process.cwd(), dir) || "."}/`));
       console.log();

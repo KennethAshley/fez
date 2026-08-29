@@ -126,14 +126,18 @@ evaluates), hashing any \`*.module.css\` you import along the way.
 `;
 }
 
-/** Writes the tree under `<targetDir>/<name>` and returns that path. */
-export async function scaffold(name: string, targetDir: string): Promise<string> {
-  const dir = path.join(targetDir, name);
-  mkdirSync(path.join(dir, "src"), { recursive: true });
-  writeFileSync(path.join(dir, "package.json"), packageJson(name));
-  writeFileSync(path.join(dir, "tsconfig.json"), tsconfig());
-  writeFileSync(path.join(dir, "src/view.tsx"), viewTsx(name));
-  writeFileSync(path.join(dir, "src/styles.module.css"), stylesModuleCss());
-  writeFileSync(path.join(dir, "README.md"), readme(name));
-  return dir;
+/**
+ * Writes the tree into `outDir` exactly (an exact output dir, not a parent
+ * to append `name` to) and returns `outDir` — same `--dir` semantics as
+ * the older multi-surface `fez create`, so the flag means one thing
+ * regardless of which scaffolder a `create` invocation routes to.
+ */
+export async function scaffold(name: string, outDir: string): Promise<string> {
+  mkdirSync(path.join(outDir, "src"), { recursive: true });
+  writeFileSync(path.join(outDir, "package.json"), packageJson(name));
+  writeFileSync(path.join(outDir, "tsconfig.json"), tsconfig());
+  writeFileSync(path.join(outDir, "src/view.tsx"), viewTsx(name));
+  writeFileSync(path.join(outDir, "src/styles.module.css"), stylesModuleCss());
+  writeFileSync(path.join(outDir, "README.md"), readme(name));
+  return outDir;
 }
