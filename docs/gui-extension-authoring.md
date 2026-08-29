@@ -19,6 +19,13 @@ fez link .                # copies the gui part into ~/.fez/packages/<name>/
 running desktop still needs a relaunch to pick up a changed `gui` part —
 there is no hot reload.
 
+**Honest caveat:** `@fezchat/ui` and `@fezchat/tailwind-preset` are new
+packages that are **not yet published to npm**. A scaffolded project's
+`package.json` names them by registry version, so `bun install` outside
+this monorepo will fail to resolve them until they're published. Until
+then, develop inside the fez monorepo's `packages/` (where a `file:` link
+to the sibling package resolves) or point your lockfile at a local copy.
+
 `--gui` alone is what routes `fez create` to this scaffold. `fez create`
 also takes `--headless`, `--relay`, and `--workspace`, and any combination
 other than `--gui` alone (including the no-flags default, which is

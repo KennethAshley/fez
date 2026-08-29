@@ -53,7 +53,10 @@ console.log("\nbuilding fez\n");
 // step, which meant GitHub's runners could build from nothing and a
 // fresh local checkout could not. One recipe, both places: ci.yml now
 // just runs this script.
-const BOOTSTRAP = ["fez-tui", "fez-relay", "fez-client"];
+// fez-tailwind-preset and fez-ui are core-independent tsc builds with no
+// dependency on the trio above, but fez-desktop (which sorts before both
+// alphabetically) now depends on their dists, so they must build first too.
+const BOOTSTRAP = ["fez-tui", "fez-relay", "fez-client", "fez-tailwind-preset", "fez-ui"];
 const built = [];
 for (const name of BOOTSTRAP) {
   run(name, "npm run build", join(PACKAGES, name));

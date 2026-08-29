@@ -8,6 +8,7 @@ Cargo.lock
 node_modules/
 dist/
 *.tsbuildinfo
+packages/*/bun.lock
 
 # IDE
 .idea/

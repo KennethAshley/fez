@@ -1,12 +1,14 @@
 /**
  * The GUI surface — the API a `gui` part receives, running in the
- * desktop webview. The host injects React (`api.React`) so the page
- * keeps ONE React, and every capability is gated by a permission the
- * install dialog names.
+ * desktop webview. Every capability is gated by a permission the install
+ * dialog names.
  *
- * `El` is a React element the host renders; you build it with
- * `api.React.createElement` (aliased `h`), not JSX, so your bundle
- * carries no React of its own.
+ * Mount-model parts (the current shape) bundle their own React and use
+ * standard JSX: the host calls your part's `mount(host)` with a DOM node
+ * it owns, and you `createRoot(host).render(<App/>)` inside it, returning
+ * a disposer. `api.React` remains available for legacy parts that still
+ * return an element (`El`) from a `() => El` render function instead of
+ * mounting their own root — see `MountRender` below for both forms.
  */
 export type El = unknown;
 export type Props = Record<string, unknown> | null;
@@ -74,6 +76,8 @@ export interface BlockProps {
 }
 
 export interface GuiExtensionApi {
+  /** Available for legacy element-returning parts (`() => El`). Mount-model
+   *  parts bundle their own React and don't need this. */
   React: {
     createElement(type: unknown, props?: Props, ...children: unknown[]): El;
     useState<T>(initial: T | (() => T)): [T, (next: T | ((prev: T) => T)) => void];

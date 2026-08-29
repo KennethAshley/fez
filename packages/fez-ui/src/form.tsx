@@ -1,11 +1,18 @@
-import type { MouseEventHandler, ReactNode } from "react";
+import { cloneElement, isValidElement, useId, type MouseEventHandler, type ReactNode } from "react";
 
-/** `.settings-field` > `<label>` + control + `.settings-hint`, the shape every settings screen in the app uses. */
+/**
+ * `.settings-field` > `<label>` + control + `.settings-hint`, the shape
+ * every settings screen in the app uses. `htmlFor`/`id` are wired for a11y
+ * when `children` is a single element (the common case); a fragment or
+ * text child falls back to an unassociated label rather than guessing.
+ */
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  const id = useId();
+  const control = isValidElement<{ id?: string }>(children) ? cloneElement(children, { id }) : children;
   return (
     <div className="settings-field">
-      <label>{label}</label>
-      {children}
+      <label htmlFor={isValidElement(children) ? id : undefined}>{label}</label>
+      {control}
       {hint && <div className="settings-hint">{hint}</div>}
     </div>
   );

@@ -28,11 +28,11 @@ function packageJson(name: string): string {
     dependencies: {
       react: "^19.1.0",
       "react-dom": "^19.1.0",
-      "@fezchat/ui": "file:../fez-ui",
+      "@fezchat/ui": "^0.1.0",
     },
     devDependencies: {
-      "@fezchat/tailwind-preset": "file:../fez-tailwind-preset",
-      "@fezchat/extension-api": "file:../fez-extension-api",
+      "@fezchat/tailwind-preset": "^0.1.0",
+      "@fezchat/extension-api": "^0.2.0",
       esbuild: "^0.21.5",
       typescript: "^5.6.0",
       "@types/react": "^19.1.8",
