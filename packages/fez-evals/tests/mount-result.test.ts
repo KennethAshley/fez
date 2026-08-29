@@ -14,7 +14,17 @@ describe("classifyMountResult", () => {
     expect(classifyMountResult(undefined)).toEqual({});
     expect(classifyMountResult(null)).toEqual({});
   });
-  it("a plain object that is not a React element is not treated as content", () => {
-    expect(classifyMountResult({ foo: 1 })).toEqual({});
+  // A legacy `() => ReactNode` callback was always allowed to return a
+  // string, number, array, or fragment — not just an element — so the
+  // classifier must not silently drop them.
+  it("a string is legacy content to render", () => {
+    expect(classifyMountResult("hello")).toEqual({ element: "hello" });
+  });
+  it("a number is legacy content to render", () => {
+    expect(classifyMountResult(0)).toEqual({ element: 0 });
+  });
+  it("an array of elements is legacy content to render", () => {
+    const els = [{ $$typeof: Symbol.for("react.element"), type: "span" }];
+    expect(classifyMountResult(els)).toEqual({ element: els });
   });
 });

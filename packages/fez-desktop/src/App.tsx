@@ -2067,7 +2067,12 @@ function ChannelView({
           const props = { channelId, rootId: threadRoot, rootContent: root.content };
           return (
             <div className="thread-view">
-              <ExtensionPanel panel={{ name: view.name, render: (host) => view.render(props, host) }} />
+              {/* name carries the mount identity ExtensionPanel keys on —
+                  view.name alone is the SAME string for every thread a
+                  given extension boards, so without the rootId a jump
+                  from thread A to thread B (same view, different root)
+                  would reuse thread A's mounted content. */}
+              <ExtensionPanel panel={{ name: `${view.name}:${threadRoot}`, render: (host) => view.render(props, host) }} />
             </div>
           );
         })()}

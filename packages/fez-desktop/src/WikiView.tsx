@@ -19,6 +19,7 @@ import MentionBox from "./MentionBox";
 import { FormatBar, markdownFormatOps } from "./format-bar";
 import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";
 import { MountPoint } from "./MountPoint";
+import type { MountRender } from "./mount-result";
 import QueryBlock from "./QueryBlock";
 import SlashMenu, { caretPosition, slashAt, type SlashState } from "./SlashMenu";
 import { AnimatedSprite } from "./pixel-sprite";
@@ -609,6 +610,66 @@ export default function WikiView({ client }: { client: FezClient }) {
     openWiki(wikiSlug(title), title);
   };
 
+  // `md` builds a fresh `components.code` function every time it runs —
+  // once per markdown block, on every WikiView render — so react-markdown
+  // sees a new component TYPE at that position each time and tears the
+  // block (MountPoint included) down and back up regardless of whether
+  // the block's content changed. Unlike ChannelInfo's single ReactMarkdown
+  // instance, this handler is built inside a plain per-block factory
+  // (`md`, called from a `.map()`), not at a stable per-render hook call
+  // site — so it's cached by hand (doc identity + block text) rather than
+  // memoized with useCallback. Cleared whenever the open page changes, so
+  // it doesn't grow across an entire session of browsing many pages.
+  //
+  // ponytail: doesn't invalidate on selPage/homeChannel resolving AFTER
+  // the block's first render (e.g. selPage loading async) — narrow, and
+  // the same risk any memoization here would carry. Revisit if a
+  // mount-form block renderer actually hits it.
+  const docKeyRef = React.useRef<string | undefined>(undefined);
+  const codeHandlers = React.useRef(new Map<string, (props: React.ComponentPropsWithoutRef<"code">) => React.ReactNode>());
+  const docKey = sel
+    ? `${sel.kind}:${sel.kind === "wiki" ? sel.slug : sel.channelId}:${
+        sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : ""
+      }`
+    : "";
+  if (docKeyRef.current !== docKey) {
+    docKeyRef.current = docKey;
+    codeHandlers.current = new Map();
+  }
+  const codeHandlerFor = (blockText: string) => {
+    let handler = codeHandlers.current.get(blockText);
+    if (!handler) {
+      handler = ({ className, children, ...rest }) => {
+        const lang = /language-([\w:.-]+)/.exec(className ?? "")?.[1];
+        // fez:query ships with the app rather than as an extension —
+        // it is the doc surface's own vocabulary, like [[links]].
+        if (lang === "fez:query" && sel) {
+          return <QueryBlock client={client} source={String(children ?? "")} />;
+        }
+        const blockRender = lang ? blockRenderer(lang) : undefined;
+        if (blockRender && sel) {
+          const body = String(children ?? "").replace(/\n$/, "");
+          const infoLine = blockText.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang;
+          const mountRender: MountRender = (host) =>
+            blockRender(
+              {
+                info: infoLine.trim().slice(3 + (lang?.length ?? 0)).trim(),
+                body,
+                raw: `${infoLine}\n${body}\n\`\`\``,
+                channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
+                slug: sel.kind === "wiki" ? sel.slug : undefined,
+              },
+              host
+            );
+          return <MountPoint render={mountRender} />;
+        }
+        return <code className={className} {...rest}>{children}</code>;
+      };
+      codeHandlers.current.set(blockText, handler);
+    }
+    return handler;
+  };
+
   const md = (text: string) => (
     <ReactMarkdown
       // extensions extend parsing (callouts, math…) through the seam
@@ -662,36 +723,7 @@ export default function WikiView({ client }: { client: FezClient }) {
         },
         // A fenced block whose language an extension owns renders as that
         // extension's component (```fez:live …```), everything else stays code.
-        code: ({ className, children, ...rest }) => {
-          const lang = /language-([\w:.-]+)/.exec(className ?? "")?.[1];
-          // fez:query ships with the app rather than as an extension —
-          // it is the doc surface's own vocabulary, like [[links]].
-          if (lang === "fez:query" && sel) {
-            return <QueryBlock client={client} source={String(children ?? "")} />;
-          }
-          const render = lang ? blockRenderer(lang) : undefined;
-          if (render && sel) {
-            const body = String(children ?? "").replace(/\n$/, "");
-            const infoLine = text.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang;
-            return (
-              <MountPoint
-                render={(host) =>
-                  render(
-                    {
-                      info: infoLine.trim().slice(3 + lang!.length).trim(),
-                      body,
-                      raw: `${infoLine}\n${body}\n\`\`\``,
-                      channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
-                      slug: sel.kind === "wiki" ? sel.slug : undefined,
-                    },
-                    host
-                  )
-                }
-              />
-            );
-          }
-          return <code className={className} {...rest}>{children}</code>;
-        },
+        code: codeHandlerFor(text),
         a: ({ href, children, className }) => {
           if (href?.startsWith("wiki:")) {
             const [slug, section] = href.slice(5).split("#");
@@ -733,6 +765,45 @@ export default function WikiView({ client }: { client: FezClient }) {
     >
       {linkifyWiki(text)}
     </ReactMarkdown>
+  );
+
+  // The object literal below used to be built inline at the render site —
+  // a fresh closure every WikiView render, so MountPoint's mount effect
+  // (keyed on the render prop's identity) refired, and any state a
+  // mount-form page view holds was lost, on every unrelated WikiView
+  // re-render (a comment loading, a keystroke elsewhere) — not just when
+  // the page actually changed. Keyed on the doc identity, not the
+  // save/comment closures rebuilt every render (those would defeat the
+  // memo) — a real content edit lands as a new `shown.id`, which is
+  // itself in the key, so a republish still remounts the view.
+  const pageViewRender = useCallback(
+    (host?: HTMLElement) => {
+      if (!sel || !shown || !activeViewImpl) return undefined;
+      return activeViewImpl.render(
+        {
+          content: shown.content,
+          save: publish,
+          comment: async (text, anchor, mentions) => {
+            if (!sel) return;
+            const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
+            if (!channelId) return;
+            await client.publishDocComment(channelId, text, {
+              anchor,
+              slug: sel.kind === "wiki" ? sel.slug : undefined,
+              mentionPks: mentions.map((name) => client.pkByName(name)).filter((pk): pk is string => !!pk),
+            });
+            await load();
+          },
+          title: sel.kind === "wiki" ? selPage?.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
+          channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
+          slug: sel.kind === "wiki" ? sel.slug : undefined,
+          editable: shown.id === latest?.id,
+        },
+        host
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately doc-identity, not every closed-over value: see comment above
+    [activeViewImpl?.name, sel?.kind, sel?.kind === "wiki" ? sel.slug : sel?.channelId, selPage?.channelId, shown?.id]
   );
 
   return (
@@ -900,35 +971,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                   </div>
                   {activeViewImpl ? (
                     <div className="page-view-body">
-                      <MountPoint
-                        render={(host) =>
-                          activeViewImpl.render(
-                            {
-                              content: shown.content,
-                              save: publish,
-                              comment: async (text, anchor, mentions) => {
-                                if (!sel) return;
-                                const channelId =
-                                  sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
-                                if (!channelId) return;
-                                await client.publishDocComment(channelId, text, {
-                                  anchor,
-                                  slug: sel.kind === "wiki" ? sel.slug : undefined,
-                                  mentionPks: mentions
-                                    .map((name) => client.pkByName(name))
-                                    .filter((pk): pk is string => !!pk),
-                                });
-                                await load();
-                              },
-                              title: sel.kind === "wiki" ? selPage?.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
-                              channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
-                              slug: sel.kind === "wiki" ? sel.slug : undefined,
-                              editable: shown.id === latest?.id,
-                            },
-                            host
-                          )
-                        }
-                      />
+                      <MountPoint render={pageViewRender} />
                     </div>
                   ) : (
                   <div className="md doc-body wiki-body">

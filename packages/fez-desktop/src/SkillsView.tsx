@@ -1008,15 +1008,28 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
  * that extension: without a boundary, a card that throws takes the
  * extensions page with it and the only way out is a config file.
  */
-export class ExtensionPanel extends Component<{ panel: { name: string; render: MountRender } }, { failed?: string }> {
-  state: { failed?: string } = {};
+export class ExtensionPanel extends Component<
+  { panel: { name: string; render: MountRender } },
+  { failed?: string; forName?: string }
+> {
+  state: { failed?: string; forName?: string } = {};
+  // React reuses THIS instance across a panel swap (same position in the
+  // tree, still truthy) — name is the mount's whole identity, so a
+  // changed name both clears a stale error from the PREVIOUS panel and
+  // (below, via MountPoint's key) forces the new panel to actually mount.
+  static getDerivedStateFromProps(
+    props: { panel: { name: string } },
+    state: { failed?: string; forName?: string }
+  ): { failed?: string; forName?: string } | null {
+    if (state.forName === props.panel.name) return null;
+    return { failed: undefined, forName: props.panel.name };
+  }
   static getDerivedStateFromError(err: unknown): { failed: string } {
     return { failed: err instanceof Error ? err.message : String(err) };
   }
-  // A stable instance method, not an inline arrow in render() — MountPoint
-  // keys its mount effect on this reference, so it mounts once per panel
-  // instance instead of tearing down and re-mounting on every re-render.
-  // It always reads this.props fresh, so a swapped panel is still current.
+  // A stable instance method, not an inline arrow in render() — it always
+  // reads this.props fresh, so MountPoint's OWN identity check (the `key`
+  // below, not this reference) is what decides whether to remount.
   private renderPanel: MountRender = (host) => this.props.panel.render(host);
   render(): React.ReactNode {
     if (this.state.failed) {
@@ -1026,6 +1039,13 @@ export class ExtensionPanel extends Component<{ panel: { name: string; render: M
     // React routes a synchronous throw from a passive effect to the
     // nearest class error boundary the same as a throw during render —
     // getDerivedStateFromError above still catches it.
-    return <MountPoint render={this.renderPanel} />;
+    //
+    // key={panel.name}: this component instance is REUSED across a panel
+    // swap (same tree position, still truthy) — renderPanel's reference
+    // never changes, so without a key MountPoint's own mount effect would
+    // never re-fire and the new panel would never appear. The key forces
+    // a fresh MountPoint (and a fresh mount call) exactly when the name
+    // changes, not on every unrelated re-render of the same panel.
+    return <MountPoint key={this.props.panel.name} render={this.renderPanel} />;
   }
 }
