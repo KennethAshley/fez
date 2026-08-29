@@ -88,6 +88,11 @@ export default function AgentsPage({
   }, [rows]);
 
   return (
+    // A flex:1 shell wrapper so the roster fills the space between the rail
+    // and the side pane and the pane docks to the window's right edge —
+    // without it, the measured .fez-page (max-width) leaves the leftover
+    // width as dead space AFTER the pane. Same shape SkillsView uses.
+    <main className="main">
     <div className="fez-page wide">
       <header className="page-head">
         <h1 className="page-title">agents</h1>
@@ -127,5 +132,6 @@ export default function AgentsPage({
         </div>
       )}
     </div>
+    </main>
   );
 }
