@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient, ObserverEntry, WireEvent } from "@fezchat/client";
 import { invitePersona } from "./invite-persona";
+import { dayKey } from "./format";
 import type { BrowserWire } from "./wire";
 import ActivityFeed from "./ActivityFeed";
 import Avatar from "./Avatar";
@@ -41,10 +42,6 @@ interface CostSummary {
 const DAY_MS = 24 * 3600_000;
 const FLEET_DAYS = 14;
 
-const dayKey = (ts: number) => {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
 
 interface TurnRec {
   agent: string;

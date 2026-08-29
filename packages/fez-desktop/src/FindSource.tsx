@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { compact } from "./format";
 
 /**
  * "@researcher wants web-search — what IS that?"
@@ -84,11 +85,6 @@ async function fetchDownloads(names: string[], signal: AbortSignal): Promise<Map
   return new Map(entries);
 }
 
-function compactCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
-  return String(n);
-}
 
 export default function FindSource({
   skill,
@@ -213,7 +209,7 @@ export default function FindSource({
                   {hit.version && <span className="role-tag">{hit.version}</span>}
                   {typeof hit.downloads === "number" && (
                     <span className="find-installs" title={`${hit.downloads.toLocaleString()} installs in the last week`}>
-                      ⇩ {compactCount(hit.downloads)}/wk
+                      ⇩ {compact(hit.downloads)}/wk
                     </span>
                   )}
                 </span>

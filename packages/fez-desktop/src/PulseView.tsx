@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FezClient, ObserverEntry } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
 import Avatar from "./Avatar";
+import { compact, dayKey } from "./format";
 import { AnimatedSprite } from "./pixel-sprite";
 import { SPRITES } from "./sprites";
 
@@ -46,10 +47,6 @@ interface DayStats {
   ms: number;
 }
 
-const dayKey = (ts: number) => {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
 
 export default function PulseView({
   client,
@@ -809,12 +806,6 @@ function groupByDay<T extends { ts: number }>(rows: T[]): [string, T[]][] {
     bucket.push(row);
   }
   return [...out.entries()];
-}
-
-function compact(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
 }
 
 function ago(deltaMs: number): string {

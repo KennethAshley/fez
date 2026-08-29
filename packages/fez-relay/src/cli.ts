@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 import { startRelay, type RelayOptions } from "./relay.js";
 import { builtinPolicies, type RelayPolicy } from "./policies.js";
 
@@ -27,68 +28,96 @@ async function main() {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 
-  const args = process.argv.slice(2);
-  let port: number | undefined;
-  let store: string | undefined;
-  let verifySignatures: boolean | undefined;
-  let scheduler = true;
+  // --extensions takes an OPTIONAL value ("" = the default directory);
+  // parseArgs has no optional-value type, so the bare form becomes
+  // `--extensions=` before parsing.
+  const args = process.argv
+    .slice(2)
+    .map((arg, i, all) => (arg === "--extensions" && (all[i + 1] ?? "--").startsWith("--") ? "--extensions=" : arg));
+
+  let values: {
+    port?: string;
+    store?: string;
+    "no-verify"?: boolean;
+    "no-scheduler"?: boolean;
+    config?: string;
+    extensions?: string;
+    "extensions-data"?: string;
+    origin?: string[];
+    owner?: string;
+    name?: string;
+    description?: string;
+    icon?: string;
+    policy?: string[];
+    help?: boolean;
+  };
+  try {
+    ({ values } = parseArgs({
+      args,
+      options: {
+        port: { type: "string" },
+        store: { type: "string" },
+        "no-verify": { type: "boolean" },
+        "no-scheduler": { type: "boolean" },
+        config: { type: "string" },
+        extensions: { type: "string" },
+        "extensions-data": { type: "string" },
+        origin: { type: "string", multiple: true },
+        owner: { type: "string" },
+        name: { type: "string" },
+        description: { type: "string" },
+        icon: { type: "string" },
+        policy: { type: "string", multiple: true },
+        help: { type: "boolean", short: "h" },
+      },
+    }));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  if (values.help) {
+    console.log(
+      "Usage: fez-relay [--port N] [--store FILE] [--no-verify] [--policy NAME[=ARG]]... [--config FILE]\n" +
+        "                 [--owner HEX] [--name TEXT] [--description TEXT] [--icon URL]\n" +
+        "                 [--extensions [DIR]] [--extensions-data DIR] [--origin URL]... [--no-scheduler]\n\n" +
+        "--extensions loads ~/.fez/relay-extensions (or DIR): code that runs INSIDE this\n" +
+        "relay, installed by `fez install`. Off unless asked for — installing an\n" +
+        "extension and letting it into the event store are two decisions.\n" +
+        "--origin is the PUBLIC url this relay answers to; extensions that verify\n" +
+        "signed requests need it, because behind a proxy the relay cannot know.\n" +
+        "--no-scheduler   don't execute sealed 40006 schedule intents\n\n" +
+        "A relay is a workspace. --owner is the pubkey whose signature makes a channel\n" +
+        "or roster event count; it is served in the NIP-11 document and is what the\n" +
+        "membership and moderation policies enforce. Without it the workspace is\n" +
+        "unclaimed: it will serve, but no channel or roster can be valid on it."
+    );
+    process.exit(0);
+  }
+
+  const port = values.port === undefined ? undefined : Number(values.port);
+  const store = values.store;
+  const verifySignatures = values["no-verify"] ? false : undefined;
+  const scheduler = !values["no-scheduler"];
+  const configPath = values.config;
+  /** undefined = don't load any; "" = the default directory; else a path. */
+  const extensionsDir = values.extensions;
+  const extensionsData = values["extensions-data"];
+  const origins = values.origin ?? [];
+  const owner = values.owner;
+  const name = values.name;
+  const description = values.description;
+  const icon = values.icon;
   // Policies are built AFTER parsing: membership/moderation take the
   // workspace owner, and --owner may appear after --policy on the line.
-  const policySpecs: { name: string; value?: string }[] = [];
-  let configPath: string | undefined;
-  /** undefined = don't load any; "" = the default directory; else a path. */
-  let extensionsDir: string | undefined;
-  let extensionsData: string | undefined;
-  const origins: string[] = [];
-  let owner: string | undefined;
-  let name: string | undefined;
-  let description: string | undefined;
-  let icon: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--port") port = Number(args[++i]);
-    else if (arg === "--store") store = args[++i];
-    else if (arg === "--no-verify") verifySignatures = false;
-    else if (arg === "--no-scheduler") scheduler = false;
-    else if (arg === "--config") configPath = args[++i];
-    else if (arg === "--extensions") extensionsDir = args[i + 1]?.startsWith("--") === false ? args[++i] : "";
-    else if (arg === "--extensions-data") extensionsData = args[++i];
-    else if (arg === "--origin") origins.push(args[++i]);
-    else if (arg === "--owner") owner = args[++i];
-    else if (arg === "--name") name = args[++i];
-    else if (arg === "--description") description = args[++i];
-    else if (arg === "--icon") icon = args[++i];
-    else if (arg === "--policy") {
-      const spec = args[++i] ?? "";
-      const [policyName, value] = spec.split("=", 2);
-      if (!builtinPolicies[policyName]) {
-        console.error(`Unknown policy "${policyName}". Built-ins: ${Object.keys(builtinPolicies).join(", ")}`);
-        process.exit(1);
-      }
-      policySpecs.push({ name: policyName, value });
-    } else if (arg === "--help" || arg === "-h") {
-      console.log(
-        "Usage: fez-relay [--port N] [--store FILE] [--no-verify] [--policy NAME[=ARG]]... [--config FILE]\n" +
-          "                 [--owner HEX] [--name TEXT] [--description TEXT] [--icon URL]\n" +
-          "                 [--extensions [DIR]] [--extensions-data DIR] [--origin URL]... [--no-scheduler]\n\n" +
-          "--extensions loads ~/.fez/relay-extensions (or DIR): code that runs INSIDE this\n" +
-          "relay, installed by `fez install`. Off unless asked for — installing an\n" +
-          "extension and letting it into the event store are two decisions.\n" +
-          "--origin is the PUBLIC url this relay answers to; extensions that verify\n" +
-          "signed requests need it, because behind a proxy the relay cannot know.\n" +
-          "--no-scheduler   don't execute sealed 40006 schedule intents\n\n" +
-          "A relay is a workspace. --owner is the pubkey whose signature makes a channel\n" +
-          "or roster event count; it is served in the NIP-11 document and is what the\n" +
-          "membership and moderation policies enforce. Without it the workspace is\n" +
-          "unclaimed: it will serve, but no channel or roster can be valid on it."
-      );
-      process.exit(0);
-    } else {
-      console.error(`Unknown argument: ${arg}`);
+  const policySpecs = (values.policy ?? []).map((spec) => {
+    const [policyName, value] = spec.split("=", 2);
+    if (!builtinPolicies[policyName]) {
+      console.error(`Unknown policy "${policyName}". Built-ins: ${Object.keys(builtinPolicies).join(", ")}`);
       process.exit(1);
     }
-  }
+    return { name: policyName, value };
+  });
 
   let config: Partial<RelayOptions> = {};
   if (configPath) {
