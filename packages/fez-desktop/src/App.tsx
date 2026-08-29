@@ -2639,13 +2639,17 @@ function ToolPane({ artifact, building, onClose }: { artifact: Artifact; buildin
 
 /**
  * One artifact-action's mount node. `useCallback` keeps the bound render
- * stable across ToolPane re-renders (only `artifact.id` changing swaps in
- * a new mount) instead of MountPoint tearing down and remounting the
+ * stable across ToolPane re-renders (only `artifact` itself changing swaps
+ * in a new mount) instead of MountPoint tearing down and remounting the
  * action's whole node — including any state it holds, like loom's ★ keep —
- * on every unrelated ToolPane render.
+ * on every unrelated ToolPane render. Deps on `artifact` (not `artifact.id`)
+ * on purpose: `pane.artifact` is event-driven — App.tsx only replaces it
+ * with a new object when a real live-artifact update lands, so this still
+ * doesn't thrash, but it DOES re-render with the fresh content instead of
+ * a stale capture under the same id.
  */
 function ArtifactActionSlot({ action, artifact }: { action: ArtifactAction; artifact: Artifact }) {
-  const render = useCallback((host?: HTMLElement) => action.render({ artifact }, host), [action, artifact.id]);
+  const render = useCallback((host?: HTMLElement) => action.render({ artifact }, host), [action, artifact]);
   return <MountPoint render={render} />;
 }
 
