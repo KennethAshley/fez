@@ -154,6 +154,12 @@ body {
   background: var(--brand);
 }
 .channel.active:hover { background: color-mix(in srgb, var(--bg2) 85%, transparent); }
+/* @fezchat/ui's <Row active> — the same ember notch, for kit-built rows
+   the host document supplies this CSS for. */
+.fez-row { position: relative; }
+.fez-row.active::before {
+  content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px; background: var(--brand);
+}
 .channel.active .hash { color: var(--brand); }
 /* Nav glyphs are dim at rest; the active view's glyph runs phosphor —
    the terminal LED --phosphor was minted for. */
