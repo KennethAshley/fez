@@ -462,6 +462,13 @@ pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String)> {
             Some(r) => r,
             None => continue,
         };
+        // Same guard as materialize's write-time check — a manifest sitting
+        // in packages/*/ isn't necessarily one install_from_tarball wrote
+        // (hand-edited, synced, or pre-guard), so a traversal rel is
+        // refused here too rather than trusted to read outside the package.
+        if rel.starts_with('/') || Path::new(rel).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            continue;
+        }
         if let Ok(code) = std::fs::read_to_string(home.join("packages").join(&name).join(rel)) {
             out.push((name, code));
         }
@@ -749,5 +756,27 @@ mod tests {
         // it is read from the package dir, and does NOT depend on gui-extensions/
         std::fs::remove_dir_all(home.path().join("gui-extensions")).ok();
         assert!(gui_parts(home.path()).iter().any(|(n, _)| n == "tidy"), "must not depend on the symlink dir");
+    }
+
+    // install_from_tarball already refuses a traversal `gui` rel at write
+    // time (a_manifest_path_that_escapes_the_package_is_refused), but
+    // gui_parts reads whatever manifest is sitting in packages/*/ — a
+    // hand-edited or pre-guard manifest is not out of scope. Same guard,
+    // at read time, so a package like this yields no gui part rather than
+    // reading a file outside its own package dir.
+    #[test]
+    fn gui_parts_refuses_a_manifest_gui_rel_that_escapes_the_package() {
+        let home = tempfile::tempdir().unwrap();
+        let pkg_dir = home.path().join("packages").join("evil");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name": "@fezchat/evil", "version": "0.0.1", "fez": {"type": "extension", "parts": {"gui": "../evil.js"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(home.path().join("packages").join("evil.js"), "haha\n").unwrap();
+
+        let found = gui_parts(home.path());
+        assert!(found.iter().all(|(n, _)| n != "evil"), "a traversal gui rel must yield no gui part: {found:?}");
     }
 }
