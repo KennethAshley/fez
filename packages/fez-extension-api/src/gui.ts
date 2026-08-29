@@ -201,7 +201,21 @@ export interface GuiExtensionApi {
    * — are refused. Secrets do not belong here either: a spawned agent
    * resolves its own key from fez's key store, which is what keeps agent
    * keys out of the desktop entirely.
+   *
+   * The host also supplies two facts of its own to every spawn —
+   * FEZ_OWNER_PK (the workspace owner's pubkey) and FEZ_WORKSPACE_RELAY
+   * (the workspace relay URL) — so a spawned agent can report to its
+   * owner without the extension having to learn either. Your `env` wins
+   * on collision.
    */
+  /**
+   * A native notification through the host's notifier (permission
+   * `notifications`). The user's notification settings still apply —
+   * `kind` picks which category gates and voices it: "agent_error" for
+   * failures, "needs_action" (the default) for things the owner should
+   * act on. Absent without the grant.
+   */
+  notify?: (title: string, body: string, kind?: "agent_error" | "needs_action") => void;
   agents?: {
     /** Start `bin` as an agent called `name`; resolves to its pid. */
     spawn(bin: string, opts: { name: string; env?: Record<string, string> }): Promise<number>;
