@@ -11,7 +11,8 @@ import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
 import { useConfig, bumpConfig } from "./config-store";
 import { attachSkill, detachSkill, declaredSkills, rememberSkillSource } from "./skill-attach";
-import type { Dispose } from "./mount-result";
+import type { MountRender } from "./mount-result";
+import { MountPoint } from "./MountPoint";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -1007,27 +1008,24 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
  * that extension: without a boundary, a card that throws takes the
  * extensions page with it and the only way out is a config file.
  */
-export class ExtensionPanel extends Component<
-  { panel: { name: string; render: () => React.ReactNode | Dispose | void } },
-  { failed?: string }
-> {
+export class ExtensionPanel extends Component<{ panel: { name: string; render: MountRender } }, { failed?: string }> {
   state: { failed?: string } = {};
   static getDerivedStateFromError(err: unknown): { failed: string } {
     return { failed: err instanceof Error ? err.message : String(err) };
   }
+  // A stable instance method, not an inline arrow in render() — MountPoint
+  // keys its mount effect on this reference, so it mounts once per panel
+  // instance instead of tearing down and re-mounting on every re-render.
+  // It always reads this.props fresh, so a swapped panel is still current.
+  private renderPanel: MountRender = (host) => this.props.panel.render(host);
   render(): React.ReactNode {
     if (this.state.failed) {
       return <div className="ext-panel-broken">this extension's settings failed to render — {this.state.failed}</div>;
     }
-    try {
-      // The mount form (a returned disposer) has no host node to mount
-      // into here — this boundary predates it and today's registered
-      // extensions only ever return an element. MountPoint (the real
-      // host-node bridge, dispatching on classifyMountResult) is Task 5.
-      const result = this.props.panel.render();
-      return <>{result as React.ReactNode}</>;
-    } catch (err) {
-      return <div className="ext-panel-broken">this extension's settings failed to render — {String(err)}</div>;
-    }
+    // No try/catch here: render now runs inside MountPoint's effect, and
+    // React routes a synchronous throw from a passive effect to the
+    // nearest class error boundary the same as a throw during render —
+    // getDerivedStateFromError above still catches it.
+    return <MountPoint render={this.renderPanel} />;
   }
 }

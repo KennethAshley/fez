@@ -18,6 +18,7 @@ import {
 import MentionBox from "./MentionBox";
 import { FormatBar, markdownFormatOps } from "./format-bar";
 import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";
+import { MountPoint } from "./MountPoint";
 import QueryBlock from "./QueryBlock";
 import SlashMenu, { caretPosition, slashAt, type SlashState } from "./SlashMenu";
 import { AnimatedSprite } from "./pixel-sprite";
@@ -673,15 +674,20 @@ export default function WikiView({ client }: { client: FezClient }) {
             const body = String(children ?? "").replace(/\n$/, "");
             const infoLine = text.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang;
             return (
-              <>
-                {render({
-                  info: infoLine.trim().slice(3 + lang!.length).trim(),
-                  body,
-                  raw: `${infoLine}\n${body}\n\`\`\``,
-                  channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
-                  slug: sel.kind === "wiki" ? sel.slug : undefined,
-                })}
-              </>
+              <MountPoint
+                render={(host) =>
+                  render(
+                    {
+                      info: infoLine.trim().slice(3 + lang!.length).trim(),
+                      body,
+                      raw: `${infoLine}\n${body}\n\`\`\``,
+                      channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
+                      slug: sel.kind === "wiki" ? sel.slug : undefined,
+                    },
+                    host
+                  )
+                }
+              />
             );
           }
           return <code className={className} {...rest}>{children}</code>;
@@ -894,31 +900,35 @@ export default function WikiView({ client }: { client: FezClient }) {
                   </div>
                   {activeViewImpl ? (
                     <div className="page-view-body">
-                      {/* Today's registered page views only ever return an
-                          element — MountPoint (dispatching mount-form vs.
-                          element) is Task 5. */}
-                      {(activeViewImpl.render({
-                        content: shown.content,
-                        save: publish,
-                        comment: async (text, anchor, mentions) => {
-                          if (!sel) return;
-                          const channelId =
-                            sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
-                          if (!channelId) return;
-                          await client.publishDocComment(channelId, text, {
-                            anchor,
-                            slug: sel.kind === "wiki" ? sel.slug : undefined,
-                            mentionPks: mentions
-                              .map((name) => client.pkByName(name))
-                              .filter((pk): pk is string => !!pk),
-                          });
-                          await load();
-                        },
-                        title: sel.kind === "wiki" ? selPage?.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
-                        channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
-                        slug: sel.kind === "wiki" ? sel.slug : undefined,
-                        editable: shown.id === latest?.id,
-                      }) as React.ReactNode)}
+                      <MountPoint
+                        render={(host) =>
+                          activeViewImpl.render(
+                            {
+                              content: shown.content,
+                              save: publish,
+                              comment: async (text, anchor, mentions) => {
+                                if (!sel) return;
+                                const channelId =
+                                  sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
+                                if (!channelId) return;
+                                await client.publishDocComment(channelId, text, {
+                                  anchor,
+                                  slug: sel.kind === "wiki" ? sel.slug : undefined,
+                                  mentionPks: mentions
+                                    .map((name) => client.pkByName(name))
+                                    .filter((pk): pk is string => !!pk),
+                                });
+                                await load();
+                              },
+                              title: sel.kind === "wiki" ? selPage?.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
+                              channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
+                              slug: sel.kind === "wiki" ? sel.slug : undefined,
+                              editable: shown.id === latest?.id,
+                            },
+                            host
+                          )
+                        }
+                      />
                     </div>
                   ) : (
                   <div className="md doc-body wiki-body">

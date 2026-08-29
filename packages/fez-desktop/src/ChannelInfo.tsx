@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
+import { MountPoint } from "./MountPoint";
 
 /**
  * The channel's standing information, always reachable from inside the
@@ -124,14 +125,19 @@ export default function ChannelInfo({
                       const infoLine =
                         doc!.latestContent.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang;
                       return (
-                        <>
-                          {render({
-                            info: infoLine.trim().slice(3 + lang!.length).trim(),
-                            body,
-                            raw: `${infoLine}\n${body}\n\`\`\``,
-                            channelId,
-                          })}
-                        </>
+                        <MountPoint
+                          render={(host) =>
+                            render(
+                              {
+                                info: infoLine.trim().slice(3 + lang!.length).trim(),
+                                body,
+                                raw: `${infoLine}\n${body}\n\`\`\``,
+                                channelId,
+                              },
+                              host
+                            )
+                          }
+                        />
                       );
                     }
                     return <code className={className} {...rest}>{children}</code>;

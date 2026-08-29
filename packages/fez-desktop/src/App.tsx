@@ -1,4 +1,4 @@
-import { Fragment, createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -31,7 +31,8 @@ import { shareArtifact } from "./share-artifact";
 import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
 import { toast } from "./toast";
 import { startSummoner } from "./summoner";
-import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, extensionNavViews, extensionArtifactActions } from "./gui-extensions";
+import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, extensionNavViews, extensionArtifactActions, type ArtifactAction } from "./gui-extensions";
+import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
@@ -1275,11 +1276,17 @@ function Shell({
       {view.kind === "wiki" && <WikiView client={client} />}
       {view.kind === "ext" && (
         <main className="main">
-          {/* Today's registered views only ever return an element —
-              MountPoint (dispatching mount-form vs. element) is Task 5. */}
-          {(extensionNavViews().find((nav) => nav.name === view.name)?.render() as React.ReactNode) ?? (
-            <div className="pane-empty">this view's extension is no longer installed</div>
-          )}
+          {(() => {
+            const nav = extensionNavViews().find((n) => n.name === view.name);
+            // nav.render is the same function reference for the extension's
+            // whole registered lifetime, so MountPoint mounts once here
+            // rather than on every Shell re-render.
+            return nav ? (
+              <MountPoint render={nav.render} />
+            ) : (
+              <div className="pane-empty">this view's extension is no longer installed</div>
+            );
+          })()}
         </main>
       )}
       {view.kind === "extensions" && <SkillsView only="extensions" client={client} wire={wire} />}
@@ -2060,7 +2067,7 @@ function ChannelView({
           const props = { channelId, rootId: threadRoot, rootContent: root.content };
           return (
             <div className="thread-view">
-              <ExtensionPanel panel={{ name: view.name, render: () => view.render(props) }} />
+              <ExtensionPanel panel={{ name: view.name, render: (host) => view.render(props, host) }} />
             </div>
           );
         })()}
@@ -2613,9 +2620,7 @@ function ToolPane({ artifact, building, onClose }: { artifact: Artifact; buildin
         <span className="pane-actions">
           {/* Extension-contributed header actions — loom's ★ keep lives here. */}
           {extensionArtifactActions().map((action) => (
-            // Today's registered actions only ever return an element —
-            // MountPoint (dispatching mount-form vs. element) is Task 5.
-            <Fragment key={action.name}>{action.render({ artifact }) as React.ReactNode}</Fragment>
+            <Fragment key={action.name}><ArtifactActionSlot action={action} artifact={artifact} /></Fragment>
           ))}
           <button className="pane-close" onClick={onClose}>✕</button>
         </span>
@@ -2625,6 +2630,18 @@ function ToolPane({ artifact, building, onClose }: { artifact: Artifact; buildin
       </div>
     </aside>
   );
+}
+
+/**
+ * One artifact-action's mount node. `useCallback` keeps the bound render
+ * stable across ToolPane re-renders (only `artifact.id` changing swaps in
+ * a new mount) instead of MountPoint tearing down and remounting the
+ * action's whole node — including any state it holds, like loom's ★ keep —
+ * on every unrelated ToolPane render.
+ */
+function ArtifactActionSlot({ action, artifact }: { action: ArtifactAction; artifact: Artifact }) {
+  const render = useCallback((host?: HTMLElement) => action.render({ artifact }, host), [action, artifact.id]);
+  return <MountPoint render={render} />;
 }
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🚀", "👀"];
