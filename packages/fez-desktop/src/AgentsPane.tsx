@@ -37,10 +37,104 @@ interface CostSummary {
   failed: number;
   cancelled: number;
   ms: number;
+  /** Budget state off the NEWEST metric that carried it (fez-acp rides
+   * dayUsd/capUsd on every 47030) — today's tally and the persona's cap. */
+  dayUsd?: number;
+  capUsd?: number;
+  budgetTs?: number;
 }
 
 const DAY_MS = 24 * 3600_000;
 const FLEET_DAYS = 14;
+
+/** Splice `spendCapUsd:` into a persona's frontmatter — replace the line
+ * if present, append it if not, drop it when cap is undefined. The rest of
+ * the file is untouched: personas are edited in an editor, so this command
+ * changes exactly one declared setting, never the prose. */
+function withSpendCap(md: string, cap: number | undefined): string {
+  const line = cap !== undefined ? `spendCapUsd: ${cap}` : undefined;
+  const m = /^---\n([\s\S]*?)\n---/.exec(md);
+  if (!m) return line ? `---\n${line}\n---\n\n${md}` : md;
+  let fm = m[1];
+  if (/^spendCapUsd:.*$/m.test(fm)) {
+    fm = line ? fm.replace(/^spendCapUsd:.*$/m, line) : fm.replace(/\n?^spendCapUsd:.*$/m, "");
+  } else if (line) {
+    fm = `${fm}\n${line}`;
+  }
+  return `${md.slice(0, m.index)}---\n${fm}\n---${md.slice(m.index + m[0].length)}`;
+}
+
+/** Spend today against the persona's `spendCapUsd`, plus the cap editor.
+ * Budget state rides the newest 47030; a metric from a previous local day
+ * means nothing has been spent TODAY, so the bar resets rather than
+ * showing yesterday's tally. The cap writes to the persona file (the
+ * agent's contract) and applies when the agent next restarts. */
+function BudgetBar({ name, summary }: { name: string; summary: CostSummary }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saved, setSaved] = useState<string>();
+
+  const fresh = summary.budgetTs !== undefined
+    && new Date(summary.budgetTs * 1000).toLocaleDateString() === new Date().toLocaleDateString();
+  const spent = fresh && summary.dayUsd !== undefined ? summary.dayUsd : 0;
+  const cap = summary.capUsd;
+
+  const save = async () => {
+    const cleaned = draft.trim();
+    const next = cleaned === "" ? undefined : Number(cleaned);
+    if (next !== undefined && !(next > 0)) return;
+    try {
+      const md = await invoke<string>("read_persona", { name });
+      await invoke("update_persona", { name, content: withSpendCap(md, next) });
+      setSaved(next !== undefined ? `cap $${next}/day saved — applies when @${name} restarts` : `cap removed — applies when @${name} restarts`);
+      setEditing(false);
+    } catch (e) {
+      setSaved(String(e));
+    }
+  };
+
+  return (
+    <div className="budget">
+      <div className="cost-detail">
+        {cap !== undefined ? (
+          <>
+            ${spent.toFixed(2)} of ${cap.toFixed(2)} today
+            {spent >= cap ? " · capped — not taking turns until tomorrow" : spent >= cap * 0.8 ? " · nearing cap" : ""}
+          </>
+        ) : (
+          <>${spent.toFixed(2)} today · no daily cap</>
+        )}
+        {" · "}
+        {editing ? (
+          <span className="budget-edit">
+            $<input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }}
+              placeholder={cap !== undefined ? String(cap) : "5"}
+              aria-label="daily spend cap in dollars, empty to remove"
+              autoFocus
+            />/day
+            <button onClick={() => void save()}>Save</button>
+          </span>
+        ) : (
+          <button className="linkish" onClick={() => { setDraft(cap !== undefined ? String(cap) : ""); setEditing(true); setSaved(undefined); }}>
+            {cap !== undefined ? "Change cap" : "Set cap"}
+          </button>
+        )}
+      </div>
+      {cap !== undefined && (
+        <div className="budget-track" role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={spent} aria-label="spend today against daily cap">
+          <div
+            className={`budget-fill${spent >= cap ? " over" : spent >= cap * 0.8 ? " warn" : ""}`}
+            style={{ width: `${Math.min(1, spent / cap) * 100}%` }}
+          />
+        </div>
+      )}
+      {saved && <div className="cost-detail">{saved}</div>}
+    </div>
+  );
+}
 
 
 interface TurnRec {
@@ -636,6 +730,8 @@ function AgentDetail({
             agent?: string;
             status?: string;
             durationMs?: number;
+            dayUsd?: number;
+            capUsd?: number;
           };
           if (metric.agent !== name) continue;
           summary.turns++;
@@ -643,6 +739,11 @@ function AgentDetail({
           else if (metric.status === "failed") summary.failed++;
           else if (metric.status === "cancelled") summary.cancelled++;
           summary.ms += metric.durationMs ?? 0;
+          if (metric.dayUsd !== undefined && event.created_at > (summary.budgetTs ?? 0)) {
+            summary.budgetTs = event.created_at;
+            summary.dayUsd = metric.dayUsd;
+            summary.capUsd = metric.capUsd;
+          }
         } catch {
           /* not ours */
         }
@@ -744,6 +845,7 @@ function AgentDetail({
                 <div className="cost-detail">{(costs.ms / 60_000).toFixed(1)} min compute</div>
               </div>
             )}
+            {costs && costs !== "loading" && <BudgetBar name={name} summary={costs} />}
           </>
         )}
       </div>
