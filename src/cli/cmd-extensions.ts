@@ -458,6 +458,15 @@ program
   });
 
 program
+  .command("pack")
+  .description("Build this GUI extension: src/view.tsx → dist/view.js (and a hashed CSS module if present)")
+  .action(async () => {
+    const { packExtension } = await import("./pack.js");
+    const out = await packExtension(process.cwd());
+    console.log(`packed ${out.js}${out.css ? ` + ${out.css}` : ""}`);
+  });
+
+program
   .command("list")
   .description("List installed fez packages")
   .action(async () => {
