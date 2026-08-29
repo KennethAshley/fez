@@ -38,6 +38,7 @@ export const PERM_LABEL: Record<string, string> = {
   // Said as what it costs you, not as what the API is called: the point a
   // reader needs is that this outlives the window they grant it in.
   processes: "run its own programs on your machine",
+  notifications: "send you native notifications",
   "network:relay": "talk to your relay",
 };
 

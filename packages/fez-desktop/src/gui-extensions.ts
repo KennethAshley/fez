@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Artifact, FezClient } from "@fezchat/client";
 import { parseQuery } from "@fezchat/client";
 import { registerArtifactViewer } from "./artifact-viewers";
+import { notifyEvent } from "./notify";
 import { invitePersona } from "./invite-persona";
 import type { Dispose, MountRender } from "./mount-result";
 
@@ -121,7 +122,18 @@ export interface GuiExtensionApi {
    * — are refused. Secrets do not belong here either: a spawned agent
    * resolves its own key from fez's key store, which is what keeps agent
    * keys out of the desktop entirely.
+   *
+   * The host also supplies FEZ_OWNER_PK and FEZ_WORKSPACE_RELAY under
+   * every spawn, so a spawned agent can report to its owner without the
+   * extension having to learn either. The caller's env wins on collision.
    */
+  /**
+   * A native notification through the host's notifier (permission
+   * `notifications`). The user's notification settings still gate and
+   * voice it — `kind` picks the category: "agent_error" for failures,
+   * "needs_action" (default) for things the owner should act on.
+   */
+  notify?: (title: string, body: string, kind?: "agent_error" | "needs_action") => void;
   agents?: {
     /** Start `bin` as an agent called `name`; resolves to its pid. */
     spawn(bin: string, opts: { name: string; env?: Record<string, string> }): Promise<number>;
@@ -919,6 +931,18 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       // `extension` is passed for the caller rather than taken from it: a
       // well-behaved package never has to name itself, and a badly-behaved
       // one naming someone else gains nothing the host will honour.
+      // The user's notification settings still gate and voice these —
+      // the permission grants access to the notifier, not a bypass of it.
+      notify: may("notifications")
+        ? (title: string, body: string, kind?: "agent_error" | "needs_action") =>
+            notifyEvent({
+              key: `ext:${name}:${title}`,
+              kind: kind === "agent_error" ? "agent_error" : "needs_action",
+              title,
+              body,
+              label: name,
+            })
+        : (refuse("notifications", "send a notification") as never),
       agents: may("processes")
         ? {
             spawn: (bin: string, opts: { name: string; env?: Record<string, string> }) =>
@@ -926,7 +950,15 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
                 extension: name,
                 bin,
                 name: opts.name,
-                env: Object.entries(opts.env ?? {}),
+                // Two host facts under every spawn — owner and workspace
+                // relay — so a spawned agent can report to its owner
+                // (owner-encrypted 47030s, say) without the extension
+                // having to learn either. The caller's env wins.
+                env: Object.entries({
+                  FEZ_OWNER_PK: client.pubkey,
+                  FEZ_WORKSPACE_RELAY: (localStorage.getItem("fez-relay") ?? "").split(",")[0]?.trim() ?? "",
+                  ...(opts.env ?? {}),
+                }),
               }),
             // `bin` scopes both to the caller's own processes — "drift"
             // the miner must never stop "drift" the chat agent.
