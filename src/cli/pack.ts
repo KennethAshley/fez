@@ -56,7 +56,7 @@ function cssModulePlugin(pkgName: string): { plugin: Plugin; result: () => { has
     setup(b) {
       b.onLoad({ filter: /\.module\.css$/ }, (args) => {
         if (result && result.file !== args.path) {
-          console.log("ponytail: one CSS module per gui part; multi-module if an extension needs it");
+          console.warn("ponytail: one CSS module per gui part; multi-module if an extension needs it");
           return { contents: "export default {};", loader: "js" };
         }
         const source = readFileSync(args.path, "utf8");
@@ -66,7 +66,13 @@ function cssModulePlugin(pkgName: string): { plugin: Plugin; result: () => { has
           if (!(cls in map)) map[cls] = hashedClassName(pkgName, cls);
         }
         let hashedCss = source;
-        for (const [orig, hashed] of Object.entries(map)) {
+        // Longest-name-first: `\b` treats `-` as a non-word char, so a
+        // shorter class replaced first (e.g. "btn") would also match
+        // inside a longer, unrelated one ("btn-primary"), corrupting it.
+        // Replacing longest-first consumes the longer name before the
+        // shorter one's regex gets a chance at it.
+        const byLengthDesc = Object.entries(map).sort((a, b) => b[0].length - a[0].length);
+        for (const [orig, hashed] of byLengthDesc) {
           hashedCss = hashedCss.replace(new RegExp(`\\.${orig}\\b`, "g"), `.${hashed}`);
         }
         result = { file: args.path, hashedCss };
