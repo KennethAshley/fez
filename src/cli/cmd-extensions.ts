@@ -203,8 +203,26 @@ program
   .option("--workspace", "Include a workspace provider (gives a repo: persona a checkout)")
   .option("-d, --dir <path>", "Output directory (default ./<name>)")
   .action(async (name: string, options) => {
-    const { scaffold, baseName } = await import("../extensions/scaffold.js");
     const picked = (["headless", "gui", "relay", "workspace"] as const).filter((s) => options[s]);
+    // A GUI-only request ("fez create <name> --gui", nothing else) gets the
+    // on-brand @fezchat/ui recipe from Task 7's scaffold — mount model,
+    // fez-* utilities, capability guards — instead of the older multi-part
+    // scaffolder's raw h()-factory gui starter. Any other combination
+    // (default headless+gui, or a relay/workspace part) still goes through
+    // the general multi-surface scaffolder below; those parts have no
+    // @fezchat/ui equivalent yet.
+    if (picked.length === 1 && picked[0] === "gui") {
+      const { scaffold: scaffoldGui } = await import("./scaffold.js");
+      const dir = await scaffoldGui(name, options.dir ?? process.cwd());
+      console.log(chalk.green(`✅ ${name} — gui (built from @fezchat/ui)`));
+      console.log(chalk.dim(`   ${path.relative(process.cwd(), dir) || "."}/`));
+      console.log();
+      console.log(chalk.bold("Next:"));
+      console.log(`  cd ${path.relative(process.cwd(), dir) || "."}`);
+      console.log(`  bun install && fez pack`);
+      return;
+    }
+    const { scaffold, baseName } = await import("../extensions/scaffold.js");
     const surfaces = picked.length ? picked : (["headless", "gui"] as const);
     const dir = options.dir ?? path.join(process.cwd(), baseName(name));
     try {
