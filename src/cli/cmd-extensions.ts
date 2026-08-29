@@ -25,6 +25,13 @@ export function placeLinkedGuiPart(
 ): string {
   const guiRel = manifest.fez?.parts?.gui;
   if (!guiRel) throw new Error(`${name} declares no fez.parts.gui`);
+  // Mirror the install side's write-time guard (package_install.rs
+  // materialize / gui_parts): a manifest gui rel must stay inside the
+  // package dir — an absolute path or a `..` segment is refused before
+  // any write, not silently joined outside packages/<name>/.
+  if (path.isAbsolute(guiRel) || guiRel.split(/[\\/]/).includes("..")) {
+    throw new Error(`${name} gui rel ${guiRel} escapes the package — refusing`);
+  }
   const dir = fezHomeAt(base, "packages", name);
   nodeFs.mkdirSync(dir, { recursive: true });
   nodeFs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(manifest, null, 2));

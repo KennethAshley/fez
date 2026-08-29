@@ -51,4 +51,24 @@ describe("fez link — gui part lands in the package dir, not gui-extensions/", 
     placeLinkedGuiPart(pkgDir, manifest, name, base);
     expect(fs.existsSync(fezHomeAt(base, "gui-extensions", `${name}.js`))).toBe(false);
   });
+
+  test("refuses a gui rel that escapes the package dir with '..'", () => {
+    const evilManifest = {
+      name: "@fezchat/evil",
+      version: "0.0.1",
+      fez: { parts: { gui: "../../evil.js" } },
+    };
+    expect(() => placeLinkedGuiPart(pkgDir, evilManifest, "evil", base)).toThrow(/escapes/);
+    expect(fs.existsSync(fezHomeAt(base, "packages", "evil"))).toBe(false);
+  });
+
+  test("refuses an absolute gui rel", () => {
+    const evilManifest = {
+      name: "@fezchat/evil2",
+      version: "0.0.1",
+      fez: { parts: { gui: "/etc/evil.js" } },
+    };
+    expect(() => placeLinkedGuiPart(pkgDir, evilManifest, "evil2", base)).toThrow(/escapes/);
+    expect(fs.existsSync(fezHomeAt(base, "packages", "evil2"))).toBe(false);
+  });
 });
