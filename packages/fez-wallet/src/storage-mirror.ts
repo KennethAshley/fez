@@ -15,9 +15,10 @@ import type { SpendEntry } from "./log.js";
  * failed mirror must never break a transfer.
  */
 
-// Must match the installed gui part's file stem in ~/.fez/gui-extensions
-// (see install_package's ("gui","gui-extensions") copy in the desktop's
-// lib.rs). Verified at implementation time.
+// Must match this package's name — the desktop's gui loader namespace-locks
+// api.storage to the registered extension name (gui-extensions.ts), which
+// is the same name the gui part loads under from ~/.fez/packages/<name>.
+// Verified at implementation time.
 export const STORAGE_NAME = "wallet";
 
 const MAX_LOG = 500;

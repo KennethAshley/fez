@@ -11,6 +11,8 @@ import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
 import { useConfig, bumpConfig } from "./config-store";
 import { attachSkill, detachSkill, declaredSkills, rememberSkillSource } from "./skill-attach";
+import type { MountRender } from "./mount-result";
+import { MountPoint } from "./MountPoint";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -101,7 +103,7 @@ interface InstallTarget {
 const PART_WHERE: Record<string, { where: string; what: string }> = {
   skill: { where: "settings.json → mcpServers", what: "your agents call it" },
   headless: { where: "~/.fez/extensions", what: "background work in the TUI" },
-  gui: { where: "~/.fez/gui-extensions", what: "renders in this app" },
+  gui: { where: "~/.fez/packages/<name>", what: "renders in this app" },
 };
 
 const fromListing = (listing: Listing): InstallTarget => ({
@@ -1006,19 +1008,44 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
  * that extension: without a boundary, a card that throws takes the
  * extensions page with it and the only way out is a config file.
  */
-export class ExtensionPanel extends Component<{ panel: { name: string; render: () => React.ReactNode } }, { failed?: string }> {
-  state: { failed?: string } = {};
+export class ExtensionPanel extends Component<
+  { panel: { name: string; render: MountRender } },
+  { failed?: string; forName?: string }
+> {
+  state: { failed?: string; forName?: string } = {};
+  // React reuses THIS instance across a panel swap (same position in the
+  // tree, still truthy) — name is the mount's whole identity, so a
+  // changed name both clears a stale error from the PREVIOUS panel and
+  // (below, via MountPoint's key) forces the new panel to actually mount.
+  static getDerivedStateFromProps(
+    props: { panel: { name: string } },
+    state: { failed?: string; forName?: string }
+  ): { failed?: string; forName?: string } | null {
+    if (state.forName === props.panel.name) return null;
+    return { failed: undefined, forName: props.panel.name };
+  }
   static getDerivedStateFromError(err: unknown): { failed: string } {
     return { failed: err instanceof Error ? err.message : String(err) };
   }
+  // A stable instance method, not an inline arrow in render() — it always
+  // reads this.props fresh, so MountPoint's OWN identity check (the `key`
+  // below, not this reference) is what decides whether to remount.
+  private renderPanel: MountRender = (host) => this.props.panel.render(host);
   render(): React.ReactNode {
     if (this.state.failed) {
       return <div className="ext-panel-broken">this extension's settings failed to render — {this.state.failed}</div>;
     }
-    try {
-      return <>{this.props.panel.render()}</>;
-    } catch (err) {
-      return <div className="ext-panel-broken">this extension's settings failed to render — {String(err)}</div>;
-    }
+    // No try/catch here: render now runs inside MountPoint's effect, and
+    // React routes a synchronous throw from a passive effect to the
+    // nearest class error boundary the same as a throw during render —
+    // getDerivedStateFromError above still catches it.
+    //
+    // key={panel.name}: this component instance is REUSED across a panel
+    // swap (same tree position, still truthy) — renderPanel's reference
+    // never changes, so without a key MountPoint's own mount effect would
+    // never re-fire and the new panel would never appear. The key forces
+    // a fresh MountPoint (and a fresh mount call) exactly when the name
+    // changes, not on every unrelated re-render of the same panel.
+    return <MountPoint key={this.props.panel.name} render={this.renderPanel} />;
   }
 }

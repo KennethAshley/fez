@@ -16,7 +16,7 @@ export interface FezManifest {
       skill?: { command?: string; args?: string[]; env?: Record<string, string>; url?: string };
       /** → ~/.fez/extensions: slash commands + scheduled tasks (TUI/sentinel). */
       headless?: string;
-      /** → ~/.fez/gui-extensions: desktop panels, views, commands. */
+      /** → ~/.fez/packages/<name>: desktop panels, views, commands. */
       gui?: string;
       /** → ~/.fez/relay-extensions: HTTP handlers + NIP-11 advertisements (relay --extensions). */
       relay?: string;

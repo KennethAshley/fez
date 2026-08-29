@@ -412,28 +412,13 @@ fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
 }
 
 /// GUI extension parts installed by `fez install`/`fez link`
-/// (~/.fez/gui-extensions/*.js). The webview imports each as an ES
-/// module and calls its activate(api) — the GUI's version of the TUI's
-/// extension loader.
+/// (~/.fez/packages/<name>/, per each manifest's `fez.parts.gui`). The
+/// webview imports each as an ES module and calls its activate(api) — the
+/// GUI's version of the TUI's extension loader.
 #[tauri::command]
 fn list_gui_extensions() -> Result<Vec<(String, String)>, String> {
-    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
-    let dir = std::path::Path::new(&home).join(".fez").join("gui-extensions");
-    let mut out = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("js") {
-                if let (Some(stem), Ok(code)) = (
-                    path.file_stem().and_then(|s| s.to_str()),
-                    std::fs::read_to_string(&path),
-                ) {
-                    out.push((stem.to_string(), code));
-                }
-            }
-        }
-    }
-    Ok(out)
+    let home_path = fez_home()?;
+    Ok(package_install::gui_parts(&home_path))
 }
 
 /// Read one extension's state file (~/.fez/extension-data/<name>.json)
@@ -1206,26 +1191,14 @@ fn write_keymap(json: String) -> Result<(), String> {
 }
 
 /// Extension parts on disk, by package name: headless (~/.fez/extensions)
-/// and gui (~/.fez/gui-extensions). Skill parts live in settings.json and
-/// are listed separately — a package can have any mix of the three.
+/// and gui (packages/*/ whose manifest declares fez.parts.gui — install no
+/// longer leaves a gui-extensions/ symlink for this to scan). Skill parts
+/// live in settings.json and are listed separately — a package can have
+/// any mix of the three. Thin wrapper: the testable core lives in
+/// package_install.rs (local_extensions), same split as gui_parts.
 #[tauri::command]
 fn list_local_extensions() -> Result<Vec<(String, Vec<String>)>, String> {
-    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
-    let mut map: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
-    for (dir, part) in [("extensions", "headless"), ("gui-extensions", "gui")] {
-        let path = std::path::Path::new(&home).join(".fez").join(dir);
-        if let Ok(entries) = std::fs::read_dir(&path) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("js") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        map.entry(stem.to_string()).or_default().push(part.to_string());
-                    }
-                }
-            }
-        }
-    }
-    Ok(map.into_iter().collect())
+    Ok(package_install::local_extensions(&fez_home()?))
 }
 
 

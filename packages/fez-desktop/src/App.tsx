@@ -1,4 +1,4 @@
-import { Fragment, createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -31,7 +31,8 @@ import { shareArtifact } from "./share-artifact";
 import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
 import { toast } from "./toast";
 import { startSummoner } from "./summoner";
-import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, extensionNavViews, extensionArtifactActions } from "./gui-extensions";
+import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, extensionNavViews, extensionArtifactActions, type ArtifactAction } from "./gui-extensions";
+import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
@@ -1275,9 +1276,17 @@ function Shell({
       {view.kind === "wiki" && <WikiView client={client} />}
       {view.kind === "ext" && (
         <main className="main">
-          {extensionNavViews().find((nav) => nav.name === view.name)?.render() ?? (
-            <div className="pane-empty">this view's extension is no longer installed</div>
-          )}
+          {(() => {
+            const nav = extensionNavViews().find((n) => n.name === view.name);
+            // nav.render is the same function reference for the extension's
+            // whole registered lifetime, so MountPoint mounts once here
+            // rather than on every Shell re-render.
+            return nav ? (
+              <MountPoint render={nav.render} />
+            ) : (
+              <div className="pane-empty">this view's extension is no longer installed</div>
+            );
+          })()}
         </main>
       )}
       {view.kind === "extensions" && <SkillsView only="extensions" client={client} wire={wire} />}
@@ -2058,7 +2067,12 @@ function ChannelView({
           const props = { channelId, rootId: threadRoot, rootContent: root.content };
           return (
             <div className="thread-view">
-              <ExtensionPanel panel={{ name: view.name, render: () => view.render(props) }} />
+              {/* name carries the mount identity ExtensionPanel keys on —
+                  view.name alone is the SAME string for every thread a
+                  given extension boards, so without the rootId a jump
+                  from thread A to thread B (same view, different root)
+                  would reuse thread A's mounted content. */}
+              <ExtensionPanel panel={{ name: `${view.name}:${threadRoot}`, render: (host) => view.render(props, host) }} />
             </div>
           );
         })()}
@@ -2611,7 +2625,7 @@ function ToolPane({ artifact, building, onClose }: { artifact: Artifact; buildin
         <span className="pane-actions">
           {/* Extension-contributed header actions — loom's ★ keep lives here. */}
           {extensionArtifactActions().map((action) => (
-            <Fragment key={action.name}>{action.render({ artifact })}</Fragment>
+            <Fragment key={action.name}><ArtifactActionSlot action={action} artifact={artifact} /></Fragment>
           ))}
           <button className="pane-close" onClick={onClose}>✕</button>
         </span>
@@ -2621,6 +2635,22 @@ function ToolPane({ artifact, building, onClose }: { artifact: Artifact; buildin
       </div>
     </aside>
   );
+}
+
+/**
+ * One artifact-action's mount node. `useCallback` keeps the bound render
+ * stable across ToolPane re-renders (only `artifact` itself changing swaps
+ * in a new mount) instead of MountPoint tearing down and remounting the
+ * action's whole node — including any state it holds, like loom's ★ keep —
+ * on every unrelated ToolPane render. Deps on `artifact` (not `artifact.id`)
+ * on purpose: `pane.artifact` is event-driven — App.tsx only replaces it
+ * with a new object when a real live-artifact update lands, so this still
+ * doesn't thrash, but it DOES re-render with the fresh content instead of
+ * a stale capture under the same id.
+ */
+function ArtifactActionSlot({ action, artifact }: { action: ArtifactAction; artifact: Artifact }) {
+  const render = useCallback((host?: HTMLElement) => action.render({ artifact }, host), [action, artifact]);
+  return <MountPoint render={render} />;
 }
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🚀", "👀"];

@@ -10,8 +10,8 @@ import type { StoredEvent } from "./relay.js";
  * The relay's extension API — the host that did not have one.
  *
  * fez's parts are PLACES: `headless` lands in ~/.fez/extensions and the
- * TUI and sentinel read it, `gui` lands in ~/.fez/gui-extensions and the
- * desktop reads it. The relay was the one host with no directory of its
+ * TUI and sentinel read it, `gui` lands in ~/.fez/packages/<name> and the
+ * desktop reads it there. The relay was the one host with no directory of its
  * own, so anything it needed to do had to be written INTO it — which is
  * how git nearly ended up as a field on RelayOptions and a file inside
  * this package.

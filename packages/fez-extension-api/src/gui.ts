@@ -11,6 +11,18 @@
 export type El = unknown;
 export type Props = Record<string, unknown> | null;
 
+/** What a mount-form callback returns to tear itself down. */
+export type Dispose = () => void;
+
+/**
+ * The mount bridge. Legacy `() => El` still returns an element the host
+ * renders — zero changes for today's extensions. The mount form instead
+ * takes the host node, mounts its own React root into it (own React, own
+ * bundle — see the file doc above), and returns a disposer the host calls
+ * on hide/uninstall. `void` means neither: nothing to render or dispose.
+ */
+export type MountRender = (host?: HTMLElement) => El | Dispose | void;
+
 export interface RepoChannelLike {
   id: string;
   name: string;
@@ -105,8 +117,12 @@ export interface GuiExtensionApi {
   };
   /** Open a browser to `url`. */
   openUrl(url: string): Promise<void>;
-  /** A card in Settings that configures this extension. `opts.source` ties it to a channel source for the rail. */
-  registerSettingsPanel(name: string, render: () => El, opts?: { source?: string }): void;
+  /**
+   * A card in Settings that configures this extension. `opts.source` ties
+   * it to a channel source for the rail. `render` may be the mount form
+   * (see `MountRender`).
+   */
+  registerSettingsPanel(name: string, render: MountRender, opts?: { source?: string }): void;
   /** A slash command in the desktop composer. */
   registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
   /** Decorate chat messages whose content matches — a card under the bubble. */
@@ -114,22 +130,34 @@ export interface GuiExtensionApi {
     match: (content: string) => boolean,
     render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => El
   ): void;
-  /** A lens over a whole THREAD, keyed off its root message's content — rendered above the replies. */
+  /**
+   * A lens over a whole THREAD, keyed off its root message's content —
+   * rendered above the replies. `render` may take a trailing `host` node
+   * and return a disposer (the mount form) instead of an element.
+   */
   registerThreadView(
     name: string,
     match: (rootContent: string) => boolean,
-    render: (props: { channelId: string; rootId: string; rootContent: string }) => El
+    render: (props: { channelId: string; rootId: string; rootContent: string }, host?: HTMLElement) => El | Dispose | void
   ): void;
   /**
    * Own a whole document view: when `match(content)` is true (or "default"
    * to claim any doc), your component renders instead of the plain editor.
+   * `render` may take a trailing `host` node and return a disposer (the
+   * mount form) instead of an element.
    */
-  registerPageView(name: string, match: (content: string) => boolean | "default", render: (props: PageViewProps) => El): void;
+  registerPageView(
+    name: string,
+    match: (content: string) => boolean | "default",
+    render: (props: PageViewProps, host?: HTMLElement) => El | Dispose | void
+  ): void;
   /**
    * Own a fenced block by its language tag: ```<lang> … ``` renders with
-   * your component. `menu` adds a slash-menu entry that inserts the block.
+   * your component. `menu` adds a slash-menu entry that inserts the
+   * block. `render` may take a trailing `host` node and return a disposer
+   * (the mount form) instead of an element.
    */
-  registerBlockRenderer(lang: string, render: (props: BlockProps) => El, menu?: object): void;
+  registerBlockRenderer(lang: string, render: (props: BlockProps, host?: HTMLElement) => El | Dispose | void, menu?: object): void;
   /** Open the live activity ("watch") pane for an agent by name. */
   watchAgent(name: string): void;
   /** Open a thread in the current channel view. */
@@ -139,12 +167,14 @@ export interface GuiExtensionApi {
    * that is a PLACE (loom's ▣ tools gallery, a board). The host owns the
    * button and the main-column shell; you own everything inside.
    */
-  registerNavView(name: string, opts: { glyph: string; label: string }, render: () => El): void;
+  registerNavView(name: string, opts: { glyph: string; label: string }, render: MountRender): void;
   /**
    * An action mounted in an open artifact pane's header, next to ✕. Your
-   * component receives the artifact and owns its own state.
+   * component receives the artifact and owns its own state. `render` may
+   * take a trailing `host` node and return a disposer (the mount form)
+   * instead of an element.
    */
-  registerArtifactAction(name: string, render: (props: { artifact: ArtifactLike }) => El): void;
+  registerArtifactAction(name: string, render: (props: { artifact: ArtifactLike }, host?: HTMLElement) => El | Dispose | void): void;
   /** Open an artifact in the tool pane — the same pane a thread's tool handle opens. */
   openTool(artifact: ArtifactLike): void;
   /**

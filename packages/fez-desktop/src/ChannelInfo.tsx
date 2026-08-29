@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
+import { MountPoint } from "./MountPoint";
 
 /**
  * The channel's standing information, always reachable from inside the
@@ -41,6 +42,37 @@ export default function ChannelInfo({
   const doc = client.docsByChannel().get(channelId);
   const pins = [...client.pins(channelId).entries()];
   const hasDoc = !!doc?.latestContent?.trim();
+
+  // react-markdown resolves each fenced block's component fresh from
+  // `components.code` on every render pass — an inline arrow there would
+  // be a NEW type each time, so React tears down and remounts the whole
+  // block (MountPoint included) on every unrelated ChannelInfo re-render,
+  // not just when the doc actually changed. Stable across renders where
+  // the doc/channel haven't changed; CodeBlock is capitalized because
+  // react-markdown calls it as a real component (via createElement), so
+  // the nested useCallback below is a legitimate hook call on ITS fiber.
+  const CodeBlock = useCallback(
+    ({ className, children, ...rest }: React.ComponentPropsWithoutRef<"code">) => {
+      const lang = /language-([\w:.-]+)/.exec(className ?? "")?.[1];
+      const blockRender = lang ? blockRenderer(lang) : undefined;
+      const body = String(children ?? "").replace(/\n$/, "");
+      const infoLine =
+        lang && doc ? doc.latestContent.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang : "";
+      const raw = `${infoLine}\n${body}\n\`\`\``;
+      // Keyed on the block's own content (not just the doc), so THIS
+      // block's mount survives while a SIBLING block in the same doc
+      // remounting for its own reasons doesn't disturb it.
+      const mountRender = useCallback(
+        (host?: HTMLElement) =>
+          blockRender!({ info: infoLine.trim().slice(3 + (lang?.length ?? 0)).trim(), body, raw, channelId }, host),
+        [blockRender, raw, channelId]
+      );
+      if (!blockRender || !doc) return <code className={className} {...rest}>{children}</code>;
+      return <MountPoint render={mountRender} />;
+    },
+    [doc?.latestContent, channelId]
+  );
+
   if (!hasDoc && pins.length === 0 && !editing) {
     return (
       <div className="channel-info empty">
@@ -116,26 +148,7 @@ export default function ChannelInfo({
                 remarkPlugins={[remarkGfm, ...(docMarkdownPlugins() as [])]}
                 components={{
                   // extension-owned fenced blocks (live blocks, diagrams…)
-                  code: ({ className, children, ...rest }) => {
-                    const lang = /language-([\w:.-]+)/.exec(className ?? "")?.[1];
-                    const render = lang ? blockRenderer(lang) : undefined;
-                    if (render) {
-                      const body = String(children ?? "").replace(/\n$/, "");
-                      const infoLine =
-                        doc!.latestContent.split("\n").find((l) => l.trim().startsWith("```" + lang)) ?? "```" + lang;
-                      return (
-                        <>
-                          {render({
-                            info: infoLine.trim().slice(3 + lang!.length).trim(),
-                            body,
-                            raw: `${infoLine}\n${body}\n\`\`\``,
-                            channelId,
-                          })}
-                        </>
-                      );
-                    }
-                    return <code className={className} {...rest}>{children}</code>;
-                  },
+                  code: CodeBlock,
                 }}
               >
                 {doc!.latestContent}

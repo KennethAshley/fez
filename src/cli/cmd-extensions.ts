@@ -5,7 +5,41 @@ import fs from "fs/promises";
 import path from "path";
 import { CapabilityClient } from "../protocol/client.js";
 import { PackageManager, resolveSkillArgs } from "../extensions/package-manager.js";
-import { fezHome } from "../shared/fez-home.js";
+import { fezHome, fezHomeAt } from "../shared/fez-home.js";
+import nodeFs from "node:fs";
+
+/**
+ * Materialize a linked package's gui part into ~/.fez/packages/<name>/ —
+ * the same shape `fez install` produces (the desktop's loader reads
+ * packages/<name>/package.json + fez.parts.gui; it stopped reading the
+ * flat gui-extensions/<name>.js entirely, see package-manager.ts
+ * installParts). Without this, `fez link`'s inner dev loop built a gui
+ * part the loader could never find. `base` is a test-only ~/.fez override,
+ * mirroring PackageManager's `base` option — production callers omit it.
+ */
+export function placeLinkedGuiPart(
+  pkgDir: string,
+  manifest: { fez?: { parts?: { gui?: string } } },
+  name: string,
+  base?: string
+): string {
+  const guiRel = manifest.fez?.parts?.gui;
+  if (!guiRel) throw new Error(`${name} declares no fez.parts.gui`);
+  // Mirror the install side's write-time guard (package_install.rs
+  // materialize / gui_parts): a manifest gui rel must stay inside the
+  // package dir — an absolute path or a `..` segment is refused before
+  // any write, not silently joined outside packages/<name>/.
+  if (path.isAbsolute(guiRel) || guiRel.split(/[\\/]/).includes("..")) {
+    throw new Error(`${name} gui rel ${guiRel} escapes the package — refusing`);
+  }
+  const dir = fezHomeAt(base, "packages", name);
+  nodeFs.mkdirSync(dir, { recursive: true });
+  nodeFs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(manifest, null, 2));
+  const dest = path.join(dir, guiRel);
+  nodeFs.mkdirSync(path.dirname(dest), { recursive: true });
+  nodeFs.copyFileSync(path.join(pkgDir, guiRel), dest);
+  return dest;
+}
 
 export function registerExtensionCommands(program: Command): void {
 // ─── run ────────────────────────────────────────────────────────────────────
@@ -318,13 +352,12 @@ program
     // two callers: a first link that can't import its bundle should
     // stop the command; a watch rebuild should report and keep watching.
     const copyBuiltParts = async (fatal: boolean): Promise<void> => {
-      // gui: copied for fez-desktop's loader (webview code — no node
-      // smoke-import possible here).
+      // gui: materialized into the package dir for fez-desktop's loader
+      // (webview code — no node smoke-import possible here). No flat
+      // gui-extensions/<name>.js — the loader stopped reading that.
       if (parts?.gui) {
-        const guiDir = fezHome("gui-extensions");
-        fsSync.mkdirSync(guiDir, { recursive: true });
-        fsSync.copyFileSync(path.join(pkgDir, parts.gui), path.join(guiDir, `${name}.js`));
-        console.log(chalk.green(`✓ gui part → ~/.fez/gui-extensions/${name}.js (loads on next fez-desktop launch)`));
+        const dest = placeLinkedGuiPart(pkgDir, manifest, name);
+        console.log(chalk.green(`✓ gui part → ${dest} (loads on next fez-desktop launch)`));
       }
 
       // relay + workspace: link matches install exactly. It did not
