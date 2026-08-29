@@ -1,13 +1,27 @@
 {
   "name": "@fezchat/tailwind-preset",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Tailwind preset whose fez-* color utilities resolve to the live fez theme tokens. Dev-only for extension authors: IntelliSense + typo-checking against the utilities the fez host ships at runtime.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -p tsconfig.json" },
-  "peerDependencies": { "tailwindcss": "^3" },
-  "devDependencies": { "tailwindcss": "^3", "typescript": "^5" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "tailwindcss": "^3"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3",
+    "typescript": "^5"
+  }
 }
