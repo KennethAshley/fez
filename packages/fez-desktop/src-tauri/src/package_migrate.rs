@@ -169,6 +169,14 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
             serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?.as_bytes(),
         )
         .map_err(|e| e.to_string())?;
+
+        // The found_parts loop above just recreated gui-extensions/<name>.js
+        // (via link_index, same as every other part) so a reconstructed
+        // install is indistinguishable from a fresh pre-Task-2 one — but a
+        // fresh install today never gets that symlink. Drop it here too, so
+        // both paths converge on "no gui-extensions symlink after this
+        // function returns" without special-casing "gui" inside the loop.
+        drop_dead_gui_link(home, name, &packages_dir);
     }
 
     Ok(log)
@@ -176,9 +184,12 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
 
 /// `gui-extensions/<name>.js` is dead weight once a package dir is
 /// confirmed present: the GUI loader reads `packages/<name>/` directly now,
-/// and fresh installs stopped creating this symlink. Drop whatever a
-/// pre-upgrade install left there — an owned symlink into the package dir,
-/// or (older still) a plain flat file — tolerating absence. The other three
+/// and fresh installs stopped creating this symlink. Drop whatever's there —
+/// an owned symlink into the package dir (whether left by a pre-upgrade
+/// install or just recreated by this function's own reconstruction loop
+/// above), or (older still) a plain flat file — tolerating absence. Called
+/// from both of `migrate_flat_installs`'s exits (already-migrated and
+/// freshly-reconstructed) so neither leaves one behind. The other three
 /// flat-dir surfaces (`extensions/`, `relay-extensions/`,
 /// `workspace-providers/`) and `bin/` are untouched — their readers still
 /// resolve by flat path.
@@ -217,11 +228,15 @@ mod tests {
         assert_eq!(manifest.pointer("/fez/reconstructed"), Some(&serde_json::json!(true)));
         assert_eq!(manifest.pointer("/version"), Some(&serde_json::json!("0.1.0")));
         assert_eq!(manifest.pointer("/bin/fez-bazaar-miner"), Some(&serde_json::json!("bin/fez-bazaar-miner")));
-        // files moved in; flat entries are now symlinks into the package dir
+        // files moved in; the bin flat entry is now a symlink into the
+        // package dir, but the gui flat entry is materialized with no
+        // back-symlink — reconstruction must not recreate the dead
+        // gui-extensions compat path a fresh install never gets.
         assert!(pkg.join("dist/gui.js").exists());
         assert!(pkg.join("bin/fez-bazaar-miner").exists());
-        let link = home.path().join("gui-extensions").join("fez-bazaar.js");
-        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(!home.path().join("gui-extensions").join("fez-bazaar.js").exists());
+        let bin_link = home.path().join("bin").join("fez-bazaar-miner");
+        assert!(std::fs::symlink_metadata(&bin_link).unwrap().file_type().is_symlink());
         // running twice changes nothing (idempotent)
         migrate_flat_installs(home.path(), &settings).unwrap();
     }
@@ -290,6 +305,9 @@ mod tests {
         assert!(pkg_dir.join("dist/headless.js").exists());
         let link = home.path().join("extensions").join("tidy.js");
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        // the already-linked gui part's pre-existing back-symlink is
+        // cleaned up too, same as every other reconstruction sub-case.
+        assert!(!home.path().join("gui-extensions").join("tidy.js").exists());
     }
 
     #[test]
@@ -316,10 +334,15 @@ mod tests {
         // and the name was NOT misclassified as a settings orphan.
         assert_eq!(manifest.pointer("/fez/parts/gui"), Some(&serde_json::json!("dist/gui.js")));
         assert_eq!(manifest.pointer("/fez/parts/headless"), Some(&serde_json::json!("dist/headless.js")));
-        // The back-symlink for the moved-but-unlinked item is (re)created.
-        let link = home.path().join("gui-extensions").join("tidy.js");
-        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-        assert!(std::fs::canonicalize(&link).unwrap().ends_with("dist/gui.js"));
+        assert!(pkg_dir.join("dist/gui.js").exists());
+        // link_index momentarily restores the gui back-symlink (moved-but-
+        // unlinked case), but it's dropped again before this returns — a
+        // reconstructed gui part never leaves a gui-extensions symlink
+        // behind, same as a fresh install.
+        assert!(!home.path().join("gui-extensions").join("tidy.js").exists());
+        // The headless part is a different surface — untouched, still linked.
+        let headless_link = home.path().join("extensions").join("tidy.js");
+        assert!(std::fs::symlink_metadata(&headless_link).unwrap().file_type().is_symlink());
     }
 
     #[test]
