@@ -20,15 +20,21 @@
     ]
   },
   "scripts": {
-    "build": "esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "build": "esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=automatic --outfile=dist/gui.js",
     "check": "tsc --noEmit"
   },
   "files": [
     "personas",
     "dist"
   ],
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
   "devDependencies": {
     "esbuild": "^0.21.5",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6"
   }
 }
