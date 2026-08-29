@@ -17,6 +17,9 @@ export type MountRender = (host?: HTMLElement) => ReactNode | Dispose | void;
  */
 export function classifyMountResult(result: unknown): { dispose?: Dispose; element?: ReactNode } {
   if (typeof result === "function") return { dispose: result as Dispose };
+  // Double-cast: TS won't narrow `unknown` straight to ReactNode from an
+  // `in` check, so the detour through `unknown` is the honest way to say
+  // "checked what I could (has $$typeof), trust the rest."
   if (result && typeof result === "object" && "$$typeof" in result) return { element: result as unknown as ReactNode };
   return {};
 }
