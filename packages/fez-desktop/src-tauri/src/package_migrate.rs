@@ -6,7 +6,7 @@
 //! (reuses its `link_index`/`safe_bin_name` rather than re-deriving them),
 //! so a migrated install is indistinguishable from a fresh one afterward.
 
-use crate::package_install::{link_index, safe_bin_name, write_atomic};
+use crate::package_install::{link_index, remove_if_owned, safe_bin_name, write_atomic};
 use std::path::Path;
 
 const PART_DIRS: [(&str, &str); 4] = [
@@ -63,6 +63,7 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
     for (name, granted) in perms_map {
         let pkg_dir = packages_dir.join(name);
         if pkg_dir.join("package.json").exists() {
+            drop_dead_gui_link(home, name, &packages_dir);
             continue; // fully migrated (or a fresh install) — the manifest is the completion marker, not just the dir
         }
 
@@ -171,6 +172,24 @@ pub(crate) fn migrate_flat_installs(home: &Path, settings: &serde_json::Value) -
     }
 
     Ok(log)
+}
+
+/// `gui-extensions/<name>.js` is dead weight once a package dir is
+/// confirmed present: the GUI loader reads `packages/<name>/` directly now,
+/// and fresh installs stopped creating this symlink. Drop whatever a
+/// pre-upgrade install left there — an owned symlink into the package dir,
+/// or (older still) a plain flat file — tolerating absence. The other three
+/// flat-dir surfaces (`extensions/`, `relay-extensions/`,
+/// `workspace-providers/`) and `bin/` are untouched — their readers still
+/// resolve by flat path.
+fn drop_dead_gui_link(home: &Path, name: &str, packages_dir: &Path) {
+    let entry = home.join("gui-extensions").join(format!("{name}.js"));
+    let Ok(meta) = std::fs::symlink_metadata(&entry) else { return };
+    if meta.file_type().is_symlink() {
+        remove_if_owned(&entry, name, packages_dir);
+    } else {
+        let _ = std::fs::remove_file(&entry);
+    }
 }
 
 #[cfg(test)]
@@ -301,6 +320,25 @@ mod tests {
         let link = home.path().join("gui-extensions").join("tidy.js");
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
         assert!(std::fs::canonicalize(&link).unwrap().ends_with("dist/gui.js"));
+    }
+
+    #[test]
+    fn migration_removes_a_dead_gui_extensions_symlink() {
+        let home = tempfile::tempdir().unwrap();
+        let pkg = home.path().join("packages").join("bazaar");
+        std::fs::create_dir_all(pkg.join("dist")).unwrap();
+        std::fs::write(pkg.join("dist").join("gui.js"), "gui").unwrap();
+        std::fs::write(pkg.join("package.json"),
+            r#"{"name":"@fezchat/bazaar","version":"0.1.0","fez":{"parts":{"gui":"dist/gui.js"}}}"#).unwrap();
+        std::fs::create_dir_all(home.path().join("gui-extensions")).unwrap();
+        std::os::unix::fs::symlink(pkg.join("dist").join("gui.js"),
+            home.path().join("gui-extensions").join("bazaar.js")).unwrap();
+        let settings = serde_json::json!({ "extensionPermissions": { "bazaar": ["ui"] } });
+
+        migrate_flat_installs(home.path(), &settings).unwrap();
+        assert!(!home.path().join("gui-extensions").join("bazaar.js").exists());
+        assert!(pkg.join("dist").join("gui.js").exists());
+        migrate_flat_installs(home.path(), &settings).unwrap(); // idempotent, no panic
     }
 
     #[test]

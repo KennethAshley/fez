@@ -390,7 +390,7 @@ fn bin_owner(entry: &Path, packages_dir: &Path) -> Option<String> {
 
 /// Delete an index entry iff `base` still owns it (see `bin_owner`). A
 /// foreign or already-absent entry is left alone.
-fn remove_if_owned(entry: &Path, base: &str, packages_dir: &Path) -> bool {
+pub(crate) fn remove_if_owned(entry: &Path, base: &str, packages_dir: &Path) -> bool {
     if bin_owner(entry, packages_dir).as_deref() != Some(base) {
         return false;
     }
