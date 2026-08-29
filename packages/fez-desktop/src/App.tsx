@@ -1275,7 +1275,9 @@ function Shell({
       {view.kind === "wiki" && <WikiView client={client} />}
       {view.kind === "ext" && (
         <main className="main">
-          {extensionNavViews().find((nav) => nav.name === view.name)?.render() ?? (
+          {/* Today's registered views only ever return an element —
+              MountPoint (dispatching mount-form vs. element) is Task 5. */}
+          {(extensionNavViews().find((nav) => nav.name === view.name)?.render() as React.ReactNode) ?? (
             <div className="pane-empty">this view's extension is no longer installed</div>
           )}
         </main>
@@ -2611,7 +2613,9 @@ function ToolPane({ artifact, building, onClose }: { artifact: Artifact; buildin
         <span className="pane-actions">
           {/* Extension-contributed header actions — loom's ★ keep lives here. */}
           {extensionArtifactActions().map((action) => (
-            <Fragment key={action.name}>{action.render({ artifact })}</Fragment>
+            // Today's registered actions only ever return an element —
+            // MountPoint (dispatching mount-form vs. element) is Task 5.
+            <Fragment key={action.name}>{action.render({ artifact }) as React.ReactNode}</Fragment>
           ))}
           <button className="pane-close" onClick={onClose}>✕</button>
         </span>

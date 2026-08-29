@@ -894,7 +894,10 @@ export default function WikiView({ client }: { client: FezClient }) {
                   </div>
                   {activeViewImpl ? (
                     <div className="page-view-body">
-                      {activeViewImpl.render({
+                      {/* Today's registered page views only ever return an
+                          element — MountPoint (dispatching mount-form vs.
+                          element) is Task 5. */}
+                      {(activeViewImpl.render({
                         content: shown.content,
                         save: publish,
                         comment: async (text, anchor, mentions) => {
@@ -915,7 +918,7 @@ export default function WikiView({ client }: { client: FezClient }) {
                         channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
                         slug: sel.kind === "wiki" ? sel.slug : undefined,
                         editable: shown.id === latest?.id,
-                      })}
+                      }) as React.ReactNode)}
                     </div>
                   ) : (
                   <div className="md doc-body wiki-body">

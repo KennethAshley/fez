@@ -11,6 +11,7 @@ import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
 import { useConfig, bumpConfig } from "./config-store";
 import { attachSkill, detachSkill, declaredSkills, rememberSkillSource } from "./skill-attach";
+import type { Dispose } from "./mount-result";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -1006,7 +1007,10 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
  * that extension: without a boundary, a card that throws takes the
  * extensions page with it and the only way out is a config file.
  */
-export class ExtensionPanel extends Component<{ panel: { name: string; render: () => React.ReactNode } }, { failed?: string }> {
+export class ExtensionPanel extends Component<
+  { panel: { name: string; render: () => React.ReactNode | Dispose | void } },
+  { failed?: string }
+> {
   state: { failed?: string } = {};
   static getDerivedStateFromError(err: unknown): { failed: string } {
     return { failed: err instanceof Error ? err.message : String(err) };
@@ -1016,7 +1020,12 @@ export class ExtensionPanel extends Component<{ panel: { name: string; render: (
       return <div className="ext-panel-broken">this extension's settings failed to render — {this.state.failed}</div>;
     }
     try {
-      return <>{this.props.panel.render()}</>;
+      // The mount form (a returned disposer) has no host node to mount
+      // into here — this boundary predates it and today's registered
+      // extensions only ever return an element. MountPoint (the real
+      // host-node bridge, dispatching on classifyMountResult) is Task 5.
+      const result = this.props.panel.render();
+      return <>{result as React.ReactNode}</>;
     } catch (err) {
       return <div className="ext-panel-broken">this extension's settings failed to render — {String(err)}</div>;
     }

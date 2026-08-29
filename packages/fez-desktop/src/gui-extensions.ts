@@ -5,6 +5,7 @@ import type { Artifact, FezClient } from "@fezchat/client";
 import { parseQuery } from "@fezchat/client";
 import { registerArtifactViewer } from "./artifact-viewers";
 import { invitePersona } from "./invite-persona";
+import type { Dispose, MountRender } from "./mount-result";
 
 /**
  * Mirrors src/extension-permissions.ts (the eval-pinned source of truth).
@@ -138,11 +139,15 @@ export interface GuiExtensionApi {
     /** Roster the persona's stable key now, pre-spawn. */
     invite(name: string, role?: "bot" | "member"): Promise<"invited" | "no-key" | "unknown">;
   };
-  /** A lens on a whole thread, keyed off its root's content. */
+  /**
+   * A lens on a whole thread, keyed off its root's content. `render` may
+   * take a trailing host node and return a disposer (the mount form)
+   * instead of an element.
+   */
   registerThreadView: (
     name: string,
     match: (rootContent: string) => boolean,
-    render: (props: ThreadViewProps) => React.ReactNode
+    render: (props: ThreadViewProps, host?: HTMLElement) => React.ReactNode | Dispose | void
   ) => void;
   /** Open the live activity pane for an agent, by name. */
   watchAgent: (name: string) => void;
@@ -166,7 +171,7 @@ export interface GuiExtensionApi {
    */
   registerSettingsPanel: (
     name: string,
-    render: () => React.ReactNode,
+    render: MountRender,
     opts?: { source?: string }
   ) => void;
   /**
@@ -195,7 +200,7 @@ export interface GuiExtensionApi {
    */
   registerBlockRenderer: (
     lang: string,
-    render: (props: BlockProps) => React.ReactNode,
+    render: (props: BlockProps, host?: HTMLElement) => React.ReactNode | Dispose | void,
     /**
      * What this block looks like in the doc editor's `/` menu. Without
      * it a block type is invisible: you can only insert one by already
@@ -214,7 +219,7 @@ export interface GuiExtensionApi {
   registerPageView: (
     name: string,
     match: (content: string) => boolean | "default",
-    render: (props: PageViewProps) => React.ReactNode
+    render: (props: PageViewProps, host?: HTMLElement) => React.ReactNode | Dispose | void
   ) => void;
   /**
    * A top-level view in the rail, beside inbox and docs — how a feature
@@ -225,14 +230,19 @@ export interface GuiExtensionApi {
   registerNavView: (
     name: string,
     opts: { glyph: string; label: string },
-    render: () => React.ReactNode
+    render: MountRender
   ) => void;
   /**
    * An action mounted in an open artifact pane's header, next to ✕. The
    * component receives the artifact and owns its own state — loom's ★
-   * keep enters here, so core never learns what "keeping" is.
+   * keep enters here, so core never learns what "keeping" is. `render`
+   * may take a trailing host node and return a disposer (the mount form)
+   * instead of an element.
    */
-  registerArtifactAction: (name: string, render: (props: { artifact: Artifact }) => React.ReactNode) => void;
+  registerArtifactAction: (
+    name: string,
+    render: (props: { artifact: Artifact }, host?: HTMLElement) => React.ReactNode | Dispose | void
+  ) => void;
   /** Open an artifact in the tool pane — the same swap-semantics pane a
    * thread's tool handle opens. */
   openTool: (artifact: Artifact) => void;
@@ -316,7 +326,7 @@ export function messageDecorators(): readonly MessageDecorator[] {
 export interface SettingsPanel {
   /** The extension's name, used as the card's heading. */
   name: string;
-  render: () => React.ReactNode;
+  render: MountRender;
   /**
    * The channel `source` this panel configures, when it configures one.
    *
@@ -378,13 +388,10 @@ export function docMarkdownPlugins(): readonly unknown[] {
   return markdownPlugins;
 }
 
-const blockRenderers = new Map<string, (props: BlockProps) => React.ReactNode>();
+type BlockRender = (props: BlockProps, host?: HTMLElement) => React.ReactNode | Dispose | void;
+const blockRenderers = new Map<string, BlockRender>();
 const blockMenu: BlockMenuItem[] = [];
-export function registerBlockRenderer(
-  lang: string,
-  render: (props: BlockProps) => React.ReactNode,
-  menu?: BlockMenuItem
-): void {
+export function registerBlockRenderer(lang: string, render: BlockRender, menu?: BlockMenuItem): void {
   blockRenderers.set(lang.toLowerCase(), render);
   if (menu) blockMenu.push(menu);
 }
@@ -392,14 +399,14 @@ export function registerBlockRenderer(
 export function extensionBlockMenu(): readonly BlockMenuItem[] {
   return blockMenu;
 }
-export function blockRenderer(lang: string): ((props: BlockProps) => React.ReactNode) | undefined {
+export function blockRenderer(lang: string): BlockRender | undefined {
   return blockRenderers.get(lang.toLowerCase());
 }
 
 export interface PageView {
   name: string;
   match: (content: string) => boolean | "default";
-  render: (props: PageViewProps) => React.ReactNode;
+  render: (props: PageViewProps, host?: HTMLElement) => React.ReactNode | Dispose | void;
 }
 /**
  * Thread views — a lens on a whole THREAD, the way a page view is a
@@ -416,7 +423,7 @@ export interface ThreadViewProps {
 interface ThreadView {
   name: string;
   match: (rootContent: string) => boolean;
-  render: (props: ThreadViewProps) => React.ReactNode;
+  render: (props: ThreadViewProps, host?: HTMLElement) => React.ReactNode | Dispose | void;
 }
 const threadViews: ThreadView[] = [];
 export function registerThreadView(name: string, match: ThreadView["match"], render: ThreadView["render"]): void {
@@ -470,7 +477,7 @@ export interface NavView {
   name: string;
   glyph: string;
   label: string;
-  render: () => React.ReactNode;
+  render: MountRender;
 }
 const navViews: NavView[] = [];
 export function registerNavView(name: string, opts: { glyph: string; label: string }, render: NavView["render"]): void {
@@ -488,7 +495,7 @@ export function extensionNavViews(): readonly NavView[] {
 /** Header actions on an open artifact pane — see registerArtifactAction. */
 export interface ArtifactAction {
   name: string;
-  render: (props: { artifact: Artifact }) => React.ReactNode;
+  render: (props: { artifact: Artifact }, host?: HTMLElement) => React.ReactNode | Dispose | void;
 }
 const artifactActions: ArtifactAction[] = [];
 export function registerArtifactAction(name: string, render: ArtifactAction["render"]): void {
@@ -926,7 +933,7 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       // panel configures, and dropping it silently was why the rail's
       // group had no settings button.
       registerSettingsPanel: may("ui")
-        ? (_label: string, render: () => React.ReactNode, opts?: { source?: string }) =>
+        ? (_label: string, render: MountRender, opts?: { source?: string }) =>
             registerSettingsPanel(name, render, opts)
         : (refuse("ui", "add a settings panel") as never),
     };
