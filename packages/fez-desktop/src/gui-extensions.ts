@@ -846,9 +846,9 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
   captureBaseline();
   const loaded: string[] = [];
   status.length = 0;
-  let files: [string, string][];
+  let files: [string, string, string][];
   try {
-    files = await invoke<[string, string][]>("list_gui_extensions");
+    files = await invoke<[string, string, string][]>("list_gui_extensions");
   } catch {
     return loaded;
   }
@@ -857,11 +857,11 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
     grants = JSON.parse(await invoke<string>("read_extension_grants"));
   } catch { /* no grants recorded — everything falls back to the legacy grant */ }
 
-  for (const [name, code] of files) {
-    // Task 6 extends the Rust scan's tuple with a 3rd `styles` element
-    // (compiled CSS Module output from `fez pack`); until then every
-    // extension's styles is undefined and injection is a no-op.
-    const styles: string | undefined = undefined;
+  for (const [name, code, styles] of files) {
+    // `styles` is the gui part's companion CSS (the hashed `<gui>.css`
+    // `fez pack` emits, returned by the Rust scan beside the code). Empty
+    // string for the common no-CSS-module case, so injection below is a
+    // no-op unless there is actually CSS to inject.
     const granted = grants[name] ?? LEGACY_GRANT;
     const may = (permission: string) => granted.includes(permission);
     const hosts = granted.filter((g) => g.startsWith("network:")).map((g) => g.slice("network:".length));

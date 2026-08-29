@@ -111,7 +111,11 @@ export async function packExtension(dir: string): Promise<PackResult> {
   const found = result();
   if (!found) return { js: outfile };
 
-  const cssOut = path.join(path.dirname(outfile), "view.css");
+  // Name the companion CSS after the gui bundle itself (`<gui>.js` → `<gui>.css`),
+  // NOT a hardcoded "view.css": the desktop loader (gui_parts) derives the CSS
+  // path from the manifest's `fez.parts.gui` the same way, so an extension whose
+  // gui part isn't `view.js` (e.g. loom's `gui.js`) still pairs correctly.
+  const cssOut = outfile.replace(/\.js$/, ".css");
   writeFileSync(cssOut, found.hashedCss);
   return { js: outfile, css: cssOut };
 }
