@@ -254,6 +254,74 @@ describe("x402Fetch: consent", () => {
       vi.useRealTimers();
     }
   });
+
+  it("an abort landing between approval and signing blocks the payment (tools.ts:424-426)", async () => {
+    const dir = tmpHome();
+    const controller = new AbortController();
+    let handler: ((ev: SignedNostrEvent) => void) | undefined;
+    const relay: ConsentRelay = {
+      publish: async (ev) => {
+        queueMicrotask(() => {
+          // The owner genuinely approves — verdict will be "approved" —
+          // but the caller gives up in the very same tick, before
+          // x402Fetch gets to sign anything.
+          handler?.({ id: "r", kind: 7, pubkey: ownerPk, content: "✅", tags: [["e", ev.id]], created_at: 0, sig: "00" });
+          controller.abort();
+        });
+      },
+      subscribe: (_f, on) => {
+        handler = on;
+        return () => {};
+      },
+      query: async () => [],
+    };
+    let fetchCalls = 0;
+    const fetchImpl: FetchLike = async () => {
+      fetchCalls++;
+      return paymentRequiredResponse([offer()]);
+    };
+    const out = await x402Fetch(
+      baseDeps(dir, {
+        fetchImpl,
+        ownerPk,
+        agentNostrKey,
+        relay: () => Promise.resolve(relay),
+        signal: controller.signal,
+      }),
+      { url: "http://x/", maxUsd: 1 }
+    );
+    expect(out).toContain("nothing was paid");
+    expect(fetchCalls).toBe(1); // only the original 402 request — no paid retry ever fires
+    expect(todaySpend(dir)).toBe(0);
+    expect(readX402Log(dir)).toHaveLength(0);
+  });
+});
+
+describe("x402Fetch: daily cap float-precision boundary", () => {
+  it("exactly at the cap passes; one cent over refuses", async () => {
+    const dirAtCap = tmpHome();
+    recordSpend(dirAtCap, 24.99);
+    let calls = 0;
+    const atCapFetch: FetchLike = async () => {
+      calls++;
+      return calls === 1 ? paymentRequiredResponse([offer({ amount: "10000" })]) : settledResponse(); // $0.01 -> exactly $25.00
+    };
+    const atCapOut = await x402Fetch(
+      baseDeps(dirAtCap, { fetchImpl: atCapFetch, config: baseConfig({ x402: { dailyCapUsd: 25, autoApproveUnderUsd: { default: 1 } } }) }),
+      { url: "http://x/", maxUsd: 1 }
+    );
+    expect(atCapOut).not.toContain("daily cap");
+
+    const overCapDir = tmpHome();
+    recordSpend(overCapDir, 24.99);
+    const overCapFetch: FetchLike = async () => paymentRequiredResponse([offer({ amount: "20000" })]); // $0.02 -> $25.01
+    const overCapOut = await x402Fetch(
+      baseDeps(overCapDir, { fetchImpl: overCapFetch, config: baseConfig({ x402: { dailyCapUsd: 25 } }) }),
+      { url: "http://x/", maxUsd: 1 }
+    );
+    expect(overCapOut).toContain("daily cap");
+    expect(readX402Log(overCapDir)).toHaveLength(0);
+  });
 });
 
 describe("x402Fetch: record-before-retry (the invariant)", () => {

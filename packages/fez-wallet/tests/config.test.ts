@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig, endpointFor, readPrefs, migratePrefs } from "../src/config.js";
+import { loadConfig, saveConfig, endpointFor, readPrefs, migratePrefs, x402Settings } from "../src/config.js";
 import { mirrorPrefs } from "../src/storage-mirror.js";
 import { tmpHome } from "./helpers.js";
 
@@ -256,5 +256,40 @@ describe("legacy pin must never silently change the network", () => {
     saveConfig(c);
     expect(readPrefs().network).toBeUndefined();
     expect(loadConfig().endpoints.tao).toBe("ws://127.0.0.1:9944");
+  });
+});
+
+describe("x402Settings", () => {
+  it("fills every default when no x402 block exists", () => {
+    const s = x402Settings(loadConfig());
+    expect(s).toEqual({
+      network: "base-sepolia",
+      chainRef: "eip155:84532",
+      usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      autoApproveUnderUsd: { default: 0 },
+      dailyCapUsd: 25,
+      rpcUrl: "https://sepolia.base.org",
+    });
+  });
+
+  it("a partial override merges over defaults, field by field", () => {
+    const c = loadConfig();
+    c.x402 = { dailyCapUsd: 5, autoApproveUnderUsd: { scout: 0.1 } };
+    const s = x402Settings(c);
+    expect(s.dailyCapUsd).toBe(5);
+    // scout's override lands beside the untouched "default" floor, not
+    // instead of it — a caller that only sets one persona must not lose
+    // the fallback every other persona reads.
+    expect(s.autoApproveUnderUsd).toEqual({ default: 0, scout: 0.1 });
+    expect(s.network).toBe("base-sepolia"); // untouched fields keep their default
+    expect(s.usdcAddress).toBe("0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+  });
+
+  it("x402 is never persisted into prefs — saveConfig leaves it in wallet.json", () => {
+    const c = loadConfig();
+    c.x402 = { dailyCapUsd: 1 };
+    saveConfig(c);
+    expect("x402" in readPrefs()).toBe(false); // WalletPrefs has no x402 field at all
+    expect(x402Settings(loadConfig()).dailyCapUsd).toBe(1);
   });
 });
