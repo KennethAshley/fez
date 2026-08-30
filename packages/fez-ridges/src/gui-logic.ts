@@ -46,24 +46,42 @@ export function relTime(ts: string, now: Date): string {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
-/** The mock's exact status-line text, verbatim per status. Merged/closed
+export interface StatusParts {
+  /** The colored accent (mock's `.st-merged b` / `.st-closed b`) — only
+   * merged/closed have one. Undefined everywhere else. */
+  mark?: string;
+  /** Everything else on the status line, dim. Full text when there's no mark. */
+  rest: string;
+}
+
+/** The mock's exact status-line text, split into the colored mark (✓/✕)
+ * and the dim remainder, so the view can render the mock's two-tone
+ * merged/closed lines instead of one flat-colored string. Merged/closed
  * carry the row's relative time; the rest don't (the mock puts theirs in
  * the `.meta` row instead). Refused carries no message — a dim label. */
-export function statusText(job: RidgesJob, now: Date): string {
+export function statusParts(job: RidgesJob, now: Date): StatusParts {
   switch (job.status) {
     case "working":
-      return "working — the subnet has your issue";
+      return { rest: "working — the subnet has your issue" };
     case "pr-open":
-      return "PR open — ready for your review";
+      return { rest: "PR open — ready for your review" };
     case "merged":
-      return `✓ merged — ${relTime(job.updatedAt, now)}`;
+      return { mark: "✓ merged", rest: ` — ${relTime(job.updatedAt, now)}` };
     case "closed":
-      return `✕ closed unmerged — ${relTime(job.updatedAt, now)}`;
+      return { mark: "✕ closed unmerged", rest: ` — ${relTime(job.updatedAt, now)}` };
     case "payment-unclear":
-      return "⚠ payment unclear — may have settled; check the receipt before retrying";
+      return { rest: "⚠ payment unclear — may have settled; check the receipt before retrying" };
     case "refused":
-      return "refused";
+      return { rest: "refused" };
   }
+}
+
+/** The mock's exact status-line text, verbatim per status, as a single
+ * string — `statusParts` above split apart for the view's two-tone
+ * rendering; this is that same text concatenated back together. */
+export function statusText(job: RidgesJob, now: Date): string {
+  const { mark, rest } = statusParts(job, now);
+  return mark ? `${mark}${rest}` : rest;
 }
 
 /** "repo#N", or the hostname-trimmed issue URL for a refused row where

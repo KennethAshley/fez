@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { paneFacts, statusText, relTime, issueLabel } from "../src/gui-logic.js";
+import { paneFacts, statusText, statusParts, relTime, issueLabel } from "../src/gui-logic.js";
 import type { RidgesJob } from "../src/store.js";
 
 function job(overrides: Partial<RidgesJob>): RidgesJob {
@@ -65,6 +65,26 @@ describe("statusText — exact mock vocabulary", () => {
   });
   it("refused", () => {
     expect(statusText(job({ status: "refused" }), NOW)).toBe("refused");
+  });
+});
+
+describe("statusParts — the mark the view colors, split from the dim rest", () => {
+  it("merged carries a mark", () => {
+    expect(statusParts(job({ status: "merged", updatedAt: "2026-08-28T00:00:00.000Z" }), NOW)).toEqual({
+      mark: "✓ merged",
+      rest: " — 2 days ago",
+    });
+  });
+  it("closed carries a mark", () => {
+    expect(statusParts(job({ status: "closed", updatedAt: "2026-08-27T00:00:00.000Z" }), NOW)).toEqual({
+      mark: "✕ closed unmerged",
+      rest: " — 3 days ago",
+    });
+  });
+  it("working/pr-open/payment-unclear/refused carry no mark", () => {
+    for (const status of ["working", "pr-open", "payment-unclear", "refused"] as const) {
+      expect(statusParts(job({ status }), NOW).mark).toBeUndefined();
+    }
   });
 });
 

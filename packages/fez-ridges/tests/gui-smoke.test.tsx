@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { act } from "react";
 import { activate, type GuiApi } from "../src/view.tsx";
 import type { RidgesJob } from "../src/store.js";
+import styles from "../src/gui.module.css";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,6 +70,11 @@ describe("ridges gui pane — mount model", () => {
     expect(host.textContent).toContain("base-sepolia · test USDC");
     expect(host.textContent).not.toContain("Your first job goes here.");
 
+    // The merged mark is its own colored element, not flattened into the
+    // dim status text — the hashed class must actually be on the DOM.
+    const mark = host.querySelector(`.${CSS.escape(styles.stMergedMark)}`);
+    expect(mark?.textContent).toBe("✓ merged");
+
     act(() => dispose());
     expect(host.childNodes.length).toBe(0);
   });
@@ -94,6 +100,10 @@ describe("ridges gui pane — mount model", () => {
       button!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(host.querySelector("input")).toBeNull();
+    // No in-pane alternative exists without a client, so the hint drops
+    // the "or" — it's the only way left, not one of two.
+    expect(host.textContent).toContain("dispatch from any channel: /ridges <issue-url>");
+    expect(host.textContent).not.toContain("or from any channel:");
   });
 
   it("shows the empty-state lines verbatim when the mirror has no jobs", async () => {

@@ -20,7 +20,7 @@ import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Avatar } from "@fezchat/ui";
 import styles from "./gui.module.css";
-import { paneFacts, statusText, issueLabel } from "./gui-logic.js";
+import { paneFacts, statusParts, relTime, issueLabel } from "./gui-logic.js";
 import type { RidgesJob } from "./store.js";
 
 /** The narrow slice of the real GuiExtensionApi this pane actually
@@ -49,6 +49,21 @@ function byNewest(a: RidgesJob, b: RidgesJob): number {
 function Face({ persona, pk }: { persona: string; pk?: string }) {
   if (pk) return <Avatar pk={pk} name={persona} size={22} />;
   return <span className={styles.face}>{persona.trim() ? persona[0]!.toUpperCase() : ""}</span>;
+}
+
+/** The status line, two-tone: merged/closed get a colored ✓/✕ mark
+ * (mock's `.st-merged b`/`.st-closed b`) followed by the dim rest;
+ * everything else is just the dim rest. */
+function StatusLine({ job, now }: { job: RidgesJob; now: Date }) {
+  const { mark, rest } = statusParts(job, now);
+  if (!mark) return <>{rest}</>;
+  const markClass = job.status === "merged" ? styles.stMergedMark : styles.stClosedMark;
+  return (
+    <>
+      <b className={markClass}>{mark}</b>
+      {rest}
+    </>
+  );
 }
 
 function isHttpUrl(s: string): boolean {
@@ -84,7 +99,9 @@ function Row({ job, api, now }: { job: RidgesJob; api: GuiApi; now: Date }) {
             )}
           </span>
         </div>
-        <div className={`${styles.status} ${styles.stRefused}`}>{statusText(job, now)}</div>
+        <div className={`${styles.status} ${styles.stRefused}`}>
+          <StatusLine job={job} now={now} />
+        </div>
       </div>
     );
   }
@@ -122,11 +139,13 @@ function Row({ job, api, now }: { job: RidgesJob; api: GuiApi; now: Date }) {
           <span className={styles.ghost}>PR …</span>
         )}
       </div>
-      <div className={`${styles.status} ${statusClass}`}>{statusText(job, now)}</div>
+      <div className={`${styles.status} ${statusClass}`}>
+        <StatusLine job={job} now={now} />
+      </div>
       {job.title && <div className={styles.title}>{job.title}</div>}
       <div className={styles.meta}>
         {(job.status === "working" || job.status === "pr-open" || job.status === "payment-unclear") && (
-          <span>{relTimeMeta(job, now)}</span>
+          <span>{relTime(job.updatedAt, now)}</span>
         )}
         <span className={styles.receipt} title="the wallet's x402 receipt">
           receipt ⛁
@@ -135,18 +154,6 @@ function Row({ job, api, now }: { job: RidgesJob; api: GuiApi; now: Date }) {
       </div>
     </div>
   );
-}
-
-// merged/closed already fold their relative time into the status line
-// (statusText); the other statuses show it here in .meta, per the mock.
-function relTimeMeta(job: RidgesJob, now: Date): string {
-  const diffMs = Math.max(0, now.getTime() - new Date(job.updatedAt).getTime());
-  const min = Math.floor(diffMs / 60_000);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const days = Math.floor(hr / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 function RidgesPane({ api }: { api: GuiApi }) {
@@ -198,7 +205,8 @@ function RidgesPane({ api }: { api: GuiApi }) {
         </div>
       )}
       <p className={styles.hint}>
-        or from any channel: <b>/ridges &lt;issue-url&gt;</b> — big spends still ask you first ✅
+        {api.client?.sendChannelMessage ? "or from any channel: " : "dispatch from any channel: "}
+        <b>/ridges &lt;issue-url&gt;</b> — big spends still ask you first ✅
       </p>
 
       {jobs.length === 0 ? (
