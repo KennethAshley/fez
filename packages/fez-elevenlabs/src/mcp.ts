@@ -6,7 +6,7 @@ import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { RelayConnection, getKey, resolveRelays, loadSettings } from "@fezchat/protocol";
 import { uploadToBlossom } from "@fezchat/media/dist/blossom.js";
 import { PINNED, voiceFor } from "./voices.js";
-import { checkText, imetaFor, readVoicePrefs } from "./speak.js";
+import { checkText, imetaFor, matchChannel, readVoicePrefs } from "./speak.js";
 
 /**
  * fez-elevenlabs, skill part — agents speak.
@@ -46,22 +46,14 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const sign = (tmpl: { kind: number; tags: string[][]; content: string }) =>
   finalizeEvent({ ...tmpl, created_at: Math.floor(Date.now() / 1000) } as never, secret);
 
-/** Same resolution fez-memory uses: channel by id, else by name. */
+/**
+ * Same resolution fez-memory uses: channel by id, else by name. Does NOT
+ * swallow a relay-query failure into "no channel found" — those are
+ * different facts and the agent needs to hear which one happened.
+ */
 async function resolveChannel(raw: string): Promise<string | undefined> {
-  const channels = await relay.query([{ kinds: [KIND_CHANNEL], limit: 500 }]).catch(() => []);
-  if (channels.find((e) => e.tags.find((t) => t[0] === "d")?.[1] === raw)) return raw;
-  const nameOf = (e: { tags: string[][]; content: string }) => {
-    const tag = e.tags.find((t) => t[0] === "name")?.[1];
-    if (tag) return tag;
-    try {
-      return (JSON.parse(e.content) as { name?: string }).name;
-    } catch {
-      return undefined;
-    }
-  };
-  return channels
-    .find((e) => nameOf(e)?.toLowerCase() === raw.toLowerCase().replace(/^#/, ""))
-    ?.tags.find((t) => t[0] === "d")?.[1];
+  const channels = await relay.query([{ kinds: [KIND_CHANNEL], limit: 500 }]);
+  return matchChannel(channels, raw);
 }
 
 function mediaServer(): string {
@@ -108,7 +100,14 @@ server.registerTool(
       );
     const bad = checkText(spoken);
     if (bad) return text(bad);
-    const channelId = await resolveChannel(channel);
+    let channelId: string | undefined;
+    try {
+      channelId = await resolveChannel(channel);
+    } catch (err) {
+      return text(
+        `could not reach the relay to look up channels: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
     if (!channelId) return text(`no channel "${channel}" on this relay.`);
     try {
       const voice = voiceFor(myPubkey, readVoicePrefs(), persona);

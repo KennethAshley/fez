@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkText, imetaFor } from "../src/speak.js";
+import { checkText, imetaFor, matchChannel } from "../src/speak.js";
 
 describe("checkText", () => {
   it("passes normal text", () => {
@@ -26,5 +26,26 @@ describe("imetaFor", () => {
       "m audio/mpeg",
       "size 1234",
     ]);
+  });
+});
+
+describe("matchChannel", () => {
+  const channels = [
+    { tags: [["d", "abc123"], ["name", "general"]], content: "" },
+    { tags: [["d", "def456"]], content: JSON.stringify({ name: "random" }) },
+  ];
+
+  it("matches by id", () => {
+    expect(matchChannel(channels, "abc123")).toBe("abc123");
+  });
+  it("matches by name tag, case-insensitive, # stripped", () => {
+    expect(matchChannel(channels, "#General")).toBe("abc123");
+  });
+  it("matches by name parsed from content JSON", () => {
+    expect(matchChannel(channels, "random")).toBe("def456");
+  });
+  it("a successful query with no match returns undefined — distinct from a query failure", () => {
+    expect(matchChannel(channels, "nope")).toBeUndefined();
+    expect(matchChannel([], "anything")).toBeUndefined();
   });
 });

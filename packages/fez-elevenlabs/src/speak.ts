@@ -17,6 +17,33 @@ export function imetaFor(url: string, size: number): string[] {
   return ["imeta", `url ${url}`, "m audio/mpeg", `size ${size}`];
 }
 
+interface ChannelEvent {
+  tags: string[][];
+  content: string;
+}
+
+/**
+ * Pure half of channel resolution (id or name → id). Split out from the
+ * relay query so "the relay failed" and "the relay answered, no match"
+ * stay distinguishable — a query failure must surface as its own error,
+ * not fold into this returning undefined.
+ */
+export function matchChannel(channels: ChannelEvent[], raw: string): string | undefined {
+  if (channels.find((e) => e.tags.find((t) => t[0] === "d")?.[1] === raw)) return raw;
+  const nameOf = (e: ChannelEvent) => {
+    const tag = e.tags.find((t) => t[0] === "name")?.[1];
+    if (tag) return tag;
+    try {
+      return (JSON.parse(e.content) as { name?: string }).name;
+    } catch {
+      return undefined;
+    }
+  };
+  return channels
+    .find((e) => nameOf(e)?.toLowerCase() === raw.toLowerCase().replace(/^#/, ""))
+    ?.tags.find((t) => t[0] === "d")?.[1];
+}
+
 /**
  * Voice overrides written by the gui panel via the prefs seam land in
  * this extension's state file. Headless side reads the same file.
