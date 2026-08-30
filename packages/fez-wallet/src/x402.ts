@@ -22,12 +22,11 @@ export interface PaymentRequired {
 }
 
 export function decodePaymentRequired(headerB64: string): PaymentRequired {
-  let json: string;
-  try {
-    json = Buffer.from(headerB64, "base64").toString("utf-8");
-  } catch {
-    throw new Error("x402: PAYMENT-REQUIRED header is not valid base64");
-  }
+  // Buffer.from(str, "base64") never throws on malformed input (best-effort
+  // decode) — garbage base64 just decodes to garbage bytes, which then
+  // fails at the JSON.parse stage below. That error is accurate; no
+  // separate base64-stage catch to keep.
+  const json = Buffer.from(headerB64, "base64").toString("utf-8");
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -55,13 +54,13 @@ export function pickOffer(
 const MAX_SAFE_ATOMIC = 2 ** 53;
 
 export function offerUsd(offer: X402Offer): number {
-  let raw: bigint;
-  try {
-    raw = BigInt(offer.amount);
-  } catch {
-    throw new Error(`x402: offer amount "${offer.amount}" is not a valid integer`);
+  // BigInt(str) also accepts hex ("0x2710") and treats "" as 0n — neither is
+  // a valid x402 atomic-unit amount (the spec is a plain decimal string).
+  // Reject anything but digits before BigInt ever sees it.
+  if (!/^\d+$/.test(offer.amount)) {
+    throw new Error(`x402: offer amount "${offer.amount}" is not a decimal integer string`);
   }
-  if (raw < 0n) throw new Error(`x402: offer amount "${offer.amount}" is negative`);
+  const raw = BigInt(offer.amount);
   if (raw > BigInt(MAX_SAFE_ATOMIC)) throw new Error(`x402: offer amount "${offer.amount}" exceeds safe integer bounds`);
   return Number(raw) / 1e6;
 }

@@ -46,12 +46,14 @@ describe("decodePaymentRequired", () => {
     expect(decoded.accepts).toHaveLength(1);
   });
 
-  it("throws on bad base64", () => {
-    expect(() => decodePaymentRequired("not valid base64 !!! ###")).toThrow();
+  it("garbage base64 surfaces as the JSON-decode error (Buffer.from never throws on bad base64)", () => {
+    expect(() => decodePaymentRequired("not valid base64 !!! ###")).toThrow(/did not decode to JSON/);
   });
 
   it("throws on base64 that isn't JSON", () => {
-    expect(() => decodePaymentRequired(Buffer.from("not json", "utf-8").toString("base64"))).toThrow();
+    expect(() => decodePaymentRequired(Buffer.from("not json", "utf-8").toString("base64"))).toThrow(
+      /did not decode to JSON/,
+    );
   });
 
   it("throws when accepts is missing", () => {
@@ -100,6 +102,27 @@ describe("pickOffer", () => {
   it("returns undefined when no offers match", () => {
     expect(pickOffer([], pin)).toBeUndefined();
   });
+
+  it("matches a mixed-case pinned usdcAddress against a lowercase offer asset", () => {
+    const mixedCasePin = { ...pin, usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" };
+    const lowerOffer = { ...goodOffer, asset: goodOffer.asset.toLowerCase() };
+    expect(pickOffer([lowerOffer], mixedCasePin)).toBe(lowerOffer);
+  });
+
+  it("refuses a network with a trailing near-miss character", () => {
+    const suffixed = { ...goodOffer, network: "eip155:84532x" };
+    expect(pickOffer([suffixed], pin)).toBeUndefined();
+  });
+
+  it("refuses mainnet (eip155:8453) when pinned to base-sepolia (eip155:84532)", () => {
+    const mainnet = { ...goodOffer, network: "eip155:8453" };
+    expect(pickOffer([mainnet], pin)).toBeUndefined();
+  });
+
+  it("refuses a network with a leading space", () => {
+    const spaced = { ...goodOffer, network: " eip155:84532" };
+    expect(pickOffer([spaced], pin)).toBeUndefined();
+  });
 });
 
 describe("offerUsd", () => {
@@ -115,9 +138,22 @@ describe("offerUsd", () => {
     expect(() => offerUsd({ amount: "not-a-number" } as X402Offer)).toThrow();
   });
 
+  it("throws on a hex amount (BigInt would otherwise silently accept it)", () => {
+    expect(() => offerUsd({ amount: "0x10" } as X402Offer)).toThrow(/not a decimal integer string/);
+  });
+
+  it("throws on an empty amount (BigInt('') === 0n otherwise)", () => {
+    expect(() => offerUsd({ amount: "" } as X402Offer)).toThrow(/not a decimal integer string/);
+  });
+
   it("throws on an amount above 2**53", () => {
     const tooBig = (2n ** 53n + 1n).toString();
     expect(() => offerUsd({ amount: tooBig } as X402Offer)).toThrow();
+  });
+
+  it("allows the exact 2**53 boundary (throws only when strictly greater)", () => {
+    const boundary = (2n ** 53n).toString();
+    expect(offerUsd({ amount: boundary } as X402Offer)).toBeCloseTo(Number(2n ** 53n) / 1e6);
   });
 });
 
