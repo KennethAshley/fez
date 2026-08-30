@@ -65,6 +65,19 @@ describe("restrictedSigner", () => {
     });
     expect(sig).toMatch(/^0x[0-9a-f]{130}$/);
   });
+
+  // The tests above call the signer directly — they'd stay green even if a
+  // future SDK refactor stopped routing through signTypedData entirely. This
+  // one goes through the real payWith402 -> ExactEvmScheme path so the
+  // restriction is pinned end-to-end, not just at the unit boundary.
+  it("payWith402 (real SDK path) refuses a mismatched-asset offer, naming the offer's contract", async () => {
+    const derived = deriveAgentEvm(JUNK_MNEMONIC, 0);
+    const wrongContract = "0x000000000000000000000000000000deadbeef";
+    const wrongAssetOffer = { ...OFFER, asset: wrongContract };
+    await expect(
+      payWith402({ offer: wrongAssetOffer, privateKeyHex: derived.privateKeyHex, usdcAddress: USDC }),
+    ).rejects.toThrow(new RegExp(wrongContract, "i"));
+  });
 });
 
 describe("x402 SDK round-trip (in-test HTTP, zero chain access)", () => {

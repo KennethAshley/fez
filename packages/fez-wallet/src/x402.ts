@@ -127,7 +127,10 @@ export interface RestrictedSigner {
  * feature: a malicious 402 server can hand the client any typed-data request
  * it likes (a Permit, an approval, a transfer to itself) — this signer
  * refuses everything except the exact payment primitive, for the exact
- * asset the wallet is configured to pay with. */
+ * asset the wallet is configured to pay with. `sign`/`signMessage`/
+ * `signTransaction` pass through unrestricted — the restriction covers only
+ * `signTypedData` because that's the one member fez's own payment path
+ * invokes; the 402 server never gets to choose which method is called. */
 export function restrictedSigner(privateKeyHex: `0x${string}`, allowedContract: string): RestrictedSigner {
   const account = privateKeyToAccount(privateKeyHex);
   return {
