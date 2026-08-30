@@ -3947,3 +3947,41 @@ a.page-fact:hover { color: var(--fg); }
 @media (prefers-reduced-motion: reduce) {
   .skill-pick-more > summary::before { transition: none; }
 }
+
+/* ---- user card (moderation home) ---- */
+.ucard {
+  position: fixed; z-index: 61; min-width: 236px;
+  background: var(--bg1); border: 1px solid var(--hairline); border-radius: 10px;
+  overflow: hidden; box-shadow: 0 18px 44px -14px rgb(0,0,0,0.7);
+}
+.ucard-top {
+  display: flex; gap: 12px; align-items: center; padding: 14px 15px 12px;
+  background: var(--bg2); border-bottom: 1px solid var(--hairline);
+}
+.ucard-id { min-width: 0; }
+.ucard-name { display: flex; align-items: center; gap: 8px; color: var(--brand); font-weight: 700; font-size: 15px; }
+.ucard-presence { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 2px var(--bg2); }
+.ucard-npub { color: var(--fg-dim); font-size: 11.5px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ucard-list { padding: 6px; }
+.ucard-grp {
+  font-size: 10px; color: var(--fg-dim); letter-spacing: .06em; text-transform: uppercase;
+  padding: 9px 9px 4px; display: flex; align-items: center; gap: 6px;
+}
+.ucard-sw { width: 7px; height: 7px; border-radius: 2px; }
+.ucard-grp.auth .ucard-sw { background: var(--red); }
+.ucard-grp.self .ucard-sw { background: var(--accent); }
+.ucard-mi { display: flex; align-items: center; gap: 10px; padding: 8px 9px; border-radius: 5px; cursor: pointer; color: var(--fg); font-size: 13px; }
+.ucard-mi:hover { background: var(--bg2); }
+.ucard-gl { width: 15px; text-align: center; color: var(--fg-dim); }
+.ucard-sk { margin-left: auto; color: var(--fg-dim); font-size: 11px; }
+.ucard-mi.danger { color: var(--red); } .ucard-mi.danger .ucard-gl { color: var(--red); }
+.ucard-mi.calm { color: var(--accent); } .ucard-mi.calm .ucard-gl { color: var(--accent); }
+.ucard-mi.disabled { opacity: .5; cursor: default; }
+.ucard-mi.disabled:hover { background: transparent; }
+.ucard-rule { height: 1px; background: var(--hairline); margin: 6px 2px; }
+.ucard-presets { display: flex; gap: 6px; padding: 2px 9px 9px 34px; flex-wrap: wrap; }
+.ucard-presets span {
+  font-size: 11.5px; color: var(--fg); border: 1px solid var(--hairline);
+  background: var(--field); padding: 3px 9px; border-radius: 5px; cursor: pointer;
+}
+.ucard-presets span:hover { border-color: var(--accent); color: var(--accent); }
