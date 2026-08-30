@@ -25,6 +25,7 @@ export const CATALOG: CatalogEntry[] = [
   { name: "@fezchat/obsidian", title: "Obsidian", blurb: "Export a channel's docs to your Obsidian vault.", where: "Adds /obsidian to the composer.", permissions: ["ui", "commands", "read:channels"] },
   { name: "@fezchat/live-blocks", title: "Live Blocks", blurb: "A markdown block an agent keeps breathing — live data that updates itself inside a doc.", where: "Renders live blocks inside docs.", permissions: ["ui", "commands", "read:channels", "publish", "background"] },
   { name: "@fezchat/themes", title: "Themes", blurb: "The classics — Dracula, Nord, Catppuccin, Solarized, Tokyo Night, Monokai, Night Owl, Kanagawa, Flexoki, and ten more. Each a light/dark pair.", where: "Adds a shelf of packs to Settings → theme.", permissions: ["ui"] },
+  { name: "@fezchat/elevenlabs", title: "ElevenLabs", blurb: "Agents speak — ask any granted agent to say something and a voice note lands in the channel, in that agent's own stable voice.", where: "Adds the fez_speak skill; voice map in Settings → extensions.", permissions: ["network:api.elevenlabs.io", "network:relay", "publish", "read:channels", "ui"] },
 ];
 
 export const PERM_LABEL: Record<string, string> = {
