@@ -2960,7 +2960,25 @@ function Bubble({
             })}
             {!pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, msg.id))}
             {mine && onEdit && menuItem("edit message", "✎", onEdit)}
-            {!mine && menuItem("report to community creator…", "⚑!", () => setReportOpen(true))}
+            {!mine && menuItem("report to moderators…", "⚑!", () => setReportOpen(true))}
+            {client.canModerateMessage(msg) && (
+              <button
+                className="self-menu-item danger"
+                onClick={() => {
+                  if (!armedRemove) {
+                    setArmedRemove(true);
+                    setTimeout(() => setArmedRemove(false), 3000);
+                    return; // menu stays open — second click confirms
+                  }
+                  setArmedRemove(false);
+                  setMenu(undefined);
+                  void client.removeMessage(msg.id);
+                }}
+              >
+                <span className="menu-glyph">⊘</span>
+                {armedRemove ? "click again — withholds it for everyone" : "remove message"}
+              </button>
+            )}
             {client.canDeleteMessage(msg) && (
               <button
                 className="self-menu-item danger"
@@ -2997,6 +3015,13 @@ function Bubble({
         <HoverCard client={client} pk={msg.authorPk}>
           <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
         </HoverCard>
+        {(() => {
+          // Authority visible at a glance — owner/admin badge next to the name.
+          const role = client.state.roleOf(msg.authorPk);
+          if (role === "owner") return <span className="msg-role owner">owner</span>;
+          if (role === "admin") return <span className="msg-role admin">admin</span>;
+          return null;
+        })()}
         {(() => {
           // The zsh-prompt chip: the branch the agent's checkout is ON,
           // from its own 47000 announcement — truth from the spawn, not
@@ -3064,23 +3089,6 @@ function Bubble({
                 }}
               >
                 {armedDelete ? "⌫?" : "⌫"}
-              </button>
-            )}
-            {client.canModerateMessage(msg) && (
-              <button
-                className={armedRemove ? "danger armed-delete" : "danger"}
-                title={armedRemove ? "click again — withholds it for everyone (reversible)" : "remove (moderator)"}
-                onClick={() => {
-                  if (!armedRemove) {
-                    setArmedRemove(true);
-                    setTimeout(() => setArmedRemove(false), 3000);
-                    return;
-                  }
-                  setArmedRemove(false);
-                  void client.removeMessage(msg.id);
-                }}
-              >
-                {armedRemove ? "⊘?" : "⊘"}
               </button>
             )}
           </div>

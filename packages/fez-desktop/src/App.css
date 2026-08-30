@@ -3985,3 +3985,11 @@ a.page-fact:hover { color: var(--fg); }
   background: var(--field); padding: 3px 9px; border-radius: 5px; cursor: pointer;
 }
 .ucard-presets span:hover { border-color: var(--accent); color: var(--accent); }
+
+/* role badge next to a message author's name */
+.msg-role {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 3px; line-height: 1.6; margin-left: 2px;
+}
+.msg-role.owner { color: var(--brand); border: 1px solid #6b3410; background: #3a2113; }
+.msg-role.admin { color: var(--yellow); border: 1px solid #665c1e; background: #3a3418; }
