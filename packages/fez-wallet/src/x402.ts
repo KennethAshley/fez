@@ -68,20 +68,41 @@ export function decodePaymentRequired(headerB64: string): PaymentRequired {
   return parsed as PaymentRequired;
 }
 
+/** Normalizes an x402Version signal to exactly `1` or `2` — never guesses.
+ * Absent/undefined is the documented v2 default (the wallet's long-standing
+ * behavior, unchanged); exactly the number `1` or `2` pass through as-is;
+ * anything else — a future v3, a string `"1"` (money is never coerced), a
+ * NaN, `null` — is refused BY NAME rather than silently routed into
+ * either scheme's signer/header logic. Called once at the top of the
+ * pipeline (x402FetchRaw, before offer selection) and again inside
+ * payWith402 itself as defense-in-depth for any other caller. */
+export function resolveX402Version(v: unknown): 1 | 2 {
+  if (v === undefined) return 2;
+  if (v === 1 || v === 2) return v;
+  throw new Error(`x402: unsupported x402Version "${String(v)}" — only 1 and 2 are supported`);
+}
+
 export function pickOffer(
   offers: X402Offer[],
-  // `v1Network` is the wallet's own human network label (x402Settings().network,
-  // e.g. "base-sepolia") — v1 offers name a network that way (see
-  // @x402/evm's EVM_NETWORK_CHAIN_ID_MAP), never the CAIP-2 `chainRef`
-  // ("eip155:84532") v2 offers use. Matching either lets a v1 offer be
-  // selected at all — signing/header routing then follows the picked
-  // offer's declared x402Version (see payWith402).
-  opts: { network: string; usdcAddress: string; v1Network?: string },
+  // Matching is gated by the ALREADY-NORMALIZED version (see
+  // resolveX402Version) — and only THAT version's own network format is
+  // tried: v2 offers must use the CAIP-2 `network` ("eip155:84532"); v1
+  // offers must use the wallet's human network label (`v1Network`, e.g.
+  // "base-sepolia" — @x402/evm's EVM_NETWORK_CHAIN_ID_MAP names). A
+  // cross-format offer (a v1-declared offer wearing a CAIP string, or a
+  // v2-declared offer wearing a bare label) simply doesn't match either
+  // arm — it falls through to the ordinary no-matching-offer refusal
+  // rather than being accepted into an inconsistent signing domain.
+  // `version` defaults to `2` when omitted — the same "absent is v2"
+  // rule resolveX402Version applies, and what every pre-v1 caller
+  // (predating x402Version-awareness entirely) still gets unchanged.
+  opts: { network: string; usdcAddress: string; v1Network?: string; version?: 1 | 2 },
 ): X402Offer | undefined {
+  const version = opts.version ?? 2;
   return offers.find(
     (o) =>
       o.scheme === "exact" &&
-      (o.network === opts.network || (opts.v1Network !== undefined && o.network === opts.v1Network)) &&
+      (version === 1 ? o.network === opts.v1Network : o.network === opts.network) &&
       o.asset.toLowerCase() === opts.usdcAddress.toLowerCase(),
   );
 }
@@ -235,6 +256,11 @@ export interface PayWith402Opts {
  * `node_modules/@x402/evm/dist/cjs/exact/v1/client/index.js`) directly;
  * not asserted from the type signature alone. */
 export async function payWith402(opts: PayWith402Opts): Promise<{ paymentHeaders: Record<string, string> }> {
+  // Defense-in-depth: x402FetchRaw already normalizes before this is ever
+  // called, but payWith402 is a real SDK-signing boundary in its own
+  // right (tests, and any future caller, invoke it directly) — it must
+  // refuse a garbage version itself rather than trust the caller.
+  const version = resolveX402Version(opts.x402Version);
   const signer = restrictedSigner(opts.privateKeyHex, opts.usdcAddress);
   // I3: a server-controlled maxTimeoutSeconds otherwise becomes the
   // lifetime of a bearer authorization we hand over — an offer naming
@@ -244,7 +270,7 @@ export async function payWith402(opts: PayWith402Opts): Promise<{ paymentHeaders
   const maxTimeoutSeconds = Math.min(Number(opts.offer.maxTimeoutSeconds) || 60, 600);
 
   let paymentPayload: PaymentPayload;
-  if (opts.x402Version === 1) {
+  if (version === 1) {
     // @x402/core's PUBLIC `PaymentRequirements`/`PaymentPayload` types are
     // the v2 shapes only (v1's are separately named `PaymentRequirementsV1`/
     // `PaymentPayloadV1` — a real gap in the SDK's own .d.ts, not something

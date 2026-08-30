@@ -15,7 +15,7 @@ import {
   type X402Outcome,
 } from "../src/tools.js";
 import { deriveAgentEvm } from "../src/derive.js";
-import { payWith402, parseSettlementHeader, type X402Offer } from "../src/x402.js";
+import { payWith402, parseSettlementHeader, resolveX402Version, type X402Offer } from "../src/x402.js";
 import { readX402Log } from "../src/log.js";
 import type { ChainAdapter } from "../src/chains/adapter.js";
 import type { WalletConfig } from "../src/config.js";
@@ -54,9 +54,9 @@ function fakeResponse(status: number, opts: { headers?: Record<string, string>; 
   };
 }
 
-function paymentRequiredResponse(offers: X402Offer[]): FakeResponse {
+function paymentRequiredResponse(offers: X402Offer[], opts: { x402Version?: unknown } = {}): FakeResponse {
   const header = Buffer.from(
-    JSON.stringify({ x402Version: 2, resource: { url: "http://test.local/paid" }, accepts: offers }),
+    JSON.stringify({ x402Version: opts.x402Version ?? 2, resource: { url: "http://test.local/paid" }, accepts: offers }),
     "utf-8"
   ).toString("base64");
   return fakeResponse(402, { headers: { "PAYMENT-REQUIRED": header } });
@@ -327,5 +327,118 @@ describe("payWith402: x402Version routing (v1 vs v2)", () => {
     });
     expect(paymentHeaders["PAYMENT-SIGNATURE"]).toBeTruthy();
     expect(paymentHeaders["X-PAYMENT"]).toBeUndefined();
+  });
+});
+
+// Round 3: the version gate refuses unsupported/garbled signals instead of
+// guessing, and offer selection is gated by that SAME normalized version
+// (a cross-format offer — right label, wrong declared version — must not
+// be picked at all).
+describe("resolveX402Version: refuse, don't guess", () => {
+  it("absent is the documented v2 default", () => {
+    expect(resolveX402Version(undefined)).toBe(2);
+  });
+
+  it("exactly 1 and exactly 2 pass through unchanged", () => {
+    expect(resolveX402Version(1)).toBe(1);
+    expect(resolveX402Version(2)).toBe(2);
+  });
+
+  it("an unsupported version number is refused, naming it", () => {
+    expect(() => resolveX402Version(3)).toThrow(/3/);
+  });
+
+  it("a string version is refused — money is never coerced", () => {
+    expect(() => resolveX402Version("1")).toThrow(/1/);
+  });
+
+  it("null is refused, not treated as absent", () => {
+    expect(() => resolveX402Version(null)).toThrow(/null/);
+  });
+});
+
+describe("x402FetchRaw: the version gate refuses before any offer selection or signing", () => {
+  it("x402Version 3 -> refused, names the version, zero writes", async () => {
+    const dir = tmpHome();
+    const fetchImpl: FetchLike = async () => paymentRequiredResponse([offer()], { x402Version: 3 });
+    const outcome = await x402FetchRaw(baseDeps(dir, { fetchImpl }), { url: "http://x/", maxUsd: 1 });
+    expect(outcome.kind).toBe("refused");
+    expect((outcome as Extract<X402Outcome, { kind: "refused" }>).message).toContain("3");
+    expect(readX402Log(dir)).toHaveLength(0);
+  });
+
+  it("x402Version as the string \"1\" is refused — no coercion on money, zero writes", async () => {
+    const dir = tmpHome();
+    const fetchImpl: FetchLike = async () => paymentRequiredResponse([offer()], { x402Version: "1" });
+    const outcome = await x402FetchRaw(baseDeps(dir, { fetchImpl }), { url: "http://x/", maxUsd: 1 });
+    expect(outcome.kind).toBe("refused");
+    expect(readX402Log(dir)).toHaveLength(0);
+  });
+
+  it("absent x402Version still pays via v2 — no regression", async () => {
+    const dir = tmpHome();
+    let calls = 0;
+    const fetchImpl: FetchLike = async () => {
+      calls++;
+      // No x402Version override -> paymentRequiredResponse's default (2).
+      return calls === 1
+        ? paymentRequiredResponse([offer()])
+        : settledResponse();
+    };
+    const outcome = await x402FetchRaw(
+      baseDeps(dir, { fetchImpl, config: baseConfig({ x402: { autoApproveUnderUsd: { default: 1 } } }) }),
+      { url: "http://x/", maxUsd: 1 }
+    );
+    expect(outcome.kind).toBe("paid");
+  });
+});
+
+describe("pickOffer via x402FetchRaw: offer selection is gated by the offer's own declared version", () => {
+  it("a v1-declared offer wearing a v2 CAIP network string does not match (cross-format refused)", async () => {
+    const dir = tmpHome();
+    const crossFormatOffer = offer({ network: NETWORK }); // "eip155:84532" — v2's CAIP shape
+    const fetchImpl: FetchLike = async () => paymentRequiredResponse([crossFormatOffer], { x402Version: 1 });
+    const outcome = await x402FetchRaw(baseDeps(dir, { fetchImpl }), { url: "http://x/", maxUsd: 1 });
+    expect(outcome.kind).toBe("refused");
+    expect(readX402Log(dir)).toHaveLength(0);
+  });
+
+  it("a v2-declared offer wearing a bare v1 network label does not match (cross-format refused)", async () => {
+    const dir = tmpHome();
+    const crossFormatOffer = offer({ network: "base-sepolia" }); // v1's own label, not a CAIP string
+    const fetchImpl: FetchLike = async () => paymentRequiredResponse([crossFormatOffer], { x402Version: 2 });
+    const outcome = await x402FetchRaw(baseDeps(dir, { fetchImpl }), { url: "http://x/", maxUsd: 1 });
+    expect(outcome.kind).toBe("refused");
+    expect(readX402Log(dir)).toHaveLength(0);
+  });
+
+  it("happy path unchanged: a v2-declared offer with the CAIP network still matches and pays", async () => {
+    const dir = tmpHome();
+    let calls = 0;
+    const fetchImpl: FetchLike = async () => {
+      calls++;
+      return calls === 1 ? paymentRequiredResponse([offer()], { x402Version: 2 }) : settledResponse();
+    };
+    const outcome = await x402FetchRaw(
+      baseDeps(dir, { fetchImpl, config: baseConfig({ x402: { autoApproveUnderUsd: { default: 1 } } }) }),
+      { url: "http://x/", maxUsd: 1 }
+    );
+    expect(outcome.kind).toBe("paid");
+  });
+
+  it("happy path unchanged: a v1-declared offer with its own network label still matches and pays", async () => {
+    const dir = tmpHome();
+    let calls = 0;
+    const fetchImpl: FetchLike = async () => {
+      calls++;
+      return calls === 1
+        ? paymentRequiredResponse([OFFER_V1], { x402Version: 1 })
+        : settledResponse({ headerName: "X-PAYMENT-RESPONSE" });
+    };
+    const outcome = await x402FetchRaw(
+      baseDeps(dir, { fetchImpl, config: baseConfig({ x402: { autoApproveUnderUsd: { default: 1 } } }) }),
+      { url: "http://x/", maxUsd: 1 }
+    );
+    expect(outcome.kind).toBe("paid");
   });
 });

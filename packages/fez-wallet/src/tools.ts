@@ -20,6 +20,7 @@ import {
   recordSpend,
   payWith402,
   parseSettlementHeader,
+  resolveX402Version,
 } from "./x402.js";
 import { getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
@@ -424,7 +425,21 @@ export async function x402FetchRaw(
   const header = first.headers.get("PAYMENT-REQUIRED");
   if (!header) throw new Error("x402_fetch: got a 402 with no PAYMENT-REQUIRED header");
   const required = decodePaymentRequired(header);
-  const offer = pickOffer(required.accepts, { network: x402.chainRef, usdcAddress: x402.usdcAddress, v1Network: x402.network });
+  // Refuse an unsupported/garbled x402Version before it ever touches offer
+  // selection or signing — the same "refuse, not guess" rule money paths
+  // hold everywhere else in this function.
+  let x402Version: 1 | 2;
+  try {
+    x402Version = resolveX402Version(required.x402Version);
+  } catch (e) {
+    return { kind: "refused", message: `refused: ${(e as Error).message}` };
+  }
+  const offer = pickOffer(required.accepts, {
+    network: x402.chainRef,
+    usdcAddress: x402.usdcAddress,
+    v1Network: x402.network,
+    version: x402Version,
+  });
   if (!offer) {
     const seen = required.accepts.map((o) => `${o.scheme}/${o.network}/${o.asset}`).join(", ") || "(none)";
     return { kind: "refused", message: `refused: the 402 offered nothing that matches ${x402.chainRef}/${x402.usdcAddress} — offers seen: ${seen}` };
@@ -517,7 +532,7 @@ export async function x402FetchRaw(
       offer,
       privateKeyHex: deps.evmPair.privateKeyHex,
       usdcAddress: x402.usdcAddress,
-      x402Version: required.x402Version,
+      x402Version,
     }));
   } catch (e) {
     return { kind: "refused", message: `nothing was paid — the payment could not be signed (${(e as Error).message})` };
