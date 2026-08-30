@@ -902,6 +902,14 @@ select.ob-input:hover { border-color: var(--accent); }
 }
 .feed-empty-line { font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
 
+/* A live turn with no frames yet — same idiom, inside the open group. */
+.turn-warming { display: flex; align-items: center; gap: 10px; padding: 8px 0 4px; font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
+.turn-warming .spr-a { animation: spr-frame-a 0.8s steps(1) infinite; }
+.turn-warming .spr-b { animation: spr-frame-b 0.8s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .turn-warming .spr-a, .turn-warming .spr-b { animation: none; }
+}
+
 /* ── the watcher pane ──────────────────────────────────────── */
 .watch-head { font-weight: 600; }
 .watch-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -2189,9 +2197,18 @@ button.author:hover { text-decoration: underline; }
 .install-offer-consent { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 6px; }
 
 /* shared team memory pane */
-.memory-row { padding: 8px 10px; border: 1px solid var(--hairline); border-radius: 8px; margin-top: 6px; background: color-mix(in srgb, var(--bg2) 30%, transparent); }
+/* Memory rows are flat hairline rows, the inventory grammar — a
+   bordered card per fact said nothing. The author is a face. */
+.memory-row { padding: 9px 2px; border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent); }
+.memory-row:last-child { border-bottom: 0; }
 .memory-text { font-size: 13px; line-height: 1.45; color: var(--fg); }
-.memory-meta { font-size: 11px; color: var(--fg-dim); margin-top: 4px; }
+.memory-meta {
+  display: flex; align-items: center; gap: 5px; margin-top: 4px;
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim);
+}
+.memory-meta .avatar svg { display: block; }
+.memory-when { margin-left: auto; opacity: 0.8; }
+.pane-body > .manage-input { width: 100%; margin: 4px 0 6px; }
 .ext-modal-head { font-size: 14px; color: var(--fg); display: flex; align-items: center; gap: 12px; }
 .ext-modal-head .artifact-slot { width: 46px; height: 46px; }
 .gallery-perms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }

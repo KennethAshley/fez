@@ -155,8 +155,8 @@ export default function ActivityFeed({
   agentPk?: string;
 }) {
   const groups = useMemo(() => fold(entries), [entries]);
+  const sprite = (agent && SPRITES[agent.toLowerCase()]) || (agentPk ? generateSprite(agentPk) : undefined);
   if (groups.length === 0) {
-    const sprite = (agent && SPRITES[agent.toLowerCase()]) || (agentPk ? generateSprite(agentPk) : undefined);
     return (
       <div className="feed-empty">
         {sprite && (
@@ -187,9 +187,12 @@ export default function ActivityFeed({
           <details key={index} className={`turn ${group.outcome ?? "live"}`} open={index === groups.length - 1}>
             <summary className="turn-head">
               <span className={`turn-status ${group.outcome ?? "live"}`}>
-                {live ? "▸ working" : `${OUTCOME_MARK[group.outcome ?? ""] ?? "·"} turn ${group.outcome ?? "…"}`}
+                {/* A finished-looking group with NO outcome is a turn whose
+                    stream died unclosed (agent restarted, superseded) —
+                    "turn …" read like it was still coming. Say what it is. */}
+                {live ? "▸ working" : `${OUTCOME_MARK[group.outcome ?? ""] ?? "·"} turn ${group.outcome ?? "interrupted"}`}
               </span>
-              {live && dur !== undefined && <LiveElapsed baseMs={dur} />}
+              {live && <LiveElapsed baseMs={dur ?? 0} />}
               {!live && dur !== undefined && dur > 0 && <span className="turn-elapsed">{fmtDur(dur)}</span>}
               {live && doing && (
                 <span className="turn-doing">
@@ -208,6 +211,15 @@ export default function ActivityFeed({
               {!live && last?.path && <span className="turn-last">{last.path.split("/").at(-1)}</span>}
               {live && tools > 0 && <span className="turn-count">{tools} tool{tools === 1 ? "" : "s"}</span>}
             </summary>
+            {/* The starved moment: a live turn whose frames haven't landed
+                yet (harness booting) used to render a bare "working" line.
+                The creature holds the room and says what's coming. */}
+            {live && group.items.length === 0 && (
+              <div className="turn-warming">
+                {sprite && <AnimatedSprite sprite={sprite} scale={3} />}
+                <span>@{agent ?? "agent"} is spinning up — thoughts and tool calls stream here as they happen</span>
+              </div>
+            )}
             {group.items.map((item, itemIndex) => (
               <Fragment key={itemIndex}>
                 {item.t === "tool" && <ToolRow item={item} />}
