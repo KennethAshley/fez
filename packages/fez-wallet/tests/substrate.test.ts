@@ -239,12 +239,5 @@ describe("raceConnect (finding #3 — unreachable endpoint must not hang forever
   });
 });
 
-import { evmAdapter, NotEnabledError } from "../src/chains/evm.js";
-
-describe("evm stub", () => {
-  it("throws NotEnabledError on everything", async () => {
-    const evm = evmAdapter();
-    expect(() => evm.address({ publicKeyHex: "", secretKeyHex: "", address: "" })).toThrow(NotEnabledError);
-    await expect(evm.balance("0x0", "USDC")).rejects.toThrow(NotEnabledError);
-  });
-});
+// evm adapter behavior (address/balance live, transfer gated) is covered by
+// tests/evm-adapter.test.ts now that address()/balance() are implemented.
