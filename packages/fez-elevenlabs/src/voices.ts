@@ -13,8 +13,8 @@ export interface PinnedVoice {
 }
 
 // Premade ElevenLabs voices (ids are stable public catalog ids).
-// Verified against GET /v1/voices at implementation time — if any id is
-// gone, replace it here rather than filtering at runtime.
+// Verify against GET /v1/voices before first ship (plan Task 4 step 5);
+// if an id is gone, replace it here rather than filtering at runtime.
 export const PINNED: PinnedVoice[] = [
   { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel" },
   { id: "29vD33N1CtxCmqQRPOHJ", name: "Drew" },

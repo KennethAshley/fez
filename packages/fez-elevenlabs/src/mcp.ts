@@ -5,7 +5,7 @@ import { z } from "zod";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { RelayConnection, getKey, resolveRelays, loadSettings } from "@fezchat/protocol";
 import { uploadToBlossom } from "@fezchat/media/dist/blossom.js";
-import { PINNED, voiceFor } from "./voices.js";
+import { voiceFor } from "./voices.js";
 import { checkText, imetaFor, matchChannel, readVoicePrefs } from "./speak.js";
 
 /**

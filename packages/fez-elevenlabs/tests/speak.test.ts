@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { checkText, imetaFor, matchChannel } from "../src/speak.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { checkText, imetaFor, matchChannel, readVoicePrefs } from "../src/speak.js";
 
 describe("checkText", () => {
   it("passes normal text", () => {
@@ -47,5 +50,57 @@ describe("matchChannel", () => {
   it("a successful query with no match returns undefined — distinct from a query failure", () => {
     expect(matchChannel(channels, "nope")).toBeUndefined();
     expect(matchChannel([], "anything")).toBeUndefined();
+  });
+});
+
+describe("readVoicePrefs", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-elevenlabs-prefs-"));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("returns {} when neither file exists", () => {
+    expect(readVoicePrefs(dir)).toEqual({});
+  });
+
+  it("reads the de-scoped npm name (elevenlabs.json) when present", () => {
+    fs.writeFileSync(
+      path.join(dir, "elevenlabs.json"),
+      JSON.stringify({ prefs: { voices: { quill: "abc" } } })
+    );
+    expect(readVoicePrefs(dir)).toEqual({ quill: "abc" });
+  });
+
+  it("falls back to the link name (fez-elevenlabs.json) when elevenlabs.json is missing", () => {
+    fs.writeFileSync(
+      path.join(dir, "fez-elevenlabs.json"),
+      JSON.stringify({ prefs: { voices: { quill: "def" } } })
+    );
+    expect(readVoicePrefs(dir)).toEqual({ quill: "def" });
+  });
+
+  it("falls back when elevenlabs.json exists but has no voices", () => {
+    fs.writeFileSync(path.join(dir, "elevenlabs.json"), JSON.stringify({ prefs: {} }));
+    fs.writeFileSync(
+      path.join(dir, "fez-elevenlabs.json"),
+      JSON.stringify({ prefs: { voices: { quill: "ghi" } } })
+    );
+    expect(readVoicePrefs(dir)).toEqual({ quill: "ghi" });
+  });
+
+  it("prefers elevenlabs.json over fez-elevenlabs.json when both have voices", () => {
+    fs.writeFileSync(
+      path.join(dir, "elevenlabs.json"),
+      JSON.stringify({ prefs: { voices: { quill: "npm" } } })
+    );
+    fs.writeFileSync(
+      path.join(dir, "fez-elevenlabs.json"),
+      JSON.stringify({ prefs: { voices: { quill: "link" } } })
+    );
+    expect(readVoicePrefs(dir)).toEqual({ quill: "npm" });
   });
 });

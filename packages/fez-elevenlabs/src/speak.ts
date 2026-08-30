@@ -44,20 +44,35 @@ export function matchChannel(channels: ChannelEvent[], raw: string): string | un
     ?.tags.find((t) => t[0] === "d")?.[1];
 }
 
-/**
- * Voice overrides written by the gui panel via the prefs seam land in
- * this extension's state file. Headless side reads the same file.
- * Shape: { prefs: { voices: { [personaName]: voiceId } } }
- */
-export function readVoicePrefs(
-  file = path.join(os.homedir(), ".fez", "extension-data", "fez-elevenlabs.json")
-): Record<string, string> {
+function loadVoices(file: string): Record<string, string> | undefined {
   try {
     const raw = JSON.parse(fs.readFileSync(file, "utf8")) as {
       prefs?: { voices?: Record<string, string> };
     };
-    return raw.prefs?.voices ?? {};
+    const voices = raw.prefs?.voices;
+    return voices && Object.keys(voices).length > 0 ? voices : undefined;
   } catch {
-    return {};
+    return undefined;
   }
+}
+
+/**
+ * Voice overrides written by the gui panel via the prefs seam land in
+ * this extension's state file. Headless side reads the same file.
+ * Shape: { prefs: { voices: { [personaName]: voiceId } } }
+ *
+ * The gui writes under the INSTALL DIRECTORY name, which differs by
+ * install path: `fez link` keys it "fez-elevenlabs", but a production
+ * `fez install npm:@fezchat/elevenlabs` de-scopes it to "elevenlabs" —
+ * fez-wallet hit this exact trap (see storage-mirror.ts). Try the
+ * de-scoped npm name first, fall back to the link name.
+ */
+export function readVoicePrefs(
+  dir = process.env.FEZ_EXTENSION_DATA_DIR ?? path.join(os.homedir(), ".fez", "extension-data")
+): Record<string, string> {
+  return (
+    loadVoices(path.join(dir, "elevenlabs.json")) ??
+    loadVoices(path.join(dir, "fez-elevenlabs.json")) ??
+    {}
+  );
 }
