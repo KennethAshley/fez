@@ -8,6 +8,9 @@ import {
   encodeAddress,
 } from "@polkadot/util-crypto";
 import { u8aToHex, hexToU8a } from "@polkadot/util";
+import { HDKey } from "@scure/bip32";
+import { mnemonicToSeedSync } from "@scure/bip39";
+import { privateKeyToAccount } from "viem/accounts";
 
 /**
  * The money tree. One mnemonic (stored as the root keychain entry, CLI-only) hard-
@@ -50,6 +53,31 @@ export function deriveAgentPair(mnemonic: string, persona: string): WalletPair {
   const { path } = keyExtractPath(`//${persona}`);
   const d = keyFromPath(basePair(mnemonic), path, "sr25519");
   return toPair(d.publicKey, d.secretKey);
+}
+
+export interface EvmPair { addressHex: `0x${string}`; privateKeyHex: `0x${string}` }
+
+/** The money tree's EVM branch: standard BIP44 so mnemonic+index recovers
+ *  in any stock wallet. Index is per-persona, persisted in wallet config
+ *  (see config.ts's assignEvmIndex). */
+export function deriveAgentEvm(mnemonic: string, index: number): EvmPair {
+  if (!mnemonicValidate(mnemonic)) throw new Error("invalid mnemonic");
+  const key = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic)).derive(`m/44'/60'/0'/0/${index}`);
+  if (!key.privateKey) throw new Error("evm derivation failed");
+  const privateKeyHex = (`0x` + Buffer.from(key.privateKey).toString("hex")) as `0x${string}`;
+  return { addressHex: privateKeyToAccount(privateKeyHex).address, privateKeyHex };
+}
+
+/** Reads the EVM pair stored alongside the sr25519 pair (see cmdDerive) —
+ * same generic-error contract as pairFromStored: never echoes the input. */
+export function evmPairFromStored(json: string): EvmPair {
+  try {
+    const p = JSON.parse(json) as { evm?: Partial<EvmPair> };
+    if (!p.evm?.addressHex || !p.evm?.privateKeyHex) throw new Error("malformed stored pair");
+    return { addressHex: p.evm.addressHex, privateKeyHex: p.evm.privateKeyHex };
+  } catch {
+    throw new Error("malformed stored pair");
+  }
 }
 
 export function pairFromStored(json: string): WalletPair {

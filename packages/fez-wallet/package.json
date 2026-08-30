@@ -39,8 +39,11 @@
     "@polkadot/keyring": "^13.2.3",
     "@polkadot/util": "^13.2.3",
     "@polkadot/util-crypto": "^13.2.3",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
     "nostr-tools": "^2.10.0",
     "qrcode-generator": "^2.0.4",
+    "viem": "^2.56.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {

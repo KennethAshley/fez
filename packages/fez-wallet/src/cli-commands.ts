@@ -1,4 +1,4 @@
-import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored } from "./derive.js";
+import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored, deriveAgentEvm } from "./derive.js";
 import { readEntry, writeEntry, readRootEntry, writeRootEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, type Network } from "./config.js";
@@ -57,11 +57,16 @@ export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
   const mnemonic = requireRoot();
   const existing = readEntry(persona);
   const pair = existing ? pairFromStored(existing) : deriveAgentPair(mnemonic, persona);
-  if (!existing) writeEntry(persona, JSON.stringify(pair));
   const config = loadConfig();
-  assignEvmIndex(config, persona);
+  const evmIndex = assignEvmIndex(config, persona);
   saveConfig(config);
+  // Same stored-pair mechanism as the sr25519 half (one JSON entry per
+  // persona) — rewritten every call so a pre-EVM entry gets backfilled,
+  // idempotently, since both halves are deterministic from mnemonic+index.
+  const evm = deriveAgentEvm(mnemonic, evmIndex);
+  writeEntry(persona, JSON.stringify({ ...pair, evm }));
   io.print(`${persona}: ${pair.address}`);
+  io.print(`${persona} (evm): ${evm.addressHex}  (fund this for x402 payments)`);
   await mirrorAddresses({ persona: { name: persona, address: pair.address } });
 }
 

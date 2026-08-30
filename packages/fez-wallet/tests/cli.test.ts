@@ -51,15 +51,18 @@ describe("cli ceremony", () => {
     const { cmdInit, cmdDerive } = await import("../src/cli-commands.js");
     const { readEntry } = await import("../src/store.js");
     const { loadConfig } = await import("../src/config.js");
-    const { pairFromStored } = await import("../src/derive.js");
+    const { pairFromStored, evmPairFromStored } = await import("../src/derive.js");
     const { io, lines } = collect();
     await cmdInit(io);
     await cmdDerive(io, "scout");
     const stored = pairFromStored(readEntry("scout")!);
+    const evm = evmPairFromStored(readEntry("scout")!);
     expect(loadConfig().personas.scout.index).toBe(0);
     expect(lines.join("\n")).toContain(stored.address);
-    await cmdDerive(io, "scout"); // no throw, same address printed again
+    expect(lines.join("\n")).toContain(evm.addressHex);
+    await cmdDerive(io, "scout"); // no throw, same addresses printed again
     expect(pairFromStored(readEntry("scout")!).address).toBe(stored.address);
+    expect(evmPairFromStored(readEntry("scout")!).addressHex).toBe(evm.addressHex);
   });
 
   it("fund moves treasury → persona via the adapter", async () => {
