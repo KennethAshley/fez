@@ -34,6 +34,18 @@ export type { Network };
 export interface WalletPrefs {
   network?: Network;
   thresholds?: Record<string, string>;
+  /** GUI-editable x402 overrides (network flip, caps). A prefs value wins
+   * over wallet.json's x402 block key-by-key — see config.ts's
+   * x402Settings for the layering, including the rule that a prefs-level
+   * network flip re-derives chainRef/usdcAddress/rpcUrl as a set. */
+  x402?: {
+    network?: string;
+    chainRef?: string;
+    usdcAddress?: string;
+    rpcUrl?: string;
+    dailyCapUsd?: number;
+    autoApproveUnderUsd?: Record<string, number>;
+  };
 }
 
 type State = {
@@ -105,5 +117,52 @@ export function mirrorSpend(entry: SpendEntry): Promise<void> {
 export function mirrorPrefs(p: Partial<WalletPrefs>): Promise<void> {
   return update((s) => {
     s.prefs = { ...(s.prefs ?? {}), ...p };
+  });
+}
+
+/** One x402 ledger row, mirrored verbatim from the append-only x402 spend
+ * log — the panel renders events (signed, then settled/ambiguous), it
+ * never infers state. Shape matches log.ts's X402LogEntry. */
+export interface X402MirrorRow {
+  ts: string;
+  persona: string;
+  url: string;
+  payTo: string;
+  usd: number;
+  status: "signed" | "settled" | "ambiguous";
+  txHash?: string;
+  network: string;
+}
+
+export function mirrorX402Spend(row: X402MirrorRow): Promise<void> {
+  return update((s) => {
+    const log = (s.x402Log as X402MirrorRow[] | undefined) ?? [];
+    s.x402Log = [...log, row].slice(-MAX_LOG);
+  });
+}
+
+/** A persona's fundable EVM address — mirrored at derive time so the
+ * panel can show it (copy/QR) without any key material ever landing here. */
+export function mirrorEvmAddress(u: { name: string; address: string }): Promise<void> {
+  return update((s) => {
+    const a = (s.evmAddresses as Record<string, string> | undefined) ?? {};
+    s.evmAddresses = { ...a, [u.name]: u.address };
+  });
+}
+
+/** The resolved x402 settings snapshot (network/rpc/usdc/caps) — the
+ * panel needs rpcUrl+usdcAddress for its read-only balance call and the
+ * effective numbers for display. Nothing secret: all of this is config. */
+export interface X402Meta {
+  network: string;
+  rpcUrl: string;
+  usdcAddress: string;
+  dailyCapUsd: number;
+  autoApproveDefault: number;
+}
+
+export function mirrorX402Meta(meta: X402Meta): Promise<void> {
+  return update((s) => {
+    s.x402Meta = meta;
   });
 }

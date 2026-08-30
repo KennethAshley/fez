@@ -20,6 +20,7 @@
     },
     "permissions": [
       "network:.opentensor.ai",
+      "network:.base.org",
       "network:relay",
       "publish",
       "read:channels",

@@ -6,7 +6,7 @@ import { type WalletConfig, thresholdFor, loadConfig, rememberPayee, saveConfig,
 import { appendLog, readLog, appendX402Log } from "./log.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { buildConsentRequest, awaitDecision, type ConsentRelay } from "./consent.js";
-import { mirrorSpend, mirrorEndpoint } from "./storage-mirror.js";
+import { mirrorSpend, mirrorEndpoint, mirrorX402Spend, mirrorX402Meta } from "./storage-mirror.js";
 import type { Resolved } from "./resolve.js";
 import { buildReceipt, parseReceipt, KIND_PAYMENT_RECEIPT } from "./receipt.js";
 import {
@@ -357,6 +357,19 @@ export async function x402Fetch(
   }
   const fetchImpl = deps.fetchImpl ?? (fetch as unknown as FetchLike);
   const x402 = x402Settings(deps.config);
+  // The panel is a read-only view: mirror the resolved settings (for the
+  // balance call + display) and every ledger row, beside the on-disk log.
+  void mirrorX402Meta({
+    network: x402.network,
+    rpcUrl: x402.rpcUrl,
+    usdcAddress: x402.usdcAddress,
+    dailyCapUsd: x402.dailyCapUsd,
+    autoApproveDefault: x402.autoApproveUnderUsd.default ?? 0,
+  });
+  const logX402 = (entry: Parameters<typeof appendX402Log>[1]) => {
+    appendX402Log(deps.dir, entry);
+    void mirrorX402Spend(entry);
+  };
   const now = () => (deps.now ? deps.now() : new Date().toISOString());
   const init = { method: args.method ?? "GET", ...(args.body !== undefined ? { body: args.body } : {}) };
 
@@ -475,7 +488,7 @@ export async function x402Fetch(
   } catch (e) {
     return `nothing was paid — ${(e as Error).message}`;
   }
-  appendX402Log(deps.dir, {
+  logX402({
     ts: now(),
     persona: deps.persona,
     url: args.url,
@@ -489,7 +502,7 @@ export async function x402Fetch(
   try {
     paidRes = await fetchImpl(args.url, { ...init, headers: { ...paymentHeaders } });
   } catch (e) {
-    appendX402Log(deps.dir, {
+    logX402({
       ts: now(),
       persona: deps.persona,
       url: args.url,
@@ -505,7 +518,7 @@ export async function x402Fetch(
   }
 
   if (paidRes.status === 402 || paidRes.status < 200 || paidRes.status >= 300) {
-    appendX402Log(deps.dir, {
+    logX402({
       ts: now(),
       persona: deps.persona,
       url: args.url,
@@ -548,7 +561,7 @@ export async function x402Fetch(
   // so publishing it would only dress up an unresolved payment as a real
   // audit entry.
   if (!txHash) {
-    appendX402Log(deps.dir, {
+    logX402({
       ts: now(),
       persona: deps.persona,
       url: args.url,
@@ -563,7 +576,7 @@ export async function x402Fetch(
     );
   }
 
-  appendX402Log(deps.dir, {
+  logX402({
     ts: now(),
     persona: deps.persona,
     url: args.url,
