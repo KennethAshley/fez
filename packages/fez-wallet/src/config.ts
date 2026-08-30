@@ -14,6 +14,54 @@ export interface WalletConfig {
   endpoints: { tao: string };
   network: Network;
   knownPayees: string[]; // payee pubkeys that have been approved at least once
+  x402?: Partial<X402Settings>; // wallet.json-owned — see x402Settings() below
+}
+
+/** USDC on base-sepolia — the only x402 asset wired up today. */
+export const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+
+/** Base MAINNET USDC, verified against Circle's official contract-address
+ * docs on 2026-08-30 (https://developers.circle.com/stablecoins/usdc-contract-addresses).
+ * Not used by default — flipping x402.network to "base" (and chainRef to
+ * "eip155:8453") in wallet.json is the whole enablement, no code change. */
+export const USDC_BASE_MAINNET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+export interface X402Settings {
+  network: string;   // human label, e.g. "base-sepolia" / "base"
+  chainRef: string;  // matches an offer's `network` field, e.g. "eip155:84532"
+  usdcAddress: string;
+  autoApproveUnderUsd: Record<string, number>; // "default" is the floor; 0 = always ask
+  dailyCapUsd: number;
+  rpcUrl: string;
+}
+
+const X402_DEFAULTS: X402Settings = {
+  network: "base-sepolia",
+  chainRef: "eip155:84532",
+  usdcAddress: USDC_BASE_SEPOLIA,
+  autoApproveUnderUsd: { default: 0 },
+  dailyCapUsd: 25,
+  rpcUrl: "https://sepolia.base.org",
+};
+
+/**
+ * x402 lives in wallet.json ONLY, never prefs. The cap and auto-approve
+ * floors are the same kind of security ceiling `thresholds` is, and
+ * `thresholds` is exactly the field saveConfig()'s comments describe
+ * getting bitten by prefs-vs-wallet.json split ownership (a value that
+ * could round-trip through prefs and wallet.json at once, so clearing one
+ * didn't clear the setting). x402 has no prefs UI yet, so the simplest
+ * thing that cannot repeat that bug is to give it exactly one home:
+ * saveConfig's plain `owned` spread already persists any field it doesn't
+ * explicitly strip, so `x402` needs no special-case code to stay put.
+ */
+export function x402Settings(c: WalletConfig): X402Settings {
+  const raw = c.x402 ?? {};
+  return {
+    ...X402_DEFAULTS,
+    ...raw,
+    autoApproveUnderUsd: { ...X402_DEFAULTS.autoApproveUnderUsd, ...raw.autoApproveUnderUsd },
+  };
 }
 
 const DEFAULTS: WalletConfig = {

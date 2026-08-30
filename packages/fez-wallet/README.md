@@ -127,6 +127,55 @@ If the receipt fails to publish, the transfer still stands and the
 ledger still records it — the tool's reply just says the note didn't go
 out.
 
+## x402 (pay-per-call HTTP)
+
+Agents can also pay ordinary HTTP servers that speak
+[x402](https://x402.org): `x402_fetch({ url, method?, body?, maxUsd })`
+fetches a URL, and if — only if — the server answers `402 Payment
+Required`, pays for it in USDC on Base and retries. `maxUsd` is required;
+there is no default.
+
+    fez-wallet derive scout    # adds an EVM account alongside the TAO one
+
+Fund the printed EVM address with Base-**Sepolia** USDC (a faucet, or a
+transfer from another testnet wallet) — that account is the spending cap
+for x402, exactly the way the TAO balance is the cap for `wallet_send`.
+
+Config lives in `wallet.json` under an `x402` key (never in prefs — see
+the comment on `x402Settings()` in `src/config.ts` for why):
+
+    "x402": {
+      "network": "base-sepolia",
+      "chainRef": "eip155:84532",
+      "usdcAddress": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "autoApproveUnderUsd": { "default": 0, "scout": 0.05 },
+      "dailyCapUsd": 25,
+      "rpcUrl": "https://sepolia.base.org"
+    }
+
+- `autoApproveUnderUsd` — per-persona, `default` is the floor. `0` (the
+  default) means every payment asks the owner first, the same consent
+  card `wallet_send` uses, over `consentChannel`, with the price, the
+  payee address, and the URL spelled out.
+- `dailyCapUsd` — a hard ceiling across all calls in one local day,
+  checked before consent, tallied in a `x402-spend.json` file beside
+  `wallet.json`.
+- **Mainnet flip:** set `"network": "base"`, `"chainRef": "eip155:8453"`,
+  and `"usdcAddress"` to `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+  (Base mainnet USDC, verified against Circle's own contract-address
+  docs on 2026-08-30) — a config change, not a code change.
+
+**Never pays twice.** The moment a payment is signed and the price is
+about to be retried, the daily tally and a `signed` row in the x402 log
+(`x402-log.jsonl`, beside the tally file) are written *before* the paid
+request goes out. If that retry throws, or answers `402` again, the tool
+does **not** retry or sign a second time — it reports the situation as
+ambiguous ("may have settled — check receipts and the spend log") and
+leaves the spend recorded rather than risk paying twice. Only a genuine
+2xx settlement gets logged `settled` and produces a kind-`47040` receipt,
+same audit surface `wallet_send` uses (chain `"base"`, the tx hash, and
+the URL as the memo).
+
 ## GUI
 
 The extension ships a gui part: consent requests in chat grow

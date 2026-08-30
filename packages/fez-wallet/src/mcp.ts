@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import path from "node:path";
+import os from "node:os";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -6,11 +8,20 @@ import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { pairFromStored } from "./derive.js";
 import { readEntry, readAgentNostrKey } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, x402Settings } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
 import { evmAdapter } from "./chains/evm.js";
 import { poolRelay } from "./consent.js";
-import { walletAddress, walletBalance, walletSend, walletHistory, type ToolDeps } from "./tools.js";
+import {
+  walletAddress,
+  walletBalance,
+  walletSend,
+  walletHistory,
+  resolveEvmPair,
+  x402Fetch,
+  type ToolDeps,
+  type X402ToolDeps,
+} from "./tools.js";
 import type { ChainAdapter } from "./chains/adapter.js";
 import type { WalletPair } from "./derive.js";
 import type { WalletConfig } from "./config.js";
@@ -57,6 +68,19 @@ function cachedSubstrateAdapter(endpoint: string): ChainAdapter {
   return a;
 }
 const evm = evmAdapter(); // stateless stub — one instance is plenty
+
+/** Same memoization reasoning as cachedSubstrateAdapter, keyed on rpcUrl
+ * so an x402 mainnet flip (a different rpcUrl) gets its own client rather
+ * than reusing a testnet one. */
+const evmAdaptersByRpc = new Map<string, ChainAdapter>();
+function cachedEvmAdapter(rpcUrl: string): ChainAdapter {
+  let a = evmAdaptersByRpc.get(rpcUrl);
+  if (!a) {
+    a = evmAdapter({ rpcUrl });
+    evmAdaptersByRpc.set(rpcUrl, a);
+  }
+  return a;
+}
 
 /** Addressable, so republishing is a replace and needs no staleness
  * bookkeeping. Failure is silent by design — an agent that cannot
@@ -139,6 +163,31 @@ async function deps(signal?: AbortSignal): Promise<ToolDeps> {
   };
 }
 
+/** Separate from deps(): x402_fetch needs the EVM pair (not the sr25519
+ * one) and its own directory-scoped spend tally/log, not the TAO adapter
+ * list. Built lazily per call for the same reason deps() is. */
+async function x402Deps(signal?: AbortSignal): Promise<X402ToolDeps> {
+  const stored = readEntry(persona!);
+  if (!stored) {
+    throw new Error(`no wallet for "${persona}" — run: fez-wallet derive ${persona}`);
+  }
+  const config = loadConfig();
+  const settings = x402Settings(config);
+  const relays = (process.env.FEZ_RELAY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const agentNostrKey = readAgentNostrKey(persona!);
+  return {
+    persona: persona!,
+    evmPair: resolveEvmPair(persona!, stored),
+    adapter: cachedEvmAdapter(settings.rpcUrl),
+    config,
+    ownerPk: process.env.FEZ_AGENT_OWNER,
+    agentNostrKey,
+    relay: relays.length ? () => poolRelay(relays, agentNostrKey) : undefined,
+    dir: process.env.FEZ_WALLET_HOME ?? path.join(os.homedir(), ".fez"),
+    signal,
+  };
+}
+
 server.registerTool(
   "wallet_address",
   {
@@ -178,6 +227,22 @@ server.registerTool(
   },
   async ({ to, amount, asset, memo, for: forEvent }, extra) =>
     text(await walletSend(await deps(extra.signal), { to, amount, asset, memo, for: forEvent }))
+);
+
+server.registerTool(
+  "x402_fetch",
+  {
+    description:
+      "Fetch a URL. If (and only if) the server answers 402 Payment Required, pay for it in USDC — up to maxUsd, and only after the same consent/cap checks wallet_send uses. Never pays twice for one call, even if the paid retry fails or demands payment again.",
+    inputSchema: {
+      url: z.string().describe("The URL to fetch."),
+      method: z.string().optional().describe("HTTP method, default GET."),
+      body: z.string().optional().describe("Request body, if any."),
+      maxUsd: z.number().describe("Required. The most you're willing to pay for this call, in USD."),
+    },
+  },
+  async ({ url, method, body, maxUsd }, extra) =>
+    text(await x402Fetch(await x402Deps(extra.signal), { url, method, body, maxUsd }))
 );
 
 server.registerTool(

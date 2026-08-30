@@ -1,8 +1,15 @@
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import type { SignedNostrEvent } from "./consent.js";
-import type { Network } from "./storage-mirror.js";
+import type { Network as ChainNetwork } from "./storage-mirror.js";
 import type { Amount } from "./chains/adapter.js";
+
+/** Widened locally, not in networks.ts: the TAO network selector
+ * (test/finney) that file gates stays exhaustive, but a receipt can also
+ * record an x402 payment on a chain that selector never named (base,
+ * base-sepolia). `(string & {})` keeps the two known literals as
+ * autocomplete hints without narrowing what's actually accepted. */
+export type Network = ChainNetwork | (string & {});
 
 /**
  * A payment, bound to the message that earned it. Substrate transfers

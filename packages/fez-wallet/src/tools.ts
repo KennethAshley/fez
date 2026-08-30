@@ -1,14 +1,23 @@
-import type { WalletPair } from "./derive.js";
-import { pairFromStored } from "./derive.js";
+import type { WalletPair, EvmPair } from "./derive.js";
+import { pairFromStored, evmPairFromStored } from "./derive.js";
 import { readEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { type WalletConfig, thresholdFor, loadConfig, rememberPayee, saveConfig } from "./config.js";
-import { appendLog, readLog } from "./log.js";
+import { type WalletConfig, thresholdFor, loadConfig, rememberPayee, saveConfig, x402Settings } from "./config.js";
+import { appendLog, readLog, appendX402Log } from "./log.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { buildConsentRequest, awaitDecision, type ConsentRelay } from "./consent.js";
 import { mirrorSpend, mirrorEndpoint } from "./storage-mirror.js";
 import type { Resolved } from "./resolve.js";
 import { buildReceipt, parseReceipt, KIND_PAYMENT_RECEIPT } from "./receipt.js";
+import {
+  decodePaymentRequired,
+  pickOffer,
+  offerUsd,
+  todaySpend,
+  recordSpend,
+  payWith402,
+  parseSettlementHeader,
+} from "./x402.js";
 import { getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 
@@ -271,4 +280,238 @@ export async function walletHistory(deps: ToolDeps, args: { limit?: number }): P
 
   const all = [...rows, ...inbound];
   return all.length ? all.join("\n") : "no transfers recorded.";
+}
+
+/** evmPairFromStored's error never echoes the input (it's the same
+ * generic-error contract as pairFromStored) — which also means it never
+ * says WHY the read failed. The one common cause is an entry derived
+ * before EVM existed (T1/T2), and that has a fix an agent can act on. */
+export function resolveEvmPair(persona: string, stored: string): EvmPair {
+  try {
+    return evmPairFromStored(stored);
+  } catch {
+    throw new Error(`no EVM account for "${persona}" — re-run: fez-wallet derive ${persona} to add an EVM account`);
+  }
+}
+
+/** Structurally just enough of the Fetch API for x402Fetch to work against
+ * — real global `fetch` satisfies this; tests hand in a plain async
+ * function instead of standing up a Response. */
+export type FetchLike = (
+  url: string,
+  init?: { method?: string; body?: string; headers?: Record<string, string> }
+) => Promise<{ status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
+
+export interface X402ToolDeps {
+  persona: string;
+  evmPair: EvmPair;
+  /** The evm ChainAdapter — used only for the best-effort balance check. */
+  adapter: ChainAdapter;
+  config: WalletConfig;
+  ownerPk?: string;
+  relay?: () => Promise<ConsentRelay>;
+  agentNostrKey?: string;
+  /** Directory the spend tally (x402.ts) and the x402 log (log.ts) live
+   * in — same seam both already use, so tests never touch FEZ_WALLET_HOME. */
+  dir: string;
+  fetchImpl?: FetchLike;
+  now?: () => string;
+  signal?: AbortSignal;
+}
+
+const BODY_PREVIEW_BYTES = 2048;
+
+async function summarizeResponse(res: { status: number; headers: { get(name: string): string | null }; text(): Promise<string> }): Promise<string> {
+  const contentType = res.headers.get("content-type") ?? "unknown";
+  const body = await res.text();
+  return `HTTP ${res.status} (${contentType})\n${body.slice(0, BODY_PREVIEW_BYTES)}`;
+}
+
+/**
+ * The agent's own x402 client: fetch a URL, and if (and only if) the
+ * server answers 402, pay for it — behind the exact same policy shape as
+ * `walletSend` (caps, consent, record-before-retry) plus x402's OWN
+ * invariant: a payment is signed and tallied AT MOST ONCE per call, no
+ * matter what the paid retry comes back with. `recordSpend`/the "signed"
+ * log row land BEFORE the paid retry is even sent (finding: never let a
+ * network hiccup after signing look like "nothing happened" — a second
+ * call would just pay twice).
+ */
+export async function x402Fetch(
+  deps: X402ToolDeps,
+  args: { url: string; method?: string; body?: string; maxUsd: number }
+): Promise<string> {
+  if (typeof args.maxUsd !== "number" || !(args.maxUsd > 0)) {
+    throw new Error("x402_fetch requires maxUsd — the most you're willing to pay for this call");
+  }
+  const fetchImpl = deps.fetchImpl ?? (fetch as unknown as FetchLike);
+  const x402 = x402Settings(deps.config);
+  const now = () => (deps.now ? deps.now() : new Date().toISOString());
+  const init = { method: args.method ?? "GET", ...(args.body !== undefined ? { body: args.body } : {}) };
+
+  const first = await fetchImpl(args.url, init);
+  if (first.status !== 402) return summarizeResponse(first);
+
+  const header = first.headers.get("PAYMENT-REQUIRED");
+  if (!header) throw new Error("x402_fetch: got a 402 with no PAYMENT-REQUIRED header");
+  const required = decodePaymentRequired(header);
+  const offer = pickOffer(required.accepts, { network: x402.chainRef, usdcAddress: x402.usdcAddress });
+  if (!offer) {
+    const seen = required.accepts.map((o) => `${o.scheme}/${o.network}/${o.asset}`).join(", ") || "(none)";
+    return `refused: the 402 offered nothing that matches ${x402.chainRef}/${x402.usdcAddress} — offers seen: ${seen}`;
+  }
+  const usd = offerUsd(offer);
+
+  if (usd > args.maxUsd) {
+    return `refused: this costs $${usd.toFixed(2)}, above your maxUsd of $${args.maxUsd.toFixed(2)} — nothing was paid`;
+  }
+  const spentToday = todaySpend(deps.dir);
+  if (spentToday + usd > x402.dailyCapUsd) {
+    return `refused: paying $${usd.toFixed(2)} would push today's spend past the $${x402.dailyCapUsd.toFixed(2)} daily cap (already spent $${spentToday.toFixed(2)}) — nothing was paid`;
+  }
+
+  // Best-effort: the envelope speaks first when it can be checked at all,
+  // but an unreachable RPC must not block a payment the other checks
+  // already cleared — it's noted on the way out instead.
+  let balanceNote = "";
+  try {
+    const balance = await deps.adapter.balance(deps.evmPair.addressHex, "USDC");
+    const usdBalance = Number(balance.raw) / 10 ** balance.decimals;
+    if (usdBalance < usd) {
+      return `refused: balance is $${usdBalance.toFixed(2)} USDC, below the $${usd.toFixed(2)} price — nothing was paid`;
+    }
+  } catch {
+    balanceNote = " (balance unverified — RPC unreachable)";
+  }
+
+  const autoApprove = x402.autoApproveUnderUsd[deps.persona] ?? x402.autoApproveUnderUsd.default;
+  const needsConsent = usd > autoApprove;
+  if (needsConsent) {
+    if (!deps.relay || !deps.ownerPk || !deps.agentNostrKey || !deps.config.consentChannel) {
+      throw new Error(
+        "this payment needs owner consent, but the consent channel is not configured (set consentChannel in wallet.json)"
+      );
+    }
+    const relay = await deps.relay();
+    const request = buildConsentRequest({
+      agentSecretHex: deps.agentNostrKey,
+      channelId: deps.config.consentChannel,
+      ownerPk: deps.ownerPk,
+      text: [
+        `💸 **${deps.persona}** wants to pay **$${usd.toFixed(2)} USDC**`,
+        `to \`${oneLine(offer.payTo)}\` for \`${oneLine(args.url)}\``,
+        `react ✅ to approve · ❌ to decline`,
+      ].join("\n"),
+    });
+    // Subscribe BEFORE publishing so a fast reaction can't slip past.
+    const decision = awaitDecision(relay, request.id, deps.ownerPk, CONSENT_TIMEOUT_MS, deps.signal);
+    await relay.publish(request);
+    const verdict = await decision;
+    if (verdict !== "approved") {
+      const reason =
+        verdict === "timeout"
+          ? "consent timed out after 10 minutes"
+          : verdict === "aborted"
+            ? "request was aborted"
+            : "declined by owner";
+      return `nothing was paid — ${reason}`;
+    }
+  }
+
+  // Re-checked right before anything is signed (mirrors walletSend): a
+  // caller that aborted while waiting on consent — or one that never
+  // needed consent at all — must not have money move on its way out.
+  if (deps.signal?.aborted) {
+    return "nothing was paid — request was aborted";
+  }
+
+  // Record-before-retry: THE invariant this tool exists to enforce. The
+  // tally and the "signed" log row land before the paid request is even
+  // dispatched, so a network hiccup on the way out can never look like
+  // nothing was spent — see the ambiguous branches below.
+  recordSpend(deps.dir, usd);
+  appendX402Log(deps.dir, {
+    ts: now(),
+    persona: deps.persona,
+    url: args.url,
+    payTo: offer.payTo,
+    usd,
+    status: "signed",
+    network: x402.network,
+  });
+
+  let paidRes: Awaited<ReturnType<FetchLike>>;
+  try {
+    const { paymentHeaders } = await payWith402({
+      offer,
+      privateKeyHex: deps.evmPair.privateKeyHex,
+      usdcAddress: x402.usdcAddress,
+    });
+    paidRes = await fetchImpl(args.url, { ...init, headers: { ...paymentHeaders } });
+  } catch (e) {
+    appendX402Log(deps.dir, {
+      ts: now(),
+      persona: deps.persona,
+      url: args.url,
+      payTo: offer.payTo,
+      usd,
+      status: "ambiguous",
+      network: x402.network,
+    });
+    return (
+      `a payment was signed but the paid request failed to complete (${(e as Error).message}) — ` +
+      `it may have settled. Do NOT retry — check receipts and the spend log.${balanceNote}`
+    );
+  }
+
+  if (paidRes.status === 402 || paidRes.status < 200 || paidRes.status >= 300) {
+    appendX402Log(deps.dir, {
+      ts: now(),
+      persona: deps.persona,
+      url: args.url,
+      payTo: offer.payTo,
+      usd,
+      status: "ambiguous",
+      network: x402.network,
+    });
+    return paidRes.status === 402
+      ? `the server demanded payment again after a payment was already signed — NOT retrying (it may have settled); check receipts and the spend log.${balanceNote}`
+      : `the paid request returned HTTP ${paidRes.status} — it may have settled; do not retry, check receipts and the spend log.${balanceNote}`;
+  }
+
+  const settlement = parseSettlementHeader(paidRes.headers);
+  const txHash = settlement?.transaction ?? "";
+  appendX402Log(deps.dir, {
+    ts: now(),
+    persona: deps.persona,
+    url: args.url,
+    payTo: offer.payTo,
+    usd,
+    status: "settled",
+    txHash,
+    network: x402.network,
+  });
+
+  let receiptNote = "";
+  if (deps.relay && deps.agentNostrKey) {
+    try {
+      const relay = await deps.relay();
+      await relay.publish(
+        buildReceipt({
+          agentSecretHex: deps.agentNostrKey,
+          channelId: deps.config.consentChannel,
+          amount: { raw: BigInt(offer.amount), decimals: 6, symbol: "USDC" },
+          chain: "base",
+          network: x402.network,
+          txHash,
+          memo: args.url,
+        })
+      );
+    } catch {
+      receiptNote = " (the receipt failed to publish — the payment stands)";
+    }
+  }
+
+  const summary = await summarizeResponse(paidRes);
+  return `${summary}\npaid $${usd.toFixed(2)} USDC → ${offer.payTo}, tx ${txHash || "(unknown — no settlement header)"}${receiptNote}${balanceNote}`;
 }

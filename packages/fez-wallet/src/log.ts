@@ -38,6 +38,43 @@ export function readLog(network: Network, limit: number): SpendEntry[] {
   }
 }
 
+/**
+ * The x402 spend log — a separate append-only stream from the TAO
+ * `wallet-log.*.jsonl` above: x402 runs on its own chain family (the
+ * `network` here is an x402 label like "base-sepolia", not the substrate
+ * `Network` type wallet-log is keyed by) and needs a `status` a plain
+ * transfer never has. `dir` is passed explicitly, same seam as
+ * x402.ts's todaySpend/recordSpend, so tests never touch FEZ_WALLET_HOME.
+ *
+ * Append-only, like the tally: a payment's lifecycle (signed → settled,
+ * or signed → ambiguous) is recorded as a NEW row rather than an
+ * in-place update, so "what happened" is never lost by being overwritten.
+ */
+export interface X402LogEntry {
+  ts: string;
+  persona: string;
+  url: string;
+  payTo: string;
+  usd: number;
+  status: "signed" | "settled" | "ambiguous";
+  txHash?: string;
+  network: string;
+}
+
+export function appendX402Log(dir: string, entry: X402LogEntry): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(path.join(dir, "x402-log.jsonl"), JSON.stringify(entry) + "\n", { mode: 0o600 });
+}
+
+export function readX402Log(dir: string, limit = 20): X402LogEntry[] {
+  try {
+    const lines = fs.readFileSync(path.join(dir, "x402-log.jsonl"), "utf-8").trim().split("\n").filter(Boolean);
+    return lines.slice(-limit).reverse().map((l) => JSON.parse(l) as X402LogEntry);
+  } catch {
+    return [];
+  }
+}
+
 /** The legacy single log holds only testnet rows — verified at planning
  * time (3 rows, all from the 2026-08-26 testnet e2e). Decided by that
  * fact, not by the current config, which has since moved. Refuses to
