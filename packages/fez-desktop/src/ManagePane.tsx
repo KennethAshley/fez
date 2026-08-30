@@ -3,6 +3,7 @@ import type { FezClient } from "@fezchat/client";
 import { flash } from "./toast";
 import { relaySet } from "./relay";
 import Avatar from "./Avatar";
+import UserCard from "./UserCard";
 
 /**
  * Channel/workspace management — Buzz's ChannelManagementSheet as a fez
@@ -22,7 +23,7 @@ export default function ManagePane({
   onClose: () => void;
 }) {
   const current = client.state.currentChannel();
-  const [armed, setArmed] = useState<string>(); // `${verb}:${pk}` two-click confirm
+  const [card, setCard] = useState<{ pk: string; x: number; y: number } | null>(null);
 
   const run = async (label: string, action: () => Promise<unknown>) => {
     try {
@@ -31,16 +32,6 @@ export default function ManagePane({
     } catch (err) {
       flash(`✗ ${err instanceof Error ? err.message : String(err)}`);
     }
-  };
-
-  const confirmThen = (key: string, action: () => void) => {
-    if (armed !== key) {
-      setArmed(key);
-      setTimeout(() => setArmed((cur) => (cur === key ? undefined : cur)), 4000);
-      return;
-    }
-    setArmed(undefined);
-    action();
   };
 
   if (!current) {
@@ -62,10 +53,11 @@ export default function ManagePane({
   const channel = current;
 
   const amCreator = client.state.isOwner(client.pubkey);
+  const myRole = client.state.roleOf(client.pubkey);
   const members = [...client.state.workspace.members.entries()]
     .map(([pk, role]) => ({ pk, role, name: client.displayName(pk), online: client.isOnline(pk) }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const banned = [...(client.state.workspace.banned ?? [])];
+  const banned = [...(client.state.workspace.banned ?? new Map()).entries()].map(([pk, until]) => ({ pk, until }));
 
   return (
     <aside className="pane">
@@ -91,39 +83,34 @@ export default function ManagePane({
             <span className="manage-name">{member.name}</span>
             {/* "bot" is the protocol's word; the app's word is agent. */}
             <span className="role-tag">{member.role === "bot" ? "agent" : member.role}</span>
-            {amCreator && member.pk !== client.state.workspace.owner && (
+            {member.pk !== client.pubkey && (
               <span className="manage-actions">
                 <button
-                  className={armed === `kick:${member.pk}` ? "mini danger armed" : "mini"}
-                  title="remove from this channel (history stays)"
-                  onClick={() => confirmThen(`kick:${member.pk}`, () => void run(`removed ${member.name}`, () => client.kick(member.pk)))}
+                  className="mini"
+                  title="actions"
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setCard({ pk: member.pk, x: r.left - 244, y: r.top });
+                  }}
                 >
-                  {armed === `kick:${member.pk}` ? "kick?" : "×"}
-                </button>
-                <button
-                  className={armed === `ban:${member.pk}` ? "mini danger armed" : "mini"}
-                  title="ban from the whole workspace"
-                  onClick={() => confirmThen(`ban:${member.pk}`, () => void run(`banned ${member.name}`, () => client.banUser(member.pk)))}
-                >
-                  {/* A typographic mark, not the red-circle emoji: the
-                      only colour glyph in the pane shouted "danger" on
-                      every row for something you rarely do. The armed
-                      state is where the red belongs. */}
-                  {armed === `ban:${member.pk}` ? "ban?" : "⊘"}
+                  ⋯
                 </button>
               </span>
             )}
           </div>
         ))}
+        {card && <UserCard pk={card.pk} at={card} client={client} onClose={() => setCard(null)} />}
 
         {amCreator && <InviteBox client={client} onResult={flash} />}
 
-        {amCreator && banned.length > 0 && (
+        {(amCreator || myRole === "admin") && banned.length > 0 && (
           <>
             <div className="manage-section">banned</div>
-            {banned.map((pk) => (
+            {banned.map(({ pk, until }) => (
               <div key={pk} className="manage-row">
                 <span className="manage-name">{client.displayName(pk)}</span>
+                {until && <span className="role-tag">until {new Date(until * 1000).toLocaleString()}</span>}
+                {client.state.banReason(pk) && <span className="role-tag">{client.state.banReason(pk)}</span>}
                 <span className="manage-actions">
                   <button className="mini" title="unban" onClick={() => void run(`unbanned ${client.displayName(pk)}`, () => client.unbanUser(pk))}>
                     ↩
@@ -275,7 +262,7 @@ function JoinByCode({
 
 function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: string) => void }) {
   const [who, setWho] = useState("");
-  const [role, setRole] = useState<"member" | "bot">("member");
+  const [role, setRole] = useState<"member" | "admin" | "bot">("member");
 
   const invite = async () => {
     const raw = who.trim().replace(/^@/, "");
@@ -308,8 +295,9 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
             if (e.key === "Enter") void invite();
           }}
         />
-        <select className="manage-select" value={role} onChange={(e) => setRole(e.target.value as "member" | "bot")}>
+        <select className="manage-select" value={role} onChange={(e) => setRole(e.target.value as "member" | "admin" | "bot")}>
           <option value="member">member</option>
+          <option value="admin">admin</option>
           <option value="bot">bot</option>
         </select>
         <button className="agent-action" onClick={() => void invite()}>invite</button>

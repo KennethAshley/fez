@@ -87,6 +87,15 @@ export function dmConvoKey(participants: string[], myPk: string): string {
 }
 
 /** Exactly the TUI's NostrAccess backend shape — the client's only dependency. */
+/** One flagged message in the moderation queue, with everyone who flagged it. */
+export interface ReportEntry {
+  targetId: string;
+  channelId?: string;
+  authorPk?: string;
+  reporters: { pk: string; reason: string; at: number }[];
+  resolved?: { action: "removed" | "banned" | "dismissed"; by?: string };
+}
+
 export interface Wire {
   pubkey: string;
   publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent>;
@@ -218,6 +227,12 @@ export const K = {
   /** The one roster's d tag — a relay is a workspace, so nothing else names it. */
   ROSTER_D: "roster",
   BANS_D: "bans",
+  /** The 30047 d tag for withheld event-ids — reversible moderator removal. */
+  REMOVED_D: "removed",
+  /** The 30047 d tag for dismissed report targets — the queue's "handled, no action". */
+  DISMISSED_D: "dismissed",
+  /** NIP-56 report — reason encrypted to each moderator, one event per recipient. */
+  REPORT: 1984,
   TYPING: 20002,
   PRESENCE: 20001,
   DRAFT: 20003,
@@ -237,6 +252,8 @@ export const K = {
   REMINDER: 40007,
   REMINDER_V2: 30176,
   READ_STATE: 30078,
+  /** The personal mute list's d tag on 30078 — self-encrypted, never public p-tags. */
+  MUTES_D: "mutes",
   /** NIP-78 application data. Same kind as READ_STATE; the `d` tag separates them. */
   APP_DATA: 30078,
   PROFILE: 0,
@@ -553,6 +570,8 @@ export class FezClient {
   private statuses = new Map<string, string>(); // kind-30315 status text
   private seenMessages = new Set<string>();
   private messagesByChannel = new Map<string, Msg[]>();
+  /** Pubkeys I've personally muted — client-side, self-encrypted, tells no one. */
+  private mutedByMe = new Set<string>();
   private msgByIdMap = new Map<string, Msg>();
   private threadNoByRoot = new Map<string, number>();
   private rootByThreadNoMap = new Map<number, string>();
@@ -807,7 +826,12 @@ export class FezClient {
     return undefined;
   }
   messages(channelId: string): readonly Msg[] {
-    return this.messagesByChannel.get(channelId) ?? [];
+    const list = this.messagesByChannel.get(channelId) ?? [];
+    // The personal plane: someone you muted vanishes from YOUR reads only.
+    // ponytail: unread counts still include muted authors — filter them in
+    // the unread walk too if that ever grates.
+    if (this.mutedByMe.size === 0) return list;
+    return list.filter((m) => !this.mutedByMe.has(m.authorPk));
   }
   msgById(id: string): Msg | undefined {
     return this.msgByIdMap.get(id);
@@ -828,7 +852,9 @@ export class FezClient {
     return this.rootByThreadNoMap;
   }
   threadReplies(channelId: string, rootId: string): Msg[] {
-    return (this.messagesByChannel.get(channelId) ?? []).filter((m) => m.rootId === rootId);
+    return (this.messagesByChannel.get(channelId) ?? []).filter(
+      (m) => m.rootId === rootId && !this.mutedByMe.has(m.authorPk)
+    );
   }
   threadReplyCount(channelId: string, rootId: string): number {
     const local = this.threadReplies(channelId, rootId).length;
@@ -1071,9 +1097,19 @@ export class FezClient {
     this.handleDeletion(event);
   }
 
-  /** Your own message, or anyone's if you own the workspace. */
+  /**
+   * Your own message (kind-5 self-delete). A moderator removing SOMEONE
+   * ELSE'S message goes through removeMessage() instead — the relay honors
+   * a moderator's kind-5 for nobody, so a mod-delete must be the withhold
+   * list, not a deletion event.
+   */
   canDeleteMessage(msg: Msg): boolean {
-    return msg.authorPk === this.pubkey || this.state.isOwner(this.pubkey);
+    return msg.authorPk === this.pubkey;
+  }
+
+  /** May I remove (withhold) this message as a moderator? Not my own. */
+  canModerateMessage(msg: Msg): boolean {
+    return msg.authorPk !== this.pubkey && this.state.canModerate(this.pubkey);
   }
 
   async bookmarkMessage(channelId: string, targetId: string): Promise<void> {
@@ -1755,16 +1791,46 @@ export class FezClient {
     await this.wire.publish({ kind: K.AGENT_ATTESTATION, tags: [["p", agentPk]], content: "" });
   }
 
-  /** Owner republishes the roster without the pubkey. Their history stays. */
+  /**
+   * Guard rail: an admin (not the owner) may not act on the owner or on
+   * another admin. Only the owner outranks an admin.
+   */
+  private assertCanTarget(target: string): void {
+    if (this.state.isOwner(this.pubkey)) return; // the owner may act on anyone
+    if (target === this.state.workspace.owner || this.state.roleOf(target) === "admin") {
+      throw new Error("admins can't act on the owner or other admins");
+    }
+  }
+
+  /** A moderator republishes the roster without the pubkey. Their history stays. */
   async kick(pubkey: string): Promise<string> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can remove members");
+    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can remove members");
     if (pubkey === this.state.workspace.owner) {
       throw new Error("the owner can't be removed — the workspace is rooted in their signature");
     }
+    this.assertCanTarget(pubkey);
     const members = new Map(this.state.workspace.members);
     if (!members.delete(pubkey)) throw new Error("not a member of this workspace");
     await this.publishRoster(members);
     return this.displayName(pubkey);
+  }
+
+  /** Owner-only: promote a member to admin (or demote back to member). */
+  async promote(pubkey: string): Promise<void> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
+    if (pubkey === this.state.workspace.owner) throw new Error("the owner's role is fixed");
+    const members = new Map(this.state.workspace.members);
+    if (!members.has(pubkey)) throw new Error("not a member of this workspace");
+    members.set(pubkey, "admin");
+    await this.publishRoster(members);
+  }
+
+  async demote(pubkey: string): Promise<void> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
+    const members = new Map(this.state.workspace.members);
+    if (members.get(pubkey) !== "admin") throw new Error("not an admin");
+    members.set(pubkey, "member");
+    await this.publishRoster(members);
   }
 
   /**
@@ -1773,11 +1839,22 @@ export class FezClient {
    * rule as rosters). A ban leaves the roster untouched — the banned
    * pubkey is simply treated as a non-member everywhere until unbanned.
    */
-  private async publishBanList(banned: Set<string>): Promise<void> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can moderate");
+  private async publishBanList(
+    banned: Map<string, number | undefined>,
+    reasons: Map<string, string>
+  ): Promise<void> {
+    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can do this");
+    // ["p", pk, until|"", reason] — positional, so a reason without an
+    // expiry keeps "" in the until slot. The reason lives INSIDE the
+    // signed edict: the audit trail is the record itself.
+    const tag = (pk: string, until: number | undefined) => {
+      const reason = reasons.get(pk);
+      if (reason) return ["p", pk, until ? String(until) : "", reason];
+      return until ? ["p", pk, String(until)] : ["p", pk];
+    };
     const event = await this.wire.publish({
       kind: K.BAN_LIST,
-      tags: [["d", K.BANS_D], ...[...banned].map((pk) => ["p", pk])],
+      tags: [["d", K.BANS_D], ...[...banned].map(([pk, until]) => tag(pk, until))],
       content: "",
       created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.banListCreatedAt + 1),
     });
@@ -1785,19 +1862,196 @@ export class FezClient {
     this.emit("channelsChanged");
   }
 
-  async banUser(pubkey: string): Promise<string> {
+  /** Ban permanently, or (with `until` unix-seconds) time out temporarily. */
+  async banUser(pubkey: string, until?: number, reason?: string): Promise<string> {
     if (pubkey === this.state.workspace.owner) throw new Error("the owner can't be banned");
-    const banned = new Set(this.state.workspace.banned);
-    banned.add(pubkey);
-    await this.publishBanList(banned);
+    this.assertCanTarget(pubkey);
+    const banned = new Map(this.state.workspace.banned);
+    banned.set(pubkey, until);
+    const reasons = new Map(this.state.workspace.banReasons);
+    if (reason) reasons.set(pubkey, reason);
+    else reasons.delete(pubkey);
+    await this.publishBanList(banned, reasons);
     return this.displayName(pubkey);
   }
 
   async unbanUser(pubkey: string): Promise<string> {
-    const banned = new Set(this.state.workspace.banned);
+    const banned = new Map(this.state.workspace.banned);
     if (!banned.delete(pubkey)) throw new Error("not banned");
-    await this.publishBanList(banned);
+    const reasons = new Map(this.state.workspace.banReasons);
+    reasons.delete(pubkey);
+    await this.publishBanList(banned, reasons);
     return this.displayName(pubkey);
+  }
+
+  /** Republish the 30047 d=removed list with the id added/removed. */
+  private async publishRemovedList(removed: Set<string>, reasons: Map<string, string>): Promise<void> {
+    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can do this");
+    const event = await this.wire.publish({
+      kind: K.BAN_LIST,
+      tags: [
+        ["d", K.REMOVED_D],
+        // ["e", id, reason] — the reason is part of the signed record.
+        ...[...removed].map((id) => (reasons.get(id) ? ["e", id, reasons.get(id)!] : ["e", id])),
+      ],
+      content: "",
+      created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.removedCreatedAt + 1),
+    });
+    this.state.absorb(event);
+    this.applyRemovals();
+    this.emit("channelsChanged");
+  }
+
+  /**
+   * Tombstone any in-memory message now on the removed list. The relay
+   * already withholds removed events from REQ, so a fresh load never shows
+   * them; this covers messages already on screen when a moderator acts.
+   * ponytail: restore is reflected on reload (content is cleared here), not
+   * live in-session — retain original content if live un-tombstone matters.
+   */
+  private applyRemovals(): void {
+    for (const [channelId, list] of this.messagesByChannel) {
+      for (const msg of list) {
+        if (this.state.isRemoved(msg.id) && msg.deletedBy !== "moderator") {
+          msg.deletedBy = "moderator";
+          msg.content = "";
+          this.emit("messageDeleted", channelId, msg);
+          this.emit("metaChanged", channelId, msg.id);
+        }
+      }
+    }
+  }
+
+  /** Withhold a message for everyone (reversible). Any moderator may do this. */
+  async removeMessage(eventId: string, reason?: string): Promise<void> {
+    const removed = new Set(this.state.workspace.removed);
+    removed.add(eventId);
+    const reasons = new Map(this.state.workspace.removalReasons);
+    if (reason) reasons.set(eventId, reason);
+    else reasons.delete(eventId);
+    await this.publishRemovedList(removed, reasons);
+  }
+
+  /** Restore a previously-removed message. */
+  async restoreMessage(eventId: string): Promise<void> {
+    const removed = new Set(this.state.workspace.removed);
+    if (!removed.delete(eventId)) throw new Error("not removed");
+    const reasons = new Map(this.state.workspace.removalReasons);
+    reasons.delete(eventId);
+    await this.publishRemovedList(removed, reasons);
+  }
+
+  /** The moderator set: the owner plus every admin on the current roster. */
+  moderators(): string[] {
+    const ws = this.state.workspace;
+    const mods = ws.owner ? [ws.owner] : [];
+    for (const [pk, role] of ws.members) {
+      if (role === "admin" && pk !== ws.owner) mods.push(pk);
+    }
+    return mods;
+  }
+
+  /**
+   * Report a message to the moderators — one kind-1984 per moderator, the
+   * reason NIP-44'd to that recipient. Observers learn only "someone
+   * reported something here"; the reporter's identity and reason reach
+   * moderators alone.
+   */
+  async reportMessage(channelId: string, targetId: string, authorPk: string, reason: string): Promise<void> {
+    const mods = this.moderators();
+    if (mods.length === 0) throw new Error("this workspace has no moderators to report to");
+    for (const mod of mods) {
+      await this.wire.publish({
+        kind: K.REPORT,
+        tags: [["p", mod], ["e", targetId], ["h", channelId]],
+        content: await this.wire.encrypt(mod, JSON.stringify({ reason, author: authorPk })),
+      });
+    }
+  }
+
+  /**
+   * The moderation queue: reports addressed to me, grouped by target.
+   * Resolution is DERIVED — a removed target or banned author is handled,
+   * a dismissed target was looked at and let stand — so acting once
+   * clears the entry for every moderator without extra bookkeeping.
+   */
+  async listReports(): Promise<ReportEntry[]> {
+    const events = await this.wire.query([{ kinds: [K.REPORT], "#p": [this.pubkey], limit: 500 }]);
+    const byTarget = new Map<string, ReportEntry>();
+    for (const event of events.sort((a, b) => b.created_at - a.created_at)) {
+      const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+      if (!targetId) continue;
+      let body: { reason?: string; author?: string };
+      try {
+        body = JSON.parse(await this.wire.decrypt(event.pubkey, event.content)) as typeof body;
+      } catch {
+        continue; // not addressed to me
+      }
+      const entry = byTarget.get(targetId) ?? {
+        targetId,
+        channelId: event.tags.find((t) => t[0] === "h")?.[1],
+        authorPk: body.author,
+        reporters: [],
+      };
+      entry.reporters.push({ pk: event.pubkey, reason: body.reason ?? "", at: event.created_at });
+      byTarget.set(targetId, entry);
+    }
+    const ws = this.state.workspace;
+    for (const entry of byTarget.values()) {
+      if (this.state.isRemoved(entry.targetId)) {
+        entry.resolved = { action: "removed", by: ws.removedSigner };
+      } else if (entry.authorPk && this.state.isBanned(entry.authorPk)) {
+        entry.resolved = { action: "banned", by: ws.banListSigner };
+      } else if (this.state.isDismissed(entry.targetId)) {
+        entry.resolved = { action: "dismissed", by: ws.dismissedSigner };
+      }
+    }
+    return [...byTarget.values()].sort((a, b) => (b.reporters[0]?.at ?? 0) - (a.reporters[0]?.at ?? 0));
+  }
+
+  /** Looked at it, letting it stand — clears the entry for every moderator. */
+  async dismissReport(targetId: string): Promise<void> {
+    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can do this");
+    const dismissed = new Set(this.state.workspace.dismissed);
+    dismissed.add(targetId);
+    const event = await this.wire.publish({
+      kind: K.BAN_LIST,
+      tags: [["d", K.DISMISSED_D], ...[...dismissed].map((id) => ["e", id])],
+      content: "",
+      created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.dismissedCreatedAt + 1),
+    });
+    this.state.absorb(event);
+    this.emit("channelsChanged");
+  }
+
+  /**
+   * The personal plane: hide someone from YOUR view. No authority, no
+   * roster, no relay policy — a self-encrypted 30078 d="mutes" record
+   * (same account-data pattern as read state), so it follows your key
+   * across devices and the muted person can never tell.
+   */
+  isMutedByMe(pk: string): boolean {
+    return this.mutedByMe.has(pk);
+  }
+
+  async mutePerson(pk: string): Promise<void> {
+    if (pk === this.pubkey) throw new Error("you can't mute yourself");
+    this.mutedByMe.add(pk);
+    await this.publishMutes();
+  }
+
+  async unmutePerson(pk: string): Promise<void> {
+    if (!this.mutedByMe.delete(pk)) throw new Error("not muted");
+    await this.publishMutes();
+  }
+
+  private async publishMutes(): Promise<void> {
+    await this.wire.publish({
+      kind: K.READ_STATE,
+      tags: [["d", K.MUTES_D]],
+      content: await this.wire.encrypt(this.pubkey, JSON.stringify({ muted: [...this.mutedByMe] })),
+    });
+    this.emit("channelsChanged");
   }
 
   /**
@@ -2018,7 +2272,12 @@ export class FezClient {
       }
       for (const [d, event] of latestByD) {
         try {
-          this.lastReadByChannel.set(d, Number(JSON.parse(await this.wire.decrypt(this.pubkey, event.content)).last_read) || 0);
+          const body = JSON.parse(await this.wire.decrypt(this.pubkey, event.content)) as { last_read?: unknown; muted?: unknown };
+          if (d === K.MUTES_D) {
+            this.mutedByMe = new Set(Array.isArray(body.muted) ? (body.muted as string[]) : []);
+          } else {
+            this.lastReadByChannel.set(d, Number(body.last_read) || 0);
+          }
         } catch { /* not ours / old format */ }
       }
     } catch { /* badges start from zero */ }
@@ -2238,7 +2497,7 @@ export class FezClient {
       { kinds: [K.AGENT_METADATA], since: Math.floor(Date.now() / 1000) - 7 * 86400 },
       { kinds: [K.CHANNEL] },
       { kinds: [K.MEMBERSHIP], "#d": [K.ROSTER_D] },
-      { kinds: [K.BAN_LIST], "#d": [K.BANS_D] },
+      { kinds: [K.BAN_LIST], "#d": [K.BANS_D, K.REMOVED_D] },
     ];
     if (channelIds.length > 0) {
       filters.push(
@@ -2278,6 +2537,7 @@ export class FezClient {
           // at 98% CPU.
           if (ids !== this.subscribedChannelIds) this.resubscribe();
         }
+        if (event.kind === K.BAN_LIST) this.applyRemovals();
         this.emit("channelsChanged");
       }
     }
@@ -2402,7 +2662,7 @@ export class FezClient {
       // The workspace owner is the moderation authority — the same key
       // that signs the roster, which is what makes the tombstone
       // trustworthy rather than a stranger's kind 5.
-      const isModerator = this.state.isOwner(event.pubkey);
+      const isModerator = this.state.canModerate(event.pubkey);
       if (!isAuthor && !isModerator) continue;
       msg.deletedBy = isAuthor ? "author" : "moderator";
       msg.content = "";

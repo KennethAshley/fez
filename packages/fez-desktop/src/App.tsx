@@ -39,6 +39,8 @@ import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers } from "./InstallOffer";
 import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
+import UserCard from "./UserCard";
+import ModerationQueue from "./ModerationQueue";
 import { AnimatedSprite } from "@fezchat/ui";
 import { SPRITES } from "@fezchat/ui";
 import HoverCard from "./HoverCard";
@@ -86,7 +88,8 @@ type MainView =
   | { kind: "ext"; name: string }
   | { kind: "extensions" }
   | { kind: "agents" }
-  | { kind: "skills" };
+  | { kind: "skills" }
+  | { kind: "modqueue" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
@@ -968,6 +971,15 @@ function Shell({
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
           <span className="nav-glyph">≡</span> docs
         </button>
+        {/* Moderators only — where flagged messages come to you. */}
+        {client.state.canModerate(client.pubkey) && (
+          <button
+            className={view.kind === "modqueue" ? "channel active home-link" : "channel home-link"}
+            onClick={() => setView({ kind: "modqueue" })}
+          >
+            <span className="nav-glyph">⚑</span> moderation
+          </button>
+        )}
         {/* Extension-owned rail views (loom's ▣ tools gallery enters here). */}
         {extensionNavViews().map((nav) => (
           <button
@@ -1275,6 +1287,11 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
+      {view.kind === "modqueue" && (
+        <main className="main">
+          <ModerationQueue client={client} onOpenChannel={(channelId, msgId) => void openChannel(channelId, msgId)} />
+        </main>
+      )}
       {view.kind === "ext" && (
         <main className="main">
           {(() => {
@@ -2103,7 +2120,6 @@ function ChannelView({
               client={client}
               channelId={channelId}
               msg={msg}
-              wire={wire}
               inThread={!!threadRoot}
               onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)}
               onEdit={() => beginEdit(msg)}
@@ -2822,7 +2838,6 @@ function Bubble({
   client,
   channelId,
   msg,
-  wire,
   inThread,
   onOpenThread,
   onEdit,
@@ -2832,7 +2847,6 @@ function Bubble({
   client: FezClient;
   channelId: string;
     msg: Msg;
-  wire: BrowserWire;
   inThread: boolean;
   onOpenThread: () => void;
   onEdit?: () => void;
@@ -2866,24 +2880,21 @@ function Bubble({
   const [remindOpen, setRemindOpen] = useState(false);
   const [remindSet, setRemindSet] = useState(false);
   const [armedDelete, setArmedDelete] = useState(false);
+  const [armedRemove, setArmedRemove] = useState(false);
+  const [cardAt, setCardAt] = useState<{ x: number; y: number } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [reported, setReported] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number }>();
   const [copied, setCopied] = useState(false);
 
-  /** fez-moderation's /report: 1984, reason NIP-44'd to the community creator. */
+  /** Report to the moderators: one 1984 per mod, reason encrypted to each. */
   const sendReport = async () => {
-    const creator = client.state.workspace.owner;
     const reason = reportReason.trim();
-    if (!creator || !reason) return;
+    if (!reason) return;
     setReportOpen(false);
     setReportReason("");
-    await wire.publish({
-      kind: 1984,
-      tags: [["p", creator]],
-      content: await wire.encrypt(creator, JSON.stringify({ targetPk: msg.authorPk, reason: `${reason} (msg: ${msg.content.slice(0, 60)})`, ts: Date.now() })),
-    });
+    await client.reportMessage(channelId, msg.id, msg.authorPk, reason);
     setReported(true);
     setTimeout(() => setReported(false), 2500);
   };
@@ -2957,7 +2968,25 @@ function Bubble({
             })}
             {!pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, msg.id))}
             {mine && onEdit && menuItem("edit message", "✎", onEdit)}
-            {!mine && menuItem("report to community creator…", "⚑!", () => setReportOpen(true))}
+            {!mine && menuItem("report to moderators…", "⚑!", () => setReportOpen(true))}
+            {client.canModerateMessage(msg) && (
+              <button
+                className="self-menu-item danger"
+                onClick={() => {
+                  if (!armedRemove) {
+                    setArmedRemove(true);
+                    setTimeout(() => setArmedRemove(false), 3000);
+                    return; // menu stays open — second click confirms
+                  }
+                  setArmedRemove(false);
+                  setMenu(undefined);
+                  void client.removeMessage(msg.id);
+                }}
+              >
+                <span className="menu-glyph">⊘</span>
+                {armedRemove ? "click again — withholds it for everyone" : "remove message"}
+              </button>
+            )}
             {client.canDeleteMessage(msg) && (
               <button
                 className="self-menu-item danger"
@@ -2979,13 +3008,28 @@ function Bubble({
           </div>
         </>
       )}
-      <button className="avatar-btn" title="profile" onClick={onAuthor}>
+      <button
+        className="avatar-btn"
+        title="actions"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setCardAt({ x: r.right + 6, y: r.top });
+        }}
+      >
         <Avatar pk={msg.authorPk} title={msg.authorName} size={30} />
       </button>
+      {cardAt && <UserCard pk={msg.authorPk} at={cardAt} client={client} onClose={() => setCardAt(null)} />}
       <div className="bubble-head">
         <HoverCard client={client} pk={msg.authorPk}>
           <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
         </HoverCard>
+        {(() => {
+          // Authority visible at a glance — owner/admin badge next to the name.
+          const role = client.state.roleOf(msg.authorPk);
+          if (role === "owner") return <span className="msg-role owner">owner</span>;
+          if (role === "admin") return <span className="msg-role admin">admin</span>;
+          return null;
+        })()}
         {(() => {
           // The zsh-prompt chip: the branch the agent's checkout is ON,
           // from its own 47000 announcement — truth from the spawn, not
@@ -3084,7 +3128,17 @@ function Bubble({
       )}
       {pickerAt && <ReactionPicker at={pickerAt} onPick={react} onClose={() => setPickerAt(undefined)} />}
       {msg.deletedBy ? (
-        <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
+        <div className="tombstone">
+          ⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}
+          {msg.deletedBy === "moderator" && client.state.removalReason(msg.id) && (
+            <span> · reason: {client.state.removalReason(msg.id)}</span>
+          )}
+          {msg.deletedBy === "moderator" && client.state.canModerate(client.pubkey) && (
+            <button className="mini" title="restore this message" onClick={() => void client.restoreMessage(msg.id)}>
+              ↩ restore
+            </button>
+          )}
+        </div>
       ) : (
         <div className="bubble-body md">
           <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} media={msg.media} />
