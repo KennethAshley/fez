@@ -218,6 +218,8 @@ export const K = {
   /** The one roster's d tag — a relay is a workspace, so nothing else names it. */
   ROSTER_D: "roster",
   BANS_D: "bans",
+  /** The 30047 d tag for withheld event-ids — reversible moderator removal. */
+  REMOVED_D: "removed",
   TYPING: 20002,
   PRESENCE: 20001,
   DRAFT: 20003,
@@ -1755,16 +1757,46 @@ export class FezClient {
     await this.wire.publish({ kind: K.AGENT_ATTESTATION, tags: [["p", agentPk]], content: "" });
   }
 
-  /** Owner republishes the roster without the pubkey. Their history stays. */
+  /**
+   * Guard rail: an admin (not the owner) may not act on the owner or on
+   * another admin. Only the owner outranks an admin.
+   */
+  private assertCanTarget(target: string): void {
+    if (this.state.isOwner(this.pubkey)) return; // the owner may act on anyone
+    if (target === this.state.workspace.owner || this.state.roleOf(target) === "admin") {
+      throw new Error("admins can't act on the owner or other admins");
+    }
+  }
+
+  /** A moderator republishes the roster without the pubkey. Their history stays. */
   async kick(pubkey: string): Promise<string> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can remove members");
+    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can remove members");
     if (pubkey === this.state.workspace.owner) {
       throw new Error("the owner can't be removed — the workspace is rooted in their signature");
     }
+    this.assertCanTarget(pubkey);
     const members = new Map(this.state.workspace.members);
     if (!members.delete(pubkey)) throw new Error("not a member of this workspace");
     await this.publishRoster(members);
     return this.displayName(pubkey);
+  }
+
+  /** Owner-only: promote a member to admin (or demote back to member). */
+  async promote(pubkey: string): Promise<void> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
+    if (pubkey === this.state.workspace.owner) throw new Error("the owner's role is fixed");
+    const members = new Map(this.state.workspace.members);
+    if (!members.has(pubkey)) throw new Error("not a member of this workspace");
+    members.set(pubkey, "admin");
+    await this.publishRoster(members);
+  }
+
+  async demote(pubkey: string): Promise<void> {
+    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
+    const members = new Map(this.state.workspace.members);
+    if (members.get(pubkey) !== "admin") throw new Error("not an admin");
+    members.set(pubkey, "member");
+    await this.publishRoster(members);
   }
 
   /**
@@ -1788,10 +1820,12 @@ export class FezClient {
     this.emit("channelsChanged");
   }
 
-  async banUser(pubkey: string): Promise<string> {
+  /** Ban permanently, or (with `until` unix-seconds) time out temporarily. */
+  async banUser(pubkey: string, until?: number): Promise<string> {
     if (pubkey === this.state.workspace.owner) throw new Error("the owner can't be banned");
+    this.assertCanTarget(pubkey);
     const banned = new Map(this.state.workspace.banned);
-    banned.set(pubkey, undefined);
+    banned.set(pubkey, until);
     await this.publishBanList(banned);
     return this.displayName(pubkey);
   }
@@ -1801,6 +1835,54 @@ export class FezClient {
     if (!banned.delete(pubkey)) throw new Error("not banned");
     await this.publishBanList(banned);
     return this.displayName(pubkey);
+  }
+
+  /** Republish the 30047 d=removed list with the id added/removed. */
+  private async publishRemovedList(removed: Set<string>): Promise<void> {
+    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can do this");
+    const event = await this.wire.publish({
+      kind: K.BAN_LIST,
+      tags: [["d", K.REMOVED_D], ...[...removed].map((id) => ["e", id])],
+      content: "",
+      created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.removedCreatedAt + 1),
+    });
+    this.state.absorb(event);
+    this.applyRemovals();
+    this.emit("channelsChanged");
+  }
+
+  /**
+   * Tombstone any in-memory message now on the removed list. The relay
+   * already withholds removed events from REQ, so a fresh load never shows
+   * them; this covers messages already on screen when a moderator acts.
+   * ponytail: restore is reflected on reload (content is cleared here), not
+   * live in-session — retain original content if live un-tombstone matters.
+   */
+  private applyRemovals(): void {
+    for (const [channelId, list] of this.messagesByChannel) {
+      for (const msg of list) {
+        if (this.state.isRemoved(msg.id) && msg.deletedBy !== "moderator") {
+          msg.deletedBy = "moderator";
+          msg.content = "";
+          this.emit("messageDeleted", channelId, msg);
+          this.emit("metaChanged", channelId, msg.id);
+        }
+      }
+    }
+  }
+
+  /** Withhold a message for everyone (reversible). Any moderator may do this. */
+  async removeMessage(eventId: string): Promise<void> {
+    const removed = new Set(this.state.workspace.removed);
+    removed.add(eventId);
+    await this.publishRemovedList(removed);
+  }
+
+  /** Restore a previously-removed message. */
+  async restoreMessage(eventId: string): Promise<void> {
+    const removed = new Set(this.state.workspace.removed);
+    if (!removed.delete(eventId)) throw new Error("not removed");
+    await this.publishRemovedList(removed);
   }
 
   /**
@@ -2241,7 +2323,7 @@ export class FezClient {
       { kinds: [K.AGENT_METADATA], since: Math.floor(Date.now() / 1000) - 7 * 86400 },
       { kinds: [K.CHANNEL] },
       { kinds: [K.MEMBERSHIP], "#d": [K.ROSTER_D] },
-      { kinds: [K.BAN_LIST], "#d": [K.BANS_D] },
+      { kinds: [K.BAN_LIST], "#d": [K.BANS_D, K.REMOVED_D] },
     ];
     if (channelIds.length > 0) {
       filters.push(
@@ -2281,6 +2363,7 @@ export class FezClient {
           // at 98% CPU.
           if (ids !== this.subscribedChannelIds) this.resubscribe();
         }
+        if (event.kind === K.BAN_LIST) this.applyRemovals();
         this.emit("channelsChanged");
       }
     }
@@ -2405,7 +2488,7 @@ export class FezClient {
       // The workspace owner is the moderation authority — the same key
       // that signs the roster, which is what makes the tombstone
       // trustworthy rather than a stranger's kind 5.
-      const isModerator = this.state.isOwner(event.pubkey);
+      const isModerator = this.state.canModerate(event.pubkey);
       if (!isAuthor && !isModerator) continue;
       msg.deletedBy = isAuthor ? "author" : "moderator";
       msg.content = "";
