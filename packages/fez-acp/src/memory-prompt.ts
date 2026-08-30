@@ -44,6 +44,11 @@ const CONVENTION = [
   `Keep "core" to a few lines (who you are, standing rules, durable context) and REWRITE it whole when it changes — never append forever; when something core tracks is finished, drop its line the same turn.`,
   `When you learn a durable fact about your user or your work (a preference, a decision, standing context), save it to mem/<topic> without being asked, and say you did.`,
   `Detail you don't need every turn goes in a mem/ slug you fez_mem_get on demand, not in core.`,
+  // "remember X" in a channel means the TEAM's memory, not yours — the two
+  // stores are different tools, and without this line every agent routed
+  // the request to its private mem/ and truthfully said "saved" while the
+  // channel's memory pane stayed empty forever.
+  `mem/ is PRIVATE to you. When someone in a channel asks you to remember something, that's the channel's SHARED memory: call fez_remember (channel + the fact) if you have it — and if you don't have fez_remember, say you can't save shared memory instead of claiming you did.`,
 ].join(" ");
 
 const FIRST_TURN_TASK = [
