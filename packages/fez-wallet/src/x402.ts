@@ -225,15 +225,21 @@ export async function payWith402(opts: PayWith402Opts): Promise<{ paymentHeaders
 /** Thin wrap over @x402/core's settlement decoder — T5 reads the settled tx
  * hash off the paid retry's response through this. Accepts either a raw
  * headers record (Node lowercases incoming header names) or a Fetch-style
- * Headers-like object. */
+ * Headers-like object.
+ *
+ * Tries both the x402 v2 header name (`PAYMENT-RESPONSE`) and the v1 name
+ * (`X-PAYMENT-RESPONSE`, what Ridges documents) — a resource server can
+ * answer with either depending on which x402Version its facilitator
+ * speaks, and this wallet pays against a HELD offer's own scheme/version
+ * rather than dictating one, so the settlement parse has to meet it. */
 export function parseSettlementHeader(
   headers: Record<string, string | string[] | undefined> | { get(name: string): string | null },
 ): SettleResponse | undefined {
-  const raw =
+  const get = (name: string): string | string[] | undefined | null =>
     typeof (headers as { get?: unknown }).get === "function"
-      ? (headers as { get(name: string): string | null }).get("PAYMENT-RESPONSE")
-      : ((headers as Record<string, string | string[] | undefined>)["PAYMENT-RESPONSE"] ??
-        (headers as Record<string, string | string[] | undefined>)["payment-response"]);
+      ? (headers as { get(name: string): string | null }).get(name)
+      : (headers as Record<string, string | string[] | undefined>)[name];
+  const raw = get("PAYMENT-RESPONSE") ?? get("payment-response") ?? get("X-PAYMENT-RESPONSE") ?? get("x-payment-response");
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (!value) return undefined;
   return decodePaymentResponseHeader(value);

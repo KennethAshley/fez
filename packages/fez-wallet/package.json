@@ -4,6 +4,14 @@
   "private": true,
   "description": "Per-agent allowance wallets for fez — HD-derived accounts from one master mnemonic, TAO live (EVM later), threshold consent via owner-signed reactions. The balance IS the cap.",
   "type": "module",
+  "main": "dist/tools.js",
+  "types": "dist/types/tools.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/tools.d.ts",
+      "default": "./dist/tools.js"
+    }
+  },
   "bin": {
     "fez-wallet": "dist/cli.js"
   },
@@ -29,7 +37,7 @@
     "minFezVersion": "0.2.0"
   },
   "scripts": {
-    "build": "esbuild src/mcp.ts src/cli.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "build": "esbuild src/mcp.ts src/cli.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js && esbuild src/tools.ts --bundle --format=esm --platform=node --outfile=dist/tools.js && tsc -p tsconfig.types.json",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
