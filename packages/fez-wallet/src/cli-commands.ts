@@ -1,10 +1,10 @@
 import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored, deriveAgentEvm } from "./derive.js";
 import { readEntry, writeEntry, readRootEntry, writeRootEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, type Network } from "./config.js";
+import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, x402Settings, type Network } from "./config.js";
 import { NETWORKS } from "./networks.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
-import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs } from "./storage-mirror.js";
+import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs, mirrorEvmAddress, mirrorX402Meta } from "./storage-mirror.js";
 import { migrateLog } from "./log.js";
 
 /**
@@ -68,6 +68,12 @@ export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
   io.print(`${persona}: ${pair.address}`);
   io.print(`${persona} (evm): ${evm.addressHex}  (fund this for x402 payments)`);
   await mirrorAddresses({ persona: { name: persona, address: pair.address } });
+  // The panel shows the fundable EVM address + the effective x402 settings.
+  await mirrorEvmAddress({ name: persona, address: evm.addressHex });
+  {
+    const s = x402Settings(config);
+    await mirrorX402Meta({ network: s.network, rpcUrl: s.rpcUrl, usdcAddress: s.usdcAddress, dailyCapUsd: s.dailyCapUsd, autoApproveDefault: s.autoApproveUnderUsd.default ?? 0 });
+  }
 }
 
 /** The only path that changes which chain the wallet talks to. An unknown

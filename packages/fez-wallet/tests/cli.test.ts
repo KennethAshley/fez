@@ -98,7 +98,7 @@ describe("cli ceremony", () => {
     const { adapter } = fakeAdapter();
     await cmdStatus(io, adapter);
     // Verify mirror was written to the temp FEZ_EXTENSION_DATA_DIR, not the real home
-    const mirrorFile = path.join(process.env.FEZ_EXTENSION_DATA_DIR!, "wallet.json");
+    const mirrorFile = path.join(process.env.FEZ_EXTENSION_DATA_DIR!, "fez-wallet.json");
     const mirror = JSON.parse(await fs.promises.readFile(mirrorFile, "utf8"));
     expect(mirror.addresses?.treasury).toBeDefined();
     expect(mirror.endpoint).toBeDefined();

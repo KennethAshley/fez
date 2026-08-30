@@ -21,7 +21,15 @@ import {
   panelEndpoint,
   resolveNetwork,
   ledgerTime,
+  erc20BalanceCall,
+  parseUsdcBalance,
+  validUsd,
+  x402TxLink,
+  x402NetworkLabel,
+  X402_NETWORKS,
+  X402_DISPLAY,
 } from "./gui-logic.js";
+import type { X402MirrorRow, X402Meta } from "./storage-mirror.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
 import type { SignedNostrEvent } from "./consent.js";
 
@@ -681,6 +689,114 @@ export default function activate(api: GuiExtensionApi): void {
       })();
     }, []);
 
+    // ── x402 / USDC ─────────────────────────────────────────────────
+    // Same shape as the TAO half: prefs is the layer the panel edits
+    // (config.ts's x402Settings gives it precedence), the mirror is the
+    // wallet's own read-only account of addresses/spends/effective
+    // settings, and the panel derives what it shows from the selection.
+    const [evmAddresses, setEvmAddresses] = useState<Record<string, string>>({});
+    const [x402Log, setX402Log] = useState<X402MirrorRow[]>([]);
+    const [x402Meta, setX402Meta] = useState<X402Meta | undefined>(undefined);
+    const [x402Prefs, setX402Prefs] = useState<Record<string, unknown>>({});
+    const [usdcBalances, setUsdcBalances] = useState<Record<string, string>>({});
+    const x402Network = (x402Prefs.network as string | undefined) ?? x402Meta?.network ?? "base-sepolia";
+    // Caps shown: the prefs draft the panel edits, falling back to what the
+    // wallet last resolved (which already applied the finite-guard).
+    const [capDraft, setCapDraft] = useState<string>("");
+    const [autoDraft, setAutoDraft] = useState<string>("");
+    const capSaved = String((x402Prefs.dailyCapUsd as number | undefined) ?? x402Meta?.dailyCapUsd ?? 25);
+    const autoSaved = String(
+      ((x402Prefs.autoApproveUnderUsd as Record<string, number> | undefined)?.default ?? x402Meta?.autoApproveDefault ?? 0)
+    );
+
+    useEffect(() => {
+      void (async () => {
+        setEvmAddresses(((await api.storage.get("evmAddresses")) as Record<string, string>) ?? {});
+        setX402Log(((await api.storage.get("x402Log")) as X402MirrorRow[]) ?? []);
+        setX402Meta((await api.storage.get("x402Meta")) as X402Meta | undefined);
+        const p = ((await api.prefs.get("x402")) as Record<string, unknown>) ?? {};
+        setX402Prefs(p);
+        setCapDraft(String((p.dailyCapUsd as number | undefined) ?? ""));
+        setAutoDraft(String(((p.autoApproveUnderUsd as Record<string, number> | undefined)?.default ?? "")));
+      })();
+    }, []);
+
+    // Read-modify-write the ONE prefs key, exactly like thresholds —
+    // never clobber sibling x402 overrides this panel doesn't edit.
+    const writeX402 = useCallback(async (patch: Record<string, unknown>, doneMsg: string) => {
+      try {
+        const existing = ((await api.prefs.get("x402")) as Record<string, unknown>) ?? {};
+        const next = { ...existing, ...patch };
+        await api.prefs.set("x402", next);
+        setX402Prefs(next);
+        say(doneMsg);
+      } catch (err) {
+        complain(`✗ not saved: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, [say, complain]);
+
+    const onX402Network = useCallback((next: string) => {
+      // Flipping to mainnet is the one click in this panel that turns play
+      // money into real money — it gets a confirm the TAO selector (which
+      // moves between two funded-on-purpose chains) doesn't need.
+      // I3: auto-approve/daily-cap are network-agnostic prefs that carry
+      // straight into mainnet — name the effective numbers here, or the
+      // owner confirms a network flip with no idea agents can already
+      // spend real money unattended up to whatever they last set for testnet.
+      if (
+        next === "base" &&
+        !confirm(
+          `Flip x402 payments to Base MAINNET? Agents will spend REAL USDC — auto-approving up to $${autoSaved} per call, $${capSaved}/day, without asking you.`
+        )
+      )
+        return;
+      void writeX402({ network: next }, `✓ x402 now on ${x402NetworkLabel(next)}`);
+    }, [writeX402, autoSaved, capSaved]);
+
+    const saveX402Numbers = useCallback(() => {
+      const patch: Record<string, unknown> = {};
+      if (capDraft !== "" && validUsd(capDraft) && capDraft !== capSaved) patch.dailyCapUsd = Number(capDraft);
+      if (autoDraft !== "" && validUsd(autoDraft) && autoDraft !== autoSaved) {
+        const existing = (x402Prefs.autoApproveUnderUsd as Record<string, number> | undefined) ?? {};
+        patch.autoApproveUnderUsd = { ...existing, default: Number(autoDraft) };
+      }
+      if (Object.keys(patch).length === 0) return;
+      void writeX402(patch, "✓ x402 limits saved");
+    }, [capDraft, autoDraft, capSaved, autoSaved, x402Prefs, writeX402]);
+
+    // Read-only USDC balances over plain eth_call — display, not custody.
+    // The display table keys off the SELECTED network so a fresh flip reads
+    // the right chain even before any agent has re-mirrored its settings.
+    useEffect(() => {
+      const display = X402_DISPLAY[x402Network] ?? X402_DISPLAY["base-sepolia"];
+      const rpcUrl = (x402Meta && x402Meta.network === x402Network ? x402Meta.rpcUrl : undefined) ?? display.rpcUrl;
+      const usdc = (x402Meta && x402Meta.network === x402Network ? x402Meta.usdcAddress : undefined) ?? display.usdcAddress;
+      const entries = Object.entries(evmAddresses);
+      if (entries.length === 0) return;
+      let dead = false;
+      setUsdcBalances({});
+      void (async () => {
+        for (const [who, addr] of entries) {
+          try {
+            const call = erc20BalanceCall(usdc, String(addr));
+            const res = await fetch(rpcUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [call, "latest"] }),
+            });
+            const out = (await res.json()) as { result?: string };
+            const usd = out.result !== undefined ? parseUsdcBalance(out.result) : undefined;
+            if (dead) return;
+            setUsdcBalances((b) => ({ ...b, [who]: usd !== undefined ? `$${usd} USDC` : "unreadable" }));
+          } catch {
+            if (dead) return;
+            setUsdcBalances((b) => ({ ...b, [who]: "rpc unreachable" }));
+          }
+        }
+      })();
+      return () => { dead = true; };
+    }, [JSON.stringify(evmAddresses), x402Network, JSON.stringify(x402Meta ?? {})]);
+
     // The chain the panel dials: derived from the selection, with a genuine
     // override (local node / fork) still winning — same precedence loadConfig
     // uses, so panel and wallet can never disagree about which chain is live.
@@ -911,6 +1027,155 @@ export default function activate(api: GuiExtensionApi): void {
                         shortAddr(entry.txHash)
                       )
                     )
+                  )
+                )
+              )
+            )
+          ),
+
+      // ── x402 / USDC ───────────────────────────────────────────────
+      h("div", { className: "manage-section" }, "x402 · USDC"),
+      h(
+        "div",
+        { className: "skill-row" },
+        h(
+          "div",
+          { className: "skill-main" },
+          h("span", { className: "skill-name" }, x402NetworkLabel(x402Network)),
+          h("div", { className: "skill-desc" }, "which chain agents pay 402 services on — applies on their next call")
+        ),
+        h(
+          "select",
+          {
+            className: "skill-actions",
+            value: x402Network,
+            onChange: (e: { target: { value: string } }) => onX402Network(e.target.value),
+          },
+          ...X402_NETWORKS.map((n) => h("option", { key: n, value: n }, x402NetworkLabel(n)))
+        )
+      ),
+      h(
+        "div",
+        { className: "skill-row" },
+        h(
+          "div",
+          { className: "skill-main" },
+          h("span", { className: "skill-name" }, "daily cap / auto-approve (USD)"),
+          h(
+            "div",
+            { className: "skill-desc" },
+            `in force: $${capSaved} cap · auto-approve under $${autoSaved} (0 = every spend asks you)`
+          )
+        ),
+        h(
+          "div",
+          { className: "skill-actions" },
+          h("input", {
+            type: "text",
+            placeholder: `cap ${capSaved}`,
+            value: capDraft,
+            spellCheck: false,
+            style: { width: "5.5em", ...(capDraft === "" || validUsd(capDraft) ? {} : { borderColor: "var(--danger, #c00)" }) },
+            onChange: (e: { target: { value: string } }) => setCapDraft(e.target.value),
+          }),
+          h("input", {
+            type: "text",
+            placeholder: `auto ${autoSaved}`,
+            value: autoDraft,
+            spellCheck: false,
+            style: { width: "5.5em", ...(autoDraft === "" || validUsd(autoDraft) ? {} : { borderColor: "var(--danger, #c00)" }) },
+            onChange: (e: { target: { value: string } }) => setAutoDraft(e.target.value),
+          }),
+          h(
+            "button",
+            {
+              className: "agent-action",
+              disabled:
+                (capDraft === "" || !validUsd(capDraft) || capDraft === capSaved) &&
+                (autoDraft === "" || !validUsd(autoDraft) || autoDraft === autoSaved),
+              onClick: () => saveX402Numbers(),
+            },
+            "save"
+          )
+        )
+      ),
+
+      Object.keys(evmAddresses).length === 0
+        ? h("p", { className: "settings-hint" }, "no EVM addresses yet — run fez-wallet derive <persona> to mint one, then fund it with USDC")
+        : h(
+            "div",
+            null,
+            ...Object.entries(evmAddresses).map(([who, addr]) =>
+              h(
+                "div",
+                { key: who, className: "skill-row" },
+                h(
+                  "div",
+                  { className: "skill-main" },
+                  h("span", { className: "skill-name" }, who),
+                  h("div", { className: "skill-desc" }, h(AddressRow, { address: addr }))
+                ),
+                h("div", { className: "skill-actions" }, usdcBalances[who] ?? "…")
+              )
+            )
+          ),
+
+      x402Log.length === 0
+        ? h("p", { className: "settings-hint" }, "no x402 payments yet")
+        : h(
+            "div",
+            { style: { overflowX: "auto" } },
+            h(
+              "table",
+              { className: "wallet-ledger", style: { width: "100%", borderCollapse: "collapse" } },
+              h(
+                "thead",
+                null,
+                h(
+                  "tr",
+                  null,
+                  h("th", { style: th }, "time"),
+                  h("th", { style: th }, "agent"),
+                  h("th", { style: { ...th, textAlign: "right" as const } }, "usd"),
+                  h("th", { style: th }, "url"),
+                  h("th", { style: th }, "status"),
+                  h("th", { style: th }, "tx")
+                )
+              ),
+              h(
+                "tbody",
+                null,
+                ...[...x402Log].reverse().map((row, i) =>
+                  h(
+                    "tr",
+                    { key: `${row.ts}-${row.status}-${i}` },
+                    h("td", { style: tdDim, title: row.ts }, ledgerTime(row.ts)),
+                    h("td", { style: td }, row.persona),
+                    h(
+                      "td",
+                      { style: { ...td, textAlign: "right" as const, fontVariantNumeric: "tabular-nums" } },
+                      `$${row.usd.toFixed(2)}`
+                    ),
+                    h("td", { style: td, title: row.url }, h("div", { style: memoBox }, row.url)),
+                    // Status text stays honest: "ambiguous" is a row the
+                    // owner should look at, never silently promoted.
+                    h("td", { style: row.status === "ambiguous" ? td : tdDim }, row.status === "ambiguous" ? "⚠ may have settled" : row.status),
+                    row.txHash
+                      ? h(
+                          "td",
+                          { style: td },
+                          h(
+                            "button",
+                            {
+                              className: "skill-link",
+                              style: { whiteSpace: "nowrap" as const, fontFamily: "var(--font-mono, monospace)" },
+                              title: row.txHash,
+                              onClick: () => void api.openUrl(x402TxLink(row.network, row.txHash!)),
+                            },
+                            shortAddr(row.txHash)
+                          )
+                        )
+                      : h("td", { style: tdDim }, "—")
                   )
                 )
               )

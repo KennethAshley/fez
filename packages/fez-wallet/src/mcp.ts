@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import path from "node:path";
-import os from "node:os";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -8,7 +6,7 @@ import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { pairFromStored, evmPairFromStored } from "./derive.js";
 import { readEntry, readAgentNostrKey } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
-import { loadConfig, x402Settings } from "./config.js";
+import { loadConfig } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
 import { evmAdapter } from "./chains/evm.js";
 import { poolRelay } from "./consent.js";
@@ -17,10 +15,9 @@ import {
   walletBalance,
   walletSend,
   walletHistory,
-  resolveEvmPair,
   x402Fetch,
+  makeX402Deps,
   type ToolDeps,
-  type X402ToolDeps,
 } from "./tools.js";
 import type { ChainAdapter } from "./chains/adapter.js";
 import type { WalletPair, EvmPair } from "./derive.js";
@@ -68,21 +65,6 @@ function cachedSubstrateAdapter(endpoint: string): ChainAdapter {
   return a;
 }
 const evm = evmAdapter(); // stateless stub — one instance is plenty
-
-/** Same memoization reasoning as cachedSubstrateAdapter, keyed on
- * (rpcUrl, usdcAddress) so an x402 mainnet flip (a different RPC AND a
- * different USDC contract) gets its own client rather than reusing a
- * testnet one that would keep reading the wrong contract. */
-const evmAdaptersByKey = new Map<string, ChainAdapter>();
-function cachedEvmAdapter(rpcUrl: string, usdcAddress: string): ChainAdapter {
-  const key = `${rpcUrl}|${usdcAddress}`;
-  let a = evmAdaptersByKey.get(key);
-  if (!a) {
-    a = evmAdapter({ rpcUrl, usdcAddress });
-    evmAdaptersByKey.set(key, a);
-  }
-  return a;
-}
 
 /** Addressable, so republishing is a replace and needs no staleness
  * bookkeeping. Failure is silent by design — an agent that cannot
@@ -176,31 +158,6 @@ async function deps(signal?: AbortSignal): Promise<ToolDeps> {
   };
 }
 
-/** Separate from deps(): x402_fetch needs the EVM pair (not the sr25519
- * one) and its own directory-scoped spend tally/log, not the TAO adapter
- * list. Built lazily per call for the same reason deps() is. */
-async function x402Deps(signal?: AbortSignal): Promise<X402ToolDeps> {
-  const stored = readEntry(persona!);
-  if (!stored) {
-    throw new Error(`no wallet for "${persona}" — run: fez-wallet derive ${persona}`);
-  }
-  const config = loadConfig();
-  const settings = x402Settings(config);
-  const relays = (process.env.FEZ_RELAY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const agentNostrKey = readAgentNostrKey(persona!);
-  return {
-    persona: persona!,
-    evmPair: resolveEvmPair(persona!, stored),
-    adapter: cachedEvmAdapter(settings.rpcUrl, settings.usdcAddress),
-    config,
-    ownerPk: process.env.FEZ_AGENT_OWNER,
-    agentNostrKey,
-    relay: relays.length ? () => poolRelay(relays, agentNostrKey) : undefined,
-    dir: process.env.FEZ_WALLET_HOME ?? path.join(os.homedir(), ".fez"),
-    signal,
-  };
-}
-
 server.registerTool(
   "wallet_address",
   {
@@ -255,7 +212,7 @@ server.registerTool(
     },
   },
   async ({ url, method, body, maxUsd }, extra) =>
-    text(await x402Fetch(await x402Deps(extra.signal), { url, method, body, maxUsd }))
+    text(await x402Fetch(await makeX402Deps(persona!, extra.signal), { url, method, body, maxUsd }))
 );
 
 server.registerTool(

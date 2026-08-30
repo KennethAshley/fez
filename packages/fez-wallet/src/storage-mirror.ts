@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { SpendEntry } from "./log.js";
@@ -15,17 +16,40 @@ import type { SpendEntry } from "./log.js";
  * failed mirror must never break a transfer.
  */
 
-// Must match this package's name — the desktop's gui loader namespace-locks
-// api.storage to the registered extension name (gui-extensions.ts), which
-// is the same name the gui part loads under from ~/.fez/packages/<name>.
-// Verified at implementation time.
-export const STORAGE_NAME = "wallet";
+// Must match this package's INSTALLED name — the desktop's gui loader
+// namespace-locks api.storage to the registered extension name
+// (gui-extensions.ts), which is the package dir under ~/.fez/packages/.
+// That name is "fez-wallet" since the gui-extension-runtime migration
+// reconstructed the package under its grant name; the original "wallet"
+// staging name left the panel reading fez-wallet.json while this module
+// wrote wallet.json — every mirror invisible to the panel and every
+// panel prefs write invisible to the wallet. One home, adopted below.
+export const STORAGE_NAME = "fez-wallet";
+const LEGACY_STORAGE_NAME = "wallet";
 
 const MAX_LOG = 500;
 
+export function storageDir(): string {
+  return process.env.FEZ_EXTENSION_DATA_DIR ?? path.join(os.homedir(), ".fez", "extension-data");
+}
+
+/** One-time adoption of the pre-rename file. Sync + idempotent so both
+ * this module's async queue and config.ts's sync prefs reads can call it
+ * first; if BOTH files somehow exist, the new name wins and the legacy
+ * file is left in place (never merged — two-home merging is the bug
+ * class this fix exists to end). */
+export function adoptLegacyStorage(): void {
+  const dir = storageDir();
+  const current = path.join(dir, `${STORAGE_NAME}.json`);
+  const legacy = path.join(dir, `${LEGACY_STORAGE_NAME}.json`);
+  try {
+    if (!fsSync.existsSync(current) && fsSync.existsSync(legacy)) fsSync.renameSync(legacy, current);
+  } catch { /* best-effort — a failed adoption reads as empty, never throws */ }
+}
+
 function file(): string {
-  const dir = process.env.FEZ_EXTENSION_DATA_DIR ?? path.join(os.homedir(), ".fez", "extension-data");
-  return path.join(dir, `${STORAGE_NAME}.json`);
+  adoptLegacyStorage();
+  return path.join(storageDir(), `${STORAGE_NAME}.json`);
 }
 
 import type { Network } from "./networks.js";
@@ -34,6 +58,18 @@ export type { Network };
 export interface WalletPrefs {
   network?: Network;
   thresholds?: Record<string, string>;
+  /** GUI-editable x402 overrides (network flip, caps). A prefs value wins
+   * over wallet.json's x402 block key-by-key — see config.ts's
+   * x402Settings for the layering, including the rule that a prefs-level
+   * network flip re-derives chainRef/usdcAddress/rpcUrl as a set. */
+  x402?: {
+    network?: string;
+    chainRef?: string;
+    usdcAddress?: string;
+    rpcUrl?: string;
+    dailyCapUsd?: number;
+    autoApproveUnderUsd?: Record<string, number>;
+  };
 }
 
 type State = {
@@ -105,5 +141,52 @@ export function mirrorSpend(entry: SpendEntry): Promise<void> {
 export function mirrorPrefs(p: Partial<WalletPrefs>): Promise<void> {
   return update((s) => {
     s.prefs = { ...(s.prefs ?? {}), ...p };
+  });
+}
+
+/** One x402 ledger row, mirrored verbatim from the append-only x402 spend
+ * log — the panel renders events (signed, then settled/ambiguous), it
+ * never infers state. Shape matches log.ts's X402LogEntry. */
+export interface X402MirrorRow {
+  ts: string;
+  persona: string;
+  url: string;
+  payTo: string;
+  usd: number;
+  status: "signed" | "settled" | "ambiguous";
+  txHash?: string;
+  network: string;
+}
+
+export function mirrorX402Spend(row: X402MirrorRow): Promise<void> {
+  return update((s) => {
+    const log = (s.x402Log as X402MirrorRow[] | undefined) ?? [];
+    s.x402Log = [...log, row].slice(-MAX_LOG);
+  });
+}
+
+/** A persona's fundable EVM address — mirrored at derive time so the
+ * panel can show it (copy/QR) without any key material ever landing here. */
+export function mirrorEvmAddress(u: { name: string; address: string }): Promise<void> {
+  return update((s) => {
+    const a = (s.evmAddresses as Record<string, string> | undefined) ?? {};
+    s.evmAddresses = { ...a, [u.name]: u.address };
+  });
+}
+
+/** The resolved x402 settings snapshot (network/rpc/usdc/caps) — the
+ * panel needs rpcUrl+usdcAddress for its read-only balance call and the
+ * effective numbers for display. Nothing secret: all of this is config. */
+export interface X402Meta {
+  network: string;
+  rpcUrl: string;
+  usdcAddress: string;
+  dailyCapUsd: number;
+  autoApproveDefault: number;
+}
+
+export function mirrorX402Meta(meta: X402Meta): Promise<void> {
+  return update((s) => {
+    s.x402Meta = meta;
   });
 }

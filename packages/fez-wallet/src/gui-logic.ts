@@ -300,3 +300,58 @@ export function receiptStateText(state: "verified" | "unverifiable" | "false"): 
   if (state === "unverifiable") return "couldn't check this block";
   return "\u26a0 the chain does not match this receipt";
 }
+
+/* ── x402 / USDC (browser-safe helpers for the panel) ──────────────── */
+
+/** balanceOf(holder) calldata for a read-only eth_call — the one RPC the
+ * panel makes. Display-only: a wrong balance shows a wrong number, it
+ * cannot move money (spending resolves its own settings node-side). */
+export function erc20BalanceCall(usdcAddress: string, holder: string): { to: string; data: string } {
+  const addr = holder.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  return { to: usdcAddress, data: `0x70a08231${addr}` };
+}
+
+/** Hex eth_call result → dollars ("5.00"), 6-decimal USDC. undefined on
+ * junk rather than "0.00" — an unreadable balance is not a zero balance. */
+export function parseUsdcBalance(hexResult: string): string | undefined {
+  if (!/^0x[0-9a-fA-F]*$/.test(hexResult)) return undefined;
+  let raw: bigint;
+  try {
+    raw = BigInt(hexResult === "0x" ? "0x0" : hexResult);
+  } catch {
+    return undefined;
+  }
+  const cents = raw / 10_000n; // 6 decimals → cents
+  return `${cents / 100n}.${(cents % 100n).toString().padStart(2, "0")}`;
+}
+
+/** Money-shaped text: non-negative decimal, at most 2dp not enforced —
+ * the settings inputs accept what Number() + the node-side finite guard
+ * accept, minus signs and garbage. */
+export function validUsd(text: string): boolean {
+  return /^\d+(\.\d+)?$/.test(text.trim()) && Number.isFinite(Number(text));
+}
+
+/** DISPLAY-ONLY mirror of config.ts's X402_NETWORK_TABLE explorer hosts.
+ * Drift here mislinks a tx page, never a payment. */
+export function x402TxLink(network: string, txHash: string): string {
+  const host = network === "base" ? "https://basescan.org" : "https://sepolia.basescan.org";
+  return `${host}/tx/${txHash}`;
+}
+
+/** The two networks the panel's selector offers — mirrors config.ts's
+ * table keys; adding a row there means adding it here for the GUI. */
+export const X402_NETWORKS = ["base-sepolia", "base"] as const;
+
+export function x402NetworkLabel(network: string): string {
+  return network === "base" ? "base (REAL USDC)" : "base-sepolia (test USDC)";
+}
+
+/** DISPLAY-ONLY mirror of config.ts's network table (that module imports
+ * node:fs and cannot enter the browser bundle). Drift here shows a wrong
+ * balance or mislinks an explorer page — it cannot move money: spends
+ * resolve their own settings node-side from config.ts's table. */
+export const X402_DISPLAY: Record<string, { rpcUrl: string; usdcAddress: string }> = {
+  "base-sepolia": { rpcUrl: "https://sepolia.base.org", usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" },
+  base: { rpcUrl: "https://mainnet.base.org", usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+};

@@ -1,0 +1,54 @@
+{
+  "name": "@fezchat/ridges",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The first paid-service extension for fez — /ridges <issue-url> pays the Ridges subnet through the wallet's x402 rail and tracks the resulting PR.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "headless": "dist/headless.js",
+      "skill": {
+        "command": "node",
+        "args": ["dist/mcp.js"]
+      },
+      "gui": "dist/gui.js",
+      "background": true
+    },
+    "permissions": [
+      "network:product.ridges.ai",
+      "network:api.github.com",
+      "read:channels",
+      "publish",
+      "commands",
+      "ui",
+      "background"
+    ],
+    "minFezVersion": "0.2.0"
+  },
+  "scripts": {
+    "build": "esbuild src/headless.ts src/mcp.ts --bundle --format=esm --platform=node --outdir=dist && fez pack",
+    "check": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@fezchat/wallet": "file:../fez-wallet",
+    "@fezchat/ui": "file:../fez-ui",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@fezchat/protocol": "file:../..",
+    "@fezchat/extension-api": "file:../fez-extension-api",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6"
+  },
+  "files": [
+    "dist"
+  ]
+}

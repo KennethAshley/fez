@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { WalletPrefs } from "./storage-mirror.js";
+import { adoptLegacyStorage, storageDir, STORAGE_NAME } from "./storage-mirror.js";
 import { type Network, endpointFor, isNetworkOwnedEndpoint, networkFromEndpoint } from "./networks.js";
 
 export type { Network, WalletPrefs };
@@ -57,38 +58,67 @@ const X402_NETWORK_TABLE: Record<string, { chainRef: string; usdcAddress: string
 };
 
 /**
- * x402 lives in wallet.json ONLY, never prefs. The cap and auto-approve
- * floors are the same kind of security ceiling `thresholds` is, and
- * `thresholds` is exactly the field saveConfig()'s comments describe
- * getting bitten by prefs-vs-wallet.json split ownership (a value that
- * could round-trip through prefs and wallet.json at once, so clearing one
- * didn't clear the setting). x402 has no prefs UI yet, so the simplest
- * thing that cannot repeat that bug is to give it exactly one home:
- * saveConfig's plain `owned` spread already persists any field it doesn't
- * explicitly strip, so `x402` needs no special-case code to stay put.
+ * Two homes, combined only at READ time: wallet.json's `x402` block is the
+ * CLI/hand-edited base layer; `prefs.x402` is the GUI-editable layer and
+ * wins key-by-key. The thresholds round-trip bug this file's comments warn
+ * about came from COPYING prefs values into wallet.json on save — that
+ * cannot recur here because saveConfig never sees prefs.x402 and so never
+ * persists it.
+ *
+ * The one non-obvious rule (I2): for a KNOWN network label, chainRef and
+ * usdcAddress come from the table UNCONDITIONALLY — neither layer's
+ * explicit override is honored, no matter which one set the label —
+ * otherwise a mainnet contract could survive under a "base-sepolia"
+ * label (the panel shows only the label, not the address behind it), or
+ * a GUI flip to mainnet could pair mainnet's chain id with a stale
+ * sepolia contract (the "session says testnet, spends mainnet" bug class
+ * the TAO wallet was burned by; see isNetworkOwnedEndpoint's history). An
+ * explicit chainRef/usdcAddress is honored only when the network label
+ * itself is UNRECOGNIZED — there is no table row to defer to instead.
+ * rpcUrl carries no signing weight, so it keeps the older, looser rule:
+ * prefs' own value wins outright; a disk-level rpcUrl wins too, unless a
+ * prefs-level network flip invalidated it (same reasoning as before, just
+ * scoped to rpcUrl now that chain facts have their own, stricter rule).
  */
-export function x402Settings(c: WalletConfig): X402Settings {
-  const raw = c.x402 ?? {};
-  const network = raw.network ?? X402_DEFAULTS.network;
+export function x402Settings(c: WalletConfig, prefs: WalletPrefs = readPrefs()): X402Settings {
+  const disk = c.x402 ?? {};
+  const p = prefs.x402 ?? {};
+  const prefsFlipped = p.network !== undefined;
+  const network = p.network ?? disk.network ?? X402_DEFAULTS.network;
+  const known = network in X402_NETWORK_TABLE;
   const derived = X402_NETWORK_TABLE[network] ?? X402_NETWORK_TABLE[X402_DEFAULTS.network];
 
-  // A NaN/Infinity here (a hand-edited or generated bad config value)
-  // must not silently fail OPEN: dailyCapUsd feeds a `>` comparison that
-  // never trips against NaN, and autoApproveUnderUsd feeds one that
-  // never trips either — either way, every payment would auto-approve
-  // with no cap. Bad values fall back to the default instead of passing
-  // through.
-  const dailyCapUsd = Number.isFinite(raw.dailyCapUsd) ? (raw.dailyCapUsd as number) : X402_DEFAULTS.dailyCapUsd;
+  // I2: chainRef/usdcAddress are what gets SIGNED — for a KNOWN network
+  // they come from the table unconditionally, no matter which layer (or
+  // both) named an explicit value, so a label can never disagree with
+  // its own contract (e.g. a stray disk-level mainnet usdcAddress
+  // surviving under a prefs "base-sepolia" flip, invisible in a panel
+  // that only shows the label). An override is honored only when the
+  // network label itself is unrecognized — there is no table row to defer
+  // to instead. rpcUrl carries no signing weight, so it stays freely
+  // overridable exactly as before (prefs > disk-unless-a-flip-invalidated-it > derived).
+  const chainField = (key: "chainRef" | "usdcAddress"): string =>
+    known ? derived[key] : p[key] ?? disk[key] ?? derived[key];
+  const rpcUrl = p.rpcUrl ?? (prefsFlipped ? derived.rpcUrl : disk.rpcUrl ?? derived.rpcUrl);
+
+  // A NaN/Infinity in either layer (hand-edited or GUI-garbled) must not
+  // silently fail OPEN: dailyCapUsd and autoApproveUnderUsd both feed `>`
+  // comparisons that never trip against NaN — every payment would
+  // auto-approve with no cap. Bad values fall through to the next layer.
+  const finite = (v: unknown): number | undefined => (Number.isFinite(v) ? (v as number) : undefined);
+  const dailyCapUsd = finite(p.dailyCapUsd) ?? finite(disk.dailyCapUsd) ?? X402_DEFAULTS.dailyCapUsd;
   const autoApproveUnderUsd: Record<string, number> = { ...X402_DEFAULTS.autoApproveUnderUsd };
-  for (const [persona, v] of Object.entries(raw.autoApproveUnderUsd ?? {})) {
-    if (Number.isFinite(v)) autoApproveUnderUsd[persona] = v as number;
+  for (const layer of [disk.autoApproveUnderUsd, p.autoApproveUnderUsd]) {
+    for (const [persona, v] of Object.entries(layer ?? {})) {
+      if (Number.isFinite(v)) autoApproveUnderUsd[persona] = v as number;
+    }
   }
 
   return {
     network,
-    chainRef: raw.chainRef ?? derived.chainRef,
-    usdcAddress: raw.usdcAddress ?? derived.usdcAddress,
-    rpcUrl: raw.rpcUrl ?? derived.rpcUrl,
+    chainRef: chainField("chainRef"),
+    usdcAddress: chainField("usdcAddress"),
+    rpcUrl,
     dailyCapUsd,
     autoApproveUnderUsd,
   };
@@ -119,9 +149,11 @@ function configFile(): string {
 }
 
 function prefsFile(): string {
-  const dir =
-    process.env.FEZ_EXTENSION_DATA_DIR ?? path.join(os.homedir(), ".fez", "extension-data");
-  return path.join(dir, "wallet.json");
+  // Same file the mirror writes and the panel reads (see storage-mirror
+  // STORAGE_NAME + the legacy adoption) — prefs written by the GUI land
+  // here, so this MUST be the adopted name or GUI settings are ignored.
+  adoptLegacyStorage();
+  return path.join(storageDir(), `${STORAGE_NAME}.json`);
 }
 
 /** Sync because loadConfig() is sync and runs per tool call. Writes go

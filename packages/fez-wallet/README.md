@@ -174,9 +174,16 @@ RPC). The two rows that exist today:
   through and together blow past it. Tallied in `x402-spend.json` beside
   `wallet.json`. A non-numeric value is dropped, not trusted — it falls
   back to the default cap rather than disabling it.
-- **Mainnet flip:** set `"network": "base"`. That's the whole flip —
-  `chainRef`, the USDC contract the balance guard reads, and the RPC
-  endpoint all follow it automatically.
+- **Mainnet flip:** set `"network": "base"` — in `wallet.json`, or in
+  the desktop wallet settings panel (Settings → extensions → Wallet →
+  x402 · USDC), which asks for confirmation before flipping to real
+  money. That's the whole flip — `chainRef`, the USDC contract the
+  balance guard reads, and the RPC endpoint all follow it automatically.
+  A GUI (prefs-level) flip deliberately overrides any hand-set
+  `chainRef`/`usdcAddress`/`rpcUrl` left in `wallet.json`, so the
+  triple can never come apart. The panel also shows each agent's
+  fundable EVM address, live USDC balances, the x402 spend ledger, and
+  editors for the daily cap and auto-approve floor.
 
 **Never pays twice.** Signing happens first — if the offer tries to
 route the SDK into a primitive our restricted signer refuses (a

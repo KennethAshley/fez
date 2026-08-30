@@ -12,13 +12,22 @@ import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import { ExactEvmScheme } from "@x402/evm";
-import { encodePaymentSignatureHeader, decodePaymentResponseHeader } from "@x402/core/http";
+import { ExactEvmSchemeV1 } from "@x402/evm/exact/v1/client";
+import { x402HTTPClient, decodePaymentResponseHeader } from "@x402/core/http";
 import type { PaymentRequirements, PaymentPayload, SettleResponse } from "@x402/core/types";
 
 export interface X402Offer {
   scheme: string;
   network: string;
-  amount: string;
+  // v2 names this `amount`; v1 names the identical atomic-unit string
+  // `maxAmountRequired` (and v1 offers carry `resource`/`description` as
+  // plain strings, not v2's structured `resource` object). Both optional
+  // here because only one of the two amount fields is ever actually
+  // present on a real offer — offerUsd/payWith402 read whichever exists.
+  amount?: string;
+  maxAmountRequired?: string;
+  resource?: string;
+  description?: string;
   asset: string;
   payTo: string;
   maxTimeoutSeconds?: number;
@@ -32,6 +41,11 @@ export interface X402Offer {
 }
 
 export interface PaymentRequired {
+  // The negotiation signal: which x402 version this offer set speaks.
+  // Absent (or 2) is v2, the wallet's long-standing default; 1 is what
+  // Ridges documents. Selects payWith402's wire shape AND its header name
+  // — see payWith402 below.
+  x402Version?: number;
   accepts: X402Offer[];
   resource?: { url?: string; description?: string };
 }
@@ -54,29 +68,76 @@ export function decodePaymentRequired(headerB64: string): PaymentRequired {
   return parsed as PaymentRequired;
 }
 
+/** Normalizes an x402Version signal to exactly `1` or `2` — never guesses.
+ * Absent/undefined is the documented v2 default (the wallet's long-standing
+ * behavior, unchanged); exactly the number `1` or `2` pass through as-is;
+ * anything else — a future v3, a string `"1"` (money is never coerced), a
+ * NaN, `null` — is refused BY NAME rather than silently routed into
+ * either scheme's signer/header logic. Called once at the top of the
+ * pipeline (x402FetchRaw, before offer selection) and again inside
+ * payWith402 itself as defense-in-depth for any other caller. */
+export function resolveX402Version(v: unknown): 1 | 2 {
+  if (v === undefined) return 2;
+  if (v === 1 || v === 2) return v;
+  throw new Error(`x402: unsupported x402Version "${String(v)}" — only 1 and 2 are supported`);
+}
+
 export function pickOffer(
   offers: X402Offer[],
-  opts: { network: string; usdcAddress: string },
+  // Matching is gated by the ALREADY-NORMALIZED version (see
+  // resolveX402Version) — and only THAT version's own network format is
+  // tried: v2 offers must use the CAIP-2 `network` ("eip155:84532"); v1
+  // offers must use the wallet's human network label (`v1Network`, e.g.
+  // "base-sepolia" — @x402/evm's EVM_NETWORK_CHAIN_ID_MAP names). A
+  // cross-format offer (a v1-declared offer wearing a CAIP string, or a
+  // v2-declared offer wearing a bare label) simply doesn't match either
+  // arm — it falls through to the ordinary no-matching-offer refusal
+  // rather than being accepted into an inconsistent signing domain.
+  // `version` defaults to `2` when omitted — the same "absent is v2"
+  // rule resolveX402Version applies, and what every pre-v1 caller
+  // (predating x402Version-awareness entirely) still gets unchanged.
+  opts: { network: string; usdcAddress: string; v1Network?: string; version?: 1 | 2 },
 ): X402Offer | undefined {
+  const version = opts.version ?? 2;
   return offers.find(
     (o) =>
       o.scheme === "exact" &&
-      o.network === opts.network &&
+      (version === 1 ? o.network === opts.v1Network : o.network === opts.network) &&
       o.asset.toLowerCase() === opts.usdcAddress.toLowerCase(),
   );
 }
 
 const MAX_SAFE_ATOMIC = 2 ** 53;
 
-export function offerUsd(offer: X402Offer): number {
+/**
+ * The ONE place that reads an offer's atomic-unit amount. v2 names it
+ * `amount`; v1 names the identical field `maxAmountRequired` — before
+ * this existed, `offerUsd` (pricing/caps/consent) and BOTH `payWith402`
+ * arms (what gets signed) and the receipt build each picked their own
+ * `a ?? b` order, so a v1 offer naming BOTH fields with different values
+ * could be priced off one and signed for the other. Refuse-don't-guess,
+ * same as `resolveX402Version`: if both are present they must agree, or
+ * this throws rather than silently picking a side.
+ */
+export function offerAtomicAmount(offer: X402Offer): string {
+  const { amount, maxAmountRequired } = offer;
+  if (amount !== undefined && maxAmountRequired !== undefined && amount !== maxAmountRequired) {
+    throw new Error(`x402: offer names two amounts ("${amount}" and "${maxAmountRequired}") — refusing`);
+  }
+  const value = amount ?? maxAmountRequired;
   // BigInt(str) also accepts hex ("0x2710") and treats "" as 0n — neither is
   // a valid x402 atomic-unit amount (the spec is a plain decimal string).
   // Reject anything but digits before BigInt ever sees it.
-  if (!/^\d+$/.test(offer.amount)) {
-    throw new Error(`x402: offer amount "${offer.amount}" is not a decimal integer string`);
+  if (!value || !/^\d+$/.test(value)) {
+    throw new Error(`x402: offer amount "${value}" is not a decimal integer string`);
   }
-  const raw = BigInt(offer.amount);
-  if (raw > BigInt(MAX_SAFE_ATOMIC)) throw new Error(`x402: offer amount "${offer.amount}" exceeds safe integer bounds`);
+  return value;
+}
+
+export function offerUsd(offer: X402Offer): number {
+  const amount = offerAtomicAmount(offer);
+  const raw = BigInt(amount);
+  if (raw > BigInt(MAX_SAFE_ATOMIC)) throw new Error(`x402: offer amount "${amount}" exceeds safe integer bounds`);
   return Number(raw) / 1e6;
 }
 
@@ -190,50 +251,113 @@ export interface PayWith402Opts {
   offer: X402Offer;
   privateKeyHex: `0x${string}`;
   usdcAddress: string;
+  /** From the decoded PAYMENT-REQUIRED's own `x402Version` (see
+   * `PaymentRequired`) — absent or 2 is the long-standing v2 path,
+   * byte-identical to before this field existed. 1 routes to the SDK's
+   * dedicated v1 scheme/header machinery below. */
+  x402Version?: number;
 }
 
 /** Builds the signed exact-scheme payment for a HELD offer (never re-fetch
  * the offer between quoting and paying) and returns the retry header(s).
- * No fetch happens here — the paid retry itself is Task 5's job. */
+ * No fetch happens here — the paid retry itself is Task 5's job.
+ *
+ * Version-routed: v2 (default) is the original path, unchanged. v1 uses
+ * @x402/evm's OWN v1 scheme class (`ExactEvmSchemeV1`) to build the flat
+ * `{x402Version:1, scheme, network, payload}` wire shape v1 uses instead
+ * of v2's `{accepted, payload}` — through the SAME `restrictedSigner`,
+ * because `ExactEvmSchemeV1.signAuthorization` (a private method) calls
+ * `signer.signTypedData({ domain: { verifyingContract: asset, ... },
+ * primaryType: "TransferWithAuthorization", ... })`, the exact same
+ * member/primaryType/domain shape v2 invokes — restrictedSigner's guard
+ * needs no change to hold on this path too. Verified by reading
+ * @x402/evm's `exact/v1/client/scheme.ts` (bundled at
+ * `node_modules/@x402/evm/dist/cjs/exact/v1/client/index.js`) directly;
+ * not asserted from the type signature alone. */
 export async function payWith402(opts: PayWith402Opts): Promise<{ paymentHeaders: Record<string, string> }> {
+  // Defense-in-depth: x402FetchRaw already normalizes before this is ever
+  // called, but payWith402 is a real SDK-signing boundary in its own
+  // right (tests, and any future caller, invoke it directly) — it must
+  // refuse a garbage version itself rather than trust the caller.
+  const version = resolveX402Version(opts.x402Version);
   const signer = restrictedSigner(opts.privateKeyHex, opts.usdcAddress);
-  const requirements: PaymentRequirements = {
-    scheme: opts.offer.scheme,
-    network: opts.offer.network as `${string}:${string}`,
-    asset: opts.offer.asset,
-    amount: opts.offer.amount,
-    payTo: opts.offer.payTo,
-    // I3: a server-controlled maxTimeoutSeconds otherwise becomes the
-    // lifetime of a bearer authorization we hand over — an offer naming
-    // 315360000 (10 years) would get a decade-long signed blank cheque.
-    // Clamped to 10 minutes; `|| 60` also neutralizes non-numeric junk
-    // (NaN is falsy), which previously passed straight through unclamped.
-    maxTimeoutSeconds: Math.min(Number(opts.offer.maxTimeoutSeconds) || 60, 600),
-    extra: opts.offer.extra ?? {},
-  };
-  const scheme = new ExactEvmScheme(signer);
-  const result = await scheme.createPaymentPayload(2, requirements);
-  const paymentPayload: PaymentPayload = {
-    x402Version: 2,
-    accepted: requirements,
-    payload: result.payload,
-    ...(result.extensions ? { extensions: result.extensions } : {}),
-  };
-  return { paymentHeaders: { "PAYMENT-SIGNATURE": encodePaymentSignatureHeader(paymentPayload) } };
+  // I3: a server-controlled maxTimeoutSeconds otherwise becomes the
+  // lifetime of a bearer authorization we hand over — an offer naming
+  // 315360000 (10 years) would get a decade-long signed blank cheque.
+  // Clamped to 10 minutes; `|| 60` also neutralizes non-numeric junk
+  // (NaN is falsy), which previously passed straight through unclamped.
+  const maxTimeoutSeconds = Math.min(Number(opts.offer.maxTimeoutSeconds) || 60, 600);
+
+  let paymentPayload: PaymentPayload;
+  if (version === 1) {
+    // @x402/core's PUBLIC `PaymentRequirements`/`PaymentPayload` types are
+    // the v2 shapes only (v1's are separately named `PaymentRequirementsV1`/
+    // `PaymentPayloadV1` — a real gap in the SDK's own .d.ts, not something
+    // this wallet should paper over by inventing v1 typings of its own).
+    // `ExactEvmSchemeV1.createPaymentPayload`'s runtime body reads exactly
+    // these v1 fields (verified in its source, see the doc comment above)
+    // regardless of what its .d.ts happens to declare — the `unknown`
+    // round-trip below crosses that one typing gap, nothing else.
+    const requirements = {
+      scheme: opts.offer.scheme,
+      network: opts.offer.network,
+      maxAmountRequired: offerAtomicAmount(opts.offer),
+      resource: opts.offer.resource ?? "",
+      description: opts.offer.description ?? "",
+      payTo: opts.offer.payTo,
+      maxTimeoutSeconds,
+      asset: opts.offer.asset,
+      extra: opts.offer.extra ?? {},
+    } as unknown as PaymentRequirements;
+    paymentPayload = (await new ExactEvmSchemeV1(signer).createPaymentPayload(1, requirements)) as unknown as PaymentPayload;
+  } else {
+    const requirements: PaymentRequirements = {
+      scheme: opts.offer.scheme,
+      network: opts.offer.network as `${string}:${string}`,
+      asset: opts.offer.asset,
+      amount: offerAtomicAmount(opts.offer),
+      payTo: opts.offer.payTo,
+      maxTimeoutSeconds,
+      extra: opts.offer.extra ?? {},
+    };
+    const result = await new ExactEvmScheme(signer).createPaymentPayload(2, requirements);
+    paymentPayload = {
+      x402Version: 2,
+      accepted: requirements,
+      payload: result.payload,
+      ...(result.extensions ? { extensions: result.extensions } : {}),
+    };
+  }
+
+  // Version-aware header NAMING lives in the SDK, not here:
+  // x402HTTPClient.encodePaymentSignatureHeader picks "PAYMENT-SIGNATURE"
+  // for v2 and "X-PAYMENT" for v1 purely from paymentPayload.x402Version
+  // (@x402/core/dist/cjs/http/index.js:1596-1610) — no hand-picked header
+  // string on either path. The x402Client constructor argument is stored
+  // but never read by this method, so a throwaway one is safe: nothing
+  // else is ever called on this instance.
+  const http = new x402HTTPClient(undefined as never);
+  return { paymentHeaders: http.encodePaymentSignatureHeader(paymentPayload) };
 }
 
 /** Thin wrap over @x402/core's settlement decoder — T5 reads the settled tx
  * hash off the paid retry's response through this. Accepts either a raw
  * headers record (Node lowercases incoming header names) or a Fetch-style
- * Headers-like object. */
+ * Headers-like object.
+ *
+ * Tries both the x402 v2 header name (`PAYMENT-RESPONSE`) and the v1 name
+ * (`X-PAYMENT-RESPONSE`, what Ridges documents) — a resource server can
+ * answer with either depending on which x402Version its facilitator
+ * speaks, and this wallet pays against a HELD offer's own scheme/version
+ * rather than dictating one, so the settlement parse has to meet it. */
 export function parseSettlementHeader(
   headers: Record<string, string | string[] | undefined> | { get(name: string): string | null },
 ): SettleResponse | undefined {
-  const raw =
+  const get = (name: string): string | string[] | undefined | null =>
     typeof (headers as { get?: unknown }).get === "function"
-      ? (headers as { get(name: string): string | null }).get("PAYMENT-RESPONSE")
-      : ((headers as Record<string, string | string[] | undefined>)["PAYMENT-RESPONSE"] ??
-        (headers as Record<string, string | string[] | undefined>)["payment-response"]);
+      ? (headers as { get(name: string): string | null }).get(name)
+      : (headers as Record<string, string | string[] | undefined>)[name];
+  const raw = get("PAYMENT-RESPONSE") ?? get("payment-response") ?? get("X-PAYMENT-RESPONSE") ?? get("x-payment-response");
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (!value) return undefined;
   return decodePaymentResponseHeader(value);

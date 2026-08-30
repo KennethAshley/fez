@@ -148,7 +148,7 @@ describe("network preferences", () => {
     const { saveConfig } = await import("../src/config.js");
     await mirrorPrefs({ thresholds: { default: "5" } }); // loosened in the panel
     saveConfig(loadConfig());
-    fs.rmSync(path.join(process.env.FEZ_EXTENSION_DATA_DIR!, "wallet.json"), { force: true });
+    fs.rmSync(path.join(process.env.FEZ_EXTENSION_DATA_DIR!, "fez-wallet.json"), { force: true });
     expect(loadConfig().thresholds.default).toBe("0.01");
   });
 
@@ -328,12 +328,18 @@ describe("x402Settings", () => {
     expect(s.rpcUrl).toBe("https://mainnet.base.org");
   });
 
-  it("an explicit chainRef/usdcAddress/rpcUrl still wins over the network-derived default", () => {
+  // I2: for a KNOWN network, chainRef/usdcAddress can no longer be
+  // overridden at all — a mainnet contract must never survive under any
+  // label's resolution, known or not, once that label picks a real row.
+  // rpcUrl carries no signing weight and keeps the old, freely-overridable
+  // behavior.
+  it("a KNOWN network's chainRef/usdcAddress ignore an explicit override — only rpcUrl stays overridable", () => {
     const c = loadConfig();
-    c.x402 = { network: "base", usdcAddress: "0x000000000000000000000000000000deadbeef" };
+    c.x402 = { network: "base", usdcAddress: "0x000000000000000000000000000000deadbeef", rpcUrl: "https://disk.example" };
     const s = x402Settings(c);
-    expect(s.usdcAddress).toBe("0x000000000000000000000000000000deadbeef");
-    expect(s.chainRef).toBe("eip155:8453"); // still derived — only the overridden field changed
+    expect(s.usdcAddress).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"); // table wins, override ignored
+    expect(s.chainRef).toBe("eip155:8453"); // still derived
+    expect(s.rpcUrl).toBe("https://disk.example"); // rpc override still honored
   });
 
   it("an unrecognised network name falls back to the base-sepolia row rather than throwing", () => {

@@ -6,6 +6,7 @@ import {
   decodePaymentRequired,
   pickOffer,
   offerUsd,
+  offerAtomicAmount,
   todaySpend,
   recordSpend,
   type X402Offer,
@@ -154,6 +155,33 @@ describe("offerUsd", () => {
   it("allows the exact 2**53 boundary (throws only when strictly greater)", () => {
     const boundary = (2n ** 53n).toString();
     expect(offerUsd({ amount: boundary } as X402Offer)).toBeCloseTo(Number(2n ** 53n) / 1e6);
+  });
+});
+
+// C1 CRITICAL: offerUsd (pricing/caps/consent) and payWith402 (what gets
+// SIGNED) must never be able to read a v1 offer's two amount fields in a
+// different order and disagree — see offerAtomicAmount's doc comment.
+describe("offerAtomicAmount — the one accessor both pricing and signing must share", () => {
+  it("v2's `amount` alone", () => {
+    expect(offerAtomicAmount({ amount: "10000" } as X402Offer)).toBe("10000");
+  });
+
+  it("v1's `maxAmountRequired` alone", () => {
+    expect(offerAtomicAmount({ maxAmountRequired: "10000" } as X402Offer)).toBe("10000");
+  });
+
+  it("both present and EQUAL is fine", () => {
+    expect(offerAtomicAmount({ amount: "10000", maxAmountRequired: "10000" } as X402Offer)).toBe("10000");
+  });
+
+  it("both present and DIFFERENT refuses outright — this is the exact C1 attack shape (priced low, signed high)", () => {
+    expect(() =>
+      offerAtomicAmount({ amount: "10000", maxAmountRequired: "500000000" } as X402Offer)
+    ).toThrow(/two amounts/);
+  });
+
+  it("offerUsd (pricing) routes through it too — same refusal, same offer", () => {
+    expect(() => offerUsd({ amount: "10000", maxAmountRequired: "500000000" } as X402Offer)).toThrow(/two amounts/);
   });
 });
 
