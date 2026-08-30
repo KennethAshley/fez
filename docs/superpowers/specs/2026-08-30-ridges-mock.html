@@ -1,0 +1,211 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ridges — design mock</title>
+<style>
+  :root{
+    --bg0:#1d2021; --bg1:#282828; --bg2:#3c3836; --bg-rail:#17191a;
+    --fg:#ebdbb2; --fg-dim:#928374; --accent:#83a598; --brand:#FF6A00;
+    --green:#b8bb26; --red:#fb4934; --yellow:#fabd2f; --hairline:#32302f;
+    --phosphor:#b8bb26; --font-mono:ui-monospace,"SF Mono","JetBrains Mono",menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg-rail);color:var(--fg);font:13px/1.5 var(--font-mono);padding:0}
+  .frame{max-width:860px;margin:0 auto;padding:34px 40px 80px;background:var(--bg1);min-height:100vh}
+  .mocknote{font-size:10px;color:var(--fg-dim);letter-spacing:.14em;text-transform:uppercase;margin:0 0 26px;border:1px dashed var(--hairline);padding:6px 10px;display:inline-block}
+
+  /* ── page head (house grammar) ── */
+  h1{font-size:21px;font-weight:600;margin:0 0 6px;letter-spacing:-.01em}
+  .page-sub{color:var(--fg-dim);margin:0 0 14px;max-width:56ch}
+  .page-rule{display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--hairline);padding-bottom:10px;margin-bottom:22px}
+  .page-fact{font-size:11px;color:var(--fg-dim);letter-spacing:.05em}
+  .page-fact-action{font-size:11px;color:var(--brand);background:none;border:1px solid var(--hairline);border-radius:4px;padding:3px 9px;cursor:pointer;font-family:inherit}
+  .page-fact-action:hover{border-color:var(--brand)}
+  .page-fact-action:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
+  .spacer{flex:1}
+
+  .section{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--fg-dim);margin:26px 0 4px}
+
+  /* ── job rows ── */
+  .job{position:relative;display:grid;grid-template-columns:26px 1fr auto;gap:0 12px;padding:12px 10px 12px 14px;border-radius:6px;align-items:start}
+  .job.live{background:color-mix(in srgb, var(--bg2) 55%, transparent)}
+  .job.live::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--brand)}
+  .job+.job{margin-top:2px}
+  .job:hover{background:var(--bg2)}
+
+  /* identity gets a face: the dispatching agent */
+  .face{width:22px;height:22px;border-radius:4px;background:var(--bg0);display:grid;place-items:center;margin-top:2px;
+        font-size:11px;color:var(--fg);image-rendering:pixelated;position:relative;overflow:hidden}
+  .face i{position:absolute;width:4px;height:4px;background:var(--accent);opacity:.85}
+  .face.f-scout i:nth-child(1){left:4px;top:4px}.face.f-scout i:nth-child(2){right:4px;top:4px}
+  .face.f-scout i:nth-child(3){left:9px;top:12px;width:5px;background:var(--yellow)}
+  .face.f-drift i:nth-child(1){left:3px;top:9px;width:6px;background:var(--green)}
+  .face.f-drift i:nth-child(2){right:3px;top:5px}.face.f-drift i:nth-child(3){right:5px;bottom:4px;background:var(--red)}
+  .face.f-quill i:nth-child(1){left:9px;top:3px;height:6px;background:var(--yellow)}
+  .face.f-quill i:nth-child(2){left:5px;bottom:4px;width:12px;height:3px}
+
+  /* ── the bounty rail: issue ══($)══▶ PR ── */
+  .railline{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .agent{color:var(--fg-dim);font-size:11px;min-width:44px}
+  .node{font-weight:600}
+  .node a{color:var(--fg);text-decoration:none;border-bottom:1px solid var(--hairline)}
+  .node a:hover{border-color:var(--fg)}
+  .rail{position:relative;flex:0 1 150px;min-width:96px;height:14px;display:flex;align-items:center}
+  .rail .track{width:100%;border-top:2px dashed var(--hairline)}
+  .rail .price{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--bg1);
+               padding:0 6px;font-size:10px;color:var(--fg-dim);white-space:nowrap}
+  .job.live .rail .price{color:var(--brand)}
+  .job.live:hover .rail .price,.job.live .rail:hover .price{background:var(--bg2)}
+  .rail .tip{color:var(--fg-dim);position:absolute;right:-2px;top:50%;transform:translateY(-50%);font-size:11px}
+  /* the spark: one phosphor dot in transit while the subnet works */
+  .job.live .rail .spark{position:absolute;top:50%;left:0;width:5px;height:5px;border-radius:1px;background:var(--phosphor);
+    transform:translateY(-50%);animation:travel 2.6s linear infinite;box-shadow:0 0 6px var(--phosphor)}
+  @keyframes travel{from{left:2%}to{left:92%}}
+  @media (prefers-reduced-motion: reduce){.job.live .rail .spark{animation:none;left:46%}}
+  .ghost{color:var(--fg-dim);border:1px dashed var(--hairline);border-radius:4px;padding:0 7px;font-size:11px}
+  .pr{border:1px solid var(--hairline);border-radius:4px;padding:0 7px}
+  .pr a{color:var(--fg);text-decoration:none}
+  .status{font-size:11px;white-space:nowrap;margin-top:3px}
+  .st-work{color:var(--phosphor)}
+  .st-open{color:var(--accent)}
+  .st-merged{color:var(--fg-dim)}
+  .st-merged b{color:var(--green);font-weight:400}
+  .st-closed{color:var(--fg-dim)}
+  .st-closed b{color:var(--red);font-weight:400}
+  .st-warn{color:var(--yellow)}
+  .title{grid-column:2 / 4;color:var(--fg-dim);font-size:12px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .meta{grid-column:2 / 4;display:flex;gap:14px;font-size:10px;color:var(--fg-dim);margin-top:4px;letter-spacing:.03em}
+  .meta a{color:var(--fg-dim)}
+  .meta .receipt{cursor:pointer}
+  .meta .receipt:hover{color:var(--fg)}
+
+  /* dispatch affordance (revealed by + dispatch) */
+  .dispatch{display:flex;gap:8px;margin:0 0 18px}
+  .dispatch input{flex:1;background:var(--bg0);border:1px solid var(--hairline);border-radius:4px;color:var(--fg);
+                  font:12px var(--font-mono);padding:7px 10px}
+  .dispatch input::placeholder{color:var(--fg-dim)}
+  .dispatch input:focus-visible{outline:1px solid var(--accent);outline-offset:-1px}
+  .dispatch button{background:none;border:1px solid var(--brand);color:var(--brand);border-radius:4px;
+                   font:12px var(--font-mono);padding:7px 14px;cursor:pointer}
+  .dispatch .hint{grid-column:1/-1}
+  .hint{font-size:10px;color:var(--fg-dim);margin:-12px 0 18px}
+
+  /* ── empty state (the cast holds empty rooms) ── */
+  .divider{border-top:1px solid var(--hairline);margin:56px 0 30px;position:relative}
+  .divider span{position:absolute;top:-8px;left:0;background:var(--bg1);padding-right:10px;font-size:10px;
+                letter-spacing:.16em;text-transform:uppercase;color:var(--fg-dim)}
+  .empty{padding:30px 10px}
+  .empty .railline{opacity:.55;margin-bottom:18px}
+  .empty .rail .track{border-top:2px dashed var(--hairline)}
+  .empty-line{font-size:14px;margin:0 0 6px}
+  .empty-how{color:var(--fg-dim);max-width:52ch}
+  .empty-how code{background:var(--bg0);padding:1px 6px;border-radius:3px}
+</style>
+
+<div class="frame">
+  <p class="mocknote">design mock · ridges pane · both states</p>
+
+  <h1>ridges</h1>
+  <p class="page-sub">Pay a coding subnet to turn a GitHub issue into a pull request. One payment, one PR.</p>
+  <div class="page-rule">
+    <button class="page-fact-action">+ dispatch an issue</button>
+    <span class="page-fact">2 live · 5 merged · $3.75 this week</span>
+    <span class="spacer"></span>
+    <span class="page-fact">base-sepolia · test USDC</span>
+  </div>
+
+  <div class="dispatch">
+    <input placeholder="https://github.com/you/repo/issues/212 — needs the Ridgeline app installed on the repo" />
+    <button>pay &amp; dispatch</button>
+  </div>
+  <p class="hint">or from any channel: <b>/ridges &lt;issue-url&gt;</b> — big spends still ask you first ✅</p>
+
+  <div class="section">live</div>
+
+  <div class="job live">
+    <div class="face f-scout"><i></i><i></i><i></i></div>
+    <div class="railline">
+      <span class="agent">scout</span>
+      <span class="node"><a href="#">fez#212</a></span>
+      <span class="rail"><span class="track"></span><span class="price">$0.75</span><span class="spark"></span><span class="tip">▶</span></span>
+      <span class="ghost">PR …</span>
+    </div>
+    <div class="status st-work">working — the subnet has your issue</div>
+    <div class="title">onboarding wizard skips the relay step on retina displays</div>
+    <div class="meta"><span>4m ago</span><span class="receipt" title="kind 47040">receipt ⛁</span></div>
+  </div>
+
+  <div class="job live">
+    <div class="face f-drift"><i></i><i></i><i></i></div>
+    <div class="railline">
+      <span class="agent">drift</span>
+      <span class="node"><a href="#">fez#208</a></span>
+      <span class="rail"><span class="track"></span><span class="price">$0.75</span><span class="spark" style="animation-delay:-1.2s"></span><span class="tip">▶</span></span>
+      <span class="pr"><a href="#">PR#213</a></span>
+    </div>
+    <div class="status st-open">PR open — ready for your review</div>
+    <div class="title">bazaar panel forgets recall state across relaunch</div>
+    <div class="meta"><span>1h ago</span><span class="receipt">receipt ⛁</span><a href="#">view diff</a></div>
+  </div>
+
+  <div class="section">done</div>
+
+  <div class="job">
+    <div class="face f-scout"><i></i><i></i><i></i></div>
+    <div class="railline">
+      <span class="agent">scout</span>
+      <span class="node"><a href="#">fez#199</a></span>
+      <span class="rail"><span class="track"></span><span class="price">$0.75</span><span class="tip">▶</span></span>
+      <span class="pr"><a href="#">PR#204</a></span>
+    </div>
+    <div class="status st-merged"><b>✓ merged</b> — 2 days ago</div>
+    <div class="meta"><span class="receipt">receipt ⛁</span></div>
+  </div>
+
+  <div class="job">
+    <div class="face f-quill"><i></i><i></i></div>
+    <div class="railline">
+      <span class="agent">quill</span>
+      <span class="node"><a href="#">loom#87</a></span>
+      <span class="rail"><span class="track"></span><span class="price">$0.75</span><span class="tip">▶</span></span>
+      <span class="pr"><a href="#">PR#91</a></span>
+    </div>
+    <div class="status st-closed"><b>✕ closed unmerged</b> — 3 days ago · rerun with context?</div>
+    <div class="meta"><span class="receipt">receipt ⛁</span><a href="#">rerun</a></div>
+  </div>
+
+  <div class="job">
+    <div class="face f-drift"><i></i><i></i><i></i></div>
+    <div class="railline">
+      <span class="agent">drift</span>
+      <span class="node"><a href="#">fez#186</a></span>
+      <span class="rail"><span class="track"></span><span class="price">$0.75</span><span class="tip">▶</span></span>
+      <span class="ghost">PR …</span>
+    </div>
+    <div class="status st-warn">⚠ payment unclear — may have settled; check the receipt before retrying</div>
+    <div class="meta"><span>5 days ago</span><span class="receipt">receipt ⛁</span></div>
+  </div>
+
+  <!-- ─────────────────────── empty state ─────────────────────── -->
+  <div class="divider"><span>same pane, first run</span></div>
+
+  <h1>ridges</h1>
+  <p class="page-sub">Pay a coding subnet to turn a GitHub issue into a pull request. One payment, one PR.</p>
+  <div class="page-rule">
+    <button class="page-fact-action">+ dispatch an issue</button>
+    <span class="spacer"></span>
+    <span class="page-fact">base-sepolia · test USDC</span>
+  </div>
+
+  <div class="empty">
+    <div class="railline">
+      <span class="agent">&nbsp;</span>
+      <span class="ghost">issue</span>
+      <span class="rail"><span class="track"></span><span class="price">$0.75</span><span class="tip">▶</span></span>
+      <span class="ghost">PR</span>
+    </div>
+    <p class="empty-line">Your first job goes here.</p>
+    <p class="empty-how">Hand any agent a GitHub issue — <code>/ridges &lt;issue-url&gt;</code> — and the subnet's best
+    coding agent opens the PR on your repo. Install the Ridgeline app on the repo first; payments ride your
+    wallet's caps and ✅ consent.</p>
+  </div>
+</div>
