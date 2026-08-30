@@ -980,16 +980,35 @@ function Shell({
             <span className="nav-glyph">⚑</span> moderation
           </button>
         )}
-        {/* Extension-owned rail views (loom's ▣ tools gallery enters here). */}
-        {extensionNavViews().map((nav) => (
-          <button
-            key={nav.name}
-            className={view.kind === "ext" && view.name === nav.name ? "channel active home-link" : "channel home-link"}
-            onClick={() => setView({ kind: "ext", name: nav.name })}
-          >
-            <span className="nav-glyph">{nav.glyph}</span> {nav.label}
-          </button>
-        ))}
+        {/* Extension-owned rail views (Bazaar, loom's tools gallery, ridges)
+            gather under their own label — the core destinations above stay
+            the unlabeled spine; installed features get a section of their
+            own, sharing the CHANNELS/DMS subheader grammar. */}
+        {extensionNavViews().length > 0 && (
+          <div className="community">
+            <div className="community-name">
+              <span className="community-label">extensions</span>
+              {/* Manage what's installed — the group's own action, the way
+                  browse/manage sit with channels. */}
+              <button
+                className="community-add"
+                title="manage extensions"
+                onClick={() => setView({ kind: "extensions" })}
+              >
+                ⚙
+              </button>
+            </div>
+            {extensionNavViews().map((nav) => (
+              <button
+                key={nav.name}
+                className={view.kind === "ext" && view.name === nav.name ? "channel active home-link" : "channel home-link"}
+                onClick={() => setView({ kind: "ext", name: nav.name })}
+              >
+                <span className="nav-glyph">{nav.glyph}</span> {nav.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="community">
           <div className="community-name">
             <span className="community-label">channels</span>
