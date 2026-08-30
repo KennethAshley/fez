@@ -26,12 +26,13 @@
     "minFezVersion": "0.2.0"
   },
   "scripts": {
-    "build": "esbuild src/headless.ts src/mcp.ts --bundle --format=esm --platform=node --outdir=dist && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "build": "esbuild src/headless.ts src/mcp.ts --bundle --format=esm --platform=node --outdir=dist && fez pack",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
   "dependencies": {
     "@fezchat/wallet": "file:../fez-wallet",
+    "@fezchat/ui": "file:../fez-ui",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.23.0"
   },
@@ -40,7 +41,11 @@
     "@fezchat/extension-api": "file:../fez-extension-api",
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6"
   },
   "files": [
     "dist"
