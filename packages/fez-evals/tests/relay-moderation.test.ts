@@ -139,4 +139,23 @@ describe("moderationPolicy", () => {
     await probe.publishExpect(signAs(troll, 47103, "back after timeout", [["h", CH]], now() + 1), true);
     await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"]], now() + 30), true); // clean
   });
+
+  test("a removed message is withheld from every reader, and restore brings it back", async () => {
+    const msg = signAs(creator, 47103, "delete me", [["h", CH]], now() + 40);
+    await probe.publishExpect(msg, true);
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "removed"], ["e", msg.id]], now() + 41), true);
+
+    const reader = new Probe();
+    await reader.open();
+    await reader.auth(creator);
+    reader.send(["REQ", "r1", { kinds: [47103], "#h": [CH] }]);
+    await reader.waitFor((m) => m[0] === "EOSE" && m[1] === "r1");
+    expect(reader.messages.some((m) => m[0] === "EVENT" && m[1] === "r1" && (m[2] as any)?.id === msg.id)).toBe(false);
+
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "removed"]], now() + 42), true); // restore
+    reader.send(["REQ", "r2", { kinds: [47103], "#h": [CH] }]);
+    await reader.waitFor((m) => m[0] === "EOSE" && m[1] === "r2");
+    expect(reader.messages.some((m) => m[0] === "EVENT" && m[1] === "r2" && (m[2] as any)?.id === msg.id)).toBe(true);
+    reader.close();
+  });
 });

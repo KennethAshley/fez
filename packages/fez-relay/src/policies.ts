@@ -240,7 +240,9 @@ export function createdAtFencePolicy(opts?: { maxDriftS?: number; pastExemptKind
  */
 export function moderationPolicy(owner?: string): RelayPolicy {
   const BANS_D = "bans";
+  const REMOVED_D = "removed";
   let cachedBans: Map<string, number | undefined> | undefined;
+  let cachedRemoved: Set<string> | undefined;
   let cachedAdmins: Set<string> | undefined;
 
   // Owner + everyone the owner's latest roster marks role "admin".
@@ -282,24 +284,40 @@ export function moderationPolicy(owner?: string): RelayPolicy {
     return until === undefined || Math.floor(Date.now() / 1000) < until;
   };
 
+  // Event-ids an owner/admin has withheld. Reversible: drop the id from the
+  // list and the event is served again — the bytes were never deleted.
+  const removed = (ctx: PolicyContext): Set<string> => {
+    if (cachedRemoved) return cachedRemoved;
+    const latest = ctx
+      .query({ kinds: [KIND_BAN_LIST], "#d": [REMOVED_D] })
+      .filter((e) => admins(ctx).has(e.pubkey))
+      .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
+    cachedRemoved = new Set((latest?.tags ?? []).filter((t) => t[0] === "e" && t[1]).map((t) => t[1]));
+    return cachedRemoved;
+  };
+
   return {
     name: "moderation",
 
     onEvent(event, ctx) {
       // The roster is the admin set; if it moved, both derivations are stale.
       if (event.kind === KIND_MEMBERSHIP) {
-        cachedAdmins = undefined;
+        cachedAdmins = undefined; // admin set moved — both derivations are stale
         cachedBans = undefined;
+        cachedRemoved = undefined;
         return ok;
       }
       if (event.kind === KIND_BAN_LIST) {
-        // Only the owner or a current admin may write an edict.
+        // Only the owner or a current admin may write an edict (bans or removes).
         if (!admins(ctx).has(event.pubkey)) {
           return reject("blocked: not authorized to moderate this workspace");
         }
-        cachedBans = undefined;
+        if (tag(event, "d") === REMOVED_D) cachedRemoved = undefined;
+        else cachedBans = undefined;
         return ok;
       }
+      // A withheld event may not be re-injected under its own id.
+      if (removed(ctx).has(event.id)) return reject("blocked: this message was removed by a moderator");
       // Channel-scoped writes are what a ban withholds — the workspace
       // is the scope, so the h tag is the hook.
       if (!tag(event, "h")) return ok;
@@ -308,6 +326,7 @@ export function moderationPolicy(owner?: string): RelayPolicy {
     },
 
     onDeliver(event, ctx) {
+      if (removed(ctx).has(event.id)) return false; // withheld from every reader, reversibly
       if (!tag(event, "h") || !ctx.authedPubkey) return true; // unauthed read privacy is membershipPolicy's job
       return !isBanned(ctx.authedPubkey, ctx);
     },
