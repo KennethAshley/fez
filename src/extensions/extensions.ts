@@ -392,7 +392,7 @@ export function findUrlHandler(url: string): UrlHandler | undefined {
  * granted are REPLACED with no-ops that say so once — an extension that
  * quietly does nothing is worse to debug than one that logs why.
  */
-function buildApi(granted: readonly string[], extensionName = "extension"): FezExtensionAPI {
+export function buildApi(granted: readonly string[], extensionName = "extension"): FezExtensionAPI {
   const refuse = (permission: string, what: string) => {
     let warned = false;
     return () => {
@@ -420,20 +420,49 @@ function buildApi(granted: readonly string[], extensionName = "extension"): FezE
 
   // The nostr surface is the sharp one: read is the channel firehose,
   // publish signs AS THE USER. Gate them separately.
-  const gatedNostr: NostrAccess | undefined = nostrBackend && {
-    ...nostrBackend,
+  // Whitelist EVERY member explicitly — never spread nostrBackend. A spread
+  // exposes any method not overridden here RAW, which is exactly how
+  // signEvent/encrypt/decrypt used to leak past the permission gates (an
+  // extension with no grant could sign as the user or decrypt private
+  // content). Listing each member means a newly-added backend method is
+  // unreachable until it's deliberately gated here.
+  const bk = nostrBackend;
+  // `publish` already implies the ability to sign (you can't publish an
+  // event without signing it), so it satisfies the sign gate too.
+  const canSign = () => may("sign") || may("publish");
+  const gatedNostr: NostrAccess | undefined = bk && {
+    pubkey: bk.pubkey, // public — safe to expose ungated
     publish: may("publish")
-      ? nostrBackend.publish
+      ? bk.publish
       : (async (tmpl) => {
           refuse("publish", "publish an event")();
           return { ...tmpl, id: "", pubkey: "", created_at: 0, sig: "" } as never;
         }),
-    sendDm: may("publish") ? nostrBackend.sendDm : (async () => { refuse("publish", "send a DM")(); return ""; }),
-    query: may("read:channels") ? nostrBackend.query : (async () => { refuse("read:channels", "query the relay")(); return []; }),
+    signEvent: canSign()
+      ? bk.signEvent
+      : ((tmpl) => {
+          refuse("sign", "sign an event")();
+          return { ...tmpl, id: "", pubkey: "", created_at: tmpl.created_at ?? 0, sig: "" } as never;
+        }),
+    encrypt: canSign()
+      ? bk.encrypt
+      : ((_peer, _text) => { refuse("sign", "encrypt with your key")(); return ""; }),
+    // Decrypt reads private content addressed to you — `read:dms` covers the
+    // inbox case, `sign` the general crypto case. Throw (not "") so a denied
+    // call can't masquerade as valid empty plaintext; decrypt already throws
+    // on bad input, so callers cope with a throw.
+    decrypt: (may("sign") || may("read:dms"))
+      ? bk.decrypt
+      : ((_peer, _cipher) => {
+          refuse("sign", "decrypt with your key")();
+          throw new Error('extension denied: needs "sign" or "read:dms" to decrypt');
+        }),
+    sendDm: may("publish") ? bk.sendDm : (async () => { refuse("publish", "send a DM")(); return ""; }),
+    query: may("read:channels") ? bk.query : (async () => { refuse("read:channels", "query the relay")(); return []; }),
     subscribe: may("read:channels")
-      ? nostrBackend.subscribe
+      ? bk.subscribe
       : (() => { refuse("read:channels", "subscribe to the relay")(); return () => {}; }),
-    unwrapDm: may("read:dms") ? nostrBackend.unwrapDm : (() => { refuse("read:dms", "read a DM")(); return undefined; }),
+    unwrapDm: may("read:dms") ? bk.unwrapDm : (() => { refuse("read:dms", "read a DM")(); return undefined; }),
   };
 
   return {

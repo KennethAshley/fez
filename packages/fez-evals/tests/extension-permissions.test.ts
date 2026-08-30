@@ -25,6 +25,7 @@ describe("extension permissions", () => {
   it("marks the permissions a person should think twice about", () => {
     const sensitive = (id: string) => describePermission(id).sensitive;
     expect(sensitive("publish")).toBe(true);
+    expect(sensitive("sign")).toBe(true); // uses your key as you — think twice
     expect(sensitive("read:dms")).toBe(true);
     expect(sensitive("background")).toBe(true);
     expect(sensitive("network:*")).toBe(true);

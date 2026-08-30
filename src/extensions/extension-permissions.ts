@@ -27,6 +27,7 @@ export type PermissionId =
   | "read:dms"
   | "read:agents"
   | "publish"
+  | "sign"
   | "commands"
   | "ui"
   | "background"
@@ -45,6 +46,11 @@ const KNOWN: Record<string, Omit<PermissionInfo, "id">> = {
   "read:dms": { description: "Read your private direct messages", sensitive: true },
   "read:agents": { description: "See your agent roster and their activity", sensitive: false },
   publish: { description: "Post messages, reactions, and docs AS YOU", sensitive: true },
+  // Sensitive: signing/encrypting/decrypting uses your key AS YOU without
+  // going through the relay — NIP-98 HTTP auth, self-encrypted config,
+  // reading encrypted frames. Distinct from `publish` (relay) so an
+  // extension that only needs to sign a header doesn't over-declare.
+  sign: { description: "Sign, encrypt, and decrypt with your key (without publishing)", sensitive: true },
   commands: { description: "Add slash commands", sensitive: false },
   ui: { description: "Add panels, themes, and message cards", sensitive: false },
   background: { description: "Run on a schedule while you're away", sensitive: true },
