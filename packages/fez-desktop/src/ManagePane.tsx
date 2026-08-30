@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient } from "@fezchat/client";
 import { flash } from "./toast";
 import { relaySet } from "./relay";
@@ -176,7 +177,10 @@ function InviteCode({ communityName }: { communityName: string }) {
         <p>
           It points at whatever machine opens the invite, so a code made from it would send guests to
           themselves. Add a relay they can reach — a LAN or Tailscale address, or a hosted one — and the
-          code appears here.
+          code appears here.{" "}
+          <button className="skill-link" onClick={() => void openUrl("https://fez.chat/docs/self-hosting")}>
+            self-hosting guide ↗
+          </button>
         </p>
       </div>
     );
@@ -188,7 +192,7 @@ function InviteCode({ communityName }: { communityName: string }) {
     <>
       <code
         className="pk-code"
-        title="click to copy — anyone on this relay can join with it"
+        title="click to copy — gets them connected; inviting their key is what lets them in"
         onClick={() => {
           void navigator.clipboard.writeText(code);
           setCopied(true);
@@ -197,7 +201,10 @@ function InviteCode({ communityName }: { communityName: string }) {
       >
         {copied ? "✓ copied" : code}
       </code>
-      <div className="settings-hint">Send this to someone — they paste it under "join a workspace" (or onboard with it) and land in {communityName}.</div>
+      <div className="settings-hint">
+        Send this to someone — they paste it under "join a workspace" (or onboard with it). Connecting
+        gets them to the door; inviting their key above is what lets them into {communityName}.
+      </div>
     </>
   );
 }
