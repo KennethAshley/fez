@@ -1,7 +1,10 @@
 import type { CommandContext, FezExtensionAPI } from "@fezchat/extension-api/headless";
 import { makeX402Deps, x402FetchRaw, type X402ToolDeps } from "@fezchat/wallet";
-import { dispatchRidges, type X402Call, type X402Outcome } from "./dispatch.js";
+import { dispatchRidges, type FetchLike, type X402Call, type X402Outcome } from "./dispatch.js";
 import { ridgesDir } from "./home.js";
+import { createPollerState, pollOnce } from "./poller.js";
+
+const POLL_INTERVAL_MS = 90_000;
 
 /**
  * fez-ridges, headless part — `/ridges <issue-url>`.
@@ -37,6 +40,18 @@ export default function fezRidges(api: FezExtensionAPI): void {
     } catch (e) {
       return ctx.reply(`ridges: ${e instanceof Error ? e.message : String(e)}`);
     }
+  });
+
+  // Watches GitHub for the PR a paid dispatch bought, and transitions job
+  // rows honestly as it moves — same convention as fez-git's
+  // "git-branch-threads" scheduled task (registerScheduledTask + a
+  // module-held cursor/state, since a task can be retried or double-run
+  // and must never depend on foreground behavior). State lives here, not
+  // in ctx, because poller.ts's etags/backoff are this task's own cursor,
+  // not something another surface needs to see.
+  const pollerState = createPollerState();
+  api.registerScheduledTask("ridges-pr-poll", POLL_INTERVAL_MS, async () => {
+    await pollOnce({ dir: ridgesDir(), fetchImpl: fetch as unknown as FetchLike, state: pollerState });
   });
 }
 

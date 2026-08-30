@@ -12,14 +12,16 @@
         "command": "node",
         "args": ["dist/mcp.js"]
       },
-      "gui": "dist/gui.js"
+      "gui": "dist/gui.js",
+      "background": true
     },
     "permissions": [
       "network:product.ridges.ai",
       "network:api.github.com",
       "read:channels",
       "publish",
-      "ui"
+      "ui",
+      "background"
     ],
     "minFezVersion": "0.2.0"
   },
