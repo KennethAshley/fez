@@ -15,6 +15,8 @@ const PORT = 7794;
 const creator = generateSecretKey();
 const troll = generateSecretKey();
 const trollPk = getPublicKey(troll);
+const admin = generateSecretKey();
+const adminPk = getPublicKey(admin);
 const mallory = generateSecretKey();
 const now = () => Math.floor(Date.now() / 1000);
 const _COMM = "mod-comm";
@@ -78,7 +80,7 @@ beforeAll(async () => {
   await probe.open();
   await probe.publishExpect(signAs(creator, 47101, JSON.stringify({ name: "main" }), [["d", "roster"]]), true);
   await probe.publishExpect(
-    signAs(creator, 47102, "", [["d", "roster"], ["p", getPublicKey(creator)], ["p", trollPk]]),
+    signAs(creator, 47102, "", [["d", "roster"], ["p", getPublicKey(creator)], ["p", adminPk, "admin"], ["p", trollPk]]),
     true
   );
 });
@@ -93,9 +95,9 @@ describe("moderationPolicy", () => {
     await probe.publishExpect(signAs(troll, 47103, "gm", [["h", CH]]), true);
   });
 
-  test("a forged ban list (non-owner) is rejected at ingest", async () => {
+  test("a forged ban list (non-member) is rejected at ingest", async () => {
     const reason = await probe.publishExpect(signAs(mallory, 30047, "", [["d", "bans"], ["p", trollPk]]), false);
-    expect(reason).toMatch(/owner/);
+    expect(reason).toMatch(/not authorized|admin|owner/);
   });
 
   test("after the creator bans, the banned pubkey cannot write community content", async () => {
@@ -117,5 +119,14 @@ describe("moderationPolicy", () => {
   test("unban (empty creator list) restores writing", async () => {
     await probe.publishExpect(signAs(creator, 30047, "", [["d", "bans"]], now() + 1), true);
     await probe.publishExpect(signAs(troll, 47103, "reformed", [["h", CH]], now() + 2), true);
+  });
+
+  // Admins (role "admin" on the owner-signed roster) may sign edicts too.
+  test("an admin-signed ban is honored at ingest", async () => {
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"], ["p", trollPk]], now() + 10), true);
+    const reason = await probe.publishExpect(signAs(troll, 47103, "hi", [["h", CH]], now() + 11), false);
+    expect(reason).toMatch(/banned/);
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"]], now() + 12), true); // restore
+    await probe.publishExpect(signAs(troll, 47103, "back", [["h", CH]], now() + 13), true);
   });
 });

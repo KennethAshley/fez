@@ -128,8 +128,10 @@ export function membershipPolicy(owner?: string): RelayPolicy {
         return reject("blocked: kind 47100 is retired — a relay is a workspace");
       }
 
-      const governed =
-        event.kind === KIND_CHANNEL || event.kind === KIND_MEMBERSHIP || event.kind === KIND_BAN_LIST;
+      // 30047 (bans/removed) authorization is moderationPolicy's job now —
+      // it may be signed by the owner OR a current admin, which this policy
+      // (owner-only) can't express. Channel + roster stay owner-only.
+      const governed = event.kind === KIND_CHANNEL || event.kind === KIND_MEMBERSHIP;
       if (governed) {
         if (!owner) return reject("blocked: this workspace is unclaimed (no owner in NIP-11)");
         if (event.pubkey !== owner) return reject("blocked: only the workspace owner may publish this");
@@ -222,11 +224,15 @@ export function createdAtFencePolicy(opts?: { maxDriftS?: number; pastExemptKind
 
 /**
  * Moderation enforcement (Buzz's 9040-44 "bans bite at the seam",
- * decentralized): the workspace owner's latest kind-30047 ban list is
- * enforced at ingest (banned pubkeys can't write channel content) and at
- * delivery (an authed banned pubkey receives none). Clients enforce the
- * same list in their own trust rules — this policy is the operator-grade
- * backstop, like membershipPolicy.
+ * decentralized): the latest kind-30047 ban list — signed by the owner OR
+ * a current admin — is enforced at ingest (banned pubkeys can't write
+ * channel content) and at delivery (an authed banned pubkey receives none).
+ * Clients enforce the same list in their own trust rules — this policy is
+ * the operator-grade backstop, like membershipPolicy.
+ *
+ * Admins are derived from the owner-signed roster (a `p` tag with role
+ * "admin"), so authority still traces to the owner's signature: demote an
+ * admin and their edicts stop being honored on the next roster.
  *
  * One list per workspace, keyed on BANS_D. Banned is banned everywhere in
  * the workspace, which is what "banned from the server" has always meant
@@ -235,15 +241,29 @@ export function createdAtFencePolicy(opts?: { maxDriftS?: number; pastExemptKind
 export function moderationPolicy(owner?: string): RelayPolicy {
   const BANS_D = "bans";
   let cachedBans: Set<string> | undefined;
+  let cachedAdmins: Set<string> | undefined;
 
-  const bans = (ctx: PolicyContext): Set<string> => {
-    if (cachedBans) return cachedBans;
-    const latest = owner
+  // Owner + everyone the owner's latest roster marks role "admin".
+  const admins = (ctx: PolicyContext): Set<string> => {
+    if (cachedAdmins) return cachedAdmins;
+    const roster = owner
       ? ctx
-          .query({ kinds: [KIND_BAN_LIST], "#d": [BANS_D] })
+          .query({ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] })
           .filter((e) => e.pubkey === owner)
           .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0]
       : undefined;
+    const set = new Set<string>(owner ? [owner] : []);
+    for (const t of roster?.tags ?? []) if (t[0] === "p" && t[1] && t[2] === "admin") set.add(t[1]);
+    cachedAdmins = set;
+    return set;
+  };
+
+  const bans = (ctx: PolicyContext): Set<string> => {
+    if (cachedBans) return cachedBans;
+    const latest = ctx
+      .query({ kinds: [KIND_BAN_LIST], "#d": [BANS_D] })
+      .filter((e) => admins(ctx).has(e.pubkey))
+      .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
     cachedBans = new Set(latest?.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]) ?? []);
     return cachedBans;
   };
@@ -252,10 +272,18 @@ export function moderationPolicy(owner?: string): RelayPolicy {
     name: "moderation",
 
     onEvent(event, ctx) {
+      // The roster is the admin set; if it moved, both derivations are stale.
+      if (event.kind === KIND_MEMBERSHIP) {
+        cachedAdmins = undefined;
+        cachedBans = undefined;
+        return ok;
+      }
       if (event.kind === KIND_BAN_LIST) {
-        // Ownership itself is membershipPolicy's call; this policy only
-        // has to notice the list moved.
-        if (owner && event.pubkey === owner) cachedBans = undefined;
+        // Only the owner or a current admin may write an edict.
+        if (!admins(ctx).has(event.pubkey)) {
+          return reject("blocked: not authorized to moderate this workspace");
+        }
+        cachedBans = undefined;
         return ok;
       }
       // Channel-scoped writes are what a ban withholds — the workspace
