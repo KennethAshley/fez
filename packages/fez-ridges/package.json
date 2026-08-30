@@ -1,0 +1,40 @@
+{
+  "name": "@fezchat/ridges",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The first paid-service extension for fez — /ridges <issue-url> pays the Ridges subnet through the wallet's x402 rail and tracks the resulting PR.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "headless": "dist/headless.js",
+      "gui": "dist/gui.js"
+    },
+    "permissions": [
+      "network:product.ridges.ai",
+      "network:api.github.com",
+      "read:channels",
+      "publish",
+      "ui"
+    ],
+    "minFezVersion": "0.2.0"
+  },
+  "scripts": {
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "check": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@fezchat/wallet": "file:../fez-wallet"
+  },
+  "devDependencies": {
+    "@fezchat/protocol": "file:../..",
+    "@fezchat/extension-api": "file:../fez-extension-api",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
