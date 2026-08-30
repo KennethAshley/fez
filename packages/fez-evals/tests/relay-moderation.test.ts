@@ -15,6 +15,8 @@ const PORT = 7794;
 const creator = generateSecretKey();
 const troll = generateSecretKey();
 const trollPk = getPublicKey(troll);
+const admin = generateSecretKey();
+const adminPk = getPublicKey(admin);
 const mallory = generateSecretKey();
 const now = () => Math.floor(Date.now() / 1000);
 const _COMM = "mod-comm";
@@ -78,7 +80,7 @@ beforeAll(async () => {
   await probe.open();
   await probe.publishExpect(signAs(creator, 47101, JSON.stringify({ name: "main" }), [["d", "roster"]]), true);
   await probe.publishExpect(
-    signAs(creator, 47102, "", [["d", "roster"], ["p", getPublicKey(creator)], ["p", trollPk]]),
+    signAs(creator, 47102, "", [["d", "roster"], ["p", getPublicKey(creator)], ["p", adminPk, "admin"], ["p", trollPk]]),
     true
   );
 });
@@ -93,9 +95,9 @@ describe("moderationPolicy", () => {
     await probe.publishExpect(signAs(troll, 47103, "gm", [["h", CH]]), true);
   });
 
-  test("a forged ban list (non-owner) is rejected at ingest", async () => {
+  test("a forged ban list (non-member) is rejected at ingest", async () => {
     const reason = await probe.publishExpect(signAs(mallory, 30047, "", [["d", "bans"], ["p", trollPk]]), false);
-    expect(reason).toMatch(/owner/);
+    expect(reason).toMatch(/not authorized|admin|owner/);
   });
 
   test("after the creator bans, the banned pubkey cannot write community content", async () => {
@@ -117,5 +119,43 @@ describe("moderationPolicy", () => {
   test("unban (empty creator list) restores writing", async () => {
     await probe.publishExpect(signAs(creator, 30047, "", [["d", "bans"]], now() + 1), true);
     await probe.publishExpect(signAs(troll, 47103, "reformed", [["h", CH]], now() + 2), true);
+  });
+
+  // Admins (role "admin" on the owner-signed roster) may sign edicts too.
+  test("an admin-signed ban is honored at ingest", async () => {
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"], ["p", trollPk]], now() + 10), true);
+    const reason = await probe.publishExpect(signAs(troll, 47103, "hi", [["h", CH]], now() + 11), false);
+    expect(reason).toMatch(/banned/);
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"]], now() + 12), true); // restore
+    await probe.publishExpect(signAs(troll, 47103, "back", [["h", CH]], now() + 13), true);
+  });
+
+  test("a timeout (ban with until) lifts automatically once it passes", async () => {
+    const until = now() + 2;
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"], ["p", trollPk, String(until)]], now() + 20), true);
+    const blocked = await probe.publishExpect(signAs(troll, 47103, "muted", [["h", CH]], now() + 21), false);
+    expect(blocked).toMatch(/banned|timed out/);
+    await new Promise((r) => setTimeout(r, 2100));
+    await probe.publishExpect(signAs(troll, 47103, "back after timeout", [["h", CH]], now() + 1), true);
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"]], now() + 30), true); // clean
+  });
+
+  test("a removed message is withheld from every reader, and restore brings it back", async () => {
+    const msg = signAs(creator, 47103, "delete me", [["h", CH]], now() + 40);
+    await probe.publishExpect(msg, true);
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "removed"], ["e", msg.id]], now() + 41), true);
+
+    const reader = new Probe();
+    await reader.open();
+    await reader.auth(creator);
+    reader.send(["REQ", "r1", { kinds: [47103], "#h": [CH] }]);
+    await reader.waitFor((m) => m[0] === "EOSE" && m[1] === "r1");
+    expect(reader.messages.some((m) => m[0] === "EVENT" && m[1] === "r1" && (m[2] as any)?.id === msg.id)).toBe(false);
+
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "removed"]], now() + 42), true); // restore
+    reader.send(["REQ", "r2", { kinds: [47103], "#h": [CH] }]);
+    await reader.waitFor((m) => m[0] === "EOSE" && m[1] === "r2");
+    expect(reader.messages.some((m) => m[0] === "EVENT" && m[1] === "r2" && (m[2] as any)?.id === msg.id)).toBe(true);
+    reader.close();
   });
 });

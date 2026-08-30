@@ -83,9 +83,25 @@ export interface Workspace {
   members: Map<string, Role>;
   rosterCreatedAt: number;
   rosterEventId?: string;
-  banned: Set<string>;
+  /** pubkey -> until (unix seconds), or undefined for a permanent ban. */
+  banned: Map<string, number | undefined>;
+  /** pubkey -> the reason inside the signed edict — the audit trail. */
+  banReasons: Map<string, string>;
   banListCreatedAt: number;
   banListEventId?: string;
+  /** Event-ids withheld by a moderator. Reversible — restore drops the id. */
+  removed: Set<string>;
+  removalReasons: Map<string, string>;
+  removedCreatedAt: number;
+  removedEventId?: string;
+  /** Report targets a moderator dismissed — same signed-list machinery. */
+  dismissed: Set<string>;
+  dismissedCreatedAt: number;
+  dismissedEventId?: string;
+  /** Who signed the winning list — the queue's "removed by theo" attribution. */
+  banListSigner?: string;
+  removedSigner?: string;
+  dismissedSigner?: string;
 }
 
 /** Where you are. No community — the workspace is the relay you're on. */
@@ -153,6 +169,8 @@ const KIND_MEMBERSHIP = 47102;
 const KIND_BAN_LIST = 30047;
 const ROSTER_D = "roster";
 const BANS_D = "bans";
+const REMOVED_D = "removed";
+const DISMISSED_D = "dismissed";
 
 export function emptyWorkspace(relay: string, name?: string): Workspace {
   return {
@@ -161,8 +179,14 @@ export function emptyWorkspace(relay: string, name?: string): Workspace {
     channels: new Map(),
     members: new Map(),
     rosterCreatedAt: 0,
-    banned: new Set(),
+    banned: new Map(),
+    banReasons: new Map(),
     banListCreatedAt: 0,
+    removed: new Set(),
+    removalReasons: new Map(),
+    removedCreatedAt: 0,
+    dismissed: new Set(),
+    dismissedCreatedAt: 0,
   };
 }
 
@@ -256,7 +280,12 @@ export class WorkspaceState {
   }): boolean {
     const tag = (name: string) => event.tags.find((t) => t[0] === name)?.[1];
     const ws = this.workspace;
-    if (!ws.owner || event.pubkey !== ws.owner) return false;
+    // Channel + roster are owner-only; ban/removed edicts may also come from a
+    // current admin (canModerate). Roster is absorbed before bans (syncWorkspace
+    // ordering), so the admin set is known by the time an edict arrives.
+    const authorized =
+      event.kind === KIND_BAN_LIST ? this.canModerate(event.pubkey) : !!ws.owner && event.pubkey === ws.owner;
+    if (!authorized) return false;
 
     if (event.kind === KIND_CHANNEL) {
       const channelId = tag("d");
@@ -315,19 +344,58 @@ export class WorkspaceState {
     }
 
     if (event.kind === KIND_BAN_LIST) {
-      if (tag("d") !== BANS_D) return false;
-      if (event.created_at < ws.banListCreatedAt) return false;
-      if (
-        event.created_at === ws.banListCreatedAt &&
-        ws.banListEventId !== undefined &&
-        event.id >= ws.banListEventId
-      ) {
-        return false;
+      const d = tag("d");
+      if (d === BANS_D) {
+        if (event.created_at < ws.banListCreatedAt) return false;
+        if (
+          event.created_at === ws.banListCreatedAt &&
+          ws.banListEventId !== undefined &&
+          event.id >= ws.banListEventId
+        ) {
+          return false;
+        }
+        const entries = event.tags.filter((t) => t[0] === "p" && t[1]);
+        ws.banned = new Map(entries.map((t) => [t[1], t[2] ? Number(t[2]) : undefined] as const));
+        // ["p", pk, until|"", reason] — the reason is part of the signed record.
+        ws.banReasons = new Map(entries.filter((t) => t[3]).map((t) => [t[1], t[3]] as const));
+        ws.banListCreatedAt = event.created_at;
+        ws.banListEventId = event.id;
+        ws.banListSigner = event.pubkey;
+        return true;
       }
-      ws.banned = new Set(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
-      ws.banListCreatedAt = event.created_at;
-      ws.banListEventId = event.id;
-      return true;
+      if (d === REMOVED_D) {
+        if (event.created_at < ws.removedCreatedAt) return false;
+        if (
+          event.created_at === ws.removedCreatedAt &&
+          ws.removedEventId !== undefined &&
+          event.id >= ws.removedEventId
+        ) {
+          return false;
+        }
+        const removedTags = event.tags.filter((t) => t[0] === "e" && t[1]);
+        ws.removed = new Set(removedTags.map((t) => t[1]));
+        ws.removalReasons = new Map(removedTags.filter((t) => t[2]).map((t) => [t[1], t[2]] as const));
+        ws.removedCreatedAt = event.created_at;
+        ws.removedEventId = event.id;
+        ws.removedSigner = event.pubkey;
+        return true;
+      }
+      if (d === DISMISSED_D) {
+        if (event.created_at < ws.dismissedCreatedAt) return false;
+        if (
+          event.created_at === ws.dismissedCreatedAt &&
+          ws.dismissedEventId !== undefined &&
+          event.id >= ws.dismissedEventId
+        ) {
+          return false;
+        }
+        ws.dismissed = new Set(event.tags.filter((t) => t[0] === "e" && t[1]).map((t) => t[1]));
+        ws.dismissedCreatedAt = event.created_at;
+        ws.dismissedEventId = event.id;
+        ws.dismissedSigner = event.pubkey;
+        return true;
+      }
+      return false;
     }
 
     return false;
@@ -343,17 +411,44 @@ export class WorkspaceState {
    * everywhere, without touching the roster.
    */
   isMember(pubkey: string): boolean {
-    if (this.workspace.banned.has(pubkey)) return false;
+    if (this.isBanned(pubkey)) return false;
     return this.workspace.members.has(pubkey) || this.workspace.owner === pubkey;
   }
 
+  /** Banned now? A timeout (until set) counts only until it expires. */
   isBanned(pubkey: string): boolean {
-    return this.workspace.banned.has(pubkey);
+    const banned = this.workspace.banned;
+    if (!banned.has(pubkey)) return false;
+    const until = banned.get(pubkey);
+    return until === undefined || Math.floor(Date.now() / 1000) < until;
   }
 
   /** Am I the one who can create channels and edit the roster? */
   isOwner(pubkey: string): boolean {
     return !!this.workspace.owner && this.workspace.owner === pubkey;
+  }
+
+  /** May this key ban/timeout/remove? The owner, or an admin on the roster. */
+  canModerate(pubkey: string): boolean {
+    return this.isOwner(pubkey) || this.roleOf(pubkey) === "admin";
+  }
+
+  /** Has a moderator withheld this event? */
+  isRemoved(eventId: string): boolean {
+    return this.workspace.removed.has(eventId);
+  }
+
+  /** The reason inside the signed ban edict, if the moderator gave one. */
+  banReason(pubkey: string): string | undefined {
+    return this.workspace.banReasons.get(pubkey);
+  }
+
+  removalReason(eventId: string): string | undefined {
+    return this.workspace.removalReasons.get(eventId);
+  }
+
+  isDismissed(eventId: string): boolean {
+    return this.workspace.dismissed.has(eventId);
   }
 
   roleOf(pubkey: string): Role | undefined {
