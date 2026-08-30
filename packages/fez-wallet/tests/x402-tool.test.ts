@@ -451,6 +451,100 @@ describe("x402Fetch: balance-first check", () => {
   });
 });
 
+describe("x402Fetch: signing refusal is unambiguous (I1)", () => {
+  it("a permit2-routed offer (server-steerable via extra.assetTransferMethod) is refused — zero writes", async () => {
+    const dir = tmpHome();
+    // @x402/evm routes into PermitWitnessTransferFrom when the offer says
+    // so — our restricted signer refuses that primaryType outright. The
+    // bug this guards was recording the spend as if it happened anyway.
+    const permit2Offer = offer({ extra: { name: "USDC", version: "2", assetTransferMethod: "permit2" } });
+    const fetchImpl: FetchLike = async () => paymentRequiredResponse([permit2Offer]);
+    const out = await x402Fetch(
+      baseDeps(dir, { fetchImpl, config: baseConfig({ x402: { autoApproveUnderUsd: { default: 1 } } }) }),
+      { url: "http://x/", maxUsd: 1 }
+    );
+    expect(out).toContain("nothing was paid");
+    expect(out).toMatch(/could not be signed/);
+    expect(out).not.toMatch(/may have settled/i); // unambiguous — nothing left the process
+    expect(todaySpend(dir)).toBe(0);
+    expect(readX402Log(dir)).toHaveLength(0);
+  });
+});
+
+describe("x402Fetch: nothing after settlement may throw (C1)", () => {
+  it("200 + a malformed PAYMENT-RESPONSE header -> ambiguous, not settled, no receipt, never throws", async () => {
+    const dir = tmpHome();
+    const { relay, published } = autoRelay(() => "✅");
+    let calls = 0;
+    const fetchImpl: FetchLike = async () => {
+      calls++;
+      if (calls === 1) return paymentRequiredResponse([offer()]);
+      // @x402/core's decoder throws on this — that's the point.
+      return fakeResponse(200, { headers: { "PAYMENT-RESPONSE": "not-a-valid-header!!!" }, body: "ok" });
+    };
+    const out = await x402Fetch(
+      baseDeps(dir, { fetchImpl, ownerPk, agentNostrKey, relay: () => Promise.resolve(relay) }),
+      { url: "http://x/", maxUsd: 1 }
+    );
+    expect(out).toMatch(/may have settled/i);
+    expect(out).toMatch(/do not retry/i);
+    const rows = readX402Log(dir, 5);
+    expect(rows[0].status).toBe("ambiguous");
+    expect(rows.some((r) => r.status === "settled")).toBe(false);
+    expect(published.map(parseReceipt).filter(Boolean)).toHaveLength(0);
+  });
+});
+
+describe("x402Fetch: payTo must be a real EVM address (M1)", () => {
+  it("refuses an offer whose payTo isn't a plain 20-byte hex address", async () => {
+    const dir = tmpHome();
+    const badOffer = offer({ payTo: "0x2096000000000000000000000000000000000001`\ninjected" });
+    const fetchImpl: FetchLike = async () => paymentRequiredResponse([badOffer]);
+    const out = await x402Fetch(baseDeps(dir, { fetchImpl }), { url: "http://x/", maxUsd: 1 });
+    expect(out).toContain("not a valid EVM address");
+    expect(readX402Log(dir)).toHaveLength(0);
+    expect(todaySpend(dir)).toBe(0);
+  });
+});
+
+describe("x402Fetch: only http(s) URLs (M5)", () => {
+  it("refuses a non-http(s) URL up front", async () => {
+    const dir = tmpHome();
+    await expect(
+      x402Fetch(baseDeps(dir, { fetchImpl: async () => fakeResponse(200) }), {
+        url: "file:///etc/passwd",
+        maxUsd: 1,
+      })
+    ).rejects.toThrow(/http\(s\)/);
+  });
+});
+
+describe("x402Fetch: concurrent calls cannot together exceed the cap (I2)", () => {
+  it("two overlapping calls against one dir settle at most one of them once the cap is tight", async () => {
+    const dir = tmpHome();
+    const pricey = offer({ amount: "15000000" }); // $15 each; a $25 cap admits only one
+    const config = baseConfig({ x402: { dailyCapUsd: 25, autoApproveUnderUsd: { default: 100 } } }); // skip consent entirely
+    const makeFlow = (): FetchLike => {
+      let calls = 0;
+      return async () => {
+        calls++;
+        return calls === 1 ? paymentRequiredResponse([pricey]) : settledResponse();
+      };
+    };
+    const plentyOfBalance = fakeAdapter(1_000_000_000n); // $1,000 — balance is not what's under test here
+    const [outA, outB] = await Promise.all([
+      x402Fetch(baseDeps(dir, { fetchImpl: makeFlow(), config, adapter: plentyOfBalance }), { url: "http://a/", maxUsd: 100 }),
+      x402Fetch(baseDeps(dir, { fetchImpl: makeFlow(), config, adapter: plentyOfBalance }), { url: "http://b/", maxUsd: 100 }),
+    ]);
+    const outs = [outA, outB];
+    expect(outs.filter((o) => o.includes("paid $15.00"))).toHaveLength(1);
+    expect(outs.filter((o) => o.includes("daily cap"))).toHaveLength(1);
+    // The real invariant: together, they never spent more than the cap —
+    // an EARLY pre-check alone (before this fix) let both through.
+    expect(todaySpend(dir)).toBeLessThanOrEqual(25);
+  });
+});
+
 describe("resolveEvmPair: friendly error on a pre-EVM stored entry", () => {
   it("names the fix instead of echoing a generic parse error", () => {
     const preEvmStored = JSON.stringify({ publicKeyHex: "aa", secretKeyHex: "bb", address: "5X" });

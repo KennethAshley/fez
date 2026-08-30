@@ -8,7 +8,7 @@
 // Coinbase's official @x402/evm ExactEvmScheme (wire encoding via @x402/core —
 // never hand-rolled while that SDK is live).
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import path from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import { ExactEvmScheme } from "@x402/evm";
@@ -22,7 +22,13 @@ export interface X402Offer {
   asset: string;
   payTo: string;
   maxTimeoutSeconds?: number;
-  extra?: { name?: string; version?: string };
+  // `name`/`version` are the two fields this wallet's own signing path
+  // reads directly; the index signature lets a real 402 offer carry
+  // whatever else the exact-scheme spec allows through untyped (e.g.
+  // `assetTransferMethod: "permit2"`, which @x402/evm's client reads to
+  // pick a signing primitive — restrictedSigner is what actually gates
+  // that choice, not this type).
+  extra?: { name?: string; version?: string; [key: string]: unknown };
 }
 
 export interface PaymentRequired {
@@ -101,10 +107,38 @@ export function todaySpend(dir: string): number {
   return readDaySpend(dir).usd;
 }
 
-export function recordSpend(dir: string, usd: number): void {
+/**
+ * Reads, checks against `capUsd`, and writes in one synchronous call —
+ * no `await` anywhere in this function. That matters more than the
+ * tmp+rename below: two "overlapping" x402Fetch calls are only ever
+ * concurrent at their `await` points (JS run-to-completion), so as long
+ * as the cap is enforced HERE (right before the paid request is
+ * dispatched) rather than by an earlier pre-check separated from the
+ * write by a network round-trip or a 10-minute consent wait, the second
+ * caller to reach this line always sees the first caller's already-
+ * written total. Throws WITHOUT writing when `cur.usd + usd > capUsd`.
+ *
+ * ponytail: tmp-file + rename protects a READER from ever seeing a
+ * torn/partial write (e.g. a crash mid-write, or another process reading
+ * at the wrong instant) — it does NOT make check-then-write atomic
+ * across separate OS processes (two independent `fez-wallet` MCP
+ * processes for the same persona could still race each other here).
+ * Today's deployment is one process per persona, so in-process
+ * synchronity is the actual guarantee; upgrade to a real file lock
+ * (e.g. proper-lockfile) only if multiple processes ever share one dir.
+ */
+export function recordSpend(dir: string, usd: number, capUsd?: number): number {
   const current = readDaySpend(dir);
-  current.usd += usd;
-  writeFileSync(path.join(dir, SPEND_FILE), JSON.stringify(current));
+  const next = current.usd + usd;
+  if (capUsd !== undefined && next > capUsd) {
+    throw new Error(`x402: daily cap $${capUsd.toFixed(2)} would be exceeded (spent $${current.usd.toFixed(2)} today)`);
+  }
+  current.usd = next;
+  const file = path.join(dir, SPEND_FILE);
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(current));
+  renameSync(tmp, file);
+  return current.usd;
 }
 
 /** The shape @x402/evm's ExactEvmScheme calls signTypedData with — matches
@@ -169,7 +203,12 @@ export async function payWith402(opts: PayWith402Opts): Promise<{ paymentHeaders
     asset: opts.offer.asset,
     amount: opts.offer.amount,
     payTo: opts.offer.payTo,
-    maxTimeoutSeconds: opts.offer.maxTimeoutSeconds ?? 60,
+    // I3: a server-controlled maxTimeoutSeconds otherwise becomes the
+    // lifetime of a bearer authorization we hand over — an offer naming
+    // 315360000 (10 years) would get a decade-long signed blank cheque.
+    // Clamped to 10 minutes; `|| 60` also neutralizes non-numeric junk
+    // (NaN is falsy), which previously passed straight through unclamped.
+    maxTimeoutSeconds: Math.min(Number(opts.offer.maxTimeoutSeconds) || 60, 600),
     extra: opts.offer.extra ?? {},
   };
   const scheme = new ExactEvmScheme(signer);

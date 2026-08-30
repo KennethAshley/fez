@@ -44,6 +44,18 @@ const X402_DEFAULTS: X402Settings = {
   rpcUrl: "https://sepolia.base.org",
 };
 
+/** network -> the chain facts that follow from it, so "flip the network"
+ * (the README's promise) is literally one field. Only two rows exist
+ * today; an unrecognised `network` string falls back to base-sepolia's
+ * row rather than refusing outright — the same "an override still wins"
+ * shape `chainRef`/`usdcAddress`/`rpcUrl` keep below regardless. USDC
+ * addresses verified against Circle's official contract-address docs,
+ * 2026-08-30 (developers.circle.com/stablecoins/usdc-contract-addresses). */
+const X402_NETWORK_TABLE: Record<string, { chainRef: string; usdcAddress: string; rpcUrl: string }> = {
+  "base-sepolia": { chainRef: "eip155:84532", usdcAddress: USDC_BASE_SEPOLIA, rpcUrl: "https://sepolia.base.org" },
+  base: { chainRef: "eip155:8453", usdcAddress: USDC_BASE_MAINNET, rpcUrl: "https://mainnet.base.org" },
+};
+
 /**
  * x402 lives in wallet.json ONLY, never prefs. The cap and auto-approve
  * floors are the same kind of security ceiling `thresholds` is, and
@@ -57,10 +69,28 @@ const X402_DEFAULTS: X402Settings = {
  */
 export function x402Settings(c: WalletConfig): X402Settings {
   const raw = c.x402 ?? {};
+  const network = raw.network ?? X402_DEFAULTS.network;
+  const derived = X402_NETWORK_TABLE[network] ?? X402_NETWORK_TABLE[X402_DEFAULTS.network];
+
+  // A NaN/Infinity here (a hand-edited or generated bad config value)
+  // must not silently fail OPEN: dailyCapUsd feeds a `>` comparison that
+  // never trips against NaN, and autoApproveUnderUsd feeds one that
+  // never trips either — either way, every payment would auto-approve
+  // with no cap. Bad values fall back to the default instead of passing
+  // through.
+  const dailyCapUsd = Number.isFinite(raw.dailyCapUsd) ? (raw.dailyCapUsd as number) : X402_DEFAULTS.dailyCapUsd;
+  const autoApproveUnderUsd: Record<string, number> = { ...X402_DEFAULTS.autoApproveUnderUsd };
+  for (const [persona, v] of Object.entries(raw.autoApproveUnderUsd ?? {})) {
+    if (Number.isFinite(v)) autoApproveUnderUsd[persona] = v as number;
+  }
+
   return {
-    ...X402_DEFAULTS,
-    ...raw,
-    autoApproveUnderUsd: { ...X402_DEFAULTS.autoApproveUnderUsd, ...raw.autoApproveUnderUsd },
+    network,
+    chainRef: raw.chainRef ?? derived.chainRef,
+    usdcAddress: raw.usdcAddress ?? derived.usdcAddress,
+    rpcUrl: raw.rpcUrl ?? derived.rpcUrl,
+    dailyCapUsd,
+    autoApproveUnderUsd,
   };
 }
 
@@ -242,6 +272,12 @@ export function rememberPayee(c: WalletConfig, pubkey: string): void {
   if (!c.knownPayees.includes(pubkey)) c.knownPayees = [...c.knownPayees, pubkey];
 }
 
+/** Smallest-unused is only safe while personas never shrink: if an entry
+ * were ever deleted from `c.personas`, its index would look "unused" again
+ * and get handed to the NEXT new persona — who would inherit whatever
+ * balance the old, deleted persona's key still held. Nothing today deletes
+ * a persona entry; if that ever changes, indexes must be retired, not
+ * reused. */
 export function assignEvmIndex(c: WalletConfig, persona: string): number {
   const existing = c.personas[persona];
   if (existing) return existing.index;

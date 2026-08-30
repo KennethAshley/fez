@@ -2,7 +2,11 @@ import { describe, it, expect, afterEach } from "vitest";
 import { createServer, type Server } from "node:http";
 import { recoverTypedDataAddress, getAddress } from "viem";
 import { authorizationTypes } from "@x402/evm";
-import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymentResponseHeader } from "@x402/core/http";
+import {
+  decodePaymentSignatureHeader,
+  encodePaymentRequiredHeader,
+  encodePaymentResponseHeader,
+} from "@x402/core/http";
 import { deriveAgentEvm } from "../src/derive.js";
 import { restrictedSigner, payWith402, parseSettlementHeader, decodePaymentRequired, pickOffer } from "../src/x402.js";
 
@@ -77,6 +81,45 @@ describe("restrictedSigner", () => {
     await expect(
       payWith402({ offer: wrongAssetOffer, privateKeyHex: derived.privateKeyHex, usdcAddress: USDC }),
     ).rejects.toThrow(new RegExp(wrongContract, "i"));
+  });
+});
+
+describe("payWith402: maxTimeoutSeconds is clamped (I3)", () => {
+  it("a server-supplied 10-year timeout signs an authorization valid for at most 10 minutes", async () => {
+    const derived = deriveAgentEvm(JUNK_MNEMONIC, 0);
+    const hugeOffer = { ...OFFER, maxTimeoutSeconds: 315360000 }; // 10 years
+    const { paymentHeaders } = await payWith402({
+      offer: hugeOffer,
+      privateKeyHex: derived.privateKeyHex,
+      usdcAddress: USDC,
+    });
+    const decoded = decodePaymentSignatureHeader(paymentHeaders["PAYMENT-SIGNATURE"]) as unknown as {
+      accepted: { maxTimeoutSeconds: number };
+      payload: { authorization: { validBefore: string } };
+    };
+    expect(decoded.accepted.maxTimeoutSeconds).toBeLessThanOrEqual(600);
+    const now = Math.floor(Date.now() / 1000);
+    const validBefore = Number(decoded.payload.authorization.validBefore);
+    // The signed authorization's own validBefore is derived from the
+    // (now-clamped) maxTimeoutSeconds by the SDK itself — asserting on it
+    // directly, not just on the field we passed in, pins the actual
+    // bearer-authorization lifetime rather than just our own input.
+    expect(validBefore).toBeLessThanOrEqual(now + 600 + 5);
+    expect(validBefore).toBeGreaterThan(now + 590);
+  });
+
+  it("a non-numeric maxTimeoutSeconds falls back to 60s instead of poisoning the signature", async () => {
+    const derived = deriveAgentEvm(JUNK_MNEMONIC, 0);
+    const junkOffer = { ...OFFER, maxTimeoutSeconds: "not-a-number" as unknown as number };
+    const { paymentHeaders } = await payWith402({
+      offer: junkOffer,
+      privateKeyHex: derived.privateKeyHex,
+      usdcAddress: USDC,
+    });
+    const decoded = decodePaymentSignatureHeader(paymentHeaders["PAYMENT-SIGNATURE"]) as unknown as {
+      accepted: { maxTimeoutSeconds: number };
+    };
+    expect(decoded.accepted.maxTimeoutSeconds).toBe(60);
   });
 });
 

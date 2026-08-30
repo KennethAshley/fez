@@ -292,4 +292,55 @@ describe("x402Settings", () => {
     expect("x402" in readPrefs()).toBe(false); // WalletPrefs has no x402 field at all
     expect(x402Settings(loadConfig()).dailyCapUsd).toBe(1);
   });
+
+  // M4: a NaN/Infinity here must fall back to the default, not pass
+  // through — both feed `>` comparisons that never trip against NaN,
+  // which would fail the cap and consent gates wide OPEN.
+  it("a non-finite dailyCapUsd falls back to the default instead of disabling the cap", () => {
+    const c = loadConfig();
+    c.x402 = { dailyCapUsd: NaN };
+    expect(x402Settings(c).dailyCapUsd).toBe(25);
+    c.x402 = { dailyCapUsd: Infinity };
+    expect(x402Settings(c).dailyCapUsd).toBe(25);
+  });
+
+  it("a non-finite autoApproveUnderUsd entry falls back to the default for that persona only", () => {
+    const c = loadConfig();
+    c.x402 = { autoApproveUnderUsd: { scout: NaN, chip: 0.05 } };
+    const s = x402Settings(c);
+    // The bad entry for "scout" is dropped rather than stored as NaN —
+    // callers read it as `autoApproveUnderUsd[persona] ?? .default`, so
+    // an absent key already falls back to the (untouched) default floor.
+    expect(s.autoApproveUnderUsd.scout).toBeUndefined();
+    expect(s.autoApproveUnderUsd.default).toBe(0);
+    expect(s.autoApproveUnderUsd.chip).toBe(0.05); // an unrelated, valid entry is untouched
+  });
+
+  // I4/M6: "flip the network" (README) is meant to be literally one
+  // field — chainRef/usdcAddress/rpcUrl all follow `network` unless a
+  // caller explicitly overrides one of them.
+  it("network:'base' alone derives the mainnet chainRef, USDC address, and RPC", () => {
+    const c = loadConfig();
+    c.x402 = { network: "base" };
+    const s = x402Settings(c);
+    expect(s.chainRef).toBe("eip155:8453");
+    expect(s.usdcAddress).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+    expect(s.rpcUrl).toBe("https://mainnet.base.org");
+  });
+
+  it("an explicit chainRef/usdcAddress/rpcUrl still wins over the network-derived default", () => {
+    const c = loadConfig();
+    c.x402 = { network: "base", usdcAddress: "0x000000000000000000000000000000deadbeef" };
+    const s = x402Settings(c);
+    expect(s.usdcAddress).toBe("0x000000000000000000000000000000deadbeef");
+    expect(s.chainRef).toBe("eip155:8453"); // still derived — only the overridden field changed
+  });
+
+  it("an unrecognised network name falls back to the base-sepolia row rather than throwing", () => {
+    const c = loadConfig();
+    c.x402 = { network: "some-future-chain" };
+    const s = x402Settings(c);
+    expect(s.chainRef).toBe("eip155:84532");
+    expect(s.network).toBe("some-future-chain"); // the label itself is still whatever was set
+  });
 });

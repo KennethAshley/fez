@@ -74,7 +74,10 @@ export function evmPairFromStored(json: string): EvmPair {
   try {
     const p = JSON.parse(json) as { evm?: Partial<EvmPair> };
     if (!p.evm?.addressHex || !p.evm?.privateKeyHex) throw new Error("malformed stored pair");
-    return { addressHex: p.evm.addressHex, privateKeyHex: p.evm.privateKeyHex };
+    // Recompute the address from the private key — storage carries no
+    // authority, same rule pairFromStored already applies to the sr25519
+    // side. A tampered or stale addressHex on disk must never be trusted.
+    return { addressHex: privateKeyToAccount(p.evm.privateKeyHex).address, privateKeyHex: p.evm.privateKeyHex };
   } catch {
     throw new Error("malformed stored pair");
   }

@@ -344,6 +344,17 @@ export async function x402Fetch(
   if (typeof args.maxUsd !== "number" || !(args.maxUsd > 0)) {
     throw new Error("x402_fetch requires maxUsd — the most you're willing to pay for this call");
   }
+  // M5: http(s)-only. This closes off file:/data:/gopher: etc — it does
+  // NOT block private/internal targets (127.0.0.1, the cloud metadata
+  // address, RFC1918 ranges): that SSRF surface is a deliberate scope cut
+  // for this pass, since every URL here is one the calling agent chose
+  // itself rather than one relayed from an untrusted third party.
+  try {
+    const scheme = new URL(args.url).protocol;
+    if (scheme !== "http:" && scheme !== "https:") throw new Error("bad scheme");
+  } catch {
+    throw new Error(`x402_fetch: "${args.url}" is not an http(s) URL`);
+  }
   const fetchImpl = deps.fetchImpl ?? (fetch as unknown as FetchLike);
   const x402 = x402Settings(deps.config);
   const now = () => (deps.now ? deps.now() : new Date().toISOString());
@@ -359,6 +370,13 @@ export async function x402Fetch(
   if (!offer) {
     const seen = required.accepts.map((o) => `${o.scheme}/${o.network}/${o.asset}`).join(", ") || "(none)";
     return `refused: the 402 offered nothing that matches ${x402.chainRef}/${x402.usdcAddress} — offers seen: ${seen}`;
+  }
+  // M1: a payTo that isn't a plain 20-byte hex address is either a
+  // malformed offer or an attempt to dress up the consent card (a
+  // backtick, a bidi character, anything the card would render verbatim)
+  // — refused before it ever reaches the consent text or a signature.
+  if (!/^0x[0-9a-fA-F]{40}$/.test(offer.payTo)) {
+    return `refused: the offer's payTo "${offer.payTo}" is not a valid EVM address — nothing was paid`;
   }
   const usd = offerUsd(offer);
 
@@ -425,11 +443,38 @@ export async function x402Fetch(
     return "nothing was paid — request was aborted";
   }
 
-  // Record-before-retry: THE invariant this tool exists to enforce. The
-  // tally and the "signed" log row land before the paid request is even
-  // dispatched, so a network hiccup on the way out can never look like
-  // nothing was spent — see the ambiguous branches below.
-  recordSpend(deps.dir, usd);
+  // SIGN FIRST. A signing refusal is unambiguous, not ambiguous: nothing
+  // has left this process (no header was sent anywhere), so it costs
+  // nothing and needs none of the "may have settled" wording below. This
+  // is also the boundary the restricted signer actually defends — a
+  // server-steerable offer (e.g. `extra.assetTransferMethod: "permit2"`,
+  // routing the SDK into a primitive our signer refuses) must be caught
+  // HERE, before any tally or log write exists to roll back.
+  let paymentHeaders: Record<string, string>;
+  try {
+    ({ paymentHeaders } = await payWith402({
+      offer,
+      privateKeyHex: deps.evmPair.privateKeyHex,
+      usdcAddress: x402.usdcAddress,
+    }));
+  } catch (e) {
+    return `nothing was paid — the payment could not be signed (${(e as Error).message})`;
+  }
+
+  // Record-before-DISPATCH: THE invariant this tool exists to enforce.
+  // recordSpend both tallies AND enforces the daily cap in one
+  // synchronous call (no `await` inside it) — the earlier pre-check
+  // above is only a consent-round-saver; THIS is what actually closes
+  // the race between two overlapping calls (see x402.ts's recordSpend).
+  // If the cap throws here, the authorization just signed is inert: it
+  // never left this process and cannot settle, so refusing costs
+  // nothing and is not ambiguous either — same as the signing-refusal
+  // branch above.
+  try {
+    recordSpend(deps.dir, usd, x402.dailyCapUsd);
+  } catch (e) {
+    return `nothing was paid — ${(e as Error).message}`;
+  }
   appendX402Log(deps.dir, {
     ts: now(),
     persona: deps.persona,
@@ -442,11 +487,6 @@ export async function x402Fetch(
 
   let paidRes: Awaited<ReturnType<FetchLike>>;
   try {
-    const { paymentHeaders } = await payWith402({
-      offer,
-      privateKeyHex: deps.evmPair.privateKeyHex,
-      usdcAddress: x402.usdcAddress,
-    });
     paidRes = await fetchImpl(args.url, { ...init, headers: { ...paymentHeaders } });
   } catch (e) {
     appendX402Log(deps.dir, {
@@ -479,8 +519,50 @@ export async function x402Fetch(
       : `the paid request returned HTTP ${paidRes.status} — it may have settled; do not retry, check receipts and the spend log.${balanceNote}`;
   }
 
-  const settlement = parseSettlementHeader(paidRes.headers);
+  // C1: nothing from here down may throw uncaught — the payment already
+  // landed (2xx). @x402/core's settlement decoder throws on a malformed
+  // PAYMENT-RESPONSE (a hostile or buggy server), and Response#text() can
+  // throw too; either one throwing here, unguarded, would reject the
+  // whole call with NO settled row, NO receipt, and NO "do not retry"
+  // wording — inviting exactly the double-pay this tool exists to
+  // prevent. Both are now WHAT-HAPPENED failures, never WAS-IT-PAID ones.
+  let settlement: Awaited<ReturnType<typeof parseSettlementHeader>>;
+  try {
+    settlement = parseSettlementHeader(paidRes.headers);
+  } catch {
+    settlement = undefined;
+  }
   const txHash = settlement?.transaction ?? "";
+
+  let summary: string;
+  try {
+    summary = await summarizeResponse(paidRes);
+  } catch {
+    summary = `HTTP ${paidRes.status} (body unreadable)`;
+  }
+
+  // M2: an empty/missing txHash means the server said 2xx but never told
+  // us how to verify it — that is NOT "settled". Logged ambiguous, and no
+  // receipt is published: a receipt with an empty ["tx", ""] tag names no
+  // verifiable transaction (receipt.ts's parseReceipt would reject it),
+  // so publishing it would only dress up an unresolved payment as a real
+  // audit entry.
+  if (!txHash) {
+    appendX402Log(deps.dir, {
+      ts: now(),
+      persona: deps.persona,
+      url: args.url,
+      payTo: offer.payTo,
+      usd,
+      status: "ambiguous",
+      network: x402.network,
+    });
+    return (
+      `${summary}\na payment was signed and the server answered ${paidRes.status}, but no valid settlement header ` +
+      `came back — it may have settled. Do NOT retry — check receipts and the spend log.${balanceNote}`
+    );
+  }
+
   appendX402Log(deps.dir, {
     ts: now(),
     persona: deps.persona,
@@ -512,6 +594,5 @@ export async function x402Fetch(
     }
   }
 
-  const summary = await summarizeResponse(paidRes);
-  return `${summary}\npaid $${usd.toFixed(2)} USDC → ${offer.payTo}, tx ${txHash || "(unknown — no settlement header)"}${receiptNote}${balanceNote}`;
+  return `${summary}\npaid $${usd.toFixed(2)} USDC → ${offer.payTo}, tx ${txHash}${receiptNote}${balanceNote}`;
 }

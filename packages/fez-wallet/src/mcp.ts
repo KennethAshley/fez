@@ -5,7 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { cryptoWaitReady } from "@polkadot/util-crypto";
-import { pairFromStored } from "./derive.js";
+import { pairFromStored, evmPairFromStored } from "./derive.js";
 import { readEntry, readAgentNostrKey } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, x402Settings } from "./config.js";
@@ -23,7 +23,7 @@ import {
   type X402ToolDeps,
 } from "./tools.js";
 import type { ChainAdapter } from "./chains/adapter.js";
-import type { WalletPair } from "./derive.js";
+import type { WalletPair, EvmPair } from "./derive.js";
 import type { WalletConfig } from "./config.js";
 import { resolveRecipient } from "./resolve.js";
 import { rosterFilter, rosterFromEvents } from "./roster.js";
@@ -69,15 +69,17 @@ function cachedSubstrateAdapter(endpoint: string): ChainAdapter {
 }
 const evm = evmAdapter(); // stateless stub — one instance is plenty
 
-/** Same memoization reasoning as cachedSubstrateAdapter, keyed on rpcUrl
- * so an x402 mainnet flip (a different rpcUrl) gets its own client rather
- * than reusing a testnet one. */
-const evmAdaptersByRpc = new Map<string, ChainAdapter>();
-function cachedEvmAdapter(rpcUrl: string): ChainAdapter {
-  let a = evmAdaptersByRpc.get(rpcUrl);
+/** Same memoization reasoning as cachedSubstrateAdapter, keyed on
+ * (rpcUrl, usdcAddress) so an x402 mainnet flip (a different RPC AND a
+ * different USDC contract) gets its own client rather than reusing a
+ * testnet one that would keep reading the wrong contract. */
+const evmAdaptersByKey = new Map<string, ChainAdapter>();
+function cachedEvmAdapter(rpcUrl: string, usdcAddress: string): ChainAdapter {
+  const key = `${rpcUrl}|${usdcAddress}`;
+  let a = evmAdaptersByKey.get(key);
   if (!a) {
-    a = evmAdapter({ rpcUrl });
-    evmAdaptersByRpc.set(rpcUrl, a);
+    a = evmAdapter({ rpcUrl, usdcAddress });
+    evmAdaptersByKey.set(key, a);
   }
   return a;
 }
@@ -122,6 +124,17 @@ async function deps(signal?: AbortSignal): Promise<ToolDeps> {
   }
   const config = loadConfig();
   const pair = pairFromStored(stored);
+  // Threaded in opportunistically (I5): `wallet_address --chain eth` /
+  // `wallet_balance --chain eth` hand this same pair to the evm adapter,
+  // which needs the `.evm` branch. A pre-EVM entry (no `.evm` stored yet)
+  // just leaves it off — evm.ts's address() throws its own friendly
+  // error in that case rather than a raw TypeError.
+  let pairWithEvm: WalletPair & { evm?: EvmPair } = pair;
+  try {
+    pairWithEvm = { ...pair, evm: evmPairFromStored(stored) };
+  } catch {
+    // No EVM branch on this entry yet — eth-chain calls explain themselves.
+  }
   const relays = (process.env.FEZ_RELAY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const agentNostrKey = readAgentNostrKey(persona!);
   const substrate = cachedSubstrateAdapter(config.endpoints.tao);
@@ -130,7 +143,7 @@ async function deps(signal?: AbortSignal): Promise<ToolDeps> {
 
   return {
     persona: persona!,
-    pair,
+    pair: pairWithEvm,
     adapters: [substrate, evm],
     config,
     ownerPk: process.env.FEZ_AGENT_OWNER,
@@ -178,7 +191,7 @@ async function x402Deps(signal?: AbortSignal): Promise<X402ToolDeps> {
   return {
     persona: persona!,
     evmPair: resolveEvmPair(persona!, stored),
-    adapter: cachedEvmAdapter(settings.rpcUrl),
+    adapter: cachedEvmAdapter(settings.rpcUrl, settings.usdcAddress),
     config,
     ownerPk: process.env.FEZ_AGENT_OWNER,
     agentNostrKey,

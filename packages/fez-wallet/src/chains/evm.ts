@@ -15,14 +15,32 @@ export class NotEnabledError extends Error {
   }
 }
 
+/** A pair derived before EVM existed (T1/T2) has no `.evm` branch —
+ * `pair.evm.addressHex` would otherwise throw a raw, unhelpful TypeError.
+ * Mirrors tools.ts's resolveEvmPair wording; this adapter has no persona
+ * name to interpolate (it's a stateless, persona-agnostic singleton), so
+ * the message stays generic rather than faking one in. */
+export class NoEvmAccountError extends Error {
+  constructor() {
+    super("no EVM account for this persona yet — re-run `fez-wallet derive <persona>` to add one");
+  }
+}
+
 /** The pair shape this adapter actually needs: the sr25519 WalletPair plus
  * the EVM branch stored beside it (see derive.ts's cmdDerive / evmPairFromStored). */
 export interface EvmWalletPair extends WalletPair {
   evm: EvmPair;
 }
 
-export function evmAdapter(opts: { rpcUrl?: string; transport?: Transport } = {}): ChainAdapter {
+export function evmAdapter(
+  opts: { rpcUrl?: string; transport?: Transport; usdcAddress?: string } = {}
+): ChainAdapter {
   const rpcUrl = opts.rpcUrl ?? "https://sepolia.base.org";
+  // A mainnet flip (I4/M6, config.ts's x402Settings) sends its own
+  // usdcAddress through here — without this, balanceOf would keep
+  // reading the Sepolia contract on Base mainnet, revert, get caught as
+  // "balance unverified", and fail the guard OPEN on real money.
+  const usdcAddress = (opts.usdcAddress ?? USDC_BASE_SEPOLIA) as `0x${string}`;
   const client = createPublicClient({ transport: opts.transport ?? http(rpcUrl) });
 
   return {
@@ -31,11 +49,14 @@ export function evmAdapter(opts: { rpcUrl?: string; transport?: Transport } = {}
       { symbol: "ETH", decimals: 18 },
       { symbol: "USDC", decimals: 6 },
     ],
-    address: (pair: EvmWalletPair) => pair.evm.addressHex,
+    address: (pair: EvmWalletPair) => {
+      if (!pair.evm) throw new NoEvmAccountError();
+      return pair.evm.addressHex;
+    },
     async balance(address: string, asset: string): Promise<Amount> {
       if (asset !== "USDC") throw new Error(`unknown asset "${asset}" on eth chain`);
       const raw = await client.readContract({
-        address: USDC_BASE_SEPOLIA,
+        address: usdcAddress,
         abi: erc20Abi,
         functionName: "balanceOf",
         args: [address as `0x${string}`],

@@ -146,35 +146,56 @@ the comment on `x402Settings()` in `src/config.ts` for why):
 
     "x402": {
       "network": "base-sepolia",
-      "chainRef": "eip155:84532",
-      "usdcAddress": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
       "autoApproveUnderUsd": { "default": 0, "scout": 0.05 },
-      "dailyCapUsd": 25,
-      "rpcUrl": "https://sepolia.base.org"
+      "dailyCapUsd": 25
     }
+
+`chainRef`, `usdcAddress`, and `rpcUrl` are **derived from `network`** —
+only set them yourself to override one in isolation (e.g. a local fork's
+RPC). The two rows that exist today:
+
+| `network`      | `chainRef`     | USDC                                         | `rpcUrl`                     |
+|----------------|----------------|-----------------------------------------------|-------------------------------|
+| `base-sepolia` | `eip155:84532` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | `https://sepolia.base.org`   |
+| `base`         | `eip155:8453`  | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `https://mainnet.base.org`   |
+
+(USDC addresses verified against Circle's own contract-address docs,
+2026-08-30.)
 
 - `autoApproveUnderUsd` — per-persona, `default` is the floor. `0` (the
   default) means every payment asks the owner first, the same consent
   card `wallet_send` uses, over `consentChannel`, with the price, the
-  payee address, and the URL spelled out.
+  payee address, and the URL spelled out. A non-numeric value for a
+  persona is dropped, not trusted — it falls back to `default` rather
+  than silently auto-approving everything.
 - `dailyCapUsd` — a hard ceiling across all calls in one local day,
-  checked before consent, tallied in a `x402-spend.json` file beside
-  `wallet.json`.
-- **Mainnet flip:** set `"network": "base"`, `"chainRef": "eip155:8453"`,
-  and `"usdcAddress"` to `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
-  (Base mainnet USDC, verified against Circle's own contract-address
-  docs on 2026-08-30) — a config change, not a code change.
+  enforced at the moment a payment is about to be recorded (not just
+  pre-checked before consent), so two overlapping calls can't each slip
+  through and together blow past it. Tallied in `x402-spend.json` beside
+  `wallet.json`. A non-numeric value is dropped, not trusted — it falls
+  back to the default cap rather than disabling it.
+- **Mainnet flip:** set `"network": "base"`. That's the whole flip —
+  `chainRef`, the USDC contract the balance guard reads, and the RPC
+  endpoint all follow it automatically.
 
-**Never pays twice.** The moment a payment is signed and the price is
-about to be retried, the daily tally and a `signed` row in the x402 log
-(`x402-log.jsonl`, beside the tally file) are written *before* the paid
-request goes out. If that retry throws, or answers `402` again, the tool
-does **not** retry or sign a second time — it reports the situation as
-ambiguous ("may have settled — check receipts and the spend log") and
-leaves the spend recorded rather than risk paying twice. Only a genuine
-2xx settlement gets logged `settled` and produces a kind-`47040` receipt,
-same audit surface `wallet_send` uses (chain `"base"`, the tx hash, and
-the URL as the memo).
+**Never pays twice.** Signing happens first — if the offer tries to
+route the SDK into a primitive our restricted signer refuses (a
+malicious or misconfigured server), refusing costs nothing: no header
+ever left the process, so there's nothing to record. Once signed, the
+daily tally and a `signed` row in the x402 log (`x402-log.jsonl`, beside
+the tally file) are written *before* the paid request goes out — and
+that write is what actually enforces the daily cap (a fresh read-check-
+write, not just an earlier estimate). If the paid retry throws, answers
+`402` again, or comes back with a settlement header that doesn't parse,
+the tool does **not** retry or sign a second time — it reports the
+situation as ambiguous ("may have settled — check receipts and the
+spend log") and leaves the spend recorded rather than risk paying
+twice; none of that can throw uncaught once a payment has gone out.
+Only a genuine 2xx settlement with a real transaction hash gets logged
+`settled` and produces a kind-`47040` receipt, same audit surface
+`wallet_send` uses (chain `"base"`, the tx hash, and the URL as the
+memo) — a 2xx with no usable settlement info is logged ambiguous
+instead, and gets no receipt.
 
 ## GUI
 

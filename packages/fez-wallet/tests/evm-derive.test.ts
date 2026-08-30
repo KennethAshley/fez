@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveAgentEvm } from "../src/derive.js";
+import { deriveAgentEvm, evmPairFromStored } from "../src/derive.js";
 
 const JUNK = "test test test test test test test test test test test junk";
 
@@ -14,5 +14,17 @@ describe("EVM derivation", () => {
   });
   it("rejects an invalid mnemonic", () => {
     expect(() => deriveAgentEvm("not a mnemonic", 0)).toThrow();
+  });
+});
+
+describe("evmPairFromStored (M3: storage carries no authority)", () => {
+  it("recomputes addressHex from the private key, ignoring a tampered stored value", () => {
+    const real = deriveAgentEvm(JUNK, 0);
+    const tampered = JSON.stringify({
+      evm: { addressHex: "0x000000000000000000000000000000baadf00d", privateKeyHex: real.privateKeyHex },
+    });
+    const recovered = evmPairFromStored(tampered);
+    expect(recovered.addressHex).toBe(real.addressHex);
+    expect(recovered.addressHex).not.toBe("0x000000000000000000000000000000baadf00d");
   });
 });
