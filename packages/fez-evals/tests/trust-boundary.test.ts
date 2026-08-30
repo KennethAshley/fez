@@ -241,14 +241,17 @@ describe("deletion trust rule (author + owner only)", () => {
     expect(client.displayName(BOB)).toBe("bob-agent"); // routing names are load-bearing
   });
 
-  test("canDeleteMessage mirrors the rule for UI gating", () => {
+  test("canDeleteMessage is author-only; the owner withholds others' via canModerateMessage", () => {
     // Re-seat bob: membership is workspace-wide now, so an earlier
     // removal test silences him in every channel, not just one.
     wire.deliver(ev(47102, ALICE, [["d", ROSTER], ["p", ALICE], ["p", BOB]], "", nextRosterTs()));
     const bobLive = ev(47103, BOB, [["h", CHAN]], "gate check", Math.floor(Date.now() / 1000));
     wire.deliver(bobLive);
     const msg = client.msgById(bobLive.id)!;
-    expect(client.canDeleteMessage(msg)).toBe(true); // client IS the workspace owner
+    // Not the author → no kind-5 self-delete (the relay honors a moderator's
+    // kind-5 for nobody), but as the owner they may withhold it as a moderator.
+    expect(client.canDeleteMessage(msg)).toBe(false);
+    expect(client.canModerateMessage(msg)).toBe(true);
   });
 });
 

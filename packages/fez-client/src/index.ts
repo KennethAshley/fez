@@ -1073,9 +1073,19 @@ export class FezClient {
     this.handleDeletion(event);
   }
 
-  /** Your own message, or anyone's if you own the workspace. */
+  /**
+   * Your own message (kind-5 self-delete). A moderator removing SOMEONE
+   * ELSE'S message goes through removeMessage() instead — the relay honors
+   * a moderator's kind-5 for nobody, so a mod-delete must be the withhold
+   * list, not a deletion event.
+   */
   canDeleteMessage(msg: Msg): boolean {
-    return msg.authorPk === this.pubkey || this.state.isOwner(this.pubkey);
+    return msg.authorPk === this.pubkey;
+  }
+
+  /** May I remove (withhold) this message as a moderator? Not my own. */
+  canModerateMessage(msg: Msg): boolean {
+    return msg.authorPk !== this.pubkey && this.state.canModerate(this.pubkey);
   }
 
   async bookmarkMessage(channelId: string, targetId: string): Promise<void> {

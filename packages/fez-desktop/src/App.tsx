@@ -2866,6 +2866,7 @@ function Bubble({
   const [remindOpen, setRemindOpen] = useState(false);
   const [remindSet, setRemindSet] = useState(false);
   const [armedDelete, setArmedDelete] = useState(false);
+  const [armedRemove, setArmedRemove] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [reported, setReported] = useState(false);
@@ -3055,6 +3056,23 @@ function Bubble({
                 {armedDelete ? "⌫?" : "⌫"}
               </button>
             )}
+            {client.canModerateMessage(msg) && (
+              <button
+                className={armedRemove ? "danger armed-delete" : "danger"}
+                title={armedRemove ? "click again — withholds it for everyone (reversible)" : "remove (moderator)"}
+                onClick={() => {
+                  if (!armedRemove) {
+                    setArmedRemove(true);
+                    setTimeout(() => setArmedRemove(false), 3000);
+                    return;
+                  }
+                  setArmedRemove(false);
+                  void client.removeMessage(msg.id);
+                }}
+              >
+                {armedRemove ? "⊘?" : "⊘"}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -3084,7 +3102,14 @@ function Bubble({
       )}
       {pickerAt && <ReactionPicker at={pickerAt} onPick={react} onClose={() => setPickerAt(undefined)} />}
       {msg.deletedBy ? (
-        <div className="tombstone">⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}</div>
+        <div className="tombstone">
+          ⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}
+          {msg.deletedBy === "moderator" && client.state.canModerate(client.pubkey) && (
+            <button className="mini" title="restore this message" onClick={() => void client.restoreMessage(msg.id)}>
+              ↩
+            </button>
+          )}
+        </div>
       ) : (
         <div className="bubble-body md">
           <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} media={msg.media} />

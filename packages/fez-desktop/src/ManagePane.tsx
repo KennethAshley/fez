@@ -130,6 +130,21 @@ export default function ManagePane({
                       {armed === `ban:${member.pk}` ? "ban?" : "⊘"}
                     </button>
                   )}
+                  {ctl.ban && (
+                    <button
+                      className={armed === `timeout:${member.pk}` ? "mini danger armed" : "mini"}
+                      title="time out for 24 hours (a temporary ban that lifts itself)"
+                      onClick={() =>
+                        confirmThen(`timeout:${member.pk}`, () =>
+                          void run(`timed out ${member.name} for 24h`, () =>
+                            client.banUser(member.pk, Math.floor(Date.now() / 1000) + 86400)
+                          )
+                        )
+                      }
+                    >
+                      {armed === `timeout:${member.pk}` ? "24h?" : "⏱"}
+                    </button>
+                  )}
                 </span>
               );
             })()}
