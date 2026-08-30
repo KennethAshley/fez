@@ -40,6 +40,7 @@ import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers 
 import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
+import ModerationQueue from "./ModerationQueue";
 import { AnimatedSprite } from "@fezchat/ui";
 import { SPRITES } from "@fezchat/ui";
 import HoverCard from "./HoverCard";
@@ -87,7 +88,8 @@ type MainView =
   | { kind: "ext"; name: string }
   | { kind: "extensions" }
   | { kind: "agents" }
-  | { kind: "skills" };
+  | { kind: "skills" }
+  | { kind: "modqueue" };
 type SidePane =
   | { kind: "watch"; agent: string }
   | { kind: "costs" }
@@ -969,6 +971,15 @@ function Shell({
         <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
           <span className="nav-glyph">≡</span> docs
         </button>
+        {/* Moderators only — where flagged messages come to you. */}
+        {client.state.canModerate(client.pubkey) && (
+          <button
+            className={view.kind === "modqueue" ? "channel active home-link" : "channel home-link"}
+            onClick={() => setView({ kind: "modqueue" })}
+          >
+            <span className="nav-glyph">⚑</span> moderation
+          </button>
+        )}
         {/* Extension-owned rail views (loom's ▣ tools gallery enters here). */}
         {extensionNavViews().map((nav) => (
           <button
@@ -1276,6 +1287,11 @@ function Shell({
         />
       )}
       {view.kind === "wiki" && <WikiView client={client} />}
+      {view.kind === "modqueue" && (
+        <main className="main">
+          <ModerationQueue client={client} onOpenChannel={(channelId, msgId) => void openChannel(channelId, msgId)} />
+        </main>
+      )}
       {view.kind === "ext" && (
         <main className="main">
           {(() => {
@@ -2104,7 +2120,6 @@ function ChannelView({
               client={client}
               channelId={channelId}
               msg={msg}
-              wire={wire}
               inThread={!!threadRoot}
               onOpenThread={() => setThreadRoot(msg.rootId ?? msg.id)}
               onEdit={() => beginEdit(msg)}
@@ -2823,7 +2838,6 @@ function Bubble({
   client,
   channelId,
   msg,
-  wire,
   inThread,
   onOpenThread,
   onEdit,
@@ -2833,7 +2847,6 @@ function Bubble({
   client: FezClient;
   channelId: string;
     msg: Msg;
-  wire: BrowserWire;
   inThread: boolean;
   onOpenThread: () => void;
   onEdit?: () => void;
@@ -2875,18 +2888,13 @@ function Bubble({
   const [menu, setMenu] = useState<{ x: number; y: number }>();
   const [copied, setCopied] = useState(false);
 
-  /** fez-moderation's /report: 1984, reason NIP-44'd to the community creator. */
+  /** Report to the moderators: one 1984 per mod, reason encrypted to each. */
   const sendReport = async () => {
-    const creator = client.state.workspace.owner;
     const reason = reportReason.trim();
-    if (!creator || !reason) return;
+    if (!reason) return;
     setReportOpen(false);
     setReportReason("");
-    await wire.publish({
-      kind: 1984,
-      tags: [["p", creator]],
-      content: await wire.encrypt(creator, JSON.stringify({ targetPk: msg.authorPk, reason: `${reason} (msg: ${msg.content.slice(0, 60)})`, ts: Date.now() })),
-    });
+    await client.reportMessage(channelId, msg.id, msg.authorPk, reason);
     setReported(true);
     setTimeout(() => setReported(false), 2500);
   };

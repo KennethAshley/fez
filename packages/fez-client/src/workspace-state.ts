@@ -94,6 +94,14 @@ export interface Workspace {
   removalReasons: Map<string, string>;
   removedCreatedAt: number;
   removedEventId?: string;
+  /** Report targets a moderator dismissed — same signed-list machinery. */
+  dismissed: Set<string>;
+  dismissedCreatedAt: number;
+  dismissedEventId?: string;
+  /** Who signed the winning list — the queue's "removed by theo" attribution. */
+  banListSigner?: string;
+  removedSigner?: string;
+  dismissedSigner?: string;
 }
 
 /** Where you are. No community — the workspace is the relay you're on. */
@@ -162,6 +170,7 @@ const KIND_BAN_LIST = 30047;
 const ROSTER_D = "roster";
 const BANS_D = "bans";
 const REMOVED_D = "removed";
+const DISMISSED_D = "dismissed";
 
 export function emptyWorkspace(relay: string, name?: string): Workspace {
   return {
@@ -176,6 +185,8 @@ export function emptyWorkspace(relay: string, name?: string): Workspace {
     removed: new Set(),
     removalReasons: new Map(),
     removedCreatedAt: 0,
+    dismissed: new Set(),
+    dismissedCreatedAt: 0,
   };
 }
 
@@ -349,6 +360,7 @@ export class WorkspaceState {
         ws.banReasons = new Map(entries.filter((t) => t[3]).map((t) => [t[1], t[3]] as const));
         ws.banListCreatedAt = event.created_at;
         ws.banListEventId = event.id;
+        ws.banListSigner = event.pubkey;
         return true;
       }
       if (d === REMOVED_D) {
@@ -365,6 +377,22 @@ export class WorkspaceState {
         ws.removalReasons = new Map(removedTags.filter((t) => t[2]).map((t) => [t[1], t[2]] as const));
         ws.removedCreatedAt = event.created_at;
         ws.removedEventId = event.id;
+        ws.removedSigner = event.pubkey;
+        return true;
+      }
+      if (d === DISMISSED_D) {
+        if (event.created_at < ws.dismissedCreatedAt) return false;
+        if (
+          event.created_at === ws.dismissedCreatedAt &&
+          ws.dismissedEventId !== undefined &&
+          event.id >= ws.dismissedEventId
+        ) {
+          return false;
+        }
+        ws.dismissed = new Set(event.tags.filter((t) => t[0] === "e" && t[1]).map((t) => t[1]));
+        ws.dismissedCreatedAt = event.created_at;
+        ws.dismissedEventId = event.id;
+        ws.dismissedSigner = event.pubkey;
         return true;
       }
       return false;
@@ -417,6 +445,10 @@ export class WorkspaceState {
 
   removalReason(eventId: string): string | undefined {
     return this.workspace.removalReasons.get(eventId);
+  }
+
+  isDismissed(eventId: string): boolean {
+    return this.workspace.dismissed.has(eventId);
   }
 
   roleOf(pubkey: string): Role | undefined {

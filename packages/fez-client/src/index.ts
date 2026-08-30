@@ -87,6 +87,15 @@ export function dmConvoKey(participants: string[], myPk: string): string {
 }
 
 /** Exactly the TUI's NostrAccess backend shape — the client's only dependency. */
+/** One flagged message in the moderation queue, with everyone who flagged it. */
+export interface ReportEntry {
+  targetId: string;
+  channelId?: string;
+  authorPk?: string;
+  reporters: { pk: string; reason: string; at: number }[];
+  resolved?: { action: "removed" | "banned" | "dismissed"; by?: string };
+}
+
 export interface Wire {
   pubkey: string;
   publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent>;
@@ -220,6 +229,10 @@ export const K = {
   BANS_D: "bans",
   /** The 30047 d tag for withheld event-ids — reversible moderator removal. */
   REMOVED_D: "removed",
+  /** The 30047 d tag for dismissed report targets — the queue's "handled, no action". */
+  DISMISSED_D: "dismissed",
+  /** NIP-56 report — reason encrypted to each moderator, one event per recipient. */
+  REPORT: 1984,
   TYPING: 20002,
   PRESENCE: 20001,
   DRAFT: 20003,
@@ -1926,6 +1939,89 @@ export class FezClient {
     const reasons = new Map(this.state.workspace.removalReasons);
     reasons.delete(eventId);
     await this.publishRemovedList(removed, reasons);
+  }
+
+  /** The moderator set: the owner plus every admin on the current roster. */
+  moderators(): string[] {
+    const ws = this.state.workspace;
+    const mods = ws.owner ? [ws.owner] : [];
+    for (const [pk, role] of ws.members) {
+      if (role === "admin" && pk !== ws.owner) mods.push(pk);
+    }
+    return mods;
+  }
+
+  /**
+   * Report a message to the moderators — one kind-1984 per moderator, the
+   * reason NIP-44'd to that recipient. Observers learn only "someone
+   * reported something here"; the reporter's identity and reason reach
+   * moderators alone.
+   */
+  async reportMessage(channelId: string, targetId: string, authorPk: string, reason: string): Promise<void> {
+    const mods = this.moderators();
+    if (mods.length === 0) throw new Error("this workspace has no moderators to report to");
+    for (const mod of mods) {
+      await this.wire.publish({
+        kind: K.REPORT,
+        tags: [["p", mod], ["e", targetId], ["h", channelId]],
+        content: await this.wire.encrypt(mod, JSON.stringify({ reason, author: authorPk })),
+      });
+    }
+  }
+
+  /**
+   * The moderation queue: reports addressed to me, grouped by target.
+   * Resolution is DERIVED — a removed target or banned author is handled,
+   * a dismissed target was looked at and let stand — so acting once
+   * clears the entry for every moderator without extra bookkeeping.
+   */
+  async listReports(): Promise<ReportEntry[]> {
+    const events = await this.wire.query([{ kinds: [K.REPORT], "#p": [this.pubkey], limit: 500 }]);
+    const byTarget = new Map<string, ReportEntry>();
+    for (const event of events.sort((a, b) => b.created_at - a.created_at)) {
+      const targetId = event.tags.find((t) => t[0] === "e")?.[1];
+      if (!targetId) continue;
+      let body: { reason?: string; author?: string };
+      try {
+        body = JSON.parse(await this.wire.decrypt(event.pubkey, event.content)) as typeof body;
+      } catch {
+        continue; // not addressed to me
+      }
+      const entry = byTarget.get(targetId) ?? {
+        targetId,
+        channelId: event.tags.find((t) => t[0] === "h")?.[1],
+        authorPk: body.author,
+        reporters: [],
+      };
+      entry.reporters.push({ pk: event.pubkey, reason: body.reason ?? "", at: event.created_at });
+      byTarget.set(targetId, entry);
+    }
+    const ws = this.state.workspace;
+    for (const entry of byTarget.values()) {
+      if (this.state.isRemoved(entry.targetId)) {
+        entry.resolved = { action: "removed", by: ws.removedSigner };
+      } else if (entry.authorPk && this.state.isBanned(entry.authorPk)) {
+        entry.resolved = { action: "banned", by: ws.banListSigner };
+      } else if (this.state.isDismissed(entry.targetId)) {
+        entry.resolved = { action: "dismissed", by: ws.dismissedSigner };
+      }
+    }
+    return [...byTarget.values()].sort((a, b) => (b.reporters[0]?.at ?? 0) - (a.reporters[0]?.at ?? 0));
+  }
+
+  /** Looked at it, letting it stand — clears the entry for every moderator. */
+  async dismissReport(targetId: string): Promise<void> {
+    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can do this");
+    const dismissed = new Set(this.state.workspace.dismissed);
+    dismissed.add(targetId);
+    const event = await this.wire.publish({
+      kind: K.BAN_LIST,
+      tags: [["d", K.DISMISSED_D], ...[...dismissed].map((id) => ["e", id])],
+      content: "",
+      created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.dismissedCreatedAt + 1),
+    });
+    this.state.absorb(event);
+    this.emit("channelsChanged");
   }
 
   /**
