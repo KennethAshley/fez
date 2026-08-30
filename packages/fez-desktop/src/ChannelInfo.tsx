@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { blockRenderer, docMarkdownPlugins } from "./gui-extensions";
 import { MountPoint } from "./MountPoint";
+import Avatar from "./Avatar";
 
 /**
  * The channel's standing information, always reachable from inside the
@@ -81,7 +82,7 @@ export default function ChannelInfo({
             message, which read as a misalignment rather than a hint. */}
         <div className="channel-info-bar">
           <button className="channel-info-toggle" onClick={() => { setDraft(`# ${channelName}\n\n`); setEditing(true); }}>
-            ▤ add channel info — what everyone here should know
+            add channel info — what everyone here should know
           </button>
         </div>
       </div>
@@ -104,7 +105,7 @@ export default function ChannelInfo({
     <div className={open || editing ? "channel-info open" : "channel-info"}>
       <div className="channel-info-bar">
         <button className="channel-info-toggle" onClick={() => setOpen(!open)}>
-          <span className="channel-info-caret">{open ? "▾" : "▸"}</span> ▤ channel info
+          <span className="channel-info-caret">{open ? "▾" : "▸"}</span> channel info
           {!open && firstLine && <span className="channel-info-peek">{firstLine.slice(0, 90)}</span>}
           {!open && pins.length > 0 && <span className="channel-info-count">⚑ {pins.length}</span>}
         </button>
@@ -161,22 +162,23 @@ export default function ChannelInfo({
               {new Date(doc!.latestTs * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
             </div>
           )}
-          {pins.length > 0 && (
-            <>
-              <div className="channel-info-section">⚑ pinned</div>
-              {pins.map(([msgId, pin]) => {
-                const msg = client.messages(channelId).find((m) => m.id === msgId);
-                return (
-                  <button key={msgId} className="channel-info-pin" onClick={() => onJump(msgId)}>
-                    <span className="comment-author">{client.displayName(msg?.authorPk ?? pin.by)}</span>
-                    <span className="channel-info-pin-text">
-                      {msg ? msg.content.replace(/\s+/g, " ").slice(0, 120) : "(older message — click to jump)"}
-                    </span>
-                  </button>
-                );
-              })}
-            </>
-          )}
+          {/* No "PINNED" section head — each row carries its own ⚑, so
+              a lone pin doesn't get a heading taller than itself. The
+              author is a face, per the grammar. */}
+          {pins.map(([msgId, pin]) => {
+            const msg = client.messages(channelId).find((m) => m.id === msgId);
+            const authorPk = msg?.authorPk ?? pin.by;
+            return (
+              <button key={msgId} className="channel-info-pin" onClick={() => onJump(msgId)}>
+                <span className="channel-info-pin-mark">⚑</span>
+                <Avatar pk={authorPk} size={16} title={client.displayName(authorPk)} quip={false} />
+                <span className="comment-author">{client.displayName(authorPk)}</span>
+                <span className="channel-info-pin-text">
+                  {msg ? msg.content.replace(/\s+/g, " ").slice(0, 120) : "(older message — click to jump)"}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

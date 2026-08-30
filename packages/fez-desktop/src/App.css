@@ -2737,18 +2737,23 @@ button.author:hover { text-decoration: underline; }
   white-space: nowrap; font-family: var(--font-sans);
 }
 .channel-info-count { margin-left: auto; flex: none; color: var(--yellow); }
+/* edit/write is a secondary action — the rail's idiom: hover or focus. */
+.channel-info-bar .mini { opacity: 0; transition: opacity 110ms ease; }
+.channel-info-bar:hover .mini, .channel-info-bar:focus-within .mini { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .channel-info-bar .mini { transition: none; } }
 .channel-info-body { padding: 2px 18px 12px; max-height: 42vh; overflow-y: auto; }
 .channel-info-doc { font-size: 13px; max-width: 780px; }
 .channel-info-doc > :first-child { margin-top: 0; }
 .channel-info-meta { color: var(--fg-dim); font-size: 11px; margin-top: 6px; font-family: var(--font-mono); }
-.channel-info-section {
-  margin: 10px 0 4px; color: var(--fg-dim); font-size: 11px; font-family: var(--font-mono);
-  text-transform: uppercase; letter-spacing: 0.06em;
-}
 .channel-info-pin {
-  display: flex; gap: 8px; width: 100%; text-align: left; background: none; border: 0;
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left; background: none; border: 0;
   color: var(--fg); font: inherit; font-size: 12.5px; padding: 4px 6px; border-radius: 6px; cursor: pointer;
 }
+.channel-info-pin-mark { color: var(--yellow); flex: none; font-size: 11px; }
+.channel-info-pin .avatar svg { display: block; }
+/* Pins after a doc need a breath, not a heading. */
+.channel-info-doc ~ .channel-info-pin:first-of-type,
+.channel-info-meta + .channel-info-pin { margin-top: 8px; }
 .channel-info-pin:hover { background: var(--bg1); }
 .channel-info-pin-text { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-info-editor { width: 100%; min-height: 160px; margin-bottom: 6px; }
