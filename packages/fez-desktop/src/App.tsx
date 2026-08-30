@@ -39,6 +39,7 @@ import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers } from "./InstallOffer";
 import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
+import UserCard from "./UserCard";
 import { AnimatedSprite } from "@fezchat/ui";
 import { SPRITES } from "@fezchat/ui";
 import HoverCard from "./HoverCard";
@@ -2867,6 +2868,7 @@ function Bubble({
   const [remindSet, setRemindSet] = useState(false);
   const [armedDelete, setArmedDelete] = useState(false);
   const [armedRemove, setArmedRemove] = useState(false);
+  const [cardAt, setCardAt] = useState<{ x: number; y: number } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [reported, setReported] = useState(false);
@@ -2980,9 +2982,17 @@ function Bubble({
           </div>
         </>
       )}
-      <button className="avatar-btn" title="profile" onClick={onAuthor}>
+      <button
+        className="avatar-btn"
+        title="actions"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setCardAt({ x: r.right + 6, y: r.top });
+        }}
+      >
         <Avatar pk={msg.authorPk} title={msg.authorName} size={30} />
       </button>
+      {cardAt && <UserCard pk={msg.authorPk} at={cardAt} client={client} onClose={() => setCardAt(null)} />}
       <div className="bubble-head">
         <HoverCard client={client} pk={msg.authorPk}>
           <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
