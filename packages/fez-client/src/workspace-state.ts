@@ -85,10 +85,13 @@ export interface Workspace {
   rosterEventId?: string;
   /** pubkey -> until (unix seconds), or undefined for a permanent ban. */
   banned: Map<string, number | undefined>;
+  /** pubkey -> the reason inside the signed edict — the audit trail. */
+  banReasons: Map<string, string>;
   banListCreatedAt: number;
   banListEventId?: string;
   /** Event-ids withheld by a moderator. Reversible — restore drops the id. */
   removed: Set<string>;
+  removalReasons: Map<string, string>;
   removedCreatedAt: number;
   removedEventId?: string;
 }
@@ -168,8 +171,10 @@ export function emptyWorkspace(relay: string, name?: string): Workspace {
     members: new Map(),
     rosterCreatedAt: 0,
     banned: new Map(),
+    banReasons: new Map(),
     banListCreatedAt: 0,
     removed: new Set(),
+    removalReasons: new Map(),
     removedCreatedAt: 0,
   };
 }
@@ -338,11 +343,10 @@ export class WorkspaceState {
         ) {
           return false;
         }
-        ws.banned = new Map(
-          event.tags
-            .filter((t) => t[0] === "p" && t[1])
-            .map((t) => [t[1], t[2] ? Number(t[2]) : undefined] as const)
-        );
+        const entries = event.tags.filter((t) => t[0] === "p" && t[1]);
+        ws.banned = new Map(entries.map((t) => [t[1], t[2] ? Number(t[2]) : undefined] as const));
+        // ["p", pk, until|"", reason] — the reason is part of the signed record.
+        ws.banReasons = new Map(entries.filter((t) => t[3]).map((t) => [t[1], t[3]] as const));
         ws.banListCreatedAt = event.created_at;
         ws.banListEventId = event.id;
         return true;
@@ -356,7 +360,9 @@ export class WorkspaceState {
         ) {
           return false;
         }
-        ws.removed = new Set(event.tags.filter((t) => t[0] === "e" && t[1]).map((t) => t[1]));
+        const removedTags = event.tags.filter((t) => t[0] === "e" && t[1]);
+        ws.removed = new Set(removedTags.map((t) => t[1]));
+        ws.removalReasons = new Map(removedTags.filter((t) => t[2]).map((t) => [t[1], t[2]] as const));
         ws.removedCreatedAt = event.created_at;
         ws.removedEventId = event.id;
         return true;
@@ -402,6 +408,15 @@ export class WorkspaceState {
   /** Has a moderator withheld this event? */
   isRemoved(eventId: string): boolean {
     return this.workspace.removed.has(eventId);
+  }
+
+  /** The reason inside the signed ban edict, if the moderator gave one. */
+  banReason(pubkey: string): string | undefined {
+    return this.workspace.banReasons.get(pubkey);
+  }
+
+  removalReason(eventId: string): string | undefined {
+    return this.workspace.removalReasons.get(eventId);
   }
 
   roleOf(pubkey: string): Role | undefined {

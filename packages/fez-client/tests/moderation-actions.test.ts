@@ -74,6 +74,15 @@ describe("moderation actions", () => {
     expect(rem?.tags).toContainEqual(["e", "evt-99"]);
   });
 
+  test("reasons travel inside the signed edict", async () => {
+    await ownerClient.banUser(trollPk, undefined, "spam");
+    const ban = ownerPub.find((e) => e.kind === 30047 && e.tags.some((t) => t[1] === "bans"));
+    expect(ban?.tags).toContainEqual(["p", trollPk, "", "spam"]);
+    await ownerClient.removeMessage("evt-77", "scam link");
+    const rem = ownerPub.find((e) => e.kind === 30047 && e.tags.some((t) => t[1] === "removed"));
+    expect(rem?.tags).toContainEqual(["e", "evt-77", "scam link"]);
+  });
+
   test("promote republishes the roster with role=admin", async () => {
     await ownerClient.promote(memberPk);
     const roster = ownerPub.find((e) => e.kind === 47102);

@@ -60,4 +60,19 @@ describe("workspace-state moderation reads", () => {
     s.absorb(sign(admin, 30047, [["d", "removed"]], "", now() + 2)); // restore
     expect(s.isRemoved("evt-1")).toBe(false);
   });
+
+  test("a reason rides inside the edict — ban and remove", () => {
+    const s = seeded();
+    // permanent ban with a reason: until slot holds "" so reason stays positional
+    s.absorb(sign(owner, 30047, [["d", "bans"], ["p", trollPk, "", "spam / shill"]], "", now() + 1));
+    expect(s.isBanned(trollPk)).toBe(true);
+    expect(s.banReason(trollPk)).toBe("spam / shill");
+    // timeout + reason
+    s.absorb(sign(owner, 30047, [["d", "bans"], ["p", trollPk, String(now() + 3600), "cool off"]], "", now() + 2));
+    expect(s.isBanned(trollPk)).toBe(true);
+    expect(s.banReason(trollPk)).toBe("cool off");
+    // removed with a reason
+    s.absorb(sign(admin, 30047, [["d", "removed"], ["e", "evt-9", "scam link"]], "", now() + 3));
+    expect(s.removalReason("evt-9")).toBe("scam link");
+  });
 });

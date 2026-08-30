@@ -1826,14 +1826,22 @@ export class FezClient {
    * rule as rosters). A ban leaves the roster untouched — the banned
    * pubkey is simply treated as a non-member everywhere until unbanned.
    */
-  private async publishBanList(banned: Map<string, number | undefined>): Promise<void> {
+  private async publishBanList(
+    banned: Map<string, number | undefined>,
+    reasons: Map<string, string>
+  ): Promise<void> {
     if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can do this");
+    // ["p", pk, until|"", reason] — positional, so a reason without an
+    // expiry keeps "" in the until slot. The reason lives INSIDE the
+    // signed edict: the audit trail is the record itself.
+    const tag = (pk: string, until: number | undefined) => {
+      const reason = reasons.get(pk);
+      if (reason) return ["p", pk, until ? String(until) : "", reason];
+      return until ? ["p", pk, String(until)] : ["p", pk];
+    };
     const event = await this.wire.publish({
       kind: K.BAN_LIST,
-      tags: [
-        ["d", K.BANS_D],
-        ...[...banned].map(([pk, until]) => (until ? ["p", pk, String(until)] : ["p", pk])),
-      ],
+      tags: [["d", K.BANS_D], ...[...banned].map(([pk, until]) => tag(pk, until))],
       content: "",
       created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.banListCreatedAt + 1),
     });
@@ -1842,28 +1850,37 @@ export class FezClient {
   }
 
   /** Ban permanently, or (with `until` unix-seconds) time out temporarily. */
-  async banUser(pubkey: string, until?: number): Promise<string> {
+  async banUser(pubkey: string, until?: number, reason?: string): Promise<string> {
     if (pubkey === this.state.workspace.owner) throw new Error("the owner can't be banned");
     this.assertCanTarget(pubkey);
     const banned = new Map(this.state.workspace.banned);
     banned.set(pubkey, until);
-    await this.publishBanList(banned);
+    const reasons = new Map(this.state.workspace.banReasons);
+    if (reason) reasons.set(pubkey, reason);
+    else reasons.delete(pubkey);
+    await this.publishBanList(banned, reasons);
     return this.displayName(pubkey);
   }
 
   async unbanUser(pubkey: string): Promise<string> {
     const banned = new Map(this.state.workspace.banned);
     if (!banned.delete(pubkey)) throw new Error("not banned");
-    await this.publishBanList(banned);
+    const reasons = new Map(this.state.workspace.banReasons);
+    reasons.delete(pubkey);
+    await this.publishBanList(banned, reasons);
     return this.displayName(pubkey);
   }
 
   /** Republish the 30047 d=removed list with the id added/removed. */
-  private async publishRemovedList(removed: Set<string>): Promise<void> {
+  private async publishRemovedList(removed: Set<string>, reasons: Map<string, string>): Promise<void> {
     if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can do this");
     const event = await this.wire.publish({
       kind: K.BAN_LIST,
-      tags: [["d", K.REMOVED_D], ...[...removed].map((id) => ["e", id])],
+      tags: [
+        ["d", K.REMOVED_D],
+        // ["e", id, reason] — the reason is part of the signed record.
+        ...[...removed].map((id) => (reasons.get(id) ? ["e", id, reasons.get(id)!] : ["e", id])),
+      ],
       content: "",
       created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.removedCreatedAt + 1),
     });
@@ -1893,17 +1910,22 @@ export class FezClient {
   }
 
   /** Withhold a message for everyone (reversible). Any moderator may do this. */
-  async removeMessage(eventId: string): Promise<void> {
+  async removeMessage(eventId: string, reason?: string): Promise<void> {
     const removed = new Set(this.state.workspace.removed);
     removed.add(eventId);
-    await this.publishRemovedList(removed);
+    const reasons = new Map(this.state.workspace.removalReasons);
+    if (reason) reasons.set(eventId, reason);
+    else reasons.delete(eventId);
+    await this.publishRemovedList(removed, reasons);
   }
 
   /** Restore a previously-removed message. */
   async restoreMessage(eventId: string): Promise<void> {
     const removed = new Set(this.state.workspace.removed);
     if (!removed.delete(eventId)) throw new Error("not removed");
-    await this.publishRemovedList(removed);
+    const reasons = new Map(this.state.workspace.removalReasons);
+    reasons.delete(eventId);
+    await this.publishRemovedList(removed, reasons);
   }
 
   /**

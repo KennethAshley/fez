@@ -22,6 +22,8 @@ export default function UserCard({
   onClose: () => void;
 }) {
   const [timeoutOpen, setTimeoutOpen] = useState(false);
+  const [banOpen, setBanOpen] = useState(false);
+  const [banReason, setBanReason] = useState("");
 
   const myRole = client.state.roleOf(client.pubkey);
   const targetRole = client.state.roleOf(pk);
@@ -101,9 +103,29 @@ export default function UserCard({
                 </div>
               )}
               {a.ban && (
-                <div className="ucard-mi danger" onClick={act(`banned ${name}`, () => client.banUser(pk))}>
-                  <span className="ucard-gl">⊘</span> Ban from this workspace
-                </div>
+                <>
+                  <div className="ucard-mi danger" onClick={() => setBanOpen((v) => !v)}>
+                    <span className="ucard-gl">⊘</span> Ban from this workspace
+                    <span className="ucard-sk">{banOpen ? "▾" : "▸"}</span>
+                  </div>
+                  {banOpen && (
+                    <div className="ucard-reason">
+                      <input
+                        value={banReason}
+                        autoFocus
+                        placeholder="reason (optional) — recorded in the ban"
+                        onChange={(e) => setBanReason(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setBanOpen(false);
+                          if (e.key === "Enter") void act(`banned ${name}`, () => client.banUser(pk, undefined, banReason.trim() || undefined))();
+                        }}
+                      />
+                      <button onClick={act(`banned ${name}`, () => client.banUser(pk, undefined, banReason.trim() || undefined))}>
+                        Ban
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}

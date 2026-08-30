@@ -110,6 +110,7 @@ export default function ManagePane({
               <div key={pk} className="manage-row">
                 <span className="manage-name">{client.displayName(pk)}</span>
                 {until && <span className="role-tag">until {new Date(until * 1000).toLocaleString()}</span>}
+                {client.state.banReason(pk) && <span className="role-tag">{client.state.banReason(pk)}</span>}
                 <span className="manage-actions">
                   <button className="mini" title="unban" onClick={() => void run(`unbanned ${client.displayName(pk)}`, () => client.unbanUser(pk))}>
                     ↩

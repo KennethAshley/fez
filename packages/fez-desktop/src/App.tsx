@@ -3122,9 +3122,12 @@ function Bubble({
       {msg.deletedBy ? (
         <div className="tombstone">
           ⌫ removed by {msg.deletedBy === "moderator" ? "a moderator" : "its author"}
+          {msg.deletedBy === "moderator" && client.state.removalReason(msg.id) && (
+            <span> · reason: {client.state.removalReason(msg.id)}</span>
+          )}
           {msg.deletedBy === "moderator" && client.state.canModerate(client.pubkey) && (
             <button className="mini" title="restore this message" onClick={() => void client.restoreMessage(msg.id)}>
-              ↩
+              ↩ restore
             </button>
           )}
         </div>
