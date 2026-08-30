@@ -8,6 +8,10 @@
     "type": "extension",
     "parts": {
       "headless": "dist/headless.js",
+      "skill": {
+        "command": "node",
+        "args": ["dist/mcp.js"]
+      },
       "gui": "dist/gui.js"
     },
     "permissions": [
@@ -20,12 +24,14 @@
     "minFezVersion": "0.2.0"
   },
   "scripts": {
-    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "build": "esbuild src/headless.ts src/mcp.ts --bundle --format=esm --platform=node --outdir=dist && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
   "dependencies": {
-    "@fezchat/wallet": "file:../fez-wallet"
+    "@fezchat/wallet": "file:../fez-wallet",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@fezchat/protocol": "file:../..",
