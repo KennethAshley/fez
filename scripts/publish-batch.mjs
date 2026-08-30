@@ -56,6 +56,7 @@ const EXTENSIONS = [
   "packages/fez-loom",
   "packages/fez-workflows",
   "packages/fez-memory",
+  "packages/fez-elevenlabs",
 ];
 
 function run(cmd, args, cwd) {
