@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { SpendEntry } from "./log.js";
@@ -15,17 +16,40 @@ import type { SpendEntry } from "./log.js";
  * failed mirror must never break a transfer.
  */
 
-// Must match this package's name — the desktop's gui loader namespace-locks
-// api.storage to the registered extension name (gui-extensions.ts), which
-// is the same name the gui part loads under from ~/.fez/packages/<name>.
-// Verified at implementation time.
-export const STORAGE_NAME = "wallet";
+// Must match this package's INSTALLED name — the desktop's gui loader
+// namespace-locks api.storage to the registered extension name
+// (gui-extensions.ts), which is the package dir under ~/.fez/packages/.
+// That name is "fez-wallet" since the gui-extension-runtime migration
+// reconstructed the package under its grant name; the original "wallet"
+// staging name left the panel reading fez-wallet.json while this module
+// wrote wallet.json — every mirror invisible to the panel and every
+// panel prefs write invisible to the wallet. One home, adopted below.
+export const STORAGE_NAME = "fez-wallet";
+const LEGACY_STORAGE_NAME = "wallet";
 
 const MAX_LOG = 500;
 
+export function storageDir(): string {
+  return process.env.FEZ_EXTENSION_DATA_DIR ?? path.join(os.homedir(), ".fez", "extension-data");
+}
+
+/** One-time adoption of the pre-rename file. Sync + idempotent so both
+ * this module's async queue and config.ts's sync prefs reads can call it
+ * first; if BOTH files somehow exist, the new name wins and the legacy
+ * file is left in place (never merged — two-home merging is the bug
+ * class this fix exists to end). */
+export function adoptLegacyStorage(): void {
+  const dir = storageDir();
+  const current = path.join(dir, `${STORAGE_NAME}.json`);
+  const legacy = path.join(dir, `${LEGACY_STORAGE_NAME}.json`);
+  try {
+    if (!fsSync.existsSync(current) && fsSync.existsSync(legacy)) fsSync.renameSync(legacy, current);
+  } catch { /* best-effort — a failed adoption reads as empty, never throws */ }
+}
+
 function file(): string {
-  const dir = process.env.FEZ_EXTENSION_DATA_DIR ?? path.join(os.homedir(), ".fez", "extension-data");
-  return path.join(dir, `${STORAGE_NAME}.json`);
+  adoptLegacyStorage();
+  return path.join(storageDir(), `${STORAGE_NAME}.json`);
 }
 
 import type { Network } from "./networks.js";

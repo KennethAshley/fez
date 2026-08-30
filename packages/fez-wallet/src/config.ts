@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { WalletPrefs } from "./storage-mirror.js";
+import { adoptLegacyStorage, storageDir, STORAGE_NAME } from "./storage-mirror.js";
 import { type Network, endpointFor, isNetworkOwnedEndpoint, networkFromEndpoint } from "./networks.js";
 
 export type { Network, WalletPrefs };
@@ -132,9 +133,11 @@ function configFile(): string {
 }
 
 function prefsFile(): string {
-  const dir =
-    process.env.FEZ_EXTENSION_DATA_DIR ?? path.join(os.homedir(), ".fez", "extension-data");
-  return path.join(dir, "wallet.json");
+  // Same file the mirror writes and the panel reads (see storage-mirror
+  // STORAGE_NAME + the legacy adoption) — prefs written by the GUI land
+  // here, so this MUST be the adopted name or GUI settings are ignored.
+  adoptLegacyStorage();
+  return path.join(storageDir(), `${STORAGE_NAME}.json`);
 }
 
 /** Sync because loadConfig() is sync and runs per tool call. Writes go

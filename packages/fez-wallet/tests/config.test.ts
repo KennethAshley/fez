@@ -148,7 +148,7 @@ describe("network preferences", () => {
     const { saveConfig } = await import("../src/config.js");
     await mirrorPrefs({ thresholds: { default: "5" } }); // loosened in the panel
     saveConfig(loadConfig());
-    fs.rmSync(path.join(process.env.FEZ_EXTENSION_DATA_DIR!, "wallet.json"), { force: true });
+    fs.rmSync(path.join(process.env.FEZ_EXTENSION_DATA_DIR!, "fez-wallet.json"), { force: true });
     expect(loadConfig().thresholds.default).toBe("0.01");
   });
 

@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function mirrorState(): Record<string, unknown> {
-  return JSON.parse(readFileSync(join(dir, "wallet.json"), "utf8"));
+  return JSON.parse(readFileSync(join(dir, "fez-wallet.json"), "utf8"));
 }
 
 const ROW = {
@@ -123,5 +123,17 @@ describe("gui-logic x402 helpers (pure, browser-safe)", () => {
   it("x402TxLink targets the right basescan by network", () => {
     expect(x402TxLink("base-sepolia", "0xabc")).toBe("https://sepolia.basescan.org/tx/0xabc");
     expect(x402TxLink("base", "0xabc")).toBe("https://basescan.org/tx/0xabc");
+  });
+});
+
+describe("storage name adoption — the panel and the wallet share ONE file", () => {
+  it("adopts legacy wallet.json into fez-wallet.json on first touch, once", async () => {
+    const { writeFileSync, existsSync } = await import("node:fs");
+    writeFileSync(join(dir, "wallet.json"), JSON.stringify({ addresses: { treasury: "5X" } }));
+    await mirrorEvmAddress({ name: "scout", address: "0xabc" });
+    const s = mirrorState(); // reads fez-wallet.json
+    expect((s.addresses as { treasury: string }).treasury).toBe("5X"); // legacy data survived the rename
+    expect((s.evmAddresses as Record<string, string>).scout).toBe("0xabc");
+    expect(existsSync(join(dir, "wallet.json"))).toBe(false); // renamed, not copied — one home
   });
 });
