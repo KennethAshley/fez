@@ -1,5 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { encodePaymentResponseHeader } from "@x402/core/http";
+import { describe, it, expect, afterEach } from "vitest";
+import { createServer, type Server } from "node:http";
+import { recoverTypedDataAddress, getAddress } from "viem";
+import { authorizationTypes } from "@x402/evm";
+import {
+  encodePaymentResponseHeader,
+  encodePaymentRequiredHeader,
+  decodePaymentSignatureHeader,
+} from "@x402/core/http";
 import {
   x402Fetch,
   x402FetchRaw,
@@ -8,7 +15,7 @@ import {
   type X402Outcome,
 } from "../src/tools.js";
 import { deriveAgentEvm } from "../src/derive.js";
-import { type X402Offer } from "../src/x402.js";
+import { payWith402, parseSettlementHeader, type X402Offer } from "../src/x402.js";
 import { readX402Log } from "../src/log.js";
 import type { ChainAdapter } from "../src/chains/adapter.js";
 import type { WalletConfig } from "../src/config.js";
@@ -196,5 +203,129 @@ describe("x402FetchRaw: settlement-header tolerance (v1 name)", () => {
 
     const rows = readX402Log(dir, 5);
     expect(rows[0]).toMatchObject({ status: "settled", txHash });
+  });
+});
+
+// Round 2: version negotiation. A v1 PAYMENT-REQUIRED offer routes
+// payWith402 through @x402/evm's OWN v1 scheme (ExactEvmSchemeV1) and the
+// SDK's version-aware header naming (x402HTTPClient.encodePaymentSignatureHeader)
+// — X-PAYMENT for v1, same restricted signer as v2.
+const OFFER_V1 = {
+  scheme: "exact",
+  network: "base-sepolia", // v1's own network label, not v2's CAIP "eip155:84532"
+  maxAmountRequired: "10000", // $0.01, v1's name for v2's `amount`
+  resource: "http://test.local/paid",
+  description: "test resource",
+  asset: USDC,
+  payTo: PAY_TO,
+  maxTimeoutSeconds: 60,
+  extra: { name: "USDC", version: "2" },
+};
+
+describe("payWith402: x402Version routing (v1 vs v2)", () => {
+  let server: Server | undefined;
+
+  afterEach(async () => {
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    server = undefined;
+  });
+
+  it("a v1 offer's paid retry arrives under X-PAYMENT (not PAYMENT-SIGNATURE), and the server verifies the signer", async () => {
+    const derived = deriveAgentEvm(JUNK_MNEMONIC, 0);
+    let sawHeaderName: string | undefined;
+    let sawPaymentSignatureHeader = false;
+    let serverVerified = false;
+
+    server = createServer((req, res) => {
+      void (async () => {
+        const v1Header = req.headers["x-payment"];
+        sawPaymentSignatureHeader = sawPaymentSignatureHeader || Boolean(req.headers["payment-signature"]);
+        if (!v1Header) {
+          const header = encodePaymentRequiredHeader({
+            x402Version: 1,
+            accepts: [OFFER_V1],
+          } as never);
+          res.writeHead(402, { "PAYMENT-REQUIRED": header });
+          res.end();
+          return;
+        }
+        sawHeaderName = "x-payment";
+        const decoded = decodePaymentSignatureHeader(
+          Array.isArray(v1Header) ? v1Header[0] : v1Header,
+        ) as unknown as { payload: { authorization: Record<string, string>; signature: `0x${string}` } };
+        const auth = decoded.payload.authorization;
+        const recovered = await recoverTypedDataAddress({
+          domain: { name: "USDC", version: "2", chainId: 84532, verifyingContract: getAddress(USDC) },
+          types: authorizationTypes,
+          primaryType: "TransferWithAuthorization",
+          message: {
+            from: getAddress(auth.from),
+            to: getAddress(auth.to),
+            value: BigInt(auth.value),
+            validAfter: BigInt(auth.validAfter),
+            validBefore: BigInt(auth.validBefore),
+            nonce: auth.nonce as `0x${string}`,
+          },
+          signature: decoded.payload.signature,
+        });
+        serverVerified = recovered.toLowerCase() === derived.addressHex.toLowerCase();
+        const settleHeader = encodePaymentResponseHeader({
+          success: true,
+          transaction: "0x" + "ee".repeat(32),
+          network: "eip155:84532",
+        });
+        res.writeHead(200, { "X-PAYMENT-RESPONSE": settleHeader });
+        res.end("paid");
+      })();
+    });
+
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    const url = `http://127.0.0.1:${port}/`;
+
+    const first = await fetch(url);
+    expect(first.status).toBe(402);
+    const decodedRequired = JSON.parse(Buffer.from(first.headers.get("PAYMENT-REQUIRED")!, "base64").toString("utf-8"));
+    expect(decodedRequired.x402Version).toBe(1);
+
+    const { paymentHeaders } = await payWith402({
+      offer: OFFER_V1,
+      privateKeyHex: derived.privateKeyHex,
+      usdcAddress: USDC,
+      x402Version: decodedRequired.x402Version,
+    });
+    expect(paymentHeaders["X-PAYMENT"]).toBeTruthy();
+    expect(paymentHeaders["PAYMENT-SIGNATURE"]).toBeUndefined();
+
+    const second = await fetch(url, { headers: paymentHeaders });
+    expect(second.status).toBe(200);
+    expect(sawHeaderName).toBe("x-payment");
+    expect(sawPaymentSignatureHeader).toBe(false);
+    expect(serverVerified).toBe(true);
+
+    const settlement = parseSettlementHeader(second.headers);
+    expect(settlement?.success).toBe(true);
+  });
+
+  it("the v1 path refuses a mismatched-asset offer through the real payWith402 route, naming the offer's contract", async () => {
+    const derived = deriveAgentEvm(JUNK_MNEMONIC, 0);
+    const wrongContract = "0x000000000000000000000000000000deadbeef";
+    const wrongAssetOffer = { ...OFFER_V1, asset: wrongContract };
+    await expect(
+      payWith402({ offer: wrongAssetOffer, privateKeyHex: derived.privateKeyHex, usdcAddress: USDC, x402Version: 1 }),
+    ).rejects.toThrow(new RegExp(wrongContract, "i"));
+  });
+
+  it("a v2 offer (absent/2 x402Version) still emits PAYMENT-SIGNATURE — no regression on the name", async () => {
+    const derived = deriveAgentEvm(JUNK_MNEMONIC, 0);
+    const v2Offer = offer();
+    const { paymentHeaders } = await payWith402({
+      offer: v2Offer,
+      privateKeyHex: derived.privateKeyHex,
+      usdcAddress: USDC,
+      x402Version: 2,
+    });
+    expect(paymentHeaders["PAYMENT-SIGNATURE"]).toBeTruthy();
+    expect(paymentHeaders["X-PAYMENT"]).toBeUndefined();
   });
 });

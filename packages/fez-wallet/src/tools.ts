@@ -424,7 +424,7 @@ export async function x402FetchRaw(
   const header = first.headers.get("PAYMENT-REQUIRED");
   if (!header) throw new Error("x402_fetch: got a 402 with no PAYMENT-REQUIRED header");
   const required = decodePaymentRequired(header);
-  const offer = pickOffer(required.accepts, { network: x402.chainRef, usdcAddress: x402.usdcAddress });
+  const offer = pickOffer(required.accepts, { network: x402.chainRef, usdcAddress: x402.usdcAddress, v1Network: x402.network });
   if (!offer) {
     const seen = required.accepts.map((o) => `${o.scheme}/${o.network}/${o.asset}`).join(", ") || "(none)";
     return { kind: "refused", message: `refused: the 402 offered nothing that matches ${x402.chainRef}/${x402.usdcAddress} — offers seen: ${seen}` };
@@ -517,6 +517,7 @@ export async function x402FetchRaw(
       offer,
       privateKeyHex: deps.evmPair.privateKeyHex,
       usdcAddress: x402.usdcAddress,
+      x402Version: required.x402Version,
     }));
   } catch (e) {
     return { kind: "refused", message: `nothing was paid — the payment could not be signed (${(e as Error).message})` };
@@ -659,7 +660,7 @@ export async function x402FetchRaw(
         buildReceipt({
           agentSecretHex: deps.agentNostrKey,
           channelId: deps.config.consentChannel,
-          amount: { raw: BigInt(offer.amount), decimals: 6, symbol: "USDC" },
+          amount: { raw: BigInt(offer.amount ?? offer.maxAmountRequired ?? "0"), decimals: 6, symbol: "USDC" },
           chain: "base",
           network: x402.network,
           txHash,
