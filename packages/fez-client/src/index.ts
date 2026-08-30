@@ -1773,11 +1773,14 @@ export class FezClient {
    * rule as rosters). A ban leaves the roster untouched — the banned
    * pubkey is simply treated as a non-member everywhere until unbanned.
    */
-  private async publishBanList(banned: Set<string>): Promise<void> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can moderate");
+  private async publishBanList(banned: Map<string, number | undefined>): Promise<void> {
+    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can do this");
     const event = await this.wire.publish({
       kind: K.BAN_LIST,
-      tags: [["d", K.BANS_D], ...[...banned].map((pk) => ["p", pk])],
+      tags: [
+        ["d", K.BANS_D],
+        ...[...banned].map(([pk, until]) => (until ? ["p", pk, String(until)] : ["p", pk])),
+      ],
       content: "",
       created_at: Math.max(Math.floor(Date.now() / 1000), this.state.workspace.banListCreatedAt + 1),
     });
@@ -1787,14 +1790,14 @@ export class FezClient {
 
   async banUser(pubkey: string): Promise<string> {
     if (pubkey === this.state.workspace.owner) throw new Error("the owner can't be banned");
-    const banned = new Set(this.state.workspace.banned);
-    banned.add(pubkey);
+    const banned = new Map(this.state.workspace.banned);
+    banned.set(pubkey, undefined);
     await this.publishBanList(banned);
     return this.displayName(pubkey);
   }
 
   async unbanUser(pubkey: string): Promise<string> {
-    const banned = new Set(this.state.workspace.banned);
+    const banned = new Map(this.state.workspace.banned);
     if (!banned.delete(pubkey)) throw new Error("not banned");
     await this.publishBanList(banned);
     return this.displayName(pubkey);
