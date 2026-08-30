@@ -69,6 +69,26 @@ export default function MemoryView({
   const q = filter.trim().toLowerCase();
   const shown = (memories ?? []).filter((m) => !q || m.text.toLowerCase().includes(q));
 
+  /* Agents sometimes write a pubkey prefix where a person belongs
+     ("4d9a4f80 likes basketball"). The identity is knowable, so show
+     it: any hex run that prefixes a known member's pk renders as their
+     @name — the same resolution mentions get, at display time only
+     (the signed event is untouched). */
+  const renderText = (text: string) => {
+    // client.pubkey explicitly: the owner reads their own facts here, and
+    // the members map doesn't always carry the reader.
+    const pks = [...new Set([client.pubkey, ...client.state.workspace.members.keys(), ...client.knownNames().keys()])];
+    return text.split(/\b([0-9a-f]{8,64})\b/g).map((part, i) => {
+      if (i % 2 === 1) {
+        const pk = pks.find((p) => p.startsWith(part));
+        // Your own key reads as "you", not "@You" — mid-sentence prose.
+        if (pk === client.pubkey) return <span key={i} className="mention">you</span>;
+        if (pk) return <span key={i} className="mention">@{client.displayName(pk)}</span>;
+      }
+      return part;
+    });
+  };
+
   return (
     <aside className="pane">
       <header className="pane-head">
@@ -84,13 +104,17 @@ export default function MemoryView({
           <div className="pane-empty">open a channel to see its memory</div>
         ) : (
           <>
-            <input
-              className="manage-input"
-              placeholder="search memory…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              onKeyDown={(e) => e.stopPropagation()}
-            />
+            {/* A search field over three facts is a form over nothing —
+                it appears once there's enough here to actually search. */}
+            {((memories?.length ?? 0) > 4 || filter) && (
+              <input
+                className="manage-input"
+                placeholder="search memory…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+            )}
             {memories === undefined ? (
               <div className="pane-empty">loading…</div>
             ) : shown.length === 0 ? (
@@ -100,7 +124,7 @@ export default function MemoryView({
             ) : (
               shown.map((m) => (
                 <div key={m.id} className="memory-row">
-                  <div className="memory-text">{m.text}</div>
+                  <div className="memory-text">{renderText(m.text)}</div>
                   <div className="memory-meta">
                     <Avatar pk={m.pk} size={14} title={m.author} />
                     @{m.author}

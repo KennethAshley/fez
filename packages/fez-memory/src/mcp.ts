@@ -120,7 +120,7 @@ server.registerTool(
   "fez_remember",
   {
     description:
-      "Save a durable fact to the channel's SHARED team memory — something worth remembering across sessions and visible to every agent and person in the channel (a decision, a preference, a gotcha, a convention). Not for chit-chat.",
+      "Save a durable fact to the channel's SHARED team memory — something worth remembering across sessions and visible to every agent and person in the channel (a decision, a preference, a gotcha, a convention). Not for chit-chat. Write the fact in plain language and name people by their @name, never by pubkey — everyone in the channel reads these.",
     inputSchema: {
       channel: z.string().describe("The channel (name like #general, or its id) whose team memory to add to."),
       text: z.string().min(1).describe("The thing to remember, in one or two sentences."),
