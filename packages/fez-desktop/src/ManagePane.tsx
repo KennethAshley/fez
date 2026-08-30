@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FezClient } from "@fezchat/client";
 import { flash } from "./toast";
 import { relaySet } from "./relay";
+import { moderationControls } from "./manage-guard";
 import Avatar from "./Avatar";
 
 /**
@@ -62,10 +63,11 @@ export default function ManagePane({
   const channel = current;
 
   const amCreator = client.state.isOwner(client.pubkey);
+  const myRole = client.state.roleOf(client.pubkey);
   const members = [...client.state.workspace.members.entries()]
     .map(([pk, role]) => ({ pk, role, name: client.displayName(pk), online: client.isOnline(pk) }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const banned = [...(client.state.workspace.banned ?? [])];
+  const banned = [...(client.state.workspace.banned ?? new Map()).entries()].map(([pk, until]) => ({ pk, until }));
 
   return (
     <aside className="pane">
@@ -91,39 +93,58 @@ export default function ManagePane({
             <span className="manage-name">{member.name}</span>
             {/* "bot" is the protocol's word; the app's word is agent. */}
             <span className="role-tag">{member.role === "bot" ? "agent" : member.role}</span>
-            {amCreator && member.pk !== client.state.workspace.owner && (
-              <span className="manage-actions">
-                <button
-                  className={armed === `kick:${member.pk}` ? "mini danger armed" : "mini"}
-                  title="remove from this channel (history stays)"
-                  onClick={() => confirmThen(`kick:${member.pk}`, () => void run(`removed ${member.name}`, () => client.kick(member.pk)))}
-                >
-                  {armed === `kick:${member.pk}` ? "kick?" : "×"}
-                </button>
-                <button
-                  className={armed === `ban:${member.pk}` ? "mini danger armed" : "mini"}
-                  title="ban from the whole workspace"
-                  onClick={() => confirmThen(`ban:${member.pk}`, () => void run(`banned ${member.name}`, () => client.banUser(member.pk)))}
-                >
-                  {/* A typographic mark, not the red-circle emoji: the
-                      only colour glyph in the pane shouted "danger" on
-                      every row for something you rarely do. The armed
-                      state is where the red belongs. */}
-                  {armed === `ban:${member.pk}` ? "ban?" : "⊘"}
-                </button>
-              </span>
-            )}
+            {(() => {
+              const ctl = moderationControls(myRole, member.role, amCreator);
+              if (!ctl.kick && !ctl.ban && !ctl.promote && !ctl.demote) return null;
+              return (
+                <span className="manage-actions">
+                  {ctl.promote && (
+                    <button className="mini" title="make an admin (can moderate)" onClick={() => void run(`promoted ${member.name}`, () => client.promote(member.pk))}>
+                      ↑
+                    </button>
+                  )}
+                  {ctl.demote && (
+                    <button className="mini" title="remove admin" onClick={() => void run(`demoted ${member.name}`, () => client.demote(member.pk))}>
+                      ↓
+                    </button>
+                  )}
+                  {ctl.kick && (
+                    <button
+                      className={armed === `kick:${member.pk}` ? "mini danger armed" : "mini"}
+                      title="remove from this channel (history stays)"
+                      onClick={() => confirmThen(`kick:${member.pk}`, () => void run(`removed ${member.name}`, () => client.kick(member.pk)))}
+                    >
+                      {armed === `kick:${member.pk}` ? "kick?" : "×"}
+                    </button>
+                  )}
+                  {ctl.ban && (
+                    <button
+                      className={armed === `ban:${member.pk}` ? "mini danger armed" : "mini"}
+                      title="ban from the whole workspace"
+                      onClick={() => confirmThen(`ban:${member.pk}`, () => void run(`banned ${member.name}`, () => client.banUser(member.pk)))}
+                    >
+                      {/* A typographic mark, not the red-circle emoji: the
+                          only colour glyph in the pane shouted "danger" on
+                          every row for something you rarely do. The armed
+                          state is where the red belongs. */}
+                      {armed === `ban:${member.pk}` ? "ban?" : "⊘"}
+                    </button>
+                  )}
+                </span>
+              );
+            })()}
           </div>
         ))}
 
         {amCreator && <InviteBox client={client} onResult={flash} />}
 
-        {amCreator && banned.length > 0 && (
+        {(amCreator || myRole === "admin") && banned.length > 0 && (
           <>
             <div className="manage-section">banned</div>
-            {banned.map((pk) => (
+            {banned.map(({ pk, until }) => (
               <div key={pk} className="manage-row">
                 <span className="manage-name">{client.displayName(pk)}</span>
+                {until && <span className="role-tag">until {new Date(until * 1000).toLocaleString()}</span>}
                 <span className="manage-actions">
                   <button className="mini" title="unban" onClick={() => void run(`unbanned ${client.displayName(pk)}`, () => client.unbanUser(pk))}>
                     ↩
@@ -275,7 +296,7 @@ function JoinByCode({
 
 function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: string) => void }) {
   const [who, setWho] = useState("");
-  const [role, setRole] = useState<"member" | "bot">("member");
+  const [role, setRole] = useState<"member" | "admin" | "bot">("member");
 
   const invite = async () => {
     const raw = who.trim().replace(/^@/, "");
@@ -308,8 +329,9 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
             if (e.key === "Enter") void invite();
           }}
         />
-        <select className="manage-select" value={role} onChange={(e) => setRole(e.target.value as "member" | "bot")}>
+        <select className="manage-select" value={role} onChange={(e) => setRole(e.target.value as "member" | "admin" | "bot")}>
           <option value="member">member</option>
+          <option value="admin">admin</option>
           <option value="bot">bot</option>
         </select>
         <button className="agent-action" onClick={() => void invite()}>invite</button>
