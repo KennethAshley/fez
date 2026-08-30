@@ -443,7 +443,7 @@ pub(crate) fn remove_installed(base: &str, home: &Path) -> Result<Vec<String>, S
 /// manifest says whether it has a gui part. A dir with no `fez.parts.gui`
 /// or an unreadable bundle is skipped, not an error: a package that
 /// legitimately has no GUI part is not a broken install.
-pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String)> {
+pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     let entries = match std::fs::read_dir(home.join("packages")) {
         Ok(e) => e,
@@ -470,7 +470,18 @@ pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String)> {
             continue;
         }
         if let Ok(code) = std::fs::read_to_string(home.join("packages").join(&name).join(rel)) {
-            out.push((name, code));
+            // A gui part's companion CSS: `fez pack` emits a hashed `<gui>.css`
+            // beside `<gui>.js`. Read it when present so the webview loader can
+            // inject it; most extensions ship none, so an absent file is an
+            // empty string, not an error. `rel` already passed the traversal
+            // guard above, and the `.css` sibling derives from it.
+            let styles = rel
+                .strip_suffix(".js")
+                .and_then(|stem| {
+                    std::fs::read_to_string(home.join("packages").join(&name).join(format!("{stem}.css"))).ok()
+                })
+                .unwrap_or_default();
+            out.push((name, code, styles));
         }
     }
     out
@@ -494,7 +505,7 @@ pub(crate) fn local_extensions(home: &Path) -> Vec<(String, Vec<String>)> {
             }
         }
     }
-    for (name, _) in gui_parts(home) {
+    for (name, _, _) in gui_parts(home) {
         map.entry(name).or_default().push("gui".to_string());
     }
     map.into_iter().collect()
@@ -752,10 +763,10 @@ mod tests {
         // fixture_tar already declares fez.parts.gui = "dist/gui.js"
         install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
         let found = gui_parts(home.path());               // the new pure scanner
-        assert!(found.iter().any(|(name, code)| name == "tidy" && code.contains("export default")));
+        assert!(found.iter().any(|(name, code, _)| name == "tidy" && code.contains("export default")));
         // it is read from the package dir, and does NOT depend on gui-extensions/
         std::fs::remove_dir_all(home.path().join("gui-extensions")).ok();
-        assert!(gui_parts(home.path()).iter().any(|(n, _)| n == "tidy"), "must not depend on the symlink dir");
+        assert!(gui_parts(home.path()).iter().any(|(n, _, _)| n == "tidy"), "must not depend on the symlink dir");
     }
 
     // install_from_tarball already refuses a traversal `gui` rel at write
@@ -777,6 +788,27 @@ mod tests {
         std::fs::write(home.path().join("packages").join("evil.js"), "haha\n").unwrap();
 
         let found = gui_parts(home.path());
-        assert!(found.iter().all(|(n, _)| n != "evil"), "a traversal gui rel must yield no gui part: {found:?}");
+        assert!(found.iter().all(|(n, _, _)| n != "evil"), "a traversal gui rel must yield no gui part: {found:?}");
+    }
+
+    // fez pack emits a hashed `<gui>.css` beside `<gui>.js`; gui_parts must
+    // return it as the 3rd tuple element so the webview loader can inject it.
+    // Most extensions ship none — an absent file is an empty string.
+    #[test]
+    fn gui_parts_reads_the_companion_css_beside_the_gui_part() {
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+
+        // No companion css yet → empty styles, not an error.
+        let none = gui_parts(home.path());
+        let (_, _, styles) = none.iter().find(|(n, _, _)| n == "tidy").expect("tidy");
+        assert_eq!(styles, "", "no companion css → empty styles");
+
+        // Write dist/gui.css beside the fixture's dist/gui.js → it is read.
+        let css = home.path().join("packages").join("tidy").join("dist").join("gui.css");
+        std::fs::write(&css, ".fez-tidy-x{color:red}\n").unwrap();
+        let with = gui_parts(home.path());
+        let (_, _, styles) = with.iter().find(|(n, _, _)| n == "tidy").expect("tidy");
+        assert!(styles.contains(".fez-tidy-x"), "companion css must be read: {styles:?}");
     }
 }

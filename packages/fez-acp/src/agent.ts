@@ -645,6 +645,32 @@ async function main() {
     return turnTimes.length >= maxTurnsPerHour;
   }
 
+  // Daily spend cap (persona frontmatter `spendCapUsd`) — the money
+  // sibling of the turn budget. The tally survives restarts in the work
+  // dir; usage figures come only from what the harness surfaced, so an
+  // agent whose harness reports no cost is not capped by this (the turn
+  // budget above stays the backstop). Cap changes apply on restart.
+  const spendCapUsd = Number(persona.extra.spendCapUsd) > 0 ? Number(persona.extra.spendCapUsd) : undefined;
+  const spendFile = path.join(workDir, "spend.json");
+  const localDay = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, the owner's clock
+  let daySpend = { day: localDay(), usd: 0 };
+  try {
+    const saved = JSON.parse(fs.readFileSync(spendFile, "utf-8")) as { day?: string; usd?: number };
+    if (saved.day === daySpend.day && Number(saved.usd) >= 0) daySpend.usd = Number(saved.usd);
+  } catch { /* first run today */ }
+  const rollSpendDay = () => {
+    if (daySpend.day !== localDay()) daySpend = { day: localDay(), usd: 0 };
+  };
+  const recordSpend = (usd: number) => {
+    rollSpendDay();
+    daySpend.usd += usd;
+    try { fs.writeFileSync(spendFile, JSON.stringify(daySpend)); } catch { /* tally is best-effort */ }
+  };
+  function spendCapReached(): boolean {
+    rollSpendDay();
+    return spendCapUsd !== undefined && daySpend.usd >= spendCapUsd;
+  }
+
   // Circuit breaker (Buzz's SlotCircuit, turn-shaped): repeated
   // consecutive failures mean the setup is broken — an expired login, a
   // dead endpoint — and every further turn burns budget to produce the
@@ -855,6 +881,9 @@ async function main() {
   // actually surfaced (fail-closed: absent, never estimated).
   let turnUsage: { inputTokens?: number; outputTokens?: number; costUsd?: number } | undefined;
   const publishTurnMetric = (scope: string, status: string, startedAtMs: number, replyChars: number, trigger?: string) => {
+    // The tally moves whether or not there is an owner to report to —
+    // enforcement must not depend on visibility.
+    if (turnUsage?.costUsd) recordSpend(turnUsage.costUsd);
     if (!owner) return;
     void relay
       .publish(
@@ -871,6 +900,10 @@ async function main() {
               replyChars,
               ...(trigger ? { trigger } : {}),
               ...(turnUsage ? { usage: turnUsage } : {}),
+              // Budget state rides every metric so the owner's client can
+              // draw spend-vs-cap without a second channel.
+              dayUsd: daySpend.usd,
+              ...(spendCapUsd !== undefined ? { capUsd: spendCapUsd } : {}),
               ts: Date.now(),
             })
           ),
@@ -1263,6 +1296,11 @@ async function main() {
 
       if (budgetExhausted()) {
         console.log(`⛔ Turn budget exhausted (${maxTurnsPerHour}/hour) — not responding`);
+        return;
+      }
+
+      if (spendCapReached()) {
+        console.log(`⛔ Daily spend cap reached ($${daySpend.usd.toFixed(2)} of $${spendCapUsd}) — not responding`);
         return;
       }
 
@@ -1708,6 +1746,10 @@ async function main() {
     }
     if (budgetExhausted()) {
       console.log(`⛔ Turn budget exhausted (${maxTurnsPerHour}/hour) — not responding to DM`);
+      return;
+    }
+    if (spendCapReached()) {
+      console.log(`⛔ Daily spend cap reached ($${daySpend.usd.toFixed(2)} of $${spendCapUsd}) — not responding to DM`);
       return;
     }
     if (Date.now() < breakerUntil) return;

@@ -416,7 +416,7 @@ fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
 /// webview imports each as an ES module and calls its activate(api) — the
 /// GUI's version of the TUI's extension loader.
 #[tauri::command]
-fn list_gui_extensions() -> Result<Vec<(String, String)>, String> {
+fn list_gui_extensions() -> Result<Vec<(String, String, String)>, String> {
     let home_path = fez_home()?;
     Ok(package_install::gui_parts(&home_path))
 }

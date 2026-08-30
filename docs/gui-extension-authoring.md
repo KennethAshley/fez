@@ -79,10 +79,13 @@ is the in-tree example: its nav view deliberately renders a bare
 ## Styling beyond `fez-*` utilities
 
 A `*.module.css` you import from `src/view.tsx` gets its class names
-hashed by `fez pack`, which emits a companion `dist/view.css`. As of this
-writing that emitted CSS is **not yet loaded by the desktop's extension
-loader** — the wiring that would inject it on mount is a pending
-follow-on (the loader currently always treats an extension's styles as
-absent). Until that ships, the reliable way to style beyond `fez-*`
-utilities is inline styles, or injecting your own `<style>` element from
-inside `mount`.
+hashed by `fez pack`, which emits a companion CSS file beside your gui
+bundle (`dist/gui.js` → `dist/gui.css`). The desktop loader reads that
+companion file and injects it as a scoped `<style>` when your extension
+activates, removing it again when the extension is unloaded — so hashed
+CSS Module classes Just Work, with no collisions against the host or other
+extensions.
+
+Inline styles and injecting your own `<style>` from inside `mount` also
+work if you prefer them — but reach for a `fez-*` utility or a theme token
+(`var(--brand)`) over a bare hex, so your styling still follows the theme.

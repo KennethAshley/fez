@@ -40,6 +40,10 @@ export const KIND_TURN_METRIC = 47030;
  * verifiable by anyone against the block it names. */
 export const KIND_PAYMENT_RECEIPT = 47040;
 
+// 47041 is RESERVED: the bazaar's npub↔hotkey binding kind (fez-bazaar
+// src/protocol/kinds.ts BINDING). It moved off 47040 to clear this
+// registry's payment receipt; do not reuse the number here.
+
 /**
  * Observer control — the reverse half of the observer stream (20004):
  * OWNER → agent commands as ephemeral NIP-44-encrypted frames. v1: {cmd:

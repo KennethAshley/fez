@@ -27,6 +27,25 @@ describe("fez pack", () => {
   });
 });
 
+describe("fez pack — companion CSS is named after the gui part", () => {
+  it("emits <gui>.css (dist/gui.css for a dist/gui.js part), matching what the loader looks for", async () => {
+    const d = mkdtempSync(join(tmpdir(), "fez-pack-guijs-"));
+    mkdirSync(join(d, "src"), { recursive: true });
+    writeFileSync(join(d, "package.json"), JSON.stringify({
+      name: "guijs", fez: { parts: { gui: "dist/gui.js" } },
+    }));
+    writeFileSync(join(d, "src/styles.module.css"), ".card { color: var(--fg); }\n");
+    writeFileSync(join(d, "src/view.tsx"), `import "./styles.module.css";\nexport function activate(){}`);
+    const out = await packExtension(d);
+    expect(out.css).toBeTruthy();
+    // named after the gui bundle, NOT a hardcoded "view.css" — gui_parts (Rust)
+    // derives dist/gui.css from the manifest the same way, so the pair matches.
+    expect(out.css!.endsWith("dist/gui.css")).toBe(true);
+    expect(existsSync(join(d, "dist/gui.css"))).toBe(true);
+    expect(existsSync(join(d, "dist/view.css"))).toBe(false);
+  });
+});
+
 describe("fez pack — CSS module", () => {
   let cssDir: string;
   beforeAll(() => {
