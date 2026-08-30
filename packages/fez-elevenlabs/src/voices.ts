@@ -12,20 +12,23 @@ export interface PinnedVoice {
   previewUrl?: string;
 }
 
-// Premade ElevenLabs voices (ids are stable public catalog ids).
-// Verify against GET /v1/voices before first ship (plan Task 4 step 5);
-// if an id is gone, replace it here rather than filtering at runtime.
+// Current-generation ElevenLabs premade voices, verified against
+// GET /v1/voices on 2026-08-30 (the first pinned list was legacy
+// premades most newer accounts don't carry). If an id is gone, replace
+// it here rather than filtering at runtime. Preview urls are the
+// durable storage.googleapis ones; voices whose previews are tokenized
+// API urls would expire, so those voices weren't pinned.
 export const PINNED: PinnedVoice[] = [
-  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel" },
-  { id: "29vD33N1CtxCmqQRPOHJ", name: "Drew" },
-  { id: "2EiwWnXFnvU5JabPnv8n", name: "Clyde" },
-  { id: "5Q0t7uMcjvnagumLfvZi", name: "Paul" },
-  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi" },
-  { id: "CYw3kZ02Hs0563khs1Fj", name: "Dave" },
-  { id: "D38z5RcWu1voky8WS1ja", name: "Fin" },
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah" },
-  { id: "ErXwobaYiN019PkySvjV", name: "Antoni" },
-  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh" },
+  { id: "CwhRBWXzGAHq8TQ4Fs17", name: "Roger", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/CwhRBWXzGAHq8TQ4Fs17/58ee3ff5-f6f2-4628-93b8-e38eb31806b0.mp3" },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/EXAVITQu4vr4xnSDxMaL/01a3e33c-6e99-4ee7-8543-ff2216a32186.mp3" },
+  { id: "N2lVS1w4EtoT3dr4eOWO", name: "Callum", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/N2lVS1w4EtoT3dr4eOWO/ac833bd8-ffda-4938-9ebc-b0f99ca25481.mp3" },
+  { id: "SAz9YHcvj6GT2YYXdXww", name: "River", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/SAz9YHcvj6GT2YYXdXww/e6c95f0b-2227-491a-b3d7-2249240decb7.mp3" },
+  { id: "Xb7hH8MSUJpSbSDYk0k2", name: "Alice", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/Xb7hH8MSUJpSbSDYk0k2/d10f7534-11f6-41fe-a012-2de1e482d336.mp3" },
+  { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/XrExE9yKIg1WjnnlVkGX/b930e18d-6b4d-466e-bab2-0ae97c6d8535.mp3" },
+  { id: "bIHbv24MWmeRgasZH58o", name: "Will", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/bIHbv24MWmeRgasZH58o/8caf8f3d-ad29-4980-af41-53f20c72d7a4.mp3" },
+  { id: "cgSgspJ2msm6clMCkdW9", name: "Jessica", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/cgSgspJ2msm6clMCkdW9/56a97bf8-b69b-448f-846c-c3a11683d45a.mp3" },
+  { id: "cjVigY5qzO86Huf0OWal", name: "Eric", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/cjVigY5qzO86Huf0OWal/d098fda0-6456-4030-b3d8-63aa048c9070.mp3" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily", previewUrl: "https://storage.googleapis.com/eleven-public-prod/premade/voices/pFZP5JQG7iQjIQuC4Bku/89b68b35-b3dd-4348-a84a-a3c13a3c2b30.mp3" },
 ];
 
 /** Stable small hash — no crypto needed, spread is all that matters. */
