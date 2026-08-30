@@ -1004,7 +1004,15 @@ function Shell({
                 className={view.kind === "ext" && view.name === nav.name ? "channel active home-link" : "channel home-link"}
                 onClick={() => setView({ kind: "ext", name: nav.name })}
               >
-                <span className="nav-glyph">{nav.glyph}</span> {nav.label}
+                {/* An extension may hand us an inline SVG glyph (currentColor,
+                    1em) instead of a unicode char — render it as markup so a
+                    real brand mark sits at the same weight as the mono glyphs. */}
+                {nav.glyph.trimStart().startsWith("<svg") ? (
+                  <span className="nav-glyph" dangerouslySetInnerHTML={{ __html: nav.glyph }} />
+                ) : (
+                  <span className="nav-glyph">{nav.glyph}</span>
+                )}{" "}
+                {nav.label}
               </button>
             ))}
           </div>

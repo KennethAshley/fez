@@ -258,8 +258,16 @@ function RidgesPane({ api }: { api: GuiApi }) {
   );
 }
 
+/** The Ridges mark, reduced to a monochrome silhouette: the brand's puffy
+ * four-lobe squircle, filled in currentColor at glyph size so it dims and
+ * goes phosphor with selection exactly like the sidebar's unicode glyphs. */
+const RIDGES_GLYPH =
+  '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="currentColor" aria-hidden="true">' +
+  '<path d="M8 1.4c2 0 2.7 1.1 3.8 2.3 1.2 1.2 2.9 1.9 2.9 4.3s-1.7 3.1-2.9 4.3C10.7 13.5 10 14.6 8 14.6s-2.7-1.1-3.8-2.3C3 11.1 1.3 10.4 1.3 8s1.7-3.1 2.9-4.3C5.3 2.5 6 1.4 8 1.4z"/>' +
+  "</svg>";
+
 export function activate(api: GuiApi): void {
-  api.registerNavView("ridges", { glyph: "⛏", label: "ridges" }, (host) => {
+  api.registerNavView("ridges", { glyph: RIDGES_GLYPH, label: "ridges" }, (host) => {
     const root = createRoot(host!);
     root.render(<RidgesPane api={api} />);
     return () => root.unmount();
