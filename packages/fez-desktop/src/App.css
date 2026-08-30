@@ -2086,6 +2086,24 @@ button.author:hover { text-decoration: underline; }
   .gallery-card:hover .artifact-slot .spr-b, .ext-detail-id:hover .artifact-slot .spr-b { animation: none; }
   .artifact-slot .sprite-anim svg { transition: none; }
 }
+/* installed inventory rows — the same relic, now lit and at rest.
+   Rows stay flat hairline rows (inventory is a fact, browse is a
+   shop); the relic column is what says "this one lives here". */
+.inv-row .artifact-slot { width: 46px; height: 46px; }
+.inv-row:hover .artifact-slot .spr-a { animation: spr-frame-a 0.9s steps(1) infinite; }
+.inv-row:hover .artifact-slot .spr-b { animation: spr-frame-b 0.9s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .inv-row:hover .artifact-slot .spr-a, .inv-row:hover .artifact-slot .spr-b { animation: none; }
+}
+/* A catalog title is a word, so it sets in the body face; a bare
+   package name is an identifier and keeps the mono the page uses
+   for machine names. */
+.inv-row .skill-name { flex-wrap: wrap; }
+.inv-title { font-family: -apple-system, "SF Pro Text", Helvetica, sans-serif; font-weight: 600; font-size: 14px; }
+.inv-blurb { color: var(--fg-dim); line-height: 1.4; }
+.skill-used { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.used-agent { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 12px; }
+.used-agent .avatar svg { display: block; }
 .gallery-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .gallery-title { font-weight: 600; font-size: 14px; color: var(--fg); }
 .gallery-name { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }

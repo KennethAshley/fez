@@ -9,6 +9,10 @@ import { EnvKeyStatus } from "./SkillSecrets";
 import FindSource from "./FindSource";
 import { ExtensionGallery } from "./ExtensionGallery";
 import { flash } from "./toast";
+import { AnimatedSprite } from "@fezchat/ui";
+import { generateArtifact } from "./artifact-sprite";
+import { catalogEntry } from "./extensions-catalog";
+import { hasFace } from "./agent-face";
 import { useConfig, bumpConfig } from "./config-store";
 import { attachSkill, detachSkill, declaredSkills, rememberSkillSource } from "./skill-attach";
 import type { MountRender } from "./mount-result";
@@ -554,11 +558,29 @@ export default function SkillsView({
               {everything.length === 0 && <div className="pane-empty">nothing installed yet — see browse</div>}
               {everything.map(({ name, parts, config, wanted }) => {
                 const localPath = machineLocalPath(config);
+                // The relic grammar continues from browse: the sprite that
+                // sat dormant in the gallery stands lit in the inventory.
+                // Catalog metadata (title, blurb, where) dresses official
+                // packages; anything sideloaded keeps its bare name.
+                const entry = only === "extensions" ? catalogEntry(name) : undefined;
+                const relic = only === "extensions";
                 return (
-                <div key={name} className="skill-row">
+                <div key={name} className={relic ? "skill-row inv-row" : "skill-row"}>
+                  {relic && (
+                    <span className="artifact-slot">
+                      <AnimatedSprite sprite={generateArtifact(entry?.name ?? name)} scale={3} />
+                    </span>
+                  )}
                   <div className="skill-main">
                     <span className="skill-name">
-                      {name}
+                      {entry ? (
+                        <>
+                          <span className="inv-title">{entry.title}</span>
+                          <code className="gallery-name">{name}</code>
+                        </>
+                      ) : (
+                        name
+                      )}
                       {/* Chips earn their place by DIFFERENTIATING. In
                           the skills list every row is a skill, so a
                           "skill" chip on all ten restated the heading
@@ -582,16 +604,31 @@ export default function SkillsView({
                         </span>
                       )}
                     </span>
+                    {(entry?.blurb ?? config?.description) && (
+                      <span className="skill-desc inv-blurb">{entry?.blurb ?? config?.description}</span>
+                    )}
                     {wanted.length > 0 && (
-                      <span className="skill-desc">used by {wanted.map((a) => `@${a}`).join(", ")}</span>
+                      <span className="skill-desc skill-used">
+                        used by{" "}
+                        {wanted.map((a) => (
+                          <span key={a} className="used-agent">
+                            {hasFace(a) && <Avatar pk="" size={16} title={a} />}@{a}
+                          </span>
+                        ))}
+                      </span>
                     )}
                     {config && <code className="skill-cmd">{runsLine(config)}</code>}
                     {/* Every part it has, not only the one with a
                         command — a row showing just the mcp line looked
-                        like a bare MCP server when it is three parts. */}
-                    {parts.filter((part) => part !== "skill" && PART_WHERE[part]).map((part) => (
-                      <code key={part} className="skill-cmd">{PART_WHERE[part].what}</code>
-                    ))}
+                        like a bare MCP server when it is three parts.
+                        A catalog entry says it better in one line. */}
+                    {entry ? (
+                      <span className="gallery-where">↳ {entry.where}</span>
+                    ) : (
+                      parts.filter((part) => part !== "skill" && PART_WHERE[part]).map((part) => (
+                        <code key={part} className="skill-cmd">{PART_WHERE[part].what}</code>
+                      ))
+                    )}
                     {config?.env && Object.keys(config.env).length > 0 && (
                       <span className="skill-env skill-deps">
                         env:{" "}
