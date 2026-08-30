@@ -239,6 +239,8 @@ export const K = {
   REMINDER: 40007,
   REMINDER_V2: 30176,
   READ_STATE: 30078,
+  /** The personal mute list's d tag on 30078 — self-encrypted, never public p-tags. */
+  MUTES_D: "mutes",
   /** NIP-78 application data. Same kind as READ_STATE; the `d` tag separates them. */
   APP_DATA: 30078,
   PROFILE: 0,
@@ -555,6 +557,8 @@ export class FezClient {
   private statuses = new Map<string, string>(); // kind-30315 status text
   private seenMessages = new Set<string>();
   private messagesByChannel = new Map<string, Msg[]>();
+  /** Pubkeys I've personally muted — client-side, self-encrypted, tells no one. */
+  private mutedByMe = new Set<string>();
   private msgByIdMap = new Map<string, Msg>();
   private threadNoByRoot = new Map<string, number>();
   private rootByThreadNoMap = new Map<number, string>();
@@ -809,7 +813,12 @@ export class FezClient {
     return undefined;
   }
   messages(channelId: string): readonly Msg[] {
-    return this.messagesByChannel.get(channelId) ?? [];
+    const list = this.messagesByChannel.get(channelId) ?? [];
+    // The personal plane: someone you muted vanishes from YOUR reads only.
+    // ponytail: unread counts still include muted authors — filter them in
+    // the unread walk too if that ever grates.
+    if (this.mutedByMe.size === 0) return list;
+    return list.filter((m) => !this.mutedByMe.has(m.authorPk));
   }
   msgById(id: string): Msg | undefined {
     return this.msgByIdMap.get(id);
@@ -830,7 +839,9 @@ export class FezClient {
     return this.rootByThreadNoMap;
   }
   threadReplies(channelId: string, rootId: string): Msg[] {
-    return (this.messagesByChannel.get(channelId) ?? []).filter((m) => m.rootId === rootId);
+    return (this.messagesByChannel.get(channelId) ?? []).filter(
+      (m) => m.rootId === rootId && !this.mutedByMe.has(m.authorPk)
+    );
   }
   threadReplyCount(channelId: string, rootId: string): number {
     const local = this.threadReplies(channelId, rootId).length;
@@ -1896,6 +1907,36 @@ export class FezClient {
   }
 
   /**
+   * The personal plane: hide someone from YOUR view. No authority, no
+   * roster, no relay policy — a self-encrypted 30078 d="mutes" record
+   * (same account-data pattern as read state), so it follows your key
+   * across devices and the muted person can never tell.
+   */
+  isMutedByMe(pk: string): boolean {
+    return this.mutedByMe.has(pk);
+  }
+
+  async mutePerson(pk: string): Promise<void> {
+    if (pk === this.pubkey) throw new Error("you can't mute yourself");
+    this.mutedByMe.add(pk);
+    await this.publishMutes();
+  }
+
+  async unmutePerson(pk: string): Promise<void> {
+    if (!this.mutedByMe.delete(pk)) throw new Error("not muted");
+    await this.publishMutes();
+  }
+
+  private async publishMutes(): Promise<void> {
+    await this.wire.publish({
+      kind: K.READ_STATE,
+      tags: [["d", K.MUTES_D]],
+      content: await this.wire.encrypt(this.pubkey, JSON.stringify({ muted: [...this.mutedByMe] })),
+    });
+    this.emit("channelsChanged");
+  }
+
+  /**
    * An extension's own configuration, on the relay, encrypted to you.
    *
    * The seam exists because the alternative is every extension deriving
@@ -2113,7 +2154,12 @@ export class FezClient {
       }
       for (const [d, event] of latestByD) {
         try {
-          this.lastReadByChannel.set(d, Number(JSON.parse(await this.wire.decrypt(this.pubkey, event.content)).last_read) || 0);
+          const body = JSON.parse(await this.wire.decrypt(this.pubkey, event.content)) as { last_read?: unknown; muted?: unknown };
+          if (d === K.MUTES_D) {
+            this.mutedByMe = new Set(Array.isArray(body.muted) ? (body.muted as string[]) : []);
+          } else {
+            this.lastReadByChannel.set(d, Number(body.last_read) || 0);
+          }
         } catch { /* not ours / old format */ }
       }
     } catch { /* badges start from zero */ }

@@ -112,9 +112,19 @@ export default function UserCard({
             <>
               {hasAuthority && <div className="ucard-rule" />}
               <div className="ucard-grp self"><span className="ucard-sw" /> Just for you</div>
-              <div className="ucard-mi calm disabled" title="coming soon">
-                <span className="ucard-gl">🔇</span> Mute this person
-              </div>
+              {client.isMutedByMe(pk) ? (
+                <div className="ucard-mi calm" onClick={act(`unmuted ${name}`, () => client.unmutePerson(pk))}>
+                  <span className="ucard-gl">🔊</span> Unmute this person
+                </div>
+              ) : (
+                <div
+                  className="ucard-mi calm"
+                  title="hides them from your view only — they can't tell"
+                  onClick={act(`muted ${name} — just for you`, () => client.mutePerson(pk))}
+                >
+                  <span className="ucard-gl">🔇</span> Mute this person
+                </div>
+              )}
             </>
           )}
         </div>
