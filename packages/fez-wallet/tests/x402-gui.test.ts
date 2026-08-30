@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mirrorX402Spend, mirrorEvmAddress, mirrorX402Meta } from "../src/storage-mirror.js";
-import { x402Settings, type WalletConfig } from "../src/config.js";
+import { x402Settings, USDC_BASE_SEPOLIA, USDC_BASE_MAINNET, type WalletConfig } from "../src/config.js";
 import { erc20BalanceCall, parseUsdcBalance, validUsd, x402TxLink } from "../src/gui-logic.js";
 
 let dir: string;
@@ -82,6 +82,16 @@ describe("x402Settings — prefs layer wins, and a flip moves the triple togethe
     const s = x402Settings(BASE, { x402: { network: "base", rpcUrl: "https://my.node" } });
     expect(s.rpcUrl).toBe("https://my.node");
     expect(s.usdcAddress).toBe("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+  });
+
+  // I2: a prefs-level chain-fact override is honored ONLY for an
+  // unrecognized network label — for a KNOWN one (here "base-sepolia"),
+  // the table wins regardless of which layer named the override, so a
+  // mainnet contract can never survive under a testnet label the panel
+  // shows as just that label.
+  it("a prefs-level usdcAddress override is ignored for a KNOWN network — the table wins, not the override", () => {
+    const s = x402Settings(BASE, { x402: { network: "base-sepolia", usdcAddress: USDC_BASE_MAINNET } });
+    expect(s.usdcAddress).toBe(USDC_BASE_SEPOLIA);
   });
 
   it("garbage prefs numbers fail CLOSED to the next layer, never open", () => {

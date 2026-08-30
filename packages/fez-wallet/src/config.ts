@@ -65,25 +65,41 @@ const X402_NETWORK_TABLE: Record<string, { chainRef: string; usdcAddress: string
  * cannot recur here because saveConfig never sees prefs.x402 and so never
  * persists it.
  *
- * The one non-obvious rule: a prefs-level `network` flip re-derives
- * chainRef/usdcAddress/rpcUrl from the table AND ignores wallet.json's
- * explicit overrides of those three — otherwise a GUI flip to mainnet
- * could pair mainnet's chain id with a stale sepolia contract (the
- * "session says testnet, spends mainnet" bug class the TAO wallet was
- * burned by; see isNetworkOwnedEndpoint's history). Prefs' own explicit
- * overrides still win over its derived row.
+ * The one non-obvious rule (I2): for a KNOWN network label, chainRef and
+ * usdcAddress come from the table UNCONDITIONALLY — neither layer's
+ * explicit override is honored, no matter which one set the label —
+ * otherwise a mainnet contract could survive under a "base-sepolia"
+ * label (the panel shows only the label, not the address behind it), or
+ * a GUI flip to mainnet could pair mainnet's chain id with a stale
+ * sepolia contract (the "session says testnet, spends mainnet" bug class
+ * the TAO wallet was burned by; see isNetworkOwnedEndpoint's history). An
+ * explicit chainRef/usdcAddress is honored only when the network label
+ * itself is UNRECOGNIZED — there is no table row to defer to instead.
+ * rpcUrl carries no signing weight, so it keeps the older, looser rule:
+ * prefs' own value wins outright; a disk-level rpcUrl wins too, unless a
+ * prefs-level network flip invalidated it (same reasoning as before, just
+ * scoped to rpcUrl now that chain facts have their own, stricter rule).
  */
 export function x402Settings(c: WalletConfig, prefs: WalletPrefs = readPrefs()): X402Settings {
   const disk = c.x402 ?? {};
   const p = prefs.x402 ?? {};
   const prefsFlipped = p.network !== undefined;
   const network = p.network ?? disk.network ?? X402_DEFAULTS.network;
+  const known = network in X402_NETWORK_TABLE;
   const derived = X402_NETWORK_TABLE[network] ?? X402_NETWORK_TABLE[X402_DEFAULTS.network];
 
-  // Chain facts: prefs override > (disk override, unless a prefs flip
-  // invalidated it) > the network's derived row.
-  const chain = (key: "chainRef" | "usdcAddress" | "rpcUrl"): string =>
-    p[key] ?? (prefsFlipped ? derived[key] : disk[key] ?? derived[key]);
+  // I2: chainRef/usdcAddress are what gets SIGNED — for a KNOWN network
+  // they come from the table unconditionally, no matter which layer (or
+  // both) named an explicit value, so a label can never disagree with
+  // its own contract (e.g. a stray disk-level mainnet usdcAddress
+  // surviving under a prefs "base-sepolia" flip, invisible in a panel
+  // that only shows the label). An override is honored only when the
+  // network label itself is unrecognized — there is no table row to defer
+  // to instead. rpcUrl carries no signing weight, so it stays freely
+  // overridable exactly as before (prefs > disk-unless-a-flip-invalidated-it > derived).
+  const chainField = (key: "chainRef" | "usdcAddress"): string =>
+    known ? derived[key] : p[key] ?? disk[key] ?? derived[key];
+  const rpcUrl = p.rpcUrl ?? (prefsFlipped ? derived.rpcUrl : disk.rpcUrl ?? derived.rpcUrl);
 
   // A NaN/Infinity in either layer (hand-edited or GUI-garbled) must not
   // silently fail OPEN: dailyCapUsd and autoApproveUnderUsd both feed `>`
@@ -100,9 +116,9 @@ export function x402Settings(c: WalletConfig, prefs: WalletPrefs = readPrefs()):
 
   return {
     network,
-    chainRef: chain("chainRef"),
-    usdcAddress: chain("usdcAddress"),
-    rpcUrl: chain("rpcUrl"),
+    chainRef: chainField("chainRef"),
+    usdcAddress: chainField("usdcAddress"),
+    rpcUrl,
     dailyCapUsd,
     autoApproveUnderUsd,
   };

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { parseIssueUrl } from "./github.js";
 import { mirrorJobs, upsertJob, type RidgesJob } from "./store.js";
 
@@ -71,7 +72,7 @@ export async function dispatchRidges(deps: DispatchDeps, args: { issueUrl: strin
     const ts = now();
     const message = "ridges: not a github issue URL — expected https://github.com/<owner>/<repo>/issues/<number>";
     await record({
-      id: ts,
+      id: randomUUID(),
       ts,
       persona: deps.persona,
       issueUrl: args.issueUrl,
@@ -110,28 +111,47 @@ export async function dispatchRidges(deps: DispatchDeps, args: { issueUrl: strin
   switch (outcome.kind) {
     case "response": {
       // The 404 app-not-installed guard (and any other non-402 refusal)
-      // carries its explanation in `detail` — surfaced verbatim because
-      // it's the one that names the install link.
+      // carries its explanation in `detail` — surfaced because it's the
+      // one that names the install link. I4: Ridges is a third party;
+      // an unbounded, multi-line `detail` (or, absent one, the raw
+      // bodyText — the T3 non-JSON/missing-detail fallback) could forge
+      // fake lines into a reply a wallet message decorator renders as a
+      // card (e.g. a fake "receive address" line) — collapsed to one
+      // line and capped, same as the wallet's own `oneLine` for exactly
+      // this reason.
       const detail = readStringField(outcome.bodyText, "detail");
-      const message = `ridges refused before payment — ${detail ?? (outcome.bodyText || `HTTP ${outcome.status}`)}`;
-      await record({ ...base, id: ts, status: "refused" });
+      const raw = detail ?? (outcome.bodyText || `HTTP ${outcome.status}`);
+      const message = `ridges refused before payment — ${oneLine(raw).slice(0, 500)}`;
+      await record({ ...base, id: randomUUID(), status: "refused" });
       return message;
     }
     case "refused": {
-      await record({ ...base, id: ts, status: "refused" });
+      await record({ ...base, id: randomUUID(), status: "refused" });
       return outcome.message;
     }
     case "paid": {
+      // M1: `issue_id` is the PROVIDER's own id, not ours — recorded as
+      // `providerId` for reference, but this row's `id` (what upsertJob
+      // keys on) is always our own, so a fixed/repeated provider id can
+      // never overwrite an unrelated paid row.
       const issueId = readStringField(outcome.bodyText, "issue_id");
-      await record({ ...base, id: issueId ?? ts, status: "working", usd: outcome.usd, txHash: outcome.txHash });
+      await record({ ...base, id: randomUUID(), providerId: issueId, status: "working", usd: outcome.usd, txHash: outcome.txHash });
       return `ridges: dispatched — the subnet has your issue (paid $${outcome.usd.toFixed(2)}, tx ${outcome.txHash})`;
     }
     case "ambiguous": {
-      await record({ ...base, id: ts, status: "payment-unclear", usd: outcome.usd, txHash: outcome.txHash });
+      await record({ ...base, id: randomUUID(), status: "payment-unclear", usd: outcome.usd, txHash: outcome.txHash });
       const txNote = outcome.txHash ? ` (${outcome.txHash})` : "";
       return `${outcome.message} If it settled, do not re-dispatch — contact Ridges support with the tx hash${txNote}.`;
     }
   }
+}
+
+/** Collapses whitespace/control characters (including newlines) to a
+ * single space and trims — mirrors the wallet's own `oneLine` (tools.ts):
+ * a hostile third party's text must never carry a fake extra "line" into
+ * a message a decorator might render as a card. */
+function oneLine(s: string): string {
+  return s.replace(/[\s\x00-\x1f\x7f]+/g, " ").trim();
 }
 
 /** Reads one string (or number, stringified) field out of a JSON body —

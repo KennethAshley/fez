@@ -109,14 +109,33 @@ export function pickOffer(
 
 const MAX_SAFE_ATOMIC = 2 ** 53;
 
-export function offerUsd(offer: X402Offer): number {
-  const amount = offer.amount ?? offer.maxAmountRequired;
+/**
+ * The ONE place that reads an offer's atomic-unit amount. v2 names it
+ * `amount`; v1 names the identical field `maxAmountRequired` — before
+ * this existed, `offerUsd` (pricing/caps/consent) and BOTH `payWith402`
+ * arms (what gets signed) and the receipt build each picked their own
+ * `a ?? b` order, so a v1 offer naming BOTH fields with different values
+ * could be priced off one and signed for the other. Refuse-don't-guess,
+ * same as `resolveX402Version`: if both are present they must agree, or
+ * this throws rather than silently picking a side.
+ */
+export function offerAtomicAmount(offer: X402Offer): string {
+  const { amount, maxAmountRequired } = offer;
+  if (amount !== undefined && maxAmountRequired !== undefined && amount !== maxAmountRequired) {
+    throw new Error(`x402: offer names two amounts ("${amount}" and "${maxAmountRequired}") — refusing`);
+  }
+  const value = amount ?? maxAmountRequired;
   // BigInt(str) also accepts hex ("0x2710") and treats "" as 0n — neither is
   // a valid x402 atomic-unit amount (the spec is a plain decimal string).
   // Reject anything but digits before BigInt ever sees it.
-  if (!amount || !/^\d+$/.test(amount)) {
-    throw new Error(`x402: offer amount "${amount}" is not a decimal integer string`);
+  if (!value || !/^\d+$/.test(value)) {
+    throw new Error(`x402: offer amount "${value}" is not a decimal integer string`);
   }
+  return value;
+}
+
+export function offerUsd(offer: X402Offer): number {
+  const amount = offerAtomicAmount(offer);
   const raw = BigInt(amount);
   if (raw > BigInt(MAX_SAFE_ATOMIC)) throw new Error(`x402: offer amount "${amount}" exceeds safe integer bounds`);
   return Number(raw) / 1e6;
@@ -282,7 +301,7 @@ export async function payWith402(opts: PayWith402Opts): Promise<{ paymentHeaders
     const requirements = {
       scheme: opts.offer.scheme,
       network: opts.offer.network,
-      maxAmountRequired: opts.offer.maxAmountRequired ?? opts.offer.amount,
+      maxAmountRequired: offerAtomicAmount(opts.offer),
       resource: opts.offer.resource ?? "",
       description: opts.offer.description ?? "",
       payTo: opts.offer.payTo,
@@ -296,7 +315,7 @@ export async function payWith402(opts: PayWith402Opts): Promise<{ paymentHeaders
       scheme: opts.offer.scheme,
       network: opts.offer.network as `${string}:${string}`,
       asset: opts.offer.asset,
-      amount: opts.offer.amount ?? opts.offer.maxAmountRequired ?? "",
+      amount: offerAtomicAmount(opts.offer),
       payTo: opts.offer.payTo,
       maxTimeoutSeconds,
       extra: opts.offer.extra ?? {},

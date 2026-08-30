@@ -82,6 +82,12 @@ function Row({ job, api, now }: { job: RidgesJob; api: GuiApi; now: Date }) {
   const openIssue = () => {
     if (isHttpUrl(job.issueUrl)) void api.openUrl(job.issueUrl);
   };
+  // M4: prUrl is GitHub's own html_url via the poller, but it's still
+  // externally-sourced data landing in an onClick — same guard issueUrl
+  // gets, not a trust distinction.
+  const openPr = () => {
+    if (job.prUrl && isHttpUrl(job.prUrl)) void api.openUrl(job.prUrl);
+  };
 
   if (job.status === "refused") {
     // Refused rows never got as far as owner/repo/issueNumber — render
@@ -133,7 +139,7 @@ function Row({ job, api, now }: { job: RidgesJob; api: GuiApi; now: Date }) {
         </span>
         {job.prUrl ? (
           <span className={styles.pr}>
-            <a onClick={() => void api.openUrl(job.prUrl!)}>PR#{job.prNumber}</a>
+            <a onClick={openPr}>PR#{job.prNumber}</a>
           </span>
         ) : (
           <span className={styles.ghost}>PR …</span>
@@ -150,7 +156,7 @@ function Row({ job, api, now }: { job: RidgesJob; api: GuiApi; now: Date }) {
         <span className={styles.receipt} title="the wallet's x402 receipt">
           receipt ⛁
         </span>
-        {job.status === "pr-open" && job.prUrl && <a onClick={() => void api.openUrl(job.prUrl!)}>view diff</a>}
+        {job.status === "pr-open" && job.prUrl && <a onClick={openPr}>view diff</a>}
       </div>
     </div>
   );

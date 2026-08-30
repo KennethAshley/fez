@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readJobs, upsertJob, mirrorJobs, mirrorNetwork, STORAGE_NAME, type RidgesJob } from "../src/store.js";
+import { readJobs, upsertJob, mirrorJobs, STORAGE_NAME, type RidgesJob } from "../src/store.js";
 
 let dir: string;
 let extensionDataDir: string;
@@ -69,6 +69,17 @@ describe("readJobs / upsertJob", () => {
     upsertJob(dir, job());
     expect(fs.existsSync(path.join(dir, "ridges-jobs.json"))).toBe(true);
   });
+
+  // M2: the source file must not grow forever.
+  it("caps the source file itself at the newest 1000", () => {
+    for (let i = 0; i < 1002; i++) {
+      upsertJob(dir, job({ id: `job-${i}` }));
+    }
+    const jobs = readJobs(dir);
+    expect(jobs).toHaveLength(1000);
+    expect(jobs[0].id).toBe("job-2");
+    expect(jobs[999].id).toBe("job-1001");
+  });
 });
 
 describe("mirrorJobs", () => {
@@ -99,28 +110,5 @@ describe("mirrorJobs", () => {
     process.env.FEZ_EXTENSION_DATA_DIR = "/dev/null/nope";
     upsertJob(dir, job());
     await expect(mirrorJobs(dir)).resolves.toBeUndefined();
-  });
-});
-
-describe("mirrorNetwork", () => {
-  function readMirror() {
-    return JSON.parse(fs.readFileSync(path.join(extensionDataDir, `${STORAGE_NAME}.json`), "utf8"));
-  }
-
-  it("mirrors the network alongside the jobs", async () => {
-    upsertJob(dir, job());
-    await mirrorNetwork(dir, "base-sepolia");
-    const mirrored = readMirror();
-    expect(mirrored.network).toBe("base-sepolia");
-    expect(mirrored.jobs.map((j: RidgesJob) => j.id)).toEqual(["job-1"]);
-  });
-
-  it("updating the network does not drop jobs written afterward by mirrorJobs", async () => {
-    await mirrorNetwork(dir, "base-sepolia");
-    upsertJob(dir, job());
-    await mirrorJobs(dir);
-    const mirrored = readMirror();
-    expect(mirrored.network).toBe("base-sepolia");
-    expect(mirrored.jobs).toHaveLength(1);
   });
 });

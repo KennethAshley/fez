@@ -24,8 +24,14 @@ export const STORAGE_NAME = "fez-ridges";
 
 const JOBS_FILE = "ridges-jobs.json";
 const MAX_MIRROR = 500;
+const MAX_STORE = 1000;
 
 export interface RidgesJob {
+  /** Our OWN identity for this row — never the provider's `issue_id`
+   * (M1): a server-controlled id is either attacker-influenced or just a
+   * dumb collision waiting to happen, and `upsertJob` keys on `id` — one
+   * constant value from a buggy or hostile provider would silently
+   * overwrite an unrelated paid row instead of recording a new one. */
   id: string;
   ts: string;
   persona: string;
@@ -39,6 +45,10 @@ export interface RidgesJob {
   prUrl?: string;
   prNumber?: number;
   updatedAt: string;
+  /** The provider's own issue id (Ridges' `issue_id`), kept for reference
+   * only — never used as this row's identity. Absent when the provider
+   * never returned one, or the job never reached that outcome. */
+  providerId?: string;
 }
 
 function jobsFile(dir: string): string {
@@ -54,13 +64,17 @@ export function readJobs(dir: string): RidgesJob[] {
   }
 }
 
+/** M2: the source file grows one row per dispatch forever otherwise — an
+ * unbounded local JSON file for a wallet that could run for years. Capped
+ * at the newest 1000; the mirror's own 500-cap is unaffected (unrelated,
+ * smaller, and already there for the same reason). */
 export function upsertJob(dir: string, job: RidgesJob): void {
   const jobs = readJobs(dir);
   const i = jobs.findIndex((j) => j.id === job.id);
   if (i >= 0) jobs[i] = job;
   else jobs.push(job);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(jobsFile(dir), JSON.stringify(jobs, null, 2));
+  fs.writeFileSync(jobsFile(dir), JSON.stringify(jobs.slice(-MAX_STORE), null, 2));
 }
 
 function extensionDataDir(): string {
@@ -103,12 +117,3 @@ export function mirrorJobs(dir: string): Promise<void> {
   });
 }
 
-/** Mirrors the network alongside a fresh read of the current jobs, so
- * whichever of mirrorJobs/mirrorNetwork runs last still leaves the file
- * fully consistent rather than one field going stale. */
-export function mirrorNetwork(dir: string, network: string): Promise<void> {
-  return update((s) => {
-    s.jobs = readJobs(dir).slice(-MAX_MIRROR);
-    s.network = network;
-  });
-}

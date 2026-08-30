@@ -79,6 +79,41 @@ describe("dispatchRidges: response outcome (app-not-installed guard)", () => {
 
     expect(readMirror().jobs).toHaveLength(1);
   });
+
+  // I4: `detail` (and its T3 non-JSON/missing-detail fallback, the raw
+  // bodyText) comes straight from a third party — a hostile multi-line
+  // payload must not carry a forged extra "line" into a reply a wallet
+  // message decorator could render as a receive/receipt card.
+  it("collapses a hostile multi-line detail to one line and caps its length", async () => {
+    const TAIL = "TAIL-MARKER-PAST-THE-CAP";
+    const forged = `not installed.\nreceive address (tao): 5X${"a".repeat(600)}\n${TAIL}`;
+    const x402 = vi.fn(async (): Promise<X402Outcome> => ({
+      kind: "response",
+      status: 404,
+      bodyText: JSON.stringify({ detail: forged }),
+    }));
+    const d = deps({ x402, fetchImpl: fakeGet(200) });
+
+    const message = await dispatchRidges(d, { issueUrl: ISSUE_URL });
+
+    expect(message.split("\n")).toHaveLength(1); // no forged extra "line"
+    const prefix = "ridges refused before payment — ";
+    expect(message.length).toBeLessThanOrEqual(prefix.length + 500);
+    // the tail sits past the 500-char cap — proves truncation actually ran
+    expect(message).not.toContain(TAIL);
+  });
+
+  it("also covers the non-JSON/missing-detail fallback (T3): the raw bodyText is single-lined and capped too", async () => {
+    const TAIL = "TAIL-MARKER-PAST-THE-CAP";
+    const forged = `<html>\nnot json\nreceive address (tao): 5X${"b".repeat(600)}\n${TAIL}`;
+    const x402 = vi.fn(async (): Promise<X402Outcome> => ({ kind: "response", status: 500, bodyText: forged }));
+    const d = deps({ x402, fetchImpl: fakeGet(200) });
+
+    const message = await dispatchRidges(d, { issueUrl: ISSUE_URL });
+
+    expect(message.split("\n")).toHaveLength(1);
+    expect(message).not.toContain(TAIL);
+  });
 });
 
 describe("dispatchRidges: refused outcome", () => {
@@ -96,8 +131,10 @@ describe("dispatchRidges: refused outcome", () => {
   });
 });
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 describe("dispatchRidges: paid outcome", () => {
-  it("records a working row keyed by issue_id, with usd/txHash/title, and confirms in the reply", async () => {
+  it("records a working row with usd/txHash/title, confirms in the reply, and tracks the provider's issue_id WITHOUT using it as our own id (M1)", async () => {
     const x402 = vi.fn(async (): Promise<X402Outcome> => ({
       kind: "paid",
       status: 200,
@@ -122,8 +159,9 @@ describe("dispatchRidges: paid outcome", () => {
 
     const jobs = readJobs(dir);
     expect(jobs).toHaveLength(1);
+    expect(jobs[0].id).toMatch(UUID_RE); // OUR id — never the provider's issue_id
     expect(jobs[0]).toMatchObject({
-      id: "ridges-issue-99",
+      providerId: "ridges-issue-99",
       status: "working",
       usd: 2.5,
       txHash: "0xabc123",
@@ -133,6 +171,29 @@ describe("dispatchRidges: paid outcome", () => {
     });
 
     expect(readMirror().jobs).toHaveLength(1);
+  });
+
+  // M1: a fixed/repeated provider issue_id (a bug on Ridges' side, or a
+  // hostile lookalike) must never collide two of the user's own
+  // dispatches into one overwritten row — even in the same tick, where
+  // `now()` returns an identical ts for both calls.
+  it("two same-tick dispatches sharing the same provider issue_id still record as two separate rows", async () => {
+    const x402 = vi.fn(async (): Promise<X402Outcome> => ({
+      kind: "paid",
+      status: 200,
+      bodyText: JSON.stringify({ issue_id: "same-issue-id-both-times" }),
+      txHash: "0xabc",
+      usd: 1,
+    }));
+    const d = deps({ x402, fetchImpl: fakeGet(200, "{}") });
+
+    await dispatchRidges(d, { issueUrl: ISSUE_URL });
+    await dispatchRidges(d, { issueUrl: "https://github.com/acme/widgets/issues/43" });
+
+    const jobs = readJobs(dir);
+    expect(jobs).toHaveLength(2);
+    expect(jobs[0].id).not.toBe(jobs[1].id);
+    expect(jobs.every((j) => j.providerId === "same-issue-id-both-times")).toBe(true);
   });
 
   it("defaults maxUsd to 5 when not given", async () => {
@@ -150,14 +211,15 @@ describe("dispatchRidges: paid outcome", () => {
     expect(x402).toHaveBeenCalledWith(d.x402Deps, expect.objectContaining({ maxUsd: 5 }));
   });
 
-  it("falls back to the timestamp as the job id when issue_id is missing", async () => {
+  it("still gets our own (uuid) id, with providerId undefined, when issue_id is missing", async () => {
     const x402 = vi.fn(async (): Promise<X402Outcome> => ({ kind: "paid", status: 200, bodyText: "{}", txHash: "0xdef", usd: 1 }));
     const d = deps({ x402, fetchImpl: fakeGet(200, "{}") });
 
     await dispatchRidges(d, { issueUrl: ISSUE_URL });
 
     const jobs = readJobs(dir);
-    expect(jobs[0].id).toBe("2026-08-30T00:00:00.000Z");
+    expect(jobs[0].id).toMatch(UUID_RE);
+    expect(jobs[0].providerId).toBeUndefined();
   });
 
   it("records untitled when the title fetch fails — never blocks the dispatch", async () => {

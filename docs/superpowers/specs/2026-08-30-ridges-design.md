@@ -67,7 +67,7 @@ Mount-model nav view `{ glyph: "⛏", label: "ridges" }` (own React via `createR
 
 ## Config
 
-`~/.fez/extension-data/fez-ridges.json` `prefs` subtree (gui-writable seam): none needed in v1. Tool-level: `maxUsd` arg (default 5). No new permissions beyond the manifest: `network:product.ridges.ai`, `network:api.github.com`, `read:channels`, `publish`, `ui`.
+`~/.fez/extension-data/fez-ridges.json` `prefs` subtree (gui-writable seam): none needed in v1. Tool-level: `maxUsd` arg (default 5). Manifest permissions: `network:product.ridges.ai`, `network:api.github.com`, `read:channels`, `publish`, `commands` (I1: `/ridges` is `registerCommand`, gated exactly like `background` — omitting it left the command dead on a real install), `ui`.
 
 ## Out of scope (v1)
 

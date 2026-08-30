@@ -13,6 +13,11 @@ export function parseIssueUrl(url: string): { owner: string; repo: string; issue
     return undefined;
   }
   if (u.protocol !== "https:" || u.hostname !== "github.com") return undefined;
+  // M6: userinfo (`user:pass@`) or a non-default port don't change which
+  // host actually gets the request (u.hostname already pinned github.com
+  // above) but they're not a canonical github.com issue link either —
+  // refuse-don't-guess on anything that could dress up as one.
+  if (u.username !== "" || u.password !== "" || u.port !== "") return undefined;
   const m = ISSUE_PATH_RE.exec(u.pathname);
   if (!m) return undefined;
   const issueNumber = Number(m[3]);

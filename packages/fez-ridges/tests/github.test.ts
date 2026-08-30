@@ -77,6 +77,15 @@ describe("parseIssueUrl", () => {
   it("rejects a repo root URL", () => {
     expect(parseIssueUrl("https://github.com/foo/bar")).toBeUndefined();
   });
+
+  // M6
+  it("rejects userinfo in the URL", () => {
+    expect(parseIssueUrl("https://user:pass@github.com/foo/bar/issues/12")).toBeUndefined();
+  });
+
+  it("rejects a non-default port", () => {
+    expect(parseIssueUrl("https://github.com:8443/foo/bar/issues/12")).toBeUndefined();
+  });
 });
 
 describe("matchPr", () => {

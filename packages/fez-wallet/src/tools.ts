@@ -16,6 +16,7 @@ import {
   decodePaymentRequired,
   pickOffer,
   offerUsd,
+  offerAtomicAmount,
   todaySpend,
   recordSpend,
   payWith402,
@@ -451,7 +452,15 @@ export async function x402FetchRaw(
   if (!/^0x[0-9a-fA-F]{40}$/.test(offer.payTo)) {
     return { kind: "refused", message: `refused: the offer's payTo "${offer.payTo}" is not a valid EVM address — nothing was paid` };
   }
-  const usd = offerUsd(offer);
+  // offerUsd (via offerAtomicAmount) throws when an offer names two
+  // conflicting amount fields — refuse here rather than let a malformed
+  // offer become an uncaught exception this deep in the payment path.
+  let usd: number;
+  try {
+    usd = offerUsd(offer);
+  } catch (e) {
+    return { kind: "refused", message: `refused: ${(e as Error).message} — nothing was paid` };
+  }
 
   if (usd > args.maxUsd) {
     return { kind: "refused", message: `refused: this costs $${usd.toFixed(2)}, above your maxUsd of $${args.maxUsd.toFixed(2)} — nothing was paid` };
@@ -675,7 +684,7 @@ export async function x402FetchRaw(
         buildReceipt({
           agentSecretHex: deps.agentNostrKey,
           channelId: deps.config.consentChannel,
-          amount: { raw: BigInt(offer.amount ?? offer.maxAmountRequired ?? "0"), decimals: 6, symbol: "USDC" },
+          amount: { raw: BigInt(offerAtomicAmount(offer)), decimals: 6, symbol: "USDC" },
           chain: "base",
           network: x402.network,
           txHash,

@@ -739,9 +739,19 @@ export default function activate(api: GuiExtensionApi): void {
       // Flipping to mainnet is the one click in this panel that turns play
       // money into real money — it gets a confirm the TAO selector (which
       // moves between two funded-on-purpose chains) doesn't need.
-      if (next === "base" && !confirm("Flip x402 payments to Base MAINNET? Agents will spend REAL USDC.")) return;
+      // I3: auto-approve/daily-cap are network-agnostic prefs that carry
+      // straight into mainnet — name the effective numbers here, or the
+      // owner confirms a network flip with no idea agents can already
+      // spend real money unattended up to whatever they last set for testnet.
+      if (
+        next === "base" &&
+        !confirm(
+          `Flip x402 payments to Base MAINNET? Agents will spend REAL USDC — auto-approving up to $${autoSaved} per call, $${capSaved}/day, without asking you.`
+        )
+      )
+        return;
       void writeX402({ network: next }, `✓ x402 now on ${x402NetworkLabel(next)}`);
-    }, [writeX402]);
+    }, [writeX402, autoSaved, capSaved]);
 
     const saveX402Numbers = useCallback(() => {
       const patch: Record<string, unknown> = {};

@@ -330,6 +330,71 @@ describe("payWith402: x402Version routing (v1 vs v2)", () => {
   });
 });
 
+// C1 CRITICAL, proven end-to-end through the real x402FetchRaw flow (not
+// just the offerAtomicAmount unit): a v1 offer naming BOTH `amount` and
+// `maxAmountRequired` used to be PRICED off one field (offerUsd's
+// `amount ?? maxAmountRequired`) and SIGNED for the other (payWith402's
+// v1 arm read `maxAmountRequired ?? amount`) — a $0.01-priced offer could
+// carry a $500 `maxAmountRequired` that got signed into the actual
+// authorization, past every cap/consent check, which all ran against the
+// $0.01 price.
+describe("C1 regression: a v1 offer naming two different amounts", () => {
+  it("refuses before any write when the two amounts disagree", async () => {
+    const dir = tmpHome();
+    // OFFER_V1.maxAmountRequired is "10000" ($0.01); `amount` here claims
+    // $500 — the exact shape of the bug: priced low, would-be-signed high.
+    const conflicting = { ...OFFER_V1, amount: "500000000" };
+    const fetchImpl: FetchLike = async () => {
+      const header = Buffer.from(
+        JSON.stringify({ x402Version: 1, resource: { url: "http://test.local/paid" }, accepts: [conflicting] }),
+        "utf-8",
+      ).toString("base64");
+      return fakeResponse(402, { headers: { "PAYMENT-REQUIRED": header } });
+    };
+    const outcome = await x402FetchRaw(
+      baseDeps(dir, { fetchImpl, config: baseConfig({ x402: { autoApproveUnderUsd: { default: 1000 } } }) }),
+      { url: "http://x/", maxUsd: 1000 },
+    );
+    expect(outcome.kind).toBe("refused");
+    expect((outcome as { message: string }).message).toMatch(/two amounts/);
+    expect(readX402Log(dir)).toHaveLength(0); // zero writes
+  });
+
+  it("a v1 offer with a single amount still pays, and the SIGNED X-PAYMENT authorization value equals the PRICED usd (pricing and signing can't disagree)", async () => {
+    const dir = tmpHome();
+    let signedInit: Parameters<FetchLike>[1] | undefined;
+    let calls = 0;
+    const fetchImpl: FetchLike = async (_url, init) => {
+      calls++;
+      if (calls === 1) {
+        const header = Buffer.from(
+          JSON.stringify({ x402Version: 1, resource: { url: "http://test.local/paid" }, accepts: [OFFER_V1] }),
+          "utf-8",
+        ).toString("base64");
+        return fakeResponse(402, { headers: { "PAYMENT-REQUIRED": header } });
+      }
+      signedInit = init;
+      return settledResponse({ headerName: "X-PAYMENT-RESPONSE" });
+    };
+    const outcome = await x402FetchRaw(
+      baseDeps(dir, { fetchImpl, config: baseConfig({ x402: { autoApproveUnderUsd: { default: 1 } } }) }),
+      { url: "http://x/", maxUsd: 1 },
+    );
+    expect(outcome.kind).toBe("paid");
+    const paid = outcome as Extract<X402Outcome, { kind: "paid" }>;
+    expect(paid.usd).toBeCloseTo(0.01); // OFFER_V1.maxAmountRequired "10000" atomic units
+
+    const xPayment = (signedInit?.headers as Record<string, string> | undefined)?.["X-PAYMENT"];
+    expect(xPayment).toBeTruthy();
+    const decoded = decodePaymentSignatureHeader(xPayment!) as unknown as {
+      payload: { authorization: Record<string, string> };
+    };
+    // The decoded, SIGNED atomic value must equal the PRICED usd×1e6 —
+    // the exact invariant C1's fix restores.
+    expect(decoded.payload.authorization.value).toBe(String(BigInt(Math.round(paid.usd * 1e6))));
+  });
+});
+
 // Round 3: the version gate refuses unsupported/garbled signals instead of
 // guessing, and offer selection is gated by that SAME normalized version
 // (a cross-format offer — right label, wrong declared version — must not
