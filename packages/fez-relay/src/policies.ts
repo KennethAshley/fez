@@ -240,7 +240,7 @@ export function createdAtFencePolicy(opts?: { maxDriftS?: number; pastExemptKind
  */
 export function moderationPolicy(owner?: string): RelayPolicy {
   const BANS_D = "bans";
-  let cachedBans: Set<string> | undefined;
+  let cachedBans: Map<string, number | undefined> | undefined;
   let cachedAdmins: Set<string> | undefined;
 
   // Owner + everyone the owner's latest roster marks role "admin".
@@ -258,14 +258,28 @@ export function moderationPolicy(owner?: string): RelayPolicy {
     return set;
   };
 
-  const bans = (ctx: PolicyContext): Set<string> => {
+  // pubkey -> until (unix seconds), or undefined for a permanent ban.
+  const bans = (ctx: PolicyContext): Map<string, number | undefined> => {
     if (cachedBans) return cachedBans;
     const latest = ctx
       .query({ kinds: [KIND_BAN_LIST], "#d": [BANS_D] })
       .filter((e) => admins(ctx).has(e.pubkey))
       .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))[0];
-    cachedBans = new Set(latest?.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]) ?? []);
+    cachedBans = new Map(
+      (latest?.tags ?? [])
+        .filter((t) => t[0] === "p" && t[1])
+        .map((t) => [t[1], t[2] ? Number(t[2]) : undefined] as const)
+    );
     return cachedBans;
+  };
+
+  // A timeout (until set) is a ban only until it expires; the list is cached
+  // but expiry is evaluated live, so nothing has to re-publish to lift it.
+  const isBanned = (pk: string, ctx: PolicyContext): boolean => {
+    const m = bans(ctx);
+    if (!m.has(pk)) return false;
+    const until = m.get(pk);
+    return until === undefined || Math.floor(Date.now() / 1000) < until;
   };
 
   return {
@@ -289,13 +303,13 @@ export function moderationPolicy(owner?: string): RelayPolicy {
       // Channel-scoped writes are what a ban withholds — the workspace
       // is the scope, so the h tag is the hook.
       if (!tag(event, "h")) return ok;
-      if (bans(ctx).has(event.pubkey)) return reject("blocked: banned from this workspace");
+      if (isBanned(event.pubkey, ctx)) return reject("blocked: banned from this workspace");
       return ok;
     },
 
     onDeliver(event, ctx) {
       if (!tag(event, "h") || !ctx.authedPubkey) return true; // unauthed read privacy is membershipPolicy's job
-      return !bans(ctx).has(ctx.authedPubkey);
+      return !isBanned(ctx.authedPubkey, ctx);
     },
   };
 }

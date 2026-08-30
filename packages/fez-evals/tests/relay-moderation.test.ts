@@ -129,4 +129,14 @@ describe("moderationPolicy", () => {
     await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"]], now() + 12), true); // restore
     await probe.publishExpect(signAs(troll, 47103, "back", [["h", CH]], now() + 13), true);
   });
+
+  test("a timeout (ban with until) lifts automatically once it passes", async () => {
+    const until = now() + 2;
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"], ["p", trollPk, String(until)]], now() + 20), true);
+    const blocked = await probe.publishExpect(signAs(troll, 47103, "muted", [["h", CH]], now() + 21), false);
+    expect(blocked).toMatch(/banned|timed out/);
+    await new Promise((r) => setTimeout(r, 2100));
+    await probe.publishExpect(signAs(troll, 47103, "back after timeout", [["h", CH]], now() + 1), true);
+    await probe.publishExpect(signAs(admin, 30047, "", [["d", "bans"]], now() + 30), true); // clean
+  });
 });
