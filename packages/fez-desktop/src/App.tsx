@@ -2425,13 +2425,33 @@ function DmView({
   return (
     <main className="main">
       <header className="topbar">
-        ✉ {group && <span className="group-mark">& </span>}
-        {group ? (
-          client.dmTitle(convoKey)
-        ) : (
-          <button className="author" title="profile" onClick={() => onProfile(convoKey)}>{client.dmTitle(convoKey)}</button>
-        )}
-        <span className="dm-note">end-to-end encrypted{group ? " · every participant sees every message" : ""}</span>
+        <div className="topbar-row">
+          {/* Identity gets a face: the header is the person you're talking
+              to, in the same grammar as their rail row — face, presence,
+              name. A group shows its little pile instead. */}
+          {group ? (
+            <span className="party-pile">
+              {peers.filter((pk) => pk !== client.pubkey).slice(0, 3).map((pk) => (
+                <span key={pk} className="party-pile-face">
+                  <Avatar pk={pk} size={18} title={client.displayName(pk)} quip={false} />
+                </span>
+              ))}
+            </span>
+          ) : (
+            <Avatar pk={convoKey} size={20} title={client.dmTitle(convoKey)} quip={false} />
+          )}
+          {group ? (
+            client.dmTitle(convoKey)
+          ) : (
+            <>
+              <HoverCard client={client} pk={convoKey}>
+                <button className="author" title="profile" onClick={() => onProfile(convoKey)}>{client.dmTitle(convoKey)}</button>
+              </HoverCard>
+              <span className={client.isOnline(convoKey) ? "dot on" : "dot off"} />
+            </>
+          )}
+          <span className="dm-note">⚷ end-to-end encrypted{group ? " · every participant sees every message" : ""}</span>
+        </div>
       </header>
       <div
         className="timeline"
@@ -2441,28 +2461,30 @@ function DmView({
           if (el) nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
       >
-        {(convo?.msgs ?? []).map((msg, index, all) => {
-          const mine = msg.senderPk === client.pubkey;
-          return (
-            <div key={msg.id}>
-              {(index === 0 || !sameDay(all[index - 1].ts, msg.ts)) && (
-                <div className="day-divider"><span>{dayLabel(msg.ts)}</span></div>
-              )}
-              <div className={mine ? "bubble mine" : "bubble"}>
-              <button className="avatar-btn" title="profile" onClick={() => onProfile(msg.senderPk)}>
-                <Avatar pk={msg.senderPk} title={client.displayName(msg.senderPk)} size={30} />
-              </button>
-              <div className="bubble-head">
-                <HoverCard client={client} pk={msg.senderPk}>
-                  <button className="author" title="profile" onClick={() => onProfile(msg.senderPk)}>{client.displayName(msg.senderPk)}</button>
-                </HoverCard>
-                <span className="time">{new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-              </div>
-              <div className="bubble-body md"><MdBody text={stripArtifactMarkers(msg.text)} /></div>
-              </div>
-            </div>
-          );
-        })}
+        {(convo?.msgs ?? []).map((msg, index, all) => (
+          <div key={msg.id}>
+            {(index === 0 || !sameDay(all[index - 1].ts, msg.ts)) && (
+              <div className="day-divider"><span>{dayLabel(msg.ts)}</span></div>
+            )}
+            {/* The channel's own Bubble, in DM mode (no channelId): same
+                face/head/body anatomy, hover copy + remind, markdown and
+                mentions — minus the channel machinery it can't have. */}
+            <Bubble
+              client={client}
+              msg={{
+                id: msg.id,
+                authorPk: msg.senderPk,
+                authorName: client.displayName(msg.senderPk),
+                content: msg.text,
+                ts: msg.ts,
+                mentionPks: [],
+              }}
+              inThread={false}
+              onAuthor={() => onProfile(msg.senderPk)}
+              onProfile={onProfile}
+            />
+          </div>
+        ))}
         <div ref={bottomRef} />
       </div>
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
@@ -2872,18 +2894,21 @@ function Bubble({
   onProfile,
 }: {
   client: FezClient;
-  channelId: string;
+  /** Absent in a DM — threads, pins, reactions, and moderation are
+   *  channel machinery, and public kind-7 reactions on an E2E message
+   *  would leak; without a channelId those affordances don't render. */
+  channelId?: string;
     msg: Msg;
   inThread: boolean;
-  onOpenThread: () => void;
+  onOpenThread?: () => void;
   onEdit?: () => void;
   onAuthor?: () => void;
   onProfile?: (pk: string) => void;
 }) {
   const mine = msg.authorPk === client.pubkey;
-  const replies = client.threadReplyCount(channelId, msg.id);
-  const reactions = client.reactions(msg.id);
-  const pinned = client.isPinned(channelId, msg.id);
+  const replies = channelId ? client.threadReplyCount(channelId, msg.id) : 0;
+  const reactions = channelId ? client.reactions(msg.id) : undefined;
+  const pinned = channelId ? client.isPinned(channelId, msg.id) : false;
   const time = new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   // What this message actually tagged, by name — so an @name that
   // reached nobody doesn't render as though it had.
@@ -2918,7 +2943,7 @@ function Bubble({
   /** Report to the moderators: one 1984 per mod, reason encrypted to each. */
   const sendReport = async () => {
     const reason = reportReason.trim();
-    if (!reason) return;
+    if (!reason || !channelId) return;
     setReportOpen(false);
     setReportReason("");
     await client.reportMessage(channelId, msg.id, msg.authorPk, reason);
@@ -2928,7 +2953,7 @@ function Bubble({
 
   const react = (emoji: string) => {
     setPickerAt(undefined);
-    void client.toggleReaction(channelId, msg.id, emoji);
+    if (channelId) void client.toggleReaction(channelId, msg.id, emoji);
   };
 
   /** Buzz's remind-me-later: a preset menu, subject = this message. */
@@ -2985,18 +3010,18 @@ function Bubble({
         <>
           <div className="menu-backdrop" onClick={() => setMenu(undefined)} onContextMenu={(e) => { e.preventDefault(); setMenu(undefined); }} />
           <div className="msg-menu" style={{ left: menu.x, top: menu.y }}>
-            {menuItem("add reaction…", "☺", () => setPickerAt(menu))}
-            {!inThread && menuItem("reply in thread", "↩", onOpenThread)}
+            {channelId && menuItem("add reaction…", "☺", () => setPickerAt(menu))}
+            {channelId && !inThread && onOpenThread && menuItem("reply in thread", "↩", onOpenThread)}
             {menuItem("remind me about this", "◷", () => setRemindOpen(true))}
             {menuItem(copied ? "copied ✓" : "copy text", "⧉", () => {
               void navigator.clipboard.writeText(msg.content);
               setCopied(true);
               setTimeout(() => setCopied(false), 2000);
             })}
-            {!pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, msg.id))}
+            {channelId && !pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, msg.id))}
             {mine && onEdit && menuItem("edit message", "✎", onEdit)}
-            {!mine && menuItem("report to moderators…", "⚑!", () => setReportOpen(true))}
-            {client.canModerateMessage(msg) && (
+            {channelId && !mine && menuItem("report to moderators…", "⚑!", () => setReportOpen(true))}
+            {channelId && client.canModerateMessage(msg) && (
               <button
                 className="self-menu-item danger"
                 onClick={() => {
@@ -3014,7 +3039,7 @@ function Bubble({
                 {armedRemove ? "click again — withholds it for everyone" : "remove message"}
               </button>
             )}
-            {client.canDeleteMessage(msg) && (
+            {channelId && client.canDeleteMessage(msg) && (
               <button
                 className="self-menu-item danger"
                 onClick={() => {
@@ -3037,8 +3062,11 @@ function Bubble({
       )}
       <button
         className="avatar-btn"
-        title="actions"
+        title={channelId ? "actions" : "profile"}
         onClick={(e) => {
+          // The card is member actions (mute, timeout) — channel-side
+          // authority a DM doesn't carry; there the face opens the profile.
+          if (!channelId) return onAuthor?.();
           const r = e.currentTarget.getBoundingClientRect();
           setCardAt({ x: r.right + 6, y: r.top });
         }}
@@ -3051,7 +3079,10 @@ function Bubble({
           <button className="author" title="profile" onClick={onAuthor}>{msg.authorName}</button>
         </HoverCard>
         {(() => {
-          // Authority visible at a glance — owner/admin badge next to the name.
+          // Authority visible at a glance — owner/admin badge next to the
+          // name. Workspace rank stays out of DMs: a private conversation
+          // is between people, not roles.
+          if (!channelId) return null;
           const role = client.state.roleOf(msg.authorPk);
           if (role === "owner") return <span className="msg-role owner">owner</span>;
           if (role === "admin") return <span className="msg-role admin">admin</span>;
@@ -3083,33 +3114,37 @@ function Bubble({
             >
               {copied ? "✓" : "⧉"}
             </button>
-            <button
-              title="react"
-              onClick={(e) => {
-                if (pickerAt) return setPickerAt(undefined);
-                const rect = e.currentTarget.getBoundingClientRect();
-                setPickerAt({ x: rect.right - 264, y: rect.bottom + 6 });
-              }}
-            >
-              ☺
-            </button>
+            {channelId && (
+              <button
+                title="react"
+                onClick={(e) => {
+                  if (pickerAt) return setPickerAt(undefined);
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setPickerAt({ x: rect.right - 264, y: rect.bottom + 6 });
+                }}
+              >
+                ☺
+              </button>
+            )}
             <button title="remind me about this" onClick={() => setRemindOpen(!remindOpen)}>{remindSet ? "✓" : "◷"}</button>
-            {!mine && (
+            {channelId && !mine && (
               <button title="report to the community creator (encrypted)" onClick={() => setReportOpen(!reportOpen)}>
                 {reported ? "✓" : "⚑!"}
               </button>
             )}
-            {!inThread && <button title="reply in thread" onClick={onOpenThread}>↩</button>}
+            {channelId && !inThread && onOpenThread && <button title="reply in thread" onClick={onOpenThread}>↩</button>}
             {mine && onEdit && <button title="edit (↑ also edits your last)" onClick={onEdit}>✎</button>}
-            <button
-              title={pinned ? "pinned" : "pin"}
-              onClick={() => {
-                if (!pinned) void client.pinMessage(channelId, msg.id);
-              }}
-            >
-              ⚑
-            </button>
-            {client.canDeleteMessage(msg) && (
+            {channelId && (
+              <button
+                title={pinned ? "pinned" : "pin"}
+                onClick={() => {
+                  if (!pinned) void client.pinMessage(channelId, msg.id);
+                }}
+              >
+                ⚑
+              </button>
+            )}
+            {channelId && client.canDeleteMessage(msg) && (
               <button
                 className={armedDelete ? "danger armed-delete" : "danger"}
                 title={armedDelete ? "click again — leaves a visible tombstone" : "delete"}
@@ -3174,22 +3209,23 @@ function Bubble({
       {proposalIdsIn(msg.content).map((id) => (
         <InlineProposal key={id} id={id} />
       ))}
-      {msg.content.startsWith("⛔ approval needed:") && (
+      {channelId && msg.content.startsWith("⛔ approval needed:") && (
         <ApprovalCard client={client} msg={msg} channelId={channelId} />
       )}
-      {msg.content.startsWith("❓ choose:") && (
+      {channelId && msg.content.startsWith("❓ choose:") && (
         <ChoiceCard client={client} msg={msg} channelId={channelId} />
       )}
       {installOffers(msg.content).length > 0 && (
         <InstallOffer content={msg.content} authorName={msg.authorName} client={client} />
       )}
-      {messageDecorators()
-        .filter((d) => d.match(msg.content))
-        .map((d, i) => (
-          <div key={`deco-${i}`} className="msg-decoration">
-            {d.render({ content: msg.content, msgId: msg.id, channelId, authorName: msg.authorName })}
-          </div>
-        ))}
+      {channelId &&
+        messageDecorators()
+          .filter((d) => d.match(msg.content))
+          .map((d, i) => (
+            <div key={`deco-${i}`} className="msg-decoration">
+              {d.render({ content: msg.content, msgId: msg.id, channelId, authorName: msg.authorName })}
+            </div>
+          ))}
       <div className="bubble-foot">
         {reactions &&
           [...reactions.entries()].map(([emoji, who]) => (

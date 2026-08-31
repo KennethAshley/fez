@@ -1739,6 +1739,10 @@ button.author:hover { text-decoration: underline; }
 
 /* agent hover card — what can this name do, without clicking */
 .hovercard-wrap { position: relative; display: inline-flex; min-width: 0; }
+/* In the rail, the wrap holds a full-width row, not an inline name —
+   DM rows are the one .channel wrapped in a HoverCard, and inline-flex
+   was laying them out side by side like words. */
+.community > .hovercard-wrap { display: block; }
 /* ── pending attachments (composer chips) ───────────────────────
    Uploaded, not yet sent — the words and the file leave together. */
 .attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px; }
