@@ -11,6 +11,7 @@ import {
   installHint,
   wellKnownSource,
   resolveDeclaredSkills,
+  skillsInstalled,
   invokeWithRetry,
   KIND_AGENT_ENGRAM,
   registerBuiltinHarnesses,
@@ -60,6 +61,7 @@ import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
+import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
 import { fezMcpLaunch } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
@@ -232,6 +234,17 @@ async function main() {
       console.warn(`   ${installHint(m.name, m.source ?? wellKnownSource(m.name))}`);
     }
   }
+
+  // SKILL.md attachments (skills-standard) — a SEPARATE tier from the
+  // mcpServers resolution above (that one predates this plan and is
+  // legacy-named "skills" for tool packages). Progressive disclosure: the
+  // prompt gets name+description only, resolved once here at spawn; the
+  // body stays behind fez_load_skill until the agent actually needs it.
+  const { attached: attachedSkills, missing: missingSkillMds } = resolveAttachedSkills(
+    persona.skills,
+    skillsInstalled()
+  );
+  const skillsSection = skillsPromptSection(attachedSkills);
   const mcpServers = resolved
     .map((r) => findMcpServer(r.key))
     .filter((s): s is NonNullable<typeof s> => s !== undefined);
@@ -255,6 +268,9 @@ async function main() {
         ...(owner ? [{ name: "FEZ_AGENT_OWNER", value: owner }] : []),
         ...(Number(persona.extra.approvalQuorum) >= 1
           ? [{ name: "FEZ_APPROVAL_QUORUM", value: String(Number(persona.extra.approvalQuorum)) }]
+          : []),
+        ...(attachedSkills.length > 0
+          ? [{ name: "FEZ_AGENT_SKILLS", value: skillsEnvJson(attachedSkills) }]
           : []),
       ],
     });
@@ -1461,6 +1477,7 @@ async function main() {
           return [
             persona.systemPrompt ?? "",
             ...(memory.section ? [memory.section] : []),
+            ...(skillsSection ? [skillsSection] : []),
             `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
             `- Artifacts: to ship rich output (a web page, a data table, a report), put it in a fenced block starting \`\`\`artifact:html title="My page" (types: html, markdown, table = JSON array of objects, image = data: URI) — capable clients render it inline; keep it under ~30KB. Plain prose never needs this.`,
             `- Live tools: for a UI that reads and KEEPS reading relay data (a board, a dashboard, a tally), use \`\`\`artifact:live — body-level HTML with a script that calls window.fez.query(q) (Promise of rows) or window.fez.subscribe(q, cb) (re-fires on change, returns an unsubscribe). q is the fez query language, e.g. "open approvals", "pages this week", "open tasks". It's READ-ONLY and NO network is allowed — data comes only through window.fez. Never invent data: an empty result means show "nothing yet", not a made-up row.`,
@@ -1499,6 +1516,11 @@ async function main() {
               : [
                   `- Capability honesty: if the task needs a tool or data source you don't have access to, say so plainly instead of improvising the result.`,
                 ]),
+            ...(missingSkillMds.length > 0
+              ? [
+                  `- Capability honesty: your persona declares skills that are NOT installed: ${missingSkillMds.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
+                ]
+              : []),
             ...(repoUnavailable
               ? [
                   `- No repository: your persona declares repo "${repoUnavailable}", but no workspace provider is installed here — you have NO checkout and NO files to edit. If the task needs the repo, say plainly that the repo isn't available in this session and stop; never pretend to read, edit, or commit files.`,
@@ -1785,6 +1807,7 @@ async function main() {
         return [
           persona.systemPrompt ?? "",
           ...(memory.section ? [memory.section] : []),
+          ...(skillsSection ? [skillsSection] : []),
           groupNote ?? "",
           `Fez tools: you have fez_* MCP tools (send/read channels, DMs, search, memory, docs) — prefer them over \`fez\` shell commands.`,
           `You are @${personaId}, in a PRIVATE direct-message conversation — only the participants can read it. This session is ONGOING — later messages arrive as new turns in the same conversation. Reply to them directly; @names summon nobody here, and there is no channel audience. If a task needs a tool or data source you don't have, say so plainly instead of improvising.`,
