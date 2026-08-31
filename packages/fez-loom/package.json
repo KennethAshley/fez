@@ -1,7 +1,6 @@
 {
   "name": "@fezchat/loom",
-  "version": "0.2.0",
-  "private": true,
+  "version": "0.2.1",
   "description": "Loom for fez — describe a tool over your channel data and @loom weaves a live, streaming UI (sandboxed; reads the relay freely, every write asks you first). Keep the good ones in the ▣ tools gallery; the best crystallize into extensions.",
   "type": "module",
   "fez": {
@@ -34,5 +33,6 @@
     "react-dom": "^19.1.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6"
-  }
+  },
+  "private": true
 }
