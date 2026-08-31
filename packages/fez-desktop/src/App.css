@@ -2065,6 +2065,7 @@ button.author:hover { text-decoration: underline; }
    lights it — the sprite is the badge. */
 .ext-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
 .ext-gallery > .settings-hint { grid-column: 1 / -1; }
+.gallery-from-url { grid-column: 1 / -1; margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
 .gallery-card {
   display: flex; flex-direction: column; gap: 10px; padding: 12px;
   border: 1px solid var(--hairline); border-radius: 10px; background: color-mix(in srgb, var(--bg2) 40%, transparent);
