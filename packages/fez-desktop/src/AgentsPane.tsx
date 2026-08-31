@@ -12,7 +12,7 @@ import AgentProfile from "./AgentProfile";
 import BenchProposals from "./BenchProposals";
 import { ModelPicker } from "./ModelPicker";
 import { useConfig } from "./config-store";
-import { agentSkillHealth } from "./agent-skill-health";
+import { agentSkillHealth, type InstalledSkillMd } from "./agent-skill-health";
 
 /**
  * The agents surface — Buzz's biggest pane, fez-shaped. Roster of every
@@ -151,22 +151,36 @@ interface TurnRec {
  * is the worse of the two, and the exclusivity `agentSkillHealth` already
  * enforces means at most one of these branches ever has anything to say.
  */
-function SkillHealthBadge({ health }: { health?: { missing: string[]; local: string[] } }) {
-  if (health?.missing.length) {
-    return (
-      <span className="agent-warn" title="declared but not installed here">
-        ⚠ missing: {health.missing.join(", ")}
-      </span>
-    );
-  }
-  if (health?.local.length) {
-    return (
-      <span className="agent-warn" title="these skills point into a local directory">
-        ⚠ {health.local.length} skill{health.local.length > 1 ? "s" : ""} won't work on another machine
-      </span>
-    );
-  }
-  return null;
+function SkillHealthBadge({
+  health,
+}: {
+  health?: { missing: string[]; local: string[]; missingSkillMds: string[] };
+}) {
+  // Tools (mcpServers:) and skills (skills:) are separate frontmatter
+  // lines and separate catalogs, so a badge for each can both be true at
+  // once — unlike missing/local within one catalog, which stay mutually
+  // exclusive (agentSkillHealth's own guarantee).
+  const toolBadge = health?.missing.length ? (
+    <span className="agent-warn" title="declared but not installed here">
+      ⚠ missing: {health.missing.join(", ")}
+    </span>
+  ) : health?.local.length ? (
+    <span className="agent-warn" title="these skills point into a local directory">
+      ⚠ {health.local.length} skill{health.local.length > 1 ? "s" : ""} won't work on another machine
+    </span>
+  ) : null;
+  const skillMdBadge = health?.missingSkillMds.length ? (
+    <span className="agent-warn" title="install it from chat or ⊞ extensions">
+      ⚠ missing skill{health.missingSkillMds.length > 1 ? "s" : ""}: {health.missingSkillMds.join(", ")}
+    </span>
+  ) : null;
+  if (!toolBadge && !skillMdBadge) return null;
+  return (
+    <>
+      {toolBadge}
+      {skillMdBadge}
+    </>
+  );
 }
 
 /**
@@ -414,20 +428,26 @@ export default function AgentsPane({
   const [drafts, setDrafts] = useState<string[]>([]);
   const [reviewing, setReviewing] = useState<string>();
   const [personaNonce, setPersonaNonce] = useState(0);
-  const [health, setHealth] = useState<Record<string, { missing: string[]; local: string[] }>>({});
+  const [health, setHealth] = useState<Record<string, { missing: string[]; local: string[]; missingSkillMds: string[] }>>(
+    {}
+  );
   const { skills } = useConfig();
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const names = await invoke<string[]>("list_personas").catch(() => [] as string[]);
+      const [names, skillMdsRaw] = await Promise.all([
+        invoke<string[]>("list_personas").catch(() => [] as string[]),
+        invoke<string>("list_installed_skills").catch(() => "[]"),
+      ]);
+      const skillMds: InstalledSkillMd[] = JSON.parse(skillMdsRaw);
       const contents = await Promise.all(
         names.map((agent) => invoke<string>("read_persona", { name: agent }).catch(() => ""))
       );
       if (cancelled) return;
-      const next: Record<string, { missing: string[]; local: string[] }> = {};
+      const next: Record<string, { missing: string[]; local: string[]; missingSkillMds: string[] }> = {};
       names.forEach((agent, i) => {
         const content = contents[i];
-        if (content) next[agent] = agentSkillHealth(content, skills);
+        if (content) next[agent] = agentSkillHealth(content, skills, skillMds);
       });
       setLocalPersonas(names);
       setHealth(next);

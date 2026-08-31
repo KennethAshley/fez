@@ -22,7 +22,13 @@ import { parseSkillEntries, formatSkillEntries, safeSkillName, safeSkillSource }
  */
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
-const LINE = /^mcpServers:\s*\[([^\]]*)\]/m;
+
+/** Which frontmatter list a call operates on — `mcpServers:` (tools, the
+ * long-standing default so every existing call site is untouched) or
+ * `skills:` (SKILL.md packs, the new attach surface). Same grammar,
+ * same guards, different line. */
+type SkillKey = "mcpServers" | "skills";
+const lineRe = (key: SkillKey) => new RegExp(`^${key}:\\s*\\[([^\\]]*)\\]`, "m");
 
 /**
  * The choke point for names that arrive from OFF THIS MACHINE.
@@ -89,21 +95,26 @@ function newlineOf(content: string): string {
   return content.includes("\r\n") ? "\r\n" : "\n";
 }
 
-function parseLine(content: string): { names: string[]; sources: Record<string, string> } {
+function parseLine(content: string, key: SkillKey): { names: string[]; sources: Record<string, string> } {
   const fm = FRONTMATTER.exec(content);
   if (!fm) return { names: [], sources: {} };
-  const line = LINE.exec(fm[0]);
+  const line = lineRe(key).exec(fm[0]);
   if (!line) return { names: [], sources: {} };
   return parseSkillEntries(line[1].split(",").map((s) => s.trim()).filter(Boolean));
 }
 
 /** What this persona declares, in order, with any recorded source. */
-export function declaredSkills(content: string): { name: string; source?: string }[] {
-  const { names, sources } = parseLine(content);
+export function declaredSkills(content: string, key: SkillKey = "mcpServers"): { name: string; source?: string }[] {
+  const { names, sources } = parseLine(content, key);
   return names.map((name) => ({ name, source: sources[name] }));
 }
 
-function writeLine(content: string, names: string[], sources: Record<string, string>): string | undefined {
+function writeLine(
+  content: string,
+  names: string[],
+  sources: Record<string, string>,
+  key: SkillKey
+): string | undefined {
   const fm = FRONTMATTER.exec(content);
   if (!fm) return undefined;
   // Last line of defence: this is the single splice point, and the
@@ -114,16 +125,33 @@ function writeLine(content: string, names: string[], sources: Record<string, str
   // refuse the whole write. `undefined` is this module's "not safe to
   // edit", so callers report it instead of throwing.
   if (Object.values(sources).some((source) => !safeSkillSource(source))) return undefined;
-  const rendered = `mcpServers: [${formatSkillEntries(names, sources)}]`;
-  const line = LINE.exec(fm[0]);
+  const rendered = `${key}: [${formatSkillEntries(names, sources)}]`;
+  const line = lineRe(key).exec(fm[0]);
 
   if (line) {
-    // Splice the rendered line into the frontmatter block only, then
-    // stitch that back into the untouched rest of the file.
     const before = content.slice(0, fm.index) + fm[0].slice(0, line.index);
     const after = fm[0].slice(line.index + line[0].length) + content.slice(fm.index + fm[0].length);
+    // `mcpServers:` keeps its long-standing "empty list, not a broken
+    // line" rendering so every existing caller stays untouched. `skills:`
+    // is newer and has no such history to preserve — dropping the last
+    // skill drops the line entirely, so an agent that carries nothing
+    // doesn't leave a dead `skills: []` key behind. `before` already
+    // ends in the newline that preceded this line, and `after` already
+    // starts with the one that followed it, so trimming ONE of them
+    // (rather than both) reconnects the block without a blank line.
+    if (names.length === 0 && key !== "mcpServers") {
+      const nl = newlineOf(content);
+      const trimmedBefore = before.endsWith(nl) ? before.slice(0, -nl.length) : before;
+      return trimmedBefore + after;
+    }
+    // Splice the rendered line into the frontmatter block only, then
+    // stitch that back into the untouched rest of the file.
     return before + rendered + after;
   }
+
+  // No line yet, and nothing to add — insertion would just create a
+  // dead key (same "no empty skills: line" rule as the removal above).
+  if (names.length === 0) return undefined;
 
   // No line yet — insert it as the last frontmatter key, using this
   // file's own newline convention, so the block stays a block, no
@@ -134,25 +162,30 @@ function writeLine(content: string, names: string[], sources: Record<string, str
 }
 
 /** Add a skill. `source` makes the persona portable; omit it for hand-rolled skills. */
-export function attachSkill(content: string, skill: string, source?: string): string | undefined {
+export function attachSkill(
+  content: string,
+  skill: string,
+  source?: string,
+  key: SkillKey = "mcpServers"
+): string | undefined {
   if (!safeSkillName(skill)) return undefined;
   // `source` is optional and an empty one has always meant "no source",
   // so the guard applies to the sources that will actually be written.
   if (source && !safeSkillSource(source)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
-  const { names, sources } = parseLine(content);
+  const { names, sources } = parseLine(content, key);
   if (names.includes(skill)) return undefined;
   const next = [...names, skill];
-  return writeLine(content, next, source ? { ...sources, [skill]: source } : sources);
+  return writeLine(content, next, source ? { ...sources, [skill]: source } : sources, key);
 }
 
 /** Remove a skill, preserving every survivor's recorded source. */
-export function detachSkill(content: string, skill: string): string | undefined {
+export function detachSkill(content: string, skill: string, key: SkillKey = "mcpServers"): string | undefined {
   if (!safeSkillName(skill)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
-  const { names, sources } = parseLine(content);
+  const { names, sources } = parseLine(content, key);
   if (!names.includes(skill)) return undefined;
-  return writeLine(content, names.filter((n) => n !== skill), sources);
+  return writeLine(content, names.filter((n) => n !== skill), sources, key);
 }
 
 /**
@@ -169,12 +202,17 @@ export function detachSkill(content: string, skill: string): string | undefined 
  * Undefined means "nothing to write": no frontmatter, no such
  * declaration, or that source is already recorded.
  */
-export function rememberSkillSource(content: string, skill: string, source: string): string | undefined {
+export function rememberSkillSource(
+  content: string,
+  skill: string,
+  source: string,
+  key: SkillKey = "mcpServers"
+): string | undefined {
   if (!safeSkillName(skill)) return undefined;
   if (!safeSkillSource(source)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
-  const { names, sources } = parseLine(content);
+  const { names, sources } = parseLine(content, key);
   if (!names.includes(skill)) return undefined;
   if (sources[skill] === source) return undefined;
-  return writeLine(content, names, { ...sources, [skill]: source });
+  return writeLine(content, names, { ...sources, [skill]: source }, key);
 }

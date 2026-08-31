@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { machineLocalPath, resolveInstalledSkill } from "@fezchat/client";
 import { useConfig } from "./config-store";
 
@@ -26,6 +27,14 @@ interface Row {
   missing: boolean;
 }
 
+/** One entry from `list_installed_skills` — a SKILL.md pack, not a tool. */
+interface InstalledSkillMd {
+  pkg: string;
+  id: string;
+  name: string;
+  description: string;
+}
+
 /** Past this many, scanning the catalogue by eye stops working. */
 const FILTER_AT = 8;
 
@@ -33,13 +42,48 @@ export default function SkillPicker({
   value,
   sources,
   onChange,
+  skillsValue,
+  onSkillsChange,
 }: {
   value: string[];
   sources: Record<string, string>;
   onChange: (names: string[], sources: Record<string, string>) => void;
+  /** SKILL.md packs this persona attaches — the `skills:` key, separate
+      catalog and separate frontmatter line from the mcpServers tools below. */
+  skillsValue: string[];
+  onSkillsChange: (names: string[]) => void;
 }) {
   const { skills } = useConfig();
   const [query, setQuery] = useState("");
+  const [installedSkillMds, setInstalledSkillMds] = useState<InstalledSkillMd[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    invoke<string>("list_installed_skills")
+      .then((raw) => {
+        if (!cancelled) setInstalledSkillMds(JSON.parse(raw));
+      })
+      .catch(() => {
+        if (!cancelled) setInstalledSkillMds([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Same "declared but not in the catalog stays visible" rule as the
+  // tools rows below — a dead skill name must stay removable, not vanish.
+  const skillMdRows = useMemo(() => {
+    const known = new Set(installedSkillMds.map((s) => s.name));
+    const missing = skillsValue
+      .filter((name) => !known.has(name))
+      .map((name) => ({ name, description: undefined as string | undefined, missing: true }));
+    const catalog = installedSkillMds.map((s) => ({ name: s.name, description: s.description, missing: false }));
+    return [...catalog, ...missing].sort((a, b) => a.name.localeCompare(b.name));
+  }, [installedSkillMds, skillsValue]);
+
+  const toggleSkillMd = (name: string, on: boolean) => {
+    onSkillsChange(on ? [...skillsValue, name] : skillsValue.filter((n) => n !== name));
+  };
 
   // Installed skills, plus anything the persona names that isn't a
   // catalog key — a dead reference must stay VISIBLE and removable, not
@@ -132,8 +176,33 @@ export default function SkillPicker({
     </label>
   );
 
+  const skillMdRow = (r: { name: string; description?: string; missing: boolean }) => (
+    <label key={r.name} className={`skill-pick${r.missing ? " missing" : ""}`}>
+      <input
+        type="checkbox"
+        checked={skillsValue.includes(r.name)}
+        onChange={(e) => toggleSkillMd(r.name, e.target.checked)}
+      />
+      <span className="skill-pick-text">
+        <span className="skill-pick-name">{r.name}</span>
+        <span className="skill-pick-desc">
+          {r.missing ? "— install it from chat or ⊞ extensions" : r.description && `— ${r.description}`}
+        </span>
+      </span>
+    </label>
+  );
+
+  const skillMdSection = skillMdRows.length > 0 && (
+    <div className="skill-pick-list">{skillMdRows.map(skillMdRow)}</div>
+  );
+
   if (broken.length + attached.length + available.length === 0) {
-    return <div className="settings-hint">No skills installed yet — find some in the Skills tab.</div>;
+    return (
+      <>
+        {skillMdSection}
+        <div className="settings-hint">No skills installed yet — find some in the Skills tab.</div>
+      </>
+    );
   }
 
   const q = query.trim().toLowerCase();
@@ -145,6 +214,7 @@ export default function SkillPicker({
 
   return (
     <div className="skill-picker">
+      {skillMdSection}
       {broken.length > 0 && (
         <div className="skill-broken">
           <div className="skill-broken-head">declared, but not installed here</div>

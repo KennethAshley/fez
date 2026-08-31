@@ -1,21 +1,36 @@
 import { machineLocalPath, resolveInstalledSkill, type SkillEntry } from "@fezchat/client";
 import { declaredSkills } from "./skill-attach";
 
+/** A `list_installed_skills` row — a SKILL.md pack, not a tool. Matched
+ * by id or name, the same rule spawn-time resolution uses
+ * (fez-acp/skills-prompt.ts's resolveAttachedSkills). */
+export interface InstalledSkillMd {
+  pkg: string;
+  id: string;
+  name: string;
+  description: string;
+}
+
 /**
- * The two ways an agent is quietly broken.
+ * The three ways an agent is quietly broken.
  *
- * `missing` — declares a skill that resolves to nothing here. It spawns
- * anyway and is told to disclose the gap, which no one sees until the
- * agent gives a worse answer than it should have.
+ * `missing` — declares a TOOL (`mcpServers:`) that resolves to nothing
+ * here. It spawns anyway and is told to disclose the gap, which no one
+ * sees until the agent gives a worse answer than it should have.
  *
  * `local` — resolves to a command inside a working directory, so the
  * agent runs on exactly this computer. Hand that persona to anyone and
  * it arrives with dead references.
+ *
+ * `missingSkillMds` — declares a SKILL.md pack (`skills:`) not installed
+ * here. Same gap as `missing`, different frontmatter line and catalog,
+ * so it is tracked separately rather than folded in.
  */
 export function agentSkillHealth(
   personaContent: string,
-  catalog: Record<string, SkillEntry>
-): { missing: string[]; local: string[] } {
+  catalog: Record<string, SkillEntry>,
+  skillMds: InstalledSkillMd[] = []
+): { missing: string[]; local: string[]; missingSkillMds: string[] } {
   const missing: string[] = [];
   const local: string[] = [];
   for (const declared of declaredSkills(personaContent)) {
@@ -26,7 +41,10 @@ export function agentSkillHealth(
     }
     if (machineLocalPath(hit.entry)) local.push(declared.name);
   }
-  return { missing, local };
+  const missingSkillMds = declaredSkills(personaContent, "skills")
+    .map((d) => d.name)
+    .filter((name) => !skillMds.some((s) => s.id === name || s.name === name));
+  return { missing, local, missingSkillMds };
 }
 
 /**
