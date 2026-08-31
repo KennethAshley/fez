@@ -64,6 +64,44 @@ pub(crate) fn tar_list_md(tar_bytes: &[u8], dir: &str) -> Vec<(String, String)> 
     out
 }
 
+/// List `<dir>/*.md` file paths (relative, "package/" prefix stripped) in
+/// an npm tarball — for `fez.skills`, which installs the files themselves
+/// rather than deriving an id+content pair from them (`tar_list_md`'s
+/// shape, used for personas). Each returned path is a valid `materialize`
+/// `rel` argument as-is (e.g. "skills/pony.md").
+pub(crate) fn tar_list_paths(tar_bytes: &[u8], dir: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut archive = tar::Archive::new(tar_bytes);
+    let entries = match archive.entries() {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    let prefix = format!("{dir}/");
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let rel = match entry
+            .path()
+            .ok()
+            .and_then(|p| p.strip_prefix("package").ok().map(|r| r.to_path_buf()))
+        {
+            Some(r) => r,
+            None => continue,
+        };
+        let rel_str = rel.to_string_lossy().to_string();
+        let name = match rel.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if rel_str.starts_with(&prefix) && name.ends_with(".md") {
+            out.push(rel_str);
+        }
+    }
+    out
+}
+
 /// Everything an install produced, for the caller (the Tauri command) to
 /// fold into settings.json. This module never writes settings itself.
 #[derive(Debug)]
@@ -148,7 +186,11 @@ fn has_installable_content(pkg: &serde_json::Value, tar_bytes: &[u8]) -> bool {
         let dir = pkg.pointer("/fez/personas/dir").and_then(|v| v.as_str()).unwrap_or("personas");
         tar_list_md(tar_bytes, dir).iter().any(|(_, content)| content.contains("harness:"))
     });
-    has_code_or_skill_part || has_bin || has_persona
+    let has_skills = pkg.pointer("/fez/skills").is_some_and(|v| {
+        let dir = v.get("dir").and_then(|d| d.as_str()).unwrap_or("skills");
+        !tar_list_paths(tar_bytes, dir).is_empty()
+    });
+    has_code_or_skill_part || has_bin || has_persona || has_skills
 }
 
 /// Place an already-fetched, already-gated npm tarball into
@@ -327,6 +369,19 @@ pub(crate) fn install_from_tarball(
             if std::fs::write(&dest, &content).is_ok() {
                 installed.push(format!("persona @{id} → ~/.fez/personas/{id}.md"));
             }
+        }
+    }
+
+    // Skill package — fez.skills: <dir>/*.md materialized into THIS
+    // package's own dir (mirrors the CLI's installSkillsPart), never
+    // ~/.fez/skills/ and no symlink index — discovery (list_installed_skills,
+    // gui_parts's sibling) reads packages/*/ directly.
+    if let Some(skills_cfg) = pkg.pointer("/fez/skills") {
+        let dir = skills_cfg.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");
+        for rel in tar_list_paths(tar_bytes, dir) {
+            let dest = materialize(tar_bytes, &pkg_dir, &rel, "skill")?;
+            let id = dest.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            installed.push(format!("skill {id} → packages/{base}/{dir}/{id}.md"));
         }
     }
 
@@ -509,6 +564,85 @@ pub(crate) fn local_extensions(home: &Path) -> Vec<(String, Vec<String>)> {
         map.entry(name).or_default().push("gui".to_string());
     }
     map.into_iter().collect()
+}
+
+/// One discovered skill, for the webview's install manager. No `path` —
+/// the webview never needs one (mirrors the CLI's `InstalledSkill`, minus
+/// the `path` field the CLI keeps for its own filesystem callers).
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct InstalledSkill {
+    pub pkg: String,
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// Parse a skill .md's `name:`/`description:` frontmatter by line prefix —
+/// same technique as `git_install::split_frontmatter` and the CLI's
+/// `parseSkillMd`. `name` defaults to `stem`; an absent `description` is "".
+fn skill_frontmatter(content: &str, stem: &str) -> (String, String) {
+    let mut name = stem.to_string();
+    let mut description = String::new();
+    if let Some(after_open) = content.strip_prefix("---\n") {
+        let close = after_open
+            .find("\n---\n")
+            .map(|i| (i, i + 5))
+            .or_else(|| after_open.starts_with("---\n").then_some((0, 4)));
+        if let Some((fm_end, _)) = close {
+            for line in after_open[..fm_end].lines() {
+                let trimmed = line.trim();
+                if let Some(v) = trimmed.strip_prefix("name:") {
+                    name = v.trim().to_string();
+                } else if let Some(v) = trimmed.strip_prefix("description:") {
+                    description = v.trim().to_string();
+                }
+            }
+        }
+    }
+    (name, description)
+}
+
+/// Walk `packages/*/package.json` for `fez.skills` and read each `.md`'s
+/// frontmatter — the desktop mirror of the CLI's `skillsInstalled`
+/// (skills-md.ts). A skill with no `description:` is skipped (required
+/// field, same rule both sides enforce).
+pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir(home.join("packages")) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        let pkg_name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let manifest = match installed_manifest(&pkg_name, home) {
+            Some(m) => m,
+            None => continue,
+        };
+        let Some(skills_cfg) = manifest.pointer("/fez/skills") else { continue };
+        let dir = skills_cfg.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");
+        let skills_dir = home.join("packages").join(&pkg_name).join(dir);
+        let files = match std::fs::read_dir(&skills_dir) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        for f in files.flatten() {
+            let path = f.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+            let Ok(content) = std::fs::read_to_string(&path) else { continue };
+            let (name, description) = skill_frontmatter(&content, stem);
+            if description.is_empty() {
+                continue; // required — matches skills-md.ts
+            }
+            out.push(InstalledSkill { pkg: pkg_name.clone(), id: stem.to_string(), name, description });
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -810,5 +944,48 @@ mod tests {
         let with = gui_parts(home.path());
         let (_, _, styles) = with.iter().find(|(n, _, _)| n == "tidy").expect("tidy");
         assert!(styles.contains(".fez-tidy-x"), "companion css must be read: {styles:?}");
+    }
+
+    #[test]
+    fn a_skills_package_installs_md_into_the_package_dir() {
+        let mut b = tar::Builder::new(Vec::new());
+        let add = |b: &mut tar::Builder<Vec<u8>>, path: &str, data: &str| {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(data.len() as u64); h.set_mode(0o644); h.set_cksum();
+            b.append_data(&mut h, path, data.as_bytes()).unwrap();
+        };
+        add(&mut b, "package/package.json", r#"{
+          "name": "@fezchat/ponytail-pack", "version": "0.0.1",
+          "fez": {"type": "extension", "skills": {"dir": "skills"}}
+        }"#);
+        add(&mut b, "package/skills/pony.md", "---\ndescription: lazy senior dev\n---\nBe lazy.\n");
+        let tar_bytes = b.into_inner().unwrap();
+
+        let home = tempfile::tempdir().unwrap();
+        let out = install_from_tarball("@fezchat/ponytail-pack", &tar_bytes, "0.0.1", home.path()).unwrap();
+        assert!(out.installed.iter().any(|l| l.contains("skill pony")), "unexpected: {:?}", out.installed);
+        assert!(home.path().join("packages/ponytail-pack/skills/pony.md").exists());
+        assert!(!home.path().join("skills").exists(), "no legacy ~/.fez/skills/ dir must be created");
+    }
+
+    #[test]
+    fn installed_skills_reads_frontmatter_and_skips_missing_description() {
+        let home = tempfile::tempdir().unwrap();
+        let skills_dir = home.path().join("packages/ponytail-pack/skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(
+            home.path().join("packages/ponytail-pack/package.json"),
+            r#"{"name": "@fezchat/ponytail-pack", "version": "0.0.1", "fez": {"type": "extension", "skills": {"dir": "skills"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(skills_dir.join("pony.md"), "---\ndescription: lazy senior dev\n---\nBe lazy.").unwrap();
+        std::fs::write(skills_dir.join("no-desc.md"), "No frontmatter.").unwrap();
+
+        let found = installed_skills(home.path());
+        assert_eq!(found.len(), 1, "description required; no-desc must be skipped: {found:?}");
+        assert_eq!(found[0].pkg, "ponytail-pack");
+        assert_eq!(found[0].id, "pony");
+        assert_eq!(found[0].name, "pony"); // no `name:` in frontmatter → defaults to stem
+        assert_eq!(found[0].description, "lazy senior dev");
     }
 }

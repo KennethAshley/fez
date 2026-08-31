@@ -73,6 +73,15 @@ export interface FezManifest {
       dir?: string; // default "personas"
       defaults?: Record<string, string>;
     };
+    /**
+     * Skill packages: a directory of SKILL.md files, installed AS-IS into
+     * this package's own dir (packages/<base>/<dir>/*.md) — never
+     * ~/.fez/skills/ (no legacy flat dir, no symlink index). Discovery
+     * reads them straight from there; see skills-md.ts.
+     */
+    skills?: {
+      dir?: string; // default "skills"
+    };
     // For integrations: config files to install
     integrations?: {
       claudeCode?: { commands?: string; evals?: string };
@@ -602,6 +611,11 @@ export class PackageManager {
       await this.installPersonaPack(name, manifest.fez.personas);
     }
 
+    // Skill package — SKILL.md files, into this package's own dir
+    if (manifest.fez.skills) {
+      await this.installSkillsPart(name, manifest.fez.skills);
+    }
+
     // Agent registration
     if (manifest.fez.agent) {
       console.log(chalk.blue(`🤖 Registering agent: ${manifest.fez.agent.entry}`));
@@ -761,6 +775,35 @@ export class PackageManager {
     const prior = this.packages.get(name)!.installedPersonas ?? [];
     this.packages.get(name)!.installedPersonas = [...new Set([...prior, ...installed])];
     console.log(chalk.green(`   👥 ${installed.length} persona(s) from pack "${name}" — fez agent <name> to run one`));
+  }
+
+  /**
+   * Install a package's SKILL.md files into ITS OWN package dir —
+   * `<dir>/*.md` copied straight across via `materializeIntoPackage` (the
+   * path-escape gate included), never ~/.fez/personas or a legacy
+   * ~/.fez/skills/ flat dir. Discovery (skills-md.ts) reads them from
+   * there directly, so materializing the dir is the whole install — no
+   * settings write, no symlink index, no frontmatter validation here
+   * (skillsInstalled skips a file missing `description:` at read time).
+   * A package declaring `fez.skills` with no matching dir in its source
+   * is a manifest bug, not a user-facing failure — warn and move on.
+   */
+  private async installSkillsPart(name: string, config: { dir?: string }): Promise<void> {
+    const dir = config.dir ?? "skills";
+    const pkgDir = this.getContentDir(this.packages.get(name)!);
+    const sourceDir = path.resolve(pkgDir, dir);
+    let files: string[];
+    try {
+      files = (await fs.readdir(sourceDir)).filter((f) => f.endsWith(".md"));
+    } catch {
+      console.log(chalk.yellow(`   ⚠ skill package "${name}" has no ${dir}/ directory — nothing installed`));
+      return;
+    }
+    for (const file of files) {
+      const dest = await this.materializeIntoPackage(name, path.join(dir, file), "skill");
+      console.log(chalk.dim(`   Installed skill ${path.basename(file, ".md")} → ${dest}`));
+    }
+    console.log(chalk.green(`   📄 ${files.length} skill(s) from "${name}"`));
   }
 
   private async installClaudeCodeIntegration(name: string, config: { commands?: string; evals?: string }): Promise<void> {
