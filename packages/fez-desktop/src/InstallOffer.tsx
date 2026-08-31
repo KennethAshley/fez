@@ -170,8 +170,30 @@ type GitPhase =
  * what would install (or why it's refused) before any button can touch
  * disk. Same LOCAL guarantee as `InstallOffer`: this machine, this click.
  */
+/** The package name a github url installs as — mirrors git_install.rs's
+ * `gh-<owner>-<repo>` normalization so a card can know "already installed"
+ * before any inspect round-trip. */
+export function gitPackageName(url: string): string {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const [owner = "", repo = ""] = url.replace(/^https:\/\//, "").replace(/^github\.com\//, "").split("#")[0].split("/");
+  return `gh-${norm(owner)}-${norm(repo)}`;
+}
+
 export function GitInstallOffer({ url, authorName }: { url: string; authorName: string; client: FezClient }) {
   const [phase, setPhase] = useState<GitPhase>({ kind: "idle" });
+  // Every card for this url — the guide may offer the same repo in several
+  // messages — flips to "installed" together: checked on mount and again on
+  // the same event an install dispatches.
+  const [already, setAlready] = useState(false);
+  useEffect(() => {
+    const check = () =>
+      void invoke<[string, string[]][]>("list_local_extensions")
+        .then((rows) => setAlready(rows.some(([n]) => n === gitPackageName(url))))
+        .catch(() => {});
+    check();
+    window.addEventListener("fez-extensions-changed", check);
+    return () => window.removeEventListener("fez-extensions-changed", check);
+  }, [url]);
 
   const inspect = async () => {
     setPhase({ kind: "inspecting" });
@@ -316,6 +338,11 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
           </div>
           {phase.kind === "inspecting" ? (
             <span className="gallery-install">inspecting…</span>
+          ) : already ? (
+            <>
+              <span className="gallery-install installed">installed</span>
+              <button className="mini" title="fetch the repo again and refresh its skills" onClick={() => void inspect()}>reinstall…</button>
+            </>
           ) : (
             <button className="gallery-install" onClick={() => void inspect()}>review &amp; install</button>
           )}
