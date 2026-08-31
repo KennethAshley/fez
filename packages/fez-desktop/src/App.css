@@ -395,7 +395,7 @@ body {
    strip (the persona editor is a real workbench, not an inspector). The
    main view yields entirely while it's open — same seam, more room. */
 .pane-wide { flex: 1; width: auto; min-width: 0; max-width: none; }
-.main:has(+ .pane.pane-wide) { display: none; }
+.main:has(~ .pane.pane-wide) { display: none; }
 /* Content keeps a page measure inside the wide pane — full-bleed rows
    read like a stretched table, a centered column reads like a page. */
 .pane-wide > .pane-body { width: 100%; max-width: 1080px; margin: 0 auto; }

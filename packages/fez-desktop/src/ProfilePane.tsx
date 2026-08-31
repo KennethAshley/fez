@@ -70,8 +70,10 @@ export default function ProfilePane({
   };
 
   if (editing && localPersona) {
+    // The profile card is an inspector; the EDITOR is a workbench — same
+    // wide treatment as the agents pane the moment editing starts.
     return (
-      <aside className="pane">
+      <aside className="pane pane-wide">
         <header className="pane-head">
           <button className="pane-back" onClick={() => setEditing(false)}>← profile</button>
           <button className="pane-close" onClick={onClose}>✕</button>
