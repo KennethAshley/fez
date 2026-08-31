@@ -135,8 +135,8 @@ export default function activate(api: GuiApi): void {
       // markup below is hand-kept instead, on the identical classNames.
       <div className="fez-page wide tools-scroll">
         <div className="page-head">
-          <h2 className="page-title">Tools</h2>
-          <div className="page-sub">Tools you kept. Open one in the pane, or ask @loom to build another.</div>
+          <h2 className="page-title">Artifacts</h2>
+          <div className="page-sub">Artifacts you kept. Open one in the pane, or ask @loom to weave another.</div>
           <div className="page-rule">
             {/* Nothing when the page is empty: the block below says so once,
                 at full size. The rule still draws — it is the column's edge. */}
