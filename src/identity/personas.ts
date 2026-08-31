@@ -49,6 +49,10 @@ export interface Persona {
    * missing skill installable, never what makes it run.
    */
   mcpSources: Record<string, string>;
+  /** SKILL.md packs this persona attaches — see the skills-standard spec. */
+  skills: string[];
+  /** name → source spec for the `skills` entries that declared one — same shape as mcpSources. */
+  skillSources: Record<string, string>;
   /**
    * One-line self-description published in the agent's 47000 metadata —
    * what orchestrators route on. Write it as verb phrases ("search the
@@ -105,9 +109,9 @@ export function parseSkillEntries(entries: string[]): { names: string[]; sources
 }
 
 /** Deliberately minimal — this frontmatter only ever needs a few flat fields, a real YAML parser would be overkill. */
-function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; mcpSources: Record<string, string>; description?: string; extra: Record<string, string>; body: string } {
+export function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; mcpSources: Record<string, string>; skills: string[]; skillSources: Record<string, string>; description?: string; extra: Record<string, string>; body: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { aliases: [], mcpServers: [], mcpSources: {}, extra: {}, body: raw.trim() };
+  if (!match) return { aliases: [], mcpServers: [], mcpSources: {}, skills: [], skillSources: {}, extra: {}, body: raw.trim() };
 
   const [, frontmatter, body] = match;
   const meta: Record<string, string> = {};
@@ -116,16 +120,19 @@ function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; m
     if (kv) meta[kv[1]] = kv[2].trim();
   }
 
-  const known = new Set(["harness", "aliases", "mcpServers", "description"]);
+  const known = new Set(["harness", "aliases", "mcpServers", "skills", "description"]);
   const extra = Object.fromEntries(Object.entries(meta).filter(([k]) => !known.has(k)));
 
   const skills = parseSkillEntries(meta.mcpServers ? parseList(meta.mcpServers) : []);
+  const skillMds = parseSkillEntries(meta.skills ? parseList(meta.skills) : []);
 
   return {
     harness: meta.harness || undefined,
     aliases: meta.aliases ? parseList(meta.aliases) : [],
     mcpServers: skills.names,
     mcpSources: skills.sources,
+    skills: skillMds.names,
+    skillSources: skillMds.sources,
     description: meta.description || undefined,
     extra,
     body: body.trim(),
@@ -141,8 +148,8 @@ function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; m
  * filtering: a caller that asked for an entry we will not write should
  * hear so, not get a persona quietly missing a skill.
  */
-export function serializePersona(harness: string, aliases: string[], mcpServers: string[], systemPrompt: string): string {
-  for (const entry of mcpServers) {
+export function serializePersona(harness: string, aliases: string[], mcpServers: string[], systemPrompt: string, skills: string[] = []): string {
+  for (const entry of [...mcpServers, ...skills]) {
     const eq = entry.indexOf("=");
     const name = (eq === -1 ? entry : entry.slice(0, eq)).trim();
     const source = eq === -1 ? "" : entry.slice(eq + 1).trim();
@@ -155,14 +162,15 @@ export function serializePersona(harness: string, aliases: string[], mcpServers:
   }
   const aliasLine = aliases.length > 0 ? `aliases: [${aliases.join(", ")}]\n` : "";
   const mcpServersLine = mcpServers.length > 0 ? `mcpServers: [${mcpServers.join(", ")}]\n` : "";
-  return `---\nharness: ${harness}\n${aliasLine}${mcpServersLine}---\n${systemPrompt}\n`;
+  const skillsLine = skills.length > 0 ? `skills: [${skills.join(", ")}]\n` : "";
+  return `---\nharness: ${harness}\n${aliasLine}${mcpServersLine}${skillsLine}---\n${systemPrompt}\n`;
 }
 
 async function loadOne(filePath: string): Promise<Persona | undefined> {
   const id = path.basename(filePath, ".md");
   try {
     const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf-8"), fs.stat(filePath)]);
-    const { harness, aliases, mcpServers, mcpSources, description, extra, body } = parseFrontmatter(raw);
+    const { harness, aliases, mcpServers, mcpSources, skills, skillSources, description, extra, body } = parseFrontmatter(raw);
     if (!harness) {
       notice(`⚠️  ${id}.md has no "harness:" in its frontmatter — skipped`);
       return undefined;
@@ -173,6 +181,8 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
       harness,
       mcpServers,
       mcpSources,
+      skills,
+      skillSources,
       description,
       extra,
       systemPrompt: body || undefined,
@@ -215,7 +225,7 @@ const MAX_BODY_BYTES = 256 * 1024; // Buzz's persona body bound
 const MAX_FRONTMATTER_BYTES = 64 * 1024;
 
 /** The frontmatter keys the parser reads directly, plus every extra key a fez consumer knows. */
-const ALL_KNOWN_KEYS = ["harness", "aliases", "mcpServers", "description", ...KNOWN_EXTRA_KEYS];
+const ALL_KNOWN_KEYS = ["harness", "aliases", "mcpServers", "skills", "description", ...KNOWN_EXTRA_KEYS];
 
 function editDistance(a: string, b: string): number {
   const rows = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array<number>(b.length).fill(0)]);
