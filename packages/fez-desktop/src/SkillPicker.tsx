@@ -230,7 +230,7 @@ export default function SkillPicker({
         <div className="skill-broken">
           <div className="skill-broken-head">declared, but not installed here</div>
           <div className="skill-strip left">{broken.map(chip)}</div>
-          <div className="field-note">This agent spawns without them until you install them in the Skills tab.</div>
+          <div className="field-note">This agent spawns without them until you install them in the tools tab.</div>
         </div>
       )}
 

@@ -542,12 +542,15 @@ pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String, String)> {
     out
 }
 
-/// Every extension with a headless and/or gui part, keyed by package name —
-/// the desktop UI's installed-extension list (lib.rs's `list_local_extensions`
-/// tauri command is a thin wrapper over this). Headless still comes from the
-/// flat `extensions/` symlink index — unaffected by this task; gui comes
-/// from `gui_parts` (packages/*/ + each manifest's `fez.parts.gui`), not the
-/// `gui-extensions/` symlink dir, which install no longer populates.
+/// Every extension with a headless, gui, and/or skills part, keyed by
+/// package name — the desktop UI's installed-extension list (lib.rs's
+/// `list_local_extensions` tauri command is a thin wrapper over this).
+/// Headless still comes from the flat `extensions/` symlink index —
+/// unaffected by this task; gui comes from `gui_parts` (packages/*/ + each
+/// manifest's `fez.parts.gui`), not the `gui-extensions/` symlink dir, which
+/// install no longer populates. Skills come from each manifest's
+/// `fez.skills` — a skill-only package (no headless/gui part) would
+/// otherwise have no row in this list at all.
 pub(crate) fn local_extensions(home: &Path) -> Vec<(String, Vec<String>)> {
     let mut map: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
     if let Ok(entries) = std::fs::read_dir(home.join("extensions")) {
@@ -562,6 +565,15 @@ pub(crate) fn local_extensions(home: &Path) -> Vec<(String, Vec<String>)> {
     }
     for (name, _, _) in gui_parts(home) {
         map.entry(name).or_default().push("gui".to_string());
+    }
+    if let Ok(entries) = std::fs::read_dir(home.join("packages")) {
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else { continue };
+            let Some(manifest) = installed_manifest(&name, home) else { continue };
+            if manifest.pointer("/fez/skills").is_some() {
+                map.entry(name).or_default().push("skills".to_string());
+            }
+        }
     }
     map.into_iter().collect()
 }
@@ -900,6 +912,32 @@ mod tests {
         let tidy = found.iter().find(|(name, _)| name == "tidy").expect("tidy must be reported");
         assert!(tidy.1.contains(&"gui".to_string()), "must report the gui part: {:?}", tidy.1);
         assert!(tidy.1.contains(&"headless".to_string()), "must still report the headless part: {:?}", tidy.1);
+    }
+
+    // A skills-only package (no headless/gui part) must still get a row in
+    // local_extensions, tagged "skills" — otherwise it has no listing, no
+    // GUI uninstall, no give-to in the installed tab.
+    #[test]
+    fn local_extensions_reports_skills_only_packages() {
+        let mut b = tar::Builder::new(Vec::new());
+        let add = |b: &mut tar::Builder<Vec<u8>>, path: &str, data: &str| {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(data.len() as u64); h.set_mode(0o644); h.set_cksum();
+            b.append_data(&mut h, path, data.as_bytes()).unwrap();
+        };
+        add(&mut b, "package/package.json", r#"{
+          "name": "@fezchat/ponytail-pack", "version": "0.0.1",
+          "fez": {"type": "extension", "skills": {"dir": "skills"}}
+        }"#);
+        add(&mut b, "package/skills/pony.md", "---\ndescription: lazy senior dev\n---\nBe lazy.\n");
+        let tar_bytes = b.into_inner().unwrap();
+
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/ponytail-pack", &tar_bytes, "0.0.1", home.path()).unwrap();
+
+        let found = local_extensions(home.path());
+        let pack = found.iter().find(|(name, _)| name == "ponytail-pack").expect("skills-only package must be listed");
+        assert!(pack.1.contains(&"skills".to_string()), "must report the skills part: {:?}", pack.1);
     }
 
     #[test]

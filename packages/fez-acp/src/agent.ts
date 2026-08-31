@@ -1518,7 +1518,7 @@ async function main() {
                 ]),
             ...(missingSkillMds.length > 0
               ? [
-                  `- Capability honesty: your persona declares skills that are NOT installed: ${missingSkillMds.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
+                  `- Capability honesty: your persona declares skills that are NOT installed: ${missingSkillMds.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result. — install from chat or the extensions view.`,
                 ]
               : []),
             ...(repoUnavailable

@@ -291,7 +291,7 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
               )}
               <div className="settings-hint">These are instructions that will steer agents you run. Installs on THIS machine.</div>
               {report.installed && (
-                <div className="settings-hint">already installed; existing persona files are kept, your edits survive.</div>
+                <div className="settings-hint">already installed; existing files are kept, your edits survive.</div>
               )}
               <div className="ext-modal-actions">
                 <button className="mini" onClick={() => setPhase({ kind: "idle" })}>cancel</button>

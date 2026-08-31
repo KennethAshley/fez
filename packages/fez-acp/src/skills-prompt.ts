@@ -14,10 +14,23 @@ export function resolveAttachedSkills(
 ): { attached: InstalledSkill[]; missing: string[] } {
   const attached: InstalledSkill[] = [];
   const missing: string[] = [];
+  const byName = new Map<string, InstalledSkill>();
   for (const name of declared) {
     const match = installed.find((s) => s.id === name || s.name === name);
-    if (match) attached.push(match);
-    else missing.push(name);
+    if (!match) {
+      missing.push(name);
+      continue;
+    }
+    // skillsEnvJson/the prompt key by frontmatter `name` — two attached
+    // skills sharing one would collapse in the env while both still list
+    // in the prompt. Keep the first, warn about the one it shadows.
+    const shadowing = byName.get(match.name);
+    if (shadowing) {
+      console.warn(`fez-acp: skill "${match.name}" from ${match.pkg} shadowed by ${shadowing.pkg} — attach names must be unique`);
+      continue;
+    }
+    byName.set(match.name, match);
+    attached.push(match);
   }
   return { attached, missing };
 }

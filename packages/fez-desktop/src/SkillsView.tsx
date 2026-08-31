@@ -105,7 +105,7 @@ interface InstallTarget {
  * "skill" as two sorts of thing is what makes the page not parse.
  */
 const PART_WHERE: Record<string, { where: string; what: string }> = {
-  skill: { where: "settings.json → mcpServers", what: "your agents call it" },
+  tool: { where: "settings.json → mcpServers", what: "your agents call it" },
   headless: { where: "~/.fez/extensions", what: "background work in the TUI" },
   gui: { where: "~/.fez/packages/<name>", what: "renders in this app" },
 };
@@ -188,7 +188,7 @@ export default function SkillsView({
       .sort((a, b) => a.localeCompare(b))
       .map((name) => {
         const parts = [...(localParts[name] ?? [])];
-        if (installed[name]) parts.unshift("skill");
+        if (installed[name]) parts.unshift("tool");
         return {
           name,
           parts,
@@ -391,7 +391,7 @@ export default function SkillsView({
     setTimeout(() => setCopied(undefined), 2000);
   };
 
-  const skillListings = (listings ?? []).filter((l) => (l.artifact ?? "mcp") === "mcp");
+  const mcpListings = (listings ?? []).filter((l) => (l.artifact ?? "mcp") === "mcp");
 
   const countKey = (listing: Listing) =>
     `${listing.authorPk}:${listing.artifact === "persona" ? "persona:" : ""}${listing.name}`;
@@ -440,7 +440,7 @@ export default function SkillsView({
             </div>
           ) : (
             <div className="ext-legend-lead">
-              <strong>Extensions</strong> are features you install — a board, a repo panel, a slash command. Some also give your agents a skill, which appears under <strong>Skills</strong>.
+              <strong>Extensions</strong> are features you install — a board, a repo panel, a slash command. Some also give your agents a tool, which appears under <strong>Tools</strong>.
             </div>
           )}
         </div>
@@ -498,7 +498,7 @@ export default function SkillsView({
               <div className="skill-section ext-missing">
                 <div className="manage-section">your agents need something</div>
                 {missing.map(({ agent, skill, source, runs }) => {
-                  const listing = skillListings.find((l) => l.name === skill);
+                  const listing = mcpListings.find((l) => l.name === skill);
                   return (
                     <div key={`${agent}:${skill}`} className="skill-row">
                       <div className="skill-main">
@@ -585,11 +585,11 @@ export default function SkillsView({
                         name
                       )}
                       {/* Chips earn their place by DIFFERENTIATING. In
-                          the skills list every row is a skill, so a
-                          "skill" chip on all ten restated the heading
+                          the tools list every row is a tool, so a
+                          "tool" chip on all ten restated the heading
                           ten times; the other parts (gui, headless) are
                           still worth naming. */}
-                      {parts.filter((part) => !(only === "skills" && part === "skill")).map((part) => (
+                      {parts.filter((part) => !(only === "skills" && part === "tool")).map((part) => (
                         <span
                           key={part}
                           className="role-tag"
@@ -628,7 +628,7 @@ export default function SkillsView({
                     {entry ? (
                       <span className="gallery-where">↳ {entry.where}</span>
                     ) : (
-                      parts.filter((part) => part !== "skill" && PART_WHERE[part]).map((part) => (
+                      parts.filter((part) => part !== "tool" && PART_WHERE[part]).map((part) => (
                         <code key={part} className="skill-cmd">{PART_WHERE[part].what}</code>
                       ))
                     )}

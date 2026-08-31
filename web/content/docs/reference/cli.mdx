@@ -83,7 +83,7 @@ alias for `fez tool` for now.
 | `fez tool add <name>` | Define a tool: `--from npm:<pkg>\|uvx:<pkg>\|pipx:<pkg>\|<url>`, or explicit `--command` / `--args` / `--url`, plus `--env KEY=value` (stored locally, never published) |
 | `fez tool list` | Defined tools, which personas use them, and declared-but-missing tools with install hints |
 | `fez tool remove <name>` | Remove the local definition |
-| `fez tool publish <name>` | Publish a listing (`--description`, `--npm`, `--github`, `--artifact mcp\|extension\|pi-package`). Refuses to publish machine-local paths |
+| `fez tool publish <name>` | Publish a listing (`--description`, `--npm`, `--github`, `--artifact mcp\|extension\|pi-package\|skill`, `--source npm:<pkg>\|git:github.com/o/r` for `--artifact skill`). Refuses to publish machine-local paths |
 | `fez tool market` | Browse listings with install counts. **Read the command before installing — it runs on your machine** |
 | `fez tool install <name>` | Install a listing: prints the exact command it will run first, requires every declared `--env` key (`--from <pubkey>` to pin an author) |
 

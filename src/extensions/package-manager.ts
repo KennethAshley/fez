@@ -790,6 +790,15 @@ export class PackageManager {
    */
   private async installSkillsPart(name: string, config: { dir?: string }): Promise<void> {
     const dir = config.dir ?? "skills";
+    // A manifest-declared dir is attacker-controlled (never re-validated) —
+    // same escape gate skills-md.ts's skillsInstalled enforces at read
+    // time, required here too so a hostile dir gets a clean skip instead
+    // of readdir-ing outside the package and then dying mid-loop on
+    // materializeIntoPackage's throw.
+    if (path.isAbsolute(dir) || dir.split(/[\\/]/).includes("..")) {
+      console.log(chalk.yellow(`   ⚠ skill package "${name}" declares an escaping dir "${dir}" — skipped`));
+      return;
+    }
     const pkgDir = this.getContentDir(this.packages.get(name)!);
     const sourceDir = path.resolve(pkgDir, dir);
     let files: string[];
