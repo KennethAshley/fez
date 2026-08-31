@@ -86,7 +86,7 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
   explicit backup/reveal). Follow-ups: republish @fezchat/extension-api + @fezchat/git
   (httpAuthHeader went async — breaking), and 'unsafe-eval' could retire if extensions ever
   load from their own origin.
-- [ ] **Undisclosed default endpoints.** Skill installs POST a signed (pubkey-bearing) receipt to
+- [ ] **Undisclosed default endpoints.** Tool installs POST a signed (pubkey-bearing) receipt to
   `fez-web-kohl.vercel.app/api/counts` with no consent/toggle (`SkillsView.tsx:35-36,307,757`);
   drag-drop uploads go to `blossom.primal.net` in the clear with no disclosure at the drop
   point (`upload.ts:16`, `App.tsx:1620-1631,1941-1954`).
@@ -123,7 +123,7 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
   off exponentially (2s→30s, watchdog respects it). Still open: NIP-11 failure renders an
   owned workspace as "unclaimed", queries resolve `[]` after 5s, splash dismisses regardless.
 - [x] `write_skill`/`remove_skill` miss `create_dir_all` — DONE, both mkdir first.
-- [ ] MCP skill install writes `npx …` commands verbatim with no node/npx check; failure happens
+- [ ] MCP tool install writes `npx …` commands verbatim with no node/npx check; failure happens
   later in a process the app doesn't own (`SkillsView.tsx:782-812`).
 - [x] `ureq` hardening — DONE: 30s timeouts on all registry/Chutes calls (120s for the tarball),
   30MB download / 120MB decompressed caps, and non-https tarball URLs refused. (Shasum verify

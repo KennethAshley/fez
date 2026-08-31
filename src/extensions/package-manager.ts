@@ -989,7 +989,7 @@ export class PackageManager {
           ),
         },
       });
-      console.log(chalk.dim(`   Defined skill "${name}" in ~/.fez/settings.json`));
+      console.log(chalk.dim(`   Defined tool "${name}" in ~/.fez/settings.json`));
     }
   }
 

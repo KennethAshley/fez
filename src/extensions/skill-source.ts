@@ -134,7 +134,7 @@ export function wellKnownSource(name: string): string | undefined {
 /**
  * A settings.json mcpServers entry, plus the provenance recorded at
  * install time. All three extra fields are optional: a hand-rolled
- * skill (`fez skill add --command …`) has none of them and stays a
+ * tool (`fez tool add --command …`) has none of them and stays a
  * first-class citizen — local names are a category, not a legacy.
  */
 export interface SkillEntry extends SkillSpec {
@@ -220,7 +220,7 @@ export function installHint(name: string, source: string | undefined): string {
   if (!config) {
     return `${name} — declared source "${source}" isn't a scheme fez knows (${SOURCE_SCHEMES.join(", ")})`;
   }
-  return `${name} — declared ${source}; install it with: fez skill add ${name} --from ${source}`;
+  return `${name} — declared ${source}; install it with: fez tool add ${name} --from ${source}`;
 }
 
 /**

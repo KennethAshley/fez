@@ -228,8 +228,8 @@ async function main() {
     // Declaring a source does NOT install it — a persona file arrives
     // from whoever wrote it, and running what it names would make
     // installing a persona arbitrary code execution. So we print the
-    // one-line install and carry on without the skill.
-    console.warn(`⚠️  Skills declared but not loadable here — the agent will disclose the gap when relevant:`);
+    // one-line install and carry on without the tool.
+    console.warn(`⚠️  Tools declared but not loadable here — the agent will disclose the gap when relevant:`);
     for (const m of missing) {
       console.warn(`   ${installHint(m.name, m.source ?? wellKnownSource(m.name))}`);
     }
@@ -1511,7 +1511,7 @@ async function main() {
               : []),
             ...(missingSkills.length > 0
               ? [
-                  `- Capability honesty: your persona declares skills that are NOT available in this session: ${missingSkills.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
+                  `- Capability honesty: your persona declares tools that are NOT available in this session: ${missingSkills.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
                 ]
               : [
                   `- Capability honesty: if the task needs a tool or data source you don't have access to, say so plainly instead of improvising the result.`,

@@ -1,16 +1,19 @@
-/** fez skill — the machine's MCP catalog and the decentralized marketplace. */
+/** fez tool — the machine's MCP catalog and the decentralized marketplace. `fez skill` is a hidden alias kept for one release. */
 import type { Command } from "commander";
 import chalk from "chalk";
 import { CapabilityClient } from "../protocol/client.js";
 
 export function registerSkillCommands(program: Command): void {
-// ─── skill — the machine's MCP catalog + the decentralized marketplace ──────
+// ─── tool — the machine's MCP catalog + the decentralized marketplace ───────
 
-const skill = program.command("skill").description("Skills (MCP servers) personas can declare — define locally, publish/install via the relay");
+// Attached identically to the visible `tool` command and the hidden
+// `skill` alias below — same subcommands, same behavior, so the old
+// spelling keeps working for one release without duplicating logic.
+function attachToolCommands(tool: Command): void {
 
-skill
+tool
   .command("add <name>")
-  .description("Define a skill: what the name means on THIS machine (personas reference it via mcpServers:)")
+  .description("Define a tool: what the name means on THIS machine (personas reference it via mcpServers:)")
   .option("--from <spec>", "source spec — npm:<pkg>, uvx:<pkg>, pipx:<pkg> or an https:// url")
   .option("--command <cmd>", "executable to launch (stdio MCP server)")
   .option("--args <list>", "comma-separated arguments")
@@ -29,7 +32,7 @@ skill
       return;
     }
     if (!fromSpec && !options.command && !options.url) {
-      console.error("A skill needs --from (a published package), --command (stdio) or --url (http).");
+      console.error("A tool needs --from (a published package), --command (stdio) or --url (http).");
       process.exitCode = 1;
       return;
     }
@@ -50,12 +53,12 @@ skill
     if (fromSpec) console.log(`   runs: ${chalk.dim(describeSkillSpec(fromSpec))}`);
     const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
     saveSettings({ mcpServers: { ...settings.mcpServers, [name]: config } } as never);
-    console.log(`✅ skill "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn.`);
+    console.log(`✅ tool "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn.`);
   });
 
-skill
+tool
   .command("list")
-  .description("List defined skills and which personas declare them")
+  .description("List defined tools and which personas declare them")
   .action(async () => {
     const { loadSettings } = await import("../shared/settings.js");
     const { listPersonas } = await import("../identity/personas.js");
@@ -63,7 +66,7 @@ skill
     const skills = settings.mcpServers ?? {};
     const personas = await listPersonas();
     if (Object.keys(skills).length === 0) {
-      console.log("No skills defined — fez skill add <name> --command ... (or install one from the marketplace: fez skill market)");
+      console.log("No tools defined — fez tool add <name> --command ... (or install one from the marketplace: fez tool market)");
     }
     for (const [name, config] of Object.entries(skills)) {
       const users = personas.filter((persona) => persona.mcpServers.includes(name)).map((persona) => `@${persona.id}`);
@@ -88,23 +91,23 @@ skill
     }
   });
 
-skill
+tool
   .command("remove <name>")
-  .description("Remove a skill definition (personas declaring it fall back to disclosure)")
+  .description("Remove a tool definition (personas declaring it fall back to disclosure)")
   .action(async (name: string) => {
     const { loadSettings, saveSettings } = await import("../shared/settings.js");
     const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
-    if (!settings.mcpServers?.[name]) return console.log(`No skill named "${name}".`);
+    if (!settings.mcpServers?.[name]) return console.log(`No tool named "${name}".`);
     const { [name]: _removed, ...rest } = settings.mcpServers;
     saveSettings({ mcpServers: rest } as never);
-    console.log(`🗑  skill "${name}" removed.`);
+    console.log(`🗑  tool "${name}" removed.`);
   });
 
-skill
+tool
   .command("publish <name>")
   .description("Publish a marketplace listing (env VALUES never leave this machine)")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
-  .option("--description <text>", "what this skill does")
+  .option("--description <text>", "what this tool does")
   .option("--homepage <url>", "docs link")
   .option("--github <url>", "source repository")
   .option("--npm <name>", "npm package name")
@@ -117,7 +120,7 @@ skill
     const artifact = (options.artifact as string | undefined) ?? "mcp";
     const config = settings.mcpServers?.[name];
     if (artifact === "mcp" && !config) {
-      console.error(`No skill named "${name}" — define it first: fez skill add ${name} ...`);
+      console.error(`No tool named "${name}" — define it first: fez tool add ${name} ...`);
       process.exitCode = 1;
       return;
     }
@@ -129,14 +132,14 @@ skill
     // A listing carries a POINTER, never bytes — so it has to point at
     // something the installer can reach. A path on this disk fails
     // silently on theirs: the MCP server won't start, and a server that
-    // won't start is indistinguishable from a skill nobody declared.
+    // won't start is indistinguishable from a tool nobody declared.
     const { machineLocalPath } = await import("../extensions/skill-source.js");
     const localPath = artifact === "mcp" ? machineLocalPath(config) : undefined;
     if (localPath) {
       console.error(
         `Can't publish "${name}" — its command points at ${localPath}, which exists only on this machine.\n` +
           `Anyone installing it would get that path verbatim and their agents would spawn against nothing.\n` +
-          `Publish the package first, then define the skill from it: fez skill add ${name} --from npm:<package>`
+          `Publish the package first, then define the tool from it: fez tool add ${name} --from npm:<package>`
       );
       process.exitCode = 1;
       return;
@@ -151,7 +154,7 @@ skill
         ? `fez install npm:${options.npm}`
         : artifact === "pi-package"
           ? `add to the persona frontmatter: packages: [npm:${options.npm}]`
-          : `fez skill install ${name}${envKeys.length ? " " + envKeys.map((key) => `--env ${key}=<value>`).join(" ") : ""}`;
+          : `fez tool install ${name}${envKeys.length ? " " + envKeys.map((key) => `--env ${key}=<value>`).join(" ") : ""}`;
     const listing = {
       name,
       artifact,
@@ -172,9 +175,9 @@ skill
     relay.disconnect();
   });
 
-skill
+tool
   .command("install <name>")
-  .description("Install a skill from a marketplace listing (writes your catalog + publishes an install receipt)")
+  .description("Install a tool from a marketplace listing (writes your catalog + publishes an install receipt)")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--from <pubkey>", "listing author (default: most-installed listing of that name)")
   .option("--env <pairs...>", "KEY=value for each env key the listing requires (stored locally)")
@@ -240,7 +243,7 @@ skill
     relay.disconnect();
   });
 
-skill
+tool
   .command("market")
   .description("Browse marketplace listings on the relay")
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
@@ -281,7 +284,7 @@ skill
       const prior = latest.get(`${event.pubkey}:${d}`);
       if (!prior || event.created_at > prior.created_at) latest.set(`${event.pubkey}:${d}`, event);
     }
-    if (latest.size === 0) console.log("No listings on this relay yet — fez skill publish <name> puts yours up.");
+    if (latest.size === 0) console.log("No listings on this relay yet — fez tool publish <name> puts yours up.");
     for (const event of latest.values()) {
       try {
         const listing = JSON.parse(event.content) as { name: string; artifact?: string; description?: string; command?: string; args?: string[]; url?: string; envKeys?: string[]; installCmd?: string; github?: string; npm?: string };
@@ -298,4 +301,15 @@ skill
     console.log(chalk.dim(`\n  READ the command before installing — it runs on your machine.`));
     relay.disconnect();
   });
+
+}
+
+const tool = program.command("tool").description("Tools (MCP servers) personas can declare — plus publishing to the marketplace");
+attachToolCommands(tool);
+
+// `fez skill` — hidden alias for one release. A real second registration
+// (not commander's .alias(), which prints "tool|skill" in top-level
+// help) so it stays fully out of `fez --help` while still routing.
+const skill = program.command("skill", { hidden: true });
+attachToolCommands(skill);
 }

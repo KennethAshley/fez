@@ -59,7 +59,7 @@ fez/
 Every action is a Nostr event kind, defined in `src/protocol/kinds.ts` — the registry is the spec, with the rationale in doc comments. The families:
 - `47000`–`47030` = agents: metadata, attestation (47006), turn metrics (47030); the 47001–47003 task loop is the legacy SDK path
 - `47101`–`47103` = workspace: channel, roster, channel message (+ `30047` bans)
-- `40003`–`40300` = apps: edits, pins, scheduled sends, docs (40100), skill marketplace (40200/40201), artifacts (40300)
+- `40003`–`40300` = apps: edits, pins, scheduled sends, docs (40100), tool marketplace (40200/40201), artifacts (40300)
 - `200xx` = ephemeral (never stored): presence, typing, streaming drafts (20003), observer stream (20004), owner cancel (20005)
 - Standard nostr reused: 0, 5, 7, 14/1059 (NIP-17 DMs), 30078, 30174 (engrams), 1984
 

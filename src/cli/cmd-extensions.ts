@@ -359,7 +359,7 @@ program
           ),
         },
       } as never);
-      console.log(chalk.green(`✓ skill "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn`));
+      console.log(chalk.green(`✓ tool "${name}" defined — personas declaring mcpServers: [${name}] get it on next spawn`));
     }
 
     // ── background part: the sentinel only loads extensions that ASKED
