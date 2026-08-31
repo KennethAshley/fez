@@ -399,8 +399,11 @@ export default function SkillsView({
     .filter((listing) => {
       if (filter === "all") return true;
       if (filter === "agents") return listing.artifact === "persona";
-      if (filter === "skills") return (listing.artifact ?? "mcp") === "mcp";
-      return listing.artifact !== "persona" && (listing.artifact ?? "mcp") !== "mcp";
+      // "skills" means SKILL.md listings (artifact "skill"), not MCP
+      // tools — tools still browse, just under "packs" alongside
+      // extensions and pi-packages, since they lost their own chip.
+      if (filter === "skills") return listing.artifact === "skill";
+      return listing.artifact !== "persona" && listing.artifact !== "skill";
     })
     .sort((a, b) => (installs.get(countKey(b)) ?? 0) - (installs.get(countKey(a)) ?? 0) || b.ts - a.ts);
 

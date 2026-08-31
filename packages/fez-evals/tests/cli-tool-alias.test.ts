@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Command } from "commander";
-import { registerSkillCommands } from "../../../src/cli/cmd-skill.js";
+import { registerSkillCommands, buildListing, resolveInstallAction } from "../../../src/cli/cmd-skill.js";
 
 /**
  * `fez tool` is the renamed command (was `fez skill`) for the MCP-server
@@ -37,5 +37,58 @@ describe("fez tool (skill hidden alias)", () => {
     const visible = program.commands.filter((c) => !(c as unknown as { _hidden?: boolean })._hidden).map((c) => c.name());
     expect(visible).toContain("tool");
     expect(visible).not.toContain("skill");
+  });
+});
+
+/**
+ * Task 9: skills become publishable/installable through the marketplace
+ * rail, same as extension/pi-package — a SKILL.md package, never an
+ * mcpServers write. `publish`/`install` are inline action closures that
+ * dial a real relay, so — per the Task 7 test's own pattern (no relay
+ * faking exists here either) — these test the pure helpers the actions
+ * delegate to: the listing shape `publish` signs, and the routing
+ * decision `install` makes from a parsed listing.
+ */
+describe("fez tool publish/install — artifact skill routes to a package install", () => {
+  test("buildListing(--artifact skill) carries artifact + source, no mcp config", () => {
+    const listing = buildListing("web-search", "skill", undefined, {
+      description: "Search the web",
+      source: "npm:@scope/web-search-skill",
+    });
+    expect(listing.artifact).toBe("skill");
+    expect(listing.source).toBe("npm:@scope/web-search-skill");
+    expect(listing.installCmd).toBe("fez install npm:@scope/web-search-skill");
+    expect(listing).not.toHaveProperty("command");
+    expect(listing).not.toHaveProperty("url");
+  });
+
+  test("buildListing(--artifact skill, git source) carries the git: spec verbatim", () => {
+    const listing = buildListing("code-review", "skill", undefined, {
+      source: "git:github.com/o/r",
+    });
+    expect(listing.source).toBe("git:github.com/o/r");
+    expect(listing.installCmd).toBe("fez install git:github.com/o/r");
+  });
+
+  test("buildListing(--artifact mcp) is unaffected — no source field, config carried as before", () => {
+    const listing = buildListing("github", "mcp", { command: "npx", args: ["-y", "github-mcp"] }, {});
+    expect(listing.artifact).toBe("mcp");
+    expect(listing).not.toHaveProperty("source");
+    expect(listing.command).toBe("npx");
+  });
+
+  test("resolveInstallAction: artifact skill routes to a package install, never mcpServers", () => {
+    const action = resolveInstallAction({ artifact: "skill", source: "npm:@scope/web-search-skill" });
+    expect(action).toEqual({ kind: "package", source: "npm:@scope/web-search-skill" });
+  });
+
+  test("resolveInstallAction: artifact mcp still routes to an mcpServers write", () => {
+    const action = resolveInstallAction({ artifact: "mcp", command: "npx", args: ["-y", "github-mcp"] });
+    expect(action).toEqual({ kind: "mcp", config: { command: "npx", args: ["-y", "github-mcp"] } });
+  });
+
+  test("resolveInstallAction: artifact extension still just prints its installCmd (unchanged)", () => {
+    const action = resolveInstallAction({ artifact: "extension", installCmd: "fez install npm:@scope/ext" });
+    expect(action).toEqual({ kind: "print", installCmd: "fez install npm:@scope/ext" });
   });
 });
