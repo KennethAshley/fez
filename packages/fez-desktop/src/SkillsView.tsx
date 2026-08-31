@@ -108,6 +108,7 @@ const PART_WHERE: Record<string, { where: string; what: string }> = {
   tool: { where: "settings.json → mcpServers", what: "your agents call it" },
   headless: { where: "~/.fez/extensions", what: "background work in the TUI" },
   gui: { where: "~/.fez/packages/<name>", what: "renders in this app" },
+  skills: { where: "~/.fez/packages/<name>", what: "instructions agents load on demand" },
 };
 
 const fromListing = (listing: Listing): InstallTarget => ({
@@ -153,7 +154,10 @@ export default function SkillsView({
   const [publishing, setPublishing] = useState<string>();
   const [installs, setInstalls] = useState<Map<string, number>>(new Map());
   const [copied, setCopied] = useState<string>();
-  const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[]; sources: Record<string, string> }[]>([]);
+  const [agentDeps, setAgentDeps] = useState<{ agent: string; skills: string[]; skillMds: string[]; sources: Record<string, string> }[]>([]);
+  /** Installed SKILL.md packs, grouped by owning package — the skills-part
+   * counterpart of `installed` (which only knows mcpServers entries). */
+  const [skillPacks, setSkillPacks] = useState<Record<string, { id: string; name: string; description: string }[]>>({});
   const [givingTo, setGivingTo] = useState<string>();
   const [allAgents, setAllAgents] = useState<string[]>([]);
   // Which agent's toggle is mid-write, so a double-click can't fire the
@@ -181,42 +185,56 @@ export default function SkillsView({
     name: string;
     parts: string[];
     config?: SkillConfig;
+    pack?: { id: string; name: string; description: string }[];
     wanted: string[];
   }[] = useMemo(() => {
-    const names = new Set([...Object.keys(localParts), ...Object.keys(installed)]);
+    const names = new Set([...Object.keys(localParts), ...Object.keys(installed), ...Object.keys(skillPacks)]);
     return [...names]
       .sort((a, b) => a.localeCompare(b))
       .map((name) => {
         const parts = [...(localParts[name] ?? [])];
         if (installed[name]) parts.unshift("tool");
+        const pack = skillPacks[name];
+        // A pack's "wanted" is any agent whose skills: line names one of
+        // its skills — by id or display name, the same dual rule the
+        // picker and spawn-time resolution use.
+        const packWanted = pack
+          ? agentDeps
+              .filter((dep) => dep.skillMds.some((n) => pack.some((s) => s.id === n || s.name === n)))
+              .map((dep) => dep.agent)
+          : [];
+        // Through the resolver, not `includes(name)`: @scout declaring
+        // `wallet=npm:@fezchat/wallet` on a machine that keyed the same
+        // package "fez-wallet" DOES want this row. A raw key lookup
+        // showed no ✓, so clicking "give to…" appended a second
+        // declaration of a package the agent already had.
+        const toolWanted = agentDeps
+          .filter((dep) =>
+            dep.skills.some(
+              (skill) => resolveInstalledSkill(installed, { name: skill, source: dep.sources[skill] })?.key === name
+            )
+          )
+          .map((dep) => dep.agent);
         return {
           name,
           parts,
           config: installed[name],
-          // Through the resolver, not `includes(name)`: @scout declaring
-          // `wallet=npm:@fezchat/wallet` on a machine that keyed the same
-          // package "fez-wallet" DOES want this row. A raw key lookup
-          // showed no ✓, so clicking "give to…" appended a second
-          // declaration of a package the agent already had.
-          wanted: agentDeps
-            .filter((dep) =>
-              dep.skills.some(
-                (skill) => resolveInstalledSkill(installed, { name: skill, source: dep.sources[skill] })?.key === name
-              )
-            )
-            .map((dep) => dep.agent),
+          pack,
+          wanted: [...new Set([...toolWanted, ...packWanted])],
         };
       })
       // EXTENSIONS = renders in this app (has a gui part). SKILLS = a
       // settings.json entry agents call, shown there only when the
-      // package has no gui row to carry it. Headless-only packages
-      // belong to the TUI's environment and get no desktop row at all.
+      // package has no gui row to carry it — or a skill pack, which is
+      // agent-facing capability like a tool and earns its inventory row
+      // here. Headless-only packages belong to the TUI's environment and
+      // get no desktop row at all.
       .filter((row) => {
         if (!only) return true;
         const inApp = row.parts.includes("gui");
-        return only === "extensions" ? inApp : !inApp && !!row.config;
+        return only === "extensions" ? inApp : !inApp && (!!row.config || (row.pack?.length ?? 0) > 0);
       });
-  }, [localParts, installed, agentDeps, only]);
+  }, [localParts, installed, skillPacks, agentDeps, only]);
 
   /**
    * Declared by a persona, not present here — the only actionable gap.
@@ -255,7 +273,7 @@ export default function SkillsView({
       try {
         const names = await invoke<string[]>("list_personas");
         setAllAgents(names);
-        const deps: { agent: string; skills: string[]; sources: Record<string, string> }[] = [];
+        const deps: { agent: string; skills: string[]; skillMds: string[]; sources: Record<string, string> }[] = [];
         for (const agent of names) {
           const content = await invoke<string>("read_persona", { name: agent }).catch(() => "");
           // `web-search=npm:@brave/…` — the name the prompt sees, plus
@@ -270,10 +288,19 @@ export default function SkillsView({
           const sources = Object.fromEntries(
             declared.filter((d) => d.source).map((d) => [d.name, d.source as string])
           );
-          if (skills.length > 0) deps.push({ agent, skills, sources });
+          const skillMds = declaredSkills(content, "skills").map((d) => d.name);
+          if (skills.length > 0 || skillMds.length > 0) deps.push({ agent, skills, skillMds, sources });
         }
         setAgentDeps(deps);
       } catch { /* no personas dir */ }
+    })();
+    void (async () => {
+      try {
+        const rows = JSON.parse(await invoke<string>("list_installed_skills")) as { pkg: string; id: string; name: string; description: string }[];
+        const packs: Record<string, { id: string; name: string; description: string }[]> = {};
+        for (const { pkg, id, name, description } of rows) (packs[pkg] ??= []).push({ id, name, description });
+        setSkillPacks(packs);
+      } catch { /* command absent or no packages */ }
     })();
     void (async () => {
       const events = await wire.query([{ kinds: [KIND_SKILL_LISTING], limit: 100 }]);
@@ -559,7 +586,7 @@ export default function SkillsView({
             <div className="skill-section">
               <div className="manage-section">{only === "extensions" ? "installed" : "defined here"}</div>
               {everything.length === 0 && <div className="pane-empty">nothing installed yet — see browse</div>}
-              {everything.map(({ name, parts, config, wanted }) => {
+              {everything.map(({ name, parts, config, pack, wanted }) => {
                 const localPath = machineLocalPath(config);
                 // The relic grammar continues from browse: the sprite that
                 // sat dormant in the gallery stands lit in the inventory.
@@ -621,6 +648,13 @@ export default function SkillsView({
                       </span>
                     )}
                     {config && <code className="skill-cmd">{runsLine(config)}</code>}
+                    {/* A pack row's contents ARE its description: the
+                        skills an agent gets when you give it this. */}
+                    {pack?.map((s) => (
+                      <span key={s.id} className="skill-desc">
+                        <code>{s.name}</code>{s.description ? ` — ${s.description}` : ""}
+                      </span>
+                    ))}
                     {/* Every part it has, not only the one with a
                         command — a row showing just the mcp line looked
                         like a bare MCP server when it is three parts.
@@ -641,7 +675,7 @@ export default function SkillsView({
                       </span>
                     )}
                   </div>
-                  {config && (
+                  {(config || pack) && (
                     <div className="skill-actions">
                       {publishing === name ? (
                         <PublishForm onPublish={(meta) => void publish(name, meta)} onCancel={() => setPublishing(undefined)} />
@@ -653,22 +687,39 @@ export default function SkillsView({
                               calls those "listed on your relay". Same
                               word both ends, so the round trip is
                               legible: you list it, it shows up listed. */}
-                          <button
-                            className="mini"
-                            disabled={!!localPath}
-                            title={
-                              localPath
-                                ? `Can't list this: its command points at ${localPath}, which exists only on this machine. Anyone installing it would get that path verbatim and their agents would spawn against a directory that isn't there. Publish the package first.`
-                                : `publish a signed listing to this workspace's relay — everyone here sees "${name}", the command it runs, and the names of any keys it needs. Values stay on this machine.`
-                            }
-                            onClick={() => setPublishing(name)}
-                          >
-                            ↗ list on relay
-                          </button>
+                          {config && (
+                            <button
+                              className="mini"
+                              disabled={!!localPath}
+                              title={
+                                localPath
+                                  ? `Can't list this: its command points at ${localPath}, which exists only on this machine. Anyone installing it would get that path verbatim and their agents would spawn against a directory that isn't there. Publish the package first.`
+                                  : `publish a signed listing to this workspace's relay — everyone here sees "${name}", the command it runs, and the names of any keys it needs. Values stay on this machine.`
+                              }
+                              onClick={() => setPublishing(name)}
+                            >
+                              ↗ list on relay
+                            </button>
+                          )}
                           <button className="mini" onClick={() => setGivingTo(givingTo === name ? undefined : name)}>
                             give to…
                           </button>
-                          <button className="mini" title="remove from this machine" onClick={() => void invoke("remove_skill", { name }).then(reload)}>✕</button>
+                          {/* A tool row removes its settings entry; a pack row
+                              removes the whole package (its skills live only
+                              there). ponytail: a row with BOTH keeps tool
+                              semantics — no such package exists yet. */}
+                          <button
+                            className="mini"
+                            title="remove from this machine"
+                            onClick={() =>
+                              void (config
+                                ? invoke("remove_skill", { name }).then(reload)
+                                : invoke("remove_extension", { name }).then(() => {
+                                    reload();
+                                    setAgentNonce((n) => n + 1);
+                                  }))
+                            }
+                          >✕</button>
                         </>
                       )}
                     </div>
@@ -687,9 +738,13 @@ export default function SkillsView({
                               const on = !has;
                               setGivingBusy(agent);
                               // Giving uses this machine's key; taking back
-                              // uses whatever name that agent wrote.
+                              // uses whatever name that agent wrote. A pack
+                              // row gives its skills (the skills: key), a
+                              // tool row its settings entry (mcpServers:).
                               const target = on ? name : declaredNameFor(agent, name) ?? name;
-                              void setSkillOnAgent(agent, target, config?.source, on)
+                              void (!config && pack
+                                ? setSkillPackOnAgent(agent, pack, on)
+                                : setSkillOnAgent(agent, target, config?.source, on))
                                 .then((result) =>
                                   reportSkillWrite(result, agent, name, on, () => {
                                     reload();
@@ -915,6 +970,39 @@ async function rememberSource(agent: string, skill: string, source: string): Pro
  * rather than trying to reverse-engineer which `undefined` it got back.
  */
 type SkillWriteResult = "changed" | "already" | "unsafe" | "error";
+
+/**
+ * Give a whole skill pack to an agent, or take it back — every skill in
+ * the package, on the `skills:` frontmatter line. Detach removes a skill
+ * declared under EITHER its id or its display name (the same dual rule
+ * spawn-time resolution uses); attach always writes the id.
+ */
+export async function setSkillPackOnAgent(
+  agent: string,
+  pack: { id: string; name: string }[],
+  on: boolean
+): Promise<SkillWriteResult> {
+  try {
+    let content = await invoke<string>("read_persona", { name: agent });
+    let changed = false;
+    for (const s of pack) {
+      const declared = declaredSkills(content, "skills").map((d) => d.name);
+      const declaredAs = declared.find((n) => n === s.id || n === s.name);
+      if (on === !!declaredAs) continue; // already matches on disk
+      const next = on
+        ? attachSkill(content, s.id, undefined, "skills")
+        : detachSkill(content, declaredAs as string, "skills");
+      if (!next) return "unsafe"; // no frontmatter block to edit
+      content = next;
+      changed = true;
+    }
+    if (!changed) return "already";
+    await invoke("update_persona", { name: agent, content });
+    return "changed";
+  } catch {
+    return "error";
+  }
+}
 
 /**
  * Give a skill to an agent, or take it back. The write is the same one
