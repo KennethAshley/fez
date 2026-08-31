@@ -209,16 +209,29 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
 
   if (phase.kind === "report" || phase.kind === "installing" || phase.kind === "done") {
     const { report } = phase;
+    // " (js, py, mjs)" — the kinds of code found, from the flagged paths.
+    // The Rust scan caps the list and appends "… and N more"; that entry has
+    // no extension worth counting, so it falls out of the summary naturally.
+    const fileKinds = (paths: string[]) => {
+      const kinds = [...new Set(paths.map((p) => p.split(".").pop() ?? "").filter((e) => /^[a-z]{1,4}$/i.test(e)))];
+      return kinds.length > 0 ? ` (${kinds.slice(0, 4).join(", ")})` : "";
+    };
     if (report.refused.length > 0) {
+      // The verdict is the message; the inventory is evidence on demand.
+      // A repo can flag dozens of files — a wall of paths buries the one
+      // fact that matters (it has code), so the list folds behind <details>.
       return (
         <div className="install-offers">
           <div className="install-offer unknown">
-            ⚠ contains executable code — not installable as a prompt pack:
-            <ul className="gallery-perms">
-              {report.refused.map((path) => (
-                <li key={path}>{path}</li>
-              ))}
-            </ul>
+            ⚠ not installable as a prompt pack — contains executable code{fileKinds(report.refused)}
+            <details className="install-offer-files">
+              <summary>show flagged files</summary>
+              <ul className="gallery-perms">
+                {report.refused.map((path) => (
+                  <li key={path}>{path}</li>
+                ))}
+              </ul>
+            </details>
           </div>
         </div>
       );
@@ -250,7 +263,14 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
                 ))}
               </ul>
               {report.ignored.length > 0 && (
-                <div className="settings-hint">ignored: {report.ignored.join(", ")}</div>
+                <details className="install-offer-files">
+                  <summary className="settings-hint">other repo files are ignored — only markdown installs</summary>
+                  <ul className="gallery-perms">
+                    {report.ignored.map((path) => (
+                      <li key={path}>{path}</li>
+                    ))}
+                  </ul>
+                </details>
               )}
               <ul className="gallery-perms">
                 <li className={SENSITIVE.has("personas") ? "sensitive" : ""}>
