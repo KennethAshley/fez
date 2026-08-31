@@ -55,6 +55,23 @@ const ROSTER_D = "roster";
 const tag = (e: StoredEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1];
 
 /**
+ * DM metadata channels: "dm:" + the full participant set, sorted, "+"-joined.
+ * The id IS the roster — participants are read straight out of it, nothing
+ * is published to create one. Returns the participant list, [] for a
+ * malformed id (fail closed), or null when the id isn't a DM channel.
+ * Canonical form is enforced (sorted, unique, 64-hex) so "dm:b+a" can't
+ * alias "dm:a+b" past a gate.
+ */
+const HEX64 = /^[0-9a-f]{64}$/;
+function dmParticipants(channelId: string): string[] | null {
+  if (!channelId.startsWith("dm:")) return null;
+  const pks = channelId.slice(3).split("+");
+  if (pks.length < 2 || pks.some((pk) => !HEX64.test(pk))) return [];
+  for (let i = 1; i < pks.length; i++) if (pks[i - 1] >= pks[i]) return [];
+  return pks;
+}
+
+/**
  * Server-side mirror of fez's client trust rules, enforced at ingest.
  *
  * A relay IS a workspace, so the whole trust chain reduces to one
@@ -110,6 +127,10 @@ export function membershipPolicy(owner?: string): RelayPolicy {
       const channelId = tag(event, "h");
       if (!channelId) return true; // not channel-scoped — public
       if (!ctx.authedPubkey) return false;
+      // DM channels gate to their participants, not the workspace — the
+      // one place membership is narrower than the roster.
+      const dm = dmParticipants(channelId);
+      if (dm) return dm.includes(ctx.authedPubkey);
       const roster = winningRoster(ctx);
       if (!roster) return false;
       // Workspace-wide: on the roster means every channel, which is the
@@ -145,6 +166,17 @@ export function membershipPolicy(owner?: string): RelayPolicy {
 
       const channelId = tag(event, "h");
       if (!channelId) return ok; // not channel-scoped — pass through
+
+      // DM channels: only a participant may publish into one, and the id
+      // must be canonical (sorted unique 64-hex) — a malformed id parses
+      // to [] and everything is refused. The workspace roster doesn't
+      // apply; the id names its own members.
+      const dm = dmParticipants(channelId);
+      if (dm) {
+        return dm.includes(event.pubkey)
+          ? ok
+          : reject("blocked: not a participant of this DM");
+      }
 
       const roster = winningRoster(ctx);
       if (!roster) return reject("blocked: this workspace has no roster yet");

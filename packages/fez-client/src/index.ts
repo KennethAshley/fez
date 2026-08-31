@@ -395,6 +395,10 @@ export interface DmMessage {
   senderPk: string;
   text: string;
   ts: number;
+  edited?: boolean;
+  editTs?: number;
+  /** DMs have no moderator — only the author can unsend. */
+  deletedBy?: "author";
 }
 
 export interface DocInfo {
@@ -1015,7 +1019,8 @@ export class FezClient {
   /** Edit a specific own message (author-only, enforced by every consumer's handleMsgEdit). */
   async editMessage(channelId: string, targetId: string, text: string): Promise<Msg | undefined> {
     const target = this.msgByIdMap.get(targetId);
-    if (!target || target.authorPk !== this.pubkey) return undefined;
+    const dmTarget = target ? undefined : this.dmMsgById(targetId)?.msg;
+    if ((!target || target.authorPk !== this.pubkey) && (!dmTarget || dmTarget.senderPk !== this.pubkey)) return undefined;
     const event = await this.wire.publish({
       kind: K.MSG_EDIT,
       tags: [["e", targetId], ["h", channelId]],
@@ -1303,6 +1308,26 @@ export class FezClient {
   /** The other participants behind a convo key. */
   dmPeers(key: string): string[] {
     return key.split("+").filter(Boolean);
+  }
+
+  /**
+   * The conversation's relay-side channel id: "dm:" + the FULL participant
+   * set (peers + self), sorted. Both sides derive the same id with no
+   * event to publish; the relay's dm gate reads the participants straight
+   * out of it. Reactions/edits/deletions h-tag this — message bodies stay
+   * gift-wrapped and never touch it.
+   */
+  dmChannelId(key: string): string {
+    return "dm:" + [...new Set([...this.dmPeers(key), this.pubkey])].sort().join("+");
+  }
+
+  /** Find a DM message by rumor id across conversations (small N — convos cap at 100 msgs). */
+  private dmMsgById(id: string): { msg: DmMessage; channelId: string } | undefined {
+    for (const [key, convo] of this.dmConvos) {
+      const msg = convo.msgs.find((m) => m.id === id);
+      if (msg) return { msg, channelId: this.dmChannelId(key) };
+    }
+    return undefined;
   }
 
   markDmRead(peerPk: string): void {
@@ -2387,6 +2412,17 @@ export class FezClient {
     return convo;
   }
 
+  /** Backfill a DM channel's metadata — edits before deletions, same order as loadChannelHistory. */
+  private async loadDmMeta(channelId: string): Promise<void> {
+    const events = await this.wire.query([
+      { kinds: [K.REACTION, K.DELETION, K.MSG_EDIT], "#h": [channelId], limit: 300 },
+    ]);
+    const sorted = events.sort((a, b) => a.created_at - b.created_at);
+    for (const event of sorted) if (event.kind === K.MSG_EDIT) this.handleMsgEdit(event);
+    for (const event of sorted) if (event.kind === K.REACTION) this.handleReaction(event, false);
+    for (const event of sorted) if (event.kind === K.DELETION) this.handleDeletion(event);
+  }
+
   private profileTs = new Map<string, number>();
   private statusTs = new Map<string, number>();
 
@@ -2456,6 +2492,10 @@ export class FezClient {
     return [...this.state.workspace.channels.keys()];
   }
 
+  private dmChannelIds(): string[] {
+    return [...this.dmConvos.keys()].map((key) => this.dmChannelId(key));
+  }
+
   /**
    * Pull the workspace's state from the relay.
    *
@@ -2490,7 +2530,11 @@ export class FezClient {
   private resubscribe(): void {
     this.unsubscribeLive?.();
     const channelIds = this.channelIds();
-    this.subscribedChannelIds = channelIds.sort().join(",");
+    // DM channels ride the same #h pipe for their metadata (reactions,
+    // edits, unsends) — the ids are derived, never published, so they
+    // join here rather than in channelIds() (which feeds the channel UI).
+    const dmIds = this.dmChannelIds();
+    this.subscribedChannelIds = [...channelIds, ...dmIds].sort().join(",");
     // Workspace state is unscoped now — one relay, one workspace, so
     // every channel and the single roster are simply "what is here".
     const filters: WireFilter[] = [
@@ -2508,6 +2552,13 @@ export class FezClient {
         },
         { kinds: [K.THREAD_SUMMARY], "#h": channelIds }
       );
+    }
+    if (dmIds.length > 0) {
+      filters.push({
+        kinds: [K.REACTION, K.DELETION, K.MSG_EDIT],
+        "#h": dmIds,
+        since: Math.floor(Date.now() / 1000),
+      });
     }
     this.unsubscribeLive = this.wire.subscribe(filters, (event) => this.dispatch(event));
   }
@@ -2531,7 +2582,7 @@ export class FezClient {
       default: {
         this.state.absorb(event);
         if (event.kind === K.CHANNEL) {
-          const ids = this.channelIds().sort().join(",");
+          const ids = [...this.channelIds(), ...this.dmChannelIds()].sort().join(",");
           // Resubscribe ONLY when the channel set changed — replayed
           // 47101s once fed a resubscribe feedback loop pinning the TUI
           // at 98% CPU.
@@ -2597,8 +2648,9 @@ export class FezClient {
     this.emit("reaction", channelId, targetId);
 
     // Status reactions open jobs (👀 accepted / 💬 working) — live only:
-    // a stored 👀 from last week is history, not an active turn.
-    if (live && (emoji === "👀" || emoji === "💬")) {
+    // a stored 👀 from last week is history, not an active turn. DM
+    // reactions are just reactions — no job machinery in a conversation.
+    if (live && !channelId.startsWith("dm:") && (emoji === "👀" || emoji === "💬")) {
       const key = `${event.pubkey}:${targetId}`;
       const existing = this.jobsMap.get(key);
       if (existing) {
@@ -2654,7 +2706,19 @@ export class FezClient {
       // else's kind 5 is ignored. The tombstone stays visible ("removed
       // by …"), never a silent hole.
       const msg = this.msgByIdMap.get(tag[1]);
-      if (!msg || msg.deletedBy) continue;
+      if (!msg) {
+        // DM unsend: author-only (a DM has no moderator), honest
+        // tombstone — the rumor was already delivered; honoring clients
+        // blank it, nothing is recalled.
+        const dm = this.dmMsgById(tag[1]);
+        if (dm && !dm.msg.deletedBy && event.pubkey === dm.msg.senderPk) {
+          dm.msg.deletedBy = "author";
+          dm.msg.text = "";
+          this.emit("metaChanged", dm.channelId, tag[1]);
+        }
+        continue;
+      }
+      if (msg.deletedBy) continue;
       const channelId =
         event.tags.find((t) => t[0] === "h")?.[1] ?? this.channelOfMessage(tag[1]);
       if (!channelId) continue;
@@ -2683,7 +2747,19 @@ export class FezClient {
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     if (!targetId || !channelId) return;
     const target = this.msgByIdMap.get(targetId);
-    if (!target || event.pubkey !== target.authorPk) return; // author-only
+    if (!target) {
+      // DM edit: same author-only + latest-wins rules, applied to the
+      // rumor in conversation state instead of a channel message.
+      const dm = this.dmMsgById(targetId);
+      if (!dm || event.pubkey !== dm.msg.senderPk || dm.msg.deletedBy) return;
+      if (event.created_at < (dm.msg.editTs ?? 0)) return;
+      dm.msg.text = event.content;
+      dm.msg.edited = true;
+      dm.msg.editTs = event.created_at;
+      this.emit("metaChanged", dm.channelId, targetId);
+      return;
+    }
+    if (event.pubkey !== target.authorPk) return; // author-only
     if (event.created_at < (target.editTs ?? 0)) return; // latest edit wins
     target.content = event.content;
     target.edited = true;
@@ -2874,7 +2950,19 @@ export class FezClient {
     // derives the same thread. 1:1 keys stay the bare peer pubkey.
     const participants = dm.participants ?? [dm.senderPk, dm.peerPk];
     const key = dmConvoKey(participants, this.pubkey) || dm.peerPk;
+    const isNewConvo = !this.dmConvos.has(key);
     const convo = this.dmConvo(key);
+    if (isNewConvo) {
+      // A conversation exists now, so its metadata channel does too:
+      // widen the live subscription and pull any reactions/edits/unsends
+      // that landed while we weren't listening. Fire-and-forget — DM
+      // delivery never waits on metadata.
+      this.resubscribe();
+      // ponytail: fixed 1.5s delay so the cold-start wrap replay finishes
+      // unwrapping this convo's messages before edits/unsends look them
+      // up; a settle-detector on the replay if the window ever grows.
+      setTimeout(() => void this.loadDmMeta(this.dmChannelId(key)).catch(() => {}), 1500);
+    }
     convo.participants = participants;
     convo.msgs.push({ id: dm.id, senderPk: dm.senderPk, text: dm.text, ts: dm.ts });
     convo.msgs.sort((a, b) => a.ts - b.ts);

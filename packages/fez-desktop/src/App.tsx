@@ -2374,12 +2374,16 @@ function DmView({
   const [uploading, setUploading] = useState<string>();
   /** Uploaded but not yet sent — chips on the composer, consumed by send(). */
   const [pending, setPending] = useState<Uploaded[]>([]);
+  const [editing, setEditing] = useState<{ id: string } | undefined>();
   const bottomRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   const convo = client.dmConversations().get(convoKey);
   const group = convoKey.includes("+");
   const peers = client.dmPeers(convoKey);
+  // The conversation's metadata channel — reactions/edits/unsends ride it,
+  // relay-gated to the participants; bodies stay on the gift-wrap pipe.
+  const dmChannelId = client.dmChannelId(convoKey);
 
   useEffect(() => {
     client.markDmRead(convoKey);
@@ -2388,6 +2392,21 @@ function DmView({
 
   const send = async () => {
     const text = draft.trim();
+    if (editing) {
+      // Edit replaces words only — attachments stay whatever they were.
+      if (!text) return;
+      const target = editing;
+      setEditing(undefined);
+      setDraft("");
+      try {
+        await client.editMessage(dmChannelId, target.id, text);
+      } catch (err) {
+        setEditing(target);
+        setDraft(text);
+        toast.error(`couldn't edit: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
     if (!text && pending.length === 0) return;
     setDraft("");
     const attachments = pending;
@@ -2466,11 +2485,14 @@ function DmView({
             {(index === 0 || !sameDay(all[index - 1].ts, msg.ts)) && (
               <div className="day-divider"><span>{dayLabel(msg.ts)}</span></div>
             )}
-            {/* The channel's own Bubble, in DM mode (no channelId): same
-                face/head/body anatomy, hover copy + remind, markdown and
-                mentions — minus the channel machinery it can't have. */}
+            {/* The channel's own Bubble in DM mode: same anatomy, plus
+                react/edit/unsend over the dm metadata channel — minus
+                threads, pins, and moderation, which a conversation
+                doesn't have. */}
             <Bubble
               client={client}
+              channelId={dmChannelId}
+              dm
               msg={{
                 id: msg.id,
                 authorPk: msg.senderPk,
@@ -2478,8 +2500,19 @@ function DmView({
                 content: msg.text,
                 ts: msg.ts,
                 mentionPks: [],
+                edited: msg.edited,
+                editTs: msg.editTs,
+                deletedBy: msg.deletedBy,
               }}
               inThread={false}
+              onEdit={
+                msg.senderPk === client.pubkey && !msg.deletedBy
+                  ? () => {
+                      setEditing({ id: msg.id });
+                      setDraft(msg.text);
+                    }
+                  : undefined
+              }
               onAuthor={() => onProfile(msg.senderPk)}
               onProfile={onProfile}
             />
@@ -2487,6 +2520,11 @@ function DmView({
         ))}
         <div ref={bottomRef} />
       </div>
+      {editing && (
+        <div className="edit-banner">
+          editing message · <b>enter</b> saves · <b>esc</b> cancels
+        </div>
+      )}
       {uploading && <div className="edit-banner">⬆ uploading {uploading}…</div>}
       {pending.length > 0 && (
         <div className="attach-row">
@@ -2508,6 +2546,26 @@ function DmView({
         onChange={setDraft}
         onSend={() => void send()}
         placeholder={`message ${client.dmTitle(convoKey)} — encrypted`}
+        editing={!!editing}
+        onArrowUpEmpty={
+          editing
+            ? undefined
+            : () => {
+                const last = [...(convo?.msgs ?? [])].reverse().find((m) => m.senderPk === client.pubkey && !m.deletedBy);
+                if (last) {
+                  setEditing({ id: last.id });
+                  setDraft(last.text);
+                }
+              }
+        }
+        onEscape={
+          editing
+            ? () => {
+                setEditing(undefined);
+                setDraft("");
+              }
+            : undefined
+        }
         onFiles={(files) => void handleFiles(files)}
       />
     </main>
@@ -2887,6 +2945,7 @@ function Bubble({
   client,
   channelId,
   msg,
+  dm,
   inThread,
   onOpenThread,
   onEdit,
@@ -2894,11 +2953,14 @@ function Bubble({
   onProfile,
 }: {
   client: FezClient;
-  /** Absent in a DM — threads, pins, reactions, and moderation are
-   *  channel machinery, and public kind-7 reactions on an E2E message
-   *  would leak; without a channelId those affordances don't render. */
-  channelId?: string;
+  /** In a DM this is the derived "dm:" metadata channel — reactions,
+   *  edits, and unsends publish through it (relay-gated to participants)
+   *  while message bodies stay gift-wrapped. */
+  channelId: string;
     msg: Msg;
+  /** DM mode: hides what a conversation can't have — threads, pins,
+   *  reports, moderation, workspace roles. React/edit/unsend stay. */
+  dm?: boolean;
   inThread: boolean;
   onOpenThread?: () => void;
   onEdit?: () => void;
@@ -2906,9 +2968,9 @@ function Bubble({
   onProfile?: (pk: string) => void;
 }) {
   const mine = msg.authorPk === client.pubkey;
-  const replies = channelId ? client.threadReplyCount(channelId, msg.id) : 0;
-  const reactions = channelId ? client.reactions(msg.id) : undefined;
-  const pinned = channelId ? client.isPinned(channelId, msg.id) : false;
+  const replies = dm ? 0 : client.threadReplyCount(channelId, msg.id);
+  const reactions = client.reactions(msg.id);
+  const pinned = dm ? false : client.isPinned(channelId, msg.id);
   const time = new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   // What this message actually tagged, by name — so an @name that
   // reached nobody doesn't render as though it had.
@@ -2943,7 +3005,7 @@ function Bubble({
   /** Report to the moderators: one 1984 per mod, reason encrypted to each. */
   const sendReport = async () => {
     const reason = reportReason.trim();
-    if (!reason || !channelId) return;
+    if (!reason || dm) return;
     setReportOpen(false);
     setReportReason("");
     await client.reportMessage(channelId, msg.id, msg.authorPk, reason);
@@ -2953,7 +3015,7 @@ function Bubble({
 
   const react = (emoji: string) => {
     setPickerAt(undefined);
-    if (channelId) void client.toggleReaction(channelId, msg.id, emoji);
+    void client.toggleReaction(channelId, msg.id, emoji);
   };
 
   /** Buzz's remind-me-later: a preset menu, subject = this message. */
@@ -3010,18 +3072,18 @@ function Bubble({
         <>
           <div className="menu-backdrop" onClick={() => setMenu(undefined)} onContextMenu={(e) => { e.preventDefault(); setMenu(undefined); }} />
           <div className="msg-menu" style={{ left: menu.x, top: menu.y }}>
-            {channelId && menuItem("add reaction…", "☺", () => setPickerAt(menu))}
-            {channelId && !inThread && onOpenThread && menuItem("reply in thread", "↩", onOpenThread)}
+            {menuItem("add reaction…", "☺", () => setPickerAt(menu))}
+            {!dm && !inThread && onOpenThread && menuItem("reply in thread", "↩", onOpenThread)}
             {menuItem("remind me about this", "◷", () => setRemindOpen(true))}
             {menuItem(copied ? "copied ✓" : "copy text", "⧉", () => {
               void navigator.clipboard.writeText(msg.content);
               setCopied(true);
               setTimeout(() => setCopied(false), 2000);
             })}
-            {channelId && !pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, msg.id))}
+            {!dm && !pinned && menuItem("pin to channel", "⚑", () => void client.pinMessage(channelId, msg.id))}
             {mine && onEdit && menuItem("edit message", "✎", onEdit)}
-            {channelId && !mine && menuItem("report to moderators…", "⚑!", () => setReportOpen(true))}
-            {channelId && client.canModerateMessage(msg) && (
+            {!dm && !mine && menuItem("report to moderators…", "⚑!", () => setReportOpen(true))}
+            {!dm && client.canModerateMessage(msg) && (
               <button
                 className="self-menu-item danger"
                 onClick={() => {
@@ -3039,7 +3101,7 @@ function Bubble({
                 {armedRemove ? "click again — withholds it for everyone" : "remove message"}
               </button>
             )}
-            {channelId && client.canDeleteMessage(msg) && (
+            {client.canDeleteMessage(msg) && (
               <button
                 className="self-menu-item danger"
                 onClick={() => {
@@ -3062,11 +3124,11 @@ function Bubble({
       )}
       <button
         className="avatar-btn"
-        title={channelId ? "actions" : "profile"}
+        title={dm ? "profile" : "actions"}
         onClick={(e) => {
           // The card is member actions (mute, timeout) — channel-side
           // authority a DM doesn't carry; there the face opens the profile.
-          if (!channelId) return onAuthor?.();
+          if (dm) return onAuthor?.();
           const r = e.currentTarget.getBoundingClientRect();
           setCardAt({ x: r.right + 6, y: r.top });
         }}
@@ -3082,7 +3144,7 @@ function Bubble({
           // Authority visible at a glance — owner/admin badge next to the
           // name. Workspace rank stays out of DMs: a private conversation
           // is between people, not roles.
-          if (!channelId) return null;
+          if (dm) return null;
           const role = client.state.roleOf(msg.authorPk);
           if (role === "owner") return <span className="msg-role owner">owner</span>;
           if (role === "admin") return <span className="msg-role admin">admin</span>;
@@ -3114,27 +3176,25 @@ function Bubble({
             >
               {copied ? "✓" : "⧉"}
             </button>
-            {channelId && (
-              <button
-                title="react"
-                onClick={(e) => {
-                  if (pickerAt) return setPickerAt(undefined);
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setPickerAt({ x: rect.right - 264, y: rect.bottom + 6 });
-                }}
-              >
-                ☺
-              </button>
-            )}
+            <button
+              title="react"
+              onClick={(e) => {
+                if (pickerAt) return setPickerAt(undefined);
+                const rect = e.currentTarget.getBoundingClientRect();
+                setPickerAt({ x: rect.right - 264, y: rect.bottom + 6 });
+              }}
+            >
+              ☺
+            </button>
             <button title="remind me about this" onClick={() => setRemindOpen(!remindOpen)}>{remindSet ? "✓" : "◷"}</button>
-            {channelId && !mine && (
+            {!dm && !mine && (
               <button title="report to the community creator (encrypted)" onClick={() => setReportOpen(!reportOpen)}>
                 {reported ? "✓" : "⚑!"}
               </button>
             )}
-            {channelId && !inThread && onOpenThread && <button title="reply in thread" onClick={onOpenThread}>↩</button>}
+            {!dm && !inThread && onOpenThread && <button title="reply in thread" onClick={onOpenThread}>↩</button>}
             {mine && onEdit && <button title="edit (↑ also edits your last)" onClick={onEdit}>✎</button>}
-            {channelId && (
+            {!dm && (
               <button
                 title={pinned ? "pinned" : "pin"}
                 onClick={() => {
@@ -3144,7 +3204,7 @@ function Bubble({
                 ⚑
               </button>
             )}
-            {channelId && client.canDeleteMessage(msg) && (
+            {client.canDeleteMessage(msg) && (
               <button
                 className={armedDelete ? "danger armed-delete" : "danger"}
                 title={armedDelete ? "click again — leaves a visible tombstone" : "delete"}
@@ -3209,16 +3269,16 @@ function Bubble({
       {proposalIdsIn(msg.content).map((id) => (
         <InlineProposal key={id} id={id} />
       ))}
-      {channelId && msg.content.startsWith("⛔ approval needed:") && (
+      {!dm && msg.content.startsWith("⛔ approval needed:") && (
         <ApprovalCard client={client} msg={msg} channelId={channelId} />
       )}
-      {channelId && msg.content.startsWith("❓ choose:") && (
+      {!dm && msg.content.startsWith("❓ choose:") && (
         <ChoiceCard client={client} msg={msg} channelId={channelId} />
       )}
       {installOffers(msg.content).length > 0 && (
         <InstallOffer content={msg.content} authorName={msg.authorName} client={client} />
       )}
-      {channelId &&
+      {!dm &&
         messageDecorators()
           .filter((d) => d.match(msg.content))
           .map((d, i) => (
