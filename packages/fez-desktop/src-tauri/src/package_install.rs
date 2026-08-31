@@ -645,7 +645,12 @@ pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
         let title = manifest
             .pointer("/fez/gitSource/url")
             .and_then(|v| v.as_str())
+            // Installs made from a sha-pinned card stored "…/repo#<sha>" —
+            // the fragment is provenance, not name. Strip it here so packs
+            // installed before the canonical-url fix still title cleanly.
+            .map(|u| u.split('#').next().unwrap_or(u))
             .and_then(|u| u.trim_end_matches('/').rsplit('/').next())
+            .filter(|t| !t.is_empty())
             .unwrap_or(&pkg_name)
             .to_string();
         let dir = skills_cfg.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");

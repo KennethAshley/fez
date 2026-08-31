@@ -954,7 +954,8 @@ fn finish_install(name: &str, tar_bytes: &[u8], version: &str) -> Result<String,
 fn inspect_git_package(url: String) -> Result<String, String> {
     let (owner, repo, want_ref) = git_install::parse_github_url(&url)?;
     let (tar_bytes, sha) = git_install::fetch(&owner, &repo, want_ref.as_deref())?;
-    let (report, _npm_tar) = git_install::convert(&tar_bytes, &owner, &repo, &url, &sha)?;
+    let canonical = format!("github.com/{owner}/{repo}");
+    let (report, _npm_tar) = git_install::convert(&tar_bytes, &owner, &repo, &canonical, &sha)?;
     let installed = package_install::installed_manifest(&report.name, &fez_home()?).is_some();
     let mut value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
     let obj = value.as_object_mut().ok_or("bad report")?;
@@ -971,7 +972,8 @@ fn inspect_git_package(url: String) -> Result<String, String> {
 fn install_git_package(url: String) -> Result<String, String> {
     let (owner, repo, want_ref) = git_install::parse_github_url(&url)?;
     let (tar_bytes, sha) = git_install::fetch(&owner, &repo, want_ref.as_deref())?;
-    let (report, npm_tar) = git_install::convert(&tar_bytes, &owner, &repo, &url, &sha)?;
+    let canonical = format!("github.com/{owner}/{repo}");
+    let (report, npm_tar) = git_install::convert(&tar_bytes, &owner, &repo, &canonical, &sha)?;
     let Some(npm_tar) = npm_tar else {
         return Err(format!("{} refused: {}", report.name, report.refused.join(", ")));
     };
