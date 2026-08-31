@@ -217,7 +217,7 @@ pub(crate) fn install_from_tarball(
     // phantom row for a package that installed nothing.
     if !has_installable_content(&pkg, tar_bytes) {
         return Err(format!(
-            "{name}@{version} has no installable gui/headless/relay/workspace/persona part"
+            "{name}@{version} has no installable gui/headless/relay/workspace/persona/skill part"
         ));
     }
 
@@ -580,7 +580,11 @@ pub(crate) struct InstalledSkill {
 /// Parse a skill .md's `name:`/`description:` frontmatter by line prefix —
 /// same technique as `git_install::split_frontmatter` and the CLI's
 /// `parseSkillMd`. `name` defaults to `stem`; an absent `description` is "".
+/// CRLF-tolerant (a `\r` before each `\n` is stripped first) — matches
+/// `parseSkillMd`'s `\r?\n` regex on the TS side.
 fn skill_frontmatter(content: &str, stem: &str) -> (String, String) {
+    let content = content.replace("\r\n", "\n");
+    let content = content.as_str();
     let mut name = stem.to_string();
     let mut description = String::new();
     if let Some(after_open) = content.strip_prefix("---\n") {
@@ -623,6 +627,13 @@ pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
         };
         let Some(skills_cfg) = manifest.pointer("/fez/skills") else { continue };
         let dir = skills_cfg.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");
+        // `dir` is attacker-controlled (written verbatim at install, never
+        // re-validated) — same escape gate `materialize` enforces at write
+        // time, required again here since this is a separate read path a
+        // package.json could still be hand-edited to hit.
+        if dir.starts_with('/') || Path::new(dir).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            continue;
+        }
         let skills_dir = home.join("packages").join(&pkg_name).join(dir);
         let files = match std::fs::read_dir(&skills_dir) {
             Ok(f) => f,
@@ -987,5 +998,36 @@ mod tests {
         assert_eq!(found[0].id, "pony");
         assert_eq!(found[0].name, "pony"); // no `name:` in frontmatter → defaults to stem
         assert_eq!(found[0].description, "lazy senior dev");
+    }
+
+    #[test]
+    fn installed_skills_refuses_a_dir_that_escapes_the_package() {
+        let home = tempfile::tempdir().unwrap();
+        let pkg_dir = home.path().join("packages/leaky");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name": "@fezchat/leaky", "version": "0.0.1", "fez": {"type": "extension", "skills": {"dir": "../evil"}}}"#,
+        )
+        .unwrap();
+        // A readable dir OUTSIDE packages/leaky/, with a legit-shaped skill —
+        // "../evil" from packages/leaky/ resolves to packages/evil/, a
+        // sibling package's dir that "leaky" has no business reading.
+        let evil = home.path().join("packages/evil");
+        std::fs::create_dir_all(&evil).unwrap();
+        std::fs::write(evil.join("secret.md"), "---\ndescription: leaked\n---\nx").unwrap();
+
+        let found = installed_skills(home.path());
+        assert!(found.is_empty(), "an escaping dir must yield zero skills: {found:?}");
+    }
+
+    #[test]
+    fn skill_frontmatter_tolerates_crlf() {
+        let (name, description) = skill_frontmatter(
+            "---\r\nname: The Pony\r\ndescription: lazy senior dev\r\n---\r\nBe lazy.\r\n",
+            "pony",
+        );
+        assert_eq!(name, "The Pony");
+        assert_eq!(description, "lazy senior dev");
     }
 }

@@ -22,4 +22,17 @@ describe("skillsInstalled", () => {
       .toEqual({ name: "The Pony", description: "d", body: "B" });
     expect(parseSkillMd("plain", "pony").name).toBe("pony");
   });
+  it("refuses a dir that escapes the package", () => {
+    const home = mkdtempSync(join(tmpdir(), "fez-skills-escape-"));
+    const pkg = join(home, "packages", "leaky");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "leaky", fez: { skills: { dir: "../evil" } } }));
+    // A readable dir OUTSIDE packages/leaky/, with a legit-shaped skill —
+    // "../evil" from packages/leaky/ resolves to packages/evil/, a sibling
+    // package's dir "leaky" has no business reading.
+    const evil = join(home, "packages", "evil");
+    mkdirSync(evil, { recursive: true });
+    writeFileSync(join(evil, "secret.md"), "---\ndescription: leaked\n---\nx");
+    expect(skillsInstalled(home)).toEqual([]);
+  });
 });

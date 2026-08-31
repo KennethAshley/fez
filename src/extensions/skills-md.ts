@@ -60,6 +60,14 @@ export function skillsInstalled(home: string = fezHome()): InstalledSkill[] {
     }
     if (!manifest.fez?.skills) continue;
     const dir = manifest.fez.skills.dir ?? "skills";
+    // A manifest-declared dir is attacker-controlled (installed verbatim,
+    // never re-validated) — same escape gate materializeIntoPackage
+    // enforces at write time, required again here since this is a
+    // separate read path a package.json could still be hand-edited to hit.
+    if (path.isAbsolute(dir) || dir.split(/[\\/]/).includes("..")) {
+      console.warn(`⚠ skill package "${pkgName}" declares an escaping dir "${dir}" — skipped`);
+      continue;
+    }
     const skillsDir = path.join(pkgDir, dir);
     let files: string[];
     try {
