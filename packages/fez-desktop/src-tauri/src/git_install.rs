@@ -232,6 +232,121 @@ fn append_tar_entry(builder: &mut tar::Builder<Vec<u8>>, path: &str, data: &[u8]
     builder.append_data(&mut header, path, data).map_err(|e| e.to_string())
 }
 
+fn is_valid_gh_segment(s: &str) -> bool {
+    !s.is_empty()
+        && s != ".."
+        && s != "."
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+/// Accepts "github.com/o/r", "https://github.com/o/r", optional "#ref".
+/// Returns (owner, repo, Option<ref>). No regex crate needed — split on '#',
+/// strip the scheme and "github.com/" prefixes, then split on '/'.
+pub(crate) fn parse_github_url(url: &str) -> Result<(String, String, Option<String>), String> {
+    let (path, want_ref) = match url.split_once('#') {
+        Some((p, r)) => (p, Some(r.to_string())),
+        None => (url, None),
+    };
+    let path = path.strip_prefix("https://").or_else(|| path.strip_prefix("http://")).unwrap_or(path);
+    let path = path.strip_prefix("github.com/").ok_or_else(|| "only github.com URLs are supported".to_string())?;
+
+    let mut parts = path.split('/');
+    let owner = parts.next().unwrap_or("");
+    let repo = parts.next().unwrap_or("");
+    if parts.next().is_some() {
+        return Err(format!("expected owner/repo, got extra path segments in {url}"));
+    }
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+
+    if !is_valid_gh_segment(owner) || !is_valid_gh_segment(repo) {
+        return Err(format!("not a valid github owner/repo: {url}"));
+    }
+    if let Some(r) = &want_ref {
+        if r.is_empty() {
+            return Err(format!("empty ref in {url}"));
+        }
+    }
+
+    Ok((owner.to_string(), repo.to_string(), want_ref))
+}
+
+/// Fetch a GitHub repo's tarball pinned to a resolved commit sha, so
+/// `inspect_git_package` and `install_git_package` see identical bytes.
+/// Returns (tar bytes, sha). GitHub's API 403s any request without a
+/// User-Agent header.
+pub(crate) fn fetch(owner: &str, repo: &str, want_ref: Option<&str>) -> Result<(Vec<u8>, String), String> {
+    let ghref = match want_ref {
+        Some(r) => r.to_string(),
+        None => {
+            let repo_url = format!("https://api.github.com/repos/{owner}/{repo}");
+            let body = ureq::get(&repo_url)
+                .set("User-Agent", "fez-desktop")
+                .timeout(std::time::Duration::from_secs(30))
+                .call()
+                .map_err(|e| format!("couldn't reach github for {owner}/{repo}: {e}"))?
+                .into_string()
+                .map_err(|e| format!("bad github response: {e}"))?;
+            let json: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| format!("bad github json: {e}"))?;
+            json.get("default_branch")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("no default_branch for {owner}/{repo}"))?
+                .to_string()
+        }
+    };
+
+    let commit_url = format!("https://api.github.com/repos/{owner}/{repo}/commits/{ghref}");
+    let body = ureq::get(&commit_url)
+        .set("User-Agent", "fez-desktop")
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .map_err(|e| format!("couldn't resolve {owner}/{repo}#{ghref}: {e}"))?
+        .into_string()
+        .map_err(|e| format!("bad github response: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("bad github json: {e}"))?;
+    let sha = json
+        .get("sha")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("no sha resolved for {owner}/{repo}#{ghref}"))?
+        .to_string();
+
+    // Download and unpack (gzip → tar) into a Vec we can read twice — same
+    // MAX_TGZ/MAX_TAR take-and-check pattern as install_package, so a
+    // hostile or broken response can't run us out of memory.
+    let tarball_url = format!("https://codeload.github.com/{owner}/{repo}/tar.gz/{sha}");
+    const MAX_TGZ: u64 = 30 * 1024 * 1024;
+    const MAX_TAR: u64 = 120 * 1024 * 1024;
+    let mut gz = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(
+            ureq::get(&tarball_url)
+                .set("User-Agent", "fez-desktop")
+                .timeout(std::time::Duration::from_secs(120))
+                .call()
+                .map_err(|e| format!("download failed: {e}"))?
+                .into_reader(),
+            MAX_TGZ + 1,
+        ),
+        &mut gz,
+    )
+    .map_err(|e| format!("download read failed: {e}"))?;
+    if gz.len() as u64 > MAX_TGZ {
+        return Err(format!("{owner}/{repo} tarball exceeds {}MB — refusing", MAX_TGZ / (1024 * 1024)));
+    }
+    let mut tar_bytes = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(flate2::read::GzDecoder::new(&gz[..]), MAX_TAR + 1),
+        &mut tar_bytes,
+    )
+    .map_err(|e| format!("gunzip failed: {e}"))?;
+    if tar_bytes.len() as u64 > MAX_TAR {
+        return Err(format!("{owner}/{repo} expands past {}MB — refusing", MAX_TAR / (1024 * 1024)));
+    }
+
+    Ok((tar_bytes, sha))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +439,16 @@ mod tests {
     fn a_repo_with_nothing_recognizable_errs() {
         let tar = gh_tar(&[("README.md", "hi")]);
         assert!(convert(&tar, "o", "r", "u", "s").is_err());
+    }
+
+    #[test]
+    fn github_urls_parse_and_bad_ones_refuse() {
+        assert_eq!(parse_github_url("https://github.com/A-b/c.d#v1").unwrap(),
+            ("A-b".into(), "c.d".into(), Some("v1".into())));
+        assert_eq!(parse_github_url("github.com/o/r.git").unwrap(), ("o".into(), "r".into(), None));
+        for bad in ["gitlab.com/o/r", "github.com/o", "github.com/o/r/extra", "github.com/../r", ""] {
+            assert!(parse_github_url(bad).is_err(), "{bad} should refuse");
+        }
     }
 
     #[test]
