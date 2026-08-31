@@ -94,11 +94,15 @@ Two new Tauri commands beside `install_package`:
     installed package itself, so images, JSON manifests, LICENSE
     files etc. are simply never copied; they're listed as "ignored"
     on the card, not a risk.
-  - **Code refuses the whole repo:** any `.js/.ts/.mjs/.cjs/.sh/.py/
-    .rb/.ps1` file, a `hooks/` dir, or an MCP server config marks the
-    repo **refused**, with the offending paths named in the report. No
-    partial installs: stripping the code out of a plugin that needs it
-    would ship a silently broken pack.
+  - **Code inside the payload refuses the whole repo.** The payload is
+    what installs: `skills/`, `.claude/skills/`, `agents/`, root
+    `SKILL.md`. Any `.js/.ts/.mjs/.cjs/.sh/.py/.rb/.ps1` file, `hooks/`
+    dir, or MCP config *inside those dirs* marks the repo **refused**
+    (a skill sitting next to code depends on it — stripping it would
+    ship a silently broken pack). Code elsewhere in the repo —
+    benchmarks, CI, the plugin's own installers — is ignored, not
+    refused: the repo is not the plugin (decided with Ken 2026-08-30
+    after real ponytail refused on its benchmark suite).
   - The report lists what would install (skill/persona files found,
     per the mapping below), what would be ignored, the resolved commit
     sha, and the synthesized package name.

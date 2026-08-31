@@ -81,6 +81,19 @@ fn unquote(s: &str) -> String {
 
 const CODE_EXTENSIONS: &[&str] = &["js", "ts", "mjs", "cjs", "sh", "py", "rb", "ps1"];
 
+/// The plugin payload — the dirs the converter actually installs from. The
+/// repo is not the plugin: a plugin repo carries benchmarks, CI, its own
+/// installers (ponytail ships all three), and none of that matters here.
+/// Code OUTSIDE the payload is merely ignored; code INSIDE a skill means the
+/// skill genuinely depends on it, so the pack would be broken without it —
+/// that's what refusal is for.
+fn in_payload(path: &str) -> bool {
+    path == "SKILL.md"
+        || path.starts_with("skills/")
+        || path.starts_with(".claude/skills/")
+        || path.starts_with("agents/")
+}
+
 fn is_refused_path(path: &str) -> bool {
     let ext_hit = std::path::Path::new(path)
         .extension()
@@ -139,7 +152,7 @@ pub(crate) fn convert(
             continue;
         }
 
-        if is_refused_path(stripped) {
+        if in_payload(stripped) && is_refused_path(stripped) {
             if refused.len() < 20 {
                 refused.push(stripped.to_string());
             } else {
@@ -410,11 +423,11 @@ mod tests {
     }
 
     #[test]
-    fn any_code_file_refuses_the_whole_repo() {
+    fn code_inside_the_payload_refuses() {
         let tar = gh_tar(&[
             ("skills/ponytail/SKILL.md", SKILL),
-            ("hooks/evil.js", "x"),
-            ("scripts/setup.sh", "x"),
+            ("skills/ponytail/hooks/evil.js", "x"),
+            ("skills/other/setup.sh", "x"),
         ]);
         let (report, npm) = convert(&tar, "a", "b", "u", "s").unwrap();
         assert!(npm.is_none());
@@ -423,11 +436,29 @@ mod tests {
     }
 
     #[test]
-    fn mcp_json_anywhere_refuses() {
+    fn code_outside_the_payload_is_ignored_and_the_pack_installs() {
+        // The ponytail shape: markdown skills plus a repo full of benchmarks
+        // and its own installers. The repo is not the plugin — only code the
+        // skills sit next to can break them.
         let tar = gh_tar(&[
             ("skills/ponytail/SKILL.md", SKILL),
+            ("benchmarks/loc.js", "x"),
+            ("benchmarks/run.py", "x"),
+            (".opencode/plugins/ponytail.mjs", "x"),
             ("mcp.json", "{}"),
-            ("nested/.mcp.json", "{}"),
+        ]);
+        let (report, npm) = convert(&tar, "a", "b", "u", "s").unwrap();
+        assert!(report.refused.is_empty());
+        assert!(npm.is_some());
+        assert!(report.ignored.iter().any(|p| p.contains("benchmarks/loc.js")));
+    }
+
+    #[test]
+    fn mcp_json_inside_the_payload_refuses() {
+        let tar = gh_tar(&[
+            ("skills/ponytail/SKILL.md", SKILL),
+            ("skills/ponytail/mcp.json", "{}"),
+            ("agents/.mcp.json", "{}"),
         ]);
         let (report, npm) = convert(&tar, "a", "b", "u", "s").unwrap();
         assert!(npm.is_none());
