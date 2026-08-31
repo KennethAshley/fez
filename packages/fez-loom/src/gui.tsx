@@ -153,10 +153,10 @@ export default function activate(api: GuiApi): void {
                 <span className="tool-ghost-glyph">▣</span>
               </div>
               <div className="tool-card-meta">
-                <span className="tool-card-sub">your first tool lives here</span>
+                <span className="tool-card-sub">your first artifact lives here</span>
               </div>
             </div>
-            <div className="page-empty-line">You haven't kept a tool yet.</div>
+            <div className="page-empty-line">You haven't kept an artifact yet.</div>
             <div className="page-empty-how">
               Ask @loom in any channel to build one — a chart, a tracker, a small app. Open what it makes, and hit ★
               to keep it here.
