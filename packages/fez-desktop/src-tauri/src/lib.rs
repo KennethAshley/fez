@@ -1,4 +1,5 @@
 use nostr::JsonUtil as _;
+mod git_install;
 mod managed_agents;
 mod managed_node;
 mod package_install;
