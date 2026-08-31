@@ -105,7 +105,7 @@ interface InstallTarget {
  * "skill" as two sorts of thing is what makes the page not parse.
  */
 const PART_WHERE: Record<string, { where: string; what: string }> = {
-  skill: { where: "settings.json → mcpServers", what: "your agents call it" },
+  tool: { where: "settings.json → mcpServers", what: "your agents call it" },
   headless: { where: "~/.fez/extensions", what: "background work in the TUI" },
   gui: { where: "~/.fez/packages/<name>", what: "renders in this app" },
 };
@@ -188,7 +188,7 @@ export default function SkillsView({
       .sort((a, b) => a.localeCompare(b))
       .map((name) => {
         const parts = [...(localParts[name] ?? [])];
-        if (installed[name]) parts.unshift("skill");
+        if (installed[name]) parts.unshift("tool");
         return {
           name,
           parts,
@@ -391,7 +391,7 @@ export default function SkillsView({
     setTimeout(() => setCopied(undefined), 2000);
   };
 
-  const skillListings = (listings ?? []).filter((l) => (l.artifact ?? "mcp") === "mcp");
+  const mcpListings = (listings ?? []).filter((l) => (l.artifact ?? "mcp") === "mcp");
 
   const countKey = (listing: Listing) =>
     `${listing.authorPk}:${listing.artifact === "persona" ? "persona:" : ""}${listing.name}`;
@@ -399,8 +399,11 @@ export default function SkillsView({
     .filter((listing) => {
       if (filter === "all") return true;
       if (filter === "agents") return listing.artifact === "persona";
-      if (filter === "skills") return (listing.artifact ?? "mcp") === "mcp";
-      return listing.artifact !== "persona" && (listing.artifact ?? "mcp") !== "mcp";
+      // "skills" means SKILL.md listings (artifact "skill"), not MCP
+      // tools — tools still browse, just under "packs" alongside
+      // extensions and pi-packages, since they lost their own chip.
+      if (filter === "skills") return listing.artifact === "skill";
+      return listing.artifact !== "persona" && listing.artifact !== "skill";
     })
     .sort((a, b) => (installs.get(countKey(b)) ?? 0) - (installs.get(countKey(a)) ?? 0) || b.ts - a.ts);
 
@@ -408,7 +411,7 @@ export default function SkillsView({
     <main className="main">
       <header className="topbar">
         <div className="topbar-row">
-          {only === "skills" ? "🔧 skills" : "⊞ extensions"}
+          {only === "skills" ? "🔧 tools" : "⊞ extensions"}
           {<span className="ext-tabs">
             {(["browse", "installed"] as const).map((name) => (
               <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} onClick={() => setTab(name)}>
@@ -433,11 +436,11 @@ export default function SkillsView({
         <div className="ext-legend">
           {only === "skills" ? (
             <div className="ext-legend-lead">
-              <strong>Skills</strong> are tools your agents call — an MCP server, granted to an agent in its persona. You configure them here; your agents use them.
+              <strong>Tools</strong> are MCP servers your agents call — granted to an agent in its persona. <strong>Skills</strong> are instruction packs agents load — attach them in an agent's editor.
             </div>
           ) : (
             <div className="ext-legend-lead">
-              <strong>Extensions</strong> are features you install — a board, a repo panel, a slash command. Some also give your agents a skill, which appears under <strong>Skills</strong>.
+              <strong>Extensions</strong> are features you install — a board, a repo panel, a slash command. Some also give your agents a tool, which appears under <strong>Tools</strong>.
             </div>
           )}
         </div>
@@ -495,7 +498,7 @@ export default function SkillsView({
               <div className="skill-section ext-missing">
                 <div className="manage-section">your agents need something</div>
                 {missing.map(({ agent, skill, source, runs }) => {
-                  const listing = skillListings.find((l) => l.name === skill);
+                  const listing = mcpListings.find((l) => l.name === skill);
                   return (
                     <div key={`${agent}:${skill}`} className="skill-row">
                       <div className="skill-main">
@@ -582,11 +585,11 @@ export default function SkillsView({
                         name
                       )}
                       {/* Chips earn their place by DIFFERENTIATING. In
-                          the skills list every row is a skill, so a
-                          "skill" chip on all ten restated the heading
+                          the tools list every row is a tool, so a
+                          "tool" chip on all ten restated the heading
                           ten times; the other parts (gui, headless) are
                           still worth naming. */}
-                      {parts.filter((part) => !(only === "skills" && part === "skill")).map((part) => (
+                      {parts.filter((part) => !(only === "skills" && part === "tool")).map((part) => (
                         <span
                           key={part}
                           className="role-tag"
@@ -625,7 +628,7 @@ export default function SkillsView({
                     {entry ? (
                       <span className="gallery-where">↳ {entry.where}</span>
                     ) : (
-                      parts.filter((part) => part !== "skill" && PART_WHERE[part]).map((part) => (
+                      parts.filter((part) => part !== "tool" && PART_WHERE[part]).map((part) => (
                         <code key={part} className="skill-cmd">{PART_WHERE[part].what}</code>
                       ))
                     )}
@@ -751,7 +754,7 @@ export default function SkillsView({
                 <div className="skill-main">
                   <span className="skill-name">
                     {isPersona ? `@${listing.name}` : listing.name}
-                    <span className="role-tag">{isPersona ? "agent" : isMcp ? "skill" : listing.artifact}</span>
+                    <span className="role-tag">{isPersona ? "agent" : isMcp ? "tool" : listing.artifact}</span>
                     {isInstalled && <span className="role-tag installed-tag">installed</span>}
                     <span className="skill-installs">⇩ {count}</span>
                   </span>

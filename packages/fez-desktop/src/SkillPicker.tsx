@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { machineLocalPath, resolveInstalledSkill } from "@fezchat/client";
 import { useConfig } from "./config-store";
+import type { InstalledSkillMd } from "./agent-skill-health";
 
 /**
  * Pick an agent's skills from what this machine actually has.
@@ -33,13 +35,66 @@ export default function SkillPicker({
   value,
   sources,
   onChange,
+  skillsValue,
+  onSkillsChange,
 }: {
   value: string[];
   sources: Record<string, string>;
   onChange: (names: string[], sources: Record<string, string>) => void;
+  /** SKILL.md packs this persona attaches — the `skills:` key, separate
+      catalog and separate frontmatter line from the mcpServers tools below. */
+  skillsValue: string[];
+  onSkillsChange: (names: string[]) => void;
 }) {
   const { skills } = useConfig();
   const [query, setQuery] = useState("");
+  const [installedSkillMds, setInstalledSkillMds] = useState<InstalledSkillMd[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    invoke<string>("list_installed_skills")
+      .then((raw) => {
+        if (!cancelled) setInstalledSkillMds(JSON.parse(raw));
+      })
+      .catch(() => {
+        if (!cancelled) setInstalledSkillMds([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Matched by id OR name — the same rule agentSkillHealth and spawn-time
+  // resolveAttachedSkills (fez-acp/skills-prompt.ts) use, so a persona
+  // declaring the canonical `id` reads as installed here too, instead of
+  // showing a bogus "missing" row alongside a duplicate unchecked one.
+  //
+  // `declaredAs` carries the EXACT string already in the persona (id or
+  // name, whichever it happens to be) so toggling off never rewrites an
+  // identifier that's already there — only a fresh attach picks one, and
+  // it always picks `id` (see toggleSkillMd).
+  //
+  // Same "declared but not in the catalog stays visible" rule as the
+  // tools rows below — a dead skill name must stay removable, not vanish.
+  const skillMdRows = useMemo(() => {
+    const catalog = installedSkillMds.map((s) => ({
+      key: s.id,
+      name: s.name,
+      description: s.description as string | undefined,
+      missing: false,
+      declaredAs: skillsValue.find((v) => v === s.id || v === s.name),
+    }));
+    const missing = skillsValue
+      .filter((v) => !installedSkillMds.some((s) => s.id === v || s.name === v))
+      .map((v) => ({ key: v, name: v, description: undefined as string | undefined, missing: true, declaredAs: v }));
+    return [...catalog, ...missing].sort((a, b) => a.name.localeCompare(b.name));
+  }, [installedSkillMds, skillsValue]);
+
+  const toggleSkillMd = (row: { key: string; declaredAs?: string }, on: boolean) => {
+    // New attaches write `id` (the identifier install produces); an
+    // existing declaration is only ever removed, never rewritten, so
+    // whichever identifier the persona already used survives untouched.
+    onSkillsChange(on ? [...skillsValue, row.key] : skillsValue.filter((v) => v !== row.declaredAs));
+  };
 
   // Installed skills, plus anything the persona names that isn't a
   // catalog key — a dead reference must stay VISIBLE and removable, not
@@ -132,8 +187,33 @@ export default function SkillPicker({
     </label>
   );
 
+  const skillMdRow = (r: { key: string; name: string; description?: string; missing: boolean; declaredAs?: string }) => (
+    <label key={r.key} className={`skill-pick${r.missing ? " missing" : ""}`}>
+      <input
+        type="checkbox"
+        checked={r.declaredAs !== undefined}
+        onChange={(e) => toggleSkillMd(r, e.target.checked)}
+      />
+      <span className="skill-pick-text">
+        <span className="skill-pick-name">{r.name}</span>
+        <span className="skill-pick-desc">
+          {r.missing ? "— install it from chat or ⊞ extensions" : r.description && `— ${r.description}`}
+        </span>
+      </span>
+    </label>
+  );
+
+  const skillMdSection = skillMdRows.length > 0 && (
+    <div className="skill-pick-list">{skillMdRows.map(skillMdRow)}</div>
+  );
+
   if (broken.length + attached.length + available.length === 0) {
-    return <div className="settings-hint">No skills installed yet — find some in the Skills tab.</div>;
+    return (
+      <>
+        {skillMdSection}
+        <div className="settings-hint">No tools installed yet — find some in the tools tab.</div>
+      </>
+    );
   }
 
   const q = query.trim().toLowerCase();
@@ -145,11 +225,12 @@ export default function SkillPicker({
 
   return (
     <div className="skill-picker">
+      {skillMdSection}
       {broken.length > 0 && (
         <div className="skill-broken">
           <div className="skill-broken-head">declared, but not installed here</div>
           <div className="skill-strip left">{broken.map(chip)}</div>
-          <div className="field-note">This agent spawns without them until you install them in the Skills tab.</div>
+          <div className="field-note">This agent spawns without them until you install them in the tools tab.</div>
         </div>
       )}
 

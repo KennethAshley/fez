@@ -9,6 +9,7 @@ import { CATALOG, PERM_LABEL, SENSITIVE, norm, githubUrl, npmUrl, type CatalogEn
 import { useConfig } from "./config-store";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
+import { GitInstallOffer } from "./InstallOffer";
 
 /**
  * The install gallery — discover the official fez extensions and install
@@ -39,6 +40,8 @@ export function ExtensionGallery({
   const [installing, setInstalling] = useState<string>();
   const [detail, setDetail] = useState<GalleryEntry>();
   const [info, setInfo] = useState<{ version?: string; description?: string; readme?: string }>();
+  const [urlDraft, setUrlDraft] = useState<string>("");
+  const [submitted, setSubmitted] = useState<string>();
 
   // Fetch the registry README when a detail page opens.
   useEffect(() => {
@@ -282,6 +285,15 @@ export function ExtensionGallery({
           </div>
         </div>
       )}
+
+      <div className="gallery-from-url">
+        <div className="settings-hint">install a prompt pack from GitHub — markdown skills only, repos with code are refused</div>
+        <form onSubmit={(e) => { e.preventDefault(); if (/^(https:\/\/)?github\.com\/[\w.-]+\/[\w.-]+/.test(urlDraft.trim())) setSubmitted(urlDraft.trim()); }}>
+          <input value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} placeholder="github.com/owner/repo" />
+          <button className="mini" type="submit">inspect</button>
+        </form>
+        {submitted && <GitInstallOffer key={submitted} url={submitted} authorName="you" client={client} />}
+      </div>
     </div>
   );
 }

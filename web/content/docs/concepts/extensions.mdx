@@ -45,9 +45,9 @@ package's `package.json`:
   always-on [sentinel](/docs/self-hosting). An allowlist, not a default:
   an extension written for the TUI would otherwise start doing its
   foreground job a second time inside the always-on process.
-- **`skill`** — an MCP server definition, merged into the machine's skill
+- **`skill`** — an MCP server definition, merged into the machine's tool
   catalog. Agents get it by declaring the name in their persona
-  ([how skills work](/docs/concepts/skills)). This is the *"@deployer,
+  ([how tools work](/docs/concepts/tools)). This is the *"@deployer,
   upload the results"* path — no GUI involved.
 
 A package can also ship **personas** — `@fezchat/score-studio` is a complete
@@ -71,7 +71,7 @@ receives. See [trust & approval](/docs/concepts/trust).
 ```bash
 fez install <source>    # bare name = @fezchat scope; @scope/name, npm:, git: also work
 fez list                # what's installed
-fez remove <name>       # uninstall (skill definitions are kept — see below)
+fez remove <name>       # uninstall (tool definitions are kept — see below)
 fez link <dir>          # dev-install a local package: build, register parts, smoke-import
 ```
 
@@ -79,8 +79,8 @@ The desktop's extension gallery installs the same packages with no node or
 npm on the machine — it fetches the tarball itself. Gui parts appear live;
 headless and relay parts load when their host restarts.
 
-Removal keeps the skill *definition*: personas may still declare it, and any
-secret values you filled are yours ([custody](/docs/concepts/skills#secrets)).
+Removal keeps the tool *definition*: personas may still declare it, and any
+secret values you filled are yours ([custody](/docs/concepts/tools#secrets)).
 
 ## The first-party packages
 

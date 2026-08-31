@@ -216,7 +216,7 @@ export default function activate(api: GuiApi): void {
     );
   }
 
-  api.registerNavView("loom-tools", { glyph: "▣", label: "tools" }, (host) => {
+  api.registerNavView("loom-tools", { glyph: "▣", label: "artifacts" }, (host) => {
     const root = createRoot(host!);
     root.render(<ToolsGallery />);
     return () => root.unmount();

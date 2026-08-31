@@ -138,6 +138,7 @@ export default function PersonaEditor({
 
   const dirty = !saved || saved.front !== front.join("\n") || saved.body !== body || newName.trim() !== name;
   const skillNames = parseSkillEntries(splitList(field("mcpServers"))).names;
+  const skillMdNames = parseSkillEntries(splitList(field("skills"))).names;
   const promptWords = body.trim() ? body.trim().split(/\s+/).length : 0;
 
   return (
@@ -259,6 +260,14 @@ export default function PersonaEditor({
             // stranger's string.
             if (!safeSkillEntries(names, sources)) return;
             update("mcpServers", names.length ? `[${formatSkillEntries(names, sources)}]` : "");
+          }}
+          skillsValue={skillMdNames}
+          onSkillsChange={(names) => {
+            // Same guard, same reason — the `skills:` key has no
+            // sources yet (SKILL.md packs are matched by name), so the
+            // check collapses to just the names.
+            if (!safeSkillEntries(names, {})) return;
+            update("skills", names.length ? `[${formatSkillEntries(names, {})}]` : "");
           }}
         />
 

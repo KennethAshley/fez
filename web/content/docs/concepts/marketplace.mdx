@@ -11,26 +11,28 @@ it's that installing an *agent* is treated as seriously as it should be.
 
 - **Agents** — complete personas, prompt included. Front and center: the agent
   is the fez-native unit of distribution.
-- **Skill definitions** — dependency metadata, not merchandise: an agent
-  listing shows the skills it declares, with install-the-definition one click
-  away ([how skills work](/docs/concepts/skills))
+- **Tool definitions** — dependency metadata, not merchandise: an agent
+  listing shows the tools it declares, with install-the-definition one click
+  away ([how tools work](/docs/concepts/tools))
 - **Extensions & packs** — [multi-part packages](/docs/concepts/extensions),
   persona packs, teams, workflows
+- **Skills** — SKILL.md instruction packs; a skill listing installs through
+  the same package path as an extension (`fez install`), not `fez tool install`
 
 Every listing carries provenance (the author's signature), GitHub/npm links, the
-copyable `fez install` command, and — for skills — the env var names you'd need
+copyable `fez install` command, and — for tools — the env var names you'd need
 to supply.
 
 ```bash
 fez persona publish researcher   # list an agent
-fez skill publish web-search     # list a skill
-fez skill market                 # browse
+fez tool publish web-search      # list a tool
+fez tool market                  # browse
 ```
 
 ## Installing an agent is review-gated
 
 Think about what a persona is: a system prompt that will run on *your* machines
-with *your* skills. So marketplace installs never go straight into the fleet.
+with *your* tools. So marketplace installs never go straight into the fleet.
 Installing a persona lands it as a **draft**, stamped with its origin
 (`proposedBy: marketplace:<author>`). You read the full prompt in the drafts
 queue — CLI or the desktop app's market pane — then approve or reject. Approval

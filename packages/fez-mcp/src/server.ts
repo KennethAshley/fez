@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
+import { attachedSkills, loadSkillBody } from "./skills.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import {
   RelayConnection,
@@ -32,7 +33,7 @@ import {
  * fez-acp session; personas need declare nothing.
  *
  * Env (fez-acp fills these): FEZ_AGENT_PERSONA (required),
- * FEZ_RELAY, FEZ_AGENT_OWNER (enables memory tools).
+ * FEZ_RELAY, FEZ_AGENT_OWNER (enables memory tools), FEZ_AGENT_SKILLS (enables fez_load_skill).
  */
 
 const persona = process.env.FEZ_AGENT_PERSONA;
@@ -337,6 +338,19 @@ server.registerTool(
     }
     const rows = [...latest.entries()].map(([pk, m]) => `• @${m.name ?? pk.slice(0, 8)}${m.about ? ` — ${m.about}` : ""} (${pk.slice(0, 12)}…)`);
     return text(rows.join("\n") || "No agents announced.");
+  }
+);
+
+const skills = attachedSkills(process.env.FEZ_AGENT_SKILLS);
+server.registerTool(
+  "fez_load_skill",
+  {
+    description: "Load the full instructions of one of your attached skills. Call it when a skill's description matches the task; then follow the loaded skill until done.",
+    inputSchema: { name: z.string().describe("an attached skill name, exactly as listed in your [Skills] section") },
+  },
+  async ({ name }) => {
+    try { return text(loadSkillBody(name, skills)); }
+    catch (e) { return text(String(e instanceof Error ? e.message : e)); }
   }
 );
 

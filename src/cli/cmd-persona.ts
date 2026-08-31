@@ -141,7 +141,7 @@ persona
     console.log(`📝 "${name}" downloaded as a DRAFT (by ${event.pubkey.slice(0, 12)}).`);
     console.log(`   Review the prompt like a PR: fez persona drafts → fez persona approve ${name}`);
     if (listing.requiredSkills?.length) {
-      console.log(`   Declares skills: ${listing.requiredSkills.join(", ")} — define any you're missing: fez skill list`);
+      console.log(`   Declares tools: ${listing.requiredSkills.join(", ")} — define any you're missing: fez tool list`);
     }
     relay.disconnect();
   });
@@ -235,7 +235,7 @@ persona
   .requiredOption("-h, --harness <id>", "Harness id this persona runs on (see: fez persona harnesses)")
   .option("-p, --prompt <text>", "System prompt prefixed to every instruction")
   .option("-a, --alias <names...>", "Additional names this persona responds to")
-  .option("-m, --mcp-server <names...>", "Skills (registered MCP servers) this persona gets access to")
+  .option("-m, --mcp-server <names...>", "Tools (registered MCP servers) this persona gets access to")
   .action(async (name: string, options) => {
     try {
       const p = await createPersona({
@@ -265,7 +265,7 @@ persona
     for (const p of personas) {
       console.log(`  ${chalk.green(`@${p.id}`)} ${chalk.dim(`(${p.harness})`)}`);
       if (p.aliases.length) console.log(`    Aliases: ${p.aliases.join(", ")}`);
-      if (p.mcpServers.length) console.log(`    Skills: ${p.mcpServers.join(", ")}`);
+      if (p.mcpServers.length) console.log(`    Tools: ${p.mcpServers.join(", ")}`);
       if (p.systemPrompt) console.log(`    Prompt: ${p.systemPrompt}`);
       console.log();
     }

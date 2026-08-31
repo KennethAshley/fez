@@ -36,7 +36,7 @@ import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
-import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers } from "./InstallOffer";
+import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers, gitInstallOffers, GitInstallOffer } from "./InstallOffer";
 import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
@@ -1189,7 +1189,7 @@ function Shell({
                     ]],
                     ["views", [
                       ["⊞", "extensions", () => setView({ kind: "extensions" })],
-                      ["⚒", "skills", () => setView({ kind: "skills" })],
+                      ["⚒", "tools", () => setView({ kind: "skills" })],
                     ]],
                   ] as [string, [string, string, () => void][]][]
                 ).map(([group, items]) => (
@@ -2516,6 +2516,11 @@ function DmView({
               onAuthor={() => onProfile(msg.senderPk)}
               onProfile={onProfile}
             />
+            {/* Git install offers are a DM-only consent surface (1:1, not
+                group): the guide offers, the human at this desktop decides. */}
+            {!group && gitInstallOffers(msg.text).map((url) => (
+              <GitInstallOffer key={url} url={url} authorName={client.displayName(msg.senderPk)} client={client} />
+            ))}
           </div>
         ))}
         <div ref={bottomRef} />

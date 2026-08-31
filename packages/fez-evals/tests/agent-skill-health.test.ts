@@ -26,15 +26,15 @@ describe("agent skill health", () => {
   });
 
   it("a healthy agent reports nothing", () => {
-    expect(agentSkillHealth(persona("web-search"), catalog)).toEqual({ missing: [], local: [] });
+    expect(agentSkillHealth(persona("web-search"), catalog)).toEqual({ missing: [], local: [], missingSkillMds: [] });
   });
 
   it("an agent declaring no skills reports nothing", () => {
-    expect(agentSkillHealth(`---\nharness: pi\n---\nbody\n`, catalog)).toEqual({ missing: [], local: [] });
+    expect(agentSkillHealth(`---\nharness: pi\n---\nbody\n`, catalog)).toEqual({ missing: [], local: [], missingSkillMds: [] });
   });
 
   it("a missing skill is not also reported as local", () => {
     const out = agentSkillHealth(persona("github"), catalog);
-    expect(out).toEqual({ missing: ["github"], local: [] });
+    expect(out).toEqual({ missing: ["github"], local: [], missingSkillMds: [] });
   });
 });
