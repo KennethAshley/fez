@@ -359,7 +359,21 @@ export default function SkillPicker({
       )}
 
       {available.length > 0 && (
-        <details className="skill-pick-more">
+        <details
+          className="skill-pick-more"
+          ref={(el) => {
+            // Popover semantics on a native <details>: a click anywhere
+            // outside closes it, so the floating catalogue never lingers
+            // over the instructions while you type. React 19 ref cleanup
+            // drops the listener with the element.
+            if (!el) return;
+            const onDocDown = (e: PointerEvent) => {
+              if (el.open && !el.contains(e.target as Node)) el.open = false;
+            };
+            document.addEventListener("pointerdown", onDocDown);
+            return () => document.removeEventListener("pointerdown", onDocDown);
+          }}
+        >
           <summary>
             <span className="skill-pick-more-label">add a tool</span>
             <span className="skill-pick-more-count">{available.length} on this machine</span>
