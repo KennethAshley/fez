@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
-import { parseSkillEntries, formatSkillEntries, safeSkillEntries, nearestKnownKey } from "@fezchat/client";
+import { parseSkillEntries, formatSkillEntries, parseSkillDecls, formatSkillDecls, safeSkillEntries, nearestKnownKey } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
 import SkillPicker from "./SkillPicker";
 import Avatar from "./Avatar";
@@ -138,7 +138,7 @@ export default function PersonaEditor({
 
   const dirty = !saved || saved.front !== front.join("\n") || saved.body !== body || newName.trim() !== name;
   const skillNames = parseSkillEntries(splitList(field("mcpServers"))).names;
-  const skillMdNames = parseSkillEntries(splitList(field("skills"))).names;
+  const skillMdDecls = parseSkillDecls(splitList(field("skills")));
   const promptWords = body.trim() ? body.trim().split(/\s+/).length : 0;
 
   return (
@@ -261,13 +261,17 @@ export default function PersonaEditor({
             if (!safeSkillEntries(names, sources)) return;
             update("mcpServers", names.length ? `[${formatSkillEntries(names, sources)}]` : "");
           }}
-          skillsValue={skillMdNames}
-          onSkillsChange={(names) => {
-            // Same guard, same reason — the `skills:` key has no
-            // sources yet (SKILL.md packs are matched by name), so the
-            // check collapses to just the names.
+          skillsValue={skillMdDecls.names}
+          skillSettings={skillMdDecls.settings}
+          onSkillsChange={(names, settings) => {
+            // Same guard, same reason — sources for the `skills:` key
+            // survive by carry-over (packs are matched by name); the
+            // per-attachment settings ride the parens. A setting can't
+            // carry the line's own structure either.
             if (!safeSkillEntries(names, {})) return;
-            update("skills", names.length ? `[${formatSkillEntries(names, {})}]` : "");
+            if (Object.values(settings).some((s) => /[(),\[\]\n=]/.test(s))) return;
+            const sources = Object.fromEntries(names.filter((n) => skillMdDecls.sources[n]).map((n) => [n, skillMdDecls.sources[n]]));
+            update("skills", names.length ? `[${formatSkillDecls(names, sources, settings)}]` : "");
           }}
         />
 

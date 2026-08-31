@@ -591,6 +591,8 @@ pub(crate) struct InstalledSkill {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// Declared setting choices (`options:` frontmatter) — empty when the skill declares none.
+    pub options: Vec<String>,
 }
 
 /// Parse a skill .md's `name:`/`description:` frontmatter by line prefix —
@@ -598,11 +600,12 @@ pub(crate) struct InstalledSkill {
 /// `parseSkillMd`. `name` defaults to `stem`; an absent `description` is "".
 /// CRLF-tolerant (a `\r` before each `\n` is stripped first) — matches
 /// `parseSkillMd`'s `\r?\n` regex on the TS side.
-fn skill_frontmatter(content: &str, stem: &str) -> (String, String) {
+fn skill_frontmatter(content: &str, stem: &str) -> (String, String, Vec<String>) {
     let content = content.replace("\r\n", "\n");
     let content = content.as_str();
     let mut name = stem.to_string();
     let mut description = String::new();
+    let mut options: Vec<String> = Vec::new();
     if let Some(after_open) = content.strip_prefix("---\n") {
         let close = after_open
             .find("\n---\n")
@@ -615,11 +618,22 @@ fn skill_frontmatter(content: &str, stem: &str) -> (String, String) {
                     name = v.trim().to_string();
                 } else if let Some(v) = trimmed.strip_prefix("description:") {
                     description = v.trim().to_string();
+                } else if let Some(v) = trimmed.strip_prefix("options:") {
+                    // `options: [lite, full, ultra]` — declared setting
+                    // choices; pickers render a dropdown when present.
+                    options = v
+                        .trim()
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
                 }
             }
         }
     }
-    (name, description)
+    (name, description, options)
 }
 
 /// Walk `packages/*/package.json` for `fez.skills` and read each `.md`'s
@@ -673,11 +687,11 @@ pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
             }
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
             let Ok(content) = std::fs::read_to_string(&path) else { continue };
-            let (name, description) = skill_frontmatter(&content, stem);
+            let (name, description, options) = skill_frontmatter(&content, stem);
             if description.is_empty() {
                 continue; // required — matches skills-md.ts
             }
-            out.push(InstalledSkill { pkg: pkg_name.clone(), title: title.clone(), id: stem.to_string(), name, description });
+            out.push(InstalledSkill { pkg: pkg_name.clone(), title: title.clone(), id: stem.to_string(), name, description, options });
         }
     }
     out
@@ -1076,11 +1090,12 @@ mod tests {
 
     #[test]
     fn skill_frontmatter_tolerates_crlf() {
-        let (name, description) = skill_frontmatter(
-            "---\r\nname: The Pony\r\ndescription: lazy senior dev\r\n---\r\nBe lazy.\r\n",
+        let (name, description, options) = skill_frontmatter(
+            "---\r\nname: The Pony\r\ndescription: lazy senior dev\r\noptions: [lite, full, ultra]\r\n---\r\nBe lazy.\r\n",
             "pony",
         );
         assert_eq!(name, "The Pony");
         assert_eq!(description, "lazy senior dev");
+        assert_eq!(options, vec!["lite", "full", "ultra"]);
     }
 }

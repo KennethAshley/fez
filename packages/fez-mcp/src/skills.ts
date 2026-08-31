@@ -1,12 +1,28 @@
 import { readFileSync } from "node:fs";
 
-/** Parse FEZ_AGENT_SKILLS; bad/missing json -> {} */
-export function attachedSkills(envJson: string | undefined): Record<string, string> {
+/** One attached skill: where its body lives, plus the persona's per-attachment setting. */
+export interface AttachedSkillRef {
+  path: string;
+  setting?: string;
+}
+
+/** Parse FEZ_AGENT_SKILLS; bad/missing json -> {}. Values are
+ * `{path, setting?}` objects; the original bare-string form (a path) is
+ * still accepted so a newer fez-mcp works under an older fez-acp. */
+export function attachedSkills(envJson: string | undefined): Record<string, AttachedSkillRef> {
   if (!envJson) return {};
   try {
     const parsed = JSON.parse(envJson);
     if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, string>;
+      const out: Record<string, AttachedSkillRef> = {};
+      for (const [name, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === "string") out[name] = { path: v };
+        else if (typeof v === "object" && v !== null && typeof (v as { path?: unknown }).path === "string") {
+          const ref = v as { path: string; setting?: unknown };
+          out[name] = { path: ref.path, setting: typeof ref.setting === "string" ? ref.setting : undefined };
+        }
+      }
+      return out;
     }
   } catch {
     // ignore parse error
@@ -14,12 +30,14 @@ export function attachedSkills(envJson: string | undefined): Record<string, stri
   return {};
 }
 
-/** Body of an attached skill, or an Error naming the attached set. */
-export function loadSkillBody(name: string, attached: Record<string, string>): string {
-  const path = attached[name];
-  if (!path) {
+/** Body of an attached skill (setting appended so the loaded skill sees how
+ * it was attached), or an Error naming the attached set. */
+export function loadSkillBody(name: string, attached: Record<string, AttachedSkillRef>): string {
+  const ref = attached[name];
+  if (!ref) {
     const available = Object.keys(attached).join(", ") || "none";
     throw new Error(`unknown skill "${name}" — attached: ${available}`);
   }
-  return readFileSync(path, "utf-8");
+  const body = readFileSync(ref.path, "utf-8");
+  return ref.setting ? `${body}\n\n[Attached setting: ${ref.setting}]` : body;
 }

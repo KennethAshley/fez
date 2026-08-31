@@ -7,6 +7,8 @@ export interface InstalledSkill {
   id: string;
   name: string;
   description: string;
+  /** Declared setting choices (`options: [lite, full, ultra]` frontmatter) — pickers render a dropdown when present. */
+  options?: string[];
   path: string;
 }
 
@@ -16,19 +18,26 @@ export interface InstalledSkill {
  * use, no YAML dep needed for two flat fields. `name` defaults to the
  * file stem; an absent `description` is "".
  */
-export function parseSkillMd(raw: string, stem: string): { name: string; description: string; body: string } {
+export function parseSkillMd(raw: string, stem: string): { name: string; description: string; options?: string[]; body: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return { name: stem, description: "", body: raw.trim() };
   const [, frontmatter, body] = match;
   let name = stem;
   let description = "";
+  let options: string[] | undefined;
   for (const line of frontmatter.split(/\r?\n/)) {
     const kv = line.match(/^([\w-]+):\s*(.*)$/);
     if (!kv) continue;
     if (kv[1] === "name") name = kv[2].trim();
     if (kv[1] === "description") description = kv[2].trim();
+    // `options: [lite, full, ultra]` — a skill declaring its setting
+    // choices (fez convention; foreign skills simply don't have it).
+    if (kv[1] === "options") {
+      const list = kv[2].trim().replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean);
+      if (list.length > 0) options = list;
+    }
   }
-  return { name, description, body: body.trim() };
+  return { name, description, options, body: body.trim() };
 }
 
 /**
@@ -79,12 +88,12 @@ export function skillsInstalled(home: string = fezHome()): InstalledSkill[] {
       const filePath = path.join(skillsDir, file);
       const stem = path.basename(file, ".md");
       const raw = fs.readFileSync(filePath, "utf-8");
-      const { name, description } = parseSkillMd(raw, stem);
+      const { name, description, options } = parseSkillMd(raw, stem);
       if (!description) {
         console.warn(`⚠ skill ${pkgName}/${dir}/${file} has no "description:" — skipped`);
         continue;
       }
-      found.push({ pkg: pkgName, id: stem, name, description, path: filePath });
+      found.push({ pkg: pkgName, id: stem, name, description, options, path: filePath });
     }
   }
   return found;

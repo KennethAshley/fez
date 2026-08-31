@@ -1,5 +1,11 @@
 import type { InstalledSkill } from "@fezchat/protocol";
 
+/** An attached skill plus the persona's per-attachment setting, if any. */
+export interface AttachedSkill extends InstalledSkill {
+  /** From `skills: [name(setting)]` — free text the loaded skill interprets (e.g. ponytail's ultra). */
+  setting?: string;
+}
+
 /**
  * Attached skills at spawn — progressive disclosure only. The prompt gets
  * name+description (a menu); the body stays behind fez_load_skill until
@@ -10,9 +16,10 @@ import type { InstalledSkill } from "@fezchat/protocol";
  */
 export function resolveAttachedSkills(
   declared: string[],
-  installed: InstalledSkill[]
-): { attached: InstalledSkill[]; missing: string[] } {
-  const attached: InstalledSkill[] = [];
+  installed: InstalledSkill[],
+  settings: Record<string, string> = {}
+): { attached: AttachedSkill[]; missing: string[] } {
+  const attached: AttachedSkill[] = [];
   const missing: string[] = [];
   const byName = new Map<string, InstalledSkill>();
   for (const name of declared) {
@@ -30,22 +37,25 @@ export function resolveAttachedSkills(
       continue;
     }
     byName.set(match.name, match);
-    attached.push(match);
+    // The setting keys by whatever the persona declared (id or name).
+    attached.push({ ...match, setting: settings[name] });
   }
   return { attached, missing };
 }
 
 /** The `[Skills]` prompt section, or undefined when none attached. Never includes a body. */
-export function skillsPromptSection(attached: InstalledSkill[]): string | undefined {
+export function skillsPromptSection(attached: AttachedSkill[]): string | undefined {
   if (attached.length === 0) return undefined;
   return [
     `[Skills]`,
     `You have these skills — load one with fez_load_skill when its description matches the task; follow a loaded skill until done.`,
-    ...attached.map((s) => `- ${s.name}: ${s.description}`),
+    ...attached.map((s) => `- ${s.name}: ${s.description}${s.setting ? ` (attached with: ${s.setting})` : ""}`),
   ].join("\n");
 }
 
-/** JSON for FEZ_AGENT_SKILLS: {"<name>": "<abs path>"} */
-export function skillsEnvJson(attached: InstalledSkill[]): string {
-  return JSON.stringify(Object.fromEntries(attached.map((s) => [s.name, s.path])));
+/** JSON for FEZ_AGENT_SKILLS: {"<name>": {"path": "<abs path>", "setting"?: "<text>"}} — fez-mcp also accepts the older bare-string form. */
+export function skillsEnvJson(attached: AttachedSkill[]): string {
+  return JSON.stringify(
+    Object.fromEntries(attached.map((s) => [s.name, s.setting ? { path: s.path, setting: s.setting } : { path: s.path }]))
+  );
 }

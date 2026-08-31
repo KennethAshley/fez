@@ -242,7 +242,8 @@ async function main() {
   // body stays behind fez_load_skill until the agent actually needs it.
   const { attached: attachedSkills, missing: missingSkillMds } = resolveAttachedSkills(
     persona.skills,
-    skillsInstalled()
+    skillsInstalled(),
+    persona.skillSettings
   );
   const skillsSection = skillsPromptSection(attachedSkills);
   const mcpServers = resolved

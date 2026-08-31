@@ -3969,6 +3969,9 @@ a.page-fact:hover { color: var(--fg); }
 /* One row per pack; the per-skill rows fold beneath it, indented under the checkbox. */
 .skill-pack-fold { margin-left: 22px; }
 .skill-pack-fold summary { cursor: pointer; }
+/* A fold row = checkbox+text, with the per-attachment setting control at the row's end. */
+.skill-pick-main { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; flex: 1; }
+.skill-pick-setting { margin-left: auto; max-width: 110px; font-size: 12px; background: var(--bg-inset, transparent); color: var(--fg-dim); border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 5px; }
 .skill-pick-filter { width: 100%; margin-bottom: 4px; font-size: 12px; padding: 5px 8px; }
 .skill-pick { display: flex; align-items: flex-start; gap: 8px; padding: 4px 2px; cursor: pointer; }
 .skill-pick:hover { color: var(--fg); }

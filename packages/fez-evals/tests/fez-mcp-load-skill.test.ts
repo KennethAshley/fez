@@ -18,3 +18,17 @@ describe("fez_load_skill core", () => {
     expect(attachedSkills("not json")).toEqual({});
   });
 });
+
+describe("fez_load_skill settings", () => {
+  it("appends the attached setting to the loaded body; old bare-string env still parses", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "fez-mcp-setting-"));
+    const p = join(dir, "ponytail.md");
+    writeFileSync(p, "Be lazy.");
+    const set = attachedSkills(JSON.stringify({ ponytail: { path: p, setting: "ultra" }, old: p }));
+    expect(loadSkillBody("ponytail", set)).toContain("[Attached setting: ultra]");
+    expect(loadSkillBody("old", set)).toBe("Be lazy.");
+  });
+});

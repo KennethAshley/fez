@@ -11,6 +11,8 @@ export interface InstalledSkillMd {
   id: string;
   name: string;
   description: string;
+  /** Declared setting choices (`options:` frontmatter) — pickers render a dropdown when present. */
+  options?: string[];
 }
 
 /**

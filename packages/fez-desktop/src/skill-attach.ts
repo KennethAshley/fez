@@ -1,4 +1,4 @@
-import { parseSkillEntries, formatSkillEntries, safeSkillName, safeSkillSource } from "@fezchat/client";
+import { parseSkillDecls, formatSkillDecls, safeSkillName, safeSkillSource } from "@fezchat/client";
 
 /**
  * Editing the one frontmatter line that binds an agent to its skills.
@@ -95,12 +95,14 @@ function newlineOf(content: string): string {
   return content.includes("\r\n") ? "\r\n" : "\n";
 }
 
-function parseLine(content: string, key: SkillKey): { names: string[]; sources: Record<string, string> } {
+function parseLine(content: string, key: SkillKey): { names: string[]; sources: Record<string, string>; settings: Record<string, string> } {
   const fm = FRONTMATTER.exec(content);
-  if (!fm) return { names: [], sources: {} };
+  if (!fm) return { names: [], sources: {}, settings: {} };
   const line = lineRe(key).exec(fm[0]);
-  if (!line) return { names: [], sources: {} };
-  return parseSkillEntries(line[1].split(",").map((s) => s.trim()).filter(Boolean));
+  if (!line) return { names: [], sources: {}, settings: {} };
+  // Decls grammar: `name(setting)=source`. For mcpServers no entry ever
+  // carries parens, so this reads identically to the old entry parser.
+  return parseSkillDecls(line[1].split(",").map((s) => s.trim()).filter(Boolean));
 }
 
 /** What this persona declares, in order, with any recorded source. */
@@ -113,7 +115,8 @@ function writeLine(
   content: string,
   names: string[],
   sources: Record<string, string>,
-  key: SkillKey
+  key: SkillKey,
+  settings: Record<string, string> = {}
 ): string | undefined {
   const fm = FRONTMATTER.exec(content);
   if (!fm) return undefined;
@@ -125,7 +128,7 @@ function writeLine(
   // refuse the whole write. `undefined` is this module's "not safe to
   // edit", so callers report it instead of throwing.
   if (Object.values(sources).some((source) => !safeSkillSource(source))) return undefined;
-  const rendered = `${key}: [${formatSkillEntries(names, sources)}]`;
+  const rendered = `${key}: [${formatSkillDecls(names, sources, settings)}]`;
   const line = lineRe(key).exec(fm[0]);
 
   if (line) {
@@ -173,19 +176,19 @@ export function attachSkill(
   // so the guard applies to the sources that will actually be written.
   if (source && !safeSkillSource(source)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
-  const { names, sources } = parseLine(content, key);
+  const { names, sources, settings } = parseLine(content, key);
   if (names.includes(skill)) return undefined;
   const next = [...names, skill];
-  return writeLine(content, next, source ? { ...sources, [skill]: source } : sources, key);
+  return writeLine(content, next, source ? { ...sources, [skill]: source } : sources, key, settings);
 }
 
 /** Remove a skill, preserving every survivor's recorded source. */
 export function detachSkill(content: string, skill: string, key: SkillKey = "mcpServers"): string | undefined {
   if (!safeSkillName(skill)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
-  const { names, sources } = parseLine(content, key);
+  const { names, sources, settings } = parseLine(content, key);
   if (!names.includes(skill)) return undefined;
-  return writeLine(content, names.filter((n) => n !== skill), sources, key);
+  return writeLine(content, names.filter((n) => n !== skill), sources, key, settings);
 }
 
 /**
@@ -211,8 +214,8 @@ export function rememberSkillSource(
   if (!safeSkillName(skill)) return undefined;
   if (!safeSkillSource(source)) return undefined;
   if (!FRONTMATTER.test(content)) return undefined;
-  const { names, sources } = parseLine(content, key);
+  const { names, sources, settings } = parseLine(content, key);
   if (!names.includes(skill)) return undefined;
   if (sources[skill] === source) return undefined;
-  return writeLine(content, names, { ...sources, [skill]: source }, key);
+  return writeLine(content, names, { ...sources, [skill]: source }, key, settings);
 }

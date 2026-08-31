@@ -36,6 +36,7 @@ export default function SkillPicker({
   sources,
   onChange,
   skillsValue,
+  skillSettings,
   onSkillsChange,
 }: {
   value: string[];
@@ -44,7 +45,9 @@ export default function SkillPicker({
   /** SKILL.md packs this persona attaches — the `skills:` key, separate
       catalog and separate frontmatter line from the mcpServers tools below. */
   skillsValue: string[];
-  onSkillsChange: (names: string[]) => void;
+  /** Per-attachment settings from `name(setting)` — keyed by the declared identifier. */
+  skillSettings?: Record<string, string>;
+  onSkillsChange: (names: string[], settings: Record<string, string>) => void;
 }) {
   const { skills } = useConfig();
   const [query, setQuery] = useState("");
@@ -75,25 +78,42 @@ export default function SkillPicker({
   //
   // Same "declared but not in the catalog stays visible" rule as the
   // tools rows below — a dead skill name must stay removable, not vanish.
+  const settings = skillSettings ?? {};
   const skillMdRows = useMemo(() => {
     const catalog = installedSkillMds.map((s) => ({
       key: s.id,
       name: s.name,
       description: s.description as string | undefined,
+      options: s.options,
       missing: false,
       declaredAs: skillsValue.find((v) => v === s.id || v === s.name),
     }));
     const missing = skillsValue
       .filter((v) => !installedSkillMds.some((s) => s.id === v || s.name === v))
-      .map((v) => ({ key: v, name: v, description: undefined as string | undefined, missing: true, declaredAs: v }));
+      .map((v) => ({ key: v, name: v, description: undefined as string | undefined, options: undefined as string[] | undefined, missing: true, declaredAs: v }));
     return [...catalog, ...missing].sort((a, b) => a.name.localeCompare(b.name));
   }, [installedSkillMds, skillsValue]);
+
+  /** Settings for the surviving names only — a detach takes its setting with it. */
+  const settingsFor = (names: string[]) =>
+    Object.fromEntries(Object.entries(settings).filter(([k]) => names.includes(k)));
 
   const toggleSkillMd = (row: { key: string; declaredAs?: string }, on: boolean) => {
     // New attaches write `id` (the identifier install produces); an
     // existing declaration is only ever removed, never rewritten, so
     // whichever identifier the persona already used survives untouched.
-    onSkillsChange(on ? [...skillsValue, row.key] : skillsValue.filter((v) => v !== row.declaredAs));
+    const names = on ? [...skillsValue, row.key] : skillsValue.filter((v) => v !== row.declaredAs);
+    onSkillsChange(names, settingsFor(names));
+  };
+
+  const setSetting = (row: { declaredAs?: string }, raw: string) => {
+    if (!row.declaredAs) return;
+    // The line's own structure can't ride inside the parens.
+    const v = raw.replace(/[(),\[\]\n=]/g, "").trim();
+    const next = settingsFor(skillsValue);
+    if (v) next[row.declaredAs] = v;
+    else delete next[row.declaredAs];
+    onSkillsChange(skillsValue, next);
   };
 
   // Installed skills, plus anything the persona names that isn't a
@@ -187,20 +207,49 @@ export default function SkillPicker({
     </label>
   );
 
-  const skillMdRow = (r: { key: string; name: string; description?: string; missing: boolean; declaredAs?: string }) => (
-    <label key={r.key} className={`skill-pick${r.missing ? " missing" : ""}`}>
-      <input
-        type="checkbox"
-        checked={r.declaredAs !== undefined}
-        onChange={(e) => toggleSkillMd(r, e.target.checked)}
-      />
-      <span className="skill-pick-text">
-        <span className="skill-pick-name">{r.name}</span>
-        <span className="skill-pick-desc">
-          {r.missing ? "— install it from chat or ⊞ extensions" : r.description && `— ${r.description}`}
+  const skillMdRow = (r: { key: string; name: string; description?: string; options?: string[]; missing: boolean; declaredAs?: string }) => (
+    <div key={r.key} className={`skill-pick${r.missing ? " missing" : ""}`}>
+      <label className="skill-pick-main">
+        <input
+          type="checkbox"
+          checked={r.declaredAs !== undefined}
+          onChange={(e) => toggleSkillMd(r, e.target.checked)}
+        />
+        <span className="skill-pick-text">
+          <span className="skill-pick-name">{r.name}</span>
+          <span className="skill-pick-desc">
+            {r.missing ? "— install it from chat or ⊞ extensions" : r.description && `— ${r.description}`}
+          </span>
         </span>
-      </span>
-    </label>
+      </label>
+      {/* Per-attachment setting — free text the loaded skill interprets
+          (ponytail: lite|full|ultra); a dropdown when the skill declares
+          its choices via `options:` frontmatter. Only for attached rows:
+          a setting without an attachment has nothing to ride. */}
+      {r.declaredAs !== undefined && !r.missing && (
+        r.options && r.options.length > 0 ? (
+          <select
+            className="skill-pick-setting"
+            value={settings[r.declaredAs] ?? ""}
+            onChange={(e) => setSetting(r, e.target.value)}
+          >
+            <option value="">default</option>
+            {r.options.map((o) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            className="skill-pick-setting"
+            placeholder="setting"
+            title={`Free text the skill reads when loaded — e.g. ponytail understands lite, full, ultra. Stored as ${r.name}(…) in the persona.`}
+            defaultValue={settings[r.declaredAs] ?? ""}
+            onBlur={(e) => setSetting(r, e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          />
+        )
+      )}
+    </div>
   );
 
   // The PACK is what a person clicked "install" on — one checkbox attaches
@@ -224,11 +273,10 @@ export default function SkillPicker({
     // One write covering the whole pack: add every unattached id, or drop
     // every declaration under whichever identifier the persona used.
     const declared = new Set(rows.map((r) => r.declaredAs).filter(Boolean) as string[]);
-    onSkillsChange(
-      on
-        ? [...skillsValue, ...rows.filter((r) => r.declaredAs === undefined).map((r) => r.key)]
-        : skillsValue.filter((v) => !declared.has(v))
-    );
+    const names = on
+      ? [...skillsValue, ...rows.filter((r) => r.declaredAs === undefined).map((r) => r.key)]
+      : skillsValue.filter((v) => !declared.has(v));
+    onSkillsChange(names, settingsFor(names));
   };
 
   const skillMdSection = skillMdRows.length > 0 && (

@@ -15,8 +15,16 @@ describe("skills prompt", () => {
     expect(s).toContain("- ponytail: lazy senior dev");
     expect(skillsPromptSection([])).toBeUndefined();
   });
-  it("env json maps name to path", () => {
-    expect(JSON.parse(skillsEnvJson([pony]))).toEqual({ ponytail: "/x/ponytail.md" });
+  it("env json maps name to path, setting riding along when attached with one", () => {
+    expect(JSON.parse(skillsEnvJson([pony]))).toEqual({ ponytail: { path: "/x/ponytail.md" } });
+    expect(JSON.parse(skillsEnvJson([{ ...pony, setting: "ultra" }]))).toEqual({
+      ponytail: { path: "/x/ponytail.md", setting: "ultra" },
+    });
+  });
+  it("settings resolve by declared identifier and reach the section line", () => {
+    const { attached } = resolveAttachedSkills(["ponytail"], [pony], { ponytail: "ultra" });
+    expect(attached[0].setting).toBe("ultra");
+    expect(skillsPromptSection(attached)).toContain("- ponytail: lazy senior dev (attached with: ultra)");
   });
   it("dedupes two attached skills sharing a frontmatter name, keeping the first and warning", () => {
     const impostor = { pkg: "q", id: "fake-ponytail", name: "ponytail", description: "not lazy", path: "/y/ponytail.md" };

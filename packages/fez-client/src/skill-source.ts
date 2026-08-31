@@ -184,6 +184,47 @@ export function formatSkillEntries(names: string[], sources: Record<string, stri
 }
 
 /**
+ * The skills: line's richer grammar — `ponytail(ultra)=git:…` is a name,
+ * an optional per-attachment setting in parens, and an optional source.
+ * The setting is free text the loaded skill interprets; it must carry no
+ * commas or parens (the line splits on "," before this ever runs).
+ * MIRRORED in src/identity/personas.ts — change both.
+ */
+export function parseSkillDecls(entries: string[]): { names: string[]; sources: Record<string, string>; settings: Record<string, string> } {
+  const names: string[] = [];
+  const sources: Record<string, string> = {};
+  const settings: Record<string, string> = {};
+  for (const entry of entries) {
+    // The source split honors parens: `review(k=v)=npm:@x/y` splits at the
+    // SECOND `=` — the first is inside the setting.
+    let eq = -1;
+    let depth = 0;
+    for (let i = 0; i < entry.length; i++) {
+      const c = entry[i];
+      if (c === "(") depth++;
+      else if (c === ")") depth = Math.max(0, depth - 1);
+      else if (c === "=" && depth === 0) { eq = i; break; }
+    }
+    const left = (eq === -1 ? entry : entry.slice(0, eq)).trim();
+    const source = eq === -1 ? "" : entry.slice(eq + 1).trim();
+    const m = /^(.*?)\((.*)\)$/.exec(left);
+    const name = (m ? m[1] : left).trim();
+    if (!name) continue;
+    names.push(name);
+    if (m && m[2].trim()) settings[name] = m[2].trim();
+    if (source) sources[name] = source;
+  }
+  return { names, sources, settings };
+}
+
+/** Inverse of parseSkillDecls — one entry per name, setting and source riding along. */
+export function formatSkillDecls(names: string[], sources: Record<string, string>, settings: Record<string, string>): string {
+  return names
+    .map((n) => `${n}${settings[n] ? `(${settings[n]})` : ""}${sources[n] ? `=${sources[n]}` : ""}`)
+    .join(", ");
+}
+
+/**
  * The write-side guards for that same line. `mcpServers: [name=source, …]`
  * is ONE frontmatter line built out of `=`, `,` and `]`, so a name or
  * source carrying those characters (or a newline) restructures whatever

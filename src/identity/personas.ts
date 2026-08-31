@@ -53,6 +53,8 @@ export interface Persona {
   skills: string[];
   /** name → source spec for the `skills` entries that declared one — same shape as mcpSources. */
   skillSources: Record<string, string>;
+  /** name → per-attachment setting from `name(setting)` — free text the loaded skill interprets (e.g. ponytail's ultra). */
+  skillSettings: Record<string, string>;
   /**
    * One-line self-description published in the agent's 47000 metadata —
    * what orchestrators route on. Write it as verb phrases ("search the
@@ -108,10 +110,51 @@ export function parseSkillEntries(entries: string[]): { names: string[]; sources
   return { names, sources };
 }
 
+/**
+ * The skills: line's richer grammar — `ponytail(ultra)=git:…` is a name,
+ * an optional per-attachment setting in parens, and an optional source.
+ * The setting is free text the loaded skill interprets (ponytail's own
+ * body defines lite|full|ultra); fez only carries it. MIRRORED in
+ * packages/fez-client/src/skill-source.ts — change both.
+ */
+export function parseSkillDecls(entries: string[]): { names: string[]; sources: Record<string, string>; settings: Record<string, string> } {
+  const names: string[] = [];
+  const sources: Record<string, string> = {};
+  const settings: Record<string, string> = {};
+  for (const entry of entries) {
+    // The source split honors parens: `review(k=v)=npm:@x/y` splits at the
+    // SECOND `=` — the first is inside the setting.
+    let eq = -1;
+    let depth = 0;
+    for (let i = 0; i < entry.length; i++) {
+      const c = entry[i];
+      if (c === "(") depth++;
+      else if (c === ")") depth = Math.max(0, depth - 1);
+      else if (c === "=" && depth === 0) { eq = i; break; }
+    }
+    const left = (eq === -1 ? entry : entry.slice(0, eq)).trim();
+    const source = eq === -1 ? "" : entry.slice(eq + 1).trim();
+    const m = /^(.*?)\((.*)\)$/.exec(left);
+    const name = (m ? m[1] : left).trim();
+    if (!name) continue;
+    names.push(name);
+    if (m && m[2].trim()) settings[name] = m[2].trim();
+    if (source) sources[name] = source;
+  }
+  return { names, sources, settings };
+}
+
+/** Inverse of parseSkillDecls — one entry per name, setting and source riding along. */
+export function formatSkillDecls(names: string[], sources: Record<string, string>, settings: Record<string, string>): string {
+  return names
+    .map((n) => `${n}${settings[n] ? `(${settings[n]})` : ""}${sources[n] ? `=${sources[n]}` : ""}`)
+    .join(", ");
+}
+
 /** Deliberately minimal — this frontmatter only ever needs a few flat fields, a real YAML parser would be overkill. */
-export function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; mcpSources: Record<string, string>; skills: string[]; skillSources: Record<string, string>; description?: string; extra: Record<string, string>; body: string } {
+export function parseFrontmatter(raw: string): { harness?: string; aliases: string[]; mcpServers: string[]; mcpSources: Record<string, string>; skills: string[]; skillSources: Record<string, string>; skillSettings: Record<string, string>; description?: string; extra: Record<string, string>; body: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { aliases: [], mcpServers: [], mcpSources: {}, skills: [], skillSources: {}, extra: {}, body: raw.trim() };
+  if (!match) return { aliases: [], mcpServers: [], mcpSources: {}, skills: [], skillSources: {}, skillSettings: {}, extra: {}, body: raw.trim() };
 
   const [, frontmatter, body] = match;
   const meta: Record<string, string> = {};
@@ -124,7 +167,9 @@ export function parseFrontmatter(raw: string): { harness?: string; aliases: stri
   const extra = Object.fromEntries(Object.entries(meta).filter(([k]) => !known.has(k)));
 
   const skills = parseSkillEntries(meta.mcpServers ? parseList(meta.mcpServers) : []);
-  const skillMds = parseSkillEntries(meta.skills ? parseList(meta.skills) : []);
+  // NOTE: a setting is free text without commas or parens — parseList
+  // splits on "," before parseSkillDecls ever sees the entry.
+  const skillMds = parseSkillDecls(meta.skills ? parseList(meta.skills) : []);
 
   return {
     harness: meta.harness || undefined,
@@ -133,6 +178,7 @@ export function parseFrontmatter(raw: string): { harness?: string; aliases: stri
     mcpSources: skills.sources,
     skills: skillMds.names,
     skillSources: skillMds.sources,
+    skillSettings: skillMds.settings,
     description: meta.description || undefined,
     extra,
     body: body.trim(),
@@ -170,7 +216,7 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
   const id = path.basename(filePath, ".md");
   try {
     const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf-8"), fs.stat(filePath)]);
-    const { harness, aliases, mcpServers, mcpSources, skills, skillSources, description, extra, body } = parseFrontmatter(raw);
+    const { harness, aliases, mcpServers, mcpSources, skills, skillSources, skillSettings, description, extra, body } = parseFrontmatter(raw);
     if (!harness) {
       notice(`⚠️  ${id}.md has no "harness:" in its frontmatter — skipped`);
       return undefined;
@@ -183,6 +229,7 @@ async function loadOne(filePath: string): Promise<Persona | undefined> {
       mcpSources,
       skills,
       skillSources,
+      skillSettings,
       description,
       extra,
       systemPrompt: body || undefined,
