@@ -1134,6 +1134,26 @@ function Shell({
                 </HoverCard>
               );
             })}
+            {/* The cast you HAVEN'T talked to yet: every agent the relay
+                announces is one click from a conversation — the rail
+                shouldn't make you remember a name the workspace already
+                knows. Online first, dimmed until hover, capped so the
+                rail stays a rail (the rest live in the agents view). */}
+            {(() => {
+              const haveConvo = new Set(dmConvos.map(([key]) => key));
+              const cast = [...client.agents().entries()]
+                .filter(([pk]) => !haveConvo.has(pk))
+                .sort(([apk, an], [bpk, bn]) => Number(client.isOnline(bpk)) - Number(client.isOnline(apk)) || an.localeCompare(bn))
+                .slice(0, 8);
+              return cast.map(([pk, agentName]) => (
+                <HoverCard key={pk} client={client} pk={pk}>
+                  <button className="channel cast" onClick={() => openDm(pk)}>
+                    <Avatar pk={pk} size={16} title={agentName} />
+                    <span className={client.isOnline(pk) ? "dot on" : "dot off"} /> {agentName}
+                  </button>
+                </HoverCard>
+              ));
+            })()}
         </div>
         </div>
         {/* Ambient, not a destination: what is running right now is a
@@ -1589,13 +1609,26 @@ function Shell({
 function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey: string) => void }) {
   const [open, setOpen] = useState(false);
   const [who, setWho] = useState("");
-  const start = () => {
-    const raw = who.trim().replace(/^@/, "");
-    const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw);
-    if (!pk) return;
+  // Type-to-find over everyone the workspace can name — an exact name
+  // was the old contract, and "@dri" going nowhere while @drift sits on
+  // the relay made the input feel broken. Enter takes the first match.
+  const q = who.trim().replace(/^@/, "").toLowerCase();
+  const matches = q && !/^[0-9a-f]{64}$/i.test(q)
+    ? [...client.knownNames().entries()]
+        .filter(([, n]) => n.toLowerCase().includes(q))
+        .sort(([, a], [, b]) => Number(b.toLowerCase().startsWith(q)) - Number(a.toLowerCase().startsWith(q)) || a.localeCompare(b))
+        .slice(0, 5)
+    : [];
+  const pick = (pk: string) => {
     setOpen(false);
     setWho("");
     onOpen(pk);
+  };
+  const start = () => {
+    const raw = who.trim().replace(/^@/, "");
+    const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw) ?? matches[0]?.[0];
+    if (!pk) return;
+    pick(pk);
   };
   if (!open) {
     return (
@@ -1603,19 +1636,36 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
     );
   }
   return (
-    <input
-      className="manage-input new-dm-input"
-      value={who}
-      autoFocus
-      spellCheck={false}
-      placeholder="@name or pubkey"
-      onChange={(e) => setWho(e.target.value)}
-      onBlur={() => setOpen(false)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") start();
-        if (e.key === "Escape") setOpen(false);
-      }}
-    />
+    <span className="new-dm-wrap">
+      <input
+        className="manage-input new-dm-input"
+        value={who}
+        autoFocus
+        spellCheck={false}
+        placeholder="@name or pubkey"
+        onChange={(e) => setWho(e.target.value)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") start();
+          if (e.key === "Escape") setOpen(false);
+        }}
+      />
+      {matches.length > 0 && (
+        <span className="new-dm-suggest">
+          {matches.map(([pk, n]) => (
+            <button
+              key={pk}
+              className="channel"
+              // mousedown beats the input's blur-close, so the click lands.
+              onMouseDown={(e) => { e.preventDefault(); pick(pk); }}
+            >
+              <Avatar pk={pk} size={16} title={n} />
+              <span className={client.isOnline(pk) ? "dot on" : "dot off"} /> {n}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
   );
 }
 
