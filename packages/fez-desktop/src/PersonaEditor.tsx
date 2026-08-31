@@ -144,48 +144,41 @@ export default function PersonaEditor({
   return (
     <>
       <div className="pane-body edit-body">
-        <div className="edit-id">
-          {hasFace(name) ? (
-            <Avatar pk="" title={name} size={44} />
-          ) : (
-            <span className="agent-egg small" aria-hidden>◌</span>
-          )}
-          <span className="edit-id-text">
-            <span className="edit-id-kind">editing persona</span>
-            <span className="edit-id-name">@{name}</span>
+        {/* The character sheet opens on the character: the same portrait
+            stage the profile view uses, except here the name and epithet
+            ARE the inputs — you edit the being, not fields about it. */}
+        <div className="edit-stage">
+          <span className="portrait-slot">
+            {hasFace(name) ? (
+              <Avatar pk="" title={name} size={88} />
+            ) : (
+              <span className="agent-egg" aria-hidden>◌</span>
+            )}
           </span>
-        </div>
-
-        {/* Full-width editor: the config column reads top-to-bottom on the
-            left; the prompt — the agent's actual substance — gets the
-            remaining canvas on the right. One column again under 880px. */}
-        <div className="edit-col">
-        <div className="manage-section">identity</div>
-        <div className="settings-field">
-          <label>name</label>
-          <input className="manage-input" value={newName} spellCheck={false} onChange={(e) => setNewName(e.target.value)} />
+          <input
+            className="stage-name"
+            value={newName}
+            spellCheck={false}
+            aria-label="agent name"
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <input
+            className="stage-epithet"
+            value={field("description")}
+            placeholder="what it does — @fez routes on this, verb phrases route best"
+            aria-label="agent description"
+            onChange={(e) => update("description", e.target.value)}
+          />
           {newName.trim() && newName.trim() !== name && (
             <div className="field-consequence">
               Renaming mints a new key, so @{newName.trim()} spawns as a different identity with a different face.
             </div>
           )}
         </div>
-        <div className="settings-field">
-          <label>description</label>
-          <input className="manage-input" value={field("description")} onChange={(e) => update("description", e.target.value)} />
-          <div className="field-note">@fez routes on this — verb phrases route better than nouns.</div>
-        </div>
-        <div className="settings-field">
-          <label>aliases</label>
-          <input
-            className="manage-input"
-            value={listToText(field("aliases"))}
-            spellCheck={false}
-            placeholder="comma-separated"
-            onChange={(e) => update("aliases", textToList(e.target.value))}
-          />
-        </div>
 
+        {/* Wiring on the left, capabilities on the right; the instructions
+            canvas below spans both. One column again under 880px. */}
+        <div className="edit-col">
         <div className="manage-section">runtime</div>
         <div className="settings-field">
           <label>channels it serves</label>
@@ -249,6 +242,16 @@ export default function PersonaEditor({
           <label>access</label>
           <AccessPicker client={client} value={field("respondTo")} onChange={(value) => update("respondTo", value)} />
         </div>
+        <div className="settings-field">
+          <label>also answers to</label>
+          <input
+            className="manage-input"
+            value={listToText(field("aliases"))}
+            spellCheck={false}
+            placeholder="comma-separated nicknames"
+            onChange={(e) => update("aliases", textToList(e.target.value))}
+          />
+        </div>
 
         </div>
 
@@ -286,9 +289,10 @@ export default function PersonaEditor({
 
         <div className="edit-col edit-col-prompt">
         <div className="manage-section">
-          prompt
+          instructions
           {promptWords > 0 && <span className="section-fact">{promptWords} words</span>}
         </div>
+        <div className="field-note">This is the agent — everything above is wiring. Written as plain instructions to it.</div>
         <textarea
           className="doc-textarea persona-prompt"
           value={body}
