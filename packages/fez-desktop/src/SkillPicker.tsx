@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { machineLocalPath, resolveInstalledSkill } from "@fezchat/client";
 import { useConfig } from "./config-store";
+import type { InstalledSkillMd } from "./agent-skill-health";
 
 /**
  * Pick an agent's skills from what this machine actually has.
@@ -25,14 +26,6 @@ interface Row {
   source?: string;
   local: boolean;
   missing: boolean;
-}
-
-/** One entry from `list_installed_skills` — a SKILL.md pack, not a tool. */
-interface InstalledSkillMd {
-  pkg: string;
-  id: string;
-  name: string;
-  description: string;
 }
 
 /** Past this many, scanning the catalogue by eye stops working. */
@@ -70,19 +63,37 @@ export default function SkillPicker({
     };
   }, []);
 
+  // Matched by id OR name — the same rule agentSkillHealth and spawn-time
+  // resolveAttachedSkills (fez-acp/skills-prompt.ts) use, so a persona
+  // declaring the canonical `id` reads as installed here too, instead of
+  // showing a bogus "missing" row alongside a duplicate unchecked one.
+  //
+  // `declaredAs` carries the EXACT string already in the persona (id or
+  // name, whichever it happens to be) so toggling off never rewrites an
+  // identifier that's already there — only a fresh attach picks one, and
+  // it always picks `id` (see toggleSkillMd).
+  //
   // Same "declared but not in the catalog stays visible" rule as the
   // tools rows below — a dead skill name must stay removable, not vanish.
   const skillMdRows = useMemo(() => {
-    const known = new Set(installedSkillMds.map((s) => s.name));
+    const catalog = installedSkillMds.map((s) => ({
+      key: s.id,
+      name: s.name,
+      description: s.description as string | undefined,
+      missing: false,
+      declaredAs: skillsValue.find((v) => v === s.id || v === s.name),
+    }));
     const missing = skillsValue
-      .filter((name) => !known.has(name))
-      .map((name) => ({ name, description: undefined as string | undefined, missing: true }));
-    const catalog = installedSkillMds.map((s) => ({ name: s.name, description: s.description, missing: false }));
+      .filter((v) => !installedSkillMds.some((s) => s.id === v || s.name === v))
+      .map((v) => ({ key: v, name: v, description: undefined as string | undefined, missing: true, declaredAs: v }));
     return [...catalog, ...missing].sort((a, b) => a.name.localeCompare(b.name));
   }, [installedSkillMds, skillsValue]);
 
-  const toggleSkillMd = (name: string, on: boolean) => {
-    onSkillsChange(on ? [...skillsValue, name] : skillsValue.filter((n) => n !== name));
+  const toggleSkillMd = (row: { key: string; declaredAs?: string }, on: boolean) => {
+    // New attaches write `id` (the identifier install produces); an
+    // existing declaration is only ever removed, never rewritten, so
+    // whichever identifier the persona already used survives untouched.
+    onSkillsChange(on ? [...skillsValue, row.key] : skillsValue.filter((v) => v !== row.declaredAs));
   };
 
   // Installed skills, plus anything the persona names that isn't a
@@ -176,12 +187,12 @@ export default function SkillPicker({
     </label>
   );
 
-  const skillMdRow = (r: { name: string; description?: string; missing: boolean }) => (
-    <label key={r.name} className={`skill-pick${r.missing ? " missing" : ""}`}>
+  const skillMdRow = (r: { key: string; name: string; description?: string; missing: boolean; declaredAs?: string }) => (
+    <label key={r.key} className={`skill-pick${r.missing ? " missing" : ""}`}>
       <input
         type="checkbox"
-        checked={skillsValue.includes(r.name)}
-        onChange={(e) => toggleSkillMd(r.name, e.target.checked)}
+        checked={r.declaredAs !== undefined}
+        onChange={(e) => toggleSkillMd(r, e.target.checked)}
       />
       <span className="skill-pick-text">
         <span className="skill-pick-name">{r.name}</span>
