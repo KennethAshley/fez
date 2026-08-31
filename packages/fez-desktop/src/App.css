@@ -3874,7 +3874,10 @@ a.page-fact:hover { color: var(--fg); }
    showed you the chips, so here each one says what it means. */
 .profile-skills { list-style: none; margin: 8px 0 20px; padding: 0; display: flex; flex-direction: column; gap: 7px; }
 .profile-skill { display: flex; align-items: baseline; gap: 9px; }
-.profile-skill-state { color: var(--fg-dim); font-size: 11.5px; }
+.profile-skill-state { color: var(--fg-dim); font-size: 11.5px; min-width: 0; }
+/* Skill descriptions are whole routing sentences — let them wrap; the
+   chip stays put as the row's anchor. */
+.profile-skill .skill-chip { flex-shrink: 0; }
 
 .profile-facts { margin: 8px 0 4px; display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; align-items: baseline; }
 .profile-facts dt { color: var(--fg-dim); font-size: 11.5px; }

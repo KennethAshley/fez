@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { parseSkillDecls } from "@fezchat/client";
 import Avatar from "./Avatar";
 import { hasFace } from "./agent-face";
-import { agentSkillStrip } from "./agent-skill-health";
+import { agentSkillStrip, type InstalledSkillMd } from "./agent-skill-health";
 import { useConfig } from "./config-store";
 
 /**
@@ -36,6 +37,7 @@ export default function AgentProfile({
 }) {
   const { skills: catalog } = useConfig();
   const [content, setContent] = useState<string>();
+  const [installedMds, setInstalledMds] = useState<InstalledSkillMd[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +46,11 @@ export default function AgentProfile({
       .then((c) => {
         if (!cancelled) setContent(c);
       });
+    void invoke<string>("list_installed_skills")
+      .then((raw) => {
+        if (!cancelled) setInstalledMds(JSON.parse(raw));
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -51,6 +58,15 @@ export default function AgentProfile({
 
   const faced = hasFace(name, pk);
   const skills = content ? agentSkillStrip(content, catalog) : [];
+  // The skills: line resolved against what's installed — each row's
+  // description is a routing sentence ("Use when…"), which is exactly
+  // the "what do I ping it for" a reader opened this profile to learn.
+  const skillLine = content?.match(/^skills:\s*(.+)$/m)?.[1]?.replace(/^\[|\]$/g, "") ?? "";
+  const packDecls = parseSkillDecls(skillLine.split(",").map((s) => s.trim()).filter(Boolean));
+  const packSkills = packDecls.names.map((n) => {
+    const hit = installedMds.find((s) => s.id === n || s.name === n);
+    return { key: n, name: hit?.name ?? n, description: hit?.description, setting: packDecls.settings[n], missing: !hit };
+  });
   const description = content ? field(content, "description") : undefined;
   const harness = content ? field(content, "harness") : undefined;
   const channels = content ? field(content, "channels") : undefined;
@@ -82,6 +98,25 @@ export default function AgentProfile({
             edit
           </button>
         </div>
+
+        <div className="manage-section">skills</div>
+        {packSkills.length === 0 ? (
+          <div className="settings-hint">No skills attached. Add packs in edit — or DM @fez a GitHub link to install more.</div>
+        ) : (
+          <ul className="profile-skills">
+            {packSkills.map((s) => (
+              <li key={s.key} className="profile-skill">
+                <span className={s.missing ? "skill-chip missing" : "skill-chip"}>
+                  {s.name}
+                  {s.setting ? ` (${s.setting})` : ""}
+                </span>
+                <span className="profile-skill-state">
+                  {s.missing ? "not installed here" : s.description}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
 
         <div className="manage-section">tools</div>
         {skills.length === 0 ? (
