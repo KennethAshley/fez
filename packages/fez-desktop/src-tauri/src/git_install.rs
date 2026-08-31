@@ -1,18 +1,20 @@
 //! Convert a GitHub repo tarball (as fetched from the codeload tarball URL)
 //! into an npm-shaped tarball the existing installer
 //! (`package_install::install_from_tarball`) can consume unmodified — a
-//! synthesized `package.json` declaring a `persona-pack`, plus one
-//! `personas/<id>.md` per discovered skill/agent. Never installs code: any
-//! `.js/.ts/.mjs/.cjs/.sh/.py/.rb/.ps1` file or `hooks/` dir anywhere in the
-//! repo refuses the whole conversion — no partial installs of a repo we
+//! synthesized `package.json` declaring `fez.skills` for skill-shaped
+//! sources (`skills/*/SKILL.md`, `.claude/skills/*/SKILL.md`, root
+//! `SKILL.md`) and `fez.personas` for `agents/*.md`. Never installs code:
+//! any `.js/.ts/.mjs/.cjs/.sh/.py/.rb/.ps1` file or `hooks/` dir anywhere in
+//! the repo refuses the whole conversion — no partial installs of a repo we
 //! haven't vetted.
 
 #[derive(serde::Serialize, Clone)]
 pub(crate) struct InspectReport {
-    pub name: String,               // "gh-dietrichgebert-ponytail"
-    pub personas: Vec<PersonaFound>, // what will install
-    pub ignored: Vec<String>,       // non-md paths, listed on the card
-    pub refused: Vec<String>,       // offending paths; non-empty = refused
+    pub name: String,                // "gh-dietrichgebert-ponytail"
+    pub skills: Vec<PersonaFound>,   // skill-shaped sources: fez.skills
+    pub agents: Vec<PersonaFound>,   // agents/*.md: fez.personas
+    pub ignored: Vec<String>,        // non-md paths, listed on the card
+    pub refused: Vec<String>,        // offending paths; non-empty = refused
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -21,10 +23,16 @@ pub(crate) struct PersonaFound {
     pub description: String, // from SKILL.md frontmatter, may be ""
 }
 
+enum SourceKind {
+    Skill, // skills/*/SKILL.md, .claude/skills/*/SKILL.md, root SKILL.md → fez.skills
+    Agent, // agents/*.md → fez.personas
+}
+
 /// One discovered skill/agent file, before frontmatter is parsed out.
 struct RawSkill {
     id: String,
     body: String,
+    kind: SourceKind,
 }
 
 /// `id` normalization: lowercase, chars outside `[a-z0-9-]` → `-` — matches
@@ -38,13 +46,13 @@ fn normalize_id(s: &str) -> String {
 }
 
 /// Split `---\n...\n---\n<body>` frontmatter off a skill file. No YAML
-/// dependency — this module only ever needs `description`, read by line
-/// prefix. Returns (description, body); an absent description is "". A file
-/// with no `---\n` opener has no frontmatter at all — the whole file is the
-/// body.
-fn split_frontmatter(content: &str) -> (String, String) {
+/// dependency — this module only ever needs `name` and `description`, read
+/// by line prefix. Returns (name, description, body); an absent field is
+/// "". A file with no `---\n` opener has no frontmatter at all — the whole
+/// file is the body.
+fn split_frontmatter(content: &str) -> (String, String, String) {
     let Some(after_open) = content.strip_prefix("---\n") else {
-        return (String::new(), content.to_string());
+        return (String::new(), String::new(), content.to_string());
     };
     // The closing delimiter is a line that is exactly "---" — find it as
     // "\n---\n" (or an empty frontmatter block, where it's the very first
@@ -54,18 +62,21 @@ fn split_frontmatter(content: &str) -> (String, String) {
     });
     let Some((fm_end, body_start)) = close else {
         // No closing "---" found — treat the whole thing as body.
-        return (String::new(), content.to_string());
+        return (String::new(), String::new(), content.to_string());
     };
     let frontmatter = &after_open[..fm_end];
     let body = &after_open[body_start..];
+    let mut name = String::new();
     let mut description = String::new();
     for line in frontmatter.lines() {
         let trimmed = line.trim();
         if let Some(v) = trimmed.strip_prefix("description:") {
             description = unquote(v);
+        } else if let Some(v) = trimmed.strip_prefix("name:") {
+            name = unquote(v);
         }
     }
-    (description, body.to_string())
+    (name, description, body.to_string())
 }
 
 fn unquote(s: &str) -> String {
@@ -161,20 +172,20 @@ pub(crate) fn convert(
             continue;
         }
 
-        let mut matched_id: Option<String> = None;
+        let mut matched: Option<(String, SourceKind)> = None;
         if let Some(name) = stripped.strip_suffix("/SKILL.md").and_then(|p| p.strip_prefix("skills/")) {
-            matched_id = Some(normalize_id(name));
+            matched = Some((normalize_id(name), SourceKind::Skill));
         } else if let Some(name) = stripped.strip_suffix("/SKILL.md").and_then(|p| p.strip_prefix(".claude/skills/")) {
-            matched_id = Some(normalize_id(name));
+            matched = Some((normalize_id(name), SourceKind::Skill));
         } else if stripped == "SKILL.md" {
-            matched_id = Some(repo_id.clone());
+            matched = Some((repo_id.clone(), SourceKind::Skill));
         } else if let Some(name) = stripped.strip_prefix("agents/").and_then(|p| p.strip_suffix(".md")) {
             if !name.contains('/') {
-                matched_id = Some(normalize_id(name));
+                matched = Some((normalize_id(name), SourceKind::Agent));
             }
         }
 
-        if let Some(id) = matched_id {
+        if let Some((id, kind)) = matched {
             if seen_ids.contains(&id) {
                 continue; // first hit per id wins
             }
@@ -183,7 +194,7 @@ pub(crate) fn convert(
                 continue;
             }
             seen_ids.insert(id.clone());
-            skills.push(RawSkill { id, body: buf });
+            skills.push(RawSkill { id, body: buf, kind });
             continue;
         }
 
@@ -204,46 +215,78 @@ pub(crate) fn convert(
         return Err(format!("no skills or personas found in {owner}/{repo}"));
     }
 
-    let mut personas: Vec<PersonaFound> = Vec::new();
-    let mut persona_files: Vec<(String, String)> = Vec::new(); // (id, generated content)
+    let mut skill_found: Vec<PersonaFound> = Vec::new();
+    let mut agent_found: Vec<PersonaFound> = Vec::new();
+    let mut skill_files: Vec<(String, String)> = Vec::new(); // (id, generated content)
+    let mut agent_files: Vec<(String, String)> = Vec::new(); // (id, generated content)
     let short_sha = &sha[..sha.len().min(7)];
     for skill in &skills {
-        let (description, body) = split_frontmatter(&skill.body);
-        personas.push(PersonaFound { id: skill.id.clone(), description: description.clone() });
+        let (fm_name, description, body) = split_frontmatter(&skill.body);
         // The generated file always carries a description — fall back to
         // "ported from <owner>/<repo>" here, but leave the report's own
         // `description` as the raw parsed value (may be "") for the card.
         let file_description =
-            if description.is_empty() { format!("ported from {owner}/{repo}") } else { description };
-        let content = format!(
-            "---\nharness: claude-code\ndescription: {file_description}\n---\n\n> Ported from {url} ({short_sha}) by fez install-from-chat.\n> This file is yours: edit or delete it at ~/.fez/personas/{id}.md.\n> Reinstalling never overwrites your edits.\n\n{body}",
-            id = skill.id,
-        );
-        persona_files.push((skill.id.clone(), content));
+            if description.is_empty() { format!("ported from {owner}/{repo}") } else { description.clone() };
+        match skill.kind {
+            SourceKind::Skill => {
+                skill_found.push(PersonaFound { id: skill.id.clone(), description });
+                let name = if fm_name.is_empty() { skill.id.clone() } else { fm_name };
+                let content = format!(
+                    "---\nname: {name}\ndescription: {file_description}\n---\n<!-- ported from {url} ({short_sha}) by fez install-from-chat; edit or delete freely -->\n\n{body}",
+                );
+                skill_files.push((skill.id.clone(), content));
+            }
+            SourceKind::Agent => {
+                agent_found.push(PersonaFound { id: skill.id.clone(), description });
+                let content = format!(
+                    "---\nharness: claude-code\ndescription: {file_description}\n---\n\n> Ported from {url} ({short_sha}) by fez install-from-chat.\n> This file is yours: edit or delete it at ~/.fez/personas/{id}.md.\n> Reinstalling never overwrites your edits.\n\n{body}",
+                    id = skill.id,
+                );
+                agent_files.push((skill.id.clone(), content));
+            }
+        }
     }
 
     let name = format!("gh-{}-{}", normalize_id(owner), normalize_id(repo));
-    let report = InspectReport { name: name.clone(), personas, ignored, refused: refused.clone() };
+    let report = InspectReport {
+        name: name.clone(),
+        skills: skill_found,
+        agents: agent_found,
+        ignored,
+        refused: refused.clone(),
+    };
 
     if !refused.is_empty() {
         return Ok((report, None));
     }
 
+    let mut fez = serde_json::Map::new();
+    fez.insert("type".to_string(), serde_json::json!("persona-pack"));
+    fez.insert(
+        "permissions".to_string(),
+        serde_json::json!(if agent_files.is_empty() { Vec::<&str>::new() } else { vec!["personas"] }),
+    );
+    if !skill_files.is_empty() {
+        fez.insert("skills".to_string(), serde_json::json!({ "dir": "skills" }));
+    }
+    if !agent_files.is_empty() {
+        fez.insert("personas".to_string(), serde_json::json!({ "dir": "personas" }));
+    }
+    fez.insert("gitSource".to_string(), serde_json::json!({ "url": url, "sha": sha }));
+
     let pkg = serde_json::json!({
         "name": name,
         "version": format!("0.0.0-{short_sha}"),
-        "fez": {
-            "type": "persona-pack",
-            "permissions": ["personas"],
-            "personas": { "dir": "personas" },
-            "gitSource": { "url": url, "sha": sha },
-        },
+        "fez": fez,
     });
     let pkg_bytes = serde_json::to_vec_pretty(&pkg).map_err(|e| e.to_string())?;
 
     let mut builder = tar::Builder::new(Vec::new());
     append_tar_entry(&mut builder, "package/package.json", &pkg_bytes)?;
-    for (id, content) in &persona_files {
+    for (id, content) in &skill_files {
+        append_tar_entry(&mut builder, &format!("package/skills/{id}.md"), content.as_bytes())?;
+    }
+    for (id, content) in &agent_files {
         append_tar_entry(&mut builder, &format!("package/personas/{id}.md"), content.as_bytes())?;
     }
     let npm_tar = builder.into_inner().map_err(|e| e.to_string())?;
@@ -397,7 +440,7 @@ mod tests {
     const SKILL: &str = "---\nname: ponytail\ndescription: lazy senior dev\n---\n\nBe lazy.\n";
 
     #[test]
-    fn a_clean_plugin_converts_to_a_persona_pack() {
+    fn a_clean_plugin_converts_to_a_skill_package() {
         let tar = gh_tar(&[
             ("skills/ponytail/SKILL.md", SKILL),
             ("skills/review/SKILL.md", "No frontmatter body.\n"),
@@ -407,19 +450,21 @@ mod tests {
         let (report, npm) = convert(&tar, "DietrichGebert", "ponytail", "https://github.com/DietrichGebert/ponytail", "abcdef1234567890").unwrap();
         assert!(report.refused.is_empty());
         assert_eq!(report.name, "gh-dietrichgebert-ponytail");
-        let ids: Vec<_> = report.personas.iter().map(|p| p.id.as_str()).collect();
+        let ids: Vec<_> = report.skills.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, vec!["ponytail", "review"]);
-        assert_eq!(report.personas[0].description, "lazy senior dev");
+        assert_eq!(report.skills[0].description, "lazy senior dev");
+        assert!(report.agents.is_empty());
         let npm = npm.expect("clean repo must produce a tarball");
         let pkg = crate::package_install::tar_read(&npm, "package.json").unwrap();
         let pkg: serde_json::Value = serde_json::from_slice(&pkg).unwrap();
-        assert_eq!(pkg.pointer("/fez/type").unwrap(), "persona-pack");
+        assert_eq!(pkg.pointer("/fez/skills/dir").unwrap(), "skills");
         assert_eq!(pkg.pointer("/fez/gitSource/sha").unwrap(), "abcdef1234567890");
-        let persona = String::from_utf8(crate::package_install::tar_read(&npm, "personas/ponytail.md").unwrap()).unwrap();
-        assert!(persona.starts_with("---\nharness: claude-code\n"));
-        assert!(persona.contains("Ported from https://github.com/DietrichGebert/ponytail (abcdef1)"));
-        assert!(persona.contains("Be lazy."));
-        assert!(!persona.contains("name: ponytail"), "skill frontmatter must not leak into the body");
+        assert_eq!(pkg.pointer("/fez/permissions").unwrap(), &serde_json::json!([]));
+        let skill = String::from_utf8(crate::package_install::tar_read(&npm, "skills/ponytail.md").unwrap()).unwrap();
+        assert!(skill.starts_with("---\nname: ponytail\n"));
+        assert!(skill.contains("<!-- ported from https://github.com/DietrichGebert/ponytail (abcdef1) by fez install-from-chat; edit or delete freely -->"));
+        assert!(skill.contains("Be lazy."));
+        assert!(crate::package_install::tar_read(&npm, "personas/ponytail.md").is_none(), "skill-shaped source must not land under personas/");
     }
 
     #[test]
@@ -469,9 +514,32 @@ mod tests {
     fn bare_skill_and_agents_layouts_are_recognized() {
         let tar = gh_tar(&[("SKILL.md", SKILL), ("agents/critic.md", "You are a critic.\n")]);
         let (report, npm) = convert(&tar, "o", "ponytail", "u", "s").unwrap();
-        let ids: Vec<_> = report.personas.iter().map(|p| p.id.as_str()).collect();
-        assert!(ids.contains(&"ponytail") && ids.contains(&"critic"));
-        assert!(npm.is_some());
+        let skill_ids: Vec<_> = report.skills.iter().map(|p| p.id.as_str()).collect();
+        let agent_ids: Vec<_> = report.agents.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(skill_ids, vec!["ponytail"]);
+        assert_eq!(agent_ids, vec!["critic"]);
+        let npm = npm.expect("clean repo must produce a tarball");
+        assert!(crate::package_install::tar_read(&npm, "skills/ponytail.md").is_some());
+        let agent = String::from_utf8(crate::package_install::tar_read(&npm, "personas/critic.md").unwrap()).unwrap();
+        assert!(agent.starts_with("---\nharness: claude-code\n"));
+        assert!(agent.contains("You are a critic."));
+        let pkg = crate::package_install::tar_read(&npm, "package.json").unwrap();
+        let pkg: serde_json::Value = serde_json::from_slice(&pkg).unwrap();
+        assert_eq!(pkg.pointer("/fez/permissions").unwrap(), &serde_json::json!(["personas"]));
+    }
+
+    #[test]
+    fn agents_only_repo_emits_personas_and_no_skills() {
+        let tar = gh_tar(&[("agents/critic.md", "You are a critic.\n")]);
+        let (report, npm) = convert(&tar, "o", "r", "u", "s").unwrap();
+        assert!(report.skills.is_empty());
+        assert_eq!(report.agents.len(), 1);
+        let npm = npm.expect("clean repo must produce a tarball");
+        let pkg = crate::package_install::tar_read(&npm, "package.json").unwrap();
+        let pkg: serde_json::Value = serde_json::from_slice(&pkg).unwrap();
+        assert!(pkg.pointer("/fez/personas").is_some());
+        assert!(pkg.pointer("/fez/skills").is_none());
+        assert_eq!(pkg.pointer("/fez/permissions").unwrap(), &serde_json::json!(["personas"]));
     }
 
     #[test]
@@ -537,7 +605,7 @@ mod tests {
         let (_, npm) = convert(&tar, "o", "ponytail", "u", "abcdef1234").unwrap();
         let home = tempfile::tempdir().unwrap();
         let outcome = crate::package_install::install_from_tarball("gh-o-ponytail", &npm.unwrap(), "0.0.0-abcdef1", home.path()).unwrap();
-        assert!(outcome.installed.iter().any(|l| l.contains("persona @ponytail")));
-        assert!(home.path().join("personas/ponytail.md").exists());
+        assert!(outcome.installed.iter().any(|l| l.contains("skill ponytail")));
+        assert!(home.path().join("packages/gh-o-ponytail/skills/ponytail.md").exists());
     }
 }

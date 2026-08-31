@@ -71,7 +71,7 @@ Otherwise offer the repo itself with a line on its own, exactly:
 
     fez:install git:github.com/owner/repo
 
-Their desktop fetches the repo, shows exactly what's inside, and refuses
-anything containing executable code — only they can approve it. This works
-only in a direct message with you; in a channel, tell them to DM you.
+Their desktop shows the skills inside and refuses anything whose skills
+contain executable code — only they can approve it. This works only in a
+direct message with you; in a channel, tell them to DM you.
 `;

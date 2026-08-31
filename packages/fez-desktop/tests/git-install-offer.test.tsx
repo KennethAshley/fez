@@ -23,7 +23,7 @@ describe("GitInstallOffer", () => {
   afterEach(() => vi.clearAllMocks());
   it("inspect result renders consent; refusal renders no install button", async () => {
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce(JSON.stringify({
-      name: "gh-a-b", personas: [], ignored: [], refused: ["hooks/evil.js"], sha: "s", url: "u", installed: false,
+      name: "gh-a-b", skills: [], agents: [], ignored: [], refused: ["hooks/evil.js"], sha: "s", url: "u", installed: false,
     }));
     const div = document.createElement("div");
     document.body.append(div);
@@ -40,14 +40,15 @@ describe("GitInstallOffer", () => {
     (invoke as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(JSON.stringify({
         name: "gh-a-b",
-        personas: [{ id: "ponytail", description: "lazy senior dev" }, { id: "scout", description: "" }],
+        skills: [{ id: "ponytail", description: "lazy senior dev" }, { id: "scout", description: "" }],
+        agents: [{ id: "critic", description: "harsh reviewer" }],
         ignored: ["README.md"],
         refused: [],
         sha: "abcdef1234567890",
         url: "u",
         installed: false,
       }))
-      .mockResolvedValueOnce("installed gh-a-b@0.0.0-abcdef1: ponytail, scout");
+      .mockResolvedValueOnce("installed gh-a-b@0.0.0-abcdef1: ponytail, scout, critic");
     const div = document.createElement("div");
     document.body.append(div);
     const root = createRoot(div);
@@ -55,6 +56,7 @@ describe("GitInstallOffer", () => {
     await act(async () => { div.querySelector("button")!.click(); }); // review & install
     expect(div.textContent).toContain("ponytail");
     expect(div.textContent).toContain("scout");
+    expect(div.textContent).toContain("critic");
     expect(div.textContent).toContain("These are instructions that will steer agents you run");
     expect(div.textContent).toContain("gh-a-b");
     expect(div.textContent).toContain("abcdef1");
@@ -65,7 +67,7 @@ describe("GitInstallOffer", () => {
     await act(async () => { installBtn.click(); });
     // Installs pinned to the sha the user actually reviewed, not a re-resolved ref.
     expect(invoke).toHaveBeenLastCalledWith("install_git_package", { url: "github.com/a/b#abcdef1234567890" });
-    expect(div.textContent).toContain("installed");
+    expect(div.textContent).toContain("installed — attach it to an agent in its editor");
     expect(buttons()).not.toContain("install & grant");
 
     act(() => root.unmount());
@@ -74,7 +76,7 @@ describe("GitInstallOffer", () => {
 
   it("already-installed report shows the kept/edits-survive note", async () => {
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce(JSON.stringify({
-      name: "gh-a-b", personas: [{ id: "ponytail", description: "" }], ignored: [], refused: [], sha: "s", url: "u", installed: true,
+      name: "gh-a-b", skills: [{ id: "ponytail", description: "" }], agents: [], ignored: [], refused: [], sha: "s", url: "u", installed: true,
     }));
     const div = document.createElement("div");
     document.body.append(div);

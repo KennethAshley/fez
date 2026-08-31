@@ -147,7 +147,8 @@ interface GitPersonaFound {
 
 interface GitInspectReport {
   name: string;
-  personas: GitPersonaFound[];
+  skills: GitPersonaFound[];
+  agents: GitPersonaFound[];
   ignored: string[];
   refused: string[];
   sha: string;
@@ -249,7 +250,7 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
             <div className="install-offer-main">
               <span className="install-offer-title">{authorName} suggests installing from {url}</span>
             </div>
-            {done && <span className="gallery-install installed">installed</span>}
+            {done && <span className="gallery-install installed">installed — attach it to an agent in its editor</span>}
             {installing && <span className="gallery-install">installing…</span>}
           </div>
           {!done && !installing && (
@@ -257,11 +258,20 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
               <div className="settings-hint">
                 installs as <code>{report.name}</code> @ <code>{report.sha.slice(0, 7)}</code>
               </div>
-              <ul className="gallery-perms">
-                {report.personas.map((p) => (
-                  <li key={p.id}>@{p.id} — {p.description}</li>
-                ))}
-              </ul>
+              {report.skills.length > 0 && (
+                <ul className="gallery-perms">
+                  {report.skills.map((s) => (
+                    <li key={s.id}>{s.id} — {s.description}</li>
+                  ))}
+                </ul>
+              )}
+              {report.agents.length > 0 && (
+                <ul className="gallery-perms">
+                  {report.agents.map((a) => (
+                    <li key={a.id}>@{a.id} — {a.description}</li>
+                  ))}
+                </ul>
+              )}
               {report.ignored.length > 0 && (
                 <details className="install-offer-files">
                   <summary className="settings-hint">other repo files are ignored — only markdown installs</summary>
@@ -272,11 +282,13 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
                   </ul>
                 </details>
               )}
-              <ul className="gallery-perms">
-                <li className={SENSITIVE.has("personas") ? "sensitive" : ""}>
-                  {SENSITIVE.has("personas") ? "⚠ " : "· "}{PERM_LABEL.personas}
-                </li>
-              </ul>
+              {report.agents.length > 0 && (
+                <ul className="gallery-perms">
+                  <li className={SENSITIVE.has("personas") ? "sensitive" : ""}>
+                    {SENSITIVE.has("personas") ? "⚠ " : "· "}{PERM_LABEL.personas}
+                  </li>
+                </ul>
+              )}
               <div className="settings-hint">These are instructions that will steer agents you run. Installs on THIS machine.</div>
               {report.installed && (
                 <div className="settings-hint">already installed; existing persona files are kept, your edits survive.</div>
