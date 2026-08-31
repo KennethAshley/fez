@@ -475,7 +475,9 @@ export default function AgentsPane({
   const unspawned = localPersonas.filter((name) => !knownNames.has(name.toLowerCase()));
 
   return (
-    <aside className="pane pane-wide">
+    // The roster and profiles are inspector-sized; only the persona
+    // EDITOR is a workbench that earns the whole content area.
+    <aside className={editingPersona ? "pane pane-wide" : "pane"}>
       <header className="pane-head">
         {current || creating || editingPersona || viewingPersona || reviewing ? (
           <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); setEditingPersona(undefined); setViewingPersona(undefined); setReviewing(undefined); }}>
