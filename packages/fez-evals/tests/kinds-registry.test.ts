@@ -20,7 +20,7 @@ const registryKinds = Object.fromEntries(
  * kind drift — the client would publish a roster the relay refuses.
  */
 const registryTags = Object.fromEntries(
-  Object.entries(protocol).filter(([name, value]) => (name === "ROSTER_D" || name === "BANS_D") && typeof value === "string")
+  Object.entries(protocol).filter(([name, value]) => (name === "ROSTER_D" || name === "BANS_D" || name === "REMOVED_D" || name === "DISMISSED_D" || name === "MUTES_D") && typeof value === "string")
 ) as Record<string, string>;
 
 // K-name → registry-name. Every K entry MUST map; a new K entry without a
@@ -33,6 +33,10 @@ const K_TO_REGISTRY: Record<string, string> = {
   // ban list. They live in K so the client and relay can't disagree.
   ROSTER_D: "ROSTER_D",
   BANS_D: "BANS_D",
+  REMOVED_D: "REMOVED_D",
+  DISMISSED_D: "DISMISSED_D",
+  MUTES_D: "MUTES_D",
+  REPORT: "KIND_REPORT",
   CHANNEL: "KIND_CHANNEL",
   MEMBERSHIP: "KIND_MEMBERSHIP",
   MESSAGE: "KIND_CHANNEL_MESSAGE",

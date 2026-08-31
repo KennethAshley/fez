@@ -145,6 +145,15 @@ export const ROSTER_D = "roster";
 /** The ban list's d-tag — workspace-wide, same reasoning as ROSTER_D. */
 export const BANS_D = "bans";
 
+/** Removed-messages list's d-tag (dm unsend rides the ban-list kind) — same single-list reasoning. */
+export const REMOVED_D = "removed";
+
+/** Dismissed-items list's d-tag — same single-list reasoning. */
+export const DISMISSED_D = "dismissed";
+
+/** Personal mute list's d-tag (rides KIND_APP_DATA 30078). */
+export const MUTES_D = "mutes";
+
 /**
  * RETIRED — kind 47100 was the community event, back when a relay could
  * hold many communities. The workspace is the relay now. The constant
