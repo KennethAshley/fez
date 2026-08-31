@@ -292,7 +292,7 @@ export function ExtensionGallery({
           <input value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} placeholder="github.com/owner/repo" />
           <button className="mini" type="submit">inspect</button>
         </form>
-        {submitted && <GitInstallOffer url={submitted} authorName="you" client={client} />}
+        {submitted && <GitInstallOffer key={submitted} url={submitted} authorName="you" client={client} />}
       </div>
     </div>
   );

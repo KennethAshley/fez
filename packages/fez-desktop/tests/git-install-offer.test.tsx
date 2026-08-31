@@ -43,11 +43,11 @@ describe("GitInstallOffer", () => {
         personas: [{ id: "ponytail", description: "lazy senior dev" }, { id: "scout", description: "" }],
         ignored: ["README.md"],
         refused: [],
-        sha: "s",
+        sha: "abcdef1234567890",
         url: "u",
         installed: false,
       }))
-      .mockResolvedValueOnce("installed gh-a-b@0.0.0-s: ponytail, scout");
+      .mockResolvedValueOnce("installed gh-a-b@0.0.0-abcdef1: ponytail, scout");
     const div = document.createElement("div");
     document.body.append(div);
     const root = createRoot(div);
@@ -56,12 +56,15 @@ describe("GitInstallOffer", () => {
     expect(div.textContent).toContain("ponytail");
     expect(div.textContent).toContain("scout");
     expect(div.textContent).toContain("These are instructions that will steer agents you run");
+    expect(div.textContent).toContain("gh-a-b");
+    expect(div.textContent).toContain("abcdef1");
     const buttons = () => [...div.querySelectorAll("button")].map((b) => b.textContent);
     expect(buttons()).toContain("install & grant");
 
     const installBtn = [...div.querySelectorAll("button")].find((b) => b.textContent === "install & grant")!;
     await act(async () => { installBtn.click(); });
-    expect(invoke).toHaveBeenLastCalledWith("install_git_package", { url: "github.com/a/b" });
+    // Installs pinned to the sha the user actually reviewed, not a re-resolved ref.
+    expect(invoke).toHaveBeenLastCalledWith("install_git_package", { url: "github.com/a/b#abcdef1234567890" });
     expect(div.textContent).toContain("installed");
     expect(buttons()).not.toContain("install & grant");
 

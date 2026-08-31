@@ -86,8 +86,14 @@ fn is_refused_path(path: &str) -> bool {
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| CODE_EXTENSIONS.iter().any(|c| c.eq_ignore_ascii_case(e)));
-    let hooks_hit = std::path::Path::new(path).components().any(|c| c.as_os_str() == "hooks");
-    ext_hit || hooks_hit
+    let hooks_hit = std::path::Path::new(path)
+        .components()
+        .any(|c| c.as_os_str().eq_ignore_ascii_case("hooks"));
+    let mcp_hit = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("mcp.json") || n.eq_ignore_ascii_case(".mcp.json"));
+    ext_hit || hooks_hit || mcp_hit
 }
 
 /// Scan a GitHub tarball (tar bytes, root prefix "<repo>-<ref>/") and, if
@@ -111,6 +117,7 @@ pub(crate) fn convert(
     let mut ignored: Vec<String> = Vec::new();
     let mut refused: Vec<String> = Vec::new();
     let mut ignored_overflow = 0usize;
+    let mut refused_overflow = 0usize;
 
     for entry in entries {
         let mut entry = entry.map_err(|e| format!("bad tarball entry: {e}"))?;
@@ -133,7 +140,11 @@ pub(crate) fn convert(
         }
 
         if is_refused_path(stripped) {
-            refused.push(stripped.to_string());
+            if refused.len() < 20 {
+                refused.push(stripped.to_string());
+            } else {
+                refused_overflow += 1;
+            }
             continue;
         }
 
@@ -171,6 +182,9 @@ pub(crate) fn convert(
     }
     if ignored_overflow > 0 {
         ignored.push(format!("… and {ignored_overflow} more"));
+    }
+    if refused_overflow > 0 {
+        refused.push(format!("… and {refused_overflow} more"));
     }
 
     if skills.is_empty() {
@@ -262,8 +276,12 @@ pub(crate) fn parse_github_url(url: &str) -> Result<(String, String, Option<Stri
         return Err(format!("not a valid github owner/repo: {url}"));
     }
     if let Some(r) = &want_ref {
-        if r.is_empty() {
-            return Err(format!("empty ref in {url}"));
+        // A ref can contain slashes (e.g. "feature/branch-name"), but every
+        // component must still be a valid segment — otherwise something like
+        // "../../evil" becomes a path-traversing GET when `fetch` interpolates
+        // it into the GitHub commits API URL.
+        if r.is_empty() || !r.split('/').all(is_valid_gh_segment) {
+            return Err(format!("not a valid ref in {url}"));
         }
     }
 
@@ -405,6 +423,18 @@ mod tests {
     }
 
     #[test]
+    fn mcp_json_anywhere_refuses() {
+        let tar = gh_tar(&[
+            ("skills/ponytail/SKILL.md", SKILL),
+            ("mcp.json", "{}"),
+            ("nested/.mcp.json", "{}"),
+        ]);
+        let (report, npm) = convert(&tar, "a", "b", "u", "s").unwrap();
+        assert!(npm.is_none());
+        assert_eq!(report.refused.len(), 2);
+    }
+
+    #[test]
     fn bare_skill_and_agents_layouts_are_recognized() {
         let tar = gh_tar(&[("SKILL.md", SKILL), ("agents/critic.md", "You are a critic.\n")]);
         let (report, npm) = convert(&tar, "o", "ponytail", "u", "s").unwrap();
@@ -449,6 +479,25 @@ mod tests {
         for bad in ["gitlab.com/o/r", "github.com/o", "github.com/o/r/extra", "github.com/../r", ""] {
             assert!(parse_github_url(bad).is_err(), "{bad} should refuse");
         }
+    }
+
+    #[test]
+    fn ref_charset_is_validated_per_path_segment() {
+        // A ref that path-traverses via "../.." must not reach `fetch`'s
+        // commits API interpolation.
+        assert!(parse_github_url("github.com/o/r#../../evil").is_err());
+        // A ref with a slash (branch names commonly have one) still parses —
+        // each component just has to be a valid segment on its own.
+        assert_eq!(
+            parse_github_url("github.com/o/r#feature/branch-name").unwrap(),
+            ("o".into(), "r".into(), Some("feature/branch-name".into()))
+        );
+        // A 40-hex sha is a single valid segment.
+        let sha = "a".repeat(40);
+        assert_eq!(
+            parse_github_url(&format!("github.com/o/r#{sha}")).unwrap(),
+            ("o".into(), "r".into(), Some(sha))
+        );
     }
 
     #[test]

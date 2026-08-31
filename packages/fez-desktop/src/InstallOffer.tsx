@@ -185,7 +185,10 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
   const install = async (report: GitInspectReport) => {
     setPhase({ kind: "installing", report });
     try {
-      await invoke<string>("install_git_package", { url });
+      // Pin to the sha the user actually reviewed — the branch may have
+      // moved between inspect and this click. `parse_github_url` accepts a
+      // sha as `#ref`, so this needs zero Rust-side changes.
+      await invoke<string>("install_git_package", { url: `${url.split("#")[0]}#${report.sha}` });
       flash(`✓ ${report.name} installed`);
       // No reloadGuiExtensions — persona packs have no gui part.
       window.dispatchEvent(new CustomEvent("fez-extensions-changed"));
@@ -238,6 +241,9 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
           </div>
           {!done && !installing && (
             <div className="install-offer-consent">
+              <div className="settings-hint">
+                installs as <code>{report.name}</code> @ <code>{report.sha.slice(0, 7)}</code>
+              </div>
               <ul className="gallery-perms">
                 {report.personas.map((p) => (
                   <li key={p.id}>@{p.id} — {p.description}</li>
