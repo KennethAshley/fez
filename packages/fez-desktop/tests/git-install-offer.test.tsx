@@ -35,4 +35,51 @@ describe("GitInstallOffer", () => {
     act(() => root.unmount());
     div.remove();
   });
+
+  it("clean report renders consent panel, then install & grant installs and reaches done", async () => {
+    (invoke as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(JSON.stringify({
+        name: "gh-a-b",
+        personas: [{ id: "ponytail", description: "lazy senior dev" }, { id: "scout", description: "" }],
+        ignored: ["README.md"],
+        refused: [],
+        sha: "s",
+        url: "u",
+        installed: false,
+      }))
+      .mockResolvedValueOnce("installed gh-a-b@0.0.0-s: ponytail, scout");
+    const div = document.createElement("div");
+    document.body.append(div);
+    const root = createRoot(div);
+    await act(async () => root.render(<GitInstallOffer url="github.com/a/b" authorName="fez" client={{} as never} />));
+    await act(async () => { div.querySelector("button")!.click(); }); // review & install
+    expect(div.textContent).toContain("ponytail");
+    expect(div.textContent).toContain("scout");
+    expect(div.textContent).toContain("These are instructions that will steer agents you run");
+    const buttons = () => [...div.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons()).toContain("install & grant");
+
+    const installBtn = [...div.querySelectorAll("button")].find((b) => b.textContent === "install & grant")!;
+    await act(async () => { installBtn.click(); });
+    expect(invoke).toHaveBeenLastCalledWith("install_git_package", { url: "github.com/a/b" });
+    expect(div.textContent).toContain("installed");
+    expect(buttons()).not.toContain("install & grant");
+
+    act(() => root.unmount());
+    div.remove();
+  });
+
+  it("already-installed report shows the kept/edits-survive note", async () => {
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce(JSON.stringify({
+      name: "gh-a-b", personas: [{ id: "ponytail", description: "" }], ignored: [], refused: [], sha: "s", url: "u", installed: true,
+    }));
+    const div = document.createElement("div");
+    document.body.append(div);
+    const root = createRoot(div);
+    await act(async () => root.render(<GitInstallOffer url="github.com/a/b" authorName="fez" client={{} as never} />));
+    await act(async () => { div.querySelector("button")!.click(); });
+    expect(div.textContent).toContain("existing persona files are kept");
+    act(() => root.unmount());
+    div.remove();
+  });
 });

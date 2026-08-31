@@ -247,7 +247,9 @@ export function GitInstallOffer({ url, authorName }: { url: string; authorName: 
                 <div className="settings-hint">ignored: {report.ignored.join(", ")}</div>
               )}
               <ul className="gallery-perms">
-                <li className="sensitive">⚠ {PERM_LABEL.personas}</li>
+                <li className={SENSITIVE.has("personas") ? "sensitive" : ""}>
+                  {SENSITIVE.has("personas") ? "⚠ " : "· "}{PERM_LABEL.personas}
+                </li>
               </ul>
               <div className="settings-hint">These are instructions that will steer agents you run. Installs on THIS machine.</div>
               {report.installed && (
