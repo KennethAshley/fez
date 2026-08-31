@@ -83,7 +83,7 @@ describe("GitInstallOffer", () => {
     const root = createRoot(div);
     await act(async () => root.render(<GitInstallOffer url="github.com/a/b" authorName="fez" client={{} as never} />));
     await act(async () => { div.querySelector("button")!.click(); });
-    expect(div.textContent).toContain("existing files are kept");
+    expect(div.textContent).toContain("reinstalling refreshes its skills");
     act(() => root.unmount());
     div.remove();
   });
