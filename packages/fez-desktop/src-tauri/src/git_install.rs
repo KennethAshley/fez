@@ -38,13 +38,13 @@ fn normalize_id(s: &str) -> String {
 }
 
 /// Split `---\n...\n---\n<body>` frontmatter off a skill file. No YAML
-/// dependency — this module only ever needs two fields (`name`,
-/// `description`), read by line prefix. Returns (name, description, body);
-/// absent fields are "". A file with no `---\n` opener has no frontmatter at
-/// all — the whole file is the body.
-fn split_frontmatter(content: &str) -> (String, String, String) {
+/// dependency — this module only ever needs `description`, read by line
+/// prefix. Returns (description, body); an absent description is "". A file
+/// with no `---\n` opener has no frontmatter at all — the whole file is the
+/// body.
+fn split_frontmatter(content: &str) -> (String, String) {
     let Some(after_open) = content.strip_prefix("---\n") else {
-        return (String::new(), String::new(), content.to_string());
+        return (String::new(), content.to_string());
     };
     // The closing delimiter is a line that is exactly "---" — find it as
     // "\n---\n" (or an empty frontmatter block, where it's the very first
@@ -54,21 +54,18 @@ fn split_frontmatter(content: &str) -> (String, String, String) {
     });
     let Some((fm_end, body_start)) = close else {
         // No closing "---" found — treat the whole thing as body.
-        return (String::new(), String::new(), content.to_string());
+        return (String::new(), content.to_string());
     };
     let frontmatter = &after_open[..fm_end];
     let body = &after_open[body_start..];
-    let mut name = String::new();
     let mut description = String::new();
     for line in frontmatter.lines() {
         let trimmed = line.trim();
-        if let Some(v) = trimmed.strip_prefix("name:") {
-            name = unquote(v);
-        } else if let Some(v) = trimmed.strip_prefix("description:") {
+        if let Some(v) = trimmed.strip_prefix("description:") {
             description = unquote(v);
         }
     }
-    (name, description, body.to_string())
+    (description, body.to_string())
 }
 
 fn unquote(s: &str) -> String {
@@ -126,6 +123,14 @@ pub(crate) fn convert(
         if stripped.is_empty() {
             continue;
         }
+        // Directory entries (and anything else non-regular, e.g. symlinks)
+        // carry no content of their own — every real file already gets its
+        // own entry, so a bare "src/" or "hooks/" dir entry must not compete
+        // for the ignored/refused lists (tar_list_md in package_install.rs
+        // sidesteps this the same way, via its own filename filter).
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
 
         if is_refused_path(stripped) {
             refused.push(stripped.to_string());
@@ -176,7 +181,7 @@ pub(crate) fn convert(
     let mut persona_files: Vec<(String, String)> = Vec::new(); // (id, generated content)
     let short_sha = &sha[..sha.len().min(7)];
     for skill in &skills {
-        let (_name, description, body) = split_frontmatter(&skill.body);
+        let (description, body) = split_frontmatter(&skill.body);
         personas.push(PersonaFound { id: skill.id.clone(), description: description.clone() });
         // The generated file always carries a description — fall back to
         // "ported from <owner>/<repo>" here, but leave the report's own
@@ -291,6 +296,28 @@ mod tests {
         let ids: Vec<_> = report.personas.iter().map(|p| p.id.as_str()).collect();
         assert!(ids.contains(&"ponytail") && ids.contains(&"critic"));
         assert!(npm.is_some());
+    }
+
+    #[test]
+    fn directory_entries_are_neither_ignored_nor_refused() {
+        let mut b = tar::Builder::new(Vec::new());
+        let mut h = tar::Header::new_gnu();
+        h.set_size(SKILL.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        b.append_data(&mut h, "ponytail-main/skills/ponytail/SKILL.md", SKILL.as_bytes()).unwrap();
+        let mut dir_h = tar::Header::new_gnu();
+        dir_h.set_entry_type(tar::EntryType::Directory);
+        dir_h.set_size(0);
+        dir_h.set_mode(0o755);
+        dir_h.set_cksum();
+        b.append_data(&mut dir_h, "ponytail-main/src/", &[][..]).unwrap();
+        let tar = b.into_inner().unwrap();
+
+        let (report, npm) = convert(&tar, "o", "ponytail", "u", "s").unwrap();
+        assert!(npm.is_some());
+        assert!(report.refused.iter().all(|p| !p.contains("src")), "a bare dir entry must not land in refused: {:?}", report.refused);
+        assert!(report.ignored.iter().all(|p| !p.contains("src")), "a bare dir entry must not land in ignored: {:?}", report.ignored);
     }
 
     #[test]
