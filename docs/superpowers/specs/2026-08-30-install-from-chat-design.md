@@ -74,12 +74,11 @@ still cannot install anything.
 `installOffers()` gains a second pattern:
 `/fez:install\s+git:(github\.com\/[\w.-]+\/[\w.-]+)(#[\w.\/-]+)?/gi`.
 GitHub-only in v1; the host is part of the regex, not user input to a
-fetcher. Git-source offers are returned tagged `kind: "git"` and the
-caller renders a card **only when the surrounding channel is the
-user's own DM with the guide** (the app already knows the DM peer);
-elsewhere `stripInstallMarkers()` leaves the text as-is so the message
-reads as a URL, not a button. The existing `@fezchat/*` pattern and
-behavior are untouched.
+fetcher. DMs render no install cards at all today (`DmView` renders
+raw markdown), which gives the surface gate for free: the git card
+component mounts **only in `DmView`** (1:1 conversations, not group
+DMs) — channels keep the `@fezchat/*`-only card and never learn the
+git pattern. The existing `@fezchat/*` behavior is untouched.
 
 ### 3. Fetch + scan (`packages/fez-desktop/src-tauri`)
 
@@ -91,12 +90,13 @@ Two new Tauri commands beside `install_package`:
   https-only), download under the existing `MAX_TGZ`/`MAX_TAR` caps,
   untar in memory (reuse the `install_package` tar machinery), then
   scan every entry:
-  - **Allowlist:** `*.md`, `*.png|jpg|jpeg|gif|svg|webp`, `LICENSE*`,
-    `.gitignore`, and directories. SVGs are checked for `<script` and
-    refused if found.
-  - Anything else — any `.js/.ts/.sh/.py`, `package.json` with
-    scripts, `hooks/`, `mcp.json`, dotfile configs — marks the repo
-    **refused**, with the offending paths named in the report. No
+  - **Only `.md` files ever install** — the converter authors the
+    installed package itself, so images, JSON manifests, LICENSE
+    files etc. are simply never copied; they're listed as "ignored"
+    on the card, not a risk.
+  - **Code refuses the whole repo:** any `.js/.ts/.mjs/.cjs/.sh/.py/
+    .rb/.ps1` file, a `hooks/` dir, or an MCP server config marks the
+    repo **refused**, with the offending paths named in the report. No
     partial installs: stripping the code out of a plugin that needs it
     would ship a silently broken pack.
   - The report lists what would install (skill/persona files found,
@@ -135,9 +135,11 @@ Synthesized manifest: name `gh-<owner>-<repo>` (normalized to the
 existing charset rules — the `gh-` namespace cannot collide with or
 impersonate `@fezchat/*`), `fez.type: "persona-pack"`,
 `fez.personas: {dir}`, `fez.permissions: ["personas"]`,
-`fez.minFezVersion` = current `FEZ_VERSION`. A persona-name collision
-with an already-installed persona refuses the install and names the
-conflict, matching existing persona-pack behavior.
+`fez.gitSource: {url, sha}` recorded in the manifest itself. Each
+persona is stamped `harness: claude-code` frontmatter (the persona
+installer skips files without a `harness:` key). A persona file that
+already exists is kept, not overwritten — existing persona-pack
+behavior.
 
 ### 5. Gallery URL box (`packages/fez-desktop/src/ExtensionGallery.tsx`)
 
@@ -157,12 +159,12 @@ button to override the scan.
 
 ## Updates
 
-None automatic. Re-running the install (from the DM, gallery, or a
-future card on the installed list) re-fetches the default branch and
-overwrites — the recorded sha makes "what changed" answerable later,
-but v1 ships no diff UI. User edits to installed persona files are
-therefore clobbered by a reinstall; the card says so when the package
-is already present.
+None automatic. Re-running the install re-fetches the default branch,
+but the persona installer **keeps any file that already exists** — so
+user edits are never clobbered; a genuine upstream update requires
+deleting the persona file first, and the card says so when the package
+is already present. The recorded sha makes "what changed" answerable
+later; v1 ships no diff UI.
 
 ## Security model, summarized
 
@@ -190,8 +192,8 @@ is already present.
   normalization, persona collision refusal.
 - `InstallOffer` test: git marker renders a card in the guide DM,
   plain text elsewhere (extend `packages/fez-desktop/tests`).
-- Guide persona: an eval in fez-evals asserting the marker is emitted
-  for a DM'd URL and not in a channel, following existing persona
-  evals.
+- Guide persona: a text-level guard in fez-evals asserting the persona
+  keeps teaching the git marker form and its DM-only rule (a behavioral
+  agent eval is optional follow-up, not v1).
 - E2E gate: `e2e-cold-start.sh` on the mini stays the ship gate for
   any desktop release carrying this.
