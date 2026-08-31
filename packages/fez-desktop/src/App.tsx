@@ -36,7 +36,7 @@ import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
-import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers } from "./InstallOffer";
+import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers, gitInstallOffers, GitInstallOffer } from "./InstallOffer";
 import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
@@ -2431,7 +2431,10 @@ function DmView({
                 </HoverCard>
                 <span className="time">{new Date(msg.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
-              <div className="bubble-body md"><MdBody text={stripArtifactMarkers(msg.text)} /></div>
+              <div className="bubble-body md"><MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.text))} /></div>
+              {!group && gitInstallOffers(msg.text).map((url) => (
+                <GitInstallOffer key={url} url={url} authorName={client.displayName(msg.senderPk)} client={client} />
+              ))}
               </div>
             </div>
           );
