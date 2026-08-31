@@ -165,6 +165,9 @@ body {
    the terminal LED --phosphor was minted for. */
 .nav-glyph { color: var(--fg-dim); transition: color 110ms ease; }
 .channel.active .nav-glyph { color: var(--phosphor); }
+/* An SVG glyph (extension brand mark) sits at glyph size and inherits the
+   dim/phosphor color via fill: currentColor, like the unicode glyphs. */
+.nav-glyph svg { width: 1em; height: 1em; vertical-align: -0.15em; }
 .channel:active { transform: translateY(0.5px); }
 /* Keyboard users get the same answer the mouse gets. */
 .channel:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
@@ -1736,6 +1739,10 @@ button.author:hover { text-decoration: underline; }
 
 /* agent hover card — what can this name do, without clicking */
 .hovercard-wrap { position: relative; display: inline-flex; min-width: 0; }
+/* In the rail, the wrap holds a full-width row, not an inline name —
+   DM rows are the one .channel wrapped in a HoverCard, and inline-flex
+   was laying them out side by side like words. */
+.community > .hovercard-wrap { display: block; }
 /* ── pending attachments (composer chips) ───────────────────────
    Uploaded, not yet sent — the words and the file leave together. */
 .attach-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px; }

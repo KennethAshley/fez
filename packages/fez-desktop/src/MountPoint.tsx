@@ -22,11 +22,33 @@ export function MountPoint({ render }: { render: MountRender }) {
   const [portal, setPortal] = useState<ReactNode>(null);
   useEffect(() => {
     if (!host.current) return;
-    const { dispose, element } = classifyMountResult(render(host.current));
+    // The mount form runs the extension's OWN React root (fez pack bundles
+    // React per-extension). Give that root a dedicated child node instead
+    // of host.current itself: the host's React renders {portal} into
+    // host.current, so a foreign root mutating the SAME node races the
+    // host on teardown — the intermittent "object can not be found here"
+    // (removeChild NotFoundError) on fast view cycling. An isolated child
+    // the host never reconciles keeps the two roots off each other's DOM,
+    // and a fresh node per effect run also sidesteps StrictMode's
+    // "createRoot on an already-used container".
+    const mountNode = document.createElement("div");
+    mountNode.style.display = "contents";
+    host.current.appendChild(mountNode);
+    const { dispose, element } = classifyMountResult(render(mountNode));
+    // Legacy/api.React content still portals into the host's own tree.
     if (element) setPortal(createPortal(element, host.current));
     return () => {
-      dispose?.();
       setPortal(null);
+      // Defer the foreign root's unmount out of the host's commit phase —
+      // unmounting one React root synchronously while another is mid-render
+      // is the race React warns about ("may lead to a race condition") and
+      // the source of the intermittent teardown crash. The fresh mountNode
+      // per effect means this deferred cleanup only ever touches its own
+      // node, never the next mount's — so it stays StrictMode-safe.
+      queueMicrotask(() => {
+        dispose?.();
+        mountNode.remove();
+      });
     };
   }, [render]);
   return <div ref={host} style={{ display: "contents" }}>{portal}</div>;
