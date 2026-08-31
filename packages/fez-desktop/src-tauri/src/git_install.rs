@@ -66,15 +66,38 @@ fn split_frontmatter(content: &str) -> (String, String, String) {
     };
     let frontmatter = &after_open[..fm_end];
     let body = &after_open[body_start..];
+    let lines: Vec<&str> = frontmatter.lines().collect();
     let mut name = String::new();
     let mut description = String::new();
-    for line in frontmatter.lines() {
-        let trimmed = line.trim();
-        if let Some(v) = trimmed.strip_prefix("description:") {
-            description = unquote(v);
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        let (key_hit, v) = if let Some(v) = trimmed.strip_prefix("description:") {
+            (Some(&mut description), v)
         } else if let Some(v) = trimmed.strip_prefix("name:") {
-            name = unquote(v);
+            (Some(&mut name), v)
+        } else {
+            (None, "")
+        };
+        if let Some(slot) = key_hit {
+            // Real skills (ponytail among them) write YAML block scalars —
+            // `description: >` with the text on the indented lines below.
+            // Without this, the value is literally ">" and every picker row
+            // reads "— >". Folded (>) and literal (|) both collapse to one
+            // space-joined line here: a picker line, not a document.
+            let marker = v.trim();
+            if matches!(marker, ">" | ">-" | "|" | "|-") {
+                let mut folded: Vec<String> = Vec::new();
+                while i + 1 < lines.len() && lines[i + 1].starts_with(char::is_whitespace) && !lines[i + 1].trim().is_empty() {
+                    folded.push(lines[i + 1].trim().to_string());
+                    i += 1;
+                }
+                *slot = folded.join(" ");
+            } else {
+                *slot = unquote(v);
+            }
         }
+        i += 1;
     }
     (name, description, body.to_string())
 }
@@ -438,6 +461,19 @@ mod tests {
     }
 
     const SKILL: &str = "---\nname: ponytail\ndescription: lazy senior dev\n---\n\nBe lazy.\n";
+
+    #[test]
+    fn folded_yaml_descriptions_read_as_one_line() {
+        // The real ponytail writes `description: >` with indented lines —
+        // the shape that shipped "— >" to the picker.
+        let folded = "---\nname: ponytail\ndescription: >\n  Forces the laziest\n  solution that works.\nlicense: MIT\n---\nBe lazy.\n";
+        let tar = gh_tar(&[("skills/ponytail/SKILL.md", folded)]);
+        let (report, npm) = convert(&tar, "o", "r", "u", "s").unwrap();
+        assert_eq!(report.skills[0].description, "Forces the laziest solution that works.");
+        let md = String::from_utf8(crate::package_install::tar_read(&npm.unwrap(), "skills/ponytail.md").unwrap()).unwrap();
+        assert!(md.contains("description: Forces the laziest solution that works."));
+        assert!(md.contains("Be lazy."));
+    }
 
     #[test]
     fn a_clean_plugin_converts_to_a_skill_package() {
