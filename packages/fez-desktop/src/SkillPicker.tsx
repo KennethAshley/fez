@@ -203,8 +203,64 @@ export default function SkillPicker({
     </label>
   );
 
+  // The PACK is what a person clicked "install" on — one checkbox attaches
+  // the lot (same unit as the tools view's give-to); the per-skill rows stay
+  // reachable behind a fold for fine-tuning. Declared-but-missing names have
+  // no pack to fold under and render flat.
+  const packs = useMemo(() => {
+    const byPkg = new Map<string, { title: string; rows: typeof skillMdRows }>();
+    for (const s of installedSkillMds) {
+      const row = skillMdRows.find((r) => !r.missing && r.key === s.id);
+      if (!row) continue;
+      const entry = byPkg.get(s.pkg) ?? { title: s.title ?? s.pkg, rows: [] };
+      entry.rows.push(row);
+      byPkg.set(s.pkg, entry);
+    }
+    return [...byPkg.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [installedSkillMds, skillMdRows]);
+  const missingMdRows = skillMdRows.filter((r) => r.missing);
+
+  const togglePack = (rows: typeof skillMdRows, on: boolean) => {
+    // One write covering the whole pack: add every unattached id, or drop
+    // every declaration under whichever identifier the persona used.
+    const declared = new Set(rows.map((r) => r.declaredAs).filter(Boolean) as string[]);
+    onSkillsChange(
+      on
+        ? [...skillsValue, ...rows.filter((r) => r.declaredAs === undefined).map((r) => r.key)]
+        : skillsValue.filter((v) => !declared.has(v))
+    );
+  };
+
   const skillMdSection = skillMdRows.length > 0 && (
-    <div className="skill-pick-list">{skillMdRows.map(skillMdRow)}</div>
+    <div className="skill-pick-list">
+      {packs.map(([pkg, { title, rows }]) => {
+        const attachedCount = rows.filter((r) => r.declaredAs !== undefined).length;
+        const all = attachedCount === rows.length;
+        return (
+          <div key={pkg} className="skill-pack">
+            <label className="skill-pick">
+              <input
+                type="checkbox"
+                checked={all}
+                ref={(el) => { if (el) el.indeterminate = attachedCount > 0 && !all; }}
+                onChange={(e) => togglePack(rows, e.target.checked)}
+              />
+              <span className="skill-pick-text">
+                <span className="skill-pick-name">{title}</span>
+                <span className="skill-pick-desc">
+                  — {rows.length} skill{rows.length === 1 ? "" : "s"}{attachedCount > 0 && !all ? `, ${attachedCount} attached` : ""}
+                </span>
+              </span>
+            </label>
+            <details className="skill-pack-fold">
+              <summary className="settings-hint">pick individually</summary>
+              {rows.map(skillMdRow)}
+            </details>
+          </div>
+        );
+      })}
+      {missingMdRows.map(skillMdRow)}
+    </div>
   );
 
   if (broken.length + attached.length + available.length === 0) {

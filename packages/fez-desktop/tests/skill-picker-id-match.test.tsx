@@ -41,9 +41,11 @@ describe("SkillPicker skills: section — id/name matching", () => {
       );
     });
 
+    // Pack row + its one folded per-skill row — and no third, bogus-missing
+    // checkbox for the id-declared skill.
     const checkboxes = [...div.querySelectorAll("input[type=checkbox]")] as HTMLInputElement[];
-    expect(checkboxes).toHaveLength(1); // no duplicate bogus-missing row
-    expect(checkboxes[0].checked).toBe(true);
+    expect(checkboxes).toHaveLength(2);
+    expect(checkboxes.every((c) => c.checked)).toBe(true);
     expect(div.textContent).toContain("ponytail");
     expect(div.textContent).not.toContain("install it from chat");
 

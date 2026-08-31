@@ -6,6 +6,8 @@ import { declaredSkills } from "./skill-attach";
  * (fez-acp/skills-prompt.ts's resolveAttachedSkills). */
 export interface InstalledSkillMd {
   pkg: string;
+  /** The pack's human name (git repo name, else the pkg) — what pickers label the pack with. */
+  title?: string;
   id: string;
   name: string;
   description: string;

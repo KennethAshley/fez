@@ -584,6 +584,10 @@ pub(crate) fn local_extensions(home: &Path) -> Vec<(String, Vec<String>)> {
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct InstalledSkill {
     pub pkg: String,
+    /// The pack's human name — the repo a git install came from ("ponytail"),
+    /// falling back to the package name. What a picker labels the PACK with;
+    /// `gh-dietrichgebert-ponytail` is an address, not a title.
+    pub title: String,
     pub id: String,
     pub name: String,
     pub description: String,
@@ -638,6 +642,12 @@ pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
             None => continue,
         };
         let Some(skills_cfg) = manifest.pointer("/fez/skills") else { continue };
+        let title = manifest
+            .pointer("/fez/gitSource/url")
+            .and_then(|v| v.as_str())
+            .and_then(|u| u.trim_end_matches('/').rsplit('/').next())
+            .unwrap_or(&pkg_name)
+            .to_string();
         let dir = skills_cfg.get("dir").and_then(|v| v.as_str()).unwrap_or("skills");
         // `dir` is attacker-controlled (written verbatim at install, never
         // re-validated) — same escape gate `materialize` enforces at write
@@ -662,7 +672,7 @@ pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
             if description.is_empty() {
                 continue; // required — matches skills-md.ts
             }
-            out.push(InstalledSkill { pkg: pkg_name.clone(), id: stem.to_string(), name, description });
+            out.push(InstalledSkill { pkg: pkg_name.clone(), title: title.clone(), id: stem.to_string(), name, description });
         }
     }
     out
