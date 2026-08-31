@@ -250,6 +250,9 @@ export default function PersonaEditor({
           <AccessPicker client={client} value={field("respondTo")} onChange={(value) => update("respondTo", value)} />
         </div>
 
+        </div>
+
+        <div className="edit-col">
         <div className="manage-section">skills</div>
         <SkillPicker
           value={skillNames}
@@ -279,11 +282,6 @@ export default function PersonaEditor({
           }}
         />
 
-        <div className="edit-danger">
-          <button className={armedDelete ? "agent-action armed-delete" : "agent-action danger"} onClick={() => void remove()}>
-            {armedDelete ? "really delete @" + name + "?" : "delete persona"}
-          </button>
-        </div>
         </div>
 
         <div className="edit-col edit-col-prompt">
@@ -306,7 +304,14 @@ export default function PersonaEditor({
             ))}
           </div>
         )}
+        </div>
 
+        {/* The floor of the page, spanning both columns: destruction sits
+            alone, last, where it can't be mistaken for configuration. */}
+        <div className="edit-danger">
+          <button className={armedDelete ? "agent-action armed-delete" : "agent-action danger"} onClick={() => void remove()}>
+            {armedDelete ? "really delete @" + name + "?" : "delete agent"}
+          </button>
         </div>
       </div>
 

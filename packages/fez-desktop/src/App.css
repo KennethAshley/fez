@@ -400,14 +400,16 @@ body {
    read like a stretched table, a centered column reads like a page. */
 .pane-wide > .pane-body { width: 100%; max-width: 1080px; margin: 0 auto; }
 
-/* The editor at width: config reads down the left, the prompt gets the
-   canvas. Collapses back to the single column the pane always had. */
+/* The editor at width: identity/runtime and skills sit side by side up
+   top; the prompt takes the full width beneath them as the writing
+   canvas; delete alone at the floor. One column again when narrow. */
 .edit-body.pane-body { max-width: 1080px; }
-.edit-body { display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); column-gap: 32px; align-content: start; }
+.edit-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; align-content: start; }
 .edit-body > .edit-id { grid-column: 1 / -1; }
 .edit-col { min-width: 0; }
-.edit-col-prompt { display: flex; flex-direction: column; }
-.edit-col-prompt .persona-prompt { flex: 1; min-height: 380px; resize: vertical; }
+.edit-col-prompt { grid-column: 1 / -1; display: flex; flex-direction: column; }
+.edit-col-prompt .persona-prompt { min-height: 320px; resize: vertical; }
+.edit-body > .edit-danger { grid-column: 1 / -1; }
 @media (max-width: 880px) {
   .edit-body { display: block; }
 }
