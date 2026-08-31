@@ -256,7 +256,9 @@ export default function PersonaEditor({
         </div>
 
         <div className="edit-col">
-        <div className="manage-section">skills</div>
+        {/* The picker draws its own skills/tools divider heads with a
+            whisper each — a second bare "skills" head above it just said
+            the same word with less information. */}
         <SkillPicker
           value={skillNames}
           sources={parseSkillEntries(splitList(field("mcpServers"))).sources}

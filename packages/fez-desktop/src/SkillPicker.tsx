@@ -311,14 +311,9 @@ export default function SkillPicker({
     </div>
   );
 
-  if (broken.length + attached.length + available.length === 0) {
-    return (
-      <>
-        {skillMdSection}
-        <div className="settings-hint">No tools installed yet — find some in the tools tab.</div>
-      </>
-    );
-  }
+  // No early return for an empty machine: the labeled skills/tools groups
+  // below explain themselves either way, and an empty tools group already
+  // says where tools come from.
 
   const q = query.trim().toLowerCase();
   const shown = q
@@ -329,7 +324,17 @@ export default function SkillPicker({
 
   return (
     <div className="skill-picker">
-      {skillMdSection}
+      {/* Two capabilities, two words, said plainly: SKILLS are
+          instructions it loads; TOOLS are programs it calls. Each group
+          carries a one-line whisper so a first-time reader never has to
+          already know the vocabulary — and the skills group teaches
+          where more come from. */}
+      <div className="manage-section">skills</div>
+      <div className="field-note">Instruction packs it loads when a task fits. Get more from chat — DM @fez a GitHub link — or ⊞ extensions.</div>
+      {skillMdSection || <div className="skill-empty">No skill packs installed yet.</div>}
+
+      <div className="manage-section">tools</div>
+      <div className="field-note">Programs it can call (MCP servers) — install more in the ⚒ tools view. ·local means it only works on this machine.</div>
       {broken.length > 0 && (
         <div className="skill-broken">
           <div className="skill-broken-head">declared, but not installed here</div>
@@ -356,7 +361,7 @@ export default function SkillPicker({
       {available.length > 0 && (
         <details className="skill-pick-more">
           <summary>
-            <span className="skill-pick-more-label">add a skill</span>
+            <span className="skill-pick-more-label">add a tool</span>
             <span className="skill-pick-more-count">{available.length} on this machine</span>
           </summary>
           <div className="skill-pick-drawer">
