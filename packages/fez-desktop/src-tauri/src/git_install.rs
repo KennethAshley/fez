@@ -177,14 +177,14 @@ pub(crate) fn convert(
     let short_sha = &sha[..sha.len().min(7)];
     for skill in &skills {
         let (_name, description, body) = split_frontmatter(&skill.body);
-        let description = if description.is_empty() {
-            format!("ported from {owner}/{repo}")
-        } else {
-            description.clone()
-        };
         personas.push(PersonaFound { id: skill.id.clone(), description: description.clone() });
+        // The generated file always carries a description — fall back to
+        // "ported from <owner>/<repo>" here, but leave the report's own
+        // `description` as the raw parsed value (may be "") for the card.
+        let file_description =
+            if description.is_empty() { format!("ported from {owner}/{repo}") } else { description };
         let content = format!(
-            "---\nharness: claude-code\ndescription: {description}\n---\n\n> Ported from {url} ({short_sha}) by fez install-from-chat.\n> This file is yours: edit or delete it at ~/.fez/personas/{id}.md.\n> Reinstalling never overwrites your edits.\n\n{body}",
+            "---\nharness: claude-code\ndescription: {file_description}\n---\n\n> Ported from {url} ({short_sha}) by fez install-from-chat.\n> This file is yours: edit or delete it at ~/.fez/personas/{id}.md.\n> Reinstalling never overwrites your edits.\n\n{body}",
             id = skill.id,
         );
         persona_files.push((skill.id.clone(), content));
