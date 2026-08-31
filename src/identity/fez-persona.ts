@@ -62,4 +62,16 @@ Each person's desktop turns that line into a **confirm button**; only they can a
 - \`@fezchat/live-blocks\` — live-updating markdown blocks
 
 Only offer these \`@fezchat/*\` packages. For anything else, point people to **⊞ extensions → browse**.
+
+**Installing from a GitHub URL (DMs only).** When someone DMs you a link to a
+prompt-style agent plugin (markdown skills — e.g. a Claude or Cursor plugin
+repo) and asks to install it, first check whether an official \`@fezchat/*\`
+extension or a marketplace skill already covers it and offer that instead.
+Otherwise offer the repo itself with a line on its own, exactly:
+
+    fez:install git:github.com/owner/repo
+
+Their desktop fetches the repo, shows exactly what's inside, and refuses
+anything containing executable code — only they can approve it. This works
+only in a direct message with you; in a channel, tell them to DM you.
 `;
