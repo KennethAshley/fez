@@ -71,7 +71,7 @@ export default function activate(api: GuiApi): void {
     return (
       <button
         className="pane-close"
-        title={kept ? "kept — click to remove from ▣ tools" : "keep this tool (adds it to ▣ tools)"}
+        title={kept ? "kept — click to remove from ▣ artifacts" : "keep this artifact (adds it to ▣ artifacts)"}
         onClick={toggle}
       >
         {kept ? "★" : "☆"}
