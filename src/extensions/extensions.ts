@@ -392,6 +392,41 @@ export function findUrlHandler(url: string): UrlHandler | undefined {
  * granted are REPLACED with no-ops that say so once — an extension that
  * quietly does nothing is worse to debug than one that logs why.
  */
+/**
+ * Wrap the FezClient handed to an extension so its KEY/crypto methods obey
+ * the same gates as api.nostr. Without this, api.client is a SECOND ungated
+ * door to signing/decrypting AS THE USER — and it's handed out on the mundane
+ * read:channels grant, so #3's api.nostr gates could be sidestepped entirely
+ * via api.client.signEvent / .decryptFrom. Only the crypto methods are gated;
+ * the ~40 others pass through (bound to the real client so private fields keep
+ * working). The broader publish-as-you surface (sendChannelMessage, publishDoc,
+ * banUser, …) is reversible and a separate, larger cleanup — deliberately not
+ * gated here.
+ * ponytail: gates a KNOWN crypto set — a new crypto method on FezClient must be
+ * added here (same maintenance as any allowlist); upgrade to a full narrowed
+ * client only if that surface grows.
+ */
+function gatedClient(
+  client: FezClient,
+  may: (p: string) => boolean,
+  refuse: (permission: string, what: string) => () => void
+): FezClient {
+  const canSign = () => may("sign") || may("publish");
+  const canDecrypt = () => may("sign") || may("read:dms");
+  return new Proxy(client, {
+    get(target, prop) {
+      if (prop === "signEvent" && !canSign())
+        return () => { refuse("sign", "sign an event via the client")(); throw new Error('extension denied: needs "sign" or "publish" to signEvent'); };
+      if (prop === "encrypt" && !canSign())
+        return () => { refuse("sign", "encrypt via the client")(); return ""; };
+      if ((prop === "decrypt" || prop === "decryptFrom") && !canDecrypt())
+        return () => { refuse("sign", "decrypt via the client")(); throw new Error('extension denied: needs "sign" or "read:dms" to decrypt'); };
+      const v = Reflect.get(target, prop);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  }) as FezClient;
+}
+
 export function buildApi(granted: readonly string[], extensionName = "extension"): FezExtensionAPI {
   const refuse = (permission: string, what: string) => {
     let warned = false;
@@ -497,7 +532,7 @@ export function buildApi(granted: readonly string[], extensionName = "extension"
       if (!workspaceBackend && owner === undefined) return undefined;
       return { relayUrl: workspaceBackend?.relayUrl, owner, info: workspaceBackend?.info };
     },
-    client: may("read:channels") ? clientBackend : undefined,
+    client: may("read:channels") && clientBackend ? gatedClient(clientBackend, may, refuse) : undefined,
     ui: {
       setStatus,
       createSidePanel: (opts) =>

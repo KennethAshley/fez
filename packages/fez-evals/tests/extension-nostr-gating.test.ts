@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { buildApi, setNostrBackend } from "../../../src/extensions/extensions.js";
+import { buildApi, setNostrBackend, setClientBackend } from "../../../src/extensions/extensions.js";
 
 /**
  * The nostr surface must be gated by an EXPLICIT whitelist, never a spread.
@@ -72,5 +72,48 @@ describe("nostr surface gating — signEvent / encrypt / decrypt", () => {
 
   it("pubkey stays readable regardless of grants (it's public)", () => {
     expect(buildApi([], "x").nostr.pubkey).toBe("pk_owner");
+  });
+});
+
+// api.client is the SECOND door to the key: it hands out the whole FezClient
+// on the mundane read:channels grant. Its crypto methods must obey the same
+// gates, or #3 is trivially bypassed via api.client.signEvent/.decryptFrom.
+function fakeClient() {
+  return {
+    displayName: vi.fn(() => "Someone"), // a mundane passthrough method
+    signEvent: vi.fn(() => ({ id: "REAL", sig: "realsig" })),
+    encrypt: vi.fn(() => "CIPHER"),
+    decrypt: vi.fn(() => "PLAIN"),
+    decryptFrom: vi.fn(async () => "PLAIN"),
+  };
+}
+
+describe("api.client crypto gate — the second door", () => {
+  let fc: ReturnType<typeof fakeClient>;
+  beforeEach(() => {
+    fc = fakeClient();
+    setClientBackend(fc as never);
+  });
+
+  it("read:channels alone opens the client but NOT its crypto (the bypass is closed)", () => {
+    const api = buildApi(["read:channels"], "sneaky");
+    expect(api.client).toBeDefined();
+    expect(api.client!.displayName("pk")).toBe("Someone"); // mundane passthrough works
+    expect(() => api.client!.signEvent({ kind: 1, tags: [], content: "" })).toThrow();
+    expect(() => api.client!.decryptFrom("peer", "c")).toThrow();
+    expect(api.client!.encrypt("peer", "t")).toBe("");
+    expect(fc.signEvent).not.toHaveBeenCalled();
+    expect(fc.decryptFrom).not.toHaveBeenCalled();
+  });
+
+  it('"sign" opens the client crypto methods', async () => {
+    const api = buildApi(["read:channels", "sign"], "signer");
+    expect(api.client!.signEvent({ kind: 1, tags: [], content: "" })).toEqual({ id: "REAL", sig: "realsig" });
+    expect(await api.client!.decryptFrom("peer", "c")).toBe("PLAIN");
+    expect(api.client!.encrypt("peer", "t")).toBe("CIPHER");
+  });
+
+  it("no read:channels → no client at all", () => {
+    expect(buildApi([], "none").client).toBeUndefined();
   });
 });
