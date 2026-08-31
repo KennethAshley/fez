@@ -37,6 +37,7 @@ import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers, gitInstallOffers, GitInstallOffer } from "./InstallOffer";
+import { highlightCode } from "./highlight";
 import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
@@ -3473,6 +3474,14 @@ const MD_COMPONENTS = {
           ))}
         </span>
       );
+    }
+    // Labeled fences get real syntax color. hljs's output is its own
+    // escaped spans (safe for innerHTML by construction); an unknown
+    // language falls through to plain text rather than a guess.
+    const lang = /language-(\w+)/.exec(className ?? "")?.[1];
+    if (lang) {
+      const html = highlightCode(String(children ?? "").replace(/\n$/, ""), lang);
+      if (html) return <code className={`${className} hljs`} dangerouslySetInnerHTML={{ __html: html }} />;
     }
     return <code className={className}>{children}</code>;
   },

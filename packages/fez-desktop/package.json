@@ -28,7 +28,8 @@
     "rehype-autolink-headings": "^7.1.0",
     "rehype-slug": "^6.0.0",
     "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "highlight.js": "^11.9.0"
   },
   "devDependencies": {
     "@fezchat/tailwind-preset": "file:../fez-tailwind-preset",

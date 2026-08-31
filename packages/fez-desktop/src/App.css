@@ -2247,6 +2247,18 @@ button.author:hover { text-decoration: underline; }
 .install-offer-title { font-size: 13px; font-weight: 600; color: var(--fg); }
 .install-offer-blurb { font-size: 12px; color: var(--fg-dim); }
 .install-offer-consent { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 6px; }
+/* Syntax color for fenced code — fez's own quiet palette on hljs's
+   token classes, not a shipped theme: keywords in the app's ember,
+   strings gone mossy, comments receding, everything else near-fg so a
+   block reads as text first and christmas lights never. */
+.hljs { color: var(--fg); }
+.hljs-keyword, .hljs-built_in, .hljs-type, .hljs-literal { color: var(--accent, #e07a3f); }
+.hljs-string, .hljs-regexp, .hljs-addition { color: #a8b06a; }
+.hljs-comment, .hljs-quote, .hljs-deletion { color: var(--fg-dim); font-style: italic; }
+.hljs-number, .hljs-symbol, .hljs-attr, .hljs-attribute { color: #c9a55c; }
+.hljs-title, .hljs-name, .hljs-section, .hljs-selector-tag { color: var(--fg); font-weight: 600; }
+.hljs-meta, .hljs-params, .hljs-variable, .hljs-template-variable { color: var(--fg-dim); }
+
 /* Evidence folded behind the verdict: the file inventory opens on demand. */
 .install-offer-files summary { cursor: pointer; font-size: 12px; color: var(--fg-dim); }
 .install-offer-files[open] summary { color: var(--fg); }
