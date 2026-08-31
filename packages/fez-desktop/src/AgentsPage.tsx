@@ -97,7 +97,7 @@ export default function AgentsPage({
       <header className="page-head">
         <h1 className="page-title">agents</h1>
         <p className="page-sub">
-          Every agent here is a persona on this machine. Give one a skill and it can use it on its
+          Every agent here is a persona on this machine. Give one a tool and it can use it on its
           next spawn.
         </p>
         <div className="page-rule">

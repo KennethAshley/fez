@@ -1162,7 +1162,7 @@ function Shell({
                     ]],
                     ["views", [
                       ["⊞", "extensions", () => setView({ kind: "extensions" })],
-                      ["⚒", "skills", () => setView({ kind: "skills" })],
+                      ["⚒", "tools", () => setView({ kind: "skills" })],
                     ]],
                   ] as [string, [string, string, () => void][]][]
                 ).map(([group, items]) => (

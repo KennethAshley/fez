@@ -211,7 +211,7 @@ export default function SkillPicker({
     return (
       <>
         {skillMdSection}
-        <div className="settings-hint">No skills installed yet — find some in the Skills tab.</div>
+        <div className="settings-hint">No tools installed yet — find some in the tools tab.</div>
       </>
     );
   }

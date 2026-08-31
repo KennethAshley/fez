@@ -408,7 +408,7 @@ export default function SkillsView({
     <main className="main">
       <header className="topbar">
         <div className="topbar-row">
-          {only === "skills" ? "🔧 skills" : "⊞ extensions"}
+          {only === "skills" ? "🔧 tools" : "⊞ extensions"}
           {<span className="ext-tabs">
             {(["browse", "installed"] as const).map((name) => (
               <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} onClick={() => setTab(name)}>
@@ -433,7 +433,7 @@ export default function SkillsView({
         <div className="ext-legend">
           {only === "skills" ? (
             <div className="ext-legend-lead">
-              <strong>Skills</strong> are tools your agents call — an MCP server, granted to an agent in its persona. You configure them here; your agents use them.
+              <strong>Tools</strong> are MCP servers your agents call — granted to an agent in its persona. <strong>Skills</strong> are instruction packs agents load — attach them in an agent's editor.
             </div>
           ) : (
             <div className="ext-legend-lead">
@@ -751,7 +751,7 @@ export default function SkillsView({
                 <div className="skill-main">
                   <span className="skill-name">
                     {isPersona ? `@${listing.name}` : listing.name}
-                    <span className="role-tag">{isPersona ? "agent" : isMcp ? "skill" : listing.artifact}</span>
+                    <span className="role-tag">{isPersona ? "agent" : isMcp ? "tool" : listing.artifact}</span>
                     {isInstalled && <span className="role-tag installed-tag">installed</span>}
                     <span className="skill-installs">⇩ {count}</span>
                   </span>

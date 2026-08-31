@@ -165,8 +165,8 @@ function SkillHealthBadge({
       ⚠ missing: {health.missing.join(", ")}
     </span>
   ) : health?.local.length ? (
-    <span className="agent-warn" title="these skills point into a local directory">
-      ⚠ {health.local.length} skill{health.local.length > 1 ? "s" : ""} won't work on another machine
+    <span className="agent-warn" title="these tools point into a local directory">
+      ⚠ {health.local.length} tool{health.local.length > 1 ? "s" : ""} won't work on another machine
     </span>
   ) : null;
   const skillMdBadge = health?.missingSkillMds.length ? (

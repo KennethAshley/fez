@@ -86,7 +86,7 @@ export default function AgentProfile({
         <div className="manage-section">skills</div>
         {skills.length === 0 ? (
           <div className="settings-hint">
-            No skills. Give it one from the Skills tab, or in edit.
+            No tools. Give it one from the tools tab, or in edit.
           </div>
         ) : (
           <ul className="profile-skills">
