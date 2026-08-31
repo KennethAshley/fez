@@ -4,7 +4,7 @@
   "private": true,
   "description": "Media for fez — /upload files to any Blossom server (BUD-02 signed auth), share the URL in-channel. Pure client-side; the relay never sees a byte.",
   "type": "module",
-  "fez": { "type": "extension", "extension": { "entry": "dist/index.js" } },
+  "fez": { "type": "extension", "permissions": ["commands", "ui", "read:channels", "publish", "sign"], "extension": { "entry": "dist/index.js" } },
   "scripts": {
     "build": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.js && esbuild src/blossom.ts --bundle --format=esm --platform=node --outfile=dist/blossom.js",
     "check": "tsc --noEmit"

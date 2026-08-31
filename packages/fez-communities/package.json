@@ -6,6 +6,7 @@
   "type": "module",
   "fez": {
     "type": "extension",
+    "permissions": ["commands", "ui", "read:channels", "publish", "sign"],
     "extension": {
       "entry": "dist/index.js"
     }

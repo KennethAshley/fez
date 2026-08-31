@@ -9,6 +9,16 @@ import chalk from "chalk";
 import { type SkillEntry, type SkillSpec } from "./skill-source.js";
 
 /**
+ * The npm command used for every extension install (npm and git paths).
+ * `--ignore-scripts` is load-bearing security, not a tweak: without it a
+ * package's install lifecycle scripts (preinstall/install/postinstall)
+ * run arbitrary code the moment it lands — BEFORE any permission check or
+ * consent. Extensions are plain JS bundles, so nothing legitimate needs
+ * install scripts; disabling them closes an RCE-on-install hole.
+ */
+export const NPM_INSTALL_CMD = "npm install --omit=dev --ignore-scripts";
+
+/**
  * Where settings reads/writes go. Injectable so the install/remove/update
  * lifecycle is testable against an in-memory store instead of the real
  * ~/.fez/settings.json (which the module-level SETTINGS_FILE pins to the
@@ -500,7 +510,7 @@ export class PackageManager {
       "utf-8"
     );
 
-    execSync(`npm install --omit=dev`, { cwd: installPath, stdio: "inherit" });
+    execSync(NPM_INSTALL_CMD, { cwd: installPath, stdio: "inherit" });
   }
 
   private async installGit(source: string): Promise<void> {
@@ -520,7 +530,7 @@ export class PackageManager {
     // Install deps if package.json exists
     const pkgJsonPath = path.join(installPath, "package.json");
     if (await this.pathExists(pkgJsonPath)) {
-      execSync("npm install --omit=dev", { cwd: installPath, stdio: "inherit" });
+      execSync(NPM_INSTALL_CMD, { cwd: installPath, stdio: "inherit" });
     }
   }
 

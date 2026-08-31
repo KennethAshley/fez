@@ -16,7 +16,8 @@
       "publish",
       "commands",
       "background",
-      "ui"
+      "ui",
+      "sign"
     ]
   },
   "scripts": {
