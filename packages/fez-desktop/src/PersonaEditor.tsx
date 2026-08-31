@@ -156,6 +156,10 @@ export default function PersonaEditor({
           </span>
         </div>
 
+        {/* Full-width editor: the config column reads top-to-bottom on the
+            left; the prompt — the agent's actual substance — gets the
+            remaining canvas on the right. One column again under 880px. */}
+        <div className="edit-col">
         <div className="manage-section">identity</div>
         <div className="settings-field">
           <label>name</label>
@@ -275,6 +279,14 @@ export default function PersonaEditor({
           }}
         />
 
+        <div className="edit-danger">
+          <button className={armedDelete ? "agent-action armed-delete" : "agent-action danger"} onClick={() => void remove()}>
+            {armedDelete ? "really delete @" + name + "?" : "delete persona"}
+          </button>
+        </div>
+        </div>
+
+        <div className="edit-col edit-col-prompt">
         <div className="manage-section">
           prompt
           {promptWords > 0 && <span className="section-fact">{promptWords} words</span>}
@@ -295,10 +307,6 @@ export default function PersonaEditor({
           </div>
         )}
 
-        <div className="edit-danger">
-          <button className={armedDelete ? "agent-action armed-delete" : "agent-action danger"} onClick={() => void remove()}>
-            {armedDelete ? "really delete @" + name + "?" : "delete persona"}
-          </button>
         </div>
       </div>
 

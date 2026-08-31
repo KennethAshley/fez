@@ -475,7 +475,7 @@ export default function AgentsPane({
   const unspawned = localPersonas.filter((name) => !knownNames.has(name.toLowerCase()));
 
   return (
-    <aside className="pane">
+    <aside className="pane pane-wide">
       <header className="pane-head">
         {current || creating || editingPersona || viewingPersona || reviewing ? (
           <button className="pane-back" onClick={() => { setSelected(undefined); setCreating(false); setEditingPersona(undefined); setViewingPersona(undefined); setReviewing(undefined); }}>

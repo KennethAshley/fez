@@ -391,6 +391,27 @@ body {
   animation: pane-in 160ms cubic-bezier(0.2, 0, 0.2, 1);
   border-left-color: var(--hairline);
 }
+/* A pane that IS the content area: the agents surface outgrew the 340px
+   strip (the persona editor is a real workbench, not an inspector). The
+   main view yields entirely while it's open — same seam, more room. */
+.pane-wide { flex: 1; width: auto; min-width: 0; max-width: none; }
+.main:has(+ .pane.pane-wide) { display: none; }
+/* Content keeps a page measure inside the wide pane — full-bleed rows
+   read like a stretched table, a centered column reads like a page. */
+.pane-wide > .pane-body { width: 100%; max-width: 1080px; margin: 0 auto; }
+
+/* The editor at width: config reads down the left, the prompt gets the
+   canvas. Collapses back to the single column the pane always had. */
+.edit-body.pane-body { max-width: 1080px; }
+.edit-body { display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); column-gap: 32px; align-content: start; }
+.edit-body > .edit-id { grid-column: 1 / -1; }
+.edit-col { min-width: 0; }
+.edit-col-prompt { display: flex; flex-direction: column; }
+.edit-col-prompt .persona-prompt { flex: 1; min-height: 380px; resize: vertical; }
+@media (max-width: 880px) {
+  .edit-body { display: block; }
+}
+
 .pane-head {
   padding: 12px 14px; border-bottom: 1px solid var(--bg2); font-weight: 600;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
