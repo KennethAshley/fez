@@ -955,6 +955,14 @@ export class PackageManager {
       // packages/<name>/dist/gui.js straight from the manifest, so
       // gui-extensions/<name>.js is dead weight nothing loads through.
       const dest = await this.materializeIntoPackage(name, parts.gui);
+      // The companion stylesheet, when the pack emitted one — the loader
+      // reads `<stem>.css` beside the gui part, so an installer that
+      // skips it ships an unstyled panel (same fix as Rust's tarball
+      // installer and placeLinkedGuiPart; keep the three in step).
+      const cssRel = parts.gui.replace(/\.js$/, ".css");
+      if (cssRel !== parts.gui) {
+        await this.materializeIntoPackage(name, cssRel).catch(() => {});
+      }
       console.log(chalk.dim(`   Created ${dest}`));
     }
     if (parts.relay) {

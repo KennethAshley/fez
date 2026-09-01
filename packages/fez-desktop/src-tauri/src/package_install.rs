@@ -270,6 +270,16 @@ pub(crate) fn install_from_tarball(
         };
         let dest = materialize(tar_bytes, &pkg_dir, rel, part_key)?;
         if part_key == "gui" {
+            // The gui part's companion stylesheet: `fez pack` emits a hashed
+            // `<stem>.css` beside `<stem>.js`, and gui_parts() reads that
+            // sibling from the package dir at load time — but nothing ever
+            // PUT it there. Only the manifest-named file was materialized,
+            // so a CSS-Modules panel (ridges, live) installed from the
+            // gallery rendered as bare markup. Best-effort: most extensions
+            // ship none, and an absent tarball entry is not an error.
+            if let Some(stem) = rel.strip_suffix(".js") {
+                let _ = materialize(tar_bytes, &pkg_dir, &format!("{stem}.css"), part_key);
+            }
             installed.push(format!("gui → packages/{base}/{rel}"));
             continue;
         }

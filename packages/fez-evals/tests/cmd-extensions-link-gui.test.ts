@@ -72,3 +72,37 @@ describe("fez link — gui part lands in the package dir, not gui-extensions/", 
     expect(fs.existsSync(fezHomeAt(base, "packages", "evil2"))).toBe(false);
   });
 });
+
+/**
+ * The companion stylesheet travels with the gui part. `fez pack` emits a
+ * hashed <stem>.css beside <stem>.js and the desktop loader reads that
+ * sibling from the package dir — but NO installer copied it: ridges
+ * installed from the gallery rendered its panel as bare markup, live.
+ * Pinned here for link; the Rust tarball installer and PackageManager
+ * carry the same fix (kept in step by contract, not by import).
+ */
+describe("fez link — the gui part's css sibling travels too", () => {
+  test("gui.css beside gui.js lands in the package dir; absent css is not an error", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fez-link-css-"));
+    try {
+      const base = path.join(tmp, "home");
+      const pkgDir = path.join(tmp, "styled");
+      fs.mkdirSync(path.join(pkgDir, "dist"), { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "dist", "gui.js"), "export default () => {};\n");
+      fs.writeFileSync(path.join(pkgDir, "dist", "gui.css"), ".fez-styled-abc123 { color: red; }\n");
+      const manifest = { name: "@fezchat/styled", version: "0.0.1", fez: { parts: { gui: "dist/gui.js" } } };
+      placeLinkedGuiPart(pkgDir, manifest, "styled", base);
+      expect(fs.existsSync(fezHomeAt(base, "packages", "styled", "dist", "gui.css"))).toBe(true);
+
+      // and a css-less package still links cleanly
+      const bare = path.join(tmp, "bare");
+      fs.mkdirSync(path.join(bare, "dist"), { recursive: true });
+      fs.writeFileSync(path.join(bare, "dist", "gui.js"), "export default () => {};\n");
+      placeLinkedGuiPart(bare, { name: "@fezchat/bare", version: "0.0.1", fez: { parts: { gui: "dist/gui.js" } } }, "bare", base);
+      expect(fs.existsSync(fezHomeAt(base, "packages", "bare", "dist", "gui.js"))).toBe(true);
+      expect(fs.existsSync(fezHomeAt(base, "packages", "bare", "dist", "gui.css"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

@@ -51,6 +51,12 @@ export function placeLinkedGuiPart(
   const dest = path.join(dir, guiRel);
   nodeFs.mkdirSync(path.dirname(dest), { recursive: true });
   nodeFs.copyFileSync(path.join(pkgDir, guiRel), dest);
+  // The companion stylesheet — same contract as install (Rust tarball +
+  // PackageManager): the loader reads `<stem>.css` beside the gui part.
+  const cssRel = guiRel.replace(/\.js$/, ".css");
+  if (cssRel !== guiRel && nodeFs.existsSync(path.join(pkgDir, cssRel))) {
+    nodeFs.copyFileSync(path.join(pkgDir, cssRel), path.join(dir, cssRel));
+  }
   return dest;
 }
 
