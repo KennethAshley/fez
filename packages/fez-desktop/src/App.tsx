@@ -2139,6 +2139,7 @@ function ChannelView({
             client={client}
             channelId={channelId}
             channelName={channelName}
+            quiet={messages.length === 0}
             onJump={(msgId) => document.getElementById(`msg-${msgId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
           />
         )}

@@ -19,11 +19,18 @@ export default function ChannelInfo({
   channelId,
   channelName,
   onJump,
+  quiet = false,
 }: {
   client: FezClient;
   channelId: string;
-    channelName: string;
+  channelName: string;
   onJump: (msgId: string) => void;
+  /** Suppress the empty-state CTA. On an empty channel the FirstRun hero
+   * owns the screen and already introduces the room — an "add channel
+   * info" nag above it is a second info section saying less. The CTA
+   * earns its place once conversation exists; a REAL doc still renders
+   * regardless (information is never quiet, only the nag is). */
+  quiet?: boolean;
 }) {
   const key = `fez-chinfo-${channelId}`;
   const [open, setOpenState] = useState(() => localStorage.getItem(key) === "1");
@@ -75,6 +82,7 @@ export default function ChannelInfo({
   );
 
   if (!hasDoc && pins.length === 0 && !editing) {
+    if (quiet) return null;
     return (
       <div className="channel-info empty">
         {/* Same bar as the filled state: without it this row got no
