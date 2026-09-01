@@ -2154,20 +2154,20 @@ function ChannelView({
             usually), a second empty room re-pitching the whole app is a
             re-introduction to someone already inside. Those rooms get one
             quiet line instead. */}
+        {/* An empty room in an introduced workspace says nothing at all —
+            the channel info above carries the standing guidance, and a
+            placeholder repeating "mention an agent" under it was one nag
+            too many (removed on request, after shipping for an hour). */}
         {messages.length === 0 &&
-          ([...client.state.workspace.channels.keys()].some(
+          ![...client.state.workspace.channels.keys()].some(
             (id) => id !== channelId && client.messages(id).length > 0
-          ) ? (
-            <div className="empty-room">
-              Nothing here yet — say something, or mention an agent by name to bring one in.
-            </div>
-          ) : (
+          ) && (
             <FirstRun
               client={client}
               channelName={channelName}
               onOpenAgents={onAgents}
             />
-          ))}
+          )}
         {messages.length > 0 && (client.state.workspace.members.size ?? 0) <= 1 && (
           <div className="empty-room">
             You're the only member here so far — invite people from manage (+), or mention an agent by name to bring one in.
