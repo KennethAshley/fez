@@ -27,6 +27,10 @@ export const CATALOG: CatalogEntry[] = [
   { name: "@fezchat/obsidian", title: "Obsidian", blurb: "Export a channel's docs to your Obsidian vault.", where: "Adds /obsidian to the composer.", permissions: ["ui", "commands", "read:channels"] },
   { name: "@fezchat/live-blocks", title: "Live Blocks", blurb: "A markdown block an agent keeps breathing — live data that updates itself inside a doc.", where: "Renders live blocks inside docs.", permissions: ["ui", "commands", "read:channels", "publish", "background"] },
   { name: "@fezchat/themes", title: "Themes", blurb: "The classics — Dracula, Nord, Catppuccin, Solarized, Tokyo Night, Monokai, Night Owl, Kanagawa, Flexoki, and ten more. Each a light/dark pair.", where: "Adds a shelf of packs to Settings → theme.", permissions: ["ui"] },
+  { name: "@fezchat/wallet", title: "Wallet", blurb: "Per-agent allowance wallets — HD-derived accounts from one master mnemonic, TAO live, threshold consent via owner-signed reactions. The balance IS the cap.", where: "Adds a wallet panel and the payment skill agents spend through.", permissions: ["network:.opentensor.ai", "network:.base.org", "network:relay", "publish", "read:channels", "ui"] },
+  { name: "@fezchat/ridges", title: "Ridges", blurb: "Pay the Ridges subnet to fix a GitHub issue — /ridges <issue-url> escrows through the wallet's x402 rail and tracks the resulting PR.", where: "Adds /ridges and the bounty-rail pane; pays through your fez wallet.", permissions: ["network:product.ridges.ai", "network:api.github.com", "read:channels", "publish", "commands", "ui", "background"] },
+  { name: "@fezchat/memory", title: "Memory", blurb: "Shared team memory for agents — fez_remember / fez_recall over append-only, signed events on the relay. Shared by default, because the relay is.", where: "Adds the fez_remember and fez_recall skills to granted agents.", permissions: ["read:channels", "publish"] },
+  { name: "@fezchat/loom", title: "Loom", blurb: "Describe a tool over your channel data and @loom weaves a live, streaming UI — sandboxed; reads the relay freely, every write asks you first.", where: "Adds the Loom panel; kept artifacts live in the ▣ tools gallery.", permissions: ["read:channels", "publish", "personas", "ui"] },
   { name: "@fezchat/bazaar", title: "Bazaar", blurb: "The fez bazaar — run a miner that serves the subnet, watch how it's doing, and ask the market questions with bazaar_ask.", where: "Adds a Bazaar panel, the bazaar_ask skill, and the fez-bazaar-miner program.", permissions: ["network:.fez.chat", "read:channels", "ui", "processes", "notifications"], repo: "https://github.com/KennethAshley/fez-bazaar" },
   { name: "@fezchat/elevenlabs", title: "ElevenLabs", blurb: "Agents speak — ask any granted agent to say something and a voice note lands in the channel, in that agent's own stable voice.", where: "Adds the fez_speak skill; voice map in Settings → extensions.", permissions: ["network:api.elevenlabs.io", "network:relay", "publish", "read:channels", "ui"] },
 ];
@@ -47,6 +51,18 @@ export const PERM_LABEL: Record<string, string> = {
 };
 
 export const SENSITIVE = new Set(["publish", "personas", "background", "processes"]);
+
+/** Human label for a permission id — network:<host> ids get a real
+ * sentence instead of falling through to raw code, since half the new
+ * catalog entries (wallet, ridges, bazaar) declare them. */
+export const permLabel = (p: string): string => {
+  if (PERM_LABEL[p]) return PERM_LABEL[p];
+  if (p.startsWith("network:")) {
+    const host = p.slice("network:".length);
+    return host === "*" ? "connect to ANY server" : `connect to ${host.replace(/^\./, "*.")}`;
+  }
+  return p;
+};
 
 const REPO = "https://github.com/KennethAshley/fez";
 /** De-scope and drop a `fez-` prefix so @fezchat/git, git, and fez-git all match. */

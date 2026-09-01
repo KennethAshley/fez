@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { reloadGuiExtensions } from "./gui-extensions";
-import { CATALOG, PERM_LABEL, SENSITIVE, norm, githubUrl, npmUrl, type CatalogEntry } from "./extensions-catalog";
+import { CATALOG, SENSITIVE, norm, permLabel, githubUrl, npmUrl, type CatalogEntry } from "./extensions-catalog";
 import { useConfig } from "./config-store";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
@@ -162,7 +162,7 @@ export function ExtensionGallery({
               <button className="gallery-uninstall" onClick={() => void uninstall(detail)}>uninstall</button>
             )
           ) : (
-            <button className="gallery-install" onClick={() => setConfirming(detail)}>install</button>
+            <button className="gallery-install" onClick={() => setConfirming(detail)}>review & install</button>
           )}
         </div>
 
@@ -182,7 +182,7 @@ export function ExtensionGallery({
           <ul className="gallery-perms">
             {detail.permissions.map((p) => (
               <li key={p} className={SENSITIVE.has(p) ? "sensitive" : ""}>
-                {SENSITIVE.has(p) ? "⚠ " : "· "}{PERM_LABEL[p] ?? p} <code>{p}</code>
+                {SENSITIVE.has(p) ? "⚠ " : "· "}{permLabel(p)} <code>{p}</code>
               </li>
             ))}
           </ul>
@@ -250,7 +250,7 @@ export function ExtensionGallery({
                 </div>
               ) : (
                 <button className="gallery-install" disabled={busy} onClick={() => setConfirming(entry)}>
-                  {busy ? "installing…" : "install"}
+                  {busy ? "installing…" : "review & install"}
                 </button>
               )}
             </div>
@@ -274,7 +274,7 @@ export function ExtensionGallery({
               {confirming.permissions.map((p) => (
                 <li key={p} className={SENSITIVE.has(p) ? "sensitive" : ""}>
                   {SENSITIVE.has(p) ? "⚠ " : "· "}
-                  {PERM_LABEL[p] ?? p} <code>{p}</code>
+                  {permLabel(p)} <code>{p}</code>
                 </li>
               ))}
             </ul>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
-import { PERM_LABEL, SENSITIVE, norm, catalogEntry, installExtension } from "./extensions-catalog";
+import { PERM_LABEL, SENSITIVE, norm, permLabel, catalogEntry, installExtension } from "./extensions-catalog";
 import { flash } from "./toast";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
@@ -123,7 +123,7 @@ export function InstallOffer({ content, authorName, client }: { content: string;
                 <ul className="gallery-perms">
                   {entry.permissions.map((p) => (
                     <li key={p} className={SENSITIVE.has(p) ? "sensitive" : ""}>
-                      {SENSITIVE.has(p) ? "⚠ " : "· "}{PERM_LABEL[p] ?? p} <code>{p}</code>
+                      {SENSITIVE.has(p) ? "⚠ " : "· "}{permLabel(p)} <code>{p}</code>
                     </li>
                   ))}
                 </ul>
