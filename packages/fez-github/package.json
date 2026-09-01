@@ -1,8 +1,8 @@
 {
   "name": "@fezchat/github",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
-  "description": "GitHub in fez — a repo is a channel, each pull request and issue a thread in it. Connects with a read-only, per-repo GitHub App over device flow; polls on the owner's machine and publishes to the relay, so teammates and agents without GitHub access still see the work.",
+  "description": "GitHub in fez \u2014 a repo is a channel, each pull request and issue a thread in it. Connects with a read-only, per-repo GitHub App over device flow; polls on the owner's machine and publishes to the relay, so teammates and agents without GitHub access still see the work.",
   "type": "module",
   "fez": {
     "type": "extension",

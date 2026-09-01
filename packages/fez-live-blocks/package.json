@@ -1,8 +1,8 @@
 {
   "name": "@fezchat/live-blocks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
-  "description": "Live blocks for fez docs — a markdown block an agent keeps up to date. Refresh is a doc comment, so every update is a signed edit with an audit trail.",
+  "description": "Live blocks for fez docs \u2014 a markdown block an agent keeps up to date. Refresh is a doc comment, so every update is a signed edit with an audit trail.",
   "type": "module",
   "fez": {
     "type": "extension",
