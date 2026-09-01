@@ -28,10 +28,11 @@
     "check": "tsc --noEmit"
   },
   "devDependencies": {
-    "esbuild": "^0.21.5",
-    "typescript": "^5.6.0",
+    "@fezchat/extension-api": "file:../fez-extension-api",
     "@fezchat/protocol": "file:../..",
-    "@fezchat/extension-api": "file:../fez-extension-api"
+    "@types/react": "^19.2.18",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

@@ -1,4 +1,4 @@
-import type { El, GuiClient, GuiExtensionApi } from "@fezchat/extension-api/gui";
+import type { GuiClient, GuiExtensionApi } from "@fezchat/extension-api/gui";
 import type { SpendEntry } from "./log.js";
 import type { Network } from "./storage-mirror.js";
 import qrcode from "qrcode-generator";
@@ -84,6 +84,10 @@ type AddressBook = { treasury?: string; personas?: Record<string, string> };
  * format under their own message renders a plain bubble — no buttons
  * (and no address anyone might pay) lent to a message that authorizes
  * nothing.
+ *
+ * JSX with `--jsx-factory=h` (the shared-React shape): the markup reads
+ * as markup and compiles to the same host-React createElement calls —
+ * one React on the page, nothing bundled.
  */
 
 export default function activate(api: GuiExtensionApi): void {
@@ -121,8 +125,8 @@ export default function activate(api: GuiExtensionApi): void {
   };
   const dim = { opacity: 0.75, fontSize: 12 };
   /** The host app's section-label grammar: mono caps, then a hairline
-   * running out to the edge. Built here because a gui part renders
-   * through h() and cannot reach App.css's classes. */
+   * running out to the edge. Built here because a gui part cannot reach
+   * App.css's classes. */
   const sectionLabel = {
     display: "flex",
     alignItems: "center",
@@ -134,8 +138,12 @@ export default function activate(api: GuiExtensionApi): void {
     color: "var(--fg-dim, #999)",
   };
   const labelRule = { flex: 1, height: 1, background: "var(--hairline, #333)" };
-  const Label = (text: string): El =>
-    h("div", { style: sectionLabel }, text, h("span", { style: labelRule }));
+  const Label = (text: string): JSX.Element => (
+    <div style={sectionLabel}>
+      {text}
+      <span style={labelRule} />
+    </div>
+  );
   const mono = { fontFamily: "var(--font-mono, monospace)", fontSize: 12 };
 
   /* The spend ledger's cells. `.wallet-ledger` was set as a className and
@@ -180,60 +188,62 @@ export default function activate(api: GuiExtensionApi): void {
     text: string;
     label?: string;
     title?: string;
-  }): El {
+  }): JSX.Element {
     const [copied, setCopied] = useState(false);
-    return h(
-      "button",
-      {
-        className: "skill-link",
-        title,
-        onClick: () => {
+    return (
+      <button
+        className="skill-link"
+        title={title}
+        onClick={() => {
           void copyText(text);
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
-        },
-      },
-      copied ? "copied ✓" : label
+        }}
+      >
+        {copied ? "copied ✓" : label}
+      </button>
     );
   }
 
   /** The address as an SVG QR — generated in-bundle, no network. */
-  function Qr({ text }: { text: string }): El {
+  function Qr({ text }: { text: string }): JSX.Element {
     const qr = qrcode(0, "M");
     qr.addData(text);
     qr.make();
     const n = qr.getModuleCount();
-    const cells: El[] = [];
+    const cells: JSX.Element[] = [];
     for (let r = 0; r < n; r++)
       for (let c = 0; c < n; c++)
-        if (qr.isDark(r, c)) cells.push(h("rect", { key: `${r}-${c}`, x: c, y: r, width: 1, height: 1 }));
-    return h(
-      "svg",
-      {
-        viewBox: `-2 -2 ${n + 4} ${n + 4}`,
-        width: 160,
-        height: 160,
-        style: { background: "#fff", borderRadius: 6, marginTop: 8, display: "block" },
-      },
-      h("g", { fill: "#000" }, ...cells)
+        if (qr.isDark(r, c)) cells.push(<rect key={`${r}-${c}`} x={c} y={r} width={1} height={1} />);
+    return (
+      <svg
+        viewBox={`-2 -2 ${n + 4} ${n + 4}`}
+        width={160}
+        height={160}
+        style={{ background: "#fff", borderRadius: 6, marginTop: 8, display: "block" }}
+      >
+        <g fill="#000">{cells}</g>
+      </svg>
     );
   }
 
   /** One address, everywhere it appears: short form (full in the hover
    * title), copy, and a QR the owner can flip open to scan. */
-  function AddressRow({ address }: { address: string }): El {
+  function AddressRow({ address }: { address: string }): JSX.Element {
     const [qrOpen, setQrOpen] = useState(false);
-    return h(
-      "div",
-      null,
-      h(
-        "div",
-        { style: { display: "flex", gap: 8, alignItems: "center" } },
-        h("span", { style: mono, title: address }, shortAddr(address)),
-        h(CopyButton, { text: address }),
-        h("button", { className: "skill-link", onClick: () => setQrOpen(!qrOpen) }, qrOpen ? "hide QR" : "QR")
-      ),
-      qrOpen ? h(Qr, { text: address }) : null
+    return (
+      <div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={mono} title={address}>
+            {shortAddr(address)}
+          </span>
+          <CopyButton text={address} />
+          <button className="skill-link" onClick={() => setQrOpen(!qrOpen)}>
+            {qrOpen ? "hide QR" : "QR"}
+          </button>
+        </div>
+        {qrOpen ? <Qr text={address} /> : null}
+      </div>
     );
   }
 
@@ -258,7 +268,7 @@ export default function activate(api: GuiExtensionApi): void {
       const msg = client.msgById(msgId);
       const personaPk = client.pkByName(req.persona);
       if (!msg || !personaPk || msg.authorPk !== personaPk) return null as never;
-      return h(ConsentCard, { req, msgId, channelId, msgTs: msg.ts } as never);
+      return <ConsentCard req={req} msgId={msgId} channelId={channelId} msgTs={msg.ts} />;
     }
   );
 
@@ -272,7 +282,7 @@ export default function activate(api: GuiExtensionApi): void {
     msgId: string;
     channelId: string;
     msgTs: number;
-  }): El {
+  }): JSX.Element {
     const book = useAddressBook();
     const [now, setNow] = useState(Date.now() / 1000);
     const [spend, setSpend] = useState<{ txHash: string } | undefined>(undefined);
@@ -320,60 +330,57 @@ export default function activate(api: GuiExtensionApi): void {
     const who = personaFor(req.to, book);
     const countdown = status === "pending" ? remainingText(msgTs, now) : undefined;
 
-    return h(
-      "div",
-      { style: card },
-      h(
-        "div",
-        { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 } },
-        h("div", { style: { fontWeight: 600 } }, `${req.persona} → ${req.amount}`),
-        countdown ? h("span", { style: dim }, countdown) : null
-      ),
-      h(
-        "div",
-        { style: { ...dim, marginTop: 2 } },
-        "to ",
-        who ? h("strong", null, `@${who} · `) : null,
-        h("span", { style: mono, title: req.to }, shortAddr(req.to)),
-        req.memo ? ` — ${req.memo}` : ""
-      ),
-      // Whatever walletSend put above the 💸 line: "first payment to
-      // this agent", "network could not be checked …". The owner is
-      // approving on the strength of these, so they render in the card
-      // and not only in the raw bubble text.
-      ...(req.notes ?? []).map((note) =>
-        h("div", { key: note, style: { ...dim, marginTop: 4 } }, `⚠ ${note}`)
-      ),
-      status === "pending"
-        ? h(
-            "div",
-            { style: { marginTop: 8, display: "flex", gap: 8 } },
-            h("button", { onClick: react("✅") }, "approve"),
-            h("button", { onClick: react("❌") }, "decline")
-          )
-        : h(
-            "div",
-            { style: { marginTop: 8, ...dim } },
-            status === "approved"
-              ? spend
-                ? h(
-                    "span",
-                    null,
-                    "✅ sent — tx ",
-                    h(
-                      "button",
-                      {
-                        className: "skill-link",
-                        onClick: () => void api.openUrl(`https://taostats.io/transfer/${spend.txHash}`),
-                      },
-                      shortAddr(spend.txHash)
-                    )
-                  )
-                : "✅ approved — waiting for the transfer to land…"
-              : status === "declined"
-                ? "❌ declined"
-                : "expired — nothing was transferred"
-          )
+    return (
+      <div style={card}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+          <div style={{ fontWeight: 600 }}>{`${req.persona} → ${req.amount}`}</div>
+          {countdown ? <span style={dim}>{countdown}</span> : null}
+        </div>
+        <div style={{ ...dim, marginTop: 2 }}>
+          to {who ? <strong>{`@${who} · `}</strong> : null}
+          <span style={mono} title={req.to}>
+            {shortAddr(req.to)}
+          </span>
+          {req.memo ? ` — ${req.memo}` : ""}
+        </div>
+        {/* Whatever walletSend put above the 💸 line: "first payment to
+            this agent", "network could not be checked …". The owner is
+            approving on the strength of these, so they render in the card
+            and not only in the raw bubble text. */}
+        {(req.notes ?? []).map((note) => (
+          <div key={note} style={{ ...dim, marginTop: 4 }}>
+            {`⚠ ${note}`}
+          </div>
+        ))}
+        {status === "pending" ? (
+          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+            <button onClick={react("✅")}>approve</button>
+            <button onClick={react("❌")}>decline</button>
+          </div>
+        ) : (
+          <div style={{ marginTop: 8, ...dim }}>
+            {status === "approved" ? (
+              spend ? (
+                <span>
+                  ✅ sent — tx{" "}
+                  <button
+                    className="skill-link"
+                    onClick={() => void api.openUrl(`https://taostats.io/transfer/${spend.txHash}`)}
+                  >
+                    {shortAddr(spend.txHash)}
+                  </button>
+                </span>
+              ) : (
+                "✅ approved — waiting for the transfer to land…"
+              )
+            ) : status === "declined" ? (
+              "❌ declined"
+            ) : (
+              "expired — nothing was transferred"
+            )}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -389,11 +396,13 @@ export default function activate(api: GuiExtensionApi): void {
       // message must exist for that attribution to mean anything.
       const msg = client.msgById(msgId);
       if (!msg) return null as never;
-      return h(
-        "div",
-        { style: card },
-        Label(`${rcv.chain} · receive`),
-        h("div", { style: { marginTop: 8 } }, h(AddressRow, { address: rcv.address }))
+      return (
+        <div style={card}>
+          {Label(`${rcv.chain} · receive`)}
+          <div style={{ marginTop: 8 }}>
+            <AddressRow address={rcv.address} />
+          </div>
+        </div>
       );
     }
   );
@@ -421,7 +430,7 @@ export default function activate(api: GuiExtensionApi): void {
       .map((e) => parseReceipt(e))
       .filter((r): r is ParsedReceipt => r !== undefined && isRenderableReceipt(r));
 
-  function ReceiptLine({ msgId }: { msgId: string }): El {
+  function ReceiptLine({ msgId }: { msgId: string }): JSX.Element | null {
     const [receipts, setReceipts] = useState<ParsedReceipt[]>(() => parseAll(client.paymentReceiptsFor(msgId)));
     useEffect(() => {
       setReceipts(parseAll(client.paymentReceiptsFor(msgId)));
@@ -429,11 +438,13 @@ export default function activate(api: GuiExtensionApi): void {
         if (targetId === msgId) setReceipts(parseAll(client.paymentReceiptsFor(msgId)));
       });
     }, [msgId]);
-    if (receipts.length === 0) return null as never;
-    return h(
-      "div",
-      null,
-      ...receipts.map((r, i) => h(ReceiptCard, { key: `${r.txHash}-${i}`, r }))
+    if (receipts.length === 0) return null;
+    return (
+      <div>
+        {receipts.map((r, i) => (
+          <ReceiptCard key={`${r.txHash}-${i}`} r={r} />
+        ))}
+      </div>
     );
   }
 
@@ -445,96 +456,86 @@ export default function activate(api: GuiExtensionApi): void {
    * amount as the headline, who it went to, and the transaction, with
    * the agent's sentence left above as its caption.
    */
-  function ReceiptCard({ r }: { r: ParsedReceipt }): El {
+  function ReceiptCard({ r }: { r: ParsedReceipt }): JSX.Element | null {
     const amount = receiptAmount(r);
-    if (!amount) return null as never;
+    if (!amount) return null;
     // Both rules live in gui-logic where they are tested — the card must
     // not re-decide either of them inline.
     const badge = playMoneyBadge(r.network);
     const short = `${r.txHash.slice(0, 10)}…${r.txHash.slice(-6)}`;
-    return h(
-      "div",
+    return (
       // No border: the message bubble is already the container, and the
       // app's rule is label-plus-hairline rather than a bordered card.
-      { style: { marginTop: 10, maxWidth: 440 } },
-      Label("payment"),
-      h(
-        "div",
-        { style: { display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 9 } },
-        h(
-          "span",
-          {
-            style: {
+      <div style={{ marginTop: 10, maxWidth: 440 }}>
+        {Label("payment")}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginTop: 9 }}>
+          <span
+            style={{
               fontFamily: "var(--font-mono, monospace)",
               fontSize: 19,
               fontWeight: 600,
               color: "var(--fg)",
               fontVariantNumeric: "tabular-nums",
-            },
-          },
-          amount
-        ),
-        // Play money must never pass for real money. The badge is loud
-        // precisely because its ABSENCE is what carries "this was real".
-        badge
-          ? h(
-              "span",
-              {
-                style: {
-                  fontFamily: "var(--font-mono, monospace)",
-                  fontSize: 10.5,
-                  textTransform: "uppercase" as const,
-                  letterSpacing: "0.08em",
-                  color: "var(--yellow, #fabd2f)",
-                  border: "1px solid var(--yellow, #fabd2f)",
-                  borderRadius: 5,
-                  padding: "1px 6px",
-                },
-              },
-              badge
-            )
-          : null
-      ),
-      // Names, not pubkeys — displayName is what the rest of the app
-      // calls these same people. The payee is optional on a 47040.
-      h(
-        "div",
-        { style: { ...mono, color: "var(--fg-dim, #999)", marginTop: 6 } },
-        r.payee ? `to ${client.displayName(r.payee)} · from ${client.displayName(r.payer)}` : `from ${client.displayName(r.payer)}`
-      ),
-      r.memo ? h("div", { style: { fontSize: 12, color: "var(--fg-dim, #999)", marginTop: 4 } }, r.memo) : null,
-      h(
-        "div",
-        { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" } },
-        h("span", { style: { ...mono, fontSize: 11.5, color: "var(--fg-dim, #999)" }, title: r.txHash }, `tx ${short}`),
-        h(CopyButton, { text: r.txHash, label: "copy tx", title: "copy the full transaction hash" }),
-        h(
-          "button",
-          {
-            className: "skill-link",
-            style: { whiteSpace: "nowrap" as const },
-            onClick: () => void api.openUrl(`https://taostats.io/transfer/${r.txHash}`),
-          },
-          "↗ taostats"
-        )
-      ),
-      // A block we haven't fetched or couldn't reach is UNVERIFIABLE,
-      // never rendered as verified and never as false — this part wires
-      // the render only; actual chain verification (comparing the block
-      // named on the receipt against the chain) is a further round-trip
-      // this gui part does not make. Never claiming "verified" without
-      // having checked is exactly the ordering rule this exists to obey.
-      h(
-        "div",
-        { style: { ...mono, fontSize: 11.5, color: "var(--fg-dim, #999)", marginTop: 7 } },
-        `· ${receiptStateText("unverifiable")}`
-      )
+            }}
+          >
+            {amount}
+          </span>
+          {/* Play money must never pass for real money. The badge is loud
+              precisely because its ABSENCE is what carries "this was real". */}
+          {badge ? (
+            <span
+              style={{
+                fontFamily: "var(--font-mono, monospace)",
+                fontSize: 10.5,
+                textTransform: "uppercase" as const,
+                letterSpacing: "0.08em",
+                color: "var(--yellow, #fabd2f)",
+                border: "1px solid var(--yellow, #fabd2f)",
+                borderRadius: 5,
+                padding: "1px 6px",
+              }}
+            >
+              {badge}
+            </span>
+          ) : null}
+        </div>
+        {/* Names, not pubkeys — displayName is what the rest of the app
+            calls these same people. The payee is optional on a 47040. */}
+        <div style={{ ...mono, color: "var(--fg-dim, #999)", marginTop: 6 }}>
+          {r.payee
+            ? `to ${client.displayName(r.payee)} · from ${client.displayName(r.payer)}`
+            : `from ${client.displayName(r.payer)}`}
+        </div>
+        {r.memo ? <div style={{ fontSize: 12, color: "var(--fg-dim, #999)", marginTop: 4 }}>{r.memo}</div> : null}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
+          <span style={{ ...mono, fontSize: 11.5, color: "var(--fg-dim, #999)" }} title={r.txHash}>
+            {`tx ${short}`}
+          </span>
+          <CopyButton text={r.txHash} label="copy tx" title="copy the full transaction hash" />
+          <button
+            className="skill-link"
+            style={{ whiteSpace: "nowrap" as const }}
+            onClick={() => void api.openUrl(`https://taostats.io/transfer/${r.txHash}`)}
+          >
+            ↗ taostats
+          </button>
+        </div>
+        {/* A block we haven't fetched or couldn't reach is UNVERIFIABLE,
+            never rendered as verified and never as false — this part wires
+            the render only; actual chain verification (comparing the block
+            named on the receipt against the chain) is a further round-trip
+            this gui part does not make. Never claiming "verified" without
+            having checked is exactly the ordering rule this exists to obey. */}
+        <div style={{ ...mono, fontSize: 11.5, color: "var(--fg-dim, #999)", marginTop: 7 }}>
+          {`· ${receiptStateText("unverifiable")}`}
+        </div>
+      </div>
     );
   }
 
   api.registerMessageDecorator(
     () => true,
-    ({ msgId }) => h(ReceiptLine, { msgId })
+    ({ msgId }) => <ReceiptLine msgId={msgId} />
   );
 
   // ── address chips ────────────────────────────────────────────────
@@ -547,19 +548,19 @@ export default function activate(api: GuiExtensionApi): void {
       parseConsentRequest(content) === undefined &&
       parseReceiveAddress(content) === undefined &&
       extractAddresses(content).length > 0,
-    ({ content }) =>
-      h(
-        "div",
-        { style: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 } },
-        ...extractAddresses(content).map((addr) => h(AddressChip, { key: addr, address: addr }))
-      )
+    ({ content }) => (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+        {extractAddresses(content).map((addr) => (
+          <AddressChip key={addr} address={addr} />
+        ))}
+      </div>
+    )
   );
 
-  function AddressChip({ address }: { address: string }): El {
-    return h(
-      "span",
-      {
-        style: {
+  function AddressChip({ address }: { address: string }): JSX.Element {
+    return (
+      <span
+        style={{
           display: "inline-flex",
           alignItems: "center",
           gap: 6,
@@ -567,26 +568,27 @@ export default function activate(api: GuiExtensionApi): void {
           borderRadius: 8,
           padding: "1px 8px",
           fontSize: 12,
-        },
-      },
-      h("span", { style: mono, title: address }, shortAddr(address)),
-      h(CopyButton, { text: address }),
-      h(
-        "button",
-        {
-          className: "skill-link",
-          title: "open on taostats",
-          onClick: () => void api.openUrl(`https://taostats.io/account/${address}`),
-        },
-        "taostats ↗"
-      )
+        }}
+      >
+        <span style={mono} title={address}>
+          {shortAddr(address)}
+        </span>
+        <CopyButton text={address} />
+        <button
+          className="skill-link"
+          title="open on taostats"
+          onClick={() => void api.openUrl(`https://taostats.io/account/${address}`)}
+        >
+          taostats ↗
+        </button>
+      </span>
     );
   }
 
   // ── wallet panel ─────────────────────────────────────────────────
-  api.registerSettingsPanel("Wallet", () => h(WalletPanel));
+  api.registerSettingsPanel("Wallet", () => <WalletPanel />);
 
-  function WalletPanel(): El {
+  function WalletPanel(): JSX.Element {
     const [addresses, setAddresses] = useState<AddressBook>({});
     const [endpoint, setEndpoint] = useState<string | undefined>(undefined);
     const [logs, setLogs] = useState<Partial<Record<Network, SpendEntry[]>>>({});
@@ -852,335 +854,276 @@ export default function activate(api: GuiExtensionApi): void {
       ...Object.entries(addresses.personas ?? {}),
     ];
 
-    return h(
-      "div",
-      { className: "ext-panel" },
-      flash ? h("p", { className: "settings-hint" }, flash) : null,
-      h("div", { className: "manage-section" }, "network"),
-      h(
-        "div",
-        { className: "skill-row" },
-        h(
-          "div",
-          { className: "skill-main" },
-          h("span", { className: "skill-name" }, networkLabel(network)),
-          h(
-            "div",
-            { className: "skill-desc" },
-            "which chain new payments go out on — applies immediately"
-          )
-        ),
-        h(
-          "select",
-          {
-            className: "skill-actions",
-            value: network,
-            onChange: (e: { target: { value: string } }) => void onNetwork(e.target.value),
-          },
-          h("option", { value: "finney" }, "finney (mainnet)"),
-          h("option", { value: "test" }, "test — play money")
-        )
-      ),
+    return (
+      <div className="ext-panel">
+        {flash ? <p className="settings-hint">{flash}</p> : null}
+        <div className="manage-section">network</div>
+        <div className="skill-row">
+          <div className="skill-main">
+            <span className="skill-name">{networkLabel(network)}</span>
+            <div className="skill-desc">which chain new payments go out on — applies immediately</div>
+          </div>
+          <select
+            className="skill-actions"
+            value={network}
+            onChange={(e: { target: { value: string } }) => void onNetwork(e.target.value)}
+          >
+            <option value="finney">finney (mainnet)</option>
+            <option value="test">test — play money</option>
+          </select>
+        </div>
 
-      h("div", { className: "manage-section" }, "consent threshold"),
-      h(
-        "div",
-        { className: "skill-row" },
-        h(
-          "div",
-          { className: "skill-main" },
-          h("span", { className: "skill-name" }, "auto-approve below"),
-          h("div", { className: "skill-desc" }, "spends at or under this amount skip the consent card")
-        ),
-        h(
-          "div",
-          { className: "skill-actions" },
-          h("input", {
-            type: "text",
-            value: draft,
-            spellCheck: false,
-            style: validThreshold(draft) ? undefined : { borderColor: "var(--danger, #c00)", color: "var(--danger, #c00)" },
-            "aria-invalid": !validThreshold(draft),
-            onChange: (e: { target: { value: string } }) => setDraft(e.target.value),
-            // Enter saves, so the field behaves like the form it is.
-            onKeyDown: (e: { key: string }) => { if (e.key === "Enter") void saveThreshold(); },
-          }),
-          h(
-            "button",
-            {
-              className: "agent-action",
-              disabled: !validThreshold(draft) || draft === threshold,
-              onClick: () => void saveThreshold(),
-            },
-            "save"
-          )
-        )
-      ),
-      !validThreshold(draft)
-        ? h("p", { className: "settings-hint" }, "not a valid TAO amount (up to 9 decimal places)")
-        : draft !== threshold
-          ? h("p", { className: "settings-hint" }, `unsaved — ${threshold} TAO is still in force`)
-          : null,
+        <div className="manage-section">consent threshold</div>
+        <div className="skill-row">
+          <div className="skill-main">
+            <span className="skill-name">auto-approve below</span>
+            <div className="skill-desc">spends at or under this amount skip the consent card</div>
+          </div>
+          <div className="skill-actions">
+            <input
+              type="text"
+              value={draft}
+              spellCheck={false}
+              style={validThreshold(draft) ? undefined : { borderColor: "var(--danger, #c00)", color: "var(--danger, #c00)" }}
+              aria-invalid={!validThreshold(draft)}
+              onChange={(e: { target: { value: string } }) => setDraft(e.target.value)}
+              // Enter saves, so the field behaves like the form it is.
+              onKeyDown={(e: { key: string }) => { if (e.key === "Enter") void saveThreshold(); }}
+            />
+            <button
+              className="agent-action"
+              disabled={!validThreshold(draft) || draft === threshold}
+              onClick={() => void saveThreshold()}
+            >
+              save
+            </button>
+          </div>
+        </div>
+        {!validThreshold(draft) ? (
+          <p className="settings-hint">not a valid TAO amount (up to 9 decimal places)</p>
+        ) : draft !== threshold ? (
+          <p className="settings-hint">{`unsaved — ${threshold} TAO is still in force`}</p>
+        ) : null}
 
-      h("div", { className: "manage-section" }, "balances"),
-      !chainEndpoint
-        ? h(
-            "p",
-            { className: "settings-hint" },
-            `no endpoint for network "${network}" — prefs names a network this build doesn't know`
-          )
-        : balanceRows.length === 0
-        ? h(
-            "p",
-            { className: "settings-hint" },
-            "no addresses yet — run fez-wallet init, then derive an agent"
-          )
-          : h(
-              "div",
-              null,
-              ...balanceRows.map(([who, addr]) =>
-                h(
-                  "div",
-                  { key: who, className: "skill-row" },
-                  h(
-                    "div",
-                    { className: "skill-main" },
-                    h("span", { className: "skill-name" }, who),
-                    h("div", { className: "skill-desc" }, h(AddressRow, { address: addr }))
-                  ),
-                  h("div", { className: "skill-actions" }, balances[who] ?? "…")
-                )
-              )
-            ),
+        <div className="manage-section">balances</div>
+        {!chainEndpoint ? (
+          <p className="settings-hint">
+            {`no endpoint for network "${network}" — prefs names a network this build doesn't know`}
+          </p>
+        ) : balanceRows.length === 0 ? (
+          <p className="settings-hint">no addresses yet — run fez-wallet init, then derive an agent</p>
+        ) : (
+          <div>
+            {balanceRows.map(([who, addr]) => (
+              <div key={who} className="skill-row">
+                <div className="skill-main">
+                  <span className="skill-name">{who}</span>
+                  <div className="skill-desc">
+                    <AddressRow address={addr} />
+                  </div>
+                </div>
+                <div className="skill-actions">{balances[who] ?? "…"}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
-      h("div", { className: "manage-section" }, "spend ledger"),
-      log.length === 0
-        ? h("p", { className: "settings-hint" }, "no transfers yet")
-        : h(
-            "div",
-            { style: { overflowX: "auto" } },
-            h(
-              "table",
-              { className: "wallet-ledger", style: { width: "100%", borderCollapse: "collapse" } },
-              h(
-                "thead",
-                null,
-                h(
-                  "tr",
-                  null,
-                  h("th", { style: th }, "time"),
-                  h("th", { style: th }, "agent"),
-                  h("th", { style: { ...th, textAlign: "right" as const } }, "amount"),
-                  h("th", { style: th }, "to"),
-                  h("th", { style: th }, "memo"),
-                  h("th", { style: th }, "consent"),
-                  h("th", { style: th }, "tx")
-                )
-              ),
-              h(
-                "tbody",
-                null,
-                ...[...log].reverse().map((entry, i) =>
-                  h(
-                    "tr",
-                    { key: `${entry.txHash}-${i}` },
-                    // The exact instant stays on hover; the column shows
-                    // the day and the minute you actually scan for.
-                    h("td", { style: tdDim, title: entry.ts }, ledgerTime(entry.ts)),
-                    h("td", { style: td }, entry.persona),
-                    // The number is the point of the row: right-aligned so
-                    // the decimals line up down the column, and tabular so
-                    // the digits do not shift width between rows.
-                    h(
-                      "td",
-                      { style: { ...td, textAlign: "right" as const, fontVariantNumeric: "tabular-nums" } },
-                      `${entry.amount} ${entry.asset}`
-                    ),
-                    // Name the recipient when the address book knows it.
-                    // "quill" is what you actually recognise, it is far
-                    // shorter than base58, and the full address stays on
-                    // hover for the one time you need to check it.
-                    h(
-                      "td",
-                      { style: personaFor(entry.to, addresses) ? td : tdMono, title: entry.to },
-                      personaFor(entry.to, addresses) ?? shortAddr(entry.to)
-                    ),
-                    // The one column allowed to give up its width — every
-                    // other cell is an identifier that must stay whole.
-                    // The cap goes on an inner box, NOT the cell: a td's
-                    // max-width is advisory under `table-layout: auto`, and
-                    // the memo taking the width it wanted pushed the tx
-                    // link off the right edge of the panel.
-                    h("td", { style: td, title: entry.memo ?? "" }, h("div", { style: memoBox }, entry.memo ?? "")),
-                    h("td", { style: tdDim }, entry.consent),
-                    h(
-                      "td",
-                      { style: td },
-                      h(
-                        "button",
-                        {
-                          className: "skill-link",
-                          style: { whiteSpace: "nowrap" as const, fontFamily: "var(--font-mono, monospace)" },
-                          title: entry.txHash,
-                          onClick: () => void api.openUrl(`https://taostats.io/transfer/${entry.txHash}`),
-                        },
-                        shortAddr(entry.txHash)
-                      )
-                    )
-                  )
-                )
-              )
-            )
-          ),
+        <div className="manage-section">spend ledger</div>
+        {log.length === 0 ? (
+          <p className="settings-hint">no transfers yet</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="wallet-ledger" style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={th}>time</th>
+                  <th style={th}>agent</th>
+                  <th style={{ ...th, textAlign: "right" as const }}>amount</th>
+                  <th style={th}>to</th>
+                  <th style={th}>memo</th>
+                  <th style={th}>consent</th>
+                  <th style={th}>tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...log].reverse().map((entry, i) => (
+                  <tr key={`${entry.txHash}-${i}`}>
+                    {/* The exact instant stays on hover; the column shows
+                        the day and the minute you actually scan for. */}
+                    <td style={tdDim} title={entry.ts}>
+                      {ledgerTime(entry.ts)}
+                    </td>
+                    <td style={td}>{entry.persona}</td>
+                    {/* The number is the point of the row: right-aligned so
+                        the decimals line up down the column, and tabular so
+                        the digits do not shift width between rows. */}
+                    <td style={{ ...td, textAlign: "right" as const, fontVariantNumeric: "tabular-nums" }}>
+                      {`${entry.amount} ${entry.asset}`}
+                    </td>
+                    {/* Name the recipient when the address book knows it.
+                        "quill" is what you actually recognise, it is far
+                        shorter than base58, and the full address stays on
+                        hover for the one time you need to check it. */}
+                    <td style={personaFor(entry.to, addresses) ? td : tdMono} title={entry.to}>
+                      {personaFor(entry.to, addresses) ?? shortAddr(entry.to)}
+                    </td>
+                    {/* The one column allowed to give up its width — every
+                        other cell is an identifier that must stay whole.
+                        The cap goes on an inner box, NOT the cell: a td's
+                        max-width is advisory under `table-layout: auto`, and
+                        the memo taking the width it wanted pushed the tx
+                        link off the right edge of the panel. */}
+                    <td style={td} title={entry.memo ?? ""}>
+                      <div style={memoBox}>{entry.memo ?? ""}</div>
+                    </td>
+                    <td style={tdDim}>{entry.consent}</td>
+                    <td style={td}>
+                      <button
+                        className="skill-link"
+                        style={{ whiteSpace: "nowrap" as const, fontFamily: "var(--font-mono, monospace)" }}
+                        title={entry.txHash}
+                        onClick={() => void api.openUrl(`https://taostats.io/transfer/${entry.txHash}`)}
+                      >
+                        {shortAddr(entry.txHash)}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-      // ── x402 / USDC ───────────────────────────────────────────────
-      h("div", { className: "manage-section" }, "x402 · USDC"),
-      h(
-        "div",
-        { className: "skill-row" },
-        h(
-          "div",
-          { className: "skill-main" },
-          h("span", { className: "skill-name" }, x402NetworkLabel(x402Network)),
-          h("div", { className: "skill-desc" }, "which chain agents pay 402 services on — applies on their next call")
-        ),
-        h(
-          "select",
-          {
-            className: "skill-actions",
-            value: x402Network,
-            onChange: (e: { target: { value: string } }) => onX402Network(e.target.value),
-          },
-          ...X402_NETWORKS.map((n) => h("option", { key: n, value: n }, x402NetworkLabel(n)))
-        )
-      ),
-      h(
-        "div",
-        { className: "skill-row" },
-        h(
-          "div",
-          { className: "skill-main" },
-          h("span", { className: "skill-name" }, "daily cap / auto-approve (USD)"),
-          h(
-            "div",
-            { className: "skill-desc" },
-            `in force: $${capSaved} cap · auto-approve under $${autoSaved} (0 = every spend asks you)`
-          )
-        ),
-        h(
-          "div",
-          { className: "skill-actions" },
-          h("input", {
-            type: "text",
-            placeholder: `cap ${capSaved}`,
-            value: capDraft,
-            spellCheck: false,
-            style: { width: "5.5em", ...(capDraft === "" || validUsd(capDraft) ? {} : { borderColor: "var(--danger, #c00)" }) },
-            onChange: (e: { target: { value: string } }) => setCapDraft(e.target.value),
-          }),
-          h("input", {
-            type: "text",
-            placeholder: `auto ${autoSaved}`,
-            value: autoDraft,
-            spellCheck: false,
-            style: { width: "5.5em", ...(autoDraft === "" || validUsd(autoDraft) ? {} : { borderColor: "var(--danger, #c00)" }) },
-            onChange: (e: { target: { value: string } }) => setAutoDraft(e.target.value),
-          }),
-          h(
-            "button",
-            {
-              className: "agent-action",
-              disabled:
+        {/* ── x402 / USDC ─────────────────────────────────────────────── */}
+        <div className="manage-section">x402 · USDC</div>
+        <div className="skill-row">
+          <div className="skill-main">
+            <span className="skill-name">{x402NetworkLabel(x402Network)}</span>
+            <div className="skill-desc">which chain agents pay 402 services on — applies on their next call</div>
+          </div>
+          <select
+            className="skill-actions"
+            value={x402Network}
+            onChange={(e: { target: { value: string } }) => onX402Network(e.target.value)}
+          >
+            {X402_NETWORKS.map((n) => (
+              <option key={n} value={n}>
+                {x402NetworkLabel(n)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="skill-row">
+          <div className="skill-main">
+            <span className="skill-name">daily cap / auto-approve (USD)</span>
+            <div className="skill-desc">
+              {`in force: $${capSaved} cap · auto-approve under $${autoSaved} (0 = every spend asks you)`}
+            </div>
+          </div>
+          <div className="skill-actions">
+            <input
+              type="text"
+              placeholder={`cap ${capSaved}`}
+              value={capDraft}
+              spellCheck={false}
+              style={{ width: "5.5em", ...(capDraft === "" || validUsd(capDraft) ? {} : { borderColor: "var(--danger, #c00)" }) }}
+              onChange={(e: { target: { value: string } }) => setCapDraft(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder={`auto ${autoSaved}`}
+              value={autoDraft}
+              spellCheck={false}
+              style={{ width: "5.5em", ...(autoDraft === "" || validUsd(autoDraft) ? {} : { borderColor: "var(--danger, #c00)" }) }}
+              onChange={(e: { target: { value: string } }) => setAutoDraft(e.target.value)}
+            />
+            <button
+              className="agent-action"
+              disabled={
                 (capDraft === "" || !validUsd(capDraft) || capDraft === capSaved) &&
-                (autoDraft === "" || !validUsd(autoDraft) || autoDraft === autoSaved),
-              onClick: () => saveX402Numbers(),
-            },
-            "save"
-          )
-        )
-      ),
+                (autoDraft === "" || !validUsd(autoDraft) || autoDraft === autoSaved)
+              }
+              onClick={() => saveX402Numbers()}
+            >
+              save
+            </button>
+          </div>
+        </div>
 
-      Object.keys(evmAddresses).length === 0
-        ? h("p", { className: "settings-hint" }, "no EVM addresses yet — run fez-wallet derive <persona> to mint one, then fund it with USDC")
-        : h(
-            "div",
-            null,
-            ...Object.entries(evmAddresses).map(([who, addr]) =>
-              h(
-                "div",
-                { key: who, className: "skill-row" },
-                h(
-                  "div",
-                  { className: "skill-main" },
-                  h("span", { className: "skill-name" }, who),
-                  h("div", { className: "skill-desc" }, h(AddressRow, { address: addr }))
-                ),
-                h("div", { className: "skill-actions" }, usdcBalances[who] ?? "…")
-              )
-            )
-          ),
+        {Object.keys(evmAddresses).length === 0 ? (
+          <p className="settings-hint">
+            no EVM addresses yet — run fez-wallet derive &lt;persona&gt; to mint one, then fund it with USDC
+          </p>
+        ) : (
+          <div>
+            {Object.entries(evmAddresses).map(([who, addr]) => (
+              <div key={who} className="skill-row">
+                <div className="skill-main">
+                  <span className="skill-name">{who}</span>
+                  <div className="skill-desc">
+                    <AddressRow address={addr} />
+                  </div>
+                </div>
+                <div className="skill-actions">{usdcBalances[who] ?? "…"}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
-      x402Log.length === 0
-        ? h("p", { className: "settings-hint" }, "no x402 payments yet")
-        : h(
-            "div",
-            { style: { overflowX: "auto" } },
-            h(
-              "table",
-              { className: "wallet-ledger", style: { width: "100%", borderCollapse: "collapse" } },
-              h(
-                "thead",
-                null,
-                h(
-                  "tr",
-                  null,
-                  h("th", { style: th }, "time"),
-                  h("th", { style: th }, "agent"),
-                  h("th", { style: { ...th, textAlign: "right" as const } }, "usd"),
-                  h("th", { style: th }, "url"),
-                  h("th", { style: th }, "status"),
-                  h("th", { style: th }, "tx")
-                )
-              ),
-              h(
-                "tbody",
-                null,
-                ...[...x402Log].reverse().map((row, i) =>
-                  h(
-                    "tr",
-                    { key: `${row.ts}-${row.status}-${i}` },
-                    h("td", { style: tdDim, title: row.ts }, ledgerTime(row.ts)),
-                    h("td", { style: td }, row.persona),
-                    h(
-                      "td",
-                      { style: { ...td, textAlign: "right" as const, fontVariantNumeric: "tabular-nums" } },
-                      `$${row.usd.toFixed(2)}`
-                    ),
-                    h("td", { style: td, title: row.url }, h("div", { style: memoBox }, row.url)),
-                    // Status text stays honest: "ambiguous" is a row the
-                    // owner should look at, never silently promoted.
-                    h("td", { style: row.status === "ambiguous" ? td : tdDim }, row.status === "ambiguous" ? "⚠ may have settled" : row.status),
-                    row.txHash
-                      ? h(
-                          "td",
-                          { style: td },
-                          h(
-                            "button",
-                            {
-                              className: "skill-link",
-                              style: { whiteSpace: "nowrap" as const, fontFamily: "var(--font-mono, monospace)" },
-                              title: row.txHash,
-                              onClick: () => void api.openUrl(x402TxLink(row.network, row.txHash!)),
-                            },
-                            shortAddr(row.txHash)
-                          )
-                        )
-                      : h("td", { style: tdDim }, "—")
-                  )
-                )
-              )
-            )
-          )
+        {x402Log.length === 0 ? (
+          <p className="settings-hint">no x402 payments yet</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="wallet-ledger" style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={th}>time</th>
+                  <th style={th}>agent</th>
+                  <th style={{ ...th, textAlign: "right" as const }}>usd</th>
+                  <th style={th}>url</th>
+                  <th style={th}>status</th>
+                  <th style={th}>tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...x402Log].reverse().map((row, i) => (
+                  <tr key={`${row.ts}-${row.status}-${i}`}>
+                    <td style={tdDim} title={row.ts}>
+                      {ledgerTime(row.ts)}
+                    </td>
+                    <td style={td}>{row.persona}</td>
+                    <td style={{ ...td, textAlign: "right" as const, fontVariantNumeric: "tabular-nums" }}>
+                      {`$${row.usd.toFixed(2)}`}
+                    </td>
+                    <td style={td} title={row.url}>
+                      <div style={memoBox}>{row.url}</div>
+                    </td>
+                    {/* Status text stays honest: "ambiguous" is a row the
+                        owner should look at, never silently promoted. */}
+                    <td style={row.status === "ambiguous" ? td : tdDim}>
+                      {row.status === "ambiguous" ? "⚠ may have settled" : row.status}
+                    </td>
+                    {row.txHash ? (
+                      <td style={td}>
+                        <button
+                          className="skill-link"
+                          style={{ whiteSpace: "nowrap" as const, fontFamily: "var(--font-mono, monospace)" }}
+                          title={row.txHash}
+                          onClick={() => void api.openUrl(x402TxLink(row.network, row.txHash!))}
+                        >
+                          {shortAddr(row.txHash)}
+                        </button>
+                      </td>
+                    ) : (
+                      <td style={tdDim}>—</td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     );
   }
 }

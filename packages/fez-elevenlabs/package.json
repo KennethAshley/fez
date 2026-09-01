@@ -7,20 +7,31 @@
   "fez": {
     "type": "extension",
     "parts": {
-      "skill": { "command": "node", "args": ["dist/mcp.js"] },
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ]
+      },
       "gui": "dist/gui.js"
     },
-    "permissions": ["network:api.elevenlabs.io", "network:relay", "publish", "read:channels", "ui"],
+    "permissions": [
+      "network:api.elevenlabs.io",
+      "network:relay",
+      "publish",
+      "read:channels",
+      "ui"
+    ],
     "minFezVersion": "0.2.0"
   },
   "scripts": {
-    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
   "dependencies": {
-    "@fezchat/protocol": "file:../..",
     "@fezchat/media": "file:../fez-media",
+    "@fezchat/protocol": "file:../..",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "nostr-tools": "^2.10.0",
     "zod": "^3.23.0"
@@ -28,9 +39,12 @@
   "devDependencies": {
     "@fezchat/extension-api": "file:../fez-extension-api",
     "@types/node": "^22.0.0",
+    "@types/react": "^19.2.18",
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ]
 }

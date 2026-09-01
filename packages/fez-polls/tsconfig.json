@@ -3,14 +3,27 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "noEmit": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "paths": { "@fezchat/client": ["../fez-client/dist/index.d.ts"] }
+    "paths": {
+      "@fezchat/client": [
+        "../fez-client/dist/index.d.ts"
+      ]
+    },
+    "jsx": "react",
+    "jsxFactory": "h"
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

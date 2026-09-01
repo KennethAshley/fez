@@ -24,7 +24,7 @@ const verbsOf = (source: string): string[] =>
 describe("/repo verb parity across surfaces", () => {
   it("headless and gui accept exactly the same verbs", () => {
     const headless = verbsOf(read("headless.ts"));
-    const gui = verbsOf(read("gui.ts"));
+    const gui = verbsOf(read("gui.tsx"));
     // If this fails: add the missing verb to the OTHER surface (or
     // deliberately remove it from both) — never ship it one-sided.
     expect(gui).toEqual(headless);

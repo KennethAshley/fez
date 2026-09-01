@@ -1,7 +1,7 @@
 import { cloneBase, cloneUrl, repoDoc, REPO_NAME } from "./repo-name.js";
 import { resolveProtect } from "./policy.js";
 import { lineOfRoot, makeLaneBoard } from "./board.js";
-import type { El, GuiExtensionApi, RepoChannelLike } from "@fezchat/extension-api/gui";
+import type { GuiExtensionApi, RepoChannelLike } from "@fezchat/extension-api/gui";
 
 /**
  * fez-git, GUI part — the repos a workspace hosts, without a terminal.
@@ -20,8 +20,9 @@ import type { El, GuiExtensionApi, RepoChannelLike } from "@fezchat/extension-ap
  * OWNER-signed channel, and the refs come from the git transport, which
  * is the actual state rather than an assertion about it.
  *
- * h(), not JSX, so the page keeps ONE React — same reason fez-polls and
- * fez-github do it.
+ * JSX with `--jsx-factory=h` (the shared-React shape): markup reads as
+ * markup, compiles to the same host-React createElement calls — the
+ * page keeps ONE React, same reason fez-polls and fez-github do it.
  */
 
 /** What a repo channel's meta says, read back. */
@@ -66,13 +67,12 @@ export default function activate(api: GuiExtensionApi): void {
   ) {
     api.registerSettingsPanel(
       "Repos",
-      () =>
-        h(
-          "div",
-          { className: "ext-panel" },
-          h("p", null, "This fez-desktop build is older than the fez-git extension."),
-          h("p", { className: "dim" }, "Rebuild and reinstall the app (packages/fez-desktop), then reopen this panel.")
-        ),
+      () => (
+        <div className="ext-panel">
+          <p>This fez-desktop build is older than the fez-git extension.</p>
+          <p className="dim">Rebuild and reinstall the app (packages/fez-desktop), then reopen this panel.</p>
+        </div>
+      ),
       { source: "fez-git" }
     );
     return;
@@ -81,7 +81,7 @@ export default function activate(api: GuiExtensionApi): void {
   /** The advertised git base, or undefined when this relay serves none. */
   const base = (): string | undefined => cloneBase(client.relayInfo());
 
-  function ReposPanel(): El {
+  function ReposPanel(): JSX.Element {
     const [repos, setRepos] = useState<Repo[]>(() =>
       client.channelsFrom("fez-git").map((c) => readRepo(c, base()))
     );
@@ -161,11 +161,14 @@ export default function activate(api: GuiExtensionApi): void {
       width: "100%",
       boxSizing: "border-box",
       display: "block",
-    };
+    } as const;
 
     /** key identifies WHICH button flashed; label is what people read. */
-    const copyButton = (key: string, label: string, text: string) =>
-      h("button", { className: "skill-link", onClick: () => copy(key, text) }, copied === key ? "copied ✓" : label);
+    const copyButton = (key: string, label: string, text: string) => (
+      <button className="skill-link" onClick={() => copy(key, text)}>
+        {copied === key ? "copied ✓" : label}
+      </button>
+    );
 
     /** The two hand-offs a repo has: agents work it, people clone it. */
     const personaSnippet = (repo: Repo) => `repo: ${repo.repo}\n# optional — fence the agent into a directory:\n# scope: [packages/thing]`;
@@ -229,216 +232,185 @@ export default function activate(api: GuiExtensionApi): void {
     }
 
     if (!gitBase) {
-      return h(
-        "div",
-        null,
-        h("div", { className: "manage-section" }, "no git server"),
-        h("p", { className: "settings-hint" }, "This relay does not advertise one."),
-        h(
-          "p",
-          { className: "settings-hint" },
-          "Install ",
-          h("code", null, "@fezchat/git"),
-          " on the relay and start it with ",
-          h("code", null, "--extensions --origin https://your-relay"),
-          ". The origin is what it publishes as the clone URL, so it has to be the address clients actually reach."
-        )
+      return (
+        <div>
+          <div className="manage-section">no git server</div>
+          <p className="settings-hint">This relay does not advertise one.</p>
+          <p className="settings-hint">
+            Install <code>@fezchat/git</code> on the relay and start it with{" "}
+            <code>--extensions --origin https://your-relay</code>. The origin is what it publishes as the clone URL,
+            so it has to be the address clients actually reach.
+          </p>
+        </div>
       );
     }
 
     /** "What now" — a repo exists; here are its two hand-offs. */
-    const nextSteps = (repo: Repo, dismiss: () => void) =>
-      h(
-        "div",
-        { className: "skill-row", style: { flexDirection: "column", alignItems: "stretch", gap: 6 } },
-        h(
-          "div",
-          { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline" } },
-          h("span", { className: "skill-name" }, `#${repo.name} is ready`),
-          h("button", { className: "skill-link", onClick: dismiss }, "done")
-        ),
-        h(
-          "div",
-          { className: "skill-desc" },
-          "Put an agent on it — add ",
-          h("code", null, `repo: ${repo.repo}`),
-          " to a persona ",
-          copyButton(`persona:${repo.repo}`, "copy snippet", personaSnippet(repo))
-        ),
-        h(
-          "div",
-          { className: "skill-desc" },
-          "…or work on it yourself: ",
-          h("code", null, cloneSnippet(repo)),
-          " ",
-          copyButton(`clone:${repo.repo}`, "copy", cloneSnippet(repo))
-        ),
-        h(
-          "div",
-          { className: "skill-desc" },
-          "main is protected — agents push their own branches, every branch becomes a thread in #",
-          repo.name,
-          ", merging is yours."
-        )
-      );
+    const nextSteps = (repo: Repo, dismiss: () => void) => (
+      <div className="skill-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span className="skill-name">{`#${repo.name} is ready`}</span>
+          <button className="skill-link" onClick={dismiss}>
+            done
+          </button>
+        </div>
+        <div className="skill-desc">
+          Put an agent on it — add <code>{`repo: ${repo.repo}`}</code> to a persona{" "}
+          {copyButton(`persona:${repo.repo}`, "copy snippet", personaSnippet(repo))}
+        </div>
+        <div className="skill-desc">
+          …or work on it yourself: <code>{cloneSnippet(repo)}</code> {copyButton(`clone:${repo.repo}`, "copy", cloneSnippet(repo))}
+        </div>
+        <div className="skill-desc">
+          main is protected — agents push their own branches, every branch becomes a thread in #{repo.name}, merging
+          is yours.
+        </div>
+      </div>
+    );
 
-    const repoRow = (repo: Repo) =>
-      h(
-        "div",
-        { key: repo.channelId, className: "skill-row" },
-        h(
-          "div",
-          { className: "skill-main" },
-          h("span", { className: "skill-name" }, `#${repo.name}`),
-          h(
-            "div",
-            { className: "skill-desc" },
-            h("code", null, repo.clone),
-            repo.meta?.upstream ? ` · from ${repo.meta.upstream.replace(/^https?:\/\//, "")}` : null
-          ),
-          editing === repo.channelId
-            ? h(
-                "div",
-                { style: { display: "flex", gap: 6, marginTop: 4 } },
-                h("input", {
-                  className: "manage-input",
-                  style: inputStyle,
-                  value: draft,
-                  placeholder: "main release/*  —  or none",
-                  onChange: (e: { target: { value: string } }) => setDraft(e.target.value),
-                  onKeyDown: (e: { key: string }) => {
-                    if (e.key === "Enter") void saveProtect(repo);
-                    if (e.key === "Escape") setEditing(undefined);
-                  },
-                }),
-                h("button", { className: "agent-action", disabled: busy === repo.channelId, onClick: () => void saveProtect(repo) }, "save"),
-                h("button", { className: "agent-action", onClick: () => setEditing(undefined) }, "cancel")
-              )
-            : h(
-                "div",
-                { className: "skill-desc" },
-                resolveProtect(repo.protect).length === 0
-                  ? "protects nothing — any roster member can push any ref"
-                  : `protects ${resolveProtect(repo.protect).join(", ")} — owners and admins only, fast-forward only`,
-                isOwner
-                  ? h(
-                      "button",
-                      {
-                        className: "skill-link",
-                        onClick: () => {
-                          setEditing(repo.channelId);
-                          setDraft(repo.protect);
-                        },
-                      },
-                      "change"
-                    )
-                  : null
-              )
-        ),
-        h(
-          "div",
-          { className: "skill-actions" },
-          api.personas && personaNames.length > 0
-            ? assigning === repo.channelId
-              ? h(
-                  "span",
-                  null,
-                  ...personaNames.map((name) =>
-                    h(
-                      "button",
-                      { key: name, className: "skill-link", disabled: busy === `assign:${repo.channelId}`, onClick: () => void assignAgent(repo, name) },
-                      `@${name}`
-                    )
-                  ),
-                  h("button", { className: "skill-link", onClick: () => setAssigning(undefined) }, "cancel")
-                )
-              : h("button", { className: "skill-link", onClick: () => setAssigning(repo.channelId) }, "put an agent on it")
-            : null,
-          copyButton(`clone:${repo.repo}`, "clone", cloneSnippet(repo)),
-          copyButton(`persona:${repo.repo}`, "persona", personaSnippet(repo))
-        )
-      );
-
-    return h(
-      "div",
-      null,
-      error ? h("p", { className: "ob-error" }, error) : null,
-      assigned
-        ? h(
-            "p",
-            { className: "settings-hint" },
-            `✓ ${assigned} — on the roster; mention it in the repo's channel to wake it. `,
-            h("button", { className: "skill-link", onClick: () => setAssigned(undefined) }, "ok")
-          )
-        : null,
-      created ? nextSteps(created, () => setCreated(undefined)) : null,
-
-      repos.length > 0 ? h("div", { className: "manage-section" }, "repos") : null,
-      ...repos.map(repoRow),
-
-      isOwner
-        ? h(
-            "div",
-            null,
-            h("div", { className: "manage-section" }, "start a new project"),
-            h(
-              "p",
-              { className: "settings-hint" },
-              "Opens the repo's channel now; the repository appears on the first push — an agent can make the first commit into an empty repo."
-            ),
-            h(
-              "div",
-              { className: "settings-field", style: { display: "flex", gap: 6 } },
-              h("input", {
-                className: "manage-input",
-                style: inputStyle,
-                value: name,
-                placeholder: "repo name",
-                spellCheck: false,
-                onChange: (e: { target: { value: string } }) => setName(e.target.value),
-                onKeyDown: (e: { key: string }) => {
-                  if (e.key === "Enter") void create();
-                },
-              }),
-              h(
-                "button",
-                { className: "agent-action", disabled: !name.trim() || busy === "create", onClick: () => void create() },
-                busy === "create" ? "opening…" : "create"
-              )
-            ),
-
-            h("div", { className: "manage-section" }, "bring an existing project"),
-            h(
-              "p",
-              { className: "settings-hint" },
-              "Works for code on your disk or a GitHub URL. One command opens the channel, adds a ",
-              h("code", null, "fez"),
-              " remote and pushes — GitHub (origin) is untouched and stays where you publish."
-            ),
-            h("input", {
-              className: "manage-input",
-              style: inputStyle,
-              value: bringUrl,
-              placeholder: "https://github.com/owner/repo  (optional — blank = the repo you are in)",
-              spellCheck: false,
-              onChange: (e: { target: { value: string } }) => setBringUrl(e.target.value),
-            }),
-            h(
-              "p",
-              { className: "settings-hint" },
-              "Run in your terminal",
-              bringUrl.trim() ? "" : ", inside the project",
-              ": ",
-              h("code", null, adoptCommand),
-              " ",
-              copyButton("adopt", "copy", adoptCommand)
+    const repoRow = (repo: Repo) => (
+      <div key={repo.channelId} className="skill-row">
+        <div className="skill-main">
+          <span className="skill-name">{`#${repo.name}`}</span>
+          <div className="skill-desc">
+            <code>{repo.clone}</code>
+            {repo.meta?.upstream ? ` · from ${repo.meta.upstream.replace(/^https?:\/\//, "")}` : null}
+          </div>
+          {editing === repo.channelId ? (
+            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+              <input
+                className="manage-input"
+                style={inputStyle}
+                value={draft}
+                placeholder="main release/*  —  or none"
+                onChange={(e: { target: { value: string } }) => setDraft(e.target.value)}
+                onKeyDown={(e: { key: string }) => {
+                  if (e.key === "Enter") void saveProtect(repo);
+                  if (e.key === "Escape") setEditing(undefined);
+                }}
+              />
+              <button className="agent-action" disabled={busy === repo.channelId} onClick={() => void saveProtect(repo)}>
+                save
+              </button>
+              <button className="agent-action" onClick={() => setEditing(undefined)}>
+                cancel
+              </button>
+            </div>
+          ) : (
+            <div className="skill-desc">
+              {resolveProtect(repo.protect).length === 0
+                ? "protects nothing — any roster member can push any ref"
+                : `protects ${resolveProtect(repo.protect).join(", ")} — owners and admins only, fast-forward only`}
+              {isOwner ? (
+                <button
+                  className="skill-link"
+                  onClick={() => {
+                    setEditing(repo.channelId);
+                    setDraft(repo.protect);
+                  }}
+                >
+                  change
+                </button>
+              ) : null}
+            </div>
+          )}
+        </div>
+        <div className="skill-actions">
+          {api.personas && personaNames.length > 0 ? (
+            assigning === repo.channelId ? (
+              <span>
+                {personaNames.map((name) => (
+                  <button
+                    key={name}
+                    className="skill-link"
+                    disabled={busy === `assign:${repo.channelId}`}
+                    onClick={() => void assignAgent(repo, name)}
+                  >
+                    {`@${name}`}
+                  </button>
+                ))}
+                <button className="skill-link" onClick={() => setAssigning(undefined)}>
+                  cancel
+                </button>
+              </span>
+            ) : (
+              <button className="skill-link" onClick={() => setAssigning(repo.channelId)}>
+                put an agent on it
+              </button>
             )
-          )
-        : h("p", { className: "settings-hint" }, "Only the workspace owner can open repos or change protection."),
+          ) : null}
+          {copyButton(`clone:${repo.repo}`, "clone", cloneSnippet(repo))}
+          {copyButton(`persona:${repo.repo}`, "persona", personaSnippet(repo))}
+        </div>
+      </div>
+    );
+
+    return (
+      <div>
+        {error ? <p className="ob-error">{error}</p> : null}
+        {assigned ? (
+          <p className="settings-hint">
+            {`✓ ${assigned} — on the roster; mention it in the repo's channel to wake it. `}
+            <button className="skill-link" onClick={() => setAssigned(undefined)}>
+              ok
+            </button>
+          </p>
+        ) : null}
+        {created ? nextSteps(created, () => setCreated(undefined)) : null}
+
+        {repos.length > 0 ? <div className="manage-section">repos</div> : null}
+        {repos.map(repoRow)}
+
+        {isOwner ? (
+          <div>
+            <div className="manage-section">start a new project</div>
+            <p className="settings-hint">
+              Opens the repo's channel now; the repository appears on the first push — an agent can make the first
+              commit into an empty repo.
+            </p>
+            <div className="settings-field" style={{ display: "flex", gap: 6 }}>
+              <input
+                className="manage-input"
+                style={inputStyle}
+                value={name}
+                placeholder="repo name"
+                spellCheck={false}
+                onChange={(e: { target: { value: string } }) => setName(e.target.value)}
+                onKeyDown={(e: { key: string }) => {
+                  if (e.key === "Enter") void create();
+                }}
+              />
+              <button className="agent-action" disabled={!name.trim() || busy === "create"} onClick={() => void create()}>
+                {busy === "create" ? "opening…" : "create"}
+              </button>
+            </div>
+
+            <div className="manage-section">bring an existing project</div>
+            <p className="settings-hint">
+              Works for code on your disk or a GitHub URL. One command opens the channel, adds a <code>fez</code>{" "}
+              remote and pushes — GitHub (origin) is untouched and stays where you publish.
+            </p>
+            <input
+              className="manage-input"
+              style={inputStyle}
+              value={bringUrl}
+              placeholder="https://github.com/owner/repo  (optional — blank = the repo you are in)"
+              spellCheck={false}
+              onChange={(e: { target: { value: string } }) => setBringUrl(e.target.value)}
+            />
+            <p className="settings-hint">
+              Run in your terminal{bringUrl.trim() ? "" : ", inside the project"}: <code>{adoptCommand}</code>{" "}
+              {copyButton("adopt", "copy", adoptCommand)}
+            </p>
+          </div>
+        ) : (
+          <p className="settings-hint">Only the workspace owner can open repos or change protection.</p>
+        )}
+      </div>
     );
   }
 
-  api.registerSettingsPanel("Repos", () => h(ReposPanel), { source: "fez-git" });
+  api.registerSettingsPanel("Repos", () => <ReposPanel />, { source: "fez-git" });
 
   // Every ⑂ thread gets the lane board above its replies — the line's
   // lanes as live rows (journal-backed), each with watch/diff/merge.
@@ -468,15 +440,15 @@ export default function activate(api: GuiExtensionApi): void {
           .filter((name): name is string => !!name);
         const working = client.workingAgents();
         const busy = agents.filter((name) => working.has(name));
-        return h(
-          "div",
-          { className: "line-chip" },
-          h(
-            "span",
-            { className: "skill-desc" },
-            stubs.length === 0 ? "no lanes yet" : `${stubs.length} lane(s)${busy.length ? ` · ⚙ ${busy.join(", ")}` : ""}`
-          ),
-          h("button", { className: "skill-link", onClick: () => api.openThread(channelId, msgId) }, "open the board →")
+        return (
+          <div className="line-chip">
+            <span className="skill-desc">
+              {stubs.length === 0 ? "no lanes yet" : `${stubs.length} lane(s)${busy.length ? ` · ⚙ ${busy.join(", ")}` : ""}`}
+            </span>
+            <button className="skill-link" onClick={() => api.openThread(channelId, msgId)}>
+              open the board →
+            </button>
+          </div>
         );
       }
     );

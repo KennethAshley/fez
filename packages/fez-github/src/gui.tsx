@@ -1,6 +1,6 @@
 import { createOAuthDeviceAuth } from "@octokit/auth-oauth-device";
 import { DEFAULT_CLIENT_ID, APP_INSTALL_URL, verificationUrl } from "./app-id.js";
-import type { El, GuiExtensionAPI } from "./gui-types.js";
+import type { GuiExtensionAPI } from "./gui-types.js";
 
 /**
  * fez-github, GUI part — connect an account and pick repos, without a
@@ -25,7 +25,9 @@ import type { El, GuiExtensionAPI } from "./gui-types.js";
  * so the two halves share custody without either knowing about the
  * other.
  *
- * h(), not JSX, so the page keeps ONE React — same reason fez-polls does.
+ * JSX with `--jsx-factory=h` (the shared-React shape): markup reads as
+ * markup, compiles to the same host-React createElement calls — the
+ * page keeps ONE React, same reason fez-polls does.
  */
 
 interface Available {
@@ -46,7 +48,7 @@ export default function activate(api: GuiExtensionAPI): void {
   const { useState, useEffect, useCallback } = api.React;
   const { client, secrets, openUrl } = api;
 
-  function GitHubPanel(): El {
+  function GitHubPanel(): JSX.Element {
     const [config, setConfig] = useState<Config>({ repos: [] });
     const [connected, setConnected] = useState(false);
     const [checking, setChecking] = useState(true);
@@ -196,120 +198,111 @@ export default function activate(api: GuiExtensionAPI): void {
       });
     }
 
-    if (checking) return h("div", { className: "settings-hint" }, "checking…");
+    if (checking) return <div className="settings-hint">checking…</div>;
 
     // ── not connected ────────────────────────────────────────────────
     if (!connected) {
-      return h(
-        "div",
-        null,
-        h(
-          "div",
-          { className: "settings-hint" },
-          "fez reads issues and pull requests through a GitHub App you install on the repos you choose — ",
-          "read-only, and a repo you don't install it on is one fez cannot see."
-        ),
-        code
-          ? h(
-              "div",
-              { className: "gh-code" },
-              h("div", { className: "gh-code-value" }, code.userCode),
-              h(
-                "div",
-                { className: "settings-hint" },
-                copied ? "copied — " : "",
-                "your browser is open at ",
-                h("button", { className: "skill-link", onClick: () => void openUrl(code.url) }, "github.com/login/device"),
-                ". Approve there and this panel connects itself."
-              )
-            )
-          : h(
-              "button",
-              { className: "agent-action", disabled: !!busy, onClick: () => void connect() },
-              busy ? "connecting…" : "Connect GitHub"
-            ),
-        busy ? h("div", { className: "settings-hint" }, busy) : null,
-        error ? h("div", { className: "ob-error" }, error) : null
+      return (
+        <div>
+          <div className="settings-hint">
+            fez reads issues and pull requests through a GitHub App you install on the repos you choose — read-only,
+            and a repo you don't install it on is one fez cannot see.
+          </div>
+          {code ? (
+            <div className="gh-code">
+              <div className="gh-code-value">{code.userCode}</div>
+              <div className="settings-hint">
+                {copied ? "copied — " : ""}
+                your browser is open at{" "}
+                <button className="skill-link" onClick={() => void openUrl(code.url)}>
+                  github.com/login/device
+                </button>
+                . Approve there and this panel connects itself.
+              </div>
+            </div>
+          ) : (
+            <button className="agent-action" disabled={!!busy} onClick={() => void connect()}>
+              {busy ? "connecting…" : "Connect GitHub"}
+            </button>
+          )}
+          {busy ? <div className="settings-hint">{busy}</div> : null}
+          {error ? <div className="ob-error">{error}</div> : null}
+        </div>
       );
     }
 
     // ── connected ────────────────────────────────────────────────────
     const available = config.available ?? [];
-    return h(
-      "div",
-      null,
-      h("div", { className: "skill-author" }, `connected as ${config.login ?? "GitHub"} · read-only`),
-      h(
-        "div",
-        { className: "settings-hint" },
-        "Each repo you watch becomes a channel; every issue and pull request is a thread in it. ",
-        "Only what changes gets posted — you won't get its history."
-      ),
-      available.length === 0
-        ? h(
-            "div",
-            { className: "settings-hint" },
-            "No repositories yet — the app isn't installed anywhere fez can see. ",
-            h("button", { className: "skill-link", onClick: () => void openUrl(APP_INSTALL_URL) }, "Install it on a repo →"),
-            " then this list fills in within a few minutes."
-          )
-        : available.map((row) => {
+    return (
+      <div>
+        <div className="skill-author">{`connected as ${config.login ?? "GitHub"} · read-only`}</div>
+        <div className="settings-hint">
+          Each repo you watch becomes a channel; every issue and pull request is a thread in it. Only what changes
+          gets posted — you won't get its history.
+        </div>
+        {available.length === 0 ? (
+          <div className="settings-hint">
+            No repositories yet — the app isn't installed anywhere fez can see.{" "}
+            <button className="skill-link" onClick={() => void openUrl(APP_INSTALL_URL)}>
+              Install it on a repo →
+            </button>{" "}
+            then this list fills in within a few minutes.
+          </div>
+        ) : (
+          available.map((row) => {
             const watching = config.repos.includes(row.repo);
-            return h(
-              "div",
-              { key: row.repo, className: "skill-row" },
-              h(
-                "div",
-                { className: "skill-main" },
-                h(
-                  "span",
-                  { className: "skill-name" },
-                  row.repo,
-                  row.private ? h("span", { className: "role-tag", title: "private repo" }, "private") : null
-                ),
-                watching
-                  ? h("span", { className: "skill-desc" }, `#${(row.repo.split("/")[1] ?? row.repo).toLowerCase()}`)
-                  : null
-              ),
-              h(
-                "div",
-                { className: "skill-actions" },
-                watching
-                  ? h(
-                      "button",
-                      {
-                        className: config.triage?.includes(row.repo) ? "mini on" : "mini",
-                        title:
-                          "Ask @fez who should take each NEW issue and pull request. " +
-                          "Costs an orchestrator turn per item, plus whatever the agent it picks then does.",
-                        onClick: () => toggleTriage(row.repo),
-                      },
-                      config.triage?.includes(row.repo) ? "triage on" : "triage off"
-                    )
-                  : null,
-                h(
-                  "button",
-                  {
-                    className: watching ? "mini" : "agent-action",
-                    title: watching ? "stop watching — the channel and everything in it stays" : undefined,
-                    onClick: () => toggleWatch(row.repo),
-                  },
-                  watching ? "watching" : "watch"
-                )
-              )
+            return (
+              <div key={row.repo} className="skill-row">
+                <div className="skill-main">
+                  <span className="skill-name">
+                    {row.repo}
+                    {row.private ? (
+                      <span className="role-tag" title="private repo">
+                        private
+                      </span>
+                    ) : null}
+                  </span>
+                  {watching ? (
+                    <span className="skill-desc">{`#${(row.repo.split("/")[1] ?? row.repo).toLowerCase()}`}</span>
+                  ) : null}
+                </div>
+                <div className="skill-actions">
+                  {watching ? (
+                    <button
+                      className={config.triage?.includes(row.repo) ? "mini on" : "mini"}
+                      title={
+                        "Ask @fez who should take each NEW issue and pull request. " +
+                        "Costs an orchestrator turn per item, plus whatever the agent it picks then does."
+                      }
+                      onClick={() => toggleTriage(row.repo)}
+                    >
+                      {config.triage?.includes(row.repo) ? "triage on" : "triage off"}
+                    </button>
+                  ) : null}
+                  <button
+                    className={watching ? "mini" : "agent-action"}
+                    title={watching ? "stop watching — the channel and everything in it stays" : undefined}
+                    onClick={() => toggleWatch(row.repo)}
+                  >
+                    {watching ? "watching" : "watch"}
+                  </button>
+                </div>
+              </div>
             );
-          }),
-      h(
-        "div",
-        { className: "settings-hint" },
-        h("button", { className: "skill-link", onClick: () => void openUrl(APP_INSTALL_URL) }, "Add or remove repositories on GitHub →")
-      ),
-      error ? h("div", { className: "ob-error" }, error) : null
+          })
+        )}
+        <div className="settings-hint">
+          <button className="skill-link" onClick={() => void openUrl(APP_INSTALL_URL)}>
+            Add or remove repositories on GitHub →
+          </button>
+        </div>
+        {error ? <div className="ob-error">{error}</div> : null}
+      </div>
     );
   }
 
   // The `source` is what ties this panel to the channels the bridge
   // opens: the rail groups by it and offers a settings button that
   // renders whatever panel claims it, without knowing what GitHub is.
-  api.registerSettingsPanel("fez-github", () => h(GitHubPanel), { source: "github" });
+  api.registerSettingsPanel("fez-github", () => <GitHubPanel />, { source: "github" });
 }

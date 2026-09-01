@@ -3,7 +3,10 @@
  * Renders any poll message as a card: option buttons (vote = reaction,
  * change-of-vote swaps your reaction), live member-only tallies, and a
  * closed state with the winner. Also registers /poll for the composer.
- * Uses api.React (h) so the page keeps one React.
+ *
+ * JSX with `--jsx-factory=h` (the shared-React shape): the markup reads
+ * as markup while the compiled output is the same host-React
+ * createElement calls — the page keeps one React, nothing bundled.
  */
 
 import { formatPoll, parsePoll, parsePollCommand, tallyPoll, OPTION_EMOJI } from "./format.js";
@@ -76,33 +79,29 @@ export default function activate(api: GuiApi): void {
         if (!mine.has(target)) await client.toggleReaction(channelId, msgId, target);
       };
 
-      return h(
-        "div",
-        { className: "poll-card" },
-        h("div", { className: "poll-question" }, `📊 ${poll.question}`),
-        ...poll.options.map((option, index) =>
-          h(
-            "button",
-            {
-              key: index,
-              className: `poll-option${mine.has(OPTION_EMOJI[index]) ? " mine" : ""}${closed && tally.winner === index ? " winner" : ""}`,
-              disabled: closed,
-              onClick: () => void vote(index),
-            },
-            h("span", { className: "poll-option-label" }, `${OPTION_EMOJI[index]} ${option}`),
-            h("span", { className: "poll-bar", style: { width: `${(tally.counts[index] / total) * 100}%` } }),
-            h("span", { className: "poll-count" }, String(tally.counts[index]))
-          )
-        ),
-        h(
-          "div",
-          { className: "poll-meta" },
-          closed
-            ? tally.winner !== undefined
-              ? `closed — "${poll.options[tally.winner]}" wins (${tally.voters} voter${tally.voters === 1 ? "" : "s"})`
-              : `closed — no winner (${tally.voters} voter${tally.voters === 1 ? "" : "s"}${tally.counts.some((c) => c > 0) ? ", tie" : ""})`
-            : `${tally.voters} vote${tally.voters === 1 ? "" : "s"} · members only · closes ${poll.closesAtMs ? new Date(poll.closesAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "never"}${tally.ambiguous ? ` · ${tally.ambiguous} ambiguous (multi-vote) excluded` : ""}`
-        )
+      return (
+        <div className="poll-card">
+          <div className="poll-question">📊 {poll.question}</div>
+          {poll.options.map((option, index) => (
+            <button
+              key={index}
+              className={`poll-option${mine.has(OPTION_EMOJI[index]) ? " mine" : ""}${closed && tally.winner === index ? " winner" : ""}`}
+              disabled={closed}
+              onClick={() => void vote(index)}
+            >
+              <span className="poll-option-label">{`${OPTION_EMOJI[index]} ${option}`}</span>
+              <span className="poll-bar" style={{ width: `${(tally.counts[index] / total) * 100}%` }} />
+              <span className="poll-count">{String(tally.counts[index])}</span>
+            </button>
+          ))}
+          <div className="poll-meta">
+            {closed
+              ? tally.winner !== undefined
+                ? `closed — "${poll.options[tally.winner]}" wins (${tally.voters} voter${tally.voters === 1 ? "" : "s"})`
+                : `closed — no winner (${tally.voters} voter${tally.voters === 1 ? "" : "s"}${tally.counts.some((c) => c > 0) ? ", tie" : ""})`
+              : `${tally.voters} vote${tally.voters === 1 ? "" : "s"} · members only · closes ${poll.closesAtMs ? new Date(poll.closesAtMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "never"}${tally.ambiguous ? ` · ${tally.ambiguous} ambiguous (multi-vote) excluded` : ""}`}
+          </div>
+        </div>
       );
     }
   );

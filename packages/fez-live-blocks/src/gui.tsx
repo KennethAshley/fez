@@ -11,6 +11,9 @@
  * block, and answer in the thread. So a live block is just a standing
  * request that anyone can re-fire, and every refresh is a signed edit
  * with an audit trail.
+ *
+ * JSX with `--jsx-factory=h` (the shared-React shape): markup reads as
+ * markup, compiles to the same host-React createElement calls.
  */
 
 import { ago, parseLiveBlock, formatLiveBlock, parseLiveCommand, LIVE_LANG } from "./format.js";
@@ -66,24 +69,24 @@ export default function activate(api: GuiApi): void {
       );
     };
 
-    return h(
-      "div",
-      { className: `live-block${stale ? " stale" : ""}` },
-      h(
-        "div",
-        { className: "live-block-head" },
-        h("span", { className: "live-block-dot" }, "◉"),
-        h("span", { className: "live-block-agent" }, block.agent ? `@${block.agent}` : "unassigned"),
-        h(
-          "span",
-          { className: "live-block-meta" },
-          `${ago(block.updatedAt, Date.now())}${block.everyMs ? ` · every ${info.match(/every=(\S+)/)?.[1] ?? ""}` : " · manual"}`
-        ),
-        h("button", { className: "live-block-refresh", title: "ask the agent to update this now", onClick: () => void refresh() }, "↻")
-      ),
-      block.output
-        ? h("div", { className: "live-block-output" }, block.output)
-        : h("div", { className: "live-block-empty" }, `${block.prompt} — no output yet; ↻ asks @${block.agent ?? "an agent"} to fill it in.`)
+    return (
+      <div className={`live-block${stale ? " stale" : ""}`}>
+        <div className="live-block-head">
+          <span className="live-block-dot">◉</span>
+          <span className="live-block-agent">{block.agent ? `@${block.agent}` : "unassigned"}</span>
+          <span className="live-block-meta">
+            {`${ago(block.updatedAt, Date.now())}${block.everyMs ? ` · every ${info.match(/every=(\S+)/)?.[1] ?? ""}` : " · manual"}`}
+          </span>
+          <button className="live-block-refresh" title="ask the agent to update this now" onClick={() => void refresh()}>
+            ↻
+          </button>
+        </div>
+        {block.output ? (
+          <div className="live-block-output">{block.output}</div>
+        ) : (
+          <div className="live-block-empty">{`${block.prompt} — no output yet; ↻ asks @${block.agent ?? "an agent"} to fill it in.`}</div>
+        )}
+      </div>
     );
   });
 

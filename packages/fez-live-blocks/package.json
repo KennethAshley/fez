@@ -2,7 +2,7 @@
   "name": "@fezchat/live-blocks",
   "version": "0.1.0",
   "private": true,
-  "description": "Live blocks for fez docs \u2014 a markdown block an agent keeps up to date. Refresh is a doc comment, so every update is a signed edit with an audit trail.",
+  "description": "Live blocks for fez docs — a markdown block an agent keeps up to date. Refresh is a doc comment, so every update is a signed edit with an audit trail.",
   "type": "module",
   "fez": {
     "type": "extension",
@@ -24,6 +24,7 @@
     "check": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/react": "^19.2.18",
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0"
   }

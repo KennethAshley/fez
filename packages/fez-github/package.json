@@ -21,7 +21,7 @@
     ]
   },
   "scripts": {
-    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/connect.ts --bundle --format=esm --platform=node --outfile=dist/connect.js && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js",
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/connect.ts --bundle --format=esm --platform=node --outfile=dist/connect.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js",
     "check": "tsc --noEmit"
   },
   "dependencies": {
@@ -32,5 +32,8 @@
   },
   "bin": {
     "fez-github": "dist/connect.js"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18"
   }
 }

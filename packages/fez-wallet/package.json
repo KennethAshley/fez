@@ -37,7 +37,7 @@
     "minFezVersion": "0.2.0"
   },
   "scripts": {
-    "build": "esbuild src/mcp.ts src/cli.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js && esbuild src/tools.ts --bundle --format=esm --platform=node --outfile=dist/tools.js && tsc -p tsconfig.types.json",
+    "build": "esbuild src/mcp.ts src/cli.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/tools.ts --bundle --format=esm --platform=node --outfile=dist/tools.js && tsc -p tsconfig.types.json",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
@@ -59,6 +59,7 @@
   },
   "devDependencies": {
     "@fezchat/extension-api": "file:../fez-extension-api",
+    "@types/react": "^19.2.18",
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
