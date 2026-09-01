@@ -919,7 +919,7 @@ function HarnessStep({
         </div>
 
         <button
-          className={`ob-brain ${claude?.installed ? "" : "unavailable"}`}
+          className={`ob-brain ${claude?.installed ? "" : "unavailable"} ${!claude || settingUp ? "working" : ""}`}
           disabled={settingUp}
           onClick={() => {
             if (!claude) return; // still probing — do nothing until we know
@@ -938,7 +938,7 @@ function HarnessStep({
         >
           <span className="ob-brain-name">Claude Code</span>
           {!claude ? (
-            <span className="ob-brain-pill">CHECKING…</span>
+            <span className="ob-brain-pill working"><span className="ob-brain-spin">⚙</span>CHECKING…</span>
           ) : !claude.installed ? (
             <>
               <span className="ob-brain-pill">INSTALL</span>
@@ -961,8 +961,8 @@ function HarnessStep({
             </>
           ) : settingUp ? (
             <>
-              <span className="ob-brain-pill">SETTING UP…</span>
-              <span className="ob-brain-hint">first-time bridge install (~30s) — one time only</span>
+              <span className="ob-brain-pill working"><span className="ob-brain-spin">⚙</span>SETTING UP…</span>
+              <span className="ob-brain-hint">downloading the bridge runtime (~50MB, tens of seconds) — one time only</span>
             </>
           ) : claude.adapterReady ? (
             <>

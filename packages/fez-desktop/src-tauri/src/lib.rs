@@ -603,41 +603,87 @@ fn harness_search_dirs() -> Vec<String> {
 /// separate — "installed" (the CLI exists) and "signed in" (its auth
 /// probe says so) — plus whether fez's managed adapter is runnable.
 /// READY may only be claimed when all three hold.
-#[tauri::command]
-fn claude_brain_status() -> Result<String, String> {
-    let dirs = harness_search_dirs();
-    let claude = dirs
-        .iter()
-        .map(|d| std::path::Path::new(d).join("claude"))
-        .find(|p| p.is_file());
-    let installed = claude.is_some();
-    let authed = match &claude {
-        Some(path) => {
-            // 10s kill deadline, Buzz's number — a hung probe must not
-            // hang onboarding.
-            match Command::new(path).args(["auth", "status"]).output() {
-                Ok(out) => managed_node::parse_claude_auth(&String::from_utf8_lossy(&out.stdout))
-                    .or_else(|| managed_node::parse_claude_auth(&String::from_utf8_lossy(&out.stderr)))
-                    .unwrap_or(false),
-                Err(_) => false,
+/// Run `claude auth status` with a REAL 10s kill deadline (Buzz's
+/// number). The old version documented the deadline and never had one —
+/// a bare .output() waits forever on a hung CLI. Small output only:
+/// reading the pipes after exit is safe because auth-status JSON is far
+/// below the pipe buffer.
+fn probe_claude_auth(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    use std::process::Stdio;
+    let child = Command::new(path)
+        .args(["auth", "status"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let Ok(mut child) = child else { return false };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
             }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(_) => return false,
         }
-        None => false,
-    };
-    Ok(serde_json::json!({
-        "installed": installed,
-        "authed": authed,
-        "adapterReady": managed_node::adapter_ready(),
+    }
+    let mut out = String::new();
+    if let Some(mut so) = child.stdout.take() {
+        let _ = so.read_to_string(&mut out);
+    }
+    let mut err = String::new();
+    if let Some(mut se) = child.stderr.take() {
+        let _ = se.read_to_string(&mut err);
+    }
+    managed_node::parse_claude_auth(&out)
+        .or_else(|| managed_node::parse_claude_auth(&err))
+        .unwrap_or(false)
+}
+
+/// async, deliberately: a sync Tauri v2 command runs ON THE MAIN THREAD,
+/// and this one shells out to `claude auth status`. Sync, it froze the
+/// event loop for the probe's whole runtime — entering the harness step
+/// beachballed the window before the CHECKING pill could even paint.
+#[tauri::command]
+async fn claude_brain_status() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let dirs = harness_search_dirs();
+        let claude = dirs
+            .iter()
+            .map(|d| std::path::Path::new(d).join("claude"))
+            .find(|p| p.is_file());
+        let installed = claude.is_some();
+        let authed = claude.as_deref().map(probe_claude_auth).unwrap_or(false);
+        serde_json::json!({
+            "installed": installed,
+            "authed": authed,
+            "adapterReady": managed_node::adapter_ready(),
+        })
+        .to_string()
     })
-    .to_string())
+    .await
+    .map_err(|e| format!("status probe panicked: {e}"))
 }
 
 /// Provision the private node runtime + the Claude ACP adapter — the
 /// managed-npm decision (see managed_node.rs). First run downloads and
 /// takes tens of seconds; the brain card owns the spinner.
+/// async for the same main-thread reason as claude_brain_status, and
+/// with far higher stakes: this downloads a ~50MB node runtime and runs
+/// `npm install`. As a sync command it parked ALL of that on the main
+/// thread — the click appeared to do nothing (React never re-rendered
+/// the SETTING UP state), the window beachballed, and on a slow network
+/// macOS reported the app as not responding. The managed_node doc
+/// comment always said "called from an async Tauri command"; now true.
 #[tauri::command]
-fn ensure_claude_adapter() -> Result<String, String> {
-    managed_node::ensure_claude_adapter()
+async fn ensure_claude_adapter() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(managed_node::ensure_claude_adapter)
+        .await
+        .map_err(|e| format!("setup task panicked: {e}"))?
 }
 
 /// Executable, not merely present — a copy that landed without its exec

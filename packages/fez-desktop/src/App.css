@@ -3662,6 +3662,13 @@ button.ob-brain:active { transform: translateY(1px); }
   border: 1px solid var(--hairline); color: var(--fg-dim);
 }
 .ob-brain-pill.ready { border-color: var(--accent); color: var(--accent); }
+/* The in-flight states. A card doing work must LOOK like it the instant
+   the click lands — "nothing happens when I click" was the report that
+   added these (the work itself now runs off the main thread, so the
+   busy frame actually gets to paint). */
+.ob-brain.working { border-color: var(--accent); }
+.ob-brain-pill.working { border-color: var(--accent); color: var(--accent); }
+.ob-brain-spin { display: inline-block; animation: spin 2s linear infinite; margin-right: 4px; }
 .ob-brain-hint { flex-basis: 100%; font-size: 12px; color: var(--fg-dim); }
 .ob-brain-hint a { color: var(--accent); }
 .ob-brain-auth { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
