@@ -90,7 +90,7 @@ export default function ChannelInfo({
             message, which read as a misalignment rather than a hint. */}
         <div className="channel-info-bar">
           <button className="channel-info-toggle" onClick={() => { setDraft(`# ${channelName}\n\n`); setEditing(true); }}>
-            add channel info — what everyone here should know
+            <span className="channel-info-glyph">≡</span> add channel info — what everyone here should know
           </button>
         </div>
       </div>
@@ -112,10 +112,27 @@ export default function ChannelInfo({
   return (
     <div className={open || editing ? "channel-info open" : "channel-info"}>
       <div className="channel-info-bar">
-        <button className="channel-info-toggle" onClick={() => setOpen(!open)}>
-          <span className="channel-info-caret">{open ? "▾" : "▸"}</span> channel info
-          {!open && firstLine && <span className="channel-info-peek">{firstLine.slice(0, 90)}</span>}
-          {!open && pins.length > 0 && <span className="channel-info-count">⚑ {pins.length}</span>}
+        {/* Collapsed, the room's one subtitle line carries the DOC's first
+            line — what the room is for — not the system's name for the
+            widget. The name lives where system names belong: as the
+            expanded state's section heading (mono caps, hairline running
+            out — the app's label grammar), and as the hover hint that
+            fades in on the collapsed line, the rail's reveal idiom. */}
+        <button className="channel-info-toggle" onClick={() => setOpen(!open)} title="channel info">
+          {open ? (
+            <>
+              <span className="channel-info-caret">▾</span>
+              <span className="channel-info-label">channel info</span>
+              <span className="channel-info-rule" />
+            </>
+          ) : (
+            <>
+              <span className="channel-info-glyph">≡</span>
+              <span className="channel-info-peek">{firstLine ?? "channel info"}</span>
+              {pins.length > 0 && <span className="channel-info-count">⚑ {pins.length}</span>}
+              <span className="channel-info-hint">channel info ▾</span>
+            </>
+          )}
         </button>
         {(open || editing) && !editing && (
           <button

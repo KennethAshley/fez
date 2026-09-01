@@ -197,6 +197,7 @@ body {
   border-bottom-color: var(--hairline);
   position: relative;
 }
+.topbar-row .hash { color: var(--brand); }
 .topbar-row {
   padding: 12px 18px 0;
   font-weight: 600; display: flex; align-items: center; gap: 8px;
@@ -2794,7 +2795,7 @@ button.author:hover { text-decoration: underline; }
 
 /* ── channel info: the channel's doc + pins, always at hand ── */
 .channel-info { flex: none; }
-.channel-info.open { border-top: 1px solid var(--hairline); }
+.channel-info.open { border-top: 0; }
 /* An unwritten channel doc is a quiet invitation, not a section: no
    rule under it, and it should not push the first message down. */
 .channel-info.empty { border-bottom: 0; }
@@ -2814,11 +2815,29 @@ button.author:hover { text-decoration: underline; }
 }
 .channel-info-toggle:hover { color: var(--fg); }
 .channel-info-caret { width: 10px; flex: none; }
+/* The page glyph — the same ≡ the topbar's doc button wears, so one
+   symbol keeps one meaning. Warms with the line on hover. */
+.channel-info-glyph { flex: none; color: var(--fg-dim); opacity: 0.8; }
+.channel-info-toggle:hover .channel-info-glyph { color: var(--accent); opacity: 1; }
 .channel-info-peek {
   color: var(--fg-dim); opacity: 0.75; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-family: var(--font-sans);
 }
-.channel-info-count { margin-left: auto; flex: none; color: var(--yellow); }
+.channel-info-toggle:hover .channel-info-peek { opacity: 1; }
+/* Open state: the system's name as a section heading — mono caps with
+   the hairline running out to the edge, the app's label grammar. */
+.channel-info-label { flex: none; text-transform: uppercase; letter-spacing: 0.08em; font-size: 10.5px; }
+.channel-info-rule { flex: 1; height: 1px; background: var(--hairline); }
+/* Collapsed affordance: the name fades in at the line's end on hover,
+   the rail's reveal idiom — content first, chrome on approach. */
+.channel-info-hint {
+  flex: none; margin-left: auto; padding-left: 10px; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-dim);
+  opacity: 0; transition: opacity 110ms ease;
+}
+.channel-info-toggle:hover .channel-info-hint, .channel-info-toggle:focus-visible .channel-info-hint { opacity: 0.9; }
+@media (prefers-reduced-motion: reduce) { .channel-info-hint { transition: none; } }
+.channel-info-count { margin-left: 10px; flex: none; color: var(--yellow); }
 /* edit/write is a secondary action — the rail's idiom: hover or focus. */
 .channel-info-bar .mini { opacity: 0; transition: opacity 110ms ease; }
 .channel-info-bar:hover .mini, .channel-info-bar:focus-within .mini { opacity: 1; }
