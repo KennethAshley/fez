@@ -9,7 +9,7 @@ import path from "node:path";
  * no silent overwrites in either direction, validation gates approval,
  * draft-meta never leaks into the live persona.
  */
-const { writeDraft, listDrafts, approveDraft, rejectDraft } = await import("../../../dist/persona-drafts.js");
+const { writeDraft, listDrafts, approveDraft, rejectDraft } = await import("../../../dist/identity/persona-drafts.js");
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), "fez-drafts-"));
 fs.mkdirSync(path.join(base, ".fez", "personas"), { recursive: true });

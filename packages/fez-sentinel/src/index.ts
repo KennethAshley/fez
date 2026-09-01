@@ -3,6 +3,7 @@ import net from "node:net";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { execFile, execSync, spawn } from "node:child_process";
 import {
   CapabilityClient,
@@ -659,7 +660,15 @@ async function main() {
   console.log(`   watching: DM summons · mention summons · doc-comment summons · notifications · schedules/reminders. Ctrl+C to stop.`);
 }
 
-main().catch((err) => {
-  console.error("FAILED:", err);
-  process.exit(1);
-});
+// Only boot when this file IS the program. It is both a daemon entry
+// point (`#!/usr/bin/env node`, run directly) and a module other code
+// imports pure helpers from — summonMentions and isSafeWork are used by
+// three eval suites. A bare `main()` at module scope made every one of
+// those imports start a real sentinel, which then failed on the missing
+// relay/identity and took the importing process down with process.exit(1).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error("FAILED:", err);
+    process.exit(1);
+  });
+}

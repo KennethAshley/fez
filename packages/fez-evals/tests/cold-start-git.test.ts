@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, copyFileSync, chmodSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +49,7 @@ const hex = (key: Uint8Array) => [...key].map((b) => b.toString(16).padStart(2, 
 const run = promisify(execFile);
 let relay: RelayHandle;
 let root: string;
+let homeBefore: string | undefined;
 
 /** Publish a signed event over the real websocket, as a client would. */
 function publish(secret: Uint8Array, tmpl: { kind: number; tags: string[][]; content: string }): Promise<void> {
@@ -100,10 +101,27 @@ beforeAll(async () => {
   mkdirSync(providers, { recursive: true });
   copyFileSync(path.join(DIST, "workspace-part.js"), path.join(providers, "fez-git.js"));
   process.env.FEZ_WORKSPACE_PROVIDERS = providers;
+
+  // ...and the credential helper where `fez install` puts it. Without
+  // this the run depends on whoever ran it having fez installed globally:
+  // resolveHelper() falls back to the bare name "fez", git looks for
+  // git-credential-fez on PATH, finds nothing, and the clone dies asking
+  // for a username — four failures whose message never says "helper".
+  // It canNOT go beside the provider: the provider loader imports every
+  // .js in that directory, so a 1.5MB credential CLI there gets executed
+  // as a provider. ~/.fez/bin is the location resolveHelper documents.
+  homeBefore = process.env.HOME;
+  const fezBin = path.join(root, ".fez", "bin");
+  mkdirSync(fezBin, { recursive: true });
+  copyFileSync(path.join(DIST, "credential.js"), path.join(fezBin, "git-credential-fez"));
+  chmodSync(path.join(fezBin, "git-credential-fez"), 0o755);
+  process.env.HOME = root;
 }, 30_000);
 
 afterAll(() => {
   delete process.env.FEZ_WORKSPACE_PROVIDERS;
+  if (homeBefore === undefined) delete process.env.HOME;
+  else process.env.HOME = homeBefore;
   relay?.close();
   rmSync(root, { recursive: true, force: true });
 });

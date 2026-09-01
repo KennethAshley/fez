@@ -167,9 +167,14 @@ describe("bare names stay unresolvable — the whole point", () => {
     expect(hint).not.toMatch(/fez skill add/);
   });
 
+  // `fez tool` is the canonical command; `fez skill` survives only as a
+  // HIDDEN alias for one release (see cli-tool-alias.test.ts). A hint is
+  // copy-pasteable advice, so it must name the command that shows up in
+  // `fez --help` — this expectation was left on the old name by the
+  // tool/skill rename and asserted the hint should teach the deprecated one.
   test("the hint for a declared source is a runnable one-liner", () => {
     expect(installHint("web-search", "npm:@brave/brave-search-mcp-server")).toContain(
-      "fez skill add web-search --from npm:@brave/brave-search-mcp-server"
+      "fez tool add web-search --from npm:@brave/brave-search-mcp-server"
     );
   });
 

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 // The published scaffolder, built. `fez create` calls exactly this.
-import { scaffold } from "../../../dist/scaffold.js";
+import { scaffold } from "../../../dist/extensions/scaffold.js";
 
 /**
  * The whole "build on top" promise is that an OUTSIDER can scaffold a GUI

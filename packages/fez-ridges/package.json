@@ -27,7 +27,7 @@
     "minFezVersion": "0.2.0"
   },
   "scripts": {
-    "build": "esbuild src/headless.ts src/mcp.ts --bundle --format=esm --platform=node --outdir=dist && fez pack",
+    "build": "esbuild src/headless.ts src/mcp.ts --bundle --format=esm --platform=node --outdir=dist && node ../../dist/cli.js pack",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
