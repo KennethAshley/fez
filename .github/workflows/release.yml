@@ -32,8 +32,21 @@ jobs:
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal
 
+      # Root install alone is not enough: the cross-package deps are
+      # `file:` links, and without a per-package install the @fezchat/*
+      # symlinks never exist — fez-relay's tsc dies on TS2307 and
+      # fez-elevenlabs cannot bundle @fezchat/media. ci.yml has always
+      # installed per package; this job did not, so it could never have
+      # built the workspace it is meant to release. Same recipe, both
+      # places. `npm install` (not ci) per package, because not every
+      # package carries a lockfile.
       - name: Build workspace (core + packages)
-        run: npm ci && npm run build
+        run: |
+          npm ci
+          for dir in packages/*/; do
+            [ -f "$dir/package.json" ] && npm install --prefix "$dir"
+          done
+          npm run build
 
       - name: Desktop deps
         run: npm ci
