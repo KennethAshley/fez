@@ -308,6 +308,16 @@ export default function App() {
   const [bootNonce, setBootNonce] = useState(0);
 
   useEffect(() => {
+    // "A keychain identity exists" is not the claim "onboarding
+    // finished" — the wizard mints the identity on its FIRST step, so
+    // gating on identity alone let a quit-after-community-creation boot
+    // straight into #welcome with no profile, no team, and no way back.
+    // Only finishWizard writes the stamp; until it has, the wizard owns
+    // the boot (and resumes from its snapshot — see Onboarding.tsx).
+    if (!localStorage.getItem("fez-onboarded")) {
+      setBoot({ phase: "onboarding" });
+      return;
+    }
     let cancelled = false;
     splashShownAt = Date.now(); // a re-boot (post-onboarding) re-arms the splash hold
     void bootOnce()

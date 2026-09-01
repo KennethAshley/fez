@@ -7,7 +7,7 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { BrowserWire, rustSigner } from "./wire";
 import { openBackup } from "./backup";
 import { DEFAULT_RELAY, PAIRING_RELAY, relayRaw, setRelays } from "./relay";
-import { type Step, nextStep, prevStep, identityPlan } from "./onboarding-steps";
+import { type Step, nextStep, prevStep, identityPlan, isStep } from "./onboarding-steps";
 import { AnimatedSprite } from "@fezchat/ui";
 import { SPRITES } from "@fezchat/ui";
 import { generateSprite } from "@fezchat/ui";
@@ -77,8 +77,30 @@ export function deriveSas(a: string, b: string): string {
   return String(n % 1_000_000).padStart(6, "0");
 }
 
+/** The wizard's persisted position. Identity is minted on the FIRST
+ * step, so "a keychain identity exists" stops meaning "onboarding
+ * happened" the moment someone quits mid-flow — and they did: quit after
+ * creating the community and the app booted into #welcome with no
+ * profile, no team, and no way back into the wizard. The snapshot
+ * (step + brain choice) survives the relaunch; finishWizard is the only
+ * thing that clears it and stamps completion. */
+const SNAPSHOT_KEY = "fez-onboarding";
+export const ONBOARDED_KEY = "fez-onboarded";
+function readSnapshot(): { step: Step; brain: Brain } | undefined {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY);
+    if (!raw) return undefined;
+    const v = JSON.parse(raw) as { step?: unknown; brain?: Brain };
+    if (!isStep(v.step)) return undefined;
+    return { step: v.step, brain: v.brain ?? {} };
+  } catch {
+    return undefined;
+  }
+}
+
 export default function Onboarding({ onComplete }: { onComplete: (relayUrl: string) => void }) {
-  const [step, setStep] = useState<Step>("welcome");
+  const resumed = readSnapshot();
+  const [step, setStep] = useState<Step>(resumed?.step ?? "welcome");
   // No relay question. A first-time user does not have an opinion about
   // WebSocket URLs, and asking produced the worst possible default:
   // whatever we prefilled. It lives in settings now, and an invite code
@@ -114,7 +136,30 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
     await invoke("ensure_claude_adapter");
     setClaude((c) => (c ? { ...c, adapterReady: true } : c));
   };
-  const [brain, setBrain] = useState<Brain>({});
+  const [brain, setBrain] = useState<Brain>(resumed?.brain ?? {});
+
+  // Every step past the front door snapshots itself (and the brain
+  // choice, which finishWizard needs two steps later) so a quit mid-flow
+  // resumes where it left off instead of stranding the half-made user.
+  useEffect(() => {
+    if (step === "welcome") return;
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ step, brain }));
+  }, [step, brain]);
+
+  // Resuming lands mid-flow without start() having run, so the identity
+  // the wizard holds in state must be re-adopted from the keychain. If
+  // it's gone (keychain cleared), the snapshot is a lie — drop it and
+  // start over at the front door.
+  useEffect(() => {
+    if (step === "welcome" || keyHex) return;
+    invoke<string>("get_identity", { account: ACCOUNT })
+      .then((hex) => setKeyHex(hex))
+      .catch(() => {
+        localStorage.removeItem(SNAPSHOT_KEY);
+        setStep("welcome");
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * The whole happy path: a name, a key, a profile, in.
@@ -220,6 +265,8 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         await invoke("write_persona", { name: p.id, content: buildStarterPersonaMd(p, harness, model, brain.provider, brain.effort) }).catch(() => {});
       }
     } catch { /* welcome.ts's fallback persona still lands */ }
+    localStorage.removeItem(SNAPSHOT_KEY);
+    localStorage.setItem(ONBOARDED_KEY, "1");
     onComplete(relayRaw());
   };
 

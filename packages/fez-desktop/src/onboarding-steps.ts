@@ -21,6 +21,14 @@ export type Step =
   | "team";
 
 const ORDER: Step[] = ["welcome", "harness", "defaults", "community", "profile", "team"];
+const ALL: Step[] = [...ORDER, "invite", "pairing", "restore", "reconnect"];
+
+/** Guard for step names read back from persistence — a renamed or
+ * removed step in a stale snapshot must fall back to the front door,
+ * not crash the wizard into a step that no longer exists. */
+export function isStep(s: unknown): s is Step {
+  return typeof s === "string" && (ALL as string[]).includes(s);
+}
 
 export function nextStep(s: Step): Step {
   const i = ORDER.indexOf(s);

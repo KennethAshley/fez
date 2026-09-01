@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextStep, prevStep, identityPlan } from "../../fez-desktop/src/onboarding-steps.js";
+import { nextStep, prevStep, identityPlan, isStep } from "../../fez-desktop/src/onboarding-steps.js";
 
 describe("onboarding step order", () => {
   it("walks the locked order forward", () => {
@@ -38,5 +38,26 @@ describe("identityPlan", () => {
   it("mints only when nothing is held or stored", () => {
     expect(identityPlan(undefined, undefined)).toEqual({ action: "mint" });
     expect(identityPlan(undefined, "not a key")).toEqual({ action: "mint" });
+  });
+});
+
+/**
+ * isStep guards the wizard's persisted snapshot: the step name written
+ * before a quit is read back on the next launch, so a renamed or removed
+ * step (or garbage) must fall back to the front door, never crash the
+ * resume into a step that no longer exists.
+ */
+describe("isStep", () => {
+  it("accepts every real step, main flow and side doors", () => {
+    for (const s of ["welcome", "harness", "defaults", "community", "profile", "team", "invite", "pairing", "restore", "reconnect"]) {
+      expect(isStep(s)).toBe(true);
+    }
+  });
+
+  it("rejects what a stale or corrupt snapshot could hold", () => {
+    expect(isStep("done")).toBe(false); // never existed — Buzz's flow ends at team
+    expect(isStep("")).toBe(false);
+    expect(isStep(undefined)).toBe(false);
+    expect(isStep(42)).toBe(false);
   });
 });
