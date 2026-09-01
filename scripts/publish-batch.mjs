@@ -57,6 +57,14 @@ const EXTENSIONS = [
   "packages/fez-workflows",
   "packages/fez-memory",
   "packages/fez-elevenlabs",
+  // Late arrivals the list missed — found by a local-vs-npm version audit
+  // after a machine wipe: themes was already in the desktop CATALOG (its
+  // gallery entry couldn't install), wallet/ridges shipped the bounty
+  // rail. Wallet before ridges: ridges' file: dep rewrites to wallet's
+  // published range.
+  "packages/fez-themes",
+  "packages/fez-wallet",
+  "packages/fez-ridges",
 ];
 
 function run(cmd, args, cwd) {

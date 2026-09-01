@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PERM_LABEL } from "../../fez-desktop/src/extensions-catalog.js";
 import { consentLines, networkAllowed, parsePermissions, describePermission, has } from "../../../src/extensions/extension-permissions.js";
 
 /**
@@ -64,5 +65,23 @@ describe("extension permissions", () => {
     expect(has(["read:channels"], "read:channels")).toBe(true);
     expect(has(["read:channels"], "read:dms")).toBe(false);
     expect(has(undefined, "publish")).toBe(false);
+  });
+});
+
+/**
+ * The desktop's permission gallery and the CLI's consent screen are two
+ * surfaces for ONE vocabulary. fez-bazaar declared `processes` and
+ * `notifications`; the desktop's PERM_LABEL knew both while the CLI
+ * called them "unrecognized — these grant nothing". A permission the
+ * gallery can label must never be one the CLI disowns.
+ */
+describe("CLI ↔ desktop permission vocabulary parity", () => {
+  it("every PERM_LABEL id parses without landing in unknown", () => {
+    const { granted, unknown } = parsePermissions(Object.keys(PERM_LABEL));
+    expect(unknown).toEqual([]);
+    // The two that drifted: declared by fez-bazaar, labeled by the
+    // desktop, disowned by the CLI.
+    expect(granted).toContain("processes");
+    expect(granted).toContain("notifications");
   });
 });

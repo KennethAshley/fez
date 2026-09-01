@@ -59,6 +59,11 @@ const KNOWN: Record<string, Omit<PermissionInfo, "id">> = {
   // with this can change what your agents will and won't do.
   "system-prompt": { description: "Add standing instructions to all your agents", sensitive: true },
   personas: { description: "Read and edit your agent personas (their instructions and settings)", sensitive: true },
+  // Sensitive: a spawned program outlives the window that granted it and
+  // runs with your user's full authority. Said as what it costs, not as
+  // what the API is called — matching the desktop's wording.
+  processes: { description: "Run its own programs on your machine", sensitive: true },
+  notifications: { description: "Send you native notifications", sensitive: false },
 };
 
 export interface ParsedPermissions {

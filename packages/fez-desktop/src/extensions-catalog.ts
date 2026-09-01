@@ -15,6 +15,8 @@ export interface CatalogEntry {
   /** Where it shows up once installed — so "nothing happened" isn't a mystery. */
   where: string;
   permissions: string[];
+  /** Source repo when it isn't a packages/ dir of the monorepo (e.g. bazaar). */
+  repo?: string;
 }
 
 export const CATALOG: CatalogEntry[] = [
@@ -25,6 +27,7 @@ export const CATALOG: CatalogEntry[] = [
   { name: "@fezchat/obsidian", title: "Obsidian", blurb: "Export a channel's docs to your Obsidian vault.", where: "Adds /obsidian to the composer.", permissions: ["ui", "commands", "read:channels"] },
   { name: "@fezchat/live-blocks", title: "Live Blocks", blurb: "A markdown block an agent keeps breathing — live data that updates itself inside a doc.", where: "Renders live blocks inside docs.", permissions: ["ui", "commands", "read:channels", "publish", "background"] },
   { name: "@fezchat/themes", title: "Themes", blurb: "The classics — Dracula, Nord, Catppuccin, Solarized, Tokyo Night, Monokai, Night Owl, Kanagawa, Flexoki, and ten more. Each a light/dark pair.", where: "Adds a shelf of packs to Settings → theme.", permissions: ["ui"] },
+  { name: "@fezchat/bazaar", title: "Bazaar", blurb: "The fez bazaar — run a miner that serves the subnet, watch how it's doing, and ask the market questions with bazaar_ask.", where: "Adds a Bazaar panel, the bazaar_ask skill, and the fez-bazaar-miner program.", permissions: ["network:.fez.chat", "read:channels", "ui", "processes", "notifications"], repo: "https://github.com/KennethAshley/fez-bazaar" },
   { name: "@fezchat/elevenlabs", title: "ElevenLabs", blurb: "Agents speak — ask any granted agent to say something and a voice note lands in the channel, in that agent's own stable voice.", where: "Adds the fez_speak skill; voice map in Settings → extensions.", permissions: ["network:api.elevenlabs.io", "network:relay", "publish", "read:channels", "ui"] },
 ];
 
@@ -48,7 +51,8 @@ export const SENSITIVE = new Set(["publish", "personas", "background", "processe
 const REPO = "https://github.com/KennethAshley/fez";
 /** De-scope and drop a `fez-` prefix so @fezchat/git, git, and fez-git all match. */
 export const norm = (n: string) => n.replace(/^@fezchat\//, "").replace(/^fez-/, "");
-export const githubUrl = (name: string) => `${REPO}/tree/main/packages/fez-${norm(name)}`;
+export const githubUrl = (name: string) =>
+  catalogEntry(name)?.repo ?? `${REPO}/tree/main/packages/fez-${norm(name)}`;
 export const npmUrl = (name: string) => `https://www.npmjs.com/package/${name}`;
 
 export const catalogEntry = (name: string): CatalogEntry | undefined =>
