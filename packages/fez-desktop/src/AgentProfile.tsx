@@ -152,6 +152,10 @@ export default function AgentProfile({
 
         <div className="manage-section">runtime</div>
         <dl className="profile-facts">
+          <dt>body</dt>
+          <dd className="mono">
+            <RestartRow name={name} />
+          </dd>
           <dt>harness</dt>
           <dd className="mono">{harness ?? "—"}</dd>
           <dt>channels</dt>
@@ -164,5 +168,40 @@ export default function AgentProfile({
           </dd>
         </dl>
     </div>
+  );
+}
+
+/**
+ * The manual bounce. Tools and brain keys bake in at spawn, so "restart"
+ * is how a running body picks up anything it was born before — and the
+ * escape hatch when an agent is just being weird. The body is disposable
+ * by design: identity and memory live on the relay, and the next mention
+ * respawns it against the persona as it stands now.
+ */
+function RestartRow({ name }: { name: string }) {
+  const [alive, setAlive] = useState<boolean>();
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void invoke<boolean>("agent_alive", { persona: name, bin: null })
+      .then((a) => { if (live) setAlive(a); })
+      .catch(() => { if (live) setAlive(false); });
+    return () => { live = false; };
+  }, [name, done]);
+  if (alive === undefined) return <span>checking…</span>;
+  if (done) return <span>restarting on next mention</span>;
+  if (!alive) return <span>asleep — wakes on mention</span>;
+  return (
+    <button
+      className="skill-link"
+      title={`stop @${name}'s running body — it respawns with the current persona (tools included) on its next mention`}
+      onClick={() => {
+        void invoke("kill_agent", { persona: name, bin: null })
+          .catch(() => {})
+          .then(() => setDone(true));
+      }}
+    >
+      running — restart
+    </button>
   );
 }

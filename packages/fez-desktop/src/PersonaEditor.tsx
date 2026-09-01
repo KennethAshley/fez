@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { flash } from "./toast";
 import type { FezClient } from "@fezchat/client";
 import { parseSkillEntries, formatSkillEntries, parseSkillDecls, formatSkillDecls, safeSkillEntries, nearestKnownKey } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
@@ -98,6 +99,17 @@ export default function PersonaEditor({
     );
   }
 
+  /** Frontmatter keys a RUNNING body bakes in at spawn — tools wire into
+   * the harness session at creation (no live-inject seam through ACP),
+   * and the brain keys pick the process itself. A save that changes one
+   * while the agent is alive must bounce the body, or the editor shows
+   * one truth and the agent lives another: the first wallet attach
+   * shipped exactly that — the persona said `mcpServers: [wallet]` while
+   * the running quill answered "I don't have a wallet". Identity and
+   * memory live on the relay; only the process restarts, and the next
+   * mention respawns it against the persona as saved. */
+  const SPAWN_KEYS = ["mcpServers", "skills", "harness", "provider", "model", "effort", "repo", "scope"];
+
   const save = async () => {
     setState("saving");
     const renaming = newName.trim() && newName.trim() !== name;
@@ -105,9 +117,19 @@ export default function PersonaEditor({
     const frontLines = renaming ? setField(front, "name", finalName) : front;
     const frontText = frontLines.filter((line) => line.trim()).join("\n");
     const content = frontText ? `---\n${frontText}\n---\n\n${body.trim()}\n` : `${body.trim()}\n`;
+    const savedFront = (saved?.front ?? "").split("\n");
+    const fieldOf = (lines: string[], key: string) => lines.find((l) => l.startsWith(key + ":"))?.slice(key.length + 1).trim();
+    const spawnChanged = renaming || SPAWN_KEYS.some((k) => fieldOf(savedFront, k) !== fieldOf(frontLines, k));
     try {
       if (renaming) await invoke("rename_persona", { from: name, to: finalName });
       await invoke("update_persona", { name: finalName, content });
+      if (spawnChanged) {
+        const alive = await invoke<boolean>("agent_alive", { persona: name, bin: null }).catch(() => false);
+        if (alive) {
+          await invoke("kill_agent", { persona: name, bin: null }).catch(() => {});
+          flash(`@${finalName} restarted — it picks up these changes on its next reply`);
+        }
+      }
       onDone(true);
     } catch (err) {
       setState(String(err));
