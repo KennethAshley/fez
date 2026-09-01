@@ -614,6 +614,37 @@ export function themeFollowsScheme(name = currentTheme()): boolean {
   return !!pack && "light" in pack && "dark" in pack;
 }
 
+/**
+ * The chosen theme's last-resolved pack, cached across launches. The
+ * palette itself lives in the themes EXTENSION, which loads after boot —
+ * so without this, every non-default theme booted in the built-in ember
+ * (the splash included) and snapped to itself seconds later when
+ * registerTheme landed. The cache is paint of last resort: stale-tolerant
+ * by design, because the canonical pack repaints over it the moment it
+ * registers, and a theme that was uninstalled keeps its last look rather
+ * than flashing raw CSS fallbacks.
+ */
+const THEME_CACHE_KEY = "fez-theme-cache";
+
+function cacheThemePack(name: string, pack: ThemePack): void {
+  try {
+    localStorage.setItem(THEME_CACHE_KEY, JSON.stringify({ name, pack }));
+  } catch {
+    /* a full or blocked storage must never break paint */
+  }
+}
+
+function cachedThemePack(name: string): ThemePack | undefined {
+  try {
+    const raw = localStorage.getItem(THEME_CACHE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { name?: string; pack?: ThemePack };
+    return parsed.name === name && parsed.pack ? parsed.pack : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function applyTheme(name: string): void {
   localStorage.setItem(THEME_KEY, name);
   paint();
@@ -645,7 +676,15 @@ function paint(): void {
   // menus the right way. Without it a light theme keeps dark native
   // widgets and looks broken in exactly the places CSS can't reach.
   document.documentElement.style.colorScheme = scheme;
-  if (!pack) return;
+  if (!pack) {
+    // Not registered yet (its extension loads after boot) — wear the
+    // cached copy of what this theme resolved to last launch, so the
+    // splash and first frames keep the chosen look.
+    const cached = cachedThemePack(name);
+    if (cached) applyThemeVars(variant(cached, scheme));
+    return;
+  }
+  cacheThemePack(name, pack);
   applyThemeVars(variant(pack, scheme));
 }
 
