@@ -82,10 +82,12 @@ export function deriveSas(a: string, b: string): string {
  * happened" the moment someone quits mid-flow — and they did: quit after
  * creating the community and the app booted into #welcome with no
  * profile, no team, and no way back into the wizard. The snapshot
- * (step + brain choice) survives the relaunch; finishWizard is the only
- * thing that clears it and stamps completion. */
+ * (step + brain choice) survives the relaunch; finishWizard alone
+ * clears it. Completion itself is never stamped — the boot gate reads it
+ * from what finishing DOES (identity + the fez persona), which lives
+ * outside the webview and survives an origin change (tauri:// vs the
+ * dev server) that wipes localStorage. */
 const SNAPSHOT_KEY = "fez-onboarding";
-export const ONBOARDED_KEY = "fez-onboarded";
 function readSnapshot(): { step: Step; brain: Brain } | undefined {
   try {
     const raw = localStorage.getItem(SNAPSHOT_KEY);
@@ -266,7 +268,6 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
       }
     } catch { /* welcome.ts's fallback persona still lands */ }
     localStorage.removeItem(SNAPSHOT_KEY);
-    localStorage.setItem(ONBOARDED_KEY, "1");
     onComplete(relayRaw());
   };
 

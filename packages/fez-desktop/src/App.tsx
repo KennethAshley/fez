@@ -312,28 +312,46 @@ export default function App() {
     // finished" — the wizard mints the identity on its FIRST step, so
     // gating on identity alone let a quit-after-community-creation boot
     // straight into #welcome with no profile, no team, and no way back.
-    // Only finishWizard writes the stamp; until it has, the wizard owns
-    // the boot (and resumes from its snapshot — see Onboarding.tsx).
-    if (!localStorage.getItem("fez-onboarded")) {
-      setBoot({ phase: "onboarding" });
-      return;
-    }
+    // But the claim must be read from DURABLE state, not a localStorage
+    // stamp: localStorage is per-origin, so the stamp written in the
+    // installed app (tauri://localhost) was invisible to the dev server
+    // (localhost:1420) and re-ran the whole wizard on every `tauri dev`.
+    // "Onboarded" now means what finishing actually does — identity in
+    // the keychain AND the fez persona written — both of which live
+    // outside the webview and agree across origins. The mid-flow
+    // snapshot (same-origin by nature) still resumes the wizard first.
     let cancelled = false;
     splashShownAt = Date.now(); // a re-boot (post-onboarding) re-arms the splash hold
-    void bootOnce()
-      .then(({ client, wire }) => {
+    void (async () => {
+      // The gate runs BEFORE bootOnce, not beside it — raced, a slow
+      // gate losing to a fast boot painted the app over the wizard.
+      if (localStorage.getItem("fez-onboarding")) {
+        if (!cancelled) setBoot({ phase: "onboarding" });
+        return;
+      }
+      const [identity, personas] = await Promise.all([
+        invoke<string>("get_identity", { account: ACCOUNT }).catch(() => undefined),
+        invoke<string[]>("list_personas").catch(() => [] as string[]),
+      ]);
+      if (cancelled) return;
+      if (!identity || !personas.some((n) => n.toLowerCase() === "fez")) {
+        setBoot({ phase: "onboarding" });
+        return;
+      }
+      try {
+        const { client, wire } = await bootOnce();
         if (cancelled) return;
         wire.onStatus = setConnected;
         wire.onRelayHealth = setRelayHealth;
         setBoot({ phase: "ready", client, wire });
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
         // No keychain identity = a NEW USER, not an error — onboarding.
         if (/no fez identity/i.test(message)) setBoot({ phase: "onboarding" });
         else setBoot({ phase: "error", message });
-      });
+      }
+    })();
     return () => {
       cancelled = true; // never close the singleton wire on remount
     };
