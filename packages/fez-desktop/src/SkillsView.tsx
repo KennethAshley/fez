@@ -223,16 +223,19 @@ export default function SkillsView({
           wanted: [...new Set([...toolWanted, ...packWanted])],
         };
       })
-      // EXTENSIONS = renders in this app (has a gui part). SKILLS = a
-      // settings.json entry agents call, shown there only when the
-      // package has no gui row to carry it — or a skill pack, which is
-      // agent-facing capability like a tool and earns its inventory row
-      // here. Headless-only packages belong to the TUI's environment and
-      // get no desktop row at all.
+      // EXTENSIONS = renders in this app (has a gui part). TOOLS = every
+      // settings.json entry agents can call, plus skill packs — INCLUDING
+      // tools shipped by gui-bearing extensions. The old rule hid those
+      // ("the extension row carries it"), and the first user to install
+      // wallet+ridges met a Tools page that said "nothing installed"
+      // while three tools existed and the agent editor listed them all.
+      // The page answers "what can my agents call?"; the gui chip on a
+      // row says the package also renders here. Headless-only packages
+      // belong to the TUI's environment and get no desktop row at all.
       .filter((row) => {
         if (!only) return true;
         const inApp = row.parts.includes("gui");
-        return only === "extensions" ? inApp : !inApp && (!!row.config || (row.pack?.length ?? 0) > 0);
+        return only === "extensions" ? inApp : !!row.config || (row.pack?.length ?? 0) > 0;
       });
   }, [localParts, installed, skillPacks, agentDeps, only]);
 
