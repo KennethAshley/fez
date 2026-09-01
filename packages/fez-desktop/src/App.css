@@ -2177,10 +2177,16 @@ button.author:hover { text-decoration: underline; }
 .gallery-name { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
 .gallery-blurb { font-size: 12.5px; color: var(--fg-dim); margin-top: 3px; line-height: 1.4; }
 .gallery-where { font-size: 11.5px; color: var(--fg-dim); opacity: 0.8; margin-top: 4px; font-style: italic; }
-.gallery-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.gallery-grants { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
-.gallery-grants .sens { color: var(--yellow); white-space: nowrap; }
-.gallery-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+/* The foot must never clip: "review & install" is wider than the old
+   "install", and the installed state carries a version chip AND an
+   uninstall button. Wrapping is the graceful degradation — a tight card
+   drops the actions to their own right-aligned line, instead of
+   splitting "7 grants" mid-phrase or shearing "uninstall" at the edge
+   (both shipped, once). */
+.gallery-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px 8px; flex-wrap: wrap; margin-top: auto; }
+.gallery-grants { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.gallery-grants .sens { color: var(--yellow); }
+.gallery-actions { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .gallery-install.update { color: var(--bg0); background: var(--yellow); border-color: var(--yellow); }
 .gallery-install.update:hover:not(:disabled) { filter: brightness(1.08); }
 .gallery-uninstall { background: none; border: none; cursor: pointer; color: var(--fg-dim); font-size: 11.5px; padding: 2px 6px; }
