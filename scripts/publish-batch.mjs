@@ -15,6 +15,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const DRY = process.argv.includes("--dry");
+// npm requires 2FA to publish (E403 without it). --otp=123456 passes the
+// authenticator code through to every publish in the run — the codes are
+// good for ~30s and the whole batch takes a few, so one code covers it.
+const OTP = process.argv.find((a) => a.startsWith("--otp="))?.slice("--otp=".length);
 const ROOT = process.cwd();
 
 // protocol is published from the repo root; the rest are package dirs.
@@ -81,6 +85,7 @@ function publishDir(dir, label) {
   // dist/ is already fresh from `npm run build`; --ignore-scripts skips the
   // per-package prepublishOnly rebuild (protocol's is a full build-all).
   const args = ["publish", "--access", "public", "--ignore-scripts"];
+  if (OTP) args.push(`--otp=${OTP}`);
   if (DRY) args.push("--dry-run");
   try {
     const out = run("npm", args, dir);
