@@ -810,6 +810,13 @@ function ProfileStep({
  */
 function TeamStep({ keyHex, onFinish, onBack }: { keyHex?: string; onFinish: () => void; onBack: () => void }) {
   const [showBackup, setShowBackup] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copyKey = () => {
+    if (!keyHex) return;
+    void navigator.clipboard.writeText(keyHex);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
   return (
     <>
       <Spine at={5} />
@@ -836,9 +843,17 @@ function TeamStep({ keyHex, onFinish, onBack }: { keyHex?: string; onFinish: () 
           {!showBackup ? (
             <button className="ob-secondary" onClick={() => setShowBackup(true)}>reveal backup key (write it somewhere safe)</button>
           ) : (
-            <code className="ob-key" onClick={() => void navigator.clipboard.writeText(keyHex)} title="click to copy">
-              {keyHex}
-            </code>
+            // The key copies from either surface, but only the button SAYS
+            // so — "click to copy" living in a title attribute is advice
+            // nobody hovers a backup key long enough to receive.
+            <div className="ob-key-row">
+              <code className="ob-key" onClick={copyKey} title="click to copy">
+                {keyHex}
+              </code>
+              <button className={`ob-copy ${copied ? "copied" : ""}`} onClick={copyKey} aria-label="copy backup key" title="copy key">
+                {copied ? "✓" : "⧉"}
+              </button>
+            </div>
           )}
         </div>
       )}

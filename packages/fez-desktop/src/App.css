@@ -513,6 +513,14 @@ select.ob-input:hover { border-color: var(--accent); }
 }
 .ob-sas { font-size: 40px; font-weight: 800; letter-spacing: 6px; color: var(--yellow); padding: 8px 0; }
 .ob-backup { display: flex; flex-direction: column; }
+.ob-key-row { display: flex; align-items: stretch; gap: 6px; }
+.ob-key-row .ob-key { flex: 1; }
+.ob-copy {
+  border: 1px solid var(--bg2); border-radius: 8px; background: var(--bg0);
+  color: var(--fg-dim); cursor: pointer; padding: 0 12px; font-size: 14px; font: inherit;
+}
+.ob-copy:hover { color: var(--fg); border-color: var(--fg-dim); }
+.ob-copy.copied { color: var(--accent); border-color: var(--accent); }
 
 /* ── connectivity / error banners ───────────────────────────── */
 .conn-bar {
