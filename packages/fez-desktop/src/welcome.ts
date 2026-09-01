@@ -185,6 +185,46 @@ async function ensureStarterTeam(
   await ensureMarkedMessage(w, channelId, client.pubkey, KICKOFF_MARKER, kickoffText());
 }
 
+/**
+ * The FirstRun hero's durable copy, as each bootstrap channel's standing
+ * info. The hero used to re-render the whole pitch in every empty room;
+ * now the workspace introduces itself once in the timeline, and the
+ * guide text lives where standing information belongs — the channel doc,
+ * collapsible under the title, readable by agents, editable by anyone.
+ * Only the durable lines move: readiness and the roster are live facts
+ * the timeline owns, and a doc that asserted them would start lying the
+ * day they changed.
+ */
+const GENERAL_DOC_SEED = `# general
+
+@fez is your guide. Ask it anything about fez — how git works, what an extension does, how to set something up — and it answers. Hand it a task and it brings in the right agent.
+
+Try \`@fez what can you do?\` — or ask it to set you up, like \`@fez install polls\` (you confirm before anything installs).
+
+@fez is a persona at \`~/.fez/personas/fez.md\` — swap its \`harness:\` to run it on any model.
+`;
+
+const WELCOME_DOC_SEED = `# welcome
+
+Your first room — @fez opened it to say hello and introduce the team. Mention @fez or any teammate, here or anywhere, whenever you want their help.
+`;
+
+/** Seed the bootstrap channels' docs, once. NEVER clobbers: a doc with
+ * content belongs to the room — history is loaded first so an existing
+ * doc the client simply hadn't absorbed yet cannot be overwritten. */
+async function seedChannelDocs(client: FezClient): Promise<void> {
+  const seeds: [string, string][] = [
+    ["bootstrap-general", GENERAL_DOC_SEED],
+    [WELCOME_CHANNEL_ID, WELCOME_DOC_SEED],
+  ];
+  for (const [id, text] of seeds) {
+    if (!client.state.workspace.channels.has(id)) continue;
+    await client.loadChannelHistory(id).catch(() => {});
+    if (client.docsByChannel().get(id)?.latestContent?.trim()) continue;
+    await client.publishDoc(id, text).catch(() => {});
+  }
+}
+
 /** The one call App.tsx makes after the owner bootstrap. */
 export async function ensureWelcome(client: FezClient): Promise<void> {
   // Only in a local workspace the user owns; never on joined relays.
@@ -194,6 +234,8 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
   // its general-channel history honored.
   const channel = client.state.workspace.channels.get(WELCOME_CHANNEL_ID) ?? client.state.workspace.channels.get("bootstrap-general");
   if (!channel) return;
+
+  await seedChannelDocs(client);
 
   const harnesses = await detectHarnesses();
   await ensureFezPersona(harnesses["claude-code"] ? "claude-code" : "pi");
