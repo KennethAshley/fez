@@ -2148,15 +2148,26 @@ function ChannelView({
         {/* The two empty-state panels used to be inverted: FirstRun (the
             helpful one) required members > 1 — impossible for a fresh solo
             user — while the solo case always got a warning that pointed at
-            the TUI. FirstRun now owns every empty channel; the solo note
-            only accompanies channels that already have history. */}
-        {messages.length === 0 && (
-          <FirstRun
-            client={client}
-            channelName={channelName}
-            onOpenAgents={onAgents}
-          />
-        )}
+            the TUI. FirstRun owns every empty channel — but the FULL hero
+            only until the workspace has introduced itself somewhere: once
+            any other channel carries conversation (#welcome's opener,
+            usually), a second empty room re-pitching the whole app is a
+            re-introduction to someone already inside. Those rooms get one
+            quiet line instead. */}
+        {messages.length === 0 &&
+          ([...client.state.workspace.channels.keys()].some(
+            (id) => id !== channelId && client.messages(id).length > 0
+          ) ? (
+            <div className="empty-room">
+              Nothing here yet — say something, or mention an agent by name to bring one in.
+            </div>
+          ) : (
+            <FirstRun
+              client={client}
+              channelName={channelName}
+              onOpenAgents={onAgents}
+            />
+          ))}
         {messages.length > 0 && (client.state.workspace.members.size ?? 0) <= 1 && (
           <div className="empty-room">
             You're the only member here so far — invite people from manage (+), or mention an agent by name to bring one in.
