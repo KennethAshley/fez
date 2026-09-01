@@ -89,6 +89,7 @@ import { registerWorkspaceCommands } from "./cli/cmd-workspace.js";
 import { registerSkillCommands } from "./cli/cmd-skill.js";
 import { registerExtensionCommands } from "./cli/cmd-extensions.js";
 import { registerPersonaCommands } from "./cli/cmd-persona.js";
+import { registerResetCommand } from "./cli/cmd-reset.js";
 
 registerIdentityCommands(program);
 registerMemCommands(program);
@@ -98,5 +99,6 @@ registerWorkspaceCommands(program);
 registerSkillCommands(program);
 registerExtensionCommands(program);
 registerPersonaCommands(program);
+registerResetCommand(program);
 
 program.parse();

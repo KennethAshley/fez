@@ -608,10 +608,69 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
             )
           }
         />
+
+        <div className="manage-section">danger</div>
+        <FactoryResetRow />
         </>)}
       </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Factory reset — the desktop door to `fez reset --factory`. The typed
+ * confirmation is deliberate friction: this deletes the identity and
+ * every agent key, and a deleted key cannot be reissued. localStorage is
+ * cleared HERE (the onboarding stamp/snapshot, relay set, name) because
+ * WebKit owns that store while the app runs; the Rust command wipes the
+ * keychain and ~/.fez, then relaunches straight into onboarding.
+ */
+function FactoryResetRow() {
+  const [armed, setArmed] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const go = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      localStorage.clear();
+      await invoke("factory_reset"); // relaunches on success — nothing runs after this
+    } catch (err) {
+      setBusy(false);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  return (
+    <Row
+      stacked
+      label="factory reset"
+      desc="Deletes your identity and your agents' keys from the keychain, all of ~/.fez (settings, personas, runtimes, this machine's workspace relay data), and relaunches into onboarding. Irreversible — reveal and save your backup key first."
+      control={
+        !armed ? (
+          <button className="quiet-danger" onClick={() => setArmed(true)}>factory reset…</button>
+        ) : (
+          <div className="ob-brain-auth">
+            <input
+              className="ob-input"
+              placeholder={'type "reset" to confirm'}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              disabled={busy}
+              autoFocus
+            />
+            <button className="quiet-danger" disabled={busy || typed.trim() !== "reset"} onClick={() => void go()}>
+              {busy ? "resetting…" : "erase everything"}
+            </button>
+            <button className="agent-action" disabled={busy} onClick={() => { setArmed(false); setTyped(""); setError(undefined); }}>
+              keep my stuff
+            </button>
+            {error && <span className="ob-error">{error}</span>}
+          </div>
+        )
+      }
+    />
   );
 }
 

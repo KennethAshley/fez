@@ -82,6 +82,7 @@ export { isValidSlug, conversationKey, engramDTag, parseBodyStrict, bodyIsValid,
 export { buildDmWraps, buildGroupDmWraps, unwrapDm, dmConvoKey, DM_FUZZ_WINDOW_S, type DmRumor } from "./protocol/dm.js";
 export { sealContent, parseSealed, type SealedEvent } from "./protocol/intents.js";
 export { pairSend, pairReceive, deriveSas, buildPairingUri, parsePairingUri, PAIRING_URI_PREFIX, type PairingCallbacks } from "./identity/pairing.js";
+export { factoryResetPlan, executeFactoryReset, fezProcessesRunning, type FactoryResetPlan } from "./identity/reset.js";
 export type { FezExtensionAPI, FezExtension, NostrAccess, PanelHandle, InputHandler, ScheduledTask, ScheduledTaskContext, WorkspaceAccess } from "./extensions/extensions.js";
 /** Background-task plumbing: the sentinel loads extensions and drains their scheduled tasks. */
 export { loadExtensions, registeredScheduledTasks, setNostrBackend, setWorkspaceBackend } from "./extensions/extensions.js";
