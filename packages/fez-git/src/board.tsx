@@ -1,7 +1,7 @@
 import { cloneBase } from "./repo-name.js";
 import { parseJournal, type PushEntry } from "./journal-format.js";
 import { lineOf, rootMarker } from "./threads.js";
-import type { El, GuiExtensionApi } from "@fezchat/extension-api/gui";
+import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
 
 /**
  * The lane board — a ⑂ thread rendered as what it IS: a line of work
@@ -60,7 +60,7 @@ export function makeLaneBoard(api: GuiExtensionApi) {
   const { useState, useEffect, useCallback } = api.React;
   const { client } = api;
 
-  return function LaneBoard({ channelId, rootContent }: { channelId: string; rootId: string; rootContent: string }): El {
+  return function LaneBoard({ channelId, rootContent }: { channelId: string; rootId: string; rootContent: string }): JSX.Element | null {
     const [lanes, setLanes] = useState<Lane[]>([]);
     const [error, setError] = useState<string | undefined>(undefined);
     const [diffOpen, setDiffOpen] = useState<string | undefined>(undefined);
@@ -135,61 +135,58 @@ export function makeLaneBoard(api: GuiExtensionApi) {
     if (!line || !repo || !base) return null;
     const working = client.workingAgents();
 
-    return h(
-      "div",
-      { className: "lane-board" },
-      h(
-        "div",
-        { className: "lane-board-head" },
-        h("span", { className: "skill-name" }, `line ${line}`),
-        h("span", { className: "skill-desc" }, ` · ${lanes.filter((l) => l.branch !== line).length} lane(s)`)
-      ),
-      error ? h("p", { className: "ob-error" }, error) : null,
-      notice ? h("p", { className: "settings-hint" }, notice) : null,
-      lanes.length === 0
-        ? h("p", { className: "settings-hint" }, "no pushes on this line yet — mention an agent in this thread to put it to work here")
-        : lanes.map((lane) => {
+    return (
+      <div className="lane-board">
+        <div className="lane-board-head">
+          <span className="skill-name">{`line ${line}`}</span>
+          <span className="skill-desc">{` · ${lanes.filter((l) => l.branch !== line).length} lane(s)`}</span>
+        </div>
+        {error ? <p className="ob-error">{error}</p> : null}
+        {notice ? <p className="settings-hint">{notice}</p> : null}
+        {lanes.length === 0 ? (
+          <p className="settings-hint">no pushes on this line yet — mention an agent in this thread to put it to work here</p>
+        ) : (
+          lanes.map((lane) => {
             const isLine = lane.branch === line;
             const busy = working.has(lane.agent);
-            return h(
-              "div",
-              { key: lane.branch, className: "lane-row" },
-              h("span", { className: busy ? "working" : "agent-ghost" }, busy ? "⚙" : "○"),
-              h("code", null, lane.branch),
-              h("span", { className: "skill-desc" }, ` ${client.displayName(lane.pusher)} · `),
-              h("code", null, lane.tip.slice(0, 8)),
-              h(
-                "span",
-                { className: "lane-actions" },
-                // The tree's edge: a lane row opens the lane's OWN
-                // thread. Found by its root marker among the channel's
-                // absorbed messages — the same join the thread task
-                // writes by.
-                (() => {
-                  const laneRoot = client
-                    .messages(channelId)
-                    .find((m) => !m.rootId && m.content.includes(rootMarker(lane.branch)));
-                  return laneRoot && lane.branch !== line
-                    ? h("button", { className: "skill-link", onClick: () => api.openThread(channelId, laneRoot.id) }, "thread")
-                    : null;
-                })(),
-                h("button", { className: "skill-link", onClick: () => api.watchAgent(lane.agent) }, "watch"),
-                isLine
-                  ? null
-                  : h("button", { className: "skill-link", onClick: () => void showDiff(lane) }, diffOpen === lane.branch ? "hide diff" : "diff"),
-                isLine
-                  ? null
-                  : h(
-                      "button",
-                      { className: "skill-link", disabled: merging === lane.branch, onClick: () => void merge(lane) },
-                      merging === lane.branch ? "merging…" : "merge"
-                    )
-              ),
-              diffOpen === lane.branch
-                ? h("pre", { className: "lane-diff" }, diffText ?? "loading diff…")
-                : null
+            // The tree's edge: a lane row opens the lane's OWN thread.
+            // Found by its root marker among the channel's absorbed
+            // messages — the same join the thread task writes by.
+            const laneRoot = client
+              .messages(channelId)
+              .find((m) => !m.rootId && m.content.includes(rootMarker(lane.branch)));
+            return (
+              <div key={lane.branch} className="lane-row">
+                <span className={busy ? "working" : "agent-ghost"}>{busy ? "⚙" : "○"}</span>
+                <code>{lane.branch}</code>
+                <span className="skill-desc">{` ${client.displayName(lane.pusher)} · `}</span>
+                <code>{lane.tip.slice(0, 8)}</code>
+                <span className="lane-actions">
+                  {laneRoot && lane.branch !== line ? (
+                    <button className="skill-link" onClick={() => api.openThread(channelId, laneRoot.id)}>
+                      thread
+                    </button>
+                  ) : null}
+                  <button className="skill-link" onClick={() => api.watchAgent(lane.agent)}>
+                    watch
+                  </button>
+                  {isLine ? null : (
+                    <button className="skill-link" onClick={() => void showDiff(lane)}>
+                      {diffOpen === lane.branch ? "hide diff" : "diff"}
+                    </button>
+                  )}
+                  {isLine ? null : (
+                    <button className="skill-link" disabled={merging === lane.branch} onClick={() => void merge(lane)}>
+                      {merging === lane.branch ? "merging…" : "merge"}
+                    </button>
+                  )}
+                </span>
+                {diffOpen === lane.branch ? <pre className="lane-diff">{diffText ?? "loading diff…"}</pre> : null}
+              </div>
             );
           })
+        )}
+      </div>
     );
   };
 }

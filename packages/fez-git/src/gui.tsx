@@ -420,7 +420,7 @@ export default function activate(api: GuiExtensionApi): void {
     api.registerThreadView(
       "lanes",
       (rootContent) => lineOfRoot(rootContent) !== undefined,
-      (props) => h(LaneBoard, props)
+      (props) => <LaneBoard {...props} />
     );
   }
 
