@@ -707,15 +707,18 @@ export default function activate(api: GuiExtensionApi): void {
     };
 
     return (
-      <div className="skill-row">
-        <div className="skill-main">
-          <span className="skill-name">agents without an account</span>
-          <div className="skill-desc">an account is the agent's own address — what you put in it is the most it can spend</div>
-          {error ? <p className="ob-error">{error}</p> : null}
-        </div>
-        <div className="skill-actions">
+      // Stacked, not the name-left/action-right settings grammar: three
+      // account buttons crushed the explainer into a five-line sliver.
+      // This is the page's primary act while accounts are missing —
+      // heading, one line of why, then real buttons (fez-git's "what
+      // now" card sets the same shape).
+      <div className="skill-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <span className="skill-name">agents without an account</span>
+        <div className="skill-desc">an account is the agent's own address — what you put in it is the most it can spend</div>
+        {error ? <p className="ob-error">{error}</p> : null}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
           {names.map((name) => (
-            <button key={name} className="skill-link" disabled={busy === name} onClick={() => void derive(name)}>
+            <button key={name} className="agent-action" disabled={busy === name} onClick={() => void derive(name)}>
               {busy === name ? "opening…" : `open @${name}'s account`}
             </button>
           ))}
