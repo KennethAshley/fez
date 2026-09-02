@@ -660,7 +660,7 @@ export default function activate(api: GuiExtensionApi): void {
             </button>
           </div>
           <div style={{ ...dim, marginTop: 10 }}>
-            treasury address — fund this, then derive an agent below:
+            treasury address — fund it, then open your agents' accounts below:
           </div>
           <div style={{ marginTop: 4 }}>
             <AddressRow address={reveal.treasuryAddress} />
@@ -709,14 +709,14 @@ export default function activate(api: GuiExtensionApi): void {
     return (
       <div className="skill-row">
         <div className="skill-main">
-          <span className="skill-name">agents without accounts</span>
-          <div className="skill-desc">each gets its own allowance address, derived from the master wallet</div>
+          <span className="skill-name">agents without an account</span>
+          <div className="skill-desc">an account is the agent's own address — what you put in it is the most it can spend</div>
           {error ? <p className="ob-error">{error}</p> : null}
         </div>
         <div className="skill-actions">
           {names.map((name) => (
             <button key={name} className="skill-link" disabled={busy === name} onClick={() => void derive(name)}>
-              {busy === name ? "deriving…" : `derive @${name}`}
+              {busy === name ? "opening…" : `open @${name}'s account`}
             </button>
           ))}
         </div>
@@ -1143,7 +1143,7 @@ export default function activate(api: GuiExtensionApi): void {
         <div className="skill-row">
           <div className="skill-main">
             <span className="skill-name">{x402NetworkLabel(x402Network)}</span>
-            <div className="skill-desc">which chain agents pay 402 services on — applies on their next call</div>
+            <div className="skill-desc">which chain agents use to pay per-call services (x402) — applies on their next call</div>
           </div>
           <select
             className="skill-actions"
@@ -1196,7 +1196,8 @@ export default function activate(api: GuiExtensionApi): void {
 
         {Object.keys(evmAddresses).length === 0 ? (
           <p className="settings-hint">
-            no EVM addresses yet — run fez-wallet derive &lt;persona&gt; to mint one, then fund it with USDC
+            no USDC addresses yet — opening an agent's account (above) creates one; fund it with USDC to let that
+            agent pay per-call services
           </p>
         ) : (
           <div>

@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/wallet",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Per-agent allowance wallets for fez \u2014 HD-derived accounts from one master mnemonic, TAO live (EVM later), threshold consent via owner-signed reactions. The balance IS the cap.",
   "type": "module",
