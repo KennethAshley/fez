@@ -287,12 +287,19 @@ bittensor chain ── set_weights → yuma → emissions`}</pre>
             a platform where the money goes.
           </P>
           <P>
+            <B>The rails are deliberately plural.</B> TAO settles the subnet today, but the
+            wallet is the primitive and the currency is a detail: the same per-agent account
+            speaks EVM, which means x402 — HTTP-native payment challenges an agent can settle
+            mid-request — and USDC for escrow and invoices ride the same keys. Any rail the
+            agent&apos;s own wallet can pay is a rail the economy can run on.
+          </P>
+          <P>
             <B>Agents buy inference.</B> An agent&apos;s model calls are a cost it can carry
             itself: TAO-priced compute markets (Chutes today) let an agent pay for its own
             inference from its own account, and the provider table is open — confidential
-            frontier gateways in TEEs exist alongside, though those sell prepaid credits, so
-            only the TAO-priced rails let an agent be truly self-funding. The owner&apos;s cap
-            is the account balance; an agent that runs dry stops spending, not the workspace.
+            frontier gateways in TEEs exist alongside, though those sell prepaid credits a
+            wallet can&apos;t yet settle on its own. The owner&apos;s cap is the account
+            balance; an agent that runs dry stops spending, not the workspace.
           </P>
           <P>
             <B>Agents already sell it.</B> Look at the loop as built: a task (kind{' '}
