@@ -973,21 +973,23 @@ function Shell({
       )}
       {banner && <div className="conn-bar error">{banner}</div>}
       <aside className="rail">
+        {/* The native titlebar is gone (titleBarStyle: Overlay) — a full
+            strip of chrome above the app said only "fez". The traffic
+            lights inlay HERE, in the rail's head, and this strip is the
+            window's grab bar (double-click zooms, as a titlebar does).
+            Ghostty and Telegram both live this way. */}
+        {/* The light-well: traffic lights and the grab bar, nothing else —
+            a workspace name and then a relay dot were both tried here and
+            both removed. Healthy needs no glyph; trouble already gets the
+            conn banner, which says what's wrong instead of blinking. */}
+        <div className="rail-titlebar" data-tauri-drag-region />
         {/* Buzz's sidebar head: search, not a title. The workspace name
             told you where you are once — search is what you reach for
             every day (⌘K works from anywhere; this is its visible home).
             The relay-health dot rides along: it was never about the
             brand, and the workspace name still lives in the browse list
             and this row's tooltip. */}
-        <button className="rail-search" title={`${client.state.workspace.name} · ${client.state.workspace.relay}`} onClick={() => setSearchOpen({ query: "" })}>
-          <span
-            className={connected ? (relayHealth.every((r) => r.connected) ? "dot on" : "dot partial") : "dot off"}
-            title={
-              relayHealth.length === 0
-                ? connected ? "relay connected" : "reconnecting…"
-                : relayHealth.map((r) => `${r.connected ? "●" : "○"} ${r.url}`).join("\n")
-            }
-          />
+        <button className="rail-search" title="search everything (⌘K)" onClick={() => setSearchOpen({ query: "" })}>
           <span className="rail-search-label">Search everything</span>
           <kbd className="rail-search-kbd">⌘K</kbd>
         </button>
@@ -1282,17 +1284,38 @@ function Shell({
               </div>
             </>
           )}
-          <button className="self-card" title="menu" onClick={() => setSelfMenu((open) => !open)}>
+          <button
+            className="self-card"
+            // The relay story lives HERE now (it was a dot in the search
+            // box, then briefly in the titlebar band): your presence and
+            // your connection are the same family of fact, and this
+            // corner already speaks status. The tooltip carries the
+            // workspace and the per-relay detail.
+            title={
+              relayHealth.length === 0
+                ? `${client.state.workspace.name} — ${connected ? "relay connected" : "reconnecting…"}`
+                : `${client.state.workspace.name}\n` + relayHealth.map((r) => `${r.connected ? "●" : "○"} ${r.url}`).join("\n")
+            }
+            onClick={() => setSelfMenu((open) => !open)}
+          >
             {/* Presence rides the creature — a dot beside the word
                 "online" said it twice, and the ring keeps it attached
-                to the face rather than floating in the row. */}
+                to the face rather than floating in the row. Partial
+                (some relays down) warms the ring without crying wolf. */}
             <span className="self-face">
               <Avatar pk={client.pubkey} size={28} title="you" />
-              <span className={connected ? "self-presence on" : "self-presence off"} />
+              <span className={connected ? (relayHealth.every((r) => r.connected) ? "self-presence on" : "self-presence partial") : "self-presence off"} />
             </span>
             <span className="self-meta">
               <span className="self-name">{client.knownNames().get(client.pubkey) ?? "you"}</span>
-              <span className="self-status">{client.statusOf(client.pubkey) ?? (connected ? "online" : "reconnecting…")}</span>
+              <span className="self-status">
+                {client.statusOf(client.pubkey) ??
+                  (!connected
+                    ? "reconnecting…"
+                    : relayHealth.some((r) => !r.connected)
+                      ? `online · ${relayHealth.filter((r) => r.connected).length}/${relayHealth.length} relays`
+                      : "online")}
+              </span>
             </span>
             <span className="self-chevron">{selfMenu ? "⌄" : "⌃"}</span>
           </button>
@@ -2040,7 +2063,7 @@ function ChannelView({
       }}
     >
       <header className="topbar">
-        <div className="topbar-row">
+        <div className="topbar-row" data-tauri-drag-region>
         <span className="hash">#</span> {channelName}
         {channelBranch && !threadRoot && (
           <span className="channel-branch" title={`tracking ${channelBranch}`}>
@@ -2535,7 +2558,7 @@ function DmView({
   return (
     <main className="main">
       <header className="topbar">
-        <div className="topbar-row">
+        <div className="topbar-row" data-tauri-drag-region>
           {/* Identity gets a face: the header is the person you're talking
               to, in the same grammar as their rail row — face, presence,
               name. A group shows its little pile instead. */}

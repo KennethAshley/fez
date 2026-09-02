@@ -23,7 +23,9 @@
         "title": "fez",
         "width": 800,
         "height": 600,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
@@ -40,7 +42,9 @@
         "base-uri": "'self'",
         "form-action": "'self'"
       },
-      "dangerousDisableAssetCspModification": ["style-src"]
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
     }
   },
   "bundle": {

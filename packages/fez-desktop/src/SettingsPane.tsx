@@ -299,6 +299,10 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
   return (
     <div className="settings-screen">
       <nav className="settings-rail">
+        {/* Settings replaces the whole shell, so it needs its own
+            light-well — without one the traffic lights sat on the back
+            button. Same band, same grab bar as the main rail. */}
+        <div className="rail-titlebar" data-tauri-drag-region />
         <button className="settings-back" onClick={onClose}>← back</button>
         {SETTINGS_GROUPS.map((group) => (
           <div key={group.label} className="settings-group">

@@ -87,12 +87,26 @@ body {
    handler was correct the whole time; the width simply could not move,
    and the ambiguity was invisible to anyone reading any one block.
    Add rail properties HERE, not in a new .rail block further down. */
+/* The overlay titlebar's footprint: tall enough to clear the traffic
+   lights (y:14 + 14px buttons), and the window's grab bar. Everything
+   in the band centers on the lights' own line, so rail and topbar read
+   as ONE titlebar. The left padding is the lights' width plus a breath. */
+/* Sized to the DEFAULT overlay light position (center ≈13pt): Tauri
+   accepts trafficLightPosition but AppKit resets custom insets on
+   window events, so the band meets the lights where macOS actually puts
+   them. The content pane's 40px header keeps its own rhythm behind the
+   full-height rail border — two tiers, the Telegram arrangement. */
+.rail-titlebar {
+  height: 26px; flex: none; min-width: 0;
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 2px 12px 0 78px; margin-bottom: 6px;
+}
 .rail {
   width: var(--rail-w, 240px);
   min-width: var(--rail-w, 240px);
   background: var(--bg-rail, var(--bg1));
   border-right: 1px solid var(--hairline, var(--bg2));
-  padding: 12px 8px 0;
+  padding: 0 8px 0;
   font-family: var(--font-mono);
   font-size: 12.5px;
   /* hidden, not auto: .rail-scroll is the scrolling child, and a rail
@@ -198,17 +212,15 @@ body {
   position: relative;
 }
 .topbar-row .hash { color: var(--brand); }
+/* The band's continuation across the content pane: same 40px, contents
+   centered on the traffic lights' line, so the title row and the lights
+   share a centerline instead of each floating at its own height. The
+   fixed height also replaces the old only-child padding dance — one
+   row or two, the first row is always the band. */
 .topbar-row {
-  padding: 12px 18px 0;
+  padding: 0 18px; min-height: 40px;
   font-weight: 600; display: flex; align-items: center; gap: 8px;
 }
-/* The row carries no bottom padding because in a channel the doc
-   subtitle sits under it and supplies its own (.channel-info-bar,
-   11px). A page header has no second row, so without this it closed
-   flush against its rule and came out visibly shorter than the channel
-   header it is meant to match. 11px is that same number, so both end up
-   the same height. */
-.topbar-row:only-child { padding-bottom: 11px; }
 .thread-exit {
   margin-left: auto; background: var(--bg2); border: 0; color: var(--accent);
   font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
@@ -1370,6 +1382,7 @@ button.author:hover { text-decoration: underline; }
 }
 .self-card:hover .self-presence { border-color: var(--bg1); }
 .self-presence.on { background: var(--phosphor); }
+.self-presence.partial { background: var(--yellow); }
 .self-presence.off { background: var(--fg-dim); }
 .self-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .self-name { font-weight: 700; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1883,7 +1896,7 @@ button.author:hover { text-decoration: underline; }
 }
 .settings-rail {
   width: 220px; min-width: 220px; background: var(--bg-rail);
-  border-right: 1px solid var(--hairline); padding: 12px 8px;
+  border-right: 1px solid var(--hairline); padding: 0 8px 12px;
   font-family: var(--font-mono); font-size: 12.5px;
   display: flex; flex-direction: column; overflow-y: auto;
 }
