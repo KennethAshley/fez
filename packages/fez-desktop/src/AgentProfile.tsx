@@ -40,6 +40,13 @@ async function fetchRecord(pk: string): Promise<RecordRow[] | "error"> {
   try {
     await relay.connect();
     const events = (await relay.query([{ kinds: [47020], "#p": [pk], limit: 500 }])) as unknown as AttestationEvent[];
+    // connect()/query() never reject on a dead relay — connect() swallows
+    // failures into onError (Promise.allSettled) and query()'s querySync
+    // just resolves empty once its wait window elapses. So an unreachable
+    // relay and a reachable-but-empty relay would otherwise both land here
+    // with events = []. health() is the only thing that tells them apart:
+    // if nothing ever connected, this is "unknown", not "no record".
+    if (!relay.health().some((h) => h.connected)) throw new Error("bazaar relay unreachable");
     const rows = aggregateRecord(events.filter((ev) => verifyEvent(ev as never)));
     recordCache.set(pk, rows);
     return rows;
