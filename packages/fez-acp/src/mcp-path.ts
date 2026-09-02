@@ -38,3 +38,37 @@ export function fezMcpLaunch(opts: {
   if (opts.exists(sibling)) return { launch: { command: sibling, args: [] }, tried };
   return { tried };
 }
+
+/**
+ * A skill entry's `command: node` is unrunnable exactly where agents
+ * run: the desktop spawns them with the GUI's PATH (/usr/bin:/bin:…),
+ * and a machine whose node lives in nvm has none there. The harness
+ * spawns the tool server, the spawn dies, and the harness proceeds
+ * WITHOUT the tool — invisible, the same class as the traps above
+ * (found live: a persona said `mcpServers: [wallet]` while its agent
+ * swore it had no wallet). Resolve bare "node" to a runtime that
+ * actually exists: the managed runtime fez installs for the Claude
+ * adapter (newest present version), then the standard install homes.
+ * Pure for tests — home, exists and list come in.
+ */
+export function resolveNodeCommand(opts: {
+  home: string;
+  exists: (p: string) => boolean;
+  list: (dir: string) => string[];
+}): string | undefined {
+  const root = path.join(opts.home, ".fez", "runtimes", "node");
+  let versions: string[] = [];
+  try {
+    versions = opts.list(root).filter((v) => v.startsWith("v")).sort().reverse();
+  } catch {
+    /* no managed runtime dir — fall through to system homes */
+  }
+  for (const v of versions) {
+    const candidate = path.join(root, v, "darwin-arm64", "bin", "node");
+    if (opts.exists(candidate)) return candidate;
+  }
+  for (const candidate of ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]) {
+    if (opts.exists(candidate)) return candidate;
+  }
+  return undefined;
+}

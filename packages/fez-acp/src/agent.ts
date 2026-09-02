@@ -62,7 +62,7 @@ import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
-import { fezMcpLaunch } from "./mcp-path.js";
+import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
@@ -247,8 +247,29 @@ async function main() {
   );
   const skillsSection = skillsPromptSection(attachedSkills);
   const mcpServers = resolved
+    // Copies, not registry objects — the command rewrite below must not
+    // reach back into the shared registry.
     .map((r) => findMcpServer(r.key))
-    .filter((s): s is NonNullable<typeof s> => s !== undefined);
+    .filter((s): s is NonNullable<typeof s> => s !== undefined)
+    .map((s) => ({ ...s }));
+
+  // A bare `command: node` (what the installer writes for every skill
+  // part) is unrunnable from an app-spawned agent — the GUI PATH has no
+  // node on an nvm machine, the harness's spawn dies, and the harness
+  // proceeds WITHOUT the tool, silently. Resolve it to a runtime that
+  // exists before the session ever sees it (resolveNodeCommand: the
+  // managed runtime fez installs, then the standard homes).
+  if (mcpServers.some((s) => "command" in s && s.command === "node")) {
+    const nodeBin = resolveNodeCommand({ home: os.homedir(), exists: fs.existsSync, list: (d) => fs.readdirSync(d) });
+    for (const s of mcpServers) {
+      if (!("command" in s) || s.command !== "node") continue;
+      if (nodeBin) s.command = nodeBin;
+      else
+        console.warn(
+          `⚠️  tool "${s.name}" needs node and no runtime is reachable from an app-spawned agent — set up the Claude bridge (installs one) or install node in /opt/homebrew`
+        );
+    }
+  }
 
   // fez-mcp: EVERY persona gets first-class fez tools (send/read channels,
   // DMs, search, memory, docs) as a stdio MCP server signed with the
@@ -278,6 +299,15 @@ async function main() {
     console.log(`🔧 fez tools attached (${fezMcp.launch.args[0] ?? fezMcp.launch.command})`);
   } else {
     console.warn(`⚠️  fez-mcp not found — agents run without fez_* tools. Looked at: ${fezMcp.tried.join(", ")}`);
+  }
+  // Every attached tool server, named — an attached-but-dead tool used to
+  // be indistinguishable from one never wired, and the difference is the
+  // whole diagnosis (found live: wallet resolved, spawned against a PATH
+  // with no node, and the log said nothing at all).
+  for (const s of mcpServers) {
+    if (s.name === "fez") continue;
+    const runs = "command" in s ? `${s.command}${s.args?.length ? " " + s.args.join(" ") : ""}` : "url" in s ? s.url : s.type;
+    console.log(`🔧 tool "${s.name}" attached (${runs})`);
   }
 
   // ── Per-persona working directory. Turns run HERE, not wherever `fez

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fezMcpLaunch } from "../../fez-acp/src/mcp-path.js";
+import { fezMcpLaunch, resolveNodeCommand } from "../../fez-acp/src/mcp-path.js";
 
 /**
  * Why this exists: EVERY desktop-spawned agent was running without fez_*
@@ -51,5 +51,33 @@ describe("fezMcpLaunch", () => {
     expect(launch).toBeUndefined();
     expect(tried).toHaveLength(2);
     expect(tried[1]).toBe("/Users/x/.fez/bin/fez-mcp");
+  });
+});
+
+/**
+ * resolveNodeCommand — a skill entry's bare `command: node` dies on the
+ * GUI PATH (no node on an nvm machine), and the harness proceeds without
+ * the tool, silently. The resolver prefers the managed runtime fez
+ * itself installs, newest version first, then the standard homes.
+ */
+describe("resolveNodeCommand", () => {
+  const home = "/Users/x";
+  const managed = (v: string) => `/Users/x/.fez/runtimes/node/${v}/darwin-arm64/bin/node`;
+
+  it("prefers the newest managed runtime", () => {
+    const disk = new Set([managed("v24.18.0"), managed("v22.1.0"), "/opt/homebrew/bin/node"]);
+    const got = resolveNodeCommand({ home, exists: (p) => disk.has(p), list: () => ["v22.1.0", "v24.18.0"] });
+    expect(got).toBe(managed("v24.18.0"));
+  });
+
+  it("falls back to the standard homes when no managed runtime exists", () => {
+    const disk = new Set(["/usr/local/bin/node"]);
+    const got = resolveNodeCommand({ home, exists: (p) => disk.has(p), list: () => { throw new Error("ENOENT"); } });
+    expect(got).toBe("/usr/local/bin/node");
+  });
+
+  it("returns undefined when node is nowhere — the caller warns, loudly", () => {
+    const got = resolveNodeCommand({ home, exists: () => false, list: () => [] });
+    expect(got).toBeUndefined();
   });
 });
