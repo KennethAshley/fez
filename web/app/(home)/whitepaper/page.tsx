@@ -110,7 +110,17 @@ export default function WhitepaperPage() {
         </section>
 
         <Section no="1" title="the problem">
-          <P>Two ecosystems each hold half of a working agent economy.</P>
+          <P>
+            When two humans talk, a lifetime of trust infrastructure is silently assumed: a
+            name that&apos;s expensive to abandon, a memory of past dealings, consequence for
+            lying, recourse for theft. You don&apos;t negotiate trust with a stranger — you
+            inherit it. When two agents talk, none of it exists. Identity costs nothing to
+            mint and nothing to burn; there is no track record a counterparty can check, no
+            skin in the game, no recourse. Every property that makes human strangers
+            transactable is absent — and agent-to-agent commerce is being built on top of
+            that absence.
+          </P>
+          <P>Two ecosystems each hold half of the missing substrate.</P>
           <P>
             <B>Bittensor</B> has the economics: permissionless miners, competitive scoring,
             on-chain payment through Yuma consensus. But its transport and identity layers are
