@@ -36,23 +36,43 @@ function requireUsablePersonaName(persona: string): void {
   }
 }
 
-export async function cmdInit(io: CliIo): Promise<void> {
+/** The ceremony, as data — ONE implementation for both presentations
+ * (the CLI's prose and `--json` for the wallet panel's in-app flow).
+ * The mnemonic is returned exactly once, by init alone; nothing else
+ * ever reads it back out. */
+export interface InitResult {
+  mnemonic: string;
+  treasuryAddress: string;
+}
+
+export async function initWallet(): Promise<InitResult> {
   if (readRootEntry()) throw new Error("a wallet root already exists — refusing to overwrite it");
   const mnemonic = generateWalletMnemonic();
   writeRootEntry(mnemonic);
+  const treasuryAddress = treasuryPair(mnemonic).address;
+  await mirrorAddresses({ treasury: treasuryAddress });
+  const config = loadConfig();
+  await mirrorEndpoint(config.endpoints.tao, config.network);
+  return { mnemonic, treasuryAddress };
+}
+
+export async function cmdInit(io: CliIo): Promise<void> {
+  const { mnemonic, treasuryAddress } = await initWallet();
   io.print("wallet created. WRITE THESE 24 WORDS DOWN — they are shown exactly once:");
   io.print("");
   io.print(`  ${mnemonic}`);
   io.print("");
-  const treasuryAddress = treasuryPair(mnemonic).address;
   io.print(`treasury address: ${treasuryAddress}`);
   io.print("fund the treasury, then: fez-wallet derive <persona> && fez-wallet fund <persona> <amount>");
-  await mirrorAddresses({ treasury: treasuryAddress });
-  const config = loadConfig();
-  await mirrorEndpoint(config.endpoints.tao, config.network);
 }
 
-export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
+export interface DeriveResult {
+  persona: string;
+  address: string;
+  evmAddress: string;
+}
+
+export async function derivePersona(persona: string): Promise<DeriveResult> {
   requireUsablePersonaName(persona);
   const mnemonic = requireRoot();
   const existing = readEntry(persona);
@@ -65,15 +85,24 @@ export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
   // idempotently, since both halves are deterministic from mnemonic+index.
   const evm = deriveAgentEvm(mnemonic, evmIndex);
   writeEntry(persona, JSON.stringify({ ...pair, evm }));
-  io.print(`${persona}: ${pair.address}`);
-  io.print(`${persona} (evm): ${evm.addressHex}  (fund this for x402 payments)`);
-  await mirrorAddresses({ persona: { name: persona, address: pair.address } });
+  await finishDeriveMirrors(persona, pair.address, evm.addressHex, config);
+  return { persona, address: pair.address, evmAddress: evm.addressHex };
+}
+
+async function finishDeriveMirrors(persona: string, address: string, evmAddress: string, config: ReturnType<typeof loadConfig>): Promise<void> {
+  await mirrorAddresses({ persona: { name: persona, address } });
   // The panel shows the fundable EVM address + the effective x402 settings.
-  await mirrorEvmAddress({ name: persona, address: evm.addressHex });
+  await mirrorEvmAddress({ name: persona, address: evmAddress });
   {
     const s = x402Settings(config);
     await mirrorX402Meta({ network: s.network, rpcUrl: s.rpcUrl, usdcAddress: s.usdcAddress, dailyCapUsd: s.dailyCapUsd, autoApproveDefault: s.autoApproveUnderUsd.default ?? 0 });
   }
+}
+
+export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
+  const r = await derivePersona(persona);
+  io.print(`${r.persona}: ${r.address}`);
+  io.print(`${r.persona} (evm): ${r.evmAddress}  (fund this for x402 payments)`);
 }
 
 /** The only path that changes which chain the wallet talks to. An unknown

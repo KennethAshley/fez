@@ -142,6 +142,13 @@ export interface GuiExtensionApi {
     /** Whether an agent by that name is running right now. */
     isRunning(name: string): Promise<boolean>;
   };
+  /** One-shot sibling of `agents`: run a bin this package ships, to
+   * completion, and get its output — owner-side ceremonies (the wallet's
+   * init/derive is the founding case). Same grant, same Rust-side bin
+   * ownership check; absent without `processes`. */
+  processes?: {
+    run(bin: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
+  };
 
   personas?: {
     list(): Promise<string[]>;
@@ -1003,6 +1010,16 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
             // the miner must never stop "drift" the chat agent.
             stop: (agent: string, bin?: string) => invoke<boolean>("kill_agent", { persona: agent, bin: bin ?? null }),
             isRunning: (agent: string, bin?: string) => invoke<boolean>("agent_alive", { persona: agent, bin: bin ?? null }),
+          }
+        : undefined,
+      // One-shot sibling of `agents` — same grant, same Rust-side bin
+      // ownership check (run_extension_bin), different shape: runs to
+      // completion and returns the output, for owner-side ceremonies a
+      // panel drives (the wallet's init/derive is the founding case).
+      processes: may("processes")
+        ? {
+            run: (bin: string, args: string[]) =>
+              invoke<{ code: number; stdout: string; stderr: string }>("run_extension_bin", { extension: name, bin, args }),
           }
         : undefined,
       personas: may("personas")

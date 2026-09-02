@@ -38,6 +38,10 @@ import type { SignedNostrEvent } from "./consent.js";
  * reach for them the way fez-git reaches under GuiClient for things it
  * needs, typed against what's actually used (fez-client:738, :922, :930). */
 interface WalletClient extends GuiClient {
+  /** pk → persona name — the derive ceremony offers accounts for the
+   * agents this workspace actually has (elevenlabs reaches for the same
+   * member, same reasoning: typed against what's actually used). */
+  agents(): Map<string, string>;
   msgById(id: string): { authorPk: string; ts: number } | undefined;
   /** My own live reaction on a target, if any (fez-client:922) — keyed by
    * MY pubkey, which is exactly the owner check this card needs: the
@@ -585,6 +589,141 @@ export default function activate(api: GuiExtensionApi): void {
     );
   }
 
+  // ── the ceremony ─────────────────────────────────────────────────
+  // fez-wallet init, from the panel — the terminal is no longer the
+  // door. Runs through api.processes (the `processes` grant + the
+  // manifest's own bin, both enforced host-side); custody is unchanged:
+  // the mnemonic is minted BY the CLI in its own process, stored in the
+  // wallet keychain, and crosses into the webview exactly once, to be
+  // shown exactly once. Nothing here can read it back afterward.
+  function Ceremony({ onDone }: { onDone: () => void }): JSX.Element {
+    const [phase, setPhase] = useState<"idle" | "running" | "reveal">("idle");
+    const [error, setError] = useState<string | undefined>(undefined);
+    const [reveal, setReveal] = useState<{ mnemonic: string; treasuryAddress: string } | undefined>(undefined);
+    const run = api.processes?.run;
+
+    if (!run) {
+      return (
+        <p className="settings-hint">
+          No wallet yet. Creating one from here needs the `processes` permission — reinstall the wallet extension to
+          grant it (or run <code>fez-wallet init</code> in a terminal).
+        </p>
+      );
+    }
+
+    const create = async () => {
+      setPhase("running");
+      setError(undefined);
+      try {
+        const out = await run("fez-wallet", ["init", "--json"]);
+        if (out.code !== 0) throw new Error(out.stderr.trim() || `init exited ${out.code}`);
+        setReveal(JSON.parse(out.stdout) as { mnemonic: string; treasuryAddress: string });
+        setPhase("reveal");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setPhase("idle");
+      }
+    };
+
+    if (phase === "reveal" && reveal) {
+      return (
+        <div style={{ ...card, maxWidth: 560 }}>
+          <div style={{ fontWeight: 600 }}>wallet created — write these 24 words down</div>
+          <div style={{ ...dim, marginTop: 2 }}>
+            They are shown exactly once and never stored anywhere you can read them again. Anyone holding them holds
+            the money.
+          </div>
+          <div
+            style={{
+              ...mono,
+              fontSize: 13,
+              lineHeight: 1.9,
+              marginTop: 10,
+              padding: "10px 12px",
+              border: "1px solid var(--hairline, #333)",
+              borderRadius: 8,
+              userSelect: "text" as const,
+            }}
+          >
+            {reveal.mnemonic}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
+            <CopyButton text={reveal.mnemonic} label="copy words" title="copy the backup phrase" />
+            <button
+              className="agent-action"
+              onClick={() => {
+                setReveal(undefined);
+                onDone();
+              }}
+            >
+              I wrote them down
+            </button>
+          </div>
+          <div style={{ ...dim, marginTop: 10 }}>
+            treasury address — fund this, then derive an agent below:
+          </div>
+          <div style={{ marginTop: 4 }}>
+            <AddressRow address={reveal.treasuryAddress} />
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <p className="settings-hint">
+          No wallet yet. One master wallet funds every agent's allowance — created here, stored in the macOS keychain,
+          backed up by 24 words you'll see exactly once.
+        </p>
+        {error ? <p className="ob-error">{error}</p> : null}
+        <button className="agent-action" disabled={phase === "running"} onClick={() => void create()}>
+          {phase === "running" ? "creating…" : "create this workspace's wallet"}
+        </button>
+      </div>
+    );
+  }
+
+  /** Agents the workspace knows that have no allowance account yet — one
+   * button each; derive is idempotent, so a re-click re-mirrors. */
+  function DeriveRows({ have, onDone }: { have: string[]; onDone: () => void }): JSX.Element | null {
+    const [busy, setBusy] = useState<string | undefined>(undefined);
+    const [error, setError] = useState<string | undefined>(undefined);
+    const run = api.processes?.run;
+    const names = [...new Set([...client.agents().values()])].filter((n) => n && !have.includes(n)).sort();
+    if (!run || names.length === 0) return null;
+
+    const derive = async (name: string) => {
+      setBusy(name);
+      setError(undefined);
+      try {
+        const out = await run("fez-wallet", ["derive", name, "--json"]);
+        if (out.code !== 0) throw new Error(out.stderr.trim() || `derive exited ${out.code}`);
+        onDone();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(undefined);
+      }
+    };
+
+    return (
+      <div className="skill-row">
+        <div className="skill-main">
+          <span className="skill-name">agents without accounts</span>
+          <div className="skill-desc">each gets its own allowance address, derived from the master wallet</div>
+          {error ? <p className="ob-error">{error}</p> : null}
+        </div>
+        <div className="skill-actions">
+          {names.map((name) => (
+            <button key={name} className="skill-link" disabled={busy === name} onClick={() => void derive(name)}>
+              {busy === name ? "deriving…" : `derive @${name}`}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // ── wallet panel ─────────────────────────────────────────────────
   api.registerSettingsPanel("Wallet", () => <WalletPanel />);
 
@@ -682,13 +821,16 @@ export default function activate(api: GuiExtensionApi): void {
       }
     }, [draft, threshold, say, complain]);
 
+    // Reused by the ceremony: init/derive run out-of-process and write
+    // the mirror; the panel re-reads it instead of guessing at results.
+    const reloadMirror = useCallback(async () => {
+      setAddresses(((await api.storage.get("addresses")) as AddressBook) ?? {});
+      setEndpoint(await api.storage.get("endpoint"));
+      setLogs(((await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>>) ?? {});
+      setMirroredNetwork((await api.storage.get("network")) as Network | undefined);
+    }, []);
     useEffect(() => {
-      void (async () => {
-        setAddresses(((await api.storage.get("addresses")) as AddressBook) ?? {});
-        setEndpoint(await api.storage.get("endpoint"));
-        setLogs(((await api.storage.get("logs")) as Partial<Record<Network, SpendEntry[]>>) ?? {});
-        setMirroredNetwork((await api.storage.get("network")) as Network | undefined);
-      })();
+      void reloadMirror();
     }, []);
 
     // ── x402 / USDC ─────────────────────────────────────────────────
@@ -911,7 +1053,7 @@ export default function activate(api: GuiExtensionApi): void {
             {`no endpoint for network "${network}" — prefs names a network this build doesn't know`}
           </p>
         ) : balanceRows.length === 0 ? (
-          <p className="settings-hint">no addresses yet — run fez-wallet init, then derive an agent</p>
+          <Ceremony onDone={() => void reloadMirror()} />
         ) : (
           <div>
             {balanceRows.map(([who, addr]) => (
@@ -927,6 +1069,8 @@ export default function activate(api: GuiExtensionApi): void {
             ))}
           </div>
         )}
+
+        {addresses.treasury ? <DeriveRows have={Object.keys(addresses.personas ?? {})} onDone={() => void reloadMirror()} /> : null}
 
         <div className="manage-section">spend ledger</div>
         {log.length === 0 ? (

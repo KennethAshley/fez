@@ -234,6 +234,18 @@ export interface GuiExtensionApi {
      *  up right now. Same scoping rule as stop. */
     isRunning(name: string, bin?: string): Promise<boolean>;
   };
+  /**
+   * One-shot: run a bin YOUR package ships, to completion, and get what
+   * it printed — for owner-side ceremonies a panel drives (the wallet's
+   * init/derive is the founding case). Same authority as `agents` (the
+   * `processes` grant + the manifest's own bin claim, both enforced in
+   * the host, not here) and absent without the grant. A run past the
+   * host's deadline is stopped and rejects; a nonzero `code` is not an
+   * error here — the caller reads stderr and decides.
+   */
+  processes?: {
+    run(bin: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
+  };
 
   /**
    * Read and edit agent personas — sensitive (`personas` permission),

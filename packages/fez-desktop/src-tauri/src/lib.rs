@@ -2072,6 +2072,63 @@ fn spawn_extension_agent(
     spawn_tracked_process(name, &bin, checked_env(env)?, vec![], None, None)
 }
 
+/// One-shot: run a bin THIS extension's package ships and return what it
+/// printed — the ceremony seam (fez-wallet init/derive from the wallet
+/// panel, and whatever the next extension's owner-side act is). The
+/// authority gate is spawn_extension_agent's exactly (extension_may_spawn:
+/// the `processes` grant plus the manifest's own bin claim); the
+/// difference is shape — this runs to completion and hands back stdout,
+/// where spawn starts a standing process and hands back a pid. Args are
+/// plain strings passed verbatim to the extension's OWN binary; a 120s
+/// deadline kills a hang rather than parking a webview promise forever.
+#[tauri::command]
+async fn run_extension_bin(
+    extension: String,
+    bin: String,
+    args: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = fez_home()?;
+        let manifest = package_install::installed_manifest(&extension, &home);
+        extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
+        let program = home.join("bin").join(&bin);
+        use std::io::Read;
+        use std::process::Stdio;
+        let mut child = Command::new(&program)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("{bin}: {e}"))?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if std::time::Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("{bin} ran past the 120s deadline and was stopped"));
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                Err(e) => return Err(format!("{bin}: {e}")),
+            }
+        }
+        let mut stdout = String::new();
+        if let Some(mut so) = child.stdout.take() {
+            let _ = so.read_to_string(&mut stdout);
+        }
+        let mut stderr = String::new();
+        if let Some(mut se) = child.stderr.take() {
+            let _ = se.read_to_string(&mut stderr);
+        }
+        let code = child.wait().ok().and_then(|st| st.code()).unwrap_or(-1);
+        Ok(serde_json::json!({ "code": code, "stdout": stdout, "stderr": stderr }))
+    })
+    .await
+    .map_err(|e| format!("run task panicked: {e}"))?
+}
+
 /// ~/.fez/settings.json as a value, or {} — the same file install_package
 /// wrote the grants and bin names into.
 fn settings_value() -> serde_json::Value {
@@ -2453,7 +2510,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, inspect_git_package, install_git_package])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {

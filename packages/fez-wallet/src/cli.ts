@@ -2,21 +2,27 @@
 import { cryptoWaitReady } from "@polkadot/util-crypto";
 import { loadConfig } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
-import { cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork } from "./cli-commands.js";
+import { cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona } from "./cli-commands.js";
 
 const io = { print: (l: string) => console.log(l) };
-const [cmd, ...rest] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+// --json: the same ceremony, machine-shaped — the wallet panel's in-app
+// init/derive flow parses this instead of scraping prose.
+const json = argv.includes("--json");
+const [cmd, ...rest] = argv.filter((a) => a !== "--json");
 
 try {
   await cryptoWaitReady();
   const adapter = () => substrateAdapter({ endpoint: loadConfig().endpoints.tao });
   switch (cmd) {
     case "init":
-      await cmdInit(io);
+      if (json) console.log(JSON.stringify(await initWallet()));
+      else await cmdInit(io);
       break;
     case "derive":
       if (!rest[0]) throw new Error("usage: fez-wallet derive <persona>");
-      await cmdDerive(io, rest[0]);
+      if (json) console.log(JSON.stringify(await derivePersona(rest[0])));
+      else await cmdDerive(io, rest[0]);
       break;
     case "fund":
       if (!rest[0] || !rest[1]) throw new Error("usage: fez-wallet fund <persona> <amount>");
