@@ -2096,6 +2096,7 @@ async fn run_extension_bin(
         use std::process::Stdio;
         let mut child = Command::new(&program)
             .args(&args)
+            .env("PATH", subprocess_path_env())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2209,6 +2210,29 @@ fn checked_env(env: Vec<(String, String)>) -> Result<Vec<(String, String)>, Stri
 /// pid registry, in one place. Every policy caller goes through here — nothing
 /// reaches Command::spawn directly, which is the point.
 ///
+/// A PATH that can actually run a `#!/usr/bin/env node` shebang: the GUI
+/// process inherits launchd's PATH (/usr/bin:/bin:…), which has no node
+/// on an nvm machine — the wallet ceremony's very first click died with
+/// "env: node: No such file or directory", and every JS bin an extension
+/// ships (fez-bazaar-miner.js included) hits the same wall. Prepend the
+/// runtimes fez can vouch for: the managed node the Claude bridge
+/// installs, then the standard homes.
+fn subprocess_path_env() -> String {
+    let mut path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+    let candidates = [
+        managed_node::node_bin_dir(),
+        std::path::PathBuf::from("/opt/homebrew/bin"),
+        std::path::PathBuf::from("/usr/local/bin"),
+    ];
+    // Reverse order so the FIRST candidate ends up first on PATH.
+    for dir in candidates.iter().rev() {
+        if dir.join("node").exists() {
+            path = format!("{}:{}", dir.display(), path);
+        }
+    }
+    path
+}
+
 /// `bin` names a file in ~/.fez/bin rather than a path, so a package that
 /// ships an executable can be spawned without the desktop knowing anything
 /// about it beyond its name.
@@ -2239,6 +2263,7 @@ fn spawn_tracked_process(
         .map_err(|e| format!("log: {e}"))?;
     let log_err = log.try_clone().map_err(|e| format!("log: {e}"))?;
     let mut cmd = Command::new(&bin_path);
+    cmd.env("PATH", subprocess_path_env());
     for (k, v) in &env {
         cmd.env(k, v);
     }
