@@ -19,13 +19,32 @@ import type { SpendEntry } from "./log.js";
 // Must match this package's INSTALLED name — the desktop's gui loader
 // namespace-locks api.storage to the registered extension name
 // (gui-extensions.ts), which is the package dir under ~/.fez/packages/.
-// That name is "fez-wallet" since the gui-extension-runtime migration
-// reconstructed the package under its grant name; the original "wallet"
-// staging name left the panel reading fez-wallet.json while this module
-// wrote wallet.json — every mirror invisible to the panel and every
-// panel prefs write invisible to the wallet. One home, adopted below.
-export const STORAGE_NAME = "fez-wallet";
-const LEGACY_STORAGE_NAME = "wallet";
+// And that name is NOT one value: `fez install` de-scopes @fezchat/wallet
+// to "wallet" while `fez link` keeps the source dir's "fez-wallet" — a
+// hardcoded name here has now been wrong in BOTH directions (first the
+// linked install read fez-wallet.json while this wrote wallet.json; then
+// the gallery install read wallet.json while this wrote fez-wallet.json
+// — the panel said "no wallet yet" over a mirrored treasury, live). So
+// the name is DERIVED from where this module actually runs: everything
+// that imports it — the mcp server, the cli (its ~/.fez/bin entry is a
+// symlink node realpath-resolves), the bundled panel — lives under
+// ~/.fez/packages/<name>/, and <name> is exactly the loader's namespace.
+// Off-install (the dev repo, tests) it falls back to the package's own
+// dir name, which is what a `fez link` registers.
+function detectInstallName(): string {
+  try {
+    const here = new URL(import.meta.url).pathname;
+    const m = /\/packages\/([^/]+)\//.exec(here);
+    if (m) return m[1];
+  } catch {
+    /* no file-backed url — fall through */
+  }
+  return "fez-wallet";
+}
+export const STORAGE_NAME = detectInstallName();
+/** Every OTHER name this package has ever registered under — adoption
+ * candidates, whichever home this run did not derive. */
+const LEGACY_STORAGE_NAMES = ["fez-wallet", "wallet"].filter((n) => n !== STORAGE_NAME);
 
 const MAX_LOG = 500;
 
@@ -41,9 +60,15 @@ export function storageDir(): string {
 export function adoptLegacyStorage(): void {
   const dir = storageDir();
   const current = path.join(dir, `${STORAGE_NAME}.json`);
-  const legacy = path.join(dir, `${LEGACY_STORAGE_NAME}.json`);
   try {
-    if (!fsSync.existsSync(current) && fsSync.existsSync(legacy)) fsSync.renameSync(legacy, current);
+    if (fsSync.existsSync(current)) return;
+    for (const name of LEGACY_STORAGE_NAMES) {
+      const legacy = path.join(dir, `${name}.json`);
+      if (fsSync.existsSync(legacy)) {
+        fsSync.renameSync(legacy, current);
+        return;
+      }
+    }
   } catch { /* best-effort — a failed adoption reads as empty, never throws */ }
 }
 
