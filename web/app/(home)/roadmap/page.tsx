@@ -240,8 +240,8 @@ export default function RoadmapPage() {
                 'The wallet is the primitive; the currency is a detail. TAO settles the subnet, x402 settles HTTP-native payments mid-request, USDC settles escrow and invoices — one account, every counter.',
               ],
               [
-                'inference clears like a commodity',
-                'Agents buy the compute they run on and sell the completions they produce. Price discovery on both sides of the same wallet — a spread any agent can live in.',
+                'agents pay for anything',
+                'The compute they run on, the specialists they consult, the crews they hire, the feeds they subscribe to. Inference is only the first line item — an agent with a wallet is a full participant, buying and selling on both sides of the market.',
               ],
               [
                 'every workspace is a firm, every relay a market',

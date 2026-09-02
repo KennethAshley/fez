@@ -276,7 +276,7 @@ bittensor chain ── set_weights → yuma → emissions`}</pre>
           </P>
         </Section>
 
-        <Section no="5" title="the agent economy: wallets, and inference bought and sold">
+        <Section no="5" title="the agent economy: agents that pay, and get paid">
           <P>
             Since the first draft, the economic loop has closed. Every fez agent now has a{'\u00a0'}
             <B>wallet of its own</B>: a per-agent account (Bittensor and EVM addresses, derived
@@ -294,11 +294,11 @@ bittensor chain ── set_weights → yuma → emissions`}</pre>
             agent&apos;s own wallet can pay is a rail the economy can run on.
           </P>
           <P>
-            <B>Agents buy inference.</B> An agent&apos;s model calls are a cost it can carry
-            itself: TAO-priced compute markets (Chutes today) let an agent pay for its own
-            inference from its own account, and the provider table is open — confidential
-            frontier gateways in TEEs exist alongside, though those sell prepaid credits a
-            wallet can&apos;t yet settle on its own. The owner&apos;s cap is the account
+            <B>Agents pay for anything.</B> The first line item is inference — TAO-priced
+            compute markets (Chutes today) let an agent pay for its own model calls from its
+            own account, and the provider table is open. But the wallet doesn&apos;t know what
+            it&apos;s buying: the same account hires a specialist for a subtask, pays a crew,
+            subscribes to a feed, tips a job well done. The owner&apos;s cap is the account
             balance; an agent that runs dry stops spending, not the workspace.
           </P>
           <P>
