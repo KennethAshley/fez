@@ -12,6 +12,7 @@ import { AnimatedSprite } from "@fezchat/ui";
 import { SPRITES } from "@fezchat/ui";
 import { generateSprite } from "@fezchat/ui";
 import { buildFezPersonaMd, buildStarterPersonaMd, STARTER_TEAM } from "./welcome-core";
+import { PROVIDERS } from "./providers";
 
 export { nextStep, prevStep };
 
@@ -1053,14 +1054,6 @@ async function openBrainInstall(): Promise<void> {
   await openUrl("https://claude.com/claude-code");
 }
 
-/** The v1 provider table (mirrors the Rust `provider_spec` list). */
-export const PROVIDERS = [
-  { id: "chutes", label: "Chutes", hint: "decentralized GPUs — chutes.ai" },
-  { id: "anthropic", label: "Anthropic", hint: "api key from console.anthropic.com" },
-  { id: "openai", label: "OpenAI", hint: "api key from platform.openai.com" },
-  { id: "openrouter", label: "OpenRouter", hint: "one key, many models — openrouter.ai" },
-  { id: "gm", label: "GM", hint: "confidential frontier models — saygm.com" },
-];
 export const CLAUDE_MODELS = ["default", "opus", "sonnet", "haiku"];
 export const EFFORTS = ["low", "medium", "high"];
 
@@ -1095,8 +1088,8 @@ function DefaultsStep({
     setError(undefined);
     try {
       if (providerKey.trim()) {
-        const spec = { chutes: "CHUTES_API_KEY", anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", openrouter: "OPENROUTER_API_KEY", gm: "GM_API_KEY" } as const;
-        await invoke("set_skill_secret", { skill: brain.providerId, key: spec[brain.providerId as keyof typeof spec], value: providerKey.trim() });
+        const keyName = PROVIDERS.find((p) => p.id === brain.providerId)?.keyName;
+        if (keyName) await invoke("set_skill_secret", { skill: brain.providerId, key: keyName, value: providerKey.trim() });
       }
       const json = await invoke<string>("wire_provider_pi", { provider: brain.providerId });
       const r = JSON.parse(json) as { provider: string; models: string[] };

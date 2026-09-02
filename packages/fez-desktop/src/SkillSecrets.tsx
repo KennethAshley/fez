@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useConfig } from "./config-store";
+import { PROVIDERS } from "./providers";
 
 /**
  * Skill secret custody UI — lives in SETTINGS (the market only installs
@@ -290,10 +291,23 @@ export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => 
         <div className="manage-section">fez — service keys</div>
         <EnvEditor skill="fez" config={FEZ_SERVICE_KEYS} onNotice={onNotice} />
       </div>
+      {/* Providers are first-class, not installed skills — their rows are
+          always here, so a key has a home before anything else is set up.
+          Wiring into an agent happens in the agent editor's model picker. */}
+      <div className="manage-section">model providers</div>
+      <div className="settings-hint">
+        Add a key and the provider's models appear in every agent editor — each agent picks its own provider and model there.
+      </div>
+      {PROVIDERS.map((p) => (
+        <div key={p.id} className="env-skill">
+          <div className="manage-section">{p.id} <span className="skill-desc">— {p.hint}</span></div>
+          <EnvEditor skill={p.id} config={{ env: { [p.keyName]: "" } }} onNotice={onNotice} />
+        </div>
+      ))}
       {skills.length === 0 ? (
         <div className="settings-hint">Install a skill and its own secrets appear here too.</div>
       ) : (
-        skills.map(([skill, config]) => (
+        skills.filter(([skill]) => !PROVIDERS.some((p) => p.id === skill)).map(([skill, config]) => (
           <div key={skill} className="env-skill">
             <div className="manage-section">{skill}</div>
             <EnvEditor skill={skill} config={config} onNotice={onNotice} />
