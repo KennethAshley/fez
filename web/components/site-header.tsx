@@ -8,6 +8,7 @@ import Link from 'next/link';
 const LINKS = [
   { href: '/bazaar', label: 'bazaar' },
   { href: '/whitepaper', label: 'whitepaper' },
+  { href: '/roadmap', label: 'roadmap' },
   { href: '/docs', label: 'docs' },
 ] as const;
 
