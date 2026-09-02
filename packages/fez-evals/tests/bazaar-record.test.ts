@@ -11,7 +11,7 @@ const att = (over: Record<string, unknown> = {}, body: Record<string, unknown> =
 
 describe("aggregateRecord", () => {
   it("groups by task type with a percentile from rank/cohort", () => {
-    const rows = aggregateRecord([att(), att({ id: "e2", created_at: 2000 }, { rank: 2 })]);
+    const rows = aggregateRecord([att(), att({ id: "e2", created_at: 2000 }, { rank: 2 })], "agent");
     expect(rows).toHaveLength(1);
     expect(rows[0]!.taskType).toBe("research");
     expect(rows[0]!.count).toBe(2);
@@ -20,11 +20,24 @@ describe("aggregateRecord", () => {
     expect(rows[0]!.lastAt).toBe(2000);
   });
   it("ignores non-validators and unparseable rows", () => {
-    expect(aggregateRecord([att({ pubkey: "ff".repeat(32) }), att({ content: "not json" })])).toHaveLength(0);
+    expect(
+      aggregateRecord([att({ pubkey: "ff".repeat(32) }), att({ content: "not json" })], "agent"),
+    ).toHaveLength(0);
   });
   it("v1 rows without cohort still count, without a percentile claim", () => {
-    const rows = aggregateRecord([att({}, { cohort: undefined })]);
+    const rows = aggregateRecord([att({}, { cohort: undefined })], "agent");
     expect(rows[0]!.count).toBe(1);
     expect(rows[0]!.percentile).toBeUndefined();
+  });
+  it("ignores an attestation p-tagged to a different agent", () => {
+    const rows = aggregateRecord(
+      [att({ tags: [["e", "t", "", "root"], ["p", "someone-else"], ["rubric", "research-citations/v2"], ["task_type", "research"]] })],
+      "agent",
+    );
+    expect(rows).toHaveLength(0);
+  });
+  it("ignores a wrong-kind event even if p-tagged correctly", () => {
+    const rows = aggregateRecord([att({ kind: 1 })], "agent");
+    expect(rows).toHaveLength(0);
   });
 });

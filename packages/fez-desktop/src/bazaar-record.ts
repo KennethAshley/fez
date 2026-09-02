@@ -25,10 +25,12 @@ export interface RecordRow {
   lastAt: number;
 }
 
-export function aggregateRecord(events: AttestationEvent[]): RecordRow[] {
+export function aggregateRecord(events: AttestationEvent[], pk: string): RecordRow[] {
   const byType = new Map<string, { count: number; pcts: number[]; lastAt: number }>();
   for (const ev of events) {
     if (!BAZAAR_VALIDATORS.includes(ev.pubkey)) continue;
+    if (ev.kind !== 47020) continue;
+    if (!ev.tags.some((t) => t[0] === "p" && t[1] === pk)) continue;
     let body: { rank?: number; cohort?: number };
     try { body = JSON.parse(ev.content) as never; } catch { continue; }
     const taskType = ev.tags.find((t) => t[0] === "task_type")?.[1] ?? "general";

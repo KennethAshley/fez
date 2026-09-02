@@ -47,7 +47,7 @@ async function fetchRecord(pk: string): Promise<RecordRow[] | "error"> {
     // with events = []. health() is the only thing that tells them apart:
     // if nothing ever connected, this is "unknown", not "no record".
     if (!relay.health().some((h) => h.connected)) throw new Error("bazaar relay unreachable");
-    const rows = aggregateRecord(events.filter((ev) => verifyEvent(ev as never)));
+    const rows = aggregateRecord(events.filter((ev) => verifyEvent(ev as never)), pk);
     recordCache.set(pk, rows);
     return rows;
   } catch {
@@ -90,6 +90,7 @@ function TrackRecord({ pk }: { pk: string }) {
             {" "}
             · {r.count} scored task{r.count === 1 ? "" : "s"}
             {r.percentile !== undefined ? ` · ${r.percentile}th percentile` : ""}
+            {` · last active ${new Date(r.lastAt * 1000).toLocaleDateString()}`}
           </span>
         </li>
       ))}
