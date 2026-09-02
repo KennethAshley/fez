@@ -782,6 +782,7 @@ fn provider_spec(id: &str) -> Option<&'static ProviderSpec> {
         ProviderSpec { id: "anthropic", name: "Anthropic", base_url: "https://api.anthropic.com/v1", key_name: "ANTHROPIC_API_KEY", auth: ProviderAuth::XApiKey },
         ProviderSpec { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1", key_name: "OPENAI_API_KEY", auth: ProviderAuth::Bearer },
         ProviderSpec { id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", key_name: "OPENROUTER_API_KEY", auth: ProviderAuth::Bearer },
+        ProviderSpec { id: "gm", name: "GM", base_url: "https://api.saygm.com/v1", key_name: "GM_API_KEY", auth: ProviderAuth::Bearer },
     ];
     PROVIDERS.iter().find(|p| p.id == id)
 }
@@ -862,7 +863,16 @@ fn wire_provider_pi(provider: String) -> Result<String, String> {
     let models: Vec<String> = parsed
         .pointer("/data")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                // A catalog may carry models pi can't call: GM lists every API
+                // shape and flags sold-out offers — keep chat.completions rows
+                // that aren't explicitly unavailable, pass shapeless rows through.
+                .filter(|m| m.get("api_shapes").and_then(|v| v.as_array()).map_or(true, |sh| sh.iter().any(|x| x.as_str() == Some("chat.completions"))))
+                .filter(|m| m.get("available").and_then(|v| v.as_bool()) != Some(false))
+                .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     if models.is_empty() {
         return Err(format!("{} returned no models", spec.name));
@@ -2708,8 +2718,8 @@ mod host_compat_tests {
 mod provider_tests {
     use super::{provider_spec, local_provider_id};
     #[test]
-    fn table_has_the_v1_four() {
-        for p in ["chutes", "anthropic", "openai", "openrouter"] {
+    fn table_has_every_provider() {
+        for p in ["chutes", "anthropic", "openai", "openrouter", "gm"] {
             assert!(provider_spec(p).is_some(), "missing provider {p}");
         }
         assert!(provider_spec("nope").is_none());
@@ -2718,6 +2728,8 @@ mod provider_tests {
     fn chutes_id_matches_the_legacy_constant() {
         // sha256("https://llm.chutes.ai/v1")[..10] — pinned by the existing wiring.
         assert_eq!(local_provider_id("https://llm.chutes.ai/v1"), "56105ece7a");
+        // GM's, pinned the same way — ModelPicker keys its optgroup off this.
+        assert_eq!(local_provider_id("https://api.saygm.com/v1"), "ebfd09756a");
     }
 }
 

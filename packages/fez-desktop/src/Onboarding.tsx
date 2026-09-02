@@ -1059,6 +1059,7 @@ export const PROVIDERS = [
   { id: "anthropic", label: "Anthropic", hint: "api key from console.anthropic.com" },
   { id: "openai", label: "OpenAI", hint: "api key from platform.openai.com" },
   { id: "openrouter", label: "OpenRouter", hint: "one key, many models — openrouter.ai" },
+  { id: "gm", label: "GM", hint: "confidential frontier models — saygm.com" },
 ];
 export const CLAUDE_MODELS = ["default", "opus", "sonnet", "haiku"];
 export const EFFORTS = ["low", "medium", "high"];
@@ -1094,7 +1095,7 @@ function DefaultsStep({
     setError(undefined);
     try {
       if (providerKey.trim()) {
-        const spec = { chutes: "CHUTES_API_KEY", anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", openrouter: "OPENROUTER_API_KEY" } as const;
+        const spec = { chutes: "CHUTES_API_KEY", anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", openrouter: "OPENROUTER_API_KEY", gm: "GM_API_KEY" } as const;
         await invoke("set_skill_secret", { skill: brain.providerId, key: spec[brain.providerId as keyof typeof spec], value: providerKey.trim() });
       }
       const json = await invoke<string>("wire_provider_pi", { provider: brain.providerId });
