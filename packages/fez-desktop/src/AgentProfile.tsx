@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { verifyEvent } from "nostr-tools/pure";
 import { parseSkillDecls } from "@fezchat/client";
 import Avatar from "./Avatar";
 import { hasFace } from "./agent-face";
 import { agentSkillStrip, type InstalledSkillMd } from "./agent-skill-health";
 import { useConfig } from "./config-store";
+import { BAZAAR_RELAY, aggregateRecord, type AttestationEvent, type RecordRow } from "./bazaar-record";
+import { RelayConnection } from "../../../src/protocol/relay.js";
 
 /**
  * One agent, at reading size.
@@ -20,6 +23,79 @@ import { useConfig } from "./config-store";
  */
 function field(front: string, key: string): string | undefined {
   return front.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim();
+}
+
+/**
+ * The bazaar track record — a one-shot read per profile open, cached for
+ * the session so reopening the same agent's profile doesn't re-hit the
+ * relay. Kept module-level (not in a hook) because the cache should
+ * outlive any single AgentProfile mount.
+ */
+const recordCache = new Map<string, RecordRow[] | "error">();
+
+async function fetchRecord(pk: string): Promise<RecordRow[] | "error"> {
+  const hit = recordCache.get(pk);
+  if (hit) return hit;
+  const relay = new RelayConnection({ urls: [BAZAAR_RELAY] });
+  try {
+    await relay.connect();
+    const events = (await relay.query([{ kinds: [47020], "#p": [pk], limit: 500 }])) as unknown as AttestationEvent[];
+    // connect()/query() never reject on a dead relay — connect() swallows
+    // failures into onError (Promise.allSettled) and query()'s querySync
+    // just resolves empty once its wait window elapses. So an unreachable
+    // relay and a reachable-but-empty relay would otherwise both land here
+    // with events = []. health() is the only thing that tells them apart:
+    // if nothing ever connected, this is "unknown", not "no record".
+    if (!relay.health().some((h) => h.connected)) throw new Error("bazaar relay unreachable");
+    const rows = aggregateRecord(events.filter((ev) => verifyEvent(ev as never)), pk);
+    recordCache.set(pk, rows);
+    return rows;
+  } catch {
+    recordCache.set(pk, "error");
+    return "error";
+  } finally {
+    relay.disconnect();
+  }
+}
+
+/**
+ * Three states, and the error state must never collapse into "empty" —
+ * a relay that's unreachable tells you nothing about whether the agent
+ * has a record, so it gets its own sentence (same rule as the wallet's
+ * mirror states).
+ */
+function TrackRecord({ pk }: { pk: string }) {
+  const [rows, setRows] = useState<RecordRow[] | "error">();
+
+  useEffect(() => {
+    let cancelled = false;
+    setRows(undefined);
+    void fetchRecord(pk).then((r) => {
+      if (!cancelled) setRows(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pk]);
+
+  if (rows === undefined) return <div className="settings-hint">◌ checking the bazaar…</div>;
+  if (rows === "error") return <div className="settings-hint">bazaar relay unreachable — record unknown, not empty</div>;
+  if (rows.length === 0) return <div className="settings-hint">no public record yet — this agent hasn't worked the bazaar</div>;
+  return (
+    <ul className="profile-skills">
+      {rows.map((r) => (
+        <li key={r.taskType}>
+          <b>{r.taskType}</b>
+          <span className="skill-desc">
+            {" "}
+            · {r.count} scored task{r.count === 1 ? "" : "s"}
+            {r.percentile !== undefined ? ` · ${r.percentile}th percentile` : ""}
+            {` · last active ${new Date(r.lastAt * 1000).toLocaleDateString()}`}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export default function AgentProfile({
@@ -149,6 +225,9 @@ export default function AgentProfile({
             ))}
           </ul>
         )}
+
+        <div className="manage-section">track record</div>
+        {pk ? <TrackRecord pk={pk} /> : <div className="settings-hint">no public key — record unknowable</div>}
 
         <div className="manage-section">runtime</div>
         <dl className="profile-facts">
