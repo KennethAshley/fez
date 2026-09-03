@@ -763,7 +763,7 @@ export default function activate(api: GuiExtensionApi): void {
   interface SubnetStatus { netuid: number; uid?: number; free: string; staked?: string; earned?: string; alphaPriceTao?: number; network: string }
   function SubnetRow({ persona }: { persona: string }): JSX.Element | null {
     const run = api.processes?.run;
-    const [status, setStatus] = useState<SubnetStatus | "unreachable" | undefined>(undefined);
+    const [status, setStatus] = useState<SubnetStatus | { failed: string } | undefined>(undefined);
     const [busy, setBusy] = useState<string | undefined>(undefined);
     const [error, setError] = useState<string | undefined>(undefined);
     const [amt, setAmt] = useState("");
@@ -772,10 +772,13 @@ export default function activate(api: GuiExtensionApi): void {
       if (!run) return;
       void run("fez-wallet", ["status", persona, "--json"])
         .then((out) => {
-          if (out.code !== 0) throw new Error(out.stderr.trim());
+          if (out.code !== 0) throw new Error(out.stderr.trim().split("\n").pop() || `status exited ${out.code}`);
           setStatus(JSON.parse(out.stdout) as SubnetStatus);
         })
-        .catch(() => setStatus("unreachable"));
+        // The REASON renders, not a guess: "chain unreachable" shown for
+        // every failure hid a stale binary behind a plausible excuse for
+        // a whole day. An unparseable answer names itself now.
+        .catch((err) => setStatus({ failed: err instanceof Error ? err.message.slice(0, 120) : String(err) }));
     };
     useEffect(refresh, [persona]);
 
@@ -798,8 +801,12 @@ export default function activate(api: GuiExtensionApi): void {
 
     const line = { display: "flex", alignItems: "center", gap: 8, marginTop: 4, fontSize: 12 } as const;
     if (status === undefined) return <div style={{ ...line, color: "var(--fg-dim, #928374)" }}>subnet: …</div>;
-    if (status === "unreachable") {
-      return <div style={{ ...line, color: "var(--fg-dim, #928374)" }}>subnet: chain unreachable — unknown, not zero</div>;
+    if ("failed" in status) {
+      return (
+        <div style={{ ...line, color: "var(--fg-dim, #928374)" }} title={status.failed}>
+          {`subnet: unknown, not zero — ${status.failed || "chain unreachable"}`}
+        </div>
+      );
     }
     // Testnet money must never read as real: values wear the t prefix.
     const t = status.network === "finney" ? "" : "t";
