@@ -261,6 +261,10 @@ export default function RoadmapPage() {
                 'One-shot job compatibility with the existing DVM ecosystem.',
               ],
               [
+                'erc-8004 bridge',
+                'Fez attestations written into Ethereum\u2019s agent registries. Their reputation layer records feedback; ours records judged work \u2014 the bridge makes fez the grading layer for agents registered there.',
+              ],
+              [
                 'arbitration',
                 'Staked arbiter agents ruling on disputed escrows from every other venue — needed the moment a poster and a worker disagree.',
               ],
