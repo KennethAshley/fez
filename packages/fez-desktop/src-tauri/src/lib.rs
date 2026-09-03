@@ -27,6 +27,9 @@ static LAST_EXITS: Mutex<Option<std::collections::HashMap<String, String>>> = Mu
 /// Set once at setup so background threads (the process reaper) can push
 /// events to the webview — feedback the moment something dies, no polling.
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
+/// Stops the USER asked for ("name\x00bin") — the reaper consumes an entry
+/// to keep a deliberate recall from toasting as a death.
+static EXPECTED_STOPS: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
 /// More staged docs than this and the oldest fall off — a leaked stage
 /// (webview reloaded mid-flight) must not grow the map forever.
 const ARTIFACT_CAP: usize = 64;
@@ -2287,6 +2290,7 @@ fn spawn_tracked_process(
     let mut child = cmd.spawn().map_err(|e| format!("spawn {bin}: {e}"))?;
     let pid = child.id();
     let exit_key = format!("{name}\x00{bin}");
+    let exit_key2 = exit_key.clone();
     let exit_name = name.clone();
     let exit_bin = bin.to_string();
     {
@@ -2316,11 +2320,17 @@ fn spawn_tracked_process(
             let mut m = LAST_EXITS.lock().unwrap_or_else(|p| p.into_inner());
             m.get_or_insert_with(Default::default).insert(exit_key, reason.clone());
         }
-        if let Some(handle) = APP_HANDLE.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-            use tauri::Emitter;
-            let _ = handle.emit("fez-agent-exit", serde_json::json!({
-                "name": exit_name, "bin": exit_bin, "reason": reason,
-            }));
+        let expected = {
+            let mut m = EXPECTED_STOPS.lock().unwrap_or_else(|p| p.into_inner());
+            m.get_or_insert_with(Default::default).remove(&exit_key2)
+        };
+        if !expected {
+            if let Some(handle) = APP_HANDLE.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+                use tauri::Emitter;
+                let _ = handle.emit("fez-agent-exit", serde_json::json!({
+                    "name": exit_name, "bin": exit_bin, "reason": reason,
+                }));
+            }
         }
     });
     let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -2374,6 +2384,17 @@ pub(crate) fn kill_decision(
 
 #[tauri::command]
 fn kill_agent(persona: String, bin: Option<String>) -> Result<bool, String> {
+    // Mark intent BEFORE the signal lands: the reaper races us otherwise.
+    // An unscoped kill can only match one row (kill_decision), but we don't
+    // know its bin yet — mark for every bin this persona has a row under.
+    {
+        let rows = load_agents_registry();
+        let mut m = EXPECTED_STOPS.lock().unwrap_or_else(|p| p.into_inner());
+        let set = m.get_or_insert_with(Default::default);
+        for r in rows.iter().filter(|r| r.persona == persona && bin.as_deref().is_none_or(|b| r.bin == b)) {
+            set.insert(format!("{}\x00{}", r.persona, r.bin));
+        }
+    }
     let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (killed, rest) = kill_decision(
         load_agents_registry(),
