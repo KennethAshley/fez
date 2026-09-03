@@ -233,6 +233,9 @@ export interface GuiExtensionApi {
     /** Whether an agent by that name — running YOUR bin, when given — is
      *  up right now. Same scoping rule as stop. */
     isRunning(name: string, bin?: string): Promise<boolean>;
+    /** Why the last run under this name+bin ended (exit code + final log
+     * line), or null if it never ran or is running now. */
+    lastExit?(agent: string, bin: string): Promise<string | null>;
   };
   /**
    * One-shot: run a bin YOUR package ships, to completion, and get what

@@ -21,6 +21,12 @@ static ARTIFACT_NEXT: AtomicU64 = AtomicU64::new(1);
 /// Synchronize agent-registry read-modify-write across Tauri command invocations
 /// to prevent lost updates when spawn_agent and kill_agent race.
 static AGENTS_REGISTRY_LOCK: Mutex<()> = Mutex::new(());
+/// Why a tracked process last died, keyed "name\u{0}bin" — the row's
+/// feedback when the send button flips back. Cleared on respawn.
+static LAST_EXITS: Mutex<Option<std::collections::HashMap<String, String>>> = Mutex::new(None);
+/// Set once at setup so background threads (the process reaper) can push
+/// events to the webview — feedback the moment something dies, no polling.
+static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
 /// More staged docs than this and the oldest fall off — a leaked stage
 /// (webview reloaded mid-flight) must not grow the map forever.
 const ARTIFACT_CAP: usize = 64;
@@ -2280,12 +2286,42 @@ fn spawn_tracked_process(
     cmd.stdout(log).stderr(log_err);
     let mut child = cmd.spawn().map_err(|e| format!("spawn {bin}: {e}"))?;
     let pid = child.id();
+    let exit_key = format!("{name}\x00{bin}");
+    let exit_name = name.clone();
+    let exit_bin = bin.to_string();
+    {
+        let mut m = LAST_EXITS.lock().unwrap_or_else(|p| p.into_inner());
+        m.get_or_insert_with(Default::default).remove(&exit_key);
+    }
+    let log_path = log_dir.join(format!("{name}.log"));
     // Reap it: an unwaited Child that exits becomes a ZOMBIE, and `kill -0`
     // succeeds on a zombie — so a dead process kept reading as "alive" until
     // the whole app quit, suppressing the engine's 90s watchdog and making the
-    // name unspawnable. This thread's only job is the wait().
+    // name unspawnable. This thread's only job is the wait() — plus writing
+    // down WHY it ended, so a row can say "died: no Anthropic key" instead
+    // of silently flipping its button back.
     std::thread::spawn(move || {
-        let _ = child.wait();
+        let status = child.wait();
+        let code = status.ok().and_then(|st| st.code());
+        let tail = std::fs::read_to_string(&log_path)
+            .ok()
+            .and_then(|text| text.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()))
+            .unwrap_or_default();
+        let reason = match code {
+            Some(0) => format!("exited cleanly{}", if tail.is_empty() { String::new() } else { format!(" — {tail}") }),
+            Some(c) => format!("exit {c}{}", if tail.is_empty() { String::new() } else { format!(" — {tail}") }),
+            None => format!("killed{}", if tail.is_empty() { String::new() } else { format!(" — {tail}") }),
+        };
+        {
+            let mut m = LAST_EXITS.lock().unwrap_or_else(|p| p.into_inner());
+            m.get_or_insert_with(Default::default).insert(exit_key, reason.clone());
+        }
+        if let Some(handle) = APP_HANDLE.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            use tauri::Emitter;
+            let _ = handle.emit("fez-agent-exit", serde_json::json!({
+                "name": exit_name, "bin": exit_bin, "reason": reason,
+            }));
+        }
     });
     let _guard = AGENTS_REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut rows: Vec<SpawnedAgent> =
@@ -2365,6 +2401,16 @@ fn kill_agent(persona: String, bin: Option<String>) -> Result<bool, String> {
 /// running with nothing in the desktop's registry, and without this the
 /// desktop can't tell them apart from "nothing is running" and
 /// double-spawns on top of them.
+#[tauri::command]
+fn agent_last_exit(persona: String, bin: String) -> Option<String> {
+    let key = format!("{persona}\x00{bin}");
+    LAST_EXITS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(&key).cloned())
+}
+
 #[tauri::command]
 fn agent_alive(persona: String, bin: Option<String>) -> bool {
     agent_is_alive_bin(&persona, bin.as_deref())
@@ -2484,6 +2530,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            *APP_HANDLE.lock().unwrap_or_else(|p| p.into_inner()) = Some(app.handle().clone());
             // macOS gets the standard "Check for Updates…" in the app menu,
             // right under About — the default menu with one item inserted.
             #[cfg(target_os = "macos")]
@@ -2545,7 +2592,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {

@@ -513,6 +513,25 @@ function Shell({
     // Sticky (ms=0) because they are one-time instructions, and deduped
     // by the toast store so reconnects don't stack repeats.
     client.on("notice", ((text: string) => toast.info(text, 0)) as never);
+    // Feedback the moment a spawned process dies — chat agent, miner,
+    // anything tracked. The Rust reaper pushes; nothing polls. A clean
+    // exit stays quiet (recall is not an incident).
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<{ name: string; bin: string; reason: string }>("fez-agent-exit", (e) => {
+        const { name, bin, reason } = e.payload;
+        if (reason.startsWith("exited cleanly")) return;
+        const what = bin === "fez-agent" ? `@${name}` : `@${name} (${bin.replace(/^fez-/, "")})`;
+        toast.error(`${what} died — ${reason}`);
+        void notifyEvent({
+          key: `agent-exit:${name}:${bin}`,
+          kind: "agent_error",
+          label: what,
+          title: `${what} died`,
+          body: reason,
+          target: { kind: "agent", name },
+        });
+      })
+    );
     client.on("draft", ((channelId: string, authorPk: string, content: string, rootId?: string) => {
       let byAuthor = draftsRef.current.get(channelId);
       if (!byAuthor) draftsRef.current.set(channelId, (byAuthor = new Map()));

@@ -141,6 +141,7 @@ export interface GuiExtensionApi {
     stop(name: string): Promise<boolean>;
     /** Whether an agent by that name is running right now. */
     isRunning(name: string): Promise<boolean>;
+    lastExit?(agent: string, bin: string): Promise<string | null>;
   };
   /** One-shot sibling of `agents`: run a bin this package ships, to
    * completion, and get its output — owner-side ceremonies (the wallet's
@@ -1010,6 +1011,9 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
             // the miner must never stop "drift" the chat agent.
             stop: (agent: string, bin?: string) => invoke<boolean>("kill_agent", { persona: agent, bin: bin ?? null }),
             isRunning: (agent: string, bin?: string) => invoke<boolean>("agent_alive", { persona: agent, bin: bin ?? null }),
+            /** Why the last run under this name+bin ended — the row's
+             * feedback when a spawn dies seconds after starting. */
+            lastExit: (agent: string, bin: string) => invoke<string | null>("agent_last_exit", { persona: agent, bin }),
           }
         : undefined,
       // One-shot sibling of `agents` — same grant, same Rust-side bin
