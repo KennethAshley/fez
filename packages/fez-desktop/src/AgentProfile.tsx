@@ -239,7 +239,6 @@ export default function AgentProfile({
           <dd className="mono">
             <RestartRow name={name} owner={owner} />
           </dd>
-          <StakeFacts name={name} />
           <dt>harness</dt>
           <dd className="mono">{harness ?? "—"}</dd>
           <dt>channels</dt>
@@ -252,55 +251,6 @@ export default function AgentProfile({
           </dd>
         </dl>
     </div>
-  );
-}
-
-/**
- * The agent's subnet standing, from the wallet's public mirror — the
- * profile can't dial the chain (no polkadot in the shell bundle, on
- * purpose), so it shows the wallet's LAST chain read with its clock.
- * The mirror carries nothing secret: netuid, uid, staked, free — the
- * same facts the chain shows anyone. No entry → no rows, silently: an
- * agent without a registered hotkey has no stake to misreport.
- */
-function StakeFacts({ name }: { name: string }) {
-  const [entry, setEntry] = useState<{ netuid: number; uid: number; staked?: string; free?: string; at?: string }>();
-  const [network, setNetwork] = useState<string>();
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      // "wallet" is the installed name; "fez-wallet" the dev-linked one.
-      for (const ext of ["wallet", "fez-wallet"]) {
-        try {
-          const state = JSON.parse(await invoke<string>("extension_storage_read", { name: ext })) as {
-            subnet?: Record<string, { netuid: number; uid: number; staked?: string; free?: string; at?: string }>;
-            network?: string;
-          };
-          const hit = state.subnet?.[name];
-          if (hit && live) {
-            setEntry(hit);
-            setNetwork(state.network);
-            return;
-          }
-        } catch { /* no mirror under this name */ }
-      }
-    })();
-    return () => { live = false; };
-  }, [name]);
-  if (!entry) return null;
-  const t = network === "finney" ? "" : "t";
-  const asOf = entry.at ? ` (as of ${new Date(entry.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })})` : "";
-  return (
-    <>
-      <dt>subnet</dt>
-      <dd className="mono">{`uid ${entry.uid} on ${entry.netuid}${network === "finney" ? "" : " — play money"}`}</dd>
-      <dt>stake</dt>
-      <dd className="mono" title={`what the wallet last read from the chain${asOf} — the wallet panel refreshes it`}>
-        {entry.staked !== undefined ? `${entry.staked} ${t}α staked` : "unknown"}
-        {entry.free !== undefined ? ` · ${entry.free} ${t}TAO free` : ""}
-        {asOf}
-      </dd>
-    </>
   );
 }
 
