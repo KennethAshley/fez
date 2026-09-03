@@ -799,12 +799,19 @@ export default function activate(api: GuiExtensionApi): void {
       }
     };
 
-    const line = { display: "flex", alignItems: "center", gap: 8, marginTop: 4, fontSize: 12 } as const;
-    if (status === undefined) return <div style={{ ...line, color: "var(--fg-dim, #928374)" }}>subnet: …</div>;
+    // Position-row grammar, shared with the usdc line: a fixed label
+    // gutter, then the money, then acts anchored right. The label column
+    // is what makes three kinds of money read as one account.
+    const posRow = { display: "flex", alignItems: "center", gap: 10, padding: "3px 0", fontSize: 12.5 } as const;
+    const posLabel = { color: "var(--fg-dim, #928374)", width: "3.8rem", flex: "none" } as const;
+    if (status === undefined) {
+      return <div style={posRow}><span style={posLabel}>subnet</span><span style={{ color: "var(--fg-dim, #928374)" }}>…</span></div>;
+    }
     if ("failed" in status) {
       return (
-        <div style={{ ...line, color: "var(--fg-dim, #928374)" }} title={status.failed}>
-          {`subnet: unknown, not zero — ${status.failed || "chain unreachable"}`}
+        <div style={posRow} title={status.failed}>
+          <span style={posLabel}>subnet</span>
+          <span style={{ color: "var(--fg-dim, #928374)" }}>{`unknown, not zero — ${status.failed || "chain unreachable"}`}</span>
         </div>
       );
     }
@@ -812,8 +819,10 @@ export default function activate(api: GuiExtensionApi): void {
     const t = status.network === "finney" ? "" : "t";
     if (status.uid === undefined) {
       return (
-        <div style={line}>
-          <span style={{ color: "var(--fg-dim, #928374)" }}>{`netuid ${status.netuid}: not registered`}</span>
+        <div style={posRow}>
+          <span style={posLabel}>subnet</span>
+          <span style={{ color: "var(--fg-dim, #928374)" }}>not registered</span>
+          <span style={{ flex: 1 }} />
           <button className="mini" disabled={busy !== undefined} onClick={() => void verb("register", ["register", persona])}>
             {busy === "register" ? "registering… (the treasury pays the burn)" : "register on the subnet"}
           </button>
@@ -821,36 +830,29 @@ export default function activate(api: GuiExtensionApi): void {
         </div>
       );
     }
-    // The subnet block is a LEDGER, not a sentence: label column, tabular
-    // amounts (α primary, ≈ tTAO valuation dim beside it), acts anchored
-    // right. Nothing wraps — a money figure broken across lines reads as
-    // two different numbers. `earned` wears the warn tone because it is
-    // money awaiting an act; everything else stays quiet.
-    const dimC = "var(--fg-dim, #928374)";
+    // Two position rows sharing the gutter: `subnet` carries identity +
+    // the standing stake + the acts; `earned` is the one row asking for
+    // an act, and the only warm thing in the block. α stays the unit,
+    // the ≈ is a read-time valuation, and nothing money-shaped wraps.
     const num = { fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums" as const, whiteSpace: "nowrap" as const };
-    const trim = (s?: string) => (s !== undefined && s.includes(".") ? s.slice(0, s.indexOf(".") + 4) : s);
-    const ledgerRow = { display: "flex", alignItems: "center", gap: 12, padding: "4px 0", fontSize: 12.5 } as const;
+    const trim = (v?: string) => (v !== undefined && v.includes(".") ? v.slice(0, v.indexOf(".") + 4) : v);
     const eqOf = (v?: string) => {
       const eq = taoEquiv(v, status.alphaPriceTao);
-      return eq ? <span style={{ color: dimC, ...num }}>{`${eq} ${t}TAO`}</span> : null;
+      return eq ? <span style={{ color: "var(--fg-dim, #928374)", ...num }}>{`${eq} ${t}TAO`}</span> : null;
     };
     return (
-      <div style={{ marginTop: 10, borderTop: "1px solid var(--hairline, #333)", paddingTop: 8 }}>
-        <div style={{ ...sectionLabel, marginBottom: 4 }}>
-          on the subnet
-          <span style={{ textTransform: "none", letterSpacing: 0 }}>{`uid ${status.uid} · netuid ${status.netuid}`}</span>
-          <span style={labelRule} />
-        </div>
-        <div style={ledgerRow}>
-          <span style={{ color: dimC, width: "3.6rem", flex: "none" }}>staked</span>
-          <span style={{ ...num }} title={status.staked !== undefined ? `${status.staked} ${t}α` : undefined}>
-            {status.staked !== undefined ? `${trim(status.staked)} ${t}α` : "unknown"}
+      <div>
+        <div style={posRow}>
+          <span style={posLabel}>subnet</span>
+          <span style={{ ...num, color: "var(--fg-dim, #928374)" }}>{`uid ${status.uid} · ${status.netuid}`}</span>
+          <span style={{ ...num }} title={status.staked !== undefined ? `${status.staked} ${t}α staked` : undefined}>
+            {status.staked !== undefined ? `${trim(status.staked)} ${t}α staked` : "staked unknown"}
           </span>
           {eqOf(status.staked)}
           <span style={{ flex: 1 }} />
           <input
             className="manage-input"
-            style={{ width: 96, flex: "none" }}
+            style={{ width: 92, flex: "none" }}
             placeholder={`${t}TAO amt`}
             value={amt}
             onChange={(e) => setAmt(e.target.value)}
@@ -867,13 +869,13 @@ export default function activate(api: GuiExtensionApi): void {
             payout sweeps them to the agent's own name, still staked. Shown
             only when there is actually something to sweep. */}
         {status.earned !== undefined && status.earned !== "0" ? (
-          <div style={ledgerRow}>
-            <span style={{ color: "var(--warn, #d79921)", width: "3.6rem", flex: "none" }}>earned</span>
+          <div style={posRow}>
+            <span style={{ ...posLabel, color: "var(--warn, #d79921)" }}>earned</span>
             <span style={{ ...num, color: "var(--warn, #d79921)" }} title={`${status.earned} ${t}α`}>
               {`${trim(status.earned)} ${t}α`}
             </span>
             {eqOf(status.earned)}
-            <span style={{ color: dimC, whiteSpace: "nowrap" }}>held by treasury</span>
+            <span style={{ color: "var(--fg-dim, #928374)", whiteSpace: "nowrap" }}>held by treasury</span>
             <span style={{ flex: 1 }} />
             <button
               className="mini"
@@ -1147,7 +1149,10 @@ export default function activate(api: GuiExtensionApi): void {
           const raw = acct.data.free.toBigInt();
           const whole = raw / 1_000_000_000n;
           const frac = (raw % 1_000_000_000n).toString().padStart(9, "0").replace(/0+$/, "");
-          setBalances((b) => ({ ...b, [who]: `${whole}${frac ? "." + frac : ""} TAO` }));
+          // Play money wears its prefix here too — the account block's big
+          // number is the last place a testnet figure may read as real.
+          const prefix = network === "finney" ? "" : "t";
+          setBalances((b) => ({ ...b, [who]: `${whole}${frac ? "." + frac : ""} ${prefix}TAO` }));
         }
         void chain.disconnect();
       })().catch(() => {});
@@ -1165,55 +1170,13 @@ export default function activate(api: GuiExtensionApi): void {
     return (
       <div className="ext-panel">
         {flash ? <p className="settings-hint">{flash}</p> : null}
-        <div className="manage-section">network</div>
-        <div className="skill-row">
-          <div className="skill-main">
-            <span className="skill-name">{networkLabel(network)}</span>
-            <div className="skill-desc">which chain new payments go out on — applies immediately</div>
-          </div>
-          <select
-            className="skill-actions"
-            value={network}
-            onChange={(e: { target: { value: string } }) => void onNetwork(e.target.value)}
-          >
-            <option value="finney">finney (mainnet)</option>
-            <option value="test">test — play money</option>
-          </select>
-        </div>
 
-        <div className="manage-section">consent threshold</div>
-        <div className="skill-row">
-          <div className="skill-main">
-            <span className="skill-name">auto-approve below</span>
-            <div className="skill-desc">spends at or under this amount skip the consent card</div>
-          </div>
-          <div className="skill-actions">
-            <input
-              type="text"
-              value={draft}
-              spellCheck={false}
-              style={validThreshold(draft) ? undefined : { borderColor: "var(--danger, #c00)", color: "var(--danger, #c00)" }}
-              aria-invalid={!validThreshold(draft)}
-              onChange={(e: { target: { value: string } }) => setDraft(e.target.value)}
-              // Enter saves, so the field behaves like the form it is.
-              onKeyDown={(e: { key: string }) => { if (e.key === "Enter") void saveThreshold(); }}
-            />
-            <button
-              className="agent-action"
-              disabled={!validThreshold(draft) || draft === threshold}
-              onClick={() => void saveThreshold()}
-            >
-              save
-            </button>
-          </div>
-        </div>
-        {!validThreshold(draft) ? (
-          <p className="settings-hint">not a valid TAO amount (up to 9 decimal places)</p>
-        ) : draft !== threshold ? (
-          <p className="settings-hint">{`unsaved — ${threshold} TAO is still in force`}</p>
-        ) : null}
-
-        <div className="manage-section">balances</div>
+        {/* ── accounts: the passbook. Organized by WHO, never by chain —
+            each agent block holds ALL its money (free TAO, its subnet
+            position, its USDC purse) with the acts beside the money they
+            act on. The big right-aligned figure is the one number you
+            opened this page for. */}
+        <div className="manage-section">accounts</div>
         {!chainEndpoint ? (
           <p className="settings-hint">
             {`no endpoint for network "${network}" — prefs names a network this build doesn't know`}
@@ -1223,26 +1186,44 @@ export default function activate(api: GuiExtensionApi): void {
         ) : (
           <div>
             {balanceRows.map(([who, addr]) => (
-              <div key={who} className="skill-row">
-                <div className="skill-main">
-                  <span className="skill-name">{who}</span>
-                  <div className="skill-desc">
-                    <AddressRow address={addr} />
-                  </div>
-                  {/* The economic loop's last two buttons (register, stake)
-                      live on the agent's own row. Testnet-only for now, so
-                      finney simply shows no subnet line. */}
-                  {who !== "treasury" && network !== "finney" ? <SubnetRow persona={who} /> : null}
+              <div key={who} style={{ padding: "12px 0", borderBottom: "1px solid var(--hairline, #333)" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+                  <span className="skill-name" style={{ fontSize: 14 }}>{who}</span>
+                  {who === "treasury" ? (
+                    <span className="skill-desc" style={{ margin: 0 }}>funds every allowance</span>
+                  ) : null}
+                  <span style={{ flex: 1 }} />
+                  <span style={{ fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums", fontSize: 15, whiteSpace: "nowrap" }}>
+                    {balances[who] ?? "…"}
+                  </span>
                 </div>
-                <div className="skill-actions">{balances[who] ?? "…"}</div>
+                <div style={{ marginTop: 3 }}>
+                  <AddressRow address={addr} />
+                </div>
+                {who !== "treasury" ? (
+                  <div style={{ marginTop: 8 }}>
+                    {network !== "finney" ? <SubnetRow persona={who} /> : null}
+                    {evmAddresses[who] ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "3px 0", fontSize: 12.5 }}>
+                        <span style={{ color: "var(--fg-dim, #928374)", width: "3.8rem", flex: "none" }}>usdc</span>
+                        <span style={{ fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                          {usdcBalances[who] ?? "…"}
+                        </span>
+                        <span style={{ color: "var(--fg-dim, #928374)", fontSize: 11.5, whiteSpace: "nowrap" }}>pays per-call services</span>
+                        <span style={{ flex: 1 }} />
+                        <AddressRow address={evmAddresses[who]!} />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
         )}
-
         {addresses.treasury ? <DeriveRows have={Object.keys(addresses.personas ?? {})} onDone={() => void reloadMirror()} /> : null}
 
-        <div className="manage-section">spend ledger</div>
+        {/* ── the book's tail: everything that moved, newest first. */}
+        <div className="manage-section">ledger</div>
         {log.length === 0 ? (
           <p className="settings-hint">no transfers yet</p>
         ) : (
@@ -1307,84 +1288,7 @@ export default function activate(api: GuiExtensionApi): void {
             </table>
           </div>
         )}
-
-        {/* ── x402 / USDC ─────────────────────────────────────────────── */}
-        <div className="manage-section">x402 · USDC</div>
-        <div className="skill-row">
-          <div className="skill-main">
-            <span className="skill-name">{x402NetworkLabel(x402Network)}</span>
-            <div className="skill-desc">which chain agents use to pay per-call services (x402) — applies on their next call</div>
-          </div>
-          <select
-            className="skill-actions"
-            value={x402Network}
-            onChange={(e: { target: { value: string } }) => onX402Network(e.target.value)}
-          >
-            {X402_NETWORKS.map((n) => (
-              <option key={n} value={n}>
-                {x402NetworkLabel(n)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="skill-row">
-          <div className="skill-main">
-            <span className="skill-name">daily cap / auto-approve (USD)</span>
-            <div className="skill-desc">
-              {`in force: $${capSaved} cap · auto-approve under $${autoSaved} (0 = every spend asks you)`}
-            </div>
-          </div>
-          <div className="skill-actions">
-            <input
-              type="text"
-              placeholder={`cap ${capSaved}`}
-              value={capDraft}
-              spellCheck={false}
-              style={{ width: "5.5em", ...(capDraft === "" || validUsd(capDraft) ? {} : { borderColor: "var(--danger, #c00)" }) }}
-              onChange={(e: { target: { value: string } }) => setCapDraft(e.target.value)}
-            />
-            <input
-              type="text"
-              placeholder={`auto ${autoSaved}`}
-              value={autoDraft}
-              spellCheck={false}
-              style={{ width: "5.5em", ...(autoDraft === "" || validUsd(autoDraft) ? {} : { borderColor: "var(--danger, #c00)" }) }}
-              onChange={(e: { target: { value: string } }) => setAutoDraft(e.target.value)}
-            />
-            <button
-              className="agent-action"
-              disabled={
-                (capDraft === "" || !validUsd(capDraft) || capDraft === capSaved) &&
-                (autoDraft === "" || !validUsd(autoDraft) || autoDraft === autoSaved)
-              }
-              onClick={() => saveX402Numbers()}
-            >
-              save
-            </button>
-          </div>
-        </div>
-
-        {Object.keys(evmAddresses).length === 0 ? (
-          <p className="settings-hint">
-            no USDC addresses yet — opening an agent's account (above) creates one; fund it with USDC to let that
-            agent pay per-call services
-          </p>
-        ) : (
-          <div>
-            {Object.entries(evmAddresses).map(([who, addr]) => (
-              <div key={who} className="skill-row">
-                <div className="skill-main">
-                  <span className="skill-name">{who}</span>
-                  <div className="skill-desc">
-                    <AddressRow address={addr} />
-                  </div>
-                </div>
-                <div className="skill-actions">{usdcBalances[who] ?? "…"}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
+        {x402Log.length > 0 ? <p className="settings-hint" style={{ marginTop: 10 }}>x402 · per-call payments</p> : null}
         {x402Log.length === 0 ? (
           <p className="settings-hint">no x402 payments yet</p>
         ) : (
@@ -1438,6 +1342,108 @@ export default function activate(api: GuiExtensionApi): void {
             </table>
           </div>
         )}
+
+        {/* ── policy: set once, glance rarely. The knobs live below the
+            money because the money is why the page opens. */}
+        <div className="manage-section">policy</div>
+        <div className="skill-row">
+          <div className="skill-main">
+            <span className="skill-name">{networkLabel(network)}</span>
+            <div className="skill-desc">which chain new payments go out on — applies immediately</div>
+          </div>
+          <select
+            className="skill-actions"
+            value={network}
+            onChange={(e: { target: { value: string } }) => void onNetwork(e.target.value)}
+          >
+            <option value="finney">finney (mainnet)</option>
+            <option value="test">test — play money</option>
+          </select>
+        </div>
+
+        <div className="skill-row">
+          <div className="skill-main">
+            <span className="skill-name">auto-approve below</span>
+            <div className="skill-desc">spends at or under this amount skip the consent card</div>
+          </div>
+          <div className="skill-actions">
+            <input
+              type="text"
+              value={draft}
+              spellCheck={false}
+              style={validThreshold(draft) ? undefined : { borderColor: "var(--danger, #c00)", color: "var(--danger, #c00)" }}
+              aria-invalid={!validThreshold(draft)}
+              onChange={(e: { target: { value: string } }) => setDraft(e.target.value)}
+              // Enter saves, so the field behaves like the form it is.
+              onKeyDown={(e: { key: string }) => { if (e.key === "Enter") void saveThreshold(); }}
+            />
+            <button
+              className="agent-action"
+              disabled={!validThreshold(draft) || draft === threshold}
+              onClick={() => void saveThreshold()}
+            >
+              save
+            </button>
+          </div>
+        </div>
+        {!validThreshold(draft) ? (
+          <p className="settings-hint">not a valid TAO amount (up to 9 decimal places)</p>
+        ) : draft !== threshold ? (
+          <p className="settings-hint">{`unsaved — ${threshold} TAO is still in force`}</p>
+        ) : null}
+        <div className="skill-row">
+          <div className="skill-main">
+            <span className="skill-name">{x402NetworkLabel(x402Network)}</span>
+            <div className="skill-desc">which chain agents use to pay per-call services (x402) — applies on their next call</div>
+          </div>
+          <select
+            className="skill-actions"
+            value={x402Network}
+            onChange={(e: { target: { value: string } }) => onX402Network(e.target.value)}
+          >
+            {X402_NETWORKS.map((n) => (
+              <option key={n} value={n}>
+                {x402NetworkLabel(n)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="skill-row">
+          <div className="skill-main">
+            <span className="skill-name">daily cap / auto-approve (USD)</span>
+            <div className="skill-desc">
+              {`in force: $${capSaved} cap · auto-approve under $${autoSaved} (0 = every spend asks you)`}
+            </div>
+          </div>
+          <div className="skill-actions">
+            <input
+              type="text"
+              placeholder={`cap ${capSaved}`}
+              value={capDraft}
+              spellCheck={false}
+              style={{ width: "5.5em", ...(capDraft === "" || validUsd(capDraft) ? {} : { borderColor: "var(--danger, #c00)" }) }}
+              onChange={(e: { target: { value: string } }) => setCapDraft(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder={`auto ${autoSaved}`}
+              value={autoDraft}
+              spellCheck={false}
+              style={{ width: "5.5em", ...(autoDraft === "" || validUsd(autoDraft) ? {} : { borderColor: "var(--danger, #c00)" }) }}
+              onChange={(e: { target: { value: string } }) => setAutoDraft(e.target.value)}
+            />
+            <button
+              className="agent-action"
+              disabled={
+                (capDraft === "" || !validUsd(capDraft) || capDraft === capSaved) &&
+                (autoDraft === "" || !validUsd(autoDraft) || autoDraft === autoSaved)
+              }
+              onClick={() => saveX402Numbers()}
+            >
+              save
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
