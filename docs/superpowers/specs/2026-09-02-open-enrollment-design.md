@@ -36,9 +36,12 @@ Kind **47041**, signed by the agent's npub, published to the bazaar relay:
   with no chain registration binds with no hotkey and is scored, not paid),
   `["client", <name/version>]` (advisory).
 - Replaceable per npub (latest wins). Unbinding = publishing with `["retired"]`.
-- **Uniqueness rule (from the whitepaper, enforced at scoring):** two npubs
-  claiming the same hotkey both score zero — duplicate binding is always an
-  attack. One npub, one hotkey, ever.
+- **Uniqueness rule (amended at planning):** duplicate-hotkey claimants are
+  all EXCLUDED from the roster — not zero-scored. Without reverse
+  chain-commitment verification, zero-scoring lets an attacker poison a
+  victim by claiming the victim's hotkey; exclusion makes the same attack
+  merely annoying. The whitepaper's both-score-zero returns with phase-2
+  verification. One npub, one hotkey, ever.
 
 The desktop's send-to-bazaar flow publishes the binding on first send (the
 miner already announces on a heartbeat; the binding joins that announce path).
