@@ -821,34 +821,60 @@ export default function activate(api: GuiExtensionApi): void {
         </div>
       );
     }
+    // The subnet block is a LEDGER, not a sentence: label column, tabular
+    // amounts (α primary, ≈ tTAO valuation dim beside it), acts anchored
+    // right. Nothing wraps — a money figure broken across lines reads as
+    // two different numbers. `earned` wears the warn tone because it is
+    // money awaiting an act; everything else stays quiet.
+    const dimC = "var(--fg-dim, #928374)";
+    const num = { fontFamily: "var(--font-mono, monospace)", fontVariantNumeric: "tabular-nums" as const, whiteSpace: "nowrap" as const };
+    const trim = (s?: string) => (s !== undefined && s.includes(".") ? s.slice(0, s.indexOf(".") + 4) : s);
+    const ledgerRow = { display: "flex", alignItems: "center", gap: 12, padding: "4px 0", fontSize: 12.5 } as const;
+    const eqOf = (v?: string) => {
+      const eq = taoEquiv(v, status.alphaPriceTao);
+      return eq ? <span style={{ color: dimC, ...num }}>{`${eq} ${t}TAO`}</span> : null;
+    };
     return (
-      <div style={line}>
-        <span style={{ color: "var(--fg-dim, #928374)" }}>
-          {`uid ${status.uid} · netuid ${status.netuid} · staked ${status.staked !== undefined ? `${status.staked} ${t}α` : "unknown"}`}
-          {/* The ≈ is a valuation at the pool's read-time price, never a
-              sum with TAO — alpha and TAO stay different assets. */}
-          {(() => { const eq = taoEquiv(status.staked, status.alphaPriceTao); return eq ? <span style={{ color: "var(--fg-dim, #928374)" }}>{` ${eq} ${t}TAO`}</span> : null; })()}
-        </span>
-        <input
-          className="manage-input"
-          style={{ width: 90 }}
-          placeholder={`${t}TAO`}
-          value={amt}
-          onChange={(e) => setAmt(e.target.value)}
-          onKeyDown={(e) => e.stopPropagation()}
-        />
-        <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void verb("stake", ["stake", persona, amt.trim()])}>
-          {busy === "stake" ? "staking…" : "stake"}
-        </button>
-        <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void verb("unstake", ["unstake", persona, amt.trim()])}>
-          {busy === "unstake" ? "unstaking…" : "unstake"}
-        </button>
+      <div style={{ marginTop: 10, borderTop: "1px solid var(--hairline, #333)", paddingTop: 8 }}>
+        <div style={{ ...sectionLabel, marginBottom: 4 }}>
+          on the subnet
+          <span style={{ textTransform: "none", letterSpacing: 0 }}>{`uid ${status.uid} · netuid ${status.netuid}`}</span>
+          <span style={labelRule} />
+        </div>
+        <div style={ledgerRow}>
+          <span style={{ color: dimC, width: "3.6rem", flex: "none" }}>staked</span>
+          <span style={{ ...num }} title={status.staked !== undefined ? `${status.staked} ${t}α` : undefined}>
+            {status.staked !== undefined ? `${trim(status.staked)} ${t}α` : "unknown"}
+          </span>
+          {eqOf(status.staked)}
+          <span style={{ flex: 1 }} />
+          <input
+            className="manage-input"
+            style={{ width: 96, flex: "none" }}
+            placeholder={`${t}TAO amt`}
+            value={amt}
+            onChange={(e) => setAmt(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void verb("stake", ["stake", persona, amt.trim()])}>
+            {busy === "stake" ? "staking…" : "stake"}
+          </button>
+          <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void verb("unstake", ["unstake", persona, amt.trim()])}>
+            {busy === "unstake" ? "unstaking…" : "unstake"}
+          </button>
+        </div>
         {/* Emissions land in the treasury's entry (it registered the uid);
             payout sweeps them to the agent's own name, still staked. Shown
             only when there is actually something to sweep. */}
         {status.earned !== undefined && status.earned !== "0" ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span style={{ color: "var(--warn, #d79921)" }}>{`earned ${status.earned} ${t}α${(() => { const eq = taoEquiv(status.earned, status.alphaPriceTao); return eq ? ` ${eq} ${t}TAO` : ""; })()} (held by treasury)`}</span>
+          <div style={ledgerRow}>
+            <span style={{ color: "var(--warn, #d79921)", width: "3.6rem", flex: "none" }}>earned</span>
+            <span style={{ ...num, color: "var(--warn, #d79921)" }} title={`${status.earned} ${t}α`}>
+              {`${trim(status.earned)} ${t}α`}
+            </span>
+            {eqOf(status.earned)}
+            <span style={{ color: dimC, whiteSpace: "nowrap" }}>held by treasury</span>
+            <span style={{ flex: 1 }} />
             <button
               className="mini"
               disabled={busy !== undefined}
@@ -857,9 +883,9 @@ export default function activate(api: GuiExtensionApi): void {
             >
               {busy === "payout" ? "paying out…" : "payout"}
             </button>
-          </span>
+          </div>
         ) : null}
-        {error ? <span className="ob-error">{error}</span> : null}
+        {error ? <p className="ob-error">{error}</p> : null}
       </div>
     );
   }

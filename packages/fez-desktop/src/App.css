@@ -1978,6 +1978,11 @@ button.author:hover { text-decoration: underline; }
    a description run tight at 48ch while a wss:// URL got a 608px input.
    The left gutter keeps the column off the rail. */
 .settings-col { max-width: 680px; padding: 40px 36px 64px 72px; font-size: 13px; }
+/* Extension pages break the core measure: 680px was tuned for label/desc
+   rows, but an extension draws its own layouts — ledgers, account blocks,
+   action rows — and squeezing a money table into a prose column wraps
+   figures into lies. Core sections keep their measure. */
+.settings-col:has(.ext-settings) { max-width: 940px; }
 
 /* ── a settings page: head, then rows ───────────────────────────────
    Buzz's row structure, fez's skin — divider heads and hairlines group
