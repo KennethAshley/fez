@@ -6,7 +6,8 @@ import { NETWORKS } from "./networks.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs, mirrorEvmAddress, mirrorX402Meta, mirrorSubnet } from "./storage-mirror.js";
 import { migrateLog } from "./log.js";
-import { burnCost, formatRao, register, uidFor } from "./chains/subtensor.js";
+import { burnCost, formatRao, ownerOf, register, stakedAlpha, transferStake, uidFor } from "./chains/subtensor.js";
+import { TAO_DECIMALS } from "./chains/substrate.js";
 import { DEFAULT_NETUID, personaStatus, requirePersonaPair, requireRehearsalNetwork, subtensorFor } from "./stake.js";
 
 /**
@@ -220,12 +221,72 @@ export async function cmdRegister(io: CliIo, persona: string, netuid = DEFAULT_N
   else io.print(`registered ${persona}: uid ${r.uid} on netuid ${r.netuid} (burned ${r.burned} tTAO, tx ${r.txHash})`);
 }
 
+export interface PayoutResult {
+  persona: string;
+  netuid: number;
+  amount: string;
+  txHash: string;
+}
+
+/**
+ * The guardian's sweep (custody option 2): emissions land in the
+ * TREASURY's stake entry on the agent's hotkey, because the treasury
+ * registered the uid and the chain credits the owner. Payout transfers
+ * that earned alpha to the agent's OWN coldkey — same hotkey, same
+ * netuid, still staked; only the name on the account changes. This is
+ * what makes "the agent stakes its own earnings" literally true while
+ * the guardian keeps the uid.
+ */
+export async function payoutPersona(persona: string, amount?: string, netuid = DEFAULT_NETUID): Promise<PayoutResult> {
+  const pair = requirePersonaPair(persona);
+  const mnemonic = requireRoot();
+  const config = loadConfig();
+  requireRehearsalNetwork(config.network);
+  const api = await subtensorFor(config.endpoints.tao);
+  const treasury = treasuryPair(mnemonic);
+
+  // Sanity before signing: the sweep only makes sense from the coldkey the
+  // chain actually credits. A hotkey the agent owns itself has no guardian
+  // entry — its earnings already land under its own name.
+  const owner = await ownerOf(api, pair.address);
+  if (owner !== treasury.address) {
+    throw new Error(
+      owner === pair.address
+        ? `${persona} owns its own hotkey — emissions already land under its name, nothing to sweep`
+        : `${persona}'s hotkey is owned by ${owner}, not this treasury — this wallet cannot sweep it`
+    );
+  }
+  const earned = await stakedAlpha(api, netuid, pair.address, treasury.address);
+  if (earned === undefined) throw new Error("the chain would not report the earned balance — try again");
+  if (earned === 0n) throw new Error(`${persona} has no earned alpha to pay out yet — emissions accrue after its uid receives weights`);
+
+  const requested = amount !== undefined ? parseAmount(amount, TAO_DECIMALS, "TAO").raw : earned;
+  if (requested > earned) {
+    throw new Error(`${persona} has earned ${formatRao(earned)} tα; paying out ${amount} is more than that`);
+  }
+  const { txHash } = await transferStake(api, treasury, {
+    destinationColdkey: pair.address,
+    hotkey: pair.address,
+    netuid,
+    amountRao: requested,
+  });
+  return { persona, netuid, amount: formatRao(requested), txHash };
+}
+
+export async function cmdPayout(io: CliIo, persona: string, amount?: string, netuid = DEFAULT_NETUID): Promise<void> {
+  const r = await payoutPersona(persona, amount, netuid);
+  io.print(`paid out ${r.amount} tα to ${persona}'s own name — still staked behind its hotkey (tx ${r.txHash})`);
+}
+
 export async function cmdPersonaStatus(io: CliIo, persona: string, netuid = DEFAULT_NETUID): Promise<void> {
   const s = await personaStatus(persona, netuid);
   const t = s.network === "finney" ? "" : "t";
   io.print(`${s.persona}  ${s.address}`);
   io.print(`netuid ${s.netuid}: ${s.uid !== undefined ? `uid ${s.uid}` : "not registered"}`);
   io.print(`free ${s.free} ${t}TAO · staked ${s.staked !== undefined ? `${s.staked} ${t}α` : "unknown"}`);
+  if (s.earned !== undefined) {
+    io.print(`earned ${s.earned} ${t}α held by the treasury — sweep with: fez-wallet payout ${s.persona}`);
+  }
 }
 
 export async function cmdStatus(io: CliIo, adapter: ChainAdapter): Promise<void> {

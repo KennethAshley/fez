@@ -32,6 +32,7 @@ export interface SubtensorApi extends SubstrateApi {
     subtensorModule: {
       uids(netuid: number, hotkey: string): Promise<{ isSome: boolean; unwrap(): { toNumber(): number } }>;
       burn(netuid: number): Promise<{ toBigInt(): bigint }>;
+      owner(hotkey: string): Promise<{ toString(): string }>;
     };
   };
   tx: SubstrateApi["tx"] & {
@@ -39,6 +40,13 @@ export interface SubtensorApi extends SubstrateApi {
       burnedRegister(netuid: number, hotkey: string): Submittable;
       addStake(hotkey: string, netuid: number, amountStaked: bigint): Submittable;
       removeStake(hotkey: string, netuid: number, amountUnstaked: bigint): Submittable;
+      transferStake(
+        destinationColdkey: string,
+        hotkey: string,
+        originNetuid: number,
+        destinationNetuid: number,
+        alphaAmount: bigint
+      ): Submittable;
     };
   };
   call: {
@@ -112,6 +120,35 @@ export async function removeStake(
   return submitAndWait(api, api.tx.subtensorModule.removeStake(persona.address, netuid, amountRao), signer, {
     onTimeout: ambiguous(`unstake of ${formatRao(amountRao)} from ${persona.address}`),
   });
+}
+
+/** Which coldkey owns a hotkey's registration — where the chain credits
+ * the hotkey's mining emissions. For a guardian-registered agent this is
+ * the treasury, and the gap between this entry and the agent's own is
+ * exactly what `payout` exists to close. */
+export async function ownerOf(api: SubtensorApi, hotkey: string): Promise<string> {
+  return (await api.query.subtensorModule.owner(hotkey)).toString();
+}
+
+/**
+ * The guardian's sweep: move earned alpha from the OWNING coldkey's stake
+ * entry on the agent's hotkey into the agent's own entry — same hotkey,
+ * same netuid, only the name on the account changes. Signed by the origin
+ * coldkey (the treasury). The alpha stays staked throughout: this is a
+ * handoff, never an unstake.
+ */
+export async function transferStake(
+  api: SubtensorApi,
+  origin: WalletPair,
+  opts: { destinationColdkey: string; hotkey: string; netuid: number; amountRao: bigint }
+): Promise<{ txHash: string }> {
+  const signer = await signerFromPair(origin);
+  return submitAndWait(
+    api,
+    api.tx.subtensorModule.transferStake(opts.destinationColdkey, opts.hotkey, opts.netuid, opts.netuid, opts.amountRao),
+    signer,
+    { onTimeout: ambiguous(`stake transfer of ${formatRao(opts.amountRao)} to ${opts.destinationColdkey}`) }
+  );
 }
 
 /**

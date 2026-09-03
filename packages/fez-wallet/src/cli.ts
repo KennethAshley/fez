@@ -4,7 +4,7 @@ import { loadConfig } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
 import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
-  cmdRegister, cmdPersonaStatus, registerPersona, stakePersona, unstakePersona, personaStatus,
+  cmdRegister, cmdPersonaStatus, cmdPayout, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona,
 } from "./cli-commands.js";
 
 const io = { print: (l: string) => console.log(l) };
@@ -70,6 +70,11 @@ try {
         io.print(`unstaked ${r.amount} tα from ${r.persona} on netuid ${r.netuid} (tx ${r.txHash})`);
       }
       break;
+    case "payout":
+      if (!rest[0]) throw new Error("usage: fez-wallet payout <persona> [amount]");
+      if (json) console.log(JSON.stringify(await payoutPersona(rest[0], rest[1], netuidArg())));
+      else await cmdPayout(io, rest[0], rest[1], netuidArg());
+      break;
     case "network":
       await cmdNetwork(io, rest[0]);
       break;
@@ -82,6 +87,7 @@ try {
       io.print("  register <persona>      register on the subnet (treasury pays the burn)");
       io.print("  stake <persona> <amt>   the agent stakes to its own hotkey");
       io.print("  unstake <persona> <amt> symmetric");
+      io.print("  payout <persona> [amt]  sweep earned alpha from the treasury to the agent's own name");
       io.print("  network [test|finney]   show or switch which chain you're on");
       process.exitCode = cmd ? 1 : 0;
   }

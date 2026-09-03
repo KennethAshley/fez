@@ -52,3 +52,39 @@ describe("stakedAlpha", () => {
     expect(await stakedAlpha(apiWith(undefined, true), 553, "h", "c")).toBeUndefined();
   });
 });
+
+describe("transferStake shape", () => {
+  it("submits destination, hotkey, same netuid twice, and the amount", async () => {
+    const calls: unknown[] = [];
+    const api = {
+      registry: { findMetaError: () => ({ section: "", name: "", docs: [] }) },
+      tx: {
+        subtensorModule: {
+          transferStake: (...args: unknown[]) => {
+            calls.push(args);
+            return {
+              signAndSend: async (_s: unknown, cb: (r: never) => void) => {
+                cb({ status: { isInBlock: true, asInBlock: { toHex: () => "0xb" } }, txHash: { toHex: () => "0xt" } } as never);
+                return () => {};
+              },
+            };
+          },
+        },
+      },
+    } as never;
+    const { transferStake } = await import("../src/chains/subtensor.js");
+    const pair = {
+      publicKeyHex: "22".repeat(32),
+      secretKeyHex: "11".repeat(64),
+      address: "5Treasury",
+    };
+    const r = await transferStake(api, pair as never, {
+      destinationColdkey: "5Agent",
+      hotkey: "5AgentHot",
+      netuid: 553,
+      amountRao: 42n,
+    });
+    expect(r.txHash).toBe("0xt");
+    expect(calls[0]).toEqual(["5Agent", "5AgentHot", 553, 553, 42n]);
+  });
+});

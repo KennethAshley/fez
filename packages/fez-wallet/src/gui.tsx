@@ -759,7 +759,7 @@ export default function activate(api: GuiExtensionApi): void {
    * won't answer renders "unknown", never zero, and a wiped testnet renders
    * unregistered because that is what the chain now says.
    */
-  interface SubnetStatus { netuid: number; uid?: number; free: string; staked?: string; network: string }
+  interface SubnetStatus { netuid: number; uid?: number; free: string; staked?: string; earned?: string; network: string }
   function SubnetRow({ persona }: { persona: string }): JSX.Element | null {
     const run = api.processes?.run;
     const [status, setStatus] = useState<SubnetStatus | "unreachable" | undefined>(undefined);
@@ -832,6 +832,22 @@ export default function activate(api: GuiExtensionApi): void {
         <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void verb("unstake", ["unstake", persona, amt.trim()])}>
           {busy === "unstake" ? "unstaking…" : "unstake"}
         </button>
+        {/* Emissions land in the treasury's entry (it registered the uid);
+            payout sweeps them to the agent's own name, still staked. Shown
+            only when there is actually something to sweep. */}
+        {status.earned !== undefined && status.earned !== "0" ? (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "var(--warn, #d79921)" }}>{`earned ${status.earned} ${t}α (held by treasury)`}</span>
+            <button
+              className="mini"
+              disabled={busy !== undefined}
+              title={`sweep ${persona}'s earned alpha from the treasury's entry to its own name — stays staked`}
+              onClick={() => void verb("payout", ["payout", persona])}
+            >
+              {busy === "payout" ? "paying out…" : "payout"}
+            </button>
+          </span>
+        ) : null}
         {error ? <span className="ob-error">{error}</span> : null}
       </div>
     );

@@ -5,7 +5,7 @@ import { loadConfig, type Network } from "./config.js";
 import { parseAmount } from "./chains/adapter.js";
 import { TAO_DECIMALS } from "./chains/substrate.js";
 import {
-  addStake, connectSubtensor, formatRao, removeStake, stakedAlpha, uidFor,
+  addStake, connectSubtensor, formatRao, ownerOf, removeStake, stakedAlpha, uidFor,
   type SubtensorApi,
 } from "./chains/subtensor.js";
 import { mirrorSubnet } from "./storage-mirror.js";
@@ -109,6 +109,11 @@ export interface PersonaChainStatus {
   free: string;
   /** Absent means UNKNOWN (chain wouldn't say), never zero. */
   staked?: string;
+  /** Alpha the chain has credited to the REGISTERING coldkey's entry on
+   * this hotkey — emissions earned but not yet swept to the agent's own
+   * name. Absent when the agent owns its own hotkey (nothing to sweep)
+   * or the chain wouldn't say. `fez-wallet payout` moves it. */
+  earned?: string;
 }
 
 export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): Promise<PersonaChainStatus> {
@@ -120,6 +125,15 @@ export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): P
     api.query.system.account(pair.address),
     stakedAlpha(api, netuid, pair.address, pair.address),
   ]);
+  // Emissions land under Owner(hotkey) — only a registered hotkey owned by
+  // someone OTHER than the agent has a guardian entry to report.
+  let earned: bigint | undefined;
+  if (uid !== undefined) {
+    const owner = await ownerOf(api, pair.address).catch(() => undefined);
+    if (owner && owner !== pair.address) {
+      earned = await stakedAlpha(api, netuid, pair.address, owner);
+    }
+  }
   // A wiped testnet must render post-wipe truth: chain says unregistered →
   // the mirror says so too, or the panel keeps offering a dead uid.
   if (uid !== undefined) {
@@ -143,5 +157,6 @@ export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): P
     ...(uid !== undefined ? { uid } : {}),
     free: formatRao(acct.data.free.toBigInt()),
     ...(staked !== undefined ? { staked: formatRao(staked) } : {}),
+    ...(earned !== undefined ? { earned: formatRao(earned) } : {}),
   };
 }
