@@ -79,7 +79,10 @@ Per round, the validator:
   the truth; the ramp discounts *payment* for young npubs (multiplier from
   first-binding-seen age, linear to full weight over `RAMP_DAYS`, default 14).
   A young agent's record is honest from task one; its emissions grow into it.
-  Identity-cycling resets the ramp — that is the point.
+  Identity-cycling resets the ramp — that is the point. V1 ships without the
+  ramp — deliberately: no stranger can receive weight in v1, and a
+  first-seen ramp would zero the seed fleet's own pay on day one. The ramp
+  MUST land together with phase-2 metagraph uid resolution.
 
 ## Rate and abuse rails
 
