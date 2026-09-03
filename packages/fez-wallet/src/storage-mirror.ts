@@ -215,3 +215,19 @@ export function mirrorX402Meta(meta: X402Meta): Promise<void> {
     s.x402Meta = meta;
   });
 }
+
+/** A persona's subnet registration — {netuid, uid, hotkey}, public chain
+ * facts. The bazaar miner reads this to publish its binding WITH the
+ * hotkey tag, which is what lets its weights pay its own uid. */
+export interface SubnetEntry {
+  netuid: number;
+  uid: number;
+  hotkey: string;
+}
+
+export function mirrorSubnet(u: { name: string; entry: SubnetEntry }): Promise<void> {
+  return update((s) => {
+    const all = (s.subnet as Record<string, SubnetEntry> | undefined) ?? {};
+    s.subnet = { ...all, [u.name]: u.entry };
+  });
+}

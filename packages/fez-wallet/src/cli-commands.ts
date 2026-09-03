@@ -4,8 +4,12 @@ import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, x402Settings, type Network } from "./config.js";
 import { NETWORKS } from "./networks.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
-import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs, mirrorEvmAddress, mirrorX402Meta } from "./storage-mirror.js";
+import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs, mirrorEvmAddress, mirrorX402Meta, mirrorSubnet } from "./storage-mirror.js";
 import { migrateLog } from "./log.js";
+import {
+  addStake, burnCost, connectSubtensor, formatRao, register, removeStake, stakedAlpha, uidFor,
+} from "./chains/subtensor.js";
+import { TAO_DECIMALS } from "./chains/substrate.js";
 
 /**
  * The ceremony. This module is the ONLY place the "root" entry (the
@@ -167,6 +171,149 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
     consent: "auto",
     network: config.network,
   });
+}
+
+/* ── stake rehearsal (spec 2026-09-03): register / stake / unstake / status ── */
+
+/** The persona's stored pair, or a plain sentence about what to run first. */
+function requirePersonaPair(persona: string) {
+  requireUsablePersonaName(persona);
+  const stored = readEntry(persona);
+  if (!stored) throw new Error(`no wallet for "${persona}" — run: fez-wallet derive ${persona}`);
+  return pairFromStored(stored);
+}
+
+/** The write verbs are testnet-only for now (mainnet enablement is gated on
+ * the roadmap's criteria) — refuse finney in a sentence, never silently. */
+function requireRehearsalNetwork(network: Network): void {
+  if (network === "finney") {
+    throw new Error("register/stake/unstake are testnet-only for now — switch with: fez-wallet network test");
+  }
+}
+
+const DEFAULT_NETUID = 553;
+
+export interface RegisterResult {
+  persona: string;
+  netuid: number;
+  uid: number;
+  hotkey: string;
+  /** Present when this call actually burned — absent means adopted. */
+  txHash?: string;
+  burned?: string;
+  adopted?: boolean;
+}
+
+export async function registerPersona(persona: string, netuid = DEFAULT_NETUID): Promise<RegisterResult> {
+  const pair = requirePersonaPair(persona);
+  const mnemonic = requireRoot();
+  const config = loadConfig();
+  requireRehearsalNetwork(config.network);
+  const api = await connectSubtensor(config.endpoints.tao);
+
+  const existing = await uidFor(api, netuid, pair.address);
+  if (existing !== undefined) {
+    // Idempotent adopt: already registered (a re-click, or a pre-wipe uid
+    // that survived) — record it and report, never a refusal.
+    await mirrorSubnet({ name: persona, entry: { netuid, uid: existing, hotkey: pair.address } });
+    return { persona, netuid, uid: existing, hotkey: pair.address, adopted: true };
+  }
+
+  const burn = await burnCost(api, netuid);
+  const { txHash, uid } = await register(api, treasuryPair(mnemonic), pair.address, netuid);
+  if (uid === undefined) throw new Error("registration landed but the uid did not resolve — run: fez-wallet status " + persona);
+  await mirrorSubnet({ name: persona, entry: { netuid, uid, hotkey: pair.address } });
+  return { persona, netuid, uid, hotkey: pair.address, txHash, burned: formatRao(burn) };
+}
+
+export async function cmdRegister(io: CliIo, persona: string, netuid = DEFAULT_NETUID): Promise<void> {
+  const api = await connectSubtensor(loadConfig().endpoints.tao).catch(() => undefined);
+  if (api) io.print(`registration on netuid ${netuid} burns ${formatRao(await burnCost(api, netuid))} tTAO from the treasury`);
+  const r = await registerPersona(persona, netuid);
+  if (r.adopted) io.print(`${persona} was already registered — adopted uid ${r.uid} on netuid ${r.netuid}`);
+  else io.print(`registered ${persona}: uid ${r.uid} on netuid ${r.netuid} (burned ${r.burned} tTAO, tx ${r.txHash})`);
+}
+
+export interface StakeResult {
+  persona: string;
+  netuid: number;
+  txHash: string;
+  amount: string;
+}
+
+export async function stakePersona(persona: string, amount: string, netuid = DEFAULT_NETUID): Promise<StakeResult> {
+  const pair = requirePersonaPair(persona);
+  const config = loadConfig();
+  requireRehearsalNetwork(config.network);
+  const parsed = parseAmount(amount, TAO_DECIMALS, "TAO");
+  const api = await connectSubtensor(config.endpoints.tao);
+  // Balance-checked here for the plain refusal the spec asks for — the
+  // chain would refuse too, but "quill has 1.2 tTAO free; staking 5 needs
+  // funding first" beats a decoded pallet error.
+  const acct = await api.query.system.account(pair.address);
+  const free = acct.data.free.toBigInt();
+  if (free < parsed.raw) {
+    throw new Error(`${persona} has ${formatRao(free)} tTAO free; staking ${amount} needs funding first (fez-wallet fund ${persona} <amt>)`);
+  }
+  const { txHash } = await addStake(api, pair, netuid, parsed.raw);
+  return { persona, netuid, txHash, amount };
+}
+
+export async function unstakePersona(persona: string, amount: string, netuid = DEFAULT_NETUID): Promise<StakeResult> {
+  const pair = requirePersonaPair(persona);
+  const config = loadConfig();
+  requireRehearsalNetwork(config.network);
+  const parsed = parseAmount(amount, TAO_DECIMALS, "TAO"); // alpha shares TAO's 9 decimals
+  const api = await connectSubtensor(config.endpoints.tao);
+  const staked = await stakedAlpha(api, netuid, pair.address, pair.address);
+  if (staked !== undefined && staked < parsed.raw) {
+    throw new Error(`${persona} has ${formatRao(staked)} tα staked; unstaking ${amount} is more than that`);
+  }
+  const { txHash } = await removeStake(api, pair, netuid, parsed.raw);
+  return { persona, netuid, txHash, amount };
+}
+
+export interface PersonaChainStatus {
+  persona: string;
+  address: string;
+  network: Network;
+  netuid: number;
+  /** Absent means "not registered"; the GUI's register button keys off it. */
+  uid?: number;
+  free: string;
+  /** Absent means UNKNOWN (chain wouldn't say), never zero. */
+  staked?: string;
+}
+
+export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): Promise<PersonaChainStatus> {
+  const pair = requirePersonaPair(persona);
+  const config = loadConfig();
+  const api = await connectSubtensor(config.endpoints.tao);
+  const [uid, acct, staked] = await Promise.all([
+    uidFor(api, netuid, pair.address),
+    api.query.system.account(pair.address),
+    stakedAlpha(api, netuid, pair.address, pair.address),
+  ]);
+  // A wiped testnet must render post-wipe truth: chain says unregistered →
+  // the mirror says so too, or the panel keeps offering a dead uid.
+  if (uid !== undefined) await mirrorSubnet({ name: persona, entry: { netuid, uid, hotkey: pair.address } });
+  return {
+    persona,
+    address: pair.address,
+    network: config.network,
+    netuid,
+    ...(uid !== undefined ? { uid } : {}),
+    free: formatRao(acct.data.free.toBigInt()),
+    ...(staked !== undefined ? { staked: formatRao(staked) } : {}),
+  };
+}
+
+export async function cmdPersonaStatus(io: CliIo, persona: string, netuid = DEFAULT_NETUID): Promise<void> {
+  const s = await personaStatus(persona, netuid);
+  const t = s.network === "finney" ? "" : "t";
+  io.print(`${s.persona}  ${s.address}`);
+  io.print(`netuid ${s.netuid}: ${s.uid !== undefined ? `uid ${s.uid}` : "not registered"}`);
+  io.print(`free ${s.free} ${t}TAO · staked ${s.staked !== undefined ? `${s.staked} ${t}α` : "unknown"}`);
 }
 
 export async function cmdStatus(io: CliIo, adapter: ChainAdapter): Promise<void> {

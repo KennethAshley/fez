@@ -85,6 +85,69 @@ export interface SubstrateApi {
   };
 }
 
+/** A signable extrinsic — the slice both transfer and the subtensor verbs
+ * submit through, so there is exactly one inclusion/timeout/dispatch-error
+ * discipline in this wallet. */
+export interface Submittable {
+  signAndSend(
+    pair: unknown,
+    callback: (result: {
+      status: { isInBlock: boolean; asInBlock: { toHex(): string } };
+      dispatchError?: SubstrateDispatchError;
+      txHash: { toHex(): string };
+    }) => void
+  ): Promise<() => void>;
+}
+
+/** The sr25519 signer for a stored pair — shared by every verb that signs. */
+export async function signerFromPair(pair: WalletPair): Promise<unknown> {
+  const { Keyring } = await import("@polkadot/keyring");
+  return new Keyring({ type: "sr25519" }).addFromPair({
+    publicKey: hexToU8a(`0x${pair.publicKeyHex}`),
+    secretKey: hexToU8a(`0x${pair.secretKeyHex}`),
+  });
+}
+
+/**
+ * Sign, submit, and wait for inclusion — settled only by a real in-block
+ * with no dispatchError, a decoded dispatch error, or the caller's own
+ * timeout error (which must read as AMBIGUOUS for anything that moves
+ * money: the extrinsic is already broadcast). Extracted from transfer so
+ * the subtensor verbs inherit the same discipline instead of a lighter one.
+ */
+export function submitAndWait(
+  api: Pick<SubstrateApi, "registry">,
+  tx: Submittable,
+  signer: unknown,
+  opts: { timeoutMs?: number; onTimeout: () => Error }
+): Promise<{ txHash: string; blockRef?: string }> {
+  let unsub: (() => void) | undefined;
+  let settled = false;
+  const timeoutMs = opts.timeoutMs ?? IN_BLOCK_TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+      unsub?.();
+    };
+    const timer = setTimeout(() => settle(() => reject(opts.onTimeout())), timeoutMs);
+    tx.signAndSend(signer, (r) => {
+      if (r.dispatchError) {
+        settle(() => reject(new Error(decodeDispatchError(api as SubstrateApi, r.dispatchError!))));
+      } else if (r.status.isInBlock) {
+        settle(() => resolve({ txHash: r.txHash.toHex(), blockRef: r.status.asInBlock.toHex() }));
+      }
+    })
+      .then((u) => {
+        unsub = u;
+        if (settled) unsub();
+      })
+      .catch((e) => settle(() => reject(e)));
+  });
+}
+
 function decodeDispatchError(api: SubstrateApi, err: SubstrateDispatchError): string {
   if (err.isModule) {
     try {
@@ -113,7 +176,7 @@ export async function raceConnect<T>(ready: Promise<T>, endpoint: string, timeou
   }
 }
 
-async function connectApi(endpoint: string): Promise<SubstrateApi> {
+export async function connectApi(endpoint: string): Promise<SubstrateApi> {
   // Lazy heavy import — the MCP handshake must answer instantly (same
   // reasoning as fez-bittensor's chain()).
   const { ApiPromise, WsProvider } = await import("@polkadot/api");
@@ -172,55 +235,22 @@ export function substrateAdapter(opts: {
     async transfer(pair: WalletPair, to: string, amount: Amount) {
       requireTao(amount.symbol);
       const a = await api();
-      const { Keyring } = await import("@polkadot/keyring");
-      const signer = new Keyring({ type: "sr25519" }).addFromPair({
-        publicKey: hexToU8a(`0x${pair.publicKeyHex}`),
-        secretKey: hexToU8a(`0x${pair.secretKeyHex}`),
-      });
-
-      // signAndSend's promise resolves at pool SUBMISSION, not at dispatch
-      // (finding #5) — a hash back then meant "accepted for broadcast",
-      // not "sent". The callback form is the only place dispatch errors
-      // (e.g. existential-deposit) surface, so that's what settles this
-      // promise: a real inclusion with no dispatchError, or a rejection
-      // with the decoded error — never a hash on the failure path.
-      let unsub: (() => void) | undefined;
-      let settled = false;
+      const signer = await signerFromPair(pair);
+      // Settled only by a real inclusion, a decoded dispatch error, or the
+      // AMBIGUOUS timeout ("it failed" on a broadcast extrinsic invites a
+      // retry that pays twice) — see submitAndWait.
       const timeoutMs = opts.inBlockTimeoutMs ?? IN_BLOCK_TIMEOUT_MS;
-      return new Promise<{ txHash: string; blockRef?: string }>((resolve, reject) => {
-        const settle = (fn: () => void) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          fn();
-          unsub?.();
-        };
-        // The wait between submission and inclusion is bounded too, and its
-        // failure is stated as ambiguous: the extrinsic is already out
-        // there, so "it failed" would be a lie that invites a second
-        // payment for the same thing.
-        const timer = setTimeout(() => settle(() => reject(ambiguousTransferError(to, timeoutMs))), timeoutMs);
-        a.tx.balances
-          .transferKeepAlive(to, amount.raw)
-          .signAndSend(signer, (r) => {
-            if (r.dispatchError) {
-              settle(() => reject(new Error(`transfer failed: ${decodeDispatchError(a, r.dispatchError!)}`)));
-            } else if (r.status.isInBlock) {
-              // status.asInBlock is the block hash the transfer settled in
-              // — free at this point, and exactly what getTransfer needs
-              // to verify the receipt later without an indexer.
-              settle(() => resolve({ txHash: r.txHash.toHex(), blockRef: r.status.asInBlock.toHex() }));
-            }
-          })
-          .then((u) => {
-            unsub = u;
-            if (settled) unsub(); // callback already fired before we got the unsub back
-          })
-          // Through settle() so the in-block timer is cleared: a submission
-          // that never got off the ground must not leave a live timeout
-          // holding the process open for two minutes.
-          .catch((e) => settle(() => reject(e)));
-      });
+      try {
+        return await submitAndWait(a, a.tx.balances.transferKeepAlive(to, amount.raw), signer, {
+          timeoutMs,
+          onTimeout: () => ambiguousTransferError(to, timeoutMs),
+        });
+      } catch (e) {
+        const msg = (e as Error).message;
+        // Dispatch errors get the transfer framing; the ambiguous timeout
+        // already carries its own wording and must pass through untouched.
+        throw msg.includes("MAY OR MAY NOT") ? e : new Error(`transfer failed: ${msg}`);
+      }
     },
     async getTransfer(blockRef: string, txHash: string) {
       const a = await api();

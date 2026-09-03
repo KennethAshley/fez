@@ -751,6 +751,92 @@ export default function activate(api: GuiExtensionApi): void {
     );
   }
 
+  /**
+   * The stake rehearsal, as a row (spec 2026-09-03): register → stake →
+   * unstake, testnet only, through the same ceremony seam as init/derive —
+   * every act is a CLI verb over api.processes, custody never enters the
+   * webview. `status <persona> --json` is the display source; a chain that
+   * won't answer renders "unknown", never zero, and a wiped testnet renders
+   * unregistered because that is what the chain now says.
+   */
+  interface SubnetStatus { netuid: number; uid?: number; free: string; staked?: string; network: string }
+  function SubnetRow({ persona }: { persona: string }): JSX.Element | null {
+    const run = api.processes?.run;
+    const [status, setStatus] = useState<SubnetStatus | "unreachable" | undefined>(undefined);
+    const [busy, setBusy] = useState<string | undefined>(undefined);
+    const [error, setError] = useState<string | undefined>(undefined);
+    const [amt, setAmt] = useState("");
+
+    const refresh = () => {
+      if (!run) return;
+      void run("fez-wallet", ["status", persona, "--json"])
+        .then((out) => {
+          if (out.code !== 0) throw new Error(out.stderr.trim());
+          setStatus(JSON.parse(out.stdout) as SubnetStatus);
+        })
+        .catch(() => setStatus("unreachable"));
+    };
+    useEffect(refresh, [persona]);
+
+    if (!run) return null; // no ceremony seam — the row has nothing honest to offer
+
+    const verb = async (label: string, args: string[]) => {
+      setBusy(label);
+      setError(undefined);
+      try {
+        const out = await run("fez-wallet", args);
+        if (out.code !== 0) throw new Error(out.stderr.trim() || `${label} exited ${out.code}`);
+        setAmt("");
+        refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(undefined);
+      }
+    };
+
+    const line = { display: "flex", alignItems: "center", gap: 8, marginTop: 4, fontSize: 12 } as const;
+    if (status === undefined) return <div style={{ ...line, color: "var(--fg-dim, #928374)" }}>subnet: …</div>;
+    if (status === "unreachable") {
+      return <div style={{ ...line, color: "var(--fg-dim, #928374)" }}>subnet: chain unreachable — unknown, not zero</div>;
+    }
+    // Testnet money must never read as real: values wear the t prefix.
+    const t = status.network === "finney" ? "" : "t";
+    if (status.uid === undefined) {
+      return (
+        <div style={line}>
+          <span style={{ color: "var(--fg-dim, #928374)" }}>{`netuid ${status.netuid}: not registered`}</span>
+          <button className="mini" disabled={busy !== undefined} onClick={() => void verb("register", ["register", persona])}>
+            {busy === "register" ? "registering… (the treasury pays the burn)" : "register on the subnet"}
+          </button>
+          {error ? <span className="ob-error">{error}</span> : null}
+        </div>
+      );
+    }
+    return (
+      <div style={line}>
+        <span style={{ color: "var(--fg-dim, #928374)" }}>
+          {`uid ${status.uid} · netuid ${status.netuid} · staked ${status.staked !== undefined ? `${status.staked} ${t}α` : "unknown"}`}
+        </span>
+        <input
+          className="manage-input"
+          style={{ width: 90 }}
+          placeholder={`${t}TAO`}
+          value={amt}
+          onChange={(e) => setAmt(e.target.value)}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+        <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void verb("stake", ["stake", persona, amt.trim()])}>
+          {busy === "stake" ? "staking…" : "stake"}
+        </button>
+        <button className="mini" disabled={busy !== undefined || !amt.trim()} onClick={() => void verb("unstake", ["unstake", persona, amt.trim()])}>
+          {busy === "unstake" ? "unstaking…" : "unstake"}
+        </button>
+        {error ? <span className="ob-error">{error}</span> : null}
+      </div>
+    );
+  }
+
   // ── wallet panel ─────────────────────────────────────────────────
   api.registerSettingsPanel("Wallet", () => <WalletPanel />);
 
@@ -1090,6 +1176,10 @@ export default function activate(api: GuiExtensionApi): void {
                   <div className="skill-desc">
                     <AddressRow address={addr} />
                   </div>
+                  {/* The economic loop's last two buttons (register, stake)
+                      live on the agent's own row. Testnet-only for now, so
+                      finney simply shows no subnet line. */}
+                  {who !== "treasury" && network !== "finney" ? <SubnetRow persona={who} /> : null}
                 </div>
                 <div className="skill-actions">{balances[who] ?? "…"}</div>
               </div>
