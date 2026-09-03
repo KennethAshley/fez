@@ -4240,3 +4240,73 @@ a.page-fact:hover { color: var(--fg); }
 }
 .msg-role.owner { color: var(--brand); border: 1px solid #6b3410; background: #3a2113; }
 .msg-role.admin { color: var(--yellow); border: 1px solid #665c1e; background: #3a3418; }
+
+/* ── guest threads: the stall counter ─────────────────────────────────
+ * A guest thread is a conversation at a market stall — open air, public,
+ * lamplit. The awning is the one loud thing: the same ember-and-bone
+ * stripes the bazaar scene paints on its stalls, hard-stopped so it stays
+ * pixel, telling you where you are without a paragraph. Everything under
+ * it stays quiet; the lamp glow is reserved for the guest actually
+ * working. */
+.guest-awning {
+  height: 6px;
+  flex: none;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--brand, #FF6A00) 0 12px,
+    var(--bz-awn-bone, #e8e2d9) 12px 24px
+  );
+}
+.guest-banner {
+  padding: 8px 18px 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.guest-timeline { overflow-y: auto; flex: 1; padding: 10px 18px 16px; }
+.guest-turn { margin: 14px 0; max-width: 72ch; }
+.guest-turn-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  margin-bottom: 3px;
+}
+.guest-turn-meta .who-them { color: var(--brand); }
+.guest-turn-body { font-size: 13.5px; line-height: 1.6; }
+.guest-turn-body p { margin: 0 0 8px; }
+.guest-turn-body p:last-child { margin-bottom: 0; }
+.guest-turn-body ul, .guest-turn-body ol { margin: 4px 0 8px; padding-left: 20px; }
+.guest-progress {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--bz-glow, #ffb75e);
+  padding: 4px 0;
+  animation: guest-lamp 1.6s steps(1) infinite;
+}
+@keyframes guest-lamp { 0%, 100% { opacity: 1; } 55% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .guest-progress { animation: none; } }
+.guest-unanswered {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding: 2px 0 4px;
+}
+.guest-chip {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 1px 8px;
+  color: var(--fg-dim);
+}
+.guest-chip.public { color: var(--brand); border-color: color-mix(in srgb, var(--brand) 45%, transparent); }
+.guest-composer { padding: 10px 18px 14px; border-top: 1px solid var(--hairline); display: flex; gap: 8px; }
+.guest-composer textarea { flex: 1; min-height: 2.6rem; resize: vertical; }
+.guest-empty {
+  color: var(--fg-dim);
+  font-size: 13px;
+  padding: 18px 0;
+}

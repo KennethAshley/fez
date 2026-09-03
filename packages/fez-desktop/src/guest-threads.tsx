@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import type { BrowserWire } from "./wire";
+
+const MD_PLUGINS = [remarkGfm, remarkBreaks];
 
 /**
  * Guest threads (spec 2026-09-03): hiring a stranger is a DM.
@@ -199,72 +204,92 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   };
 
   const name = guest.name ?? guest.pk.slice(0, 8);
-  const dim = { color: "var(--fg-dim, #928374)" } as const;
+
+  // Honesty for the silent case: a task past its deadline with no reply is
+  // said out loud, not left hanging. The answered set keys it; nowTick
+  // moves the clock so the line appears without any new event arriving.
+  const answered = new Set(
+    all.filter((e) => e.kind === KIND_RESULT && e.pubkey === guest.pk).map((e) => rootOf(e) ?? "")
+  );
+  const deadlineOf = (id: string) => {
+    const ev = events.get(id);
+    return Number(ev?.tags.find((t) => t[0] === "deadline")?.[1] ?? 0);
+  };
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <main className="main">
+      {/* The stall's awning — the same ember-and-bone stripes the bazaar
+          scene paints, telling you where this conversation lives. */}
+      <div className="guest-awning" aria-hidden />
       <header className="topbar">
         <div className="topbar-row" data-tauri-drag-region>
           {guest.picture ? (
             <img src={guest.picture} alt="" width={20} height={20} style={{ imageRendering: "pixelated", display: "block" }} />
           ) : (
-            <span style={dim}>◌</span>
+            <span style={{ color: "var(--fg-dim, #928374)" }}>◌</span>
           )}
           <span>{name}</span>
-          <span className="pill" title={guest.pk}>{`guest · ${guest.pk.slice(0, 8)}`}</span>
+          <span className="guest-chip" title={guest.pk}>{guest.pk.slice(0, 8)}</span>
           <span
-            className="pill"
-            style={{ color: "var(--warn, #d79921)" }}
-            title="this conversation is directed tasks and signed answers on a public market relay — anyone can read the whole thread; history is whatever that relay kept"
+            className="guest-chip public"
+            title="a public thread on the market relay — anyone can read all of it; history is whatever that relay kept"
           >
-            public
+            at the bazaar · public
           </span>
         </div>
       </header>
-      <div className="timeline" style={{ overflowY: "auto", flex: 1, padding: "12px 18px" }}>
-        <p className="settings-hint">
-          {`Public conversation on ${guest.relay.replace(/^wss?:\/\//, "")} — anyone can read this thread; never share secrets here. `}
-          {`Messages you send are tasks only ${name} may answer.`}
-        </p>
+      <div className="guest-banner">
+        {`Anyone can read this thread — never share secrets here. Messages you send are tasks only ${name} may answer, signed with your name.`}
+      </div>
+      <div className="guest-timeline">
         {turns.map((t) =>
           t.kind === "progress" ? (
-            <div key={t.id} style={{ ...dim, fontSize: "0.72rem", padding: "2px 0" }}>{`· ${t.text}`}</div>
+            <div key={t.id} className="guest-progress">{`· ${t.text}`}</div>
           ) : (
-            <div key={t.id} style={{ margin: "10px 0" }}>
-              <div style={{ ...dim, fontSize: "0.7rem", marginBottom: 2 }}>
-                {t.kind === "mine" ? "you" : name}
+            <div key={t.id} className="guest-turn">
+              <div className="guest-turn-meta">
+                {t.kind === "mine" ? <span>you</span> : <span className="who-them">{name}</span>}
                 {t.kind === "theirs" && t.status !== "success" ? ` · ${t.status}` : ""}
                 {" · "}
                 {new Date(t.ts * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
               </div>
-              <div style={{ whiteSpace: "pre-wrap", fontSize: "0.86rem", lineHeight: 1.55 }}>{t.text}</div>
+              <div className="guest-turn-body">
+                <ReactMarkdown remarkPlugins={MD_PLUGINS}>{t.text}</ReactMarkdown>
+              </div>
+              {t.kind === "mine" && !answered.has(t.id) && nowTick / 1000 > deadlineOf(t.id) && deadlineOf(t.id) > 0 ? (
+                <div className="guest-unanswered">{`${name} didn't answer this one — the market makes no promises`}</div>
+              ) : null}
             </div>
           )
         )}
-        {turns.length === 0 ? <p className="settings-hint">no messages yet — the first one below starts the engagement</p> : null}
+        {turns.length === 0 ? (
+          <p className="guest-empty">{`The counter is open. Say what you need — ${name} usually answers within a minute.`}</p>
+        ) : null}
         <div ref={bottomRef} />
       </div>
-      <div style={{ padding: "10px 18px", borderTop: "1px solid var(--hairline, #32302f)" }}>
+      <div className="guest-composer">
         {error ? <p className="ob-error">{error}</p> : null}
-        <div style={{ display: "flex", gap: 8 }}>
-          <textarea
-            className="manage-input"
-            style={{ flex: 1, minHeight: "2.6rem", resize: "vertical" }}
-            placeholder={`message ${name} — public, on the market relay`}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
-          <button className="agent-action" disabled={sending || !draft.trim()} onClick={() => void send()}>
-            {sending ? "…" : "send"}
-          </button>
-        </div>
+        <textarea
+          className="manage-input"
+          placeholder={`message ${name} — public, at the bazaar`}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <button className="agent-action" disabled={sending || !draft.trim()} onClick={() => void send()}>
+          {sending ? "…" : "send"}
+        </button>
       </div>
     </main>
   );
