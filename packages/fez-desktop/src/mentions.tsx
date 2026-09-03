@@ -1,4 +1,5 @@
 import type { FezClient, MentionCandidate } from "@fezchat/client";
+import { bestRow, recordScore, type RecordRow } from "./bazaar-record";
 
 /**
  * The @mention autocomplete, shared by every place you can type one.
@@ -35,15 +36,19 @@ export function rosterMatches(
   roster: readonly MentionCandidate[],
   partial: string,
   selfPk: string,
-  limit = 6
+  limit = 6,
+  records?: Map<string, RecordRow[]>
 ): MentionCandidate[] {
   const wanted = partial.toLowerCase();
+  // The record routes the work: judged agents rank above blank ones,
+  // better records rank higher. No records loaded → plain alphabetical.
+  const score = (c: MentionCandidate) => (records ? recordScore(records.get(c.pubkey) ?? []) : 0);
   return roster
     .filter((c) => c.isMember && c.pubkey !== selfPk && c.name.toLowerCase().includes(wanted))
     .sort((a, b) => {
       const aStarts = a.name.toLowerCase().startsWith(wanted) ? 0 : 1;
       const bStarts = b.name.toLowerCase().startsWith(wanted) ? 0 : 1;
-      return aStarts - bStarts || a.name.localeCompare(b.name);
+      return aStarts - bStarts || score(b) - score(a) || a.name.localeCompare(b.name);
     })
     .slice(0, limit);
 }
@@ -64,11 +69,13 @@ export function MentionList({
   candidates,
   pickIndex,
   onPick,
+  records,
 }: {
   client: FezClient;
   candidates: readonly MentionCandidate[];
   pickIndex: number;
   onPick: (index: number) => void;
+  records?: Map<string, RecordRow[]>;
 }) {
   const counts = nameCounts(candidates);
   return (
@@ -86,6 +93,14 @@ export function MentionList({
           {(counts.get(candidate.name.toLowerCase()) ?? 0) > 1 && (
             <span className="mention-key">{candidate.pubkey.slice(0, 8)}</span>
           )}
+          {(() => {
+            const top = records && bestRow(records.get(candidate.pubkey) ?? []);
+            return top ? (
+              <span className="mention-key">
+                {top.taskType}{top.percentile !== undefined ? ` · ${top.percentile}th` : ""} · {top.count} task{top.count === 1 ? "" : "s"}
+              </span>
+            ) : null;
+          })()}
           {client.isOnline(candidate.pubkey) && <span className="dot on" />}
         </button>
       ))}

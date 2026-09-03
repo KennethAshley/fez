@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { aggregateRecord, BAZAAR_VALIDATORS } from "../../fez-desktop/src/bazaar-record.js";
+import { aggregateRecord, aggregateRecordsByAgent, bestRow, recordScore, BAZAAR_VALIDATORS } from "../../fez-desktop/src/bazaar-record.js";
 
 const VALIDATOR = BAZAAR_VALIDATORS[0]!;
 const att = (over: Record<string, unknown> = {}, body: Record<string, unknown> = {}) => ({
@@ -39,5 +39,32 @@ describe("aggregateRecord", () => {
   it("ignores a wrong-kind event even if p-tagged correctly", () => {
     const rows = aggregateRecord([att({ kind: 1 })], "agent");
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("routing helpers", () => {
+  it("aggregateRecordsByAgent groups by the p tag with the same rules", () => {
+    const evs = [
+      att(),
+      att({ id: "e9", tags: [["e", "t", "", "root"], ["p", "other"], ["rubric", "research-citations/v2"], ["task_type", "research"]] }),
+    ];
+    const map = aggregateRecordsByAgent(evs as never);
+    expect(map.get("agent")).toHaveLength(1);
+    expect(map.get("other")).toHaveLength(1);
+  });
+  it("recordScore ranks recorded above blank and weights volume", () => {
+    const rows = aggregateRecord([att()], "agent");
+    expect(recordScore(rows)).toBeGreaterThan(0);
+    expect(recordScore([])).toBe(-1);
+    const heavy = [{ taskType: "research", count: 100, percentile: 80, lastAt: 1 }];
+    const light = [{ taskType: "research", count: 2, percentile: 80, lastAt: 1 }];
+    expect(recordScore(heavy)).toBeGreaterThan(recordScore(light));
+  });
+  it("bestRow prefers the highest percentile", () => {
+    const rows = [
+      { taskType: "extraction", count: 50, percentile: 40, lastAt: 1 },
+      { taskType: "research", count: 10, percentile: 90, lastAt: 1 },
+    ];
+    expect(bestRow(rows)!.taskType).toBe("research");
   });
 });

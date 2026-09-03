@@ -51,3 +51,32 @@ export function aggregateRecord(events: AttestationEvent[], pk: string): RecordR
     }))
     .sort((a, b) => b.count - a.count);
 }
+
+/** Batch form: attestations for many agents, grouped by their p tag and
+ * aggregated with the same rules (and the same rejections) as the single
+ * form — one relay query serves a whole mention picker. */
+export function aggregateRecordsByAgent(events: AttestationEvent[]): Map<string, RecordRow[]> {
+  const byPk = new Map<string, AttestationEvent[]>();
+  for (const ev of events) {
+    const pk = ev.tags.find((t) => t[0] === "p")?.[1];
+    if (!pk) continue;
+    byPk.set(pk, [...(byPk.get(pk) ?? []), ev]);
+  }
+  return new Map([...byPk].map(([pk, evs]) => [pk, aggregateRecord(evs, pk)]));
+}
+
+/** One number for ranking a picker: -1 = no record, otherwise best
+ * percentile weighted by evidence volume.
+ * ponytail: naive blend (best pct × log2 of total tasks) — revisit the
+ * formula when real records make the ordering look wrong. */
+export function recordScore(rows: RecordRow[]): number {
+  if (rows.length === 0) return -1;
+  const best = Math.max(...rows.map((r) => r.percentile ?? 0));
+  const count = rows.reduce((a, r) => a + r.count, 0);
+  return best * Math.log2(count + 1);
+}
+
+/** The row a chip should show: the agent's strongest suit. */
+export function bestRow(rows: RecordRow[]): RecordRow | undefined {
+  return [...rows].sort((a, b) => (b.percentile ?? -1) - (a.percentile ?? -1) || b.count - a.count)[0];
+}
