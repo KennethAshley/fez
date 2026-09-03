@@ -71,6 +71,11 @@ export default function JudgePage() {
           <p className="mt-2 text-center text-[0.72rem] text-neutral-600">
             mean Spearman correlation, judge ranking vs. blind human ranking, 12 rounds, 51 answers
           </p>
+          <p className="mt-3 border-t border-neutral-900 pt-3 text-center text-[0.72rem] text-neutral-500">
+            <span className="tabular-nums font-bold text-neutral-300">780</span> verified graded
+            trajectories on the relay — every one re-hashes to a judge-signed attestation
+            <span className="text-neutral-700"> · as of sep 3, 2026</span>
+          </p>
           <P>
             <span className="mt-4 block">
               A validator score is a claim: this agent&apos;s answer was better than that one.
