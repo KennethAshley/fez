@@ -6,6 +6,7 @@ import Avatar from "./Avatar";
 import { hasFace } from "./agent-face";
 import { agentSkillStrip, type InstalledSkillMd } from "./agent-skill-health";
 import { useConfig } from "./config-store";
+import { relaySet } from "./relay";
 import { BAZAAR_RELAY, aggregateRecord, type AttestationEvent, type RecordRow } from "./bazaar-record";
 import { RelayConnection } from "../../../src/protocol/relay.js";
 
@@ -102,12 +103,15 @@ export default function AgentProfile({
   name,
   pk,
   online,
+  owner,
   onEdit,
   onMessage,
 }: {
   name: string;
   pk?: string;
   online?: boolean;
+  /** The workspace owner's pubkey — what start/restart spawns under. */
+  owner?: string;
   onEdit: () => void;
   onMessage?: () => void;
 }) {
@@ -233,7 +237,7 @@ export default function AgentProfile({
         <dl className="profile-facts">
           <dt>body</dt>
           <dd className="mono">
-            <RestartRow name={name} />
+            <RestartRow name={name} owner={owner} />
           </dd>
           <dt>harness</dt>
           <dd className="mono">{harness ?? "—"}</dd>
@@ -251,36 +255,74 @@ export default function AgentProfile({
 }
 
 /**
- * The manual bounce. Tools and brain keys bake in at spawn, so "restart"
- * is how a running body picks up anything it was born before — and the
- * escape hatch when an agent is just being weird. The body is disposable
- * by design: identity and memory live on the relay, and the next mention
- * respawns it against the persona as it stands now.
+ * The manual bounce, as state + verb. Tools and brain keys bake in at
+ * spawn, so restart is how a running body picks up anything it was born
+ * before — and start is the same act from asleep. Both go through the
+ * summoner's own sequence (kill_agent, then spawn_agent with the
+ * registry's channels), so the button does the thing NOW instead of
+ * describing what a future mention would do. Without an owner pubkey
+ * there is nothing to spawn under, so the row degrades to the old
+ * wakes-on-mention prose rather than a button that can't deliver.
  */
-function RestartRow({ name }: { name: string }) {
+function RestartRow({ name, owner }: { name: string; owner?: string }) {
   const [alive, setAlive] = useState<boolean>();
-  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
   useEffect(() => {
     let live = true;
     void invoke<boolean>("agent_alive", { persona: name, bin: null })
       .then((a) => { if (live) setAlive(a); })
       .catch(() => { if (live) setAlive(false); });
     return () => { live = false; };
-  }, [name, done]);
+  }, [name, busy]);
+
+  const bounce = async (wasAlive: boolean) => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      if (wasAlive) await invoke("kill_agent", { persona: name, bin: null }).catch(() => {});
+      const rows = await invoke<{ persona: string; channels: string[]; repo?: string; line?: string }[]>("spawned_agents").catch(() => []);
+      const row = rows.find((r) => r.persona === name);
+      await invoke("spawn_agent", {
+        persona: name,
+        channels: row?.channels ?? [],
+        owner,
+        relays: relaySet().join(","),
+        repo: row?.repo ?? null,
+        baseBranch: row?.line ?? null,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (alive === undefined) return <span>checking…</span>;
-  if (done) return <span>restarting on next mention</span>;
-  if (!alive) return <span>asleep — wakes on mention</span>;
+  if (busy) return <span>{alive ? "restarting…" : "starting…"}</span>;
+  const verb = alive ? "restart" : "start";
   return (
-    <button
-      className="skill-link"
-      title={`stop @${name}'s running body — it respawns with the current persona (tools included) on its next mention`}
-      onClick={() => {
-        void invoke("kill_agent", { persona: name, bin: null })
-          .catch(() => {})
-          .then(() => setDone(true));
-      }}
-    >
-      running — restart
-    </button>
+    <span>
+      <span>{alive ? "running" : "asleep"}</span>
+      {owner ? (
+        <>
+          {" "}
+          <button
+            className="skill-link"
+            title={
+              alive
+                ? `stop @${name}'s body and spawn a fresh one against the persona as it stands now (tools included)`
+                : `spawn @${name} now — same as mentioning it, without the message`
+            }
+            onClick={() => void bounce(alive)}
+          >
+            {verb}
+          </button>
+        </>
+      ) : (
+        <span> — wakes on mention</span>
+      )}
+      {error ? <span className="ob-error"> {error}</span> : null}
+    </span>
   );
 }

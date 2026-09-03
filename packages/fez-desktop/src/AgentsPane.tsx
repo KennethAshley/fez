@@ -505,6 +505,7 @@ export default function AgentsPane({
       {viewingPersona && !editingPersona && (
         <AgentProfile
           name={viewingPersona}
+          owner={client.pubkey}
           pk={[...client.agents().entries()].find(([, n]) => n.toLowerCase() === viewingPersona.toLowerCase())?.[0]}
           online={(() => {
             const hit = [...client.agents().entries()].find(([, n]) => n.toLowerCase() === viewingPersona.toLowerCase());
