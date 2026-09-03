@@ -224,6 +224,18 @@ async function main() {
   const declared = persona.mcpServers.map((name) => ({ name, source: persona.mcpSources?.[name] }));
   const { resolved, missing } = resolveDeclaredSkills(catalog, declared);
   const missingSkills = missing.map((m) => m.name);
+  // The INVERSE gap: tools installed on this machine that this persona
+  // does not carry. Without this the agent answers from imagination —
+  // seen live: quill, asked about its stake, said "I'm just a writing
+  // agent, no wallet attached" while wallet tools sat installed one
+  // frontmatter line away. Knowing what exists-but-isn't-attached turns
+  // that into "I don't have the wallet skill — the owner can attach it."
+  const unattached = Object.keys(catalog)
+    .filter((key) => !resolved.some((r) => r.key === key))
+    .map((key) => {
+      const desc = (catalog[key] as { description?: string }).description;
+      return desc ? `${key} (${desc})` : key;
+    });
   if (missing.length > 0) {
     // Declaring a source does NOT install it — a persona file arrives
     // from whoever wrote it, and running what it names would make
@@ -1550,6 +1562,11 @@ async function main() {
             ...(missingSkillMds.length > 0
               ? [
                   `- Capability honesty: your persona declares skills that are NOT installed: ${missingSkillMds.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result. — install from chat or the extensions view.`,
+                ]
+              : []),
+            ...(unattached.length > 0
+              ? [
+                  `- Tools you do NOT carry: this workspace has installed tools that are not attached to you: ${unattached.join(", ")}. If someone asks you to do (or about) something one of them handles, say plainly that the tool exists here but isn't attached to you, and that your owner can attach it by adding it to your persona's mcpServers (Settings → agents) — never guess at what the tool would have answered.`,
                 ]
               : []),
             ...(repoUnavailable
