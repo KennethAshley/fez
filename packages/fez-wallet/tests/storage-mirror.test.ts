@@ -13,8 +13,8 @@ beforeEach(() => {
 });
 
 async function readState() {
-  const { STORAGE_NAME } = await import("../src/storage-mirror.js");
-  return JSON.parse(fs.readFileSync(path.join(dir, `${STORAGE_NAME}.json`), "utf8"));
+  const { storageName } = await import("../src/storage-mirror.js");
+  return JSON.parse(fs.readFileSync(path.join(dir, `${storageName()}.json`), "utf8"));
 }
 
 describe("storage mirror", () => {
@@ -70,33 +70,33 @@ describe("CLI command regression — mirror writes complete before exit", () => 
 
   it("cmdInit completes mirror writes before returning", async () => {
     const { cmdInit } = await import("../src/cli-commands.js");
-    const { STORAGE_NAME } = await import("../src/storage-mirror.js");
+    const { storageName } = await import("../src/storage-mirror.js");
 
     const io = { print: () => {} };
     await cmdInit(io);
 
     // Verify mirror file exists and contains expected data at resolve time
-    const state = JSON.parse(fs.readFileSync(path.join(extensionDataDir, `${STORAGE_NAME}.json`), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(extensionDataDir, `${storageName()}.json`), "utf8"));
     expect(state.addresses?.treasury).toBeDefined();
     expect(state.endpoint).toBeDefined();
   });
 
   it("cmdDerive completes mirror writes before returning", async () => {
     const { cmdInit, cmdDerive } = await import("../src/cli-commands.js");
-    const { STORAGE_NAME } = await import("../src/storage-mirror.js");
+    const { storageName } = await import("../src/storage-mirror.js");
 
     const io = { print: () => {} };
     await cmdInit(io);
     await cmdDerive(io, "scout");
 
     // Verify mirror file contains persona address at resolve time
-    const state = JSON.parse(fs.readFileSync(path.join(extensionDataDir, `${STORAGE_NAME}.json`), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(extensionDataDir, `${storageName()}.json`), "utf8"));
     expect(state.addresses?.personas?.scout).toBeDefined();
   });
 
   it("cmdFund completes mirror writes before returning", async () => {
     const { cmdInit, cmdDerive, cmdFund } = await import("../src/cli-commands.js");
-    const { STORAGE_NAME } = await import("../src/storage-mirror.js");
+    const { storageName } = await import("../src/storage-mirror.js");
 
     const io = { print: () => {} };
     await cmdInit(io);
@@ -113,7 +113,7 @@ describe("CLI command regression — mirror writes complete before exit", () => 
     await cmdFund(io, fakeAdapter, "scout", "1");
 
     // Verify mirror file contains spend entry at resolve time
-    const state = JSON.parse(fs.readFileSync(path.join(extensionDataDir, `${STORAGE_NAME}.json`), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(extensionDataDir, `${storageName()}.json`), "utf8"));
     expect(state.logs?.finney).toBeDefined();
     expect(state.logs.finney.length).toBeGreaterThan(0);
     expect(state.logs.finney[0].persona).toBe("treasury");

@@ -137,13 +137,16 @@ describe("gui-logic x402 helpers (pure, browser-safe)", () => {
 });
 
 describe("storage name adoption — the panel and the wallet share ONE file", () => {
-  it("adopts legacy wallet.json into fez-wallet.json on first touch, once", async () => {
+  it("off-install writes join whichever home already exists — never a second file", async () => {
+    // The forked-mirror bug, from the other direction: an installed app
+    // owns wallet.json; a dev-repo run must WRITE THERE rather than mint
+    // fez-wallet.json beside it and split the truth in two.
     const { writeFileSync, existsSync } = await import("node:fs");
     writeFileSync(join(dir, "wallet.json"), JSON.stringify({ addresses: { treasury: "5X" } }));
     await mirrorEvmAddress({ name: "scout", address: "0xabc" });
-    const s = mirrorState(); // reads fez-wallet.json
-    expect((s.addresses as { treasury: string }).treasury).toBe("5X"); // legacy data survived the rename
-    expect((s.evmAddresses as Record<string, string>).scout).toBe("0xabc");
-    expect(existsSync(join(dir, "wallet.json"))).toBe(false); // renamed, not copied — one home
+    const s = JSON.parse(readFileSync(join(dir, "wallet.json"), "utf8")) as Record<string, unknown>;
+    expect((s.addresses as { treasury: string }).treasury).toBe("5X"); // existing data untouched
+    expect((s.evmAddresses as Record<string, string>).scout).toBe("0xabc"); // new write joined it
+    expect(existsSync(join(dir, "fez-wallet.json"))).toBe(false); // one home, never two
   });
 });

@@ -31,20 +31,34 @@ import type { SpendEntry } from "./log.js";
 // ~/.fez/packages/<name>/, and <name> is exactly the loader's namespace.
 // Off-install (the dev repo, tests) it falls back to the package's own
 // dir name, which is what a `fez link` registers.
-function detectInstallName(): string {
+/**
+ * Resolved PER CALL, not at import: the dev repo also lives under a
+ * packages/ dir, and a smoke test run from it once took the dir name at
+ * import time and forked the mirror into a second home while the app read
+ * the first (found live, twice, once from each direction: the panel said
+ * "no wallet yet" over a funded treasury). Only an INSTALL path under
+ * ~/.fez names the namespace; anywhere else writes wherever a mirror
+ * ALREADY lives — one home, never two — and call-time resolution also
+ * honors a test's FEZ_EXTENSION_DATA_DIR set after import.
+ */
+export function storageName(): string {
   try {
     const here = new URL(import.meta.url).pathname;
-    const m = /\/packages\/([^/]+)\//.exec(here);
-    if (m) return m[1];
+    const m = /\/\.fez\/packages\/([^/]+)\//.exec(here);
+    if (m) return m[1]!;
   } catch {
     /* no file-backed url — fall through */
   }
+  try {
+    for (const name of ["wallet", "fez-wallet"]) {
+      if (fsSync.existsSync(path.join(storageDir(), `${name}.json`))) return name;
+    }
+  } catch { /* fresh machine — the default below stands */ }
   return "fez-wallet";
 }
-export const STORAGE_NAME = detectInstallName();
 /** Every OTHER name this package has ever registered under — adoption
  * candidates, whichever home this run did not derive. */
-const LEGACY_STORAGE_NAMES = ["fez-wallet", "wallet"].filter((n) => n !== STORAGE_NAME);
+const legacyStorageNames = (): string[] => ["fez-wallet", "wallet"].filter((n) => n !== storageName());
 
 const MAX_LOG = 500;
 
@@ -59,10 +73,10 @@ export function storageDir(): string {
  * class this fix exists to end). */
 export function adoptLegacyStorage(): void {
   const dir = storageDir();
-  const current = path.join(dir, `${STORAGE_NAME}.json`);
+  const current = path.join(dir, `${storageName()}.json`);
   try {
     if (fsSync.existsSync(current)) return;
-    for (const name of LEGACY_STORAGE_NAMES) {
+    for (const name of legacyStorageNames()) {
       const legacy = path.join(dir, `${name}.json`);
       if (fsSync.existsSync(legacy)) {
         fsSync.renameSync(legacy, current);
@@ -74,7 +88,7 @@ export function adoptLegacyStorage(): void {
 
 function file(): string {
   adoptLegacyStorage();
-  return path.join(storageDir(), `${STORAGE_NAME}.json`);
+  return path.join(storageDir(), `${storageName()}.json`);
 }
 
 import type { Network } from "./networks.js";
