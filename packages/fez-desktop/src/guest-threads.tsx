@@ -67,6 +67,91 @@ export function rememberGuestFace(pk: string, name?: string, picture?: string): 
   addGuest({ ...hit, ...(name ? { name } : {}), ...(picture ? { picture } : {}) });
 }
 
+/** Forgetting a guest forgets the LEDGER ENTRY only — the thread itself is
+ * public relay history and comes back intact if they're ever re-added. */
+export function removeGuest(pk: string): void {
+  localStorage.setItem(LEDGER_KEY, JSON.stringify(listGuests().filter((g) => g.pk !== pk)));
+  localStorage.removeItem(`${READ_KEY}-${pk}`);
+}
+
+/* ── read marks + unread counts ───────────────────────────────────────
+ * The thread's own socket dies when you navigate away — which is exactly
+ * when unread matters. One App-level socket per venue relay watches every
+ * guest's answers; a badge is "their answers to MY tasks, newer than my
+ * last look". */
+
+const READ_KEY = "fez-guest-read";
+
+export function markGuestRead(pk: string): void {
+  localStorage.setItem(`${READ_KEY}-${pk}`, String(Math.floor(Date.now() / 1000)));
+}
+
+function lastRead(pk: string): number {
+  return Number(localStorage.getItem(`${READ_KEY}-${pk}`) ?? 0);
+}
+
+export function useGuestUnreads(guests: Guest[], selfPk: string): Record<string, number> {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const key = guests.map((g) => `${g.pk}@${g.relay}`).sort().join(",");
+  useEffect(() => {
+    if (guests.length === 0) { setCounts({}); return; }
+    let closed = false;
+    const sockets: WebSocket[] = [];
+    // Per guest: which task ids are mine, and every answer seen with its
+    // clock — recount filters against lastRead LIVE, so opening the thread
+    // (markGuestRead) clears the badge on the next tick without any event.
+    const myTasks = new Map<string, string>();                    // taskId -> guest pk
+    const answers = new Map<string, { pk: string; ts: number }>(); // answerId -> owner + clock
+    const recount = () => {
+      if (closed) return;
+      const next: Record<string, number> = {};
+      for (const { pk, ts } of answers.values()) {
+        if (ts > lastRead(pk)) next[pk] = (next[pk] ?? 0) + 1;
+      }
+      setCounts((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    };
+    const tick = setInterval(recount, 5000);
+    const byRelay = new Map<string, Guest[]>();
+    for (const g of guests) byRelay.set(g.relay, [...(byRelay.get(g.relay) ?? []), g]);
+    for (const [relay, members] of byRelay) {
+      const pks = members.map((g) => g.pk);
+      const connect = () => {
+        if (closed) return;
+        const ws = new WebSocket(relay);
+        sockets.push(ws);
+        ws.onopen = () => {
+          ws.send(JSON.stringify(["REQ", "gu-mine", { kinds: [KIND_TASK], authors: [selfPk], "#p": pks, limit: 200 }]));
+          ws.send(JSON.stringify(["REQ", "gu-ans", { kinds: [KIND_RESULT], authors: pks, limit: 300 }]));
+        };
+        ws.onmessage = (m) => {
+          let msg: unknown[];
+          try { msg = JSON.parse(String(m.data)) as unknown[]; } catch { return; }
+          if (msg[0] !== "EVENT") return;
+          const ev = msg[2] as WireEvent;
+          if (ev.kind === KIND_TASK) {
+            const to = ev.tags.find((t) => t[0] === "p")?.[1];
+            if (to && pks.includes(to)) myTasks.set(ev.id, to);
+          } else if (ev.kind === KIND_RESULT) {
+            const root = ev.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? ev.tags.find((t) => t[0] === "e")?.[1];
+            const owner = root ? myTasks.get(root) : undefined;
+            if (owner === ev.pubkey) answers.set(ev.id, { pk: ev.pubkey, ts: ev.created_at });
+          }
+          recount();
+        };
+        ws.onclose = () => { if (!closed) setTimeout(connect, 8000); };
+      };
+      connect();
+    }
+    return () => {
+      closed = true;
+      clearInterval(tick);
+      for (const ws of sockets) ws.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, selfPk]);
+  return counts;
+}
+
 /* ── the thread context block ─────────────────────────────────────────
  * Visible, delimited, honest: the miner sees exactly what we resend. */
 
@@ -167,6 +252,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   ].sort((a, b) => a.ts - b.ts);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "auto" }); });
+  // Looking at the thread IS reading it — every render with it open moves
+  // the read mark, so the rail badge clears on the watcher's next tick.
+  useEffect(() => { markGuestRead(guest.pk); });
 
   const send = async () => {
     const text = draft.trim();

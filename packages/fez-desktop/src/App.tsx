@@ -32,7 +32,7 @@ import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
 import { toast } from "./toast";
 import { startSummoner } from "./summoner";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, setGuestDmOpener, extensionNavViews, extensionArtifactActions, type ArtifactAction } from "./gui-extensions";
-import { GuestThreadView, addGuest, listGuests } from "./guest-threads";
+import { GuestThreadView, addGuest, listGuests, removeGuest, useGuestUnreads } from "./guest-threads";
 import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
@@ -402,6 +402,14 @@ function Shell({
   // Bumped when the agents pane writes a persona, so the roster page
   // re-reads rather than showing what it read before the edit.
   const [agentsNonce, setAgentsNonce] = useState(0);
+  // Guest rail state: the ledger re-reads on a nonce (add/forget), the
+  // watcher hook keeps one socket per venue relay for the badges, and the
+  // forget button arms for 4s before it commits.
+  const [guestNonce, setGuestNonce] = useState(0);
+  const [guestForgetArmed, setGuestForgetArmed] = useState<string | undefined>(undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const guestList = useMemo(() => listGuests(), [guestNonce]);
+  const guestUnreads = useGuestUnreads(guestList, client.pubkey);
   // Extensions' window into the watch pane (gui-extensions.openWatch):
   // parked here because the pane is component state and the registry is
   // module state — the seam pattern every other extension surface uses.
@@ -412,6 +420,7 @@ function Shell({
     // npub; the ledger entry and the conversation surface are ours.
     setGuestDmOpener((guest) => {
       addGuest(guest);
+      setGuestNonce((n) => n + 1);
       setView({ kind: "guest", pk: guest.pk });
     });
     return () => {
@@ -1223,32 +1232,58 @@ function Shell({
                 one. Only threads YOU opened exist; strangers can't add
                 themselves to this rail. */}
             {(() => {
-              const guests = listGuests();
-              if (guests.length === 0) return null;
+              if (guestList.length === 0) return null;
               const memberNames = new Set([...client.agents().values()].map((n) => n.toLowerCase()));
               return (
                 <>
                   <div className="community-name" style={{ marginTop: 6 }}>
                     <span className="community-label" title="public market conversations — not encrypted DMs">guests · public</span>
                   </div>
-                  {guests.map((g) => {
+                  {guestList.map((g) => {
                     const name = g.name ?? g.pk.slice(0, 8);
                     const collides = g.name !== undefined && memberNames.has(g.name.toLowerCase());
                     const active = view.kind === "guest" && view.pk === g.pk;
+                    const unread = guestUnreads[g.pk] ?? 0;
+                    const arming = guestForgetArmed === g.pk;
                     return (
-                      <button
-                        key={g.pk}
-                        className={active ? "channel active" : "channel cast"}
-                        title={`${g.pk} — public thread on ${g.relay}`}
-                        onClick={() => setView({ kind: "guest", pk: g.pk })}
-                      >
-                        {g.picture ? (
-                          <img src={g.picture} alt="" width={16} height={16} style={{ imageRendering: "pixelated" }} />
-                        ) : (
-                          <span className="group-mark">◌</span>
-                        )}{" "}
-                        {collides ? `${name} ·${g.pk.slice(0, 4)}` : name}
-                      </button>
+                      <div key={g.pk} style={{ display: "flex", alignItems: "center" }}>
+                        <button
+                          className={active ? "channel active" : "channel cast"}
+                          style={{ flex: 1, minWidth: 0 }}
+                          title={`${g.pk} — public thread on ${g.relay}`}
+                          onClick={() => setView({ kind: "guest", pk: g.pk })}
+                        >
+                          {g.picture ? (
+                            <img src={g.picture} alt="" width={16} height={16} style={{ imageRendering: "pixelated" }} />
+                          ) : (
+                            <span className="group-mark">◌</span>
+                          )}{" "}
+                          {collides ? `${name} ·${g.pk.slice(0, 4)}` : name}
+                          {unread > 0 && !active && <span className="badge">{unread}</span>}
+                        </button>
+                        {/* Two-click forget, same discipline as leaving a
+                            channel: first × arms, second within 4s commits.
+                            Forgetting drops the ledger row only — the thread
+                            is public relay history and survives. */}
+                        <button
+                          className="mention-hint-x"
+                          title={arming ? `forget ${name}? (the public thread survives on the relay)` : `forget ${name}`}
+                          onClick={() => {
+                            if (!arming) {
+                              setGuestForgetArmed(g.pk);
+                              setTimeout(() => setGuestForgetArmed((cur) => (cur === g.pk ? undefined : cur)), 4000);
+                              return;
+                            }
+                            setGuestForgetArmed(undefined);
+                            removeGuest(g.pk);
+                            setGuestNonce((n) => n + 1);
+                            if (view.kind === "guest" && view.pk === g.pk) setView({ kind: "home" });
+                          }}
+                          style={arming ? { color: "var(--brand)" } : undefined}
+                        >
+                          ×
+                        </button>
+                      </div>
                     );
                   })}
                 </>
