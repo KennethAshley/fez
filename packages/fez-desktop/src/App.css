@@ -252,6 +252,9 @@ body {
 }
 .tombstone { color: var(--fg-dim); font-style: italic; padding: 4px 0; }
 .mention { color: var(--accent); font-weight: 600; }
+/* Amounts and chain ids inside prose (renderAmounts) — the ok tone, not
+ * the accent, so money never reads as a mention. */
+.md-amount { color: var(--ok, #b8bb26); font-variant-numeric: tabular-nums; font-weight: 600; }
 .bubble-foot { display: flex; gap: 8px; align-items: center; min-height: 0; }
 /* Only a foot with content earns the gap — an empty foot must stay
  * collapsed or every message grows phantom padding. */

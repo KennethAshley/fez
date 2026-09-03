@@ -3464,6 +3464,21 @@ function Bubble({
  * participants whatever you type. There the accent is typography, not
  * a claim, so every name keeps it.
  */
+/**
+ * Paint money and chain identifiers in prose — "11.934 tα staked (uid 5)"
+ * is a sentence whose numbers ARE the message, so they get the same
+ * at-a-glance accent a mention does. Paint only, never parse: a wrong
+ * match colors a word, it cannot move money. One capture group, so
+ * split() alternates prose/match and odd indices are the hits.
+ */
+const AMOUNT_RE =
+  /((?<![\w.$])\$\d[\d,]*(?:\.\d+)?|(?<![\w.])\d[\d,]*(?:\.\d+)?\s?t?(?:TAO|α|USDC|USD)(?!\w)|(?<!\w)(?:netuid|uid|subnet)\s?\d+)/g;
+function renderAmounts(text: string): React.ReactNode {
+  const parts = text.split(AMOUNT_RE);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) => (i % 2 ? <span key={i} className="md-amount">{part}</span> : part));
+}
+
 function renderMentions(text: string, tagged?: ReadonlySet<string>, onMention?: (name: string) => void) {
   // splitMentions, not a regex of our own: the surface that PAINTS a
   // mention and the surface that TAGS it must agree on what one is, or
@@ -3471,7 +3486,7 @@ function renderMentions(text: string, tagged?: ReadonlySet<string>, onMention?: 
   // holds @fezchat/client's copy to src/mentions.ts.
   return splitMentions(text).map(({ text: part, name }, index) => {
     if (!name || (tagged && !tagged.has(name.toLowerCase()))) {
-      return <span key={index}>{part}</span>;
+      return <span key={index}>{renderAmounts(part)}</span>;
     }
     // Accented and inert reads the same as accented and live, so only
     // give it a button when there is somewhere to go.
