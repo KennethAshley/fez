@@ -520,6 +520,10 @@ function Shell({
       listen<{ name: string; bin: string; reason: string }>("fez-agent-exit", (e) => {
         const { name, bin, reason } = e.payload;
         if (reason.startsWith("exited cleanly")) return;
+        // An ownership yield is the protocol RESOLVING a double-spawn, not
+        // an incident — the surviving instance is fine. (The double-spawn
+        // itself is a ledgered bug; its fix removes this case entirely.)
+        if (reason.includes("this instance yields")) return;
         const what = bin === "fez-agent" ? `@${name}` : `@${name} (${bin.replace(/^fez-/, "")})`;
         toast.error(`${what} died — ${reason}`);
         void notifyEvent({
