@@ -164,6 +164,13 @@ export interface GuiExtensionApi {
   registerBlockRenderer(lang: string, render: (props: BlockProps, host?: HTMLElement) => El | Dispose | void, menu?: object): void;
   /** Open the live activity ("watch") pane for an agent by name. */
   watchAgent(name: string): void;
+  /**
+   * Open a guest thread: a PUBLIC conversation with a foreign market npub,
+   * rendered in the host's DM rail (guest-threads spec). The extension
+   * supplies who and where; the ledger, transport, and surface are the
+   * host's. Optional — hosts predating the spec don't offer it.
+   */
+  openGuestDm?(guest: { pk: string; relay: string; name?: string; picture?: string }): void;
   /** Open a thread in the current channel view. */
   openThread(channelId: string, rootId: string): void;
   /**

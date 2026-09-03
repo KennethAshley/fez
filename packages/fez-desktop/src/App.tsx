@@ -31,7 +31,8 @@ import { shareArtifact } from "./share-artifact";
 import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
 import { toast } from "./toast";
 import { startSummoner } from "./summoner";
-import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, extensionNavViews, extensionArtifactActions, type ArtifactAction } from "./gui-extensions";
+import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, setGuestDmOpener, extensionNavViews, extensionArtifactActions, type ArtifactAction } from "./gui-extensions";
+import { GuestThreadView, addGuest, listGuests } from "./guest-threads";
 import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
 import { useConfig } from "./config-store";
@@ -83,6 +84,7 @@ type Boot =
 type MainView =
   | { kind: "channel"; focus?: string }
   | { kind: "dm"; convoKey: string }
+  | { kind: "guest"; pk: string }
   | { kind: "home" }
   | { kind: "pulse" }
   | { kind: "wiki" }
@@ -406,9 +408,16 @@ function Shell({
   useEffect(() => {
     setWatchOpener((agent) => setPane({ kind: "watch", agent }));
     setToolOpener((artifact) => setPane({ kind: "tool", artifact }));
+    // Guest threads (spec 2026-09-03): an extension hands over a market
+    // npub; the ledger entry and the conversation surface are ours.
+    setGuestDmOpener((guest) => {
+      addGuest(guest);
+      setView({ kind: "guest", pk: guest.pk });
+    });
     return () => {
       setWatchOpener(undefined);
       setToolOpener(undefined);
+      setGuestDmOpener(undefined);
     };
   }, []);
   // Gui parts load after the shell mounts; the rail reads their nav
@@ -1208,6 +1217,43 @@ function Shell({
                 </HoverCard>
               ));
             })()}
+            {/* Guests (guest-threads spec): hired strangers, badged as the
+                public conversations they are. A name that collides with a
+                member's wears its pk stub — two quills must never read as
+                one. Only threads YOU opened exist; strangers can't add
+                themselves to this rail. */}
+            {(() => {
+              const guests = listGuests();
+              if (guests.length === 0) return null;
+              const memberNames = new Set([...client.agents().values()].map((n) => n.toLowerCase()));
+              return (
+                <>
+                  <div className="community-name" style={{ marginTop: 6 }}>
+                    <span className="community-label" title="public market conversations — not encrypted DMs">guests · public</span>
+                  </div>
+                  {guests.map((g) => {
+                    const name = g.name ?? g.pk.slice(0, 8);
+                    const collides = g.name !== undefined && memberNames.has(g.name.toLowerCase());
+                    const active = view.kind === "guest" && view.pk === g.pk;
+                    return (
+                      <button
+                        key={g.pk}
+                        className={active ? "channel active" : "channel cast"}
+                        title={`${g.pk} — public thread on ${g.relay}`}
+                        onClick={() => setView({ kind: "guest", pk: g.pk })}
+                      >
+                        {g.picture ? (
+                          <img src={g.picture} alt="" width={16} height={16} style={{ imageRendering: "pixelated" }} />
+                        ) : (
+                          <span className="group-mark">◌</span>
+                        )}{" "}
+                        {collides ? `${name} ·${g.pk.slice(0, 4)}` : name}
+                      </button>
+                    );
+                  })}
+                </>
+              );
+            })()}
         </div>
         </div>
         {/* Ambient, not a destination: what is running right now is a
@@ -1382,6 +1428,10 @@ function Shell({
           onProfile={(pk) => setPane({ kind: "profile", pk })}
         />
       )}
+      {view.kind === "guest" && (() => {
+        const guest = listGuests().find((g) => g.pk === view.pk);
+        return guest ? <GuestThreadView key={guest.pk} wire={wire} selfPk={client.pubkey} guest={guest} /> : null;
+      })()}
       {view.kind === "home" && (
         <HomeView
           client={client}

@@ -172,6 +172,9 @@ export interface GuiExtensionApi {
   ) => void;
   /** Open the live activity pane for an agent, by name. */
   watchAgent: (name: string) => void;
+  /** Open a guest thread — a PUBLIC conversation with a foreign market
+   * npub, rendered in the host's DM rail (guest-threads spec). */
+  openGuestDm: (guest: { pk: string; relay: string; name?: string; picture?: string }) => void;
   /** Open a thread in the current channel view (no-op for other channels). */
   openThread: (channelId: string, rootId: string) => void;
   /** A palette, or a { light, dark } pair that follows the OS. */
@@ -471,6 +474,20 @@ export function setWatchOpener(open: ((agent: string) => void) | undefined): voi
 }
 export function openWatch(agent: string): void {
   watchOpener?.(agent);
+}
+
+/**
+ * Guest DMs, as a capability (guest-threads spec): an extension says
+ * "open a conversation with this market npub" — the thread surface, the
+ * ledger, and the venue-relay client are all the host's business. Same
+ * parking pattern as the watch pane.
+ */
+let guestDmOpener: ((guest: { pk: string; relay: string; name?: string; picture?: string }) => void) | undefined;
+export function setGuestDmOpener(open: typeof guestDmOpener): void {
+  guestDmOpener = open;
+}
+export function openGuestDm(guest: { pk: string; relay: string; name?: string; picture?: string }): void {
+  guestDmOpener?.(guest);
 }
 
 /**
@@ -1047,6 +1064,14 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
         : (refuse("ui", "export a tool package") as never),
       openThread: may("ui") ? openThreadAt : (refuse("ui", "navigate threads") as never),
       watchAgent: may("read:agents") ? openWatch : (refuse("read:agents", "open the watch pane") as never),
+      // Forward surface (guest-threads spec): typed loosely so extensions
+      // built against an older api still load; the host validates the pk.
+      openGuestDm: may("ui")
+        ? (guest: { pk: string; relay: string; name?: string; picture?: string }) => {
+            if (!/^[0-9a-f]{64}$/.test(guest.pk) || !/^wss?:\/\//.test(guest.relay)) return;
+            openGuestDm(guest);
+          }
+        : (refuse("ui", "open a guest DM") as never),
       // The label is ignored on purpose — a panel is filed under the
       // extension's own name, so one cannot present itself as another.
       // `opts` is NOT ignored: it carries which channel source this
