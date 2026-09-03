@@ -22,6 +22,7 @@ import {
 import type { ChainAdapter } from "./chains/adapter.js";
 import type { WalletPair, EvmPair } from "./derive.js";
 import type { WalletConfig } from "./config.js";
+import { personaStatus, stakePersona, unstakePersona } from "./stake.js";
 import { resolveRecipient } from "./resolve.js";
 import { rosterFilter, rosterFromEvents } from "./roster.js";
 import { createAddressAnnouncer } from "./announce.js";
@@ -213,6 +214,64 @@ server.registerTool(
   },
   async ({ url, method, body, maxUsd }, extra) =>
     text(await x402Fetch(await makeX402Deps(persona!, extra.signal), { url, method, body, maxUsd }))
+);
+
+/* ── the stake rehearsal, agent-side ──────────────────────────────────
+ * Self-stake is the agent's own account staking to its own hotkey: the
+ * money stays under this persona's key and unstake reverses it, so no
+ * consent card — unlike wallet_send, nothing leaves the agent's custody.
+ * The write verbs refuse mainnet inside stake.ts (testnet rehearsal
+ * only), which is also why skipping consent is currently safe.
+ * ponytail: before mainnet enablement, self-stake gets a consent story. */
+
+server.registerTool(
+  "wallet_stake",
+  {
+    description:
+      "Stake part of your own balance behind your own miner hotkey on the subnet — your earnings, staked behind your name. Testnet-only for now; the money stays yours and wallet_unstake reverses it.",
+    inputSchema: {
+      amount: z.string().describe("Decimal TAO amount to stake, e.g. '0.5'."),
+      netuid: z.number().optional().describe("Subnet netuid (default 553)."),
+    },
+  },
+  async ({ amount, netuid }) => {
+    await cryptoWaitReady();
+    const r = await stakePersona(persona!, amount, netuid);
+    return text(`staked ${r.amount} tTAO to your own hotkey on netuid ${r.netuid} (tx ${r.txHash})`);
+  }
+);
+
+server.registerTool(
+  "wallet_unstake",
+  {
+    description: "Unstake alpha from your own hotkey back to your free balance. Testnet-only for now.",
+    inputSchema: {
+      amount: z.string().describe("Decimal alpha amount to unstake, e.g. '0.5'."),
+      netuid: z.number().optional().describe("Subnet netuid (default 553)."),
+    },
+  },
+  async ({ amount, netuid }) => {
+    await cryptoWaitReady();
+    const r = await unstakePersona(persona!, amount, netuid);
+    return text(`unstaked ${r.amount} tα from your hotkey on netuid ${r.netuid} (tx ${r.txHash})`);
+  }
+);
+
+server.registerTool(
+  "wallet_stake_status",
+  {
+    description: "Your subnet standing: registered uid (or not), free balance, and how much is staked behind your hotkey.",
+    inputSchema: { netuid: z.number().optional().describe("Subnet netuid (default 553).") },
+  },
+  async ({ netuid }) => {
+    await cryptoWaitReady();
+    const s = await personaStatus(persona!, netuid);
+    const t = s.network === "finney" ? "" : "t";
+    return text(
+      `${s.persona} on netuid ${s.netuid}: ${s.uid !== undefined ? `uid ${s.uid}` : "not registered (ask your owner to register you)"} · ` +
+        `free ${s.free} ${t}TAO · staked ${s.staked !== undefined ? `${s.staked} ${t}α` : "unknown"}`
+    );
+  }
 );
 
 server.registerTool(
