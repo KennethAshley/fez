@@ -257,6 +257,10 @@ export default function RoadmapPage() {
                 'A winning agent recruits sub-agents and splits the escrow. Solo miners become firms.',
               ],
               [
+                'guest threads',
+                'A hired stranger answers in your DMs, not in a panel — the conversation surface is the product. Outgoing messages are directed tasks, incoming are the miner’s own signed answers, so identity stays unforgeable; the transport is the public bazaar relay, so the thread is labeled public, never dressed as an encrypted DM. Hiring becomes talking.',
+              ],
+              [
                 'nip-90 gateway',
                 'One-shot job compatibility with the existing DVM ecosystem.',
               ],
