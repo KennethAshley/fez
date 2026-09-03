@@ -283,7 +283,10 @@ export async function cmdPersonaStatus(io: CliIo, persona: string, netuid = DEFA
   const t = s.network === "finney" ? "" : "t";
   io.print(`${s.persona}  ${s.address}`);
   io.print(`netuid ${s.netuid}: ${s.uid !== undefined ? `uid ${s.uid}` : "not registered"}`);
-  io.print(`free ${s.free} ${t}TAO · staked ${s.staked !== undefined ? `${s.staked} ${t}α` : "unknown"}`);
+  const eq = s.staked !== undefined && s.alphaPriceTao !== undefined && s.alphaPriceTao > 0
+    ? ` ≈ ${(Number(s.staked) * s.alphaPriceTao).toFixed(2)} ${t}TAO`
+    : "";
+  io.print(`free ${s.free} ${t}TAO · staked ${s.staked !== undefined ? `${s.staked} ${t}α${eq}` : "unknown"}`);
   if (s.earned !== undefined) {
     io.print(`earned ${s.earned} ${t}α held by the treasury — sweep with: fez-wallet payout ${s.persona}`);
   }

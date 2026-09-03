@@ -435,3 +435,20 @@ describe("receiptStateText", () => {
     expect(receiptStateText("verified")).not.toMatch(/couldn't check|does not match/i);
   });
 });
+
+import { taoEquiv } from "../src/gui-logic.js";
+
+describe("taoEquiv — the ≈ gloss", () => {
+  it("values alpha at the pool price, magnitude precision", () => {
+    expect(taoEquiv("11.93433567", 0.01936)).toBe("≈ 0.23");
+    expect(taoEquiv("9.111552624", 0.01936)).toBe("≈ 0.18");
+    expect(taoEquiv("0.1", 0.01936)).toBe("≈ 0.0019"); // tiny values keep two sig figs
+    expect(taoEquiv("0", 0.01936)).toBe("≈ 0");
+  });
+  it("renders NOTHING rather than a fake number", () => {
+    expect(taoEquiv(undefined, 0.02)).toBeUndefined();   // no amount
+    expect(taoEquiv("5", undefined)).toBeUndefined();    // pool wouldn't say
+    expect(taoEquiv("5", 0)).toBeUndefined();            // empty pool
+    expect(taoEquiv("junk", 0.02)).toBeUndefined();      // unparseable amount
+  });
+});

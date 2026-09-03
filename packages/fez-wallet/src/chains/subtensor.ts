@@ -33,6 +33,8 @@ export interface SubtensorApi extends SubstrateApi {
       uids(netuid: number, hotkey: string): Promise<{ isSome: boolean; unwrap(): { toNumber(): number } }>;
       burn(netuid: number): Promise<{ toBigInt(): bigint }>;
       owner(hotkey: string): Promise<{ toString(): string }>;
+      subnetTAO(netuid: number): Promise<{ toBigInt(): bigint }>;
+      subnetAlphaIn(netuid: number): Promise<{ toBigInt(): bigint }>;
     };
   };
   tx: SubstrateApi["tx"] & {
@@ -171,6 +173,27 @@ export async function stakedAlpha(
     const stake = (json as { stake?: unknown }).stake;
     if (typeof stake === "number" || typeof stake === "string") return BigInt(stake);
     return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What one alpha fetches in TAO right now, from 553's pool reserves —
+ * a VALUATION, not a promise: it moves with every trade and an actual
+ * unstake pays slippage this figure ignores. undefined when the pool is
+ * empty or the chain won't say — the caller renders nothing rather than
+ * a stale or fake number.
+ */
+export async function alphaPriceTao(api: SubtensorApi, netuid: number): Promise<number | undefined> {
+  try {
+    const [tao, alphaIn] = await Promise.all([
+      api.query.subtensorModule.subnetTAO(netuid),
+      api.query.subtensorModule.subnetAlphaIn(netuid),
+    ]);
+    const a = alphaIn.toBigInt();
+    if (a === 0n) return undefined;
+    return Number(tao.toBigInt()) / Number(a);
   } catch {
     return undefined;
   }

@@ -23,6 +23,7 @@ import {
   ledgerTime,
   erc20BalanceCall,
   parseUsdcBalance,
+  taoEquiv,
   validUsd,
   x402TxLink,
   x402NetworkLabel,
@@ -759,7 +760,7 @@ export default function activate(api: GuiExtensionApi): void {
    * won't answer renders "unknown", never zero, and a wiped testnet renders
    * unregistered because that is what the chain now says.
    */
-  interface SubnetStatus { netuid: number; uid?: number; free: string; staked?: string; earned?: string; network: string }
+  interface SubnetStatus { netuid: number; uid?: number; free: string; staked?: string; earned?: string; alphaPriceTao?: number; network: string }
   function SubnetRow({ persona }: { persona: string }): JSX.Element | null {
     const run = api.processes?.run;
     const [status, setStatus] = useState<SubnetStatus | "unreachable" | undefined>(undefined);
@@ -817,6 +818,9 @@ export default function activate(api: GuiExtensionApi): void {
       <div style={line}>
         <span style={{ color: "var(--fg-dim, #928374)" }}>
           {`uid ${status.uid} · netuid ${status.netuid} · staked ${status.staked !== undefined ? `${status.staked} ${t}α` : "unknown"}`}
+          {/* The ≈ is a valuation at the pool's read-time price, never a
+              sum with TAO — alpha and TAO stay different assets. */}
+          {(() => { const eq = taoEquiv(status.staked, status.alphaPriceTao); return eq ? <span style={{ color: "var(--fg-dim, #928374)" }}>{` ${eq} ${t}TAO`}</span> : null; })()}
         </span>
         <input
           className="manage-input"
@@ -837,7 +841,7 @@ export default function activate(api: GuiExtensionApi): void {
             only when there is actually something to sweep. */}
         {status.earned !== undefined && status.earned !== "0" ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span style={{ color: "var(--warn, #d79921)" }}>{`earned ${status.earned} ${t}α (held by treasury)`}</span>
+            <span style={{ color: "var(--warn, #d79921)" }}>{`earned ${status.earned} ${t}α${(() => { const eq = taoEquiv(status.earned, status.alphaPriceTao); return eq ? ` ${eq} ${t}TAO` : ""; })()} (held by treasury)`}</span>
             <button
               className="mini"
               disabled={busy !== undefined}

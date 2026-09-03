@@ -5,7 +5,7 @@ import { loadConfig, type Network } from "./config.js";
 import { parseAmount } from "./chains/adapter.js";
 import { TAO_DECIMALS } from "./chains/substrate.js";
 import {
-  addStake, connectSubtensor, formatRao, ownerOf, removeStake, stakedAlpha, uidFor,
+  addStake, alphaPriceTao, connectSubtensor, formatRao, ownerOf, removeStake, stakedAlpha, uidFor,
   type SubtensorApi,
 } from "./chains/subtensor.js";
 import { mirrorSubnet } from "./storage-mirror.js";
@@ -114,16 +114,21 @@ export interface PersonaChainStatus {
    * name. Absent when the agent owns its own hotkey (nothing to sweep)
    * or the chain wouldn't say. `fez-wallet payout` moves it. */
   earned?: string;
+  /** What one alpha fetches in TAO from the subnet pool at read time — a
+   * valuation for the ≈ gloss, never a promise (moves with every trade,
+   * ignores slippage). Absent when the pool won't say. */
+  alphaPriceTao?: number;
 }
 
 export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): Promise<PersonaChainStatus> {
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
   const api = await subtensorFor(config.endpoints.tao);
-  const [uid, acct, staked] = await Promise.all([
+  const [uid, acct, staked, price] = await Promise.all([
     uidFor(api, netuid, pair.address),
     api.query.system.account(pair.address),
     stakedAlpha(api, netuid, pair.address, pair.address),
+    alphaPriceTao(api, netuid),
   ]);
   // Emissions land under Owner(hotkey) — only a registered hotkey owned by
   // someone OTHER than the agent has a guardian entry to report.
@@ -158,5 +163,6 @@ export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): P
     free: formatRao(acct.data.free.toBigInt()),
     ...(staked !== undefined ? { staked: formatRao(staked) } : {}),
     ...(earned !== undefined ? { earned: formatRao(earned) } : {}),
+    ...(price !== undefined ? { alphaPriceTao: price } : {}),
   };
 }

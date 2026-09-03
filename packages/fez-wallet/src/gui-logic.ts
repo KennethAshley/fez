@@ -301,6 +301,23 @@ export function receiptStateText(state: "verified" | "unverifiable" | "false"): 
   return "\u26a0 the chain does not match this receipt";
 }
 
+/**
+ * The ≈ gloss: what an alpha amount would fetch in TAO at the pool price.
+ * Alpha and TAO are different assets — native units stay primary and are
+ * never summed; this is a valuation at read time, so it renders with ≈
+ * and renders NOTHING when the price is unknown (a missing gloss is
+ * honest, a stale one is not). Two significant-ish decimals: the reader
+ * wants magnitude, not rao precision.
+ */
+export function taoEquiv(alphaAmount: string | undefined, priceTao: number | undefined): string | undefined {
+  if (alphaAmount === undefined || priceTao === undefined || !(priceTao > 0)) return undefined;
+  const alpha = Number(alphaAmount);
+  if (!Number.isFinite(alpha) || alpha < 0) return undefined;
+  const tao = alpha * priceTao;
+  if (tao === 0) return "≈ 0";
+  return `≈ ${tao < 0.01 ? tao.toPrecision(2) : tao.toFixed(2)}`;
+}
+
 /* ── x402 / USDC (browser-safe helpers for the panel) ──────────────── */
 
 /** balanceOf(holder) calldata for a read-only eth_call — the one RPC the
