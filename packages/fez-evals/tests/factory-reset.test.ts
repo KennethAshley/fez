@@ -14,7 +14,7 @@ import { registerResetCommand } from "../../../src/cli/cmd-reset.js";
  * that leaves half an identity behind.
  */
 describe("factoryResetPlan", () => {
-  it("on darwin: ~/.fez, both webview storage dirs, both keychain services", () => {
+  it("on darwin: ~/.fez, both webview storage dirs, all three keychain services", () => {
     const plan = factoryResetPlan({ home: "/Users/x", platform: "darwin" });
     expect(plan.dirs).toEqual([
       "/Users/x/.fez",
@@ -22,8 +22,10 @@ describe("factoryResetPlan", () => {
       "/Users/x/Library/Caches/com.fez.desktop",
     ]);
     // fez-keys carries the user's identity AND every agent's key;
-    // fez-skill-env carries skill secrets the desktop stored.
-    expect(plan.keychainServices).toEqual(["fez-keys", "fez-skill-env"]);
+    // fez-skill-env carries skill secrets the desktop stored;
+    // fez-wallet is the wallet root — leaving it stranded the next
+    // wallet setup on "root already exists".
+    expect(plan.keychainServices).toEqual(["fez-keys", "fez-skill-env", "fez-wallet"]);
   });
 
   it("elsewhere: only ~/.fez — no keychain, no webview dirs", () => {

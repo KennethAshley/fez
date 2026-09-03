@@ -600,6 +600,7 @@ export default function activate(api: GuiExtensionApi): void {
     const [phase, setPhase] = useState<"idle" | "running" | "reveal">("idle");
     const [error, setError] = useState<string | undefined>(undefined);
     const [reveal, setReveal] = useState<{ mnemonic: string; treasuryAddress: string } | undefined>(undefined);
+    const [adopted, setAdopted] = useState<string | undefined>(undefined);
     const run = api.processes?.run;
 
     if (!run) {
@@ -617,7 +618,15 @@ export default function activate(api: GuiExtensionApi): void {
       try {
         const out = await run("fez-wallet", ["init", "--json"]);
         if (out.code !== 0) throw new Error(out.stderr.trim() || `init exited ${out.code}`);
-        setReveal(JSON.parse(out.stdout) as { mnemonic: string; treasuryAddress: string });
+        const parsed = JSON.parse(out.stdout) as { adopted?: boolean; mnemonic?: string; treasuryAddress: string };
+        if (parsed.adopted) {
+          // An existing root was found and reconnected — there are no new
+          // words to reveal, and pretending otherwise would be alarming.
+          setAdopted(parsed.treasuryAddress);
+          setPhase("reveal");
+          return;
+        }
+        setReveal(parsed as { mnemonic: string; treasuryAddress: string });
         setPhase("reveal");
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -625,6 +634,21 @@ export default function activate(api: GuiExtensionApi): void {
       }
     };
 
+    if (phase === "reveal" && adopted) {
+      return (
+        <div style={{ ...card, maxWidth: 560 }}>
+          <div style={{ fontWeight: 600 }}>existing wallet reconnected</div>
+          <div style={{ ...dim, marginTop: 2 }}>
+            A wallet root was already on this Mac — it was adopted, not replaced. Your backup words stay the ones you
+            wrote down when it was created.
+          </div>
+          <div style={{ ...mono, fontSize: 12, marginTop: 8 }}>treasury: {adopted}</div>
+          <button className="agent-action" style={{ marginTop: 10 }} onClick={() => { setAdopted(undefined); onDone(); }}>
+            continue
+          </button>
+        </div>
+      );
+    }
     if (phase === "reveal" && reveal) {
       return (
         <div style={{ ...card, maxWidth: 560 }}>

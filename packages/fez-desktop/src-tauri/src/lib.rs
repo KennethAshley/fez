@@ -693,7 +693,7 @@ async fn factory_reset(app: tauri::AppHandle) -> Result<(), String> {
                 .status();
         }
         std::thread::sleep(std::time::Duration::from_millis(300));
-        for service in ["fez-keys", "fez-skill-env"] {
+        for service in ["fez-keys", "fez-skill-env", "fez-wallet"] {
             // One entry per account; `security` deletes one match per
             // call — loop until the service is empty.
             loop {

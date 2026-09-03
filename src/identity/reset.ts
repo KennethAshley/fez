@@ -38,8 +38,11 @@ export function factoryResetPlan(opts: { home?: string; platform?: NodeJS.Platfo
       path.join(home, "Library", "Caches", "com.fez.desktop")
     );
     // "fez-keys" is identity (yours and your agents'); "fez-skill-env"
-    // is skill secrets the desktop stored. Both are fez's to delete.
-    keychainServices.push("fez-keys", "fez-skill-env");
+    // is skill secrets the desktop stored; "fez-wallet" is the wallet
+    // root — money, so the caller's warning must say so. Leaving it
+    // behind used to strand the next wallet setup on "root already
+    // exists" with no mirror to go with it.
+    keychainServices.push("fez-keys", "fez-skill-env", "fez-wallet");
   }
   return { dirs, keychainServices };
 }

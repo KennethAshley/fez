@@ -40,13 +40,23 @@ function requireUsablePersonaName(persona: string): void {
  * (the CLI's prose and `--json` for the wallet panel's in-app flow).
  * The mnemonic is returned exactly once, by init alone; nothing else
  * ever reads it back out. */
-export interface InitResult {
-  mnemonic: string;
-  treasuryAddress: string;
-}
+export type InitResult =
+  | { adopted?: undefined; mnemonic: string; treasuryAddress: string }
+  | { adopted: true; treasuryAddress: string };
 
 export async function initWallet(): Promise<InitResult> {
-  if (readRootEntry()) throw new Error("a wallet root already exists — refusing to overwrite it");
+  // An existing root is ADOPTED, never overwritten: rebuild the mirror
+  // from it and hand back the treasury. This is the repair path for the
+  // stranded half-state (root in the keychain, mirror wiped — factory
+  // reset or a fresh machine) that used to dead-end wallet setup.
+  const existing = readRootEntry();
+  if (existing) {
+    const treasuryAddress = treasuryPair(existing).address;
+    await mirrorAddresses({ treasury: treasuryAddress });
+    const config = loadConfig();
+    await mirrorEndpoint(config.endpoints.tao, config.network);
+    return { adopted: true, treasuryAddress };
+  }
   const mnemonic = generateWalletMnemonic();
   writeRootEntry(mnemonic);
   const treasuryAddress = treasuryPair(mnemonic).address;
@@ -57,12 +67,18 @@ export async function initWallet(): Promise<InitResult> {
 }
 
 export async function cmdInit(io: CliIo): Promise<void> {
-  const { mnemonic, treasuryAddress } = await initWallet();
+  const result = await initWallet();
+  if (result.adopted) {
+    io.print("an existing wallet root was found and reconnected — nothing was overwritten.");
+    io.print(`treasury address: ${result.treasuryAddress}`);
+    io.print("agent accounts derive from it as before: fez-wallet derive <persona>");
+    return;
+  }
   io.print("wallet created. WRITE THESE 24 WORDS DOWN — they are shown exactly once:");
   io.print("");
-  io.print(`  ${mnemonic}`);
+  io.print(`  ${result.mnemonic}`);
   io.print("");
-  io.print(`treasury address: ${treasuryAddress}`);
+  io.print(`treasury address: ${result.treasuryAddress}`);
   io.print("fund the treasury, then: fez-wallet derive <persona> && fez-wallet fund <persona> <amount>");
 }
 

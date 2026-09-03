@@ -32,7 +32,8 @@ export function registerResetCommand(program: Command): void {
       if (plan.keychainServices.length > 0) {
         console.log(`  every keychain entry under: ${plan.keychainServices.join(", ")} — your identity AND your agents' keys`);
       }
-      console.log(chalk.dim("a deleted key cannot be reissued — `fez keys export` first if this identity matters\n"));
+      console.log(chalk.dim("a deleted key cannot be reissued — `fez keys export` first if this identity matters"));
+      console.log(chalk.dim("this includes the WALLET ROOT: if the treasury holds funds, back up the 24 words first\n"));
 
       if (!options.yes) {
         const { default: inquirer } = await import("inquirer");

@@ -44,7 +44,13 @@ describe("cli ceremony", () => {
     const root = readRootEntry();
     expect(root!.split(" ")).toHaveLength(24);
     expect(lines.join("\n")).toContain(root!); // shown for paper backup
-    await expect(cmdInit(io)).rejects.toThrow(/already/i); // refuses a second init
+    // A second init ADOPTS the existing root (the repair path for a
+    // wiped mirror) — same mnemonic, never re-revealed, never replaced.
+    const before = root;
+    await cmdInit(io);
+    expect(readRootEntry()).toBe(before);
+    expect(lines.join("\n")).toContain("reconnected");
+    expect(lines.filter((l) => l.includes(before!)).length).toBe(1); // words shown exactly once, ever
   });
 
   it("derive stores the pair, assigns an index, and is idempotent", async () => {
