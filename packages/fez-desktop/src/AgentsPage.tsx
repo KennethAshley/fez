@@ -4,6 +4,8 @@ import type { FezClient } from "@fezchat/client";
 import AgentCard, { type AgentCardSkill } from "./AgentCard";
 import { agentSkillStrip } from "./agent-skill-health";
 import { useConfig } from "./config-store";
+import { useBazaarRecords } from "./useBazaarRecords";
+import { bestRow } from "./bazaar-record";
 
 /**
  * The agents page.
@@ -37,6 +39,7 @@ export default function AgentsPage({
 }) {
   const { skills: catalog } = useConfig();
   const [rows, setRows] = useState<Row[]>([]);
+  const records = useBazaarRecords(useMemo(() => rows.map((r) => r.pk).filter((pk): pk is string => !!pk), [rows]));
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -126,6 +129,12 @@ export default function AgentsPage({
               description={row.description}
               skills={row.skills}
               online={row.online}
+              record={(() => {
+                const top = row.pk && records ? bestRow(records.get(row.pk) ?? []) : undefined;
+                return top
+                  ? `${top.taskType}${top.percentile !== undefined ? ` · ${top.percentile}th` : ""} · ${top.count} task${top.count === 1 ? "" : "s"}`
+                  : undefined;
+              })()}
               onOpen={() => onOpen(row.name)}
             />
           ))}
