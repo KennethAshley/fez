@@ -301,7 +301,7 @@ export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => 
       {PROVIDERS.map((p) => (
         <div key={p.id} className="env-skill">
           <div className="manage-section">{p.id} <span className="skill-desc">— {p.hint}</span></div>
-          <EnvEditor skill={p.id} config={{ env: { [p.keyName]: "" } }} onNotice={onNotice} />
+          <EnvEditor skill={p.id} config={{ env: { [p.keyName]: "", ...p.extraKeys } }} onNotice={onNotice} />
         </div>
       ))}
       {skills.length === 0 ? (
