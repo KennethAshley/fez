@@ -218,11 +218,20 @@ export function mirrorX402Meta(meta: X402Meta): Promise<void> {
 
 /** A persona's subnet registration — {netuid, uid, hotkey}, public chain
  * facts. The bazaar miner reads this to publish its binding WITH the
- * hotkey tag, which is what lets its weights pay its own uid. */
+ * hotkey tag, which is what lets its weights pay its own uid. The
+ * balance snapshot rides along so surfaces that can't dial the chain
+ * (the desktop's AgentProfile) can still show last-known stake — `at`
+ * is what keeps that honest. */
 export interface SubnetEntry {
   netuid: number;
   uid: number;
   hotkey: string;
+  /** Last chain-read staked alpha (decimal text), absent = never read. */
+  staked?: string;
+  /** Last chain-read free balance (decimal text). */
+  free?: string;
+  /** ISO timestamp of that read — display as "as of", never as now. */
+  at?: string;
 }
 
 export function mirrorSubnet(u: { name: string; entry: SubnetEntry }): Promise<void> {

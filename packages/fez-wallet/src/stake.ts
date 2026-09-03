@@ -122,7 +122,19 @@ export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): P
   ]);
   // A wiped testnet must render post-wipe truth: chain says unregistered →
   // the mirror says so too, or the panel keeps offering a dead uid.
-  if (uid !== undefined) await mirrorSubnet({ name: persona, entry: { netuid, uid, hotkey: pair.address } });
+  if (uid !== undefined) {
+    await mirrorSubnet({
+      name: persona,
+      entry: {
+        netuid,
+        uid,
+        hotkey: pair.address,
+        free: formatRao(acct.data.free.toBigInt()),
+        ...(staked !== undefined ? { staked: formatRao(staked) } : {}),
+        at: new Date().toISOString(),
+      },
+    });
+  }
   return {
     persona,
     address: pair.address,
