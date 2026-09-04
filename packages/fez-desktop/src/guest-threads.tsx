@@ -452,7 +452,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         args: ["rent", guest.pk, String(hours), "--as", persona, "--json"],
       });
       if (res.code !== 0) throw new Error(res.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() || `lease exited ${res.code}`);
-      const until = Date.now() + hours * 3_600_000;
+      // Extend from paid-through, not from now — mid-lease ticks stack
+      // (matching the miner's ledger), they don't reset the clock.
+      const until = Math.max(Date.now(), leaseUntil) + hours * 3_600_000;
       localStorage.setItem(`fez-lease-${guest.pk}`, String(until));
       setLeaseUntil(until);
     } catch (err) {
@@ -585,20 +587,39 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             Active → the priority meter; idle → a one-hour lease button. */}
         {(() => {
           const leasePayer = payFrom.find((a) => a.name !== "treasury")?.name;
+          // Ticks, not a fixed hour: the lease is prepaid per-call, so a
+          // thin allowance can still buy 15 minutes of priority. Costs are
+          // hours × the announced rate, shown so the click IS the consent.
+          const TICKS: [number, string][] = [[0.25, "15m"], [1, "1h"]];
+          const cost = (h: number) => {
+            const c = h * (agentRate ?? 0);
+            return `${Number(c.toFixed(3))} tτ`;
+          };
           if (leaseUntil > nowTick) {
             const t = new Date(leaseUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
             return (
               <span className="guest-lease on" title="you have priority — the agent serves your asks first while the lease is live">
                 {` · ⚡ priority through ${t}`}
-                {agentRate && leasePayer ? <button className="guest-hire-link" disabled={leasing} onClick={() => void startLease(1, leasePayer)}>{leasing ? "…" : "+1h"}</button> : null}
+                {agentRate && leasePayer
+                  ? TICKS.map(([h, label]) => (
+                      <button key={label} className="guest-hire-link" disabled={leasing} title={`extend ${label} for ${cost(h)}, paid from ${leasePayer}`} onClick={() => void startLease(h, leasePayer)}>
+                        {leasing ? "…" : `+${label}`}
+                      </button>
+                    ))
+                  : null}
               </span>
             );
           }
           if (agentRate && leasePayer) {
             return (
-              <button className="guest-hire-link" disabled={leasing} title={`lease 1 hour of priority at ${agentRate} tТАО/hr, paid from ${leasePayer}`} onClick={() => void startLease(1, leasePayer)}>
-                {leasing ? " · leasing…" : ` · ⚡ lease 1h (${agentRate} tτ)`}
-              </button>
+              <span className="guest-lease">
+                {" · ⚡ lease"}
+                {TICKS.map(([h, label]) => (
+                  <button key={label} className="guest-hire-link" disabled={leasing} title={`${label} of priority for ${cost(h)}, paid from ${leasePayer}`} onClick={() => void startLease(h, leasePayer)}>
+                    {leasing ? "…" : `${label} (${cost(h)})`}
+                  </button>
+                ))}
+              </span>
             );
           }
           return null;
