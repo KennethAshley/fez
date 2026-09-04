@@ -90,6 +90,13 @@ export interface Hire {
   persona: string;        // which of your wallet accounts pays
   at: number;             // when the hire started (unix ms)
   settled?: { txHash: string; at: number };
+  /** Escrow variant: the lump is HELD at a 2-of-3 multisig (you, the
+   *  agent, the arbiter) the moment terms lock — the agent can verify the
+   *  money exists before working, and release/refund each need two keys.
+   *  ponytail: the arbiter is currently your own escrowarbiter persona, so
+   *  today this protects delivery-shape, not you-vs-you; a neutral arbiter
+   *  (a validator) is the upgrade path. */
+  escrow?: { addr: string; state: "open" | "released" | "refunded" };
 }
 const HIRE_KEY = "fez-hire";
 export function getHire(pk: string): Hire | undefined {
@@ -438,6 +445,59 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
     setHire(guest.pk, h); setHireState(h); setStarting(false); setHireErr(undefined);
   };
 
+  // Escrow hire: same terms, but the lump moves NOW — into a 2-of-3
+  // multisig (you, the agent, the arbiter) — so the agent can verify the
+  // money exists before working, and no single key can take it back.
+  const ARBITER = "escrowarbiter";
+  const arbiterAddr = payFrom.find((a) => a.name === ARBITER)?.address;
+  const walletCall = async (args: string[]): Promise<Record<string, unknown>> => {
+    const res = await invoke<{ code: number; stdout: string; stderr: string }>("run_extension_bin", {
+      extension: "wallet", bin: "fez-wallet", args,
+    });
+    if (res.code !== 0) throw new Error(res.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() || `wallet exited ${res.code}`);
+    return JSON.parse(res.stdout.trim().split("\n").pop() ?? "{}") as Record<string, unknown>;
+  };
+
+  const startEscrow = async () => {
+    const amt = Number(hireAmt);
+    if (!(amt > 0)) { setHireErr("enter an amount greater than zero"); return; }
+    const persona = hirePersona || payFrom[0]?.name;
+    if (!persona || settling) return;
+    if (!agentPayTo || !arbiterAddr) { setHireErr("escrow needs the agent's address and an arbiter account"); return; }
+    setSettling(true); setHireErr(undefined);
+    try {
+      const out = await walletCall(["escrow", "open", agentPayTo, arbiterAddr, hireAmt.trim(), "--as", persona, "--json"]);
+      const h: Hire = { amount: hireAmt.trim(), persona, at: Date.now(), escrow: { addr: String(out.escrow ?? ""), state: "open" } };
+      setHire(guest.pk, h); setHireState(h); setStarting(false);
+    } catch (err) {
+      setHireErr(err instanceof Error ? err.message : String(err));
+    } finally { setSettling(false); }
+  };
+
+  // Two approvals move escrowed funds: yours (the poster), then the
+  // arbiter's — the second executes the transfer. Both keys are local, so
+  // one click does both; when the arbiter is a neutral someday, the second
+  // half becomes their act, not this button's.
+  const closeEscrow = async (verb: "release" | "refund") => {
+    if (!hire?.escrow || settling) return;
+    const posterAddr = payFrom.find((a) => a.name === hire.persona)?.address;
+    if (!posterAddr || !agentPayTo || !arbiterAddr) { setHireErr("missing an escrow address — wallet mirror out of date?"); return; }
+    setSettling(true); setHireErr(undefined);
+    try {
+      const args = ["escrow", verb, posterAddr, agentPayTo, arbiterAddr, hire.amount, "--json"];
+      const first = await walletCall([...args, "--as", hire.persona]);
+      const exec = first.executed ? first : await walletCall([...args, "--as", ARBITER]);
+      const done: Hire = {
+        ...hire,
+        escrow: { ...hire.escrow, state: verb === "release" ? "released" : "refunded" },
+        ...(verb === "release" ? { settled: { txHash: String(exec.txHash ?? ""), at: Date.now() } } : {}),
+      };
+      setHire(guest.pk, done); setHireState(done);
+    } catch (err) {
+      setHireErr(err instanceof Error ? err.message : String(err));
+    } finally { setSettling(false); }
+  };
+
   // Streaming lease: pay for a block of hours at the agent's advertised
   // rate, which buys PRIORITY (the miner tracks paidUntil and serves your
   // asks first while paid). Reuses the tested `rent` verb. Persona-only
@@ -547,11 +607,24 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
           states — settled, active (the meter), starting (the form), and the
           idle offer to begin. */}
       <div className="guest-hire">
-        {hire?.settled ? (
+        {hire?.escrow?.state === "refunded" ? (
+          <span title={`the escrow at ${hire.escrow.addr} was refunded to ${hire.persona}`}>
+            {`↩ refunded — ${hire.amount} tτ returned to ${hire.persona}`}
+            <button className="guest-hire-link" onClick={() => { setHire(guest.pk, undefined); setHireState(undefined); }}>new hire</button>
+          </span>
+        ) : hire?.settled ? (
           <span title={`paid ${hire.amount} tТАО from ${hire.persona}`}>
-            {`✓ settled — paid ${hire.amount} tτ from ${hire.persona}`}
+            {hire.escrow ? `✓ released from escrow — ${hire.amount} tτ paid` : `✓ settled — paid ${hire.amount} tτ from ${hire.persona}`}
             {hire.settled.txHash ? <span className="dim">{` · tx ${hire.settled.txHash.slice(0, 10)}…`}</span> : null}
             <button className="guest-hire-link" onClick={() => { setHire(guest.pk, undefined); setHireState(undefined); }}>new hire</button>
+          </span>
+        ) : hire?.escrow ? (
+          <span>
+            {`◈ escrowed · ${hire.amount} tτ held at ${hire.escrow.addr.slice(0, 6)}…${hire.escrow.addr.slice(-4)} · ${delivered} delivered`}
+            <button className="guest-hire-btn" disabled={settling} title={`two approvals (you + the arbiter) move ${hire.amount} tТАО to ${name}`} onClick={() => void closeEscrow("release")}>
+              {settling ? "signing…" : "release & pay"}
+            </button>
+            <button className="guest-hire-link" disabled={settling} title="two approvals return the funds to you" onClick={() => void closeEscrow("refund")}>refund</button>
           </span>
         ) : hire ? (
           <span>
@@ -567,9 +640,14 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             <input className="guest-hire-amt" placeholder="amount" value={hireAmt} onChange={(e) => setHireAmt(e.target.value)} />
             <span className="dim">tτ, paid from</span>
             <select className="guest-hire-sel" value={hirePersona} onChange={(e) => setHirePersona(e.target.value)}>
-              {payFrom.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+              {payFrom.filter((a) => a.name !== ARBITER).map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
             </select>
-            <button className="guest-hire-btn" onClick={startHire}>lock terms</button>
+            <button className="guest-hire-btn" onClick={startHire} title="a handshake — nothing moves until you settle">lock terms</button>
+            {agentPayTo && arbiterAddr ? (
+              <button className="guest-hire-btn" disabled={settling} onClick={() => void startEscrow()} title="funds move NOW into a 2-of-3 multisig the agent can verify; release or refund later needs two keys">
+                {settling ? "funding…" : "hold in escrow"}
+              </button>
+            ) : null}
             <button className="guest-hire-link" onClick={() => { setStarting(false); setHireErr(undefined); }}>cancel</button>
           </span>
         ) : (
