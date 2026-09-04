@@ -41,6 +41,10 @@ export interface SubtensorApi extends SubstrateApi {
     subtensorModule: {
       burnedRegister(netuid: number, hotkey: string): Submittable;
       addStake(hotkey: string, netuid: number, amountStaked: bigint): Submittable;
+      /** TAO in → alpha bought from the subnet pool AND destroyed, one
+       *  extrinsic — the fee burn's whole back half (spec 2026-09-04).
+       *  `limit` caps the price paid; null = market. */
+      addStakeBurn(hotkey: string, netuid: number, amount: bigint, limit: bigint | null): Submittable;
       removeStake(hotkey: string, netuid: number, amountUnstaked: bigint): Submittable;
       transferStake(
         destinationColdkey: string,

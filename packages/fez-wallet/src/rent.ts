@@ -6,6 +6,7 @@ import { parseAmount } from "./chains/adapter.js";
 import { mirrorSpend } from "./storage-mirror.js";
 import { ambiguousTransferError, signerFromPair, submitAndWait } from "./chains/substrate.js";
 import { requirePersonaPair, requireRehearsalNetwork, subtensorFor } from "./stake.js";
+import { splitFee } from "./fees.js";
 
 /**
  * Streaming leases, renter side (spec 2026-09-03): rent someone else's
@@ -95,6 +96,9 @@ export interface RentResult {
   miner: string;
   hours: number;
   amount: string;
+  /** Protocol fee skimmed to the burn vault (spec 2026-09-04); absent
+   *  when fees are off on this machine. */
+  fee?: string;
   txHash: string;
   receiptId: string;
 }
@@ -127,20 +131,32 @@ export async function rentAgent(
   }
 
   const signer = await signerFromPair(pair);
+  // The fee burn (spec 2026-09-04): the miner receives net, the vault
+  // accrues the fee, one atomic batch. With no vault derived here the
+  // split is a no-op and the tick flows whole.
+  const { netRao, feeRao, vault } = splitFee(amountRao);
+  const tickTx = feeRao > 0n && vault
+    ? api.tx.utility.batchAll([
+        api.tx.balances.transferKeepAlive(offer.payTo, netRao),
+        api.tx.balances.transferKeepAlive(vault, feeRao),
+      ])
+    : api.tx.balances.transferKeepAlive(offer.payTo, amountRao);
   const { txHash, blockRef } = await submitAndWait(
     api,
-    api.tx.balances.transferKeepAlive(offer.payTo, amountRao),
+    tickTx,
     signer,
     { onTimeout: () => ambiguousTransferError(offer.payTo, 120_000) }
   );
 
   // The receipt is the tick. It rides the MARKET relay because that is
   // where the miner listens — a receipt on the renter's workspace relay
-  // would be a payment the lease never hears about.
+  // would be a payment the lease never hears about. The amount is what
+  // the MINER received (net of fee) — the payout is disclosed, never
+  // silent, and the miner's lease ledger must meter what actually landed.
   const receipt = buildReceipt({
     agentSecretHex: nostrKey,
     payeePubkey: minerPk,
-    amount: { raw: amountRao, decimals: 9, symbol: "TAO" },
+    amount: { raw: netRao, decimals: 9, symbol: "TAO" },
     chain: "tao",
     network: config.network,
     txHash,
@@ -149,10 +165,10 @@ export async function rentAgent(
   });
   await marketPublish(relayUrl, receipt as SignedEvent);
 
-  return { persona, miner: minerPk, hours, amount: formatRao(amountRao), txHash, receiptId: receipt.id };
+  return { persona, miner: minerPk, hours, amount: formatRao(amountRao), ...(feeRao > 0n ? { fee: formatRao(feeRao) } : {}), txHash, receiptId: receipt.id };
 }
 
-export interface PayResult { persona: string; to: string; amount: string; txHash: string; receiptId?: string }
+export interface PayResult { persona: string; to: string; amount: string; fee?: string; txHash: string; receiptId?: string }
 
 /**
  * Settle a hire: pay a flat amount to an address, and publish a receipt
@@ -178,9 +194,18 @@ export async function payAddress(
   if (free < amountRao) throw new Error(`${persona} has ${formatRao(free)} tTAO free; paying ${amount} needs funding first`);
 
   const signer = await signerFromPair(pair);
+  // Same skim as the lease tick: payee gets net, the vault gets the fee,
+  // atomically. No vault on this machine → the payment flows whole.
+  const { netRao, feeRao, vault } = splitFee(amountRao);
+  const payTx = feeRao > 0n && vault
+    ? api.tx.utility.batchAll([
+        api.tx.balances.transferKeepAlive(to, netRao),
+        api.tx.balances.transferKeepAlive(vault, feeRao),
+      ])
+    : api.tx.balances.transferKeepAlive(to, amountRao);
   const { txHash, blockRef } = await submitAndWait(
     api,
-    api.tx.balances.transferKeepAlive(to, amountRao),
+    payTx,
     signer,
     { onTimeout: () => ambiguousTransferError(to, 120_000) }
   );
@@ -209,7 +234,8 @@ export async function payAddress(
         agentSecretHex: nostrKey,
         ...(opts.forEvent ? { forEvent: opts.forEvent } : {}),
         ...(opts.payeePk ? { payeePubkey: opts.payeePk } : {}),
-        amount: { raw: amountRao, decimals: 9, symbol: "TAO" },
+        // Net of the protocol fee — the receipt states what the payee GOT.
+        amount: { raw: netRao, decimals: 9, symbol: "TAO" },
         chain: "tao",
         network: config.network,
         txHash,
@@ -220,5 +246,5 @@ export async function payAddress(
       receiptId = receipt.id;
     } catch { /* payment stood; receipt is a courtesy */ }
   }
-  return { persona, to, amount: formatRao(amountRao), txHash, receiptId };
+  return { persona, to, amount: formatRao(amountRao), ...(feeRao > 0n ? { fee: formatRao(feeRao) } : {}), txHash, receiptId };
 }

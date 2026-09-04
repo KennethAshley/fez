@@ -8,6 +8,7 @@ import {
 } from "./cli-commands.js";
 import { rentAgent, payAddress } from "./rent.js";
 import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
+import { burnRun, burnStatus, FEE_RATE, BURN_VAULT } from "./fees.js";
 
 const io = { print: (l: string) => console.log(l) };
 const argv = process.argv.slice(2);
@@ -127,6 +128,19 @@ try {
         io.print(json ? JSON.stringify(r) : `escrow ${r.escrow} holds ${r.heldTao} tTAO`);
       } else {
         throw new Error("usage: fez-wallet escrow open|release|refund|status …");
+      }
+      break;
+    }
+    case "burn": {
+      // burn            — what the till holds (accrued fees, pool price)
+      // burn run [amt]  — buy alpha from the pool and DESTROY it, one
+      //                   extrinsic (addStakeBurn). The fee burn's back half.
+      if (rest[0] === "run") {
+        const r = await burnRun(rest[1], netuidArg());
+        io.print(json ? JSON.stringify(r) : `burned ${r.burnedTao} tTAO worth of alpha on netuid ${r.netuid} (tx ${r.txHash}) — bought from the pool and destroyed`);
+      } else {
+        const s = await burnStatus(netuidArg());
+        io.print(json ? JSON.stringify({ ...s, feeRate: FEE_RATE }) : `the till (${BURN_VAULT} ${s.vault.slice(0, 8)}…) holds ${s.accruedTao} tTAO of fees${s.alphaPriceTao !== undefined ? ` · alpha at ${s.alphaPriceTao.toFixed(6)} tТАО` : ""} · fee rate ${(FEE_RATE * 100).toFixed(1)}%`);
       }
       break;
     }

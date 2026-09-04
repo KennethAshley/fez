@@ -58,6 +58,11 @@ export interface SubstrateApi {
        * deposit), so a drainable account needs allow-death. */
       transferAllowDeath(to: string, amount: bigint): Submittable;
     };
+    /** batchAll = all-or-nothing: the fee-split settlement (payee + burn
+     * vault, spec 2026-09-04) must never half-land. */
+    utility: {
+      batchAll(calls: Submittable[]): Submittable;
+    };
   };
   /** Used only by getTransfer — substrate has no by-hash extrinsic lookup,
    * so verifying a receipt means fetching the block it landed in and

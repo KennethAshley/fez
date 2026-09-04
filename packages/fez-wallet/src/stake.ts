@@ -9,6 +9,9 @@ import {
   type SubtensorApi,
 } from "./chains/subtensor.js";
 import { mirrorSubnet } from "./storage-mirror.js";
+// Cycle with fees.ts (it needs requirePersonaPair) — safe: both sides
+// only call at runtime, never at module top level.
+import { splitFee } from "./fees.js";
 
 /**
  * The persona-only half of the stake rehearsal: stake, unstake, status.
@@ -214,7 +217,12 @@ export async function escrowApprove(
   const api = (await subtensorFor(config.endpoints.tao)) as unknown as MultisigApi;
   const amountRao = parseAmount(amount, TAO_DECIMALS, "TAO").raw;
   const destination = pay === "worker" ? worker : poster;
-  const { executed, txHash } = await approveRelease(api, pair, { poster, worker, arbiter }, destination, amountRao);
+  // The fee burn skims RELEASES only — a refund is not a settlement, the
+  // poster gets every rao back. Both approvals run through this same
+  // split, so the multisig call hashes agree.
+  const split = pay === "worker" ? splitFee(amountRao) : undefined;
+  const fee = split && split.feeRao > 0n && split.vault ? { vault: split.vault, feeRao: split.feeRao } : undefined;
+  const { executed, txHash } = await approveRelease(api, pair, { poster, worker, arbiter }, destination, amountRao, fee);
   return { escrow: escrowAddress(poster, worker, arbiter), txHash, executed };
 }
 

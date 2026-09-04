@@ -81,14 +81,26 @@ export async function approveRelease(
   signer: WalletPair,
   parties: { poster: string; worker: string; arbiter: string },
   destination: string,
-  amountRao: bigint
+  amountRao: bigint,
+  /** Fee burn (spec 2026-09-04): skim to the vault inside the SAME inner
+   *  call. Both approvers must compute the identical split, or the call
+   *  hashes diverge and the approvals never combine — today both
+   *  approvals run on one machine, so one fees.ts answers for both. */
+  fee?: { vault: string; feeRao: bigint }
 ): Promise<{ executed: boolean; txHash: string }> {
   const escrow = escrowAddress(parties.poster, parties.worker, parties.arbiter);
   // allow-death, not keep-alive: the release empties the escrow, and a
   // keep-alive transfer refuses the last drop (would leave the escrow
   // below the existential deposit). BOTH signers must build this same
   // call — the pallet combines approvals only on identical call hashes.
-  const payCall = api.tx.balances.transferAllowDeath(destination, amountRao);
+  // With a fee: net to the destination first, then the fee drains the
+  // escrow to the vault — ordered so the second transfer reaps cleanly.
+  const payCall = fee && fee.feeRao > 0n
+    ? api.tx.utility.batchAll([
+        api.tx.balances.transferAllowDeath(destination, amountRao - fee.feeRao),
+        api.tx.balances.transferAllowDeath(fee.vault, fee.feeRao),
+      ])
+    : api.tx.balances.transferAllowDeath(destination, amountRao);
   const callHash = payCall.method.hash.toHex();
   const maxWeight = (await payCall.paymentInfo(escrow)).weight;
   const co = others(signer.address, parties.poster, parties.worker, parties.arbiter);
