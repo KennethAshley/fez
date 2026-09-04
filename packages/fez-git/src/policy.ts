@@ -112,3 +112,52 @@ export function roleOf(rosterTags: string[][], pubkey: string): string | undefin
 
 export const isPrivileged = (role: string | undefined): boolean => PRIVILEGED.has(role ?? "");
 
+
+/* ── grants: the public hire's credential (spec 2026-09-04) ────────────
+ *
+ * Per-repo, per-stranger, EXPIRING write access, carried in the repo
+ * channel's meta under `grants` — the same owner-signed, latest-wins
+ * carrier `protect` rides, so this is not a second permission model,
+ * it is the existing one extended by a key. Grantees are never roster
+ * members, so isPrivileged stays false and a hired stranger can push
+ * its branch but never a protected ref. Format:
+ *
+ *   grants: "<pubkeyHex>:<expiresUnixSeconds> <pubkeyHex>:<expires>"
+ *
+ * Expired entries are inert wherever they are read; they are pruned on
+ * the next edit rather than eagerly, because pruning requires an owner
+ * signature and expiry must not.
+ */
+
+/** Parse the meta string. Malformed entries are dropped, not fatal —
+ * an owner-signed event with one bad entry must not void the others. */
+export function parseGrants(raw: string | undefined): Map<string, number> {
+  const grants = new Map<string, number>();
+  for (const entry of (raw ?? "").trim().split(/\s+/)) {
+    const [pk, exp] = entry.split(":");
+    if (pk && /^[0-9a-f]{64}$/.test(pk) && exp && /^\d+$/.test(exp)) grants.set(pk, Number(exp));
+  }
+  return grants;
+}
+
+/** Does this pubkey hold a live grant right now? */
+export function grantActive(raw: string | undefined, pubkey: string | undefined, nowS: number): boolean {
+  if (!pubkey) return false;
+  const expires = parseGrants(raw).get(pubkey);
+  return expires !== undefined && expires > nowS;
+}
+
+/** The meta string with one grant added or replaced — expired entries
+ * pruned on the way (this is the owner-signed moment pruning waits for). */
+export function withGrant(raw: string | undefined, pubkey: string, expiresS: number, nowS: number): string {
+  const grants = parseGrants(raw);
+  grants.set(pubkey, expiresS);
+  return [...grants].filter(([, exp]) => exp > nowS).map(([pk, exp]) => `${pk}:${exp}`).join(" ");
+}
+
+/** The meta string without this pubkey (and without anything expired). */
+export function withoutGrant(raw: string | undefined, pubkey: string, nowS: number): string {
+  const grants = parseGrants(raw);
+  grants.delete(pubkey);
+  return [...grants].filter(([, exp]) => exp > nowS).map(([pk, exp]) => `${pk}:${exp}`).join(" ");
+}

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { gitRepoPath } from "./auth.js";
-import { hookEnv, installHook, isPrivileged, removeHook, resolveProtect, roleOf, type RefPolicy } from "./protect.js";
+import { grantActive, hookEnv, installHook, isPrivileged, removeHook, resolveProtect, roleOf, type RefPolicy } from "./protect.js";
 import { installJournalHook, journalPath, readJournalTail } from "./journal.js";
 import { serveDiff, serveMerge, serveSync } from "./ops.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -517,7 +517,7 @@ export function rosterAccess(query: (filter: Record<string, unknown>) => StoredE
    * repos whose owner used a capital letter — and failing to FIND a
    * policy would read as "unprotected".
    */
-  const repoChannel = (repo: string): { protect?: string; upstream?: string } | undefined => {
+  const repoChannel = (repo: string): { protect?: string; upstream?: string; grants?: string } | undefined => {
     // LATEST matching event, not first-found: channel edits are new
     // events with the same d-tag, and taking whichever the store
     // returned first served STALE policy — a protection change or a
@@ -552,9 +552,21 @@ export function rosterAccess(query: (filter: Record<string, unknown>) => StoredE
   // Ref policy is the one place the roster's ROLES start to matter, and
   // they were already there — 47102 carries ["p", pubkey, role] and this
   // code simply stopped throwing the third element away.
+  //
+  // Grants (spec 2026-09-04) are the one deliberate exception to the
+  // flat roster, and they stay inside the SAME model: an owner-signed
+  // channel-meta key (`grants`), per-repo and expiring — the public
+  // hire's credential. A grantee is never on the roster, so it is never
+  // privileged: it can push its branch, never a protected ref. Bans
+  // beat grants — 30047 is the owner's last word either way.
+  const granted = (repo: string, who: GitIdentity): boolean => {
+    if (!who.pubkey) return false;
+    if (members().banned.has(who.pubkey)) return false;
+    return grantActive(repoChannel(repo)?.grants, who.pubkey, Math.floor(Date.now() / 1000));
+  };
   return {
-    canRead: (_repo, who) => may(who),
-    canWrite: (_repo, who) => may(who),
+    canRead: (repo, who) => may(who) || granted(repo, who),
+    canWrite: (repo, who) => may(who) || granted(repo, who),
     refPolicy: (repo, who) => ({
       protect: resolveProtect(repoChannel(repo)?.protect),
       privileged:

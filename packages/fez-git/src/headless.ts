@@ -1,5 +1,6 @@
 import type { ChannelsAccess, CommandContext, FezExtensionAPI } from "@fezchat/extension-api/headless";
 import { REPO_NAME, cloneBase, cloneUrl, repoDoc } from "./repo-name.js";
+import { withGrant, withoutGrant } from "./policy.js";
 import { parseJournal } from "./journal.js";
 import { planThreadPosts, type ChannelMsg } from "./threads.js";
 import type { NostrAccess } from "@fezchat/extension-api/headless";
@@ -122,6 +123,43 @@ export default function fezGit(api: FezExtensionAPI): void {
       return refs.toLowerCase() === "none"
         ? ctx.reply(`⑂ **${repo}** protects nothing — any roster member can push any ref, including \`main\`.`)
         : ctx.reply(`⑂ **${repo}** protects \`${refs}\` — owners and admins only, fast-forward only.`);
+    }
+
+    /**
+     * Grant or revoke a STRANGER's access to one repo — the public
+     * hire's credential (spec 2026-09-04). The grant rides the repo
+     * channel's meta exactly like `protect` does: owner-signed,
+     * latest-wins, no second permission model. The grantee is never on
+     * the roster, so it can push its branch but never a protected ref.
+     */
+    if ((verb === "grant" || verb === "revoke") && value) {
+      const repos = (await channels.list()).filter((c) => c.source === "fez-git");
+      const existing = repos.find((c) => c.meta?.repo === value || c.name === value.toLowerCase());
+      if (!existing) return ctx.reply(`⑂ no repo called "${value}" here — /repo new ${value}`);
+      const repo = existing.meta?.repo ?? value;
+      const pk = rest[0]?.trim().toLowerCase() ?? "";
+      if (!/^[0-9a-f]{64}$/.test(pk)) {
+        return ctx.reply(`⑂ /repo ${verb} ${repo} <64-hex pubkey>${verb === "grant" ? " [hours]" : ""} — the worker's key, from its bazaar record`);
+      }
+      const nowS = Math.floor(Date.now() / 1000);
+      let grants: string;
+      let told: string;
+      if (verb === "grant") {
+        const hours = rest[1] ? Number(rest[1]) : 72;
+        if (!(hours > 0) || hours > 24 * 30) return ctx.reply("⑂ hours must be between 0 and 720 — a hire has a deadline, not a tenure");
+        const expiresS = nowS + Math.round(hours * 3600);
+        grants = withGrant(existing.meta?.grants, pk, expiresS, nowS);
+        told = `⑂ **${repo}**: ${pk.slice(0, 8)} may clone and push until ${new Date(expiresS * 1000).toLocaleString()} — hand it \`${existing.meta?.clone ?? cloneUrl(base, repo)}\`. Protected refs stay owner-only; the grant expires on its own.`;
+      } else {
+        grants = withoutGrant(existing.meta?.grants, pk, nowS);
+        told = `⑂ **${repo}**: ${pk.slice(0, 8)}'s grant is revoked.`;
+      }
+      const carry = { ...existing.meta } as Record<string, string>;
+      if (grants) carry.grants = grants;
+      else delete carry.grants;
+      const id = await openRepoChannel(channels, repo, base, existing.meta?.protect ?? "main", carry);
+      if (!id) return ctx.reply("⑂ only the workspace owner can change this");
+      return ctx.reply(told);
     }
 
     /**

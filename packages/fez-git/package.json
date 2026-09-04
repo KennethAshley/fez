@@ -29,7 +29,8 @@
   },
   "scripts": {
     "build": "esbuild src/relay-part.ts --bundle --format=esm --platform=node --outfile=dist/relay-part.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/workspace-part.ts --bundle --format=esm --platform=node --outfile=dist/workspace-part.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/adopt.ts --bundle --format=esm --platform=node --outfile=dist/adopt.js && chmod +x dist/adopt.js && esbuild src/credential.ts --bundle --format=esm --platform=node --outfile=dist/credential.js && chmod +x dist/credential.js",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "esbuild src/policy.ts --bundle --format=esm --platform=node --outfile=dist/policy-test.mjs && node --test test/grants.test.mjs"
   },
   "devDependencies": {
     "@fezchat/extension-api": "file:../fez-extension-api",
