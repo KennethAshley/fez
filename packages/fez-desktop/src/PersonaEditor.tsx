@@ -61,7 +61,6 @@ export default function PersonaEditor({
   const [body, setBody] = useState("");
   const [state, setState] = useState<"idle" | "saving" | string>("idle");
   const [armedDelete, setArmedDelete] = useState(false);
-  const [newName, setNewName] = useState(name);
   // What was on disk. The commit bar is sticky now, so it is always in
   // view whether or not there is anything to commit — which makes "is
   // there anything to commit" a thing the bar has to be able to say.
@@ -112,22 +111,18 @@ export default function PersonaEditor({
 
   const save = async () => {
     setState("saving");
-    const renaming = newName.trim() && newName.trim() !== name;
-    const finalName = renaming ? newName.trim() : name;
-    const frontLines = renaming ? setField(front, "name", finalName) : front;
-    const frontText = frontLines.filter((line) => line.trim()).join("\n");
+    const frontText = front.filter((line) => line.trim()).join("\n");
     const content = frontText ? `---\n${frontText}\n---\n\n${body.trim()}\n` : `${body.trim()}\n`;
     const savedFront = (saved?.front ?? "").split("\n");
     const fieldOf = (lines: string[], key: string) => lines.find((l) => l.startsWith(key + ":"))?.slice(key.length + 1).trim();
-    const spawnChanged = renaming || SPAWN_KEYS.some((k) => fieldOf(savedFront, k) !== fieldOf(frontLines, k));
+    const spawnChanged = SPAWN_KEYS.some((k) => fieldOf(savedFront, k) !== fieldOf(front, k));
     try {
-      if (renaming) await invoke("rename_persona", { from: name, to: finalName });
-      await invoke("update_persona", { name: finalName, content });
+      await invoke("update_persona", { name, content });
       if (spawnChanged) {
         const alive = await invoke<boolean>("agent_alive", { persona: name, bin: null }).catch(() => false);
         if (alive) {
           await invoke("kill_agent", { persona: name, bin: null }).catch(() => {});
-          flash(`@${finalName} restarted — it picks up these changes on its next reply`);
+          flash(`@${name} restarted — it picks up these changes on its next reply`);
         }
       }
       onDone(true);
@@ -158,7 +153,7 @@ export default function PersonaEditor({
   const setBrain = (s: { harness: string; provider: string; model: string }) =>
     setFront(setField(setField(setField(front, "harness", s.harness), "provider", s.provider), "model", s.model));
 
-  const dirty = !saved || saved.front !== front.join("\n") || saved.body !== body || newName.trim() !== name;
+  const dirty = !saved || saved.front !== front.join("\n") || saved.body !== body;
   const skillNames = parseSkillEntries(splitList(field("mcpServers"))).names;
   const skillMdDecls = parseSkillDecls(splitList(field("skills")));
   const promptWords = body.trim() ? body.trim().split(/\s+/).length : 0;
@@ -177,13 +172,16 @@ export default function PersonaEditor({
               <span className="agent-egg" aria-hidden>◌</span>
             )}
           </span>
-          <input
-            className="stage-name"
-            value={newName}
-            spellCheck={false}
-            aria-label="agent name"
-            onChange={(e) => setNewName(e.target.value)}
-          />
+          {/* The name is READ-ONLY: it is this agent's primary key — the
+              keychain entry, the persona file, and the wallet's `//<name>`
+              derivation all hang off it, so "renaming" would fork a new
+              identity and orphan the old key, wallet, stake, and record.
+              A stable-id/displayName split is the real relabel path (spec
+              2026-09-03-agent-identity); until then the name is fixed at
+              creation. */}
+          <span className="stage-name" title="an agent's name is its identity — create a new agent to use a different one">
+            {name}
+          </span>
           <input
             className="stage-epithet"
             value={field("description")}
@@ -191,11 +189,6 @@ export default function PersonaEditor({
             aria-label="agent description"
             onChange={(e) => update("description", e.target.value)}
           />
-          {newName.trim() && newName.trim() !== name && (
-            <div className="field-consequence">
-              Renaming mints a new key, so @{newName.trim()} spawns as a different identity with a different face.
-            </div>
-          )}
         </div>
 
         {/* Wiring on the left, capabilities on the right; the instructions
