@@ -4322,3 +4322,7 @@ a.page-fact:hover { color: var(--fg); }
 .guest-repo-attach:hover { color: var(--fg, #ebdbb2); }
 .guest-repo-row { display: flex; gap: 6px; padding-bottom: 4px; }
 .guest-repo-row .manage-input { flex: 1; font-size: 0.72rem; }
+
+/* The DM's money context (read-only): where a hire settles + your wallet. */
+.guest-hire { padding: 6px 14px; font-size: 11.5px; font-family: var(--font-mono); color: var(--ok); border-bottom: 1px solid var(--hairline); background: var(--bg1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.guest-hire .dim { color: var(--fg-dim); }

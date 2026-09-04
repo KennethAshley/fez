@@ -6,7 +6,7 @@ import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
   cmdRegister, cmdPersonaStatus, cmdPayout, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona,
 } from "./cli-commands.js";
-import { rentAgent } from "./rent.js";
+import { rentAgent, payAddress } from "./rent.js";
 import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
 
 const io = { print: (l: string) => console.log(l) };
@@ -86,6 +86,15 @@ try {
       const r = await rentAgent(asPersona, rest[0], Number(rest[1]), marketIdx >= 0 ? argv[marketIdx + 1] : undefined);
       if (json) console.log(JSON.stringify(r));
       else io.print(`${r.persona} rented ${r.miner.slice(0, 8)} for ${r.hours}h — paid ${r.amount} tTAO (tx ${r.txHash}); the tick receipt is on the market relay`);
+      break;
+    }
+    case "pay": {
+      // pay <address> <amount> --as <persona> [--for <eventId>] [--to-pk <npub>]
+      const asIdx = argv.indexOf("--as"); const forIdx = argv.indexOf("--for"); const toPkIdx = argv.indexOf("--to-pk");
+      const who = asIdx >= 0 ? argv[asIdx+1] : undefined;
+      if (!rest[0] || !rest[1] || !who) throw new Error("usage: fez-wallet pay <address> <amount> --as <persona> [--for <eventId>] [--to-pk <npub>]");
+      const r = await payAddress(who, rest[0], rest[1], { forEvent: forIdx>=0?argv[forIdx+1]:undefined, payeePk: toPkIdx>=0?argv[toPkIdx+1]:undefined });
+      io.print(json ? JSON.stringify(r) : `${r.persona} paid ${r.amount} tTAO to ${r.to.slice(0,8)}… (tx ${r.txHash})${r.receiptId?" · receipt published":""}`);
       break;
     }
     case "payout":

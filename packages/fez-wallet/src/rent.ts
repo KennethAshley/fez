@@ -2,6 +2,8 @@ import { readAgentNostrKey } from "./store.js";
 import { loadConfig } from "./config.js";
 import { buildReceipt } from "./receipt.js";
 import { formatRao } from "./chains/subtensor.js";
+import { parseAmount } from "./chains/adapter.js";
+import { appendLog } from "./log.js";
 import { ambiguousTransferError, signerFromPair, submitAndWait } from "./chains/substrate.js";
 import { requirePersonaPair, requireRehearsalNetwork, subtensorFor } from "./stake.js";
 
@@ -148,4 +150,74 @@ export async function rentAgent(
   await marketPublish(relayUrl, receipt as SignedEvent);
 
   return { persona, miner: minerPk, hours, amount: formatRao(amountRao), txHash, receiptId: receipt.id };
+}
+
+export interface PayResult { persona: string; to: string; amount: string; txHash: string; receiptId?: string }
+
+/**
+ * Settle a hire: pay a flat amount to an address, and publish a receipt
+ * that ties the payment to the hire (the directed-task root) so the
+ * agent's owner can see it landed. The negotiated-lump settle (model A):
+ * you agreed a number in the DM, this pays it. Root-free (persona-signed,
+ * mcp/desktop-safe), testnet-gated like the other write verbs.
+ */
+export async function payAddress(
+  persona: string,
+  to: string,
+  amount: string,
+  opts: { forEvent?: string; payeePk?: string; relayUrl?: string; memo?: string } = {}
+): Promise<PayResult> {
+  if (!/^5[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(to)) throw new Error("recipient must be an ss58 address");
+  const pair = requirePersonaPair(persona);
+  const config = loadConfig();
+  requireRehearsalNetwork(config.network);
+  const amountRao = parseAmount(amount, 9, "TAO").raw;
+  if (amountRao <= 0n) throw new Error("amount must be greater than zero");
+  const api = await subtensorFor(config.endpoints.tao);
+  const free = (await api.query.system.account(pair.address)).data.free.toBigInt();
+  if (free < amountRao) throw new Error(`${persona} has ${formatRao(free)} tTAO free; paying ${amount} needs funding first`);
+
+  const signer = await signerFromPair(pair);
+  const { txHash, blockRef } = await submitAndWait(
+    api,
+    api.tx.balances.transferKeepAlive(to, amountRao),
+    signer,
+    { onTimeout: () => ambiguousTransferError(to, 120_000) }
+  );
+
+  // Record it in the wallet's spend log so the payment shows in the wallet
+  // panel's ledger — a settle that moved money invisibly to the UI would be
+  // exactly wrong. Best-effort: the transfer already landed.
+  try {
+    appendLog({
+      ts: new Date().toISOString(),
+      persona, to, amount: formatRao(amountRao), asset: "TAO", txHash,
+      memo: opts.memo ?? "hire", consent: "approved", network: config.network,
+    });
+  } catch { /* the money moved; a log hiccup must not read as failure */ }
+
+  // A receipt makes the settlement legible: proof-of-payment tied to the
+  // hire's task root, on the market relay where the counterparty watches.
+  // Best-effort — the transfer already happened; a relay hiccup must not
+  // read as a failed payment.
+  let receiptId: string | undefined;
+  const nostrKey = readAgentNostrKey(persona);
+  if (nostrKey) {
+    try {
+      const receipt = buildReceipt({
+        agentSecretHex: nostrKey,
+        ...(opts.forEvent ? { forEvent: opts.forEvent } : {}),
+        ...(opts.payeePk ? { payeePubkey: opts.payeePk } : {}),
+        amount: { raw: amountRao, decimals: 9, symbol: "TAO" },
+        chain: "tao",
+        network: config.network,
+        txHash,
+        blockRef,
+        memo: opts.memo ?? "hire",
+      });
+      await marketPublish(opts.relayUrl ?? DEFAULT_MARKET_RELAY, receipt as SignedEvent);
+      receiptId = receipt.id;
+    } catch { /* payment stood; receipt is a courtesy */ }
+  }
+  return { persona, to, amount: formatRao(amountRao), txHash, receiptId };
 }

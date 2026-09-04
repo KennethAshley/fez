@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -27,6 +28,7 @@ const KIND_PROFILE = 0;
 const KIND_TASK = 47001;
 const KIND_PROGRESS = 47002;
 const KIND_RESULT = 47003;
+const KIND_ANNOUNCE = 47000;
 /** What the live fleet serves — mirrors the bazaar's DEFAULT_TASK_TYPE. */
 const TASK_TYPE = "research-citations";
 const DEADLINE_S = 180;
@@ -216,8 +218,33 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   const [attachingRepo, setAttachingRepo] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
+  // The money context (read-only for now): where a settlement would go
+  // (the agent's announced receive address) and where it'd come from (your
+  // wallet's accounts, from the extension's public mirror). This is the
+  // "the bazaar can see the wallet" seam — the meter and settle build on it.
+  const [agentPayTo, setAgentPayTo] = useState<string>();
+  const [payFrom, setPayFrom] = useState<{ name: string; address: string }[]>([]);
   const wsRef = useRef<WebSocket | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Read the wallet extension's public mirror (~/.fez/extension-data/…) for
+  // the accounts you could pay FROM. Read-only; the wallet owns writes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      for (const name of ["wallet", "fez-wallet"]) {
+        try {
+          const raw = await invoke<string>("extension_storage_read", { name });
+          const mirror = JSON.parse(raw) as { addresses?: { treasury?: string; personas?: Record<string, string> } };
+          const accts: { name: string; address: string }[] = [];
+          if (mirror.addresses?.treasury) accts.push({ name: "treasury", address: mirror.addresses.treasury });
+          for (const [n, a] of Object.entries(mirror.addresses?.personas ?? {})) accts.push({ name: n, address: a });
+          if (accts.length && !cancelled) { setPayFrom(accts); return; }
+        } catch { /* no mirror under this name — try the next */ }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     setEvents(new Map());
@@ -232,6 +259,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         ws.send(JSON.stringify(["REQ", "gt-mine", { kinds: [KIND_TASK], authors: [selfPk], "#p": [guest.pk], limit: 200 }]));
         ws.send(JSON.stringify(["REQ", "gt-them", { kinds: [KIND_PROGRESS, KIND_RESULT], authors: [guest.pk], limit: 500 }]));
         ws.send(JSON.stringify(["REQ", "gt-face", { kinds: [KIND_PROFILE], authors: [guest.pk], limit: 1 }]));
+        // The agent's announce carries its receive address (pay_to) — where
+        // a settlement would land. Latest one wins.
+        ws.send(JSON.stringify(["REQ", "gt-pay", { kinds: [KIND_ANNOUNCE], authors: [guest.pk], limit: 1 }]));
       };
       ws.onmessage = (m) => {
         let msg: unknown[];
@@ -243,6 +273,13 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             const p = JSON.parse(ev.content) as { name?: string; picture?: string };
             rememberGuestFace(guest.pk, p.name, p.picture);
           } catch { /* faceless is fine */ }
+          return;
+        }
+        if (ev.kind === KIND_ANNOUNCE) {
+          try {
+            const beat = JSON.parse(ev.content) as { pay_to?: string };
+            if (beat.pay_to) setAgentPayTo(beat.pay_to);
+          } catch { /* unparseable beat */ }
           return;
         }
         setEvents((prev) => (prev.has(ev.id) ? prev : new Map(prev).set(ev.id, ev)));
@@ -407,6 +444,28 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       </header>
       <div className="guest-banner">
         {`Anyone can read this thread — never share secrets here. Messages you send are tasks only ${name} may answer, signed with your name.`}
+      </div>
+      {/* The money context, read-only (#1): where a hire would settle (the
+          agent's announced receive address) and that your wallet is in view
+          (the accounts you could pay from). The meter + settle build on this;
+          for now it just shows the two ends of a future payment. */}
+      <div className="guest-hire">
+        {agentPayTo ? (
+          <span title={`this agent receives at ${agentPayTo}`}>
+            {`◈ hireable — settles to ${agentPayTo.slice(0, 6)}…${agentPayTo.slice(-4)}`}
+          </span>
+        ) : (
+          <span className="dim" title="the agent hasn't published a receive address in its announce — update its miner to advertise one">
+            ◇ no receive address published yet — nothing to settle to
+          </span>
+        )}
+        {payFrom.length ? (
+          <span className="dim" title={payFrom.map((a) => `${a.name}: ${a.address}`).join("\n")}>
+            {` · your wallet: ${payFrom.length} account${payFrom.length === 1 ? "" : "s"} to pay from`}
+          </span>
+        ) : (
+          <span className="dim">{" · no wallet found — install the wallet extension to pay"}</span>
+        )}
       </div>
       <div className="guest-timeline">
         {turns.map((t) =>
