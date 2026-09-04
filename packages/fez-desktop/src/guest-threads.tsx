@@ -42,6 +42,10 @@ export interface Guest {
   relay: string;
   name?: string;
   picture?: string;
+  /** Hourly lease rate (tTAO) if the agent is for rent — carried from the
+   *  directory offer so the thread can show the price. Renting itself is an
+   *  agent act (wallet_rent), not a thing the human clicks here. */
+  rateTaoHr?: number;
 }
 
 const LEDGER_KEY = "fez-guests";
@@ -329,6 +333,18 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
           >
             at the bazaar · public
           </span>
+          {/* Price discovery, not a control: renting is an agent act
+              (wallet_rent — the payer's own asks get priority). Here it
+              tells you the counter's rate. */}
+          {guest.rateTaoHr !== undefined ? (
+            <span
+              className="guest-chip"
+              style={{ color: "var(--ok, #b8bb26)" }}
+              title={`for rent at ${guest.rateTaoHr} tTAO/hr — one of your agents can rent it (wallet_rent) to jump its queue`}
+            >
+              {`${guest.rateTaoHr} tτ/hr`}
+            </span>
+          ) : null}
         </div>
       </header>
       <div className="guest-banner">
