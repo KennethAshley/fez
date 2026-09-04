@@ -244,6 +244,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   // wallet's accounts, from the extension's public mirror). This is the
   // "the bazaar can see the wallet" seam — the meter and settle build on it.
   const [agentPayTo, setAgentPayTo] = useState<string>();
+  const [agentRate, setAgentRate] = useState<number>();       // tТАО/hr, if the agent offers a lease
+  const [leaseUntil, setLeaseUntil] = useState<number>(() => Number(localStorage.getItem(`fez-lease-${guest.pk}`) ?? 0));
+  const [leasing, setLeasing] = useState(false);
   const [payFrom, setPayFrom] = useState<{ name: string; address: string }[]>([]);
   // The hire (model A): persisted terms, plus the in-flight "start hire"
   // form and the settle spinner.
@@ -306,8 +309,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         }
         if (ev.kind === KIND_ANNOUNCE) {
           try {
-            const beat = JSON.parse(ev.content) as { pay_to?: string };
+            const beat = JSON.parse(ev.content) as { pay_to?: string; rate?: { tao_hr?: number } };
             if (beat.pay_to) setAgentPayTo(beat.pay_to);
+            if (beat.rate?.tao_hr && beat.rate.tao_hr > 0) setAgentRate(beat.rate.tao_hr);
           } catch { /* unparseable beat */ }
           return;
         }
@@ -434,6 +438,30 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
     setHire(guest.pk, h); setHireState(h); setStarting(false); setHireErr(undefined);
   };
 
+  // Streaming lease: pay for a block of hours at the agent's advertised
+  // rate, which buys PRIORITY (the miner tracks paidUntil and serves your
+  // asks first while paid). Reuses the tested `rent` verb. Persona-only
+  // for now (root-free rent can't sign as treasury — same limit `pay` had
+  // before payFromTreasury; a treasury lease is the matching follow-up).
+  const startLease = async (hours: number, persona: string) => {
+    if (leasing || !(hours > 0)) return;
+    setLeasing(true); setHireErr(undefined);
+    try {
+      const res = await invoke<{ code: number; stdout: string; stderr: string }>("run_extension_bin", {
+        extension: "wallet", bin: "fez-wallet",
+        args: ["rent", guest.pk, String(hours), "--as", persona, "--json"],
+      });
+      if (res.code !== 0) throw new Error(res.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() || `lease exited ${res.code}`);
+      const until = Date.now() + hours * 3_600_000;
+      localStorage.setItem(`fez-lease-${guest.pk}`, String(until));
+      setLeaseUntil(until);
+    } catch (err) {
+      setHireErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLeasing(false);
+    }
+  };
+
   const settle = async () => {
     if (!hire || settling) return;
     if (!agentPayTo) { setHireErr("this agent hasn't published a receive address — nothing to settle to"); return; }
@@ -552,6 +580,29 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             ) : <span className="dim"> · no wallet to pay from</span>}
           </span>
         )}
+        {/* Streaming lease — pay-per-time, buys PRIORITY. Shown when the
+            agent advertises a rate. Paid from a persona (rent is root-free).
+            Active → the priority meter; idle → a one-hour lease button. */}
+        {(() => {
+          const leasePayer = payFrom.find((a) => a.name !== "treasury")?.name;
+          if (leaseUntil > nowTick) {
+            const t = new Date(leaseUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            return (
+              <span className="guest-lease on" title="you have priority — the agent serves your asks first while the lease is live">
+                {` · ⚡ priority through ${t}`}
+                {agentRate && leasePayer ? <button className="guest-hire-link" disabled={leasing} onClick={() => void startLease(1, leasePayer)}>{leasing ? "…" : "+1h"}</button> : null}
+              </span>
+            );
+          }
+          if (agentRate && leasePayer) {
+            return (
+              <button className="guest-hire-link" disabled={leasing} title={`lease 1 hour of priority at ${agentRate} tТАО/hr, paid from ${leasePayer}`} onClick={() => void startLease(1, leasePayer)}>
+                {leasing ? " · leasing…" : ` · ⚡ lease 1h (${agentRate} tτ)`}
+              </button>
+            );
+          }
+          return null;
+        })()}
         {hireErr ? <span className="guest-hire-err">{` · ${hireErr}`}</span> : null}
       </div>
       <div className="guest-timeline">

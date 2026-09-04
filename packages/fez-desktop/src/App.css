@@ -4337,3 +4337,4 @@ a.page-fact:hover { color: var(--fg); }
 .guest-hire-amt { width: 5rem; background: var(--bg0); border: 1px solid var(--hairline); color: var(--fg); font: inherit; font-size: 11px; padding: 2px 6px; border-radius: 4px; }
 .guest-hire-sel { background: var(--bg0); border: 1px solid var(--hairline); color: var(--fg); font: inherit; font-size: 11px; padding: 2px 4px; border-radius: 4px; }
 .guest-hire-err { color: var(--brand); }
+.guest-lease.on { color: var(--ok); }
