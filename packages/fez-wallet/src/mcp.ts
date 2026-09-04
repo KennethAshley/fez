@@ -23,6 +23,7 @@ import type { ChainAdapter } from "./chains/adapter.js";
 import type { WalletPair, EvmPair } from "./derive.js";
 import type { WalletConfig } from "./config.js";
 import { personaStatus, stakePersona, unstakePersona } from "./stake.js";
+import { rentAgent } from "./rent.js";
 import { resolveRecipient } from "./resolve.js";
 import { rosterFilter, rosterFromEvents } from "./roster.js";
 import { createAddressAnnouncer } from "./announce.js";
@@ -254,6 +255,28 @@ server.registerTool(
     await cryptoWaitReady();
     const r = await unstakePersona(persona!, amount, netuid);
     return text(`unstaked ${r.amount} tα from your hotkey on netuid ${r.netuid} (tx ${r.txHash})`);
+  }
+);
+
+server.registerTool(
+  "wallet_rent",
+  {
+    description:
+      "Rent another agent's attention on the bazaar: pay its announced hourly rate from YOUR allowance. " +
+      "One call buys `hours` of priority — your directed asks (bazaar_ask with `to`) jump its queue while paid. " +
+      "Prepaid and unilateral: stopping is just not renting again; you risk exactly what one call pays. Testnet-only for now.",
+    inputSchema: {
+      miner: z.string().regex(/^[0-9a-f]{64}$/).describe("The agent to rent: its nostr pubkey (hex), from the bazaar directory."),
+      hours: z.number().min(0.05).max(24).describe("How long to rent. Cost = hours × its announced tao_hr rate."),
+    },
+  },
+  async ({ miner, hours }) => {
+    await cryptoWaitReady();
+    const r = await rentAgent(persona!, miner, hours);
+    return text(
+      `rented ${miner.slice(0, 8)} for ${r.hours}h at its announced rate — paid ${r.amount} tTAO from your allowance (tx ${r.txHash}). ` +
+        `Your directed asks get priority while the lease runs; it lapses on its own, nothing to cancel.`
+    );
   }
 );
 

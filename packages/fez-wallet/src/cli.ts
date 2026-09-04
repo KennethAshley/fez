@@ -6,6 +6,7 @@ import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
   cmdRegister, cmdPersonaStatus, cmdPayout, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona,
 } from "./cli-commands.js";
+import { rentAgent } from "./rent.js";
 
 const io = { print: (l: string) => console.log(l) };
 const argv = process.argv.slice(2);
@@ -20,7 +21,12 @@ const netuidArg = (): number | undefined => {
   if (!Number.isInteger(netuidValue) || netuidValue < 0) throw new Error("--netuid must be a whole number");
   return netuidValue;
 };
-const [cmd, ...rest] = argv.filter((a, i) => a !== "--json" && a !== "--netuid" && !(netuidFlag >= 0 && i === netuidFlag + 1));
+const asFlag = argv.indexOf("--as");
+const marketFlag = argv.indexOf("--market");
+const [cmd, ...rest] = argv.filter((a, i) =>
+  a !== "--json" && a !== "--netuid" && !(netuidFlag >= 0 && i === netuidFlag + 1)
+  && a !== "--as" && !(asFlag >= 0 && i === asFlag + 1)
+  && a !== "--market" && !(marketFlag >= 0 && i === marketFlag + 1));
 
 try {
   await cryptoWaitReady();
@@ -70,6 +76,17 @@ try {
         io.print(`unstaked ${r.amount} tα from ${r.persona} on netuid ${r.netuid} (tx ${r.txHash})`);
       }
       break;
+    case "rent": {
+      // rent <minerPk> <hours> --as <persona> [--market wss://…]
+      const asIdx = argv.indexOf("--as");
+      const marketIdx = argv.indexOf("--market");
+      const asPersona = asIdx >= 0 ? argv[asIdx + 1] : undefined;
+      if (!rest[0] || !rest[1] || !asPersona) throw new Error("usage: fez-wallet rent <miner pubkey hex> <hours> --as <persona> [--market wss://…]");
+      const r = await rentAgent(asPersona, rest[0], Number(rest[1]), marketIdx >= 0 ? argv[marketIdx + 1] : undefined);
+      if (json) console.log(JSON.stringify(r));
+      else io.print(`${r.persona} rented ${r.miner.slice(0, 8)} for ${r.hours}h — paid ${r.amount} tTAO (tx ${r.txHash}); the tick receipt is on the market relay`);
+      break;
+    }
     case "payout":
       if (!rest[0]) throw new Error("usage: fez-wallet payout <persona> [amount]");
       if (json) console.log(JSON.stringify(await payoutPersona(rest[0], rest[1], netuidArg())));
@@ -88,6 +105,7 @@ try {
       io.print("  stake <persona> <amt>   the agent stakes to its own hotkey");
       io.print("  unstake <persona> <amt> symmetric");
       io.print("  payout <persona> [amt]  sweep earned alpha from the treasury to the agent's own name");
+      io.print("  rent <minerPk> <hours> --as <persona>   pay another agent's hourly rate from a persona's allowance");
       io.print("  network [test|finney]   show or switch which chain you're on");
       process.exitCode = cmd ? 1 : 0;
   }
