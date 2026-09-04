@@ -103,6 +103,16 @@ export default function activate(api: GuiExtensionApi): void {
 
   const shortAddr = (s: string) => (s.length > 16 ? `${s.slice(0, 8)}…${s.slice(-6)}` : s);
 
+  /** The one line that matters out of a multi-line stderr. The @polkadot
+   * multi-version warning is dead at the root now (deps aligned to v14),
+   * but a chain error still arrives as several lines with the verdict
+   * last — take the last non-empty line, drop the RPC-CORE timestamp
+   * prefix, so the box says "account balance too low", never a wall. */
+  const cleanErr = (raw: string): string => {
+    const last = raw.split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? raw;
+    return last.replace(/^\d{4}-\d\d-\d\d[ T][\d:]+\s+RPC-CORE:.*?ExtrinsicStatus::\s*/i, "").slice(0, 200);
+  };
+
   /** WKWebView doesn't always grant navigator.clipboard — fall back to
    * the selection dance so copy never silently does nothing. */
   const copyText = async (text: string): Promise<void> => {
@@ -630,7 +640,7 @@ export default function activate(api: GuiExtensionApi): void {
         setReveal(parsed as { mnemonic: string; treasuryAddress: string });
         setPhase("reveal");
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(err instanceof Error ? cleanErr(err.message) : String(err));
         setPhase("idle");
       }
     };
@@ -725,7 +735,7 @@ export default function activate(api: GuiExtensionApi): void {
         if (out.code !== 0) throw new Error(out.stderr.trim() || `derive exited ${out.code}`);
         onDone();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(err instanceof Error ? cleanErr(err.message) : String(err));
       } finally {
         setBusy(undefined);
       }
@@ -772,13 +782,13 @@ export default function activate(api: GuiExtensionApi): void {
       if (!run) return;
       void run("fez-wallet", ["status", persona, "--json"])
         .then((out) => {
-          if (out.code !== 0) throw new Error(out.stderr.trim().split("\n").pop() || `status exited ${out.code}`);
+          if (out.code !== 0) throw new Error(cleanErr(out.stderr) || `status exited ${out.code}`);
           setStatus(JSON.parse(out.stdout) as SubnetStatus);
         })
         // The REASON renders, not a guess: "chain unreachable" shown for
         // every failure hid a stale binary behind a plausible excuse for
         // a whole day. An unparseable answer names itself now.
-        .catch((err) => setStatus({ failed: err instanceof Error ? err.message.slice(0, 120) : String(err) }));
+        .catch((err) => setStatus({ failed: err instanceof Error ? cleanErr(err.message) : String(err) }));
     };
     useEffect(refresh, [persona]);
 
@@ -793,7 +803,7 @@ export default function activate(api: GuiExtensionApi): void {
         setAmt("");
         refresh();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(err instanceof Error ? cleanErr(err.message) : String(err));
       } finally {
         setBusy(undefined);
       }
