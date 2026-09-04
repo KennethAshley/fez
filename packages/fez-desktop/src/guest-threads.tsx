@@ -157,13 +157,34 @@ export function useGuestUnreads(guests: Guest[], selfPk: string): Record<string,
 }
 
 /* ── the thread context block ─────────────────────────────────────────
- * Visible, delimited, honest: the miner sees exactly what we resend. */
+ * Visible, delimited, honest: the miner sees exactly what we resend.
+ *
+ * BUDGETED, because a miner rejects a task over its maxTaskChars (2000 in
+ * the fleet) as "input too long" — silently. One long answer baked whole
+ * into every later message's context blew past that, and every follow-up
+ * was dropped (found live: lebron's essay-length reply made the next five
+ * messages 2000+ chars). So each turn is truncated to its gist and the
+ * whole block is capped, keeping the newest turns and leaving ample room
+ * for the message itself. Continuity is the point, not transcription. */
+const TURN_CAP = 220;   // per-turn chars kept in the context
+const BLOCK_CAP = 1200; // whole-block ceiling — task stays well under 2000
 
 export function withContext(turns: { mine: boolean; text: string }[], next: string): string {
   const recent = turns.slice(-CONTEXT_TURNS);
   if (recent.length === 0) return next;
-  const block = recent.map((t) => `${t.mine ? "client" : "you"}: ${t.text}`).join("\n");
-  return `<thread_context>\n${block}\n</thread_context>\n\n${next}`;
+  // Build newest-first so the budget keeps the MOST recent turns, then
+  // restore chronological order for the block.
+  const lines: string[] = [];
+  let used = 0;
+  for (const t of [...recent].reverse()) {
+    const gist = t.text.length > TURN_CAP ? `${t.text.slice(0, TURN_CAP)}…` : t.text;
+    const line = `${t.mine ? "client" : "you"}: ${gist}`;
+    if (used + line.length > BLOCK_CAP) break;
+    lines.unshift(line);
+    used += line.length + 1;
+  }
+  if (lines.length === 0) return next;
+  return `<thread_context>\n${lines.join("\n")}\n</thread_context>\n\n${next}`;
 }
 
 /** The words the human typed, with any context block we prepended removed. */
@@ -232,29 +253,57 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
     return () => { closed = true; ws?.close(); };
   }, [guest.pk, guest.relay, selfPk]);
 
+  // The clock drives the ephemeral bits (progress that ages out, the
+  // unanswered line) — declared here because the timeline below reads it.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
   // Timeline: my tasks, and ONLY guest events threaded to them — a guest
   // event aimed at someone else's task is not part of this conversation.
   const all = [...events.values()];
   const myTasks = all.filter((e) => e.kind === KIND_TASK && e.pubkey === selfPk);
   const myTaskIds = new Set(myTasks.map((e) => e.id));
   const rootOf = (e: WireEvent) => e.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? e.tags.find((t) => t[0] === "e")?.[1];
+
+  // Progress (47002) is EPHEMERAL status, not history. A miner emits
+  // several ("on it", "editing", "pushing"), and each USED to become a
+  // permanent turn — so "lebron is on it" hung forever, even after the
+  // result arrived or the miner was recalled mid-task. Rules: keep only
+  // the NEWEST progress per task-root, and drop it entirely once that
+  // task has a result (the answer retires the status) or has passed its
+  // deadline (the miner isn't coming — a recall never sends a result).
+  const resultRoots = new Set(
+    all.filter((e) => e.kind === KIND_RESULT && e.pubkey === guest.pk).map((e) => rootOf(e) ?? "")
+  );
+  const nowS = nowTick / 1000;
+  const deadlineFor = (root: string) => Number(events.get(root)?.tags.find((t) => t[0] === "deadline")?.[1] ?? 0);
+  const liveProgress = new Map<string, WireEvent>();
+  for (const e of all) {
+    if (e.kind !== KIND_PROGRESS || e.pubkey !== guest.pk) continue;
+    const root = rootOf(e) ?? "";
+    if (!myTaskIds.has(root) || resultRoots.has(root)) continue;
+    const dl = deadlineFor(root);
+    if (dl > 0 && nowS > dl) continue; // past deadline — the status is stale
+    const cur = liveProgress.get(root);
+    if (!cur || e.created_at > cur.created_at) liveProgress.set(root, e);
+  }
+
   const turns: Turn[] = [
     ...myTasks.map((e): Turn => ({ kind: "mine", id: e.id, ts: e.created_at, text: withoutContext(e.content) })),
     ...all
-      .filter((e) => e.pubkey === guest.pk && myTaskIds.has(rootOf(e) ?? ""))
+      .filter((e) => e.kind === KIND_RESULT && e.pubkey === guest.pk && myTaskIds.has(rootOf(e) ?? ""))
       .map((e): Turn => {
-        if (e.kind === KIND_RESULT) {
-          try {
-            const body = JSON.parse(e.content) as { status?: string; result?: string };
-            return { kind: "theirs", id: e.id, ts: e.created_at, text: body.result ?? e.content, status: body.status ?? "success" };
-          } catch {
-            return { kind: "theirs", id: e.id, ts: e.created_at, text: e.content, status: "success" };
-          }
+        try {
+          const body = JSON.parse(e.content) as { status?: string; result?: string };
+          return { kind: "theirs", id: e.id, ts: e.created_at, text: body.result ?? e.content, status: body.status ?? "success" };
+        } catch {
+          return { kind: "theirs", id: e.id, ts: e.created_at, text: e.content, status: "success" };
         }
-        let note = e.content;
-        try { note = (JSON.parse(e.content) as { message?: string }).message ?? e.content; } catch { /* bare string stands */ }
-        return { kind: "progress", id: e.id, ts: e.created_at, text: note };
       }),
+    ...[...liveProgress.values()].map((e): Turn => {
+      let note = e.content;
+      try { note = (JSON.parse(e.content) as { message?: string }).message ?? e.content; } catch { /* bare string stands */ }
+      return { kind: "progress", id: e.id, ts: e.created_at, text: note };
+    }),
   ].sort((a, b) => a.ts - b.ts);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "auto" }); });
@@ -316,7 +365,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
     const ev = events.get(id);
     return Number(ev?.tags.find((t) => t[0] === "deadline")?.[1] ?? 0);
   };
-  const [nowTick, setNowTick] = useState(() => Date.now());
+  // nowTick is declared above (the timeline reads it); this only drives it.
   useEffect(() => {
     const timer = setInterval(() => setNowTick(Date.now()), 30_000);
     return () => clearInterval(timer);
