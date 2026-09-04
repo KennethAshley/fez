@@ -7,6 +7,7 @@ import {
   cmdRegister, cmdPersonaStatus, cmdPayout, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona,
 } from "./cli-commands.js";
 import { rentAgent } from "./rent.js";
+import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
 
 const io = { print: (l: string) => console.log(l) };
 const argv = process.argv.slice(2);
@@ -92,6 +93,30 @@ try {
       if (json) console.log(JSON.stringify(await payoutPersona(rest[0], rest[1], netuidArg())));
       else await cmdPayout(io, rest[0], rest[1], netuidArg());
       break;
+    case "escrow": {
+      // escrow open <worker> <arbiter> <amount> --as <persona>
+      // escrow release|refund <poster> <worker> <arbiter> <amount> --as <persona>
+      // escrow status <poster> <worker> <arbiter>
+      const asIdx = argv.indexOf("--as");
+      const who = asIdx >= 0 ? argv[asIdx + 1] : undefined;
+      const sub = rest[0];
+      if (sub === "open") {
+        if (!who || !rest[1] || !rest[2] || !rest[3]) throw new Error("usage: fez-wallet escrow open <worker> <arbiter> <amount> --as <persona>");
+        const r = await escrowOpen(who, rest[1], rest[2], rest[3]);
+        io.print(json ? JSON.stringify(r) : `escrow opened at ${r.escrow} — funded ${rest[3]} tTAO (tx ${r.txHash}); the worker can verify the money before working`);
+      } else if (sub === "release" || sub === "refund") {
+        if (!who || !rest[1] || !rest[2] || !rest[3] || !rest[4]) throw new Error(`usage: fez-wallet escrow ${sub} <poster> <worker> <arbiter> <amount> --as <persona>`);
+        const r = await escrowApprove(who, rest[1], rest[2], rest[3], rest[4], sub === "release" ? "worker" : "poster");
+        io.print(json ? JSON.stringify(r) : (r.executed ? `escrow ${sub}d — funds moved (tx ${r.txHash})` : `approval recorded — one more of the three must ${sub} to move the funds (tx ${r.txHash})`));
+      } else if (sub === "status") {
+        if (!rest[1] || !rest[2] || !rest[3]) throw new Error("usage: fez-wallet escrow status <poster> <worker> <arbiter>");
+        const r = await escrowStatus(rest[1], rest[2], rest[3]);
+        io.print(json ? JSON.stringify(r) : `escrow ${r.escrow} holds ${r.heldTao} tTAO`);
+      } else {
+        throw new Error("usage: fez-wallet escrow open|release|refund|status …");
+      }
+      break;
+    }
     case "network":
       await cmdNetwork(io, rest[0]);
       break;
@@ -106,6 +131,7 @@ try {
       io.print("  unstake <persona> <amt> symmetric");
       io.print("  payout <persona> [amt]  sweep earned alpha from the treasury to the agent's own name");
       io.print("  rent <minerPk> <hours> --as <persona>   pay another agent's hourly rate from a persona's allowance");
+      io.print("  escrow open|release|refund|status …      2-of-3 escrow for a hire (no custodian)");
       io.print("  network [test|finney]   show or switch which chain you're on");
       process.exitCode = cmd ? 1 : 0;
   }

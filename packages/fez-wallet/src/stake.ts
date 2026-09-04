@@ -166,3 +166,63 @@ export async function personaStatus(persona: string, netuid = DEFAULT_NETUID): P
     ...(price !== undefined ? { alphaPriceTao: price } : {}),
   };
 }
+
+/* ── escrow (spec 2026-09-03): a hire that pays, no custodian ──────────
+ * All persona-signed and root-free, so mcp.ts imports them and agents
+ * escrow each other. The chain is the state: an escrow is identified by
+ * its three participants + amount, so release/refund re-derive it from
+ * the same args — no registry to drift. */
+import { escrowAddress, openEscrow, approveRelease, type MultisigApi } from "./chains/escrow.js";
+
+const hex64 = (pk: string, role: string) => {
+  if (!/^[0-9a-f]{64}$/i.test(pk.replace(/^0x/, "")) && !/^5[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(pk)) {
+    throw new Error(`${role} must be an ss58 address`);
+  }
+  return pk;
+};
+
+export interface EscrowResult { escrow: string; txHash: string; executed?: boolean }
+
+/** Poster funds a 2-of-3 escrow for a hire. worker+arbiter are ss58 addresses. */
+export async function escrowOpen(persona: string, worker: string, arbiter: string, amount: string): Promise<EscrowResult> {
+  const pair = requirePersonaPair(persona);
+  const config = loadConfig();
+  requireRehearsalNetwork(config.network);
+  hex64(worker, "worker"); hex64(arbiter, "arbiter");
+  const api = (await subtensorFor(config.endpoints.tao)) as unknown as MultisigApi;
+  const amountRao = parseAmount(amount, TAO_DECIMALS, "TAO").raw;
+  const { escrow, txHash } = await openEscrow(api, pair, { worker, arbiter, amountRao });
+  return { escrow, txHash };
+}
+
+/** Approve paying the worker (release) or the poster (refund). The
+ * destination decides which: release → worker, refund → poster. Detects
+ * first-vs-second approver from chain state. `poster` is the funding
+ * account's ss58 (the escrow can't be re-derived without all three). */
+export async function escrowApprove(
+  persona: string,
+  poster: string,
+  worker: string,
+  arbiter: string,
+  amount: string,
+  pay: "worker" | "poster"
+): Promise<EscrowResult> {
+  const pair = requirePersonaPair(persona);
+  const config = loadConfig();
+  requireRehearsalNetwork(config.network);
+  hex64(poster, "poster"); hex64(worker, "worker"); hex64(arbiter, "arbiter");
+  const api = (await subtensorFor(config.endpoints.tao)) as unknown as MultisigApi;
+  const amountRao = parseAmount(amount, TAO_DECIMALS, "TAO").raw;
+  const destination = pay === "worker" ? worker : poster;
+  const { executed, txHash } = await approveRelease(api, pair, { poster, worker, arbiter }, destination, amountRao);
+  return { escrow: escrowAddress(poster, worker, arbiter), txHash, executed };
+}
+
+/** Pure read: what the escrow address holds right now. */
+export async function escrowStatus(poster: string, worker: string, arbiter: string): Promise<{ escrow: string; heldTao: string }> {
+  const config = loadConfig();
+  const api = await subtensorFor(config.endpoints.tao);
+  const escrow = escrowAddress(poster, worker, arbiter);
+  const acct = await api.query.system.account(escrow);
+  return { escrow, heldTao: formatRao(acct.data.free.toBigInt()) };
+}

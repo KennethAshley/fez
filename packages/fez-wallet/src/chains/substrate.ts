@@ -52,19 +52,11 @@ export interface SubstrateApi {
   query: { system: { account(addr: string): Promise<{ data: { free: { toBigInt(): bigint } } }> } };
   tx: {
     balances: {
-      transferKeepAlive(
-        to: string,
-        amount: bigint
-      ): {
-        signAndSend(
-          pair: unknown,
-          callback: (result: {
-            status: { isInBlock: boolean; asInBlock: { toHex(): string } };
-            dispatchError?: SubstrateDispatchError;
-            txHash: { toHex(): string };
-          }) => void
-        ): Promise<() => void>;
-      };
+      transferKeepAlive(to: string, amount: bigint): Submittable;
+      /** Escrow payouts empty the account on the way out — keep-alive
+       * would refuse the last transfer (would drop below existential
+       * deposit), so a drainable account needs allow-death. */
+      transferAllowDeath(to: string, amount: bigint): Submittable;
     };
   };
   /** Used only by getTransfer — substrate has no by-hash extrinsic lookup,
@@ -97,6 +89,11 @@ export interface Submittable {
       txHash: { toHex(): string };
     }) => void
   ): Promise<() => void>;
+  /** The encoded call — multisig needs its hash (both signers approve the
+   * SAME call) and its bytes (the executing signer submits the full call). */
+  method: { hash: { toHex(): string }; toHex(): string };
+  /** Fee/weight estimate — asMulti/approveAsMulti take a maxWeight. */
+  paymentInfo(who: string): Promise<{ weight: unknown }>;
 }
 
 /** The sr25519 signer for a stored pair — shared by every verb that signs. */

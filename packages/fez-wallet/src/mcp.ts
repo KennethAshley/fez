@@ -22,7 +22,7 @@ import {
 import type { ChainAdapter } from "./chains/adapter.js";
 import type { WalletPair, EvmPair } from "./derive.js";
 import type { WalletConfig } from "./config.js";
-import { personaStatus, stakePersona, unstakePersona } from "./stake.js";
+import { personaStatus, stakePersona, unstakePersona, escrowApprove, escrowStatus } from "./stake.js";
 import { rentAgent } from "./rent.js";
 import { resolveRecipient } from "./resolve.js";
 import { rosterFilter, rosterFromEvents } from "./roster.js";
@@ -276,6 +276,34 @@ server.registerTool(
     return text(
       `rented ${miner.slice(0, 8)} for ${r.hours}h at its announced rate — paid ${r.amount} tTAO from your allowance (tx ${r.txHash}). ` +
         `Your directed asks get priority while the lease runs; it lapses on its own, nothing to cancel.`
+    );
+  }
+);
+
+server.registerTool(
+  "wallet_escrow_release",
+  {
+    description:
+      "Claim your pay from an escrowed hire, or check what one holds. When a poster hires you through a 2-of-3 escrow and you've delivered, approve the release to yourself — when the poster has also approved, the funds move to you. Nobody can take the money alone; two of {poster, you, arbiter} must agree. Testnet-only for now.",
+    inputSchema: {
+      poster: z.string().describe("The hirer's ss58 address (funded the escrow)."),
+      arbiter: z.string().describe("The arbiter's ss58 address named on the hire."),
+      amount: z.string().describe("The escrowed amount, e.g. '0.5' — must match what was opened, byte for byte."),
+      check_only: z.boolean().optional().describe("Just read what the escrow holds, don't approve anything."),
+    },
+  },
+  async ({ poster, arbiter, amount, check_only }) => {
+    await cryptoWaitReady();
+    const me = (await personaStatus(persona!)).address;
+    if (check_only) {
+      const s = await escrowStatus(poster, me, arbiter);
+      return text(`escrow ${s.escrow} holds ${s.heldTao} tTAO`);
+    }
+    const r = await escrowApprove(persona!, poster, me, arbiter, amount, "worker");
+    return text(
+      r.executed
+        ? `escrow released — ${amount} tTAO is yours now (tx ${r.txHash})`
+        : `your approval is recorded; the poster must also release for the funds to move (tx ${r.txHash})`
     );
   }
 );

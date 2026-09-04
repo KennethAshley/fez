@@ -107,3 +107,17 @@ describe("offerFromAnnounces — the standing offer", () => {
     expect(() => offerFromAnnounces([])).toThrow(/not for rent/);
   });
 });
+
+describe("escrowAddress — deterministic 2-of-3 derivation", () => {
+  it("is order-independent and stable (same three keys → same escrow)", async () => {
+    const { escrowAddress } = await import("../src/chains/escrow.js");
+    const a = "5FHoTj4Kryo9PdFcg8KPrm48ER1fxvN4LhtfLCxhQ36Qtkqr";
+    const b = "5HH8BQaYnLH5pKL3o7amtRFExD2zWXXvnrCDkoFGhZfhPLt7";
+    const c = "5CAq7cJ8aWf4HCoNGjQDRWH82SXXq1Zb5qiMy4QieyYhpD1q";
+    // proven live 2026-09-03: this trio derives this escrow
+    expect(escrowAddress(a, b, c)).toBe("5CoFuLj18cUGWVZsH94S132iijs2Gyk4GyBdachSG1WGMXKs");
+    // participant order must not change the address — release re-derives it
+    expect(escrowAddress(c, a, b)).toBe(escrowAddress(a, b, c));
+    expect(escrowAddress(b, c, a)).toBe(escrowAddress(a, b, c));
+  });
+});
