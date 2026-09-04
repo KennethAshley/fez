@@ -191,6 +191,8 @@ type Turn =
 export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; selfPk: string; guest: Guest }) {
   const [events, setEvents] = useState<Map<string, WireEvent>>(new Map());
   const [draft, setDraft] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [attachingRepo, setAttachingRepo] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   const wsRef = useRef<WebSocket | undefined>(undefined);
@@ -273,12 +275,19 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       const context = turns
         .filter((t): t is Extract<Turn, { kind: "mine" | "theirs" }> => t.kind !== "progress")
         .map((t) => ({ mine: t.kind === "mine", text: t.text }));
+      // A repo pinned to the thread turns the message into a HIRE (spec
+      // 2026-09-04): task_type repo-work, the clone URL in a `repo` tag,
+      // and a longer deadline — cloning and pushing take more than a
+      // reply does. The worker's miner does the rest; the branch comes
+      // back as an ordinary result in this thread.
+      const hire = repoUrl.trim();
       const signed = await wire.signEvent({
         kind: KIND_TASK,
         content: withContext(context, text),
         tags: [
-          ["task_type", TASK_TYPE],
-          ["deadline", String(Math.floor(Date.now() / 1000) + DEADLINE_S)],
+          ["task_type", hire ? "repo-work" : TASK_TYPE],
+          ["deadline", String(Math.floor(Date.now() / 1000) + (hire ? 900 : DEADLINE_S))],
+          ...(hire ? [["repo", hire]] : []),
           ["p", guest.pk],
         ],
         created_at: Math.floor(Date.now() / 1000),
@@ -378,6 +387,25 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       </div>
       <div className="guest-composer">
         {error ? <p className="ob-error">{error}</p> : null}
+        {attachingRepo ? (
+          <div className="guest-repo-row">
+            <input
+              className="manage-input"
+              placeholder="clone URL from /repo new — grant this agent first: /repo grant <repo> <its key> 24"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+            />
+            <button className="agent-action" onClick={() => { setRepoUrl(""); setAttachingRepo(false); }}>detach</button>
+          </div>
+        ) : (
+          <button
+            className="guest-repo-attach"
+            title={`pin a repo to this conversation — your next message becomes a hire: ${name} clones it (with a grant), does the work, and pushes a branch back`}
+            onClick={() => setAttachingRepo(true)}
+          >
+            ⑂ attach repo
+          </button>
+        )}
         <textarea
           className="manage-input"
           placeholder={`message ${name} — public, at the bazaar`}

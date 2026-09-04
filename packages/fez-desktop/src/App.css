@@ -4315,3 +4315,10 @@ a.page-fact:hover { color: var(--fg); }
   font-size: 13px;
   padding: 18px 0;
 }
+
+/* attach-repo affordance in guest threads (spec 2026-09-04): the hire
+   entrance. Quiet until used — a text button above the composer. */
+.guest-repo-attach { background: none; border: none; color: var(--fg-dim, #928374); font: inherit; font-size: 0.72rem; cursor: pointer; padding: 0 0 4px; text-align: left; }
+.guest-repo-attach:hover { color: var(--fg, #ebdbb2); }
+.guest-repo-row { display: flex; gap: 6px; padding-bottom: 4px; }
+.guest-repo-row .manage-input { flex: 1; font-size: 0.72rem; }
