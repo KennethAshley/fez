@@ -55,7 +55,7 @@ import {
   loadSettings,
 } from "@fezchat/protocol";
 import fs from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
@@ -65,6 +65,8 @@ import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./ski
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
+import { finalizeEvent } from "nostr-tools/pure";
+import { hexToBytes } from "nostr-tools/utils";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
 import { decide, claimOwnership, takeOverActive, shutdownGraced, type OwnershipIO, type PresenceBeat } from "./ownership.js";
@@ -468,6 +470,82 @@ async function main() {
   };
   if (persona.extra.idleTimeoutS || persona.extra.turnTimeoutS) {
     console.log(`⏱  turn deadlines: idle ${turnTimeouts.idleMs / 1000}s · hard ${turnTimeouts.maxMs / 1000}s`);
+  }
+
+  // ── One-shot HIRE mode (the public repo hire, worker side). ─────────
+  // A hire is fez-agent asked to do ONE task in the checkout and exit,
+  // instead of living in a channel — the SAME runtime and harness the
+  // standing agent uses, so a bazaar repo-work hire runs a REAL engine
+  // (pi, claude-code, whatever the persona names) with a full tool loop,
+  // not a single completion. The bazaar miner spawns this with
+  // BAZAAR_WORKER=harness; it clones (above), drives the harness once,
+  // pushes the branch, and prints machine-readable lines the miner
+  // relays as progress (47002) and the result (47003). Deliberately
+  // before the channel machinery: a hire never subscribes to anything.
+  const hireTask = process.env.FEZ_HIRE_TASK?.trim();
+  const hireUrl = process.env.FEZ_HIRE_REPO_URL?.trim();
+  if (hireTask) {
+    const emit = (msg: string) => console.log(`FEZ_HIRE_PROGRESS=${msg.replace(/\s+/g, " ").trim().slice(0, 140)}`);
+    // Self-contained clone of a FULL clone URL — a hire's repo lives on
+    // the POSTER's relay, not this worker's, so resolveWorkspace (which
+    // builds a URL from the local relay) is the wrong tool. NIP-98: the
+    // persona's own key is the git credential, inline, no global config
+    // (same technique as the bazaar builtin body).
+    if (!hireUrl || !/^https:\/\/[^\s]+\/git\/[a-z0-9][a-z0-9._-]{0,63}\.git$/i.test(hireUrl)) {
+      console.error("FEZ_HIRE_ERROR=FEZ_HIRE_REPO_URL must be a fez relay clone URL");
+      process.exit(2);
+    }
+    const keyHex = loadServiceKey(personaId);
+    const nip98 = () => {
+      const ev = finalizeEvent(
+        { kind: 27235, created_at: Math.floor(Date.now() / 1000), tags: [["u", hireUrl], ["method", "GET"]], content: "" },
+        hexToBytes(keyHex)
+      );
+      return `Authorization: Nostr ${Buffer.from(JSON.stringify(ev)).toString("base64")}`;
+    };
+    const hireDir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-hire-"));
+    const git = (args: string[]) => execFileSync("git", args, { cwd: hireDir, stdio: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    const slug = personaId.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "agent";
+    const branchName = `${slug}/hire-${Date.now().toString(36)}`;
+    try {
+      emit(`cloning — ${persona.harness} is warming up`);
+      execFileSync("git", ["-c", `http.extraHeader=${nip98()}`, "clone", "--depth", "50", hireUrl, hireDir], { stdio: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+      git(["checkout", "-b", branchName]);
+    } catch (err) {
+      console.error(`FEZ_HIRE_ERROR=clone failed (grant missing or expired?): ${(err as Error).message.slice(0, 160)}`);
+      process.exit(3);
+    }
+    const prompt =
+      `You are ${personaId}, hired to do exactly one task in this repository, then stop.\n\n` +
+      `<task>\n${hireTask}\n</task>\n\n` +
+      `Work directly in the files under this directory. Make the change the task asks for and nothing more. ` +
+      `Do NOT commit or push — that is handled for you once you finish.`;
+    let summary = "";
+    try {
+      summary = await invokeWithRetry(harness!, prompt, hireDir, (soFar) => emit(soFar.slice(-140)));
+    } catch (err) {
+      console.error(`FEZ_HIRE_ERROR=${(err as Error).message.slice(0, 200)}`);
+      process.exit(4);
+    }
+    try {
+      git(["add", "-A"]);
+      if (!git(["status", "--porcelain"]).toString().trim()) {
+        console.error("FEZ_HIRE_ERROR=the engine finished but changed no files");
+        process.exit(5);
+      }
+      emit("committing and pushing the branch");
+      const msg = (summary.split("\n").find((l) => l.trim())?.trim() || hireTask).slice(0, 72);
+      git(["-c", `user.name=${personaId}`, "-c", `user.email=${personaId}@fez`, "commit", "-m", msg]);
+      execFileSync("git", ["-c", `http.extraHeader=${nip98()}`, "push", "origin", branchName], { cwd: hireDir, stdio: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    } catch (err) {
+      console.error(`FEZ_HIRE_ERROR=commit/push failed: ${(err as Error).message.slice(0, 200)}`);
+      process.exit(6);
+    } finally {
+      fs.rmSync(hireDir, { recursive: true, force: true });
+    }
+    console.log(`FEZ_HIRE_BRANCH=${branchName}`);
+    console.log(`FEZ_HIRE_SUMMARY=${(summary.split("\n").find((l) => l.trim())?.trim() || "done").slice(0, 200)}`);
+    process.exit(0);
   }
 
   // Identity: one stable key per persona (~/.fez/agents/<persona>.key).
