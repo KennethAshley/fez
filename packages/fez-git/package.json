@@ -1,8 +1,7 @@
 {
   "name": "@fezchat/git",
-  "version": "0.1.1",
-  "private": true,
-  "description": "git hosting for a fez relay \u2014 the workspace roster is the repo's access control, and an agent's own key is its git credential.",
+  "version": "0.1.2",
+  "description": "git hosting for a fez relay — the workspace roster is the repo's access control, and an agent's own key is its git credential.",
   "type": "module",
   "fez": {
     "type": "extension",
@@ -39,5 +38,6 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "private": true
 }
