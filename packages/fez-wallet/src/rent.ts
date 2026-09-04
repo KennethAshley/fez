@@ -3,7 +3,7 @@ import { loadConfig } from "./config.js";
 import { buildReceipt } from "./receipt.js";
 import { formatRao } from "./chains/subtensor.js";
 import { parseAmount } from "./chains/adapter.js";
-import { appendLog } from "./log.js";
+import { mirrorSpend } from "./storage-mirror.js";
 import { ambiguousTransferError, signerFromPair, submitAndWait } from "./chains/substrate.js";
 import { requirePersonaPair, requireRehearsalNetwork, subtensorFor } from "./stake.js";
 
@@ -185,11 +185,12 @@ export async function payAddress(
     { onTimeout: () => ambiguousTransferError(to, 120_000) }
   );
 
-  // Record it in the wallet's spend log so the payment shows in the wallet
-  // panel's ledger — a settle that moved money invisibly to the UI would be
-  // exactly wrong. Best-effort: the transfer already landed.
+  // Record it where the wallet PANEL reads its ledger — the mirror's
+  // `logs` (mirrorSpend), NOT the standalone wallet-log file. A settle
+  // that moved money invisibly to the UI would be exactly wrong. Best-
+  // effort: the transfer already landed.
   try {
-    appendLog({
+    await mirrorSpend({
       ts: new Date().toISOString(),
       persona, to, amount: formatRao(amountRao), asset: "TAO", txHash,
       memo: opts.memo ?? "hire", consent: "approved", network: config.network,

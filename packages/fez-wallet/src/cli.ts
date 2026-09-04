@@ -4,7 +4,7 @@ import { loadConfig } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
 import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
-  cmdRegister, cmdPersonaStatus, cmdPayout, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona,
+  cmdRegister, cmdPersonaStatus, cmdPayout, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury,
 } from "./cli-commands.js";
 import { rentAgent, payAddress } from "./rent.js";
 import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
@@ -92,9 +92,13 @@ try {
       // pay <address> <amount> --as <persona> [--for <eventId>] [--to-pk <npub>]
       const asIdx = argv.indexOf("--as"); const forIdx = argv.indexOf("--for"); const toPkIdx = argv.indexOf("--to-pk");
       const who = asIdx >= 0 ? argv[asIdx+1] : undefined;
-      if (!rest[0] || !rest[1] || !who) throw new Error("usage: fez-wallet pay <address> <amount> --as <persona> [--for <eventId>] [--to-pk <npub>]");
-      const r = await payAddress(who, rest[0], rest[1], { forEvent: forIdx>=0?argv[forIdx+1]:undefined, payeePk: toPkIdx>=0?argv[toPkIdx+1]:undefined });
-      io.print(json ? JSON.stringify(r) : `${r.persona} paid ${r.amount} tTAO to ${r.to.slice(0,8)}… (tx ${r.txHash})${r.receiptId?" · receipt published":""}`);
+      if (!rest[0] || !rest[1] || !who) throw new Error("usage: fez-wallet pay <address> <amount> --as <persona|treasury> [--for <eventId>] [--to-pk <npub>]");
+      // treasury is the human's main account — signed by the root, so it
+      // routes through cli-commands (never the root-free persona pay).
+      const r = who === "treasury"
+        ? await payFromTreasury(adapter(), rest[0], rest[1], {})
+        : await payAddress(who, rest[0], rest[1], { forEvent: forIdx>=0?argv[forIdx+1]:undefined, payeePk: toPkIdx>=0?argv[toPkIdx+1]:undefined });
+      io.print(json ? JSON.stringify(r) : `${r.persona} paid ${r.amount} tTAO to ${r.to.slice(0,8)}… (tx ${r.txHash})`);
       break;
     }
     case "payout":

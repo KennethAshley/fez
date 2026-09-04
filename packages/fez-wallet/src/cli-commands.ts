@@ -172,6 +172,33 @@ export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string,
   });
 }
 
+/**
+ * Settle a hire FROM THE TREASURY — the human's main account, which the
+ * root-free `pay` (rent.ts) can't sign for. This lives here because the
+ * treasury is the root's to sign, and only a human-at-the-desktop path
+ * reaches it (the DM settle invokes the CLI, never mcp). Same shape as a
+ * persona pay: transfer + a ledger entry the wallet panel shows.
+ */
+export async function payFromTreasury(
+  adapter: ChainAdapter,
+  to: string,
+  amount: string,
+  opts: { memo?: string } = {},
+): Promise<{ persona: string; to: string; amount: string; txHash: string }> {
+  const config = loadConfig();
+  requireRehearsalNetwork(config.network);
+  if (!/^5[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(to)) throw new Error("recipient must be an ss58 address");
+  const mnemonic = requireRoot();
+  const parsed = parseAmount(amount, adapter.assets[0].decimals, adapter.assets[0].symbol);
+  const { txHash } = await adapter.transfer(treasuryPair(mnemonic), to, parsed);
+  await mirrorSpend({
+    ts: new Date().toISOString(),
+    persona: "treasury", to, amount, asset: adapter.assets[0].symbol, txHash,
+    memo: opts.memo ?? "hire", consent: "approved", network: config.network,
+  });
+  return { persona: "treasury", to, amount, txHash };
+}
+
 /* ── stake rehearsal (spec 2026-09-03) ──────────────────────────────────
  * Register lives HERE because the treasury signs the burn, and the root
  * mnemonic is this module's to hold. Stake/unstake/status are persona-only
