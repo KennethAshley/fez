@@ -80,6 +80,27 @@ export function removeGuest(pk: string): void {
   localStorage.removeItem(`${READ_KEY}-${pk}`);
 }
 
+/* ── the hire (model A: a negotiated lump) ─────────────────────────────
+ * You chat and agree a price, then "start hire" locks it: the amount, the
+ * account it pays FROM, and when. Settle pays it to the agent's announced
+ * address via the wallet's tested `pay` verb. Persisted per guest so it
+ * survives navigation; one active hire per guest at a time. */
+export interface Hire {
+  amount: string;         // tТАО, the agreed lump
+  persona: string;        // which of your wallet accounts pays
+  at: number;             // when the hire started (unix ms)
+  settled?: { txHash: string; at: number };
+}
+const HIRE_KEY = "fez-hire";
+export function getHire(pk: string): Hire | undefined {
+  try { return JSON.parse(localStorage.getItem(`${HIRE_KEY}-${pk}`) ?? "null") as Hire ?? undefined; }
+  catch { return undefined; }
+}
+export function setHire(pk: string, hire: Hire | undefined): void {
+  if (hire) localStorage.setItem(`${HIRE_KEY}-${pk}`, JSON.stringify(hire));
+  else localStorage.removeItem(`${HIRE_KEY}-${pk}`);
+}
+
 /* ── read marks + unread counts ───────────────────────────────────────
  * The thread's own socket dies when you navigate away — which is exactly
  * when unread matters. One App-level socket per venue relay watches every
@@ -224,6 +245,14 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   // "the bazaar can see the wallet" seam — the meter and settle build on it.
   const [agentPayTo, setAgentPayTo] = useState<string>();
   const [payFrom, setPayFrom] = useState<{ name: string; address: string }[]>([]);
+  // The hire (model A): persisted terms, plus the in-flight "start hire"
+  // form and the settle spinner.
+  const [hire, setHireState] = useState<Hire | undefined>(() => getHire(guest.pk));
+  const [starting, setStarting] = useState(false);
+  const [hireAmt, setHireAmt] = useState("");
+  const [hirePersona, setHirePersona] = useState("");
+  const [settling, setSettling] = useState(false);
+  const [hireErr, setHireErr] = useState<string>();
   const wsRef = useRef<WebSocket | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -392,6 +421,44 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
 
   const name = guest.name ?? guest.pk.slice(0, 8);
 
+  // How many of my asks this agent actually delivered on — the meter's
+  // "work done" number (my task-roots that got a result).
+  const delivered = [...myTaskIds].filter((id) => resultRoots.has(id)).length;
+
+  const startHire = () => {
+    const amt = Number(hireAmt);
+    if (!(amt > 0)) { setHireErr("enter an amount greater than zero"); return; }
+    const persona = hirePersona || payFrom[0]?.name;
+    if (!persona) { setHireErr("no wallet account to pay from"); return; }
+    const h: Hire = { amount: hireAmt.trim(), persona, at: Date.now() };
+    setHire(guest.pk, h); setHireState(h); setStarting(false); setHireErr(undefined);
+  };
+
+  const settle = async () => {
+    if (!hire || settling) return;
+    if (!agentPayTo) { setHireErr("this agent hasn't published a receive address — nothing to settle to"); return; }
+    setSettling(true); setHireErr(undefined);
+    try {
+      // The tested `pay` verb, invoked as the wallet extension (holds
+      // `processes`). `--for` ties the receipt to one of my task roots so
+      // the settlement is legible on the relay.
+      const anyRoot = [...myTaskIds][0];
+      const res = await invoke<{ code: number; stdout: string; stderr: string }>("run_extension_bin", {
+        extension: "wallet",
+        bin: "fez-wallet",
+        args: ["pay", agentPayTo, hire.amount, "--as", hire.persona, "--to-pk", guest.pk, ...(anyRoot ? ["--for", anyRoot] : []), "--json"],
+      });
+      if (res.code !== 0) throw new Error(res.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() || `settle exited ${res.code}`);
+      const out = JSON.parse(res.stdout.trim().split("\n").pop() ?? "{}") as { txHash?: string };
+      const settled: Hire = { ...hire, settled: { txHash: out.txHash ?? "", at: Date.now() } };
+      setHire(guest.pk, settled); setHireState(settled);
+    } catch (err) {
+      setHireErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSettling(false);
+    }
+  };
+
   // Honesty for the silent case: a task past its deadline with no reply is
   // said out loud, not left hanging. The answered set keys it; nowTick
   // moves the clock so the line appears without any new event arriving.
@@ -445,27 +512,47 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       <div className="guest-banner">
         {`Anyone can read this thread — never share secrets here. Messages you send are tasks only ${name} may answer, signed with your name.`}
       </div>
-      {/* The money context, read-only (#1): where a hire would settle (the
-          agent's announced receive address) and that your wallet is in view
-          (the accounts you could pay from). The meter + settle build on this;
-          for now it just shows the two ends of a future payment. */}
+      {/* The hire: chat free, then start a negotiated-lump hire, watch the
+          meter, and settle to the agent's address through the wallet. Four
+          states — settled, active (the meter), starting (the form), and the
+          idle offer to begin. */}
       <div className="guest-hire">
-        {agentPayTo ? (
-          <span title={`this agent receives at ${agentPayTo}`}>
-            {`◈ hireable — settles to ${agentPayTo.slice(0, 6)}…${agentPayTo.slice(-4)}`}
+        {hire?.settled ? (
+          <span title={`paid ${hire.amount} tТАО from ${hire.persona}`}>
+            {`✓ settled — paid ${hire.amount} tτ from ${hire.persona}`}
+            {hire.settled.txHash ? <span className="dim">{` · tx ${hire.settled.txHash.slice(0, 10)}…`}</span> : null}
+            <button className="guest-hire-link" onClick={() => { setHire(guest.pk, undefined); setHireState(undefined); }}>new hire</button>
+          </span>
+        ) : hire ? (
+          <span>
+            {`◈ hired · ${hire.amount} tτ agreed · from ${hire.persona} · ${delivered} delivered`}
+            <button className="guest-hire-btn" disabled={settling || !agentPayTo} title={agentPayTo ? `pay ${hire.amount} tТАО to ${name}` : "the agent hasn't published a receive address yet"} onClick={() => void settle()}>
+              {settling ? "settling…" : "settle & pay"}
+            </button>
+            <button className="guest-hire-link" onClick={() => { setHire(guest.pk, undefined); setHireState(undefined); setHireErr(undefined); }}>cancel</button>
+          </span>
+        ) : starting ? (
+          <span className="guest-hire-form">
+            <span className="dim">start hire —</span>
+            <input className="guest-hire-amt" placeholder="amount" value={hireAmt} onChange={(e) => setHireAmt(e.target.value)} />
+            <span className="dim">tτ, paid from</span>
+            <select className="guest-hire-sel" value={hirePersona} onChange={(e) => setHirePersona(e.target.value)}>
+              {payFrom.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+            </select>
+            <button className="guest-hire-btn" onClick={startHire}>lock terms</button>
+            <button className="guest-hire-link" onClick={() => { setStarting(false); setHireErr(undefined); }}>cancel</button>
           </span>
         ) : (
-          <span className="dim" title="the agent hasn't published a receive address in its announce — update its miner to advertise one">
-            ◇ no receive address published yet — nothing to settle to
+          <span>
+            {agentPayTo
+              ? <span className="dim">{`◈ hireable — settles to ${agentPayTo.slice(0, 6)}…${agentPayTo.slice(-4)}`}</span>
+              : <span className="dim" title="the agent hasn't published a receive address — its miner needs a wallet account (fez-wallet derive <name>)">◇ no receive address yet</span>}
+            {payFrom.length ? (
+              <button className="guest-hire-link" onClick={() => { setStarting(true); setHirePersona(payFrom[0]?.name ?? ""); }}>start a hire</button>
+            ) : <span className="dim"> · no wallet to pay from</span>}
           </span>
         )}
-        {payFrom.length ? (
-          <span className="dim" title={payFrom.map((a) => `${a.name}: ${a.address}`).join("\n")}>
-            {` · your wallet: ${payFrom.length} account${payFrom.length === 1 ? "" : "s"} to pay from`}
-          </span>
-        ) : (
-          <span className="dim">{" · no wallet found — install the wallet extension to pay"}</span>
-        )}
+        {hireErr ? <span className="guest-hire-err">{` · ${hireErr}`}</span> : null}
       </div>
       <div className="guest-timeline">
         {turns.map((t) =>
