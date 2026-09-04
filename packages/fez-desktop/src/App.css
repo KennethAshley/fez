@@ -4338,3 +4338,6 @@ a.page-fact:hover { color: var(--fg); }
 .guest-hire-sel { background: var(--bg0); border: 1px solid var(--hairline); color: var(--fg); font: inherit; font-size: 11px; padding: 2px 4px; border-radius: 4px; }
 .guest-hire-err { color: var(--brand); }
 .guest-lease.on { color: var(--ok); }
+.rate-row { display: flex; align-items: center; gap: 8px; }
+.rate-input { max-width: 8rem; }
+.rate-unit { color: var(--muted, #999); font-size: 0.85em; }

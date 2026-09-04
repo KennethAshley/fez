@@ -267,6 +267,29 @@ export default function PersonaEditor({
             onChange={(e) => update("aliases", textToList(e.target.value))}
           />
         </div>
+        {/* Hire rate: the agent's own price for a lease on the bazaar. Blank =
+            not for lease. Pay-to isn't asked for — it's the agent's wallet
+            address, filled in automatically when it's sent to the bazaar. */}
+        <div className="settings-field">
+          <label>hire rate</label>
+          <div className="rate-row">
+            <input
+              className="manage-input rate-input"
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              value={field("rate")}
+              placeholder="0"
+              onChange={(e) => update("rate", e.target.value)}
+            />
+            <span className="rate-unit">tτ / hour</span>
+          </div>
+          <div className="field-note">
+            What a lease costs on the bazaar. Leave blank if this agent isn&apos;t for hire. Payments go to
+            its own wallet.
+          </div>
+        </div>
 
         </div>
 

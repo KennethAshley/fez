@@ -20,6 +20,7 @@ export const ALL_KNOWN_KEYS = [
   "routable", "idleExit", "idleTimeoutS", "turnTimeoutS",
   "url", "channels", "owner", "respondTo",
   "maxReplyChars", "shareLevel", "approvalQuorum",
+  "rate",
 ];
 
 function editDistance(a: string, b: string): number {
