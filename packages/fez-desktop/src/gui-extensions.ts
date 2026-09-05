@@ -174,7 +174,7 @@ export interface GuiExtensionApi {
   watchAgent: (name: string) => void;
   /** Open a guest thread — a PUBLIC conversation with a foreign market
    * npub, rendered in the host's DM rail (guest-threads spec). */
-  openGuestDm: (guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number }) => void;
+  openGuestDm: (guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number; draft?: string }) => void;
   /** Open a thread in the current channel view (no-op for other channels). */
   openThread: (channelId: string, rootId: string) => void;
   /** A palette, or a { light, dark } pair that follows the OS. */
@@ -482,11 +482,11 @@ export function openWatch(agent: string): void {
  * ledger, and the venue-relay client are all the host's business. Same
  * parking pattern as the watch pane.
  */
-let guestDmOpener: ((guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number }) => void) | undefined;
+let guestDmOpener: ((guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number; draft?: string }) => void) | undefined;
 export function setGuestDmOpener(open: typeof guestDmOpener): void {
   guestDmOpener = open;
 }
-export function openGuestDm(guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number }): void {
+export function openGuestDm(guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number; draft?: string }): void {
   guestDmOpener?.(guest);
 }
 
@@ -1067,7 +1067,7 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
       // Forward surface (guest-threads spec): typed loosely so extensions
       // built against an older api still load; the host validates the pk.
       openGuestDm: may("ui")
-        ? (guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number }) => {
+        ? (guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number; draft?: string }) => {
             if (!/^[0-9a-f]{64}$/.test(guest.pk) || !/^wss?:\/\//.test(guest.relay)) return;
             openGuestDm(guest);
           }

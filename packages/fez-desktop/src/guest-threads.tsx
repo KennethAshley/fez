@@ -48,6 +48,9 @@ export interface Guest {
    *  directory offer so the thread can show the price. Renting itself is an
    *  agent act (wallet_rent), not a thing the human clicks here. */
   rateTaoHr?: number;
+  /** A task prewritten by an extension (e.g. a proposal card) — prefills
+   *  the composer. The human still presses send; this never auto-sends. */
+  draft?: string;
 }
 
 const LEDGER_KEY = "fez-guests";
@@ -241,7 +244,16 @@ type Turn =
 
 export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; selfPk: string; guest: Guest }) {
   const [events, setEvents] = useState<Map<string, WireEvent>>(new Map());
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => guest.draft ?? "");
+  // Reopening the SAME guest (same pk) with a fresh draft — a second
+  // openGuestDm call, e.g. from another proposal card — reuses this
+  // mounted instance (App.tsx keys the view by guest.pk), so the
+  // mount-time seed above won't rerun. Catch that here, but never
+  // stomp on text the human already started typing.
+  useEffect(() => {
+    if (guest.draft && draft === "") setDraft(guest.draft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guest.pk, guest.draft]);
   const [repoUrl, setRepoUrl] = useState("");
   const [attachingRepo, setAttachingRepo] = useState(false);
   const [sending, setSending] = useState(false);
