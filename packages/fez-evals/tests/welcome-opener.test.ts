@@ -80,6 +80,9 @@ describe("welcome opener", () => {
     expect(md).toContain("fez-hire-proposal");
     expect(md).toContain("AT MOST ONE");
     expect(md).toContain("do not mention the market");
+    // The two-tier ruling: free tryouts execute, paid work gets the card.
+    expect(md).toContain("FREE tryout");
+    expect(md).toContain("do not execute; emit the proposal card");
     expect(md).toMatch(/mcpServers:.*bazaar/);
   });
 

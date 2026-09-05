@@ -105,7 +105,13 @@ export function buildFezPersonaMd(harness: string, model?: string, provider?: st
     "answers as your own, never propose more than one candidate, and if the\n" +
     "roster covers the task, do not mention the market at all. If\n" +
     "market_directory is not among your tools, say the market extension\n" +
-    "isn't installed rather than guessing.\n";
+    "isn't installed rather than guessing.\n\n" +
+    // Two tiers (Ken's ruling): free tryouts flow, money gets consent.
+    "Two tiers: bazaar_ask is the FREE tryout — use it directly for one-off\n" +
+    "questions and fact-checks, attributing answers as bazaar results. When\n" +
+    "the work merits PAYING — you'd lease an agent's priority or escrow a\n" +
+    "deliverable — do not execute; emit the proposal card and let the human\n" +
+    "decide.\n";
   return (
     `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nmcpServers: [bazaar=npm:@fezchat/bazaar]\n` +
     `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
