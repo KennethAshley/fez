@@ -1,7 +1,10 @@
 import { loadConfig } from "./config.js";
+import { buildReceipt } from "./receipt.js";
+import { readAgentNostrKey } from "./store.js";
 import { alphaPriceTao, formatRao } from "./chains/subtensor.js";
 import { signerFromPair, submitAndWait } from "./chains/substrate.js";
 import { requirePersonaPair, requireRehearsalNetwork, subtensorFor, DEFAULT_NETUID } from "./stake.js";
+import { DEFAULT_MARKET_RELAY, marketPublish } from "./rent.js";
 
 /**
  * The fee burn (spec 2026-09-04): skim a small protocol fee off each
@@ -78,6 +81,9 @@ export interface BurnResult {
   burnedTao: string;
   txHash: string;
   netuid: number;
+  /** The public 47040 announcing this burn on the market relay — the
+   *  spec's "publish" step. Absent if the relay was unreachable. */
+  receiptId?: string;
 }
 
 /** The pallet insists the routed hotkey EXISTS in the hotkey registry
@@ -118,11 +124,32 @@ export async function burnRun(amountTao?: string, netuid = DEFAULT_NETUID): Prom
     throw new Error(`the vault holds ${formatRao(free)} tTAO — nothing to burn${amountRao > free ? " that large" : ""}`);
   }
   const signer = await signerFromPair(pair);
-  const { txHash } = await submitAndWait(
+  const { txHash, blockRef } = await submitAndWait(
     api,
     api.tx.subtensorModule.addStakeBurn(registeredHotkey(netuid), netuid, amountRao, null),
     signer,
     { onTimeout: () => new Error("burn submitted but unconfirmed — check the vault balance before retrying") }
   );
-  return { vault: pair.address, burnedTao: formatRao(amountRao), txHash, netuid };
+  // The spec's "publish" step: a burn nobody can see is just a claim. A
+  // 47040 with memo "burn" (no payee — the money went to nobody, that is
+  // the point) rides the market relay; the tx hash makes it checkable
+  // on-chain. Best-effort: the alpha is already destroyed.
+  let receiptId: string | undefined;
+  const nostrKey = readAgentNostrKey(BURN_VAULT);
+  if (nostrKey) {
+    try {
+      const receipt = buildReceipt({
+        agentSecretHex: nostrKey,
+        amount: { raw: amountRao, decimals: 9, symbol: "TAO" },
+        chain: "tao",
+        network: config.network,
+        txHash,
+        blockRef,
+        memo: "burn",
+      });
+      await marketPublish(DEFAULT_MARKET_RELAY, receipt as Parameters<typeof marketPublish>[1]);
+      receiptId = receipt.id;
+    } catch { /* the burn stands; the counter catches the next one */ }
+  }
+  return { vault: pair.address, burnedTao: formatRao(amountRao), txHash, netuid, ...(receiptId ? { receiptId } : {}) };
 }

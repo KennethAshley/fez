@@ -53,7 +53,7 @@ async function marketQuery(relayUrl: string, filter: Record<string, unknown>): P
   });
 }
 
-async function marketPublish(relayUrl: string, event: SignedEvent): Promise<void> {
+export async function marketPublish(relayUrl: string, event: SignedEvent): Promise<void> {
   const WS = (await import("ws")).default;
   return new Promise((resolve, reject) => {
     const ws = new WS(relayUrl);
