@@ -149,9 +149,10 @@ server.registerTool(
       resource: z.string().describe("Resource name from targon_inventory, e.g. h200-small."),
       image: z.string().optional().describe("Container image (default pytorch/pytorch:latest)."),
       name: z.string().optional().describe("Workload name (default fez-<random>)."),
+      commands: z.array(z.string()).optional().describe("Container entrypoint argv (default sleep infinity, which idles the machine for targon_exec). A command that exits crash-loops the rental."),
     },
   },
-  async ({ resource, image, name }) => {
+  async ({ resource, image, name, commands }) => {
     const o = await orgSlug();
     if (!o.ok) return text(o.err);
 
@@ -176,7 +177,9 @@ server.registerTool(
     const wlName = name || `fez-${randomUUID().slice(0, 8)}`;
     const create = await api<{ uid?: string }>(`/tha/v3/orgs/${o.slug}/workloads`, {
       method: "POST",
-      body: JSON.stringify({ name: wlName, type: "RENTAL", image: image || "pytorch/pytorch:latest", resource_name: resource, ssh_keys: sshKeys }),
+      // Default entrypoint idles the box: an image whose command exits (bash
+      // with no tty) crash-loops the rental into `error` — found live.
+      body: JSON.stringify({ name: wlName, type: "RENTAL", image: image || "pytorch/pytorch:latest", resource_name: resource, ssh_keys: sshKeys, commands: commands?.length ? commands : ["sleep", "infinity"] }),
     });
     if (!create.ok) return text(create.err);
     const uid = String(create.data.uid ?? "");
