@@ -11,13 +11,18 @@ import { useHarnesses } from "./harnesses";
  * signal). No silent auto-fill — the models load into the list; you choose.
  */
 
-/** pi-wireable providers: pinned local-models id (sha256(baseUrl)[..10], asserted
- * in lib.rs provider_tests), plus the one fact a buyer needs — who can pay.
- * Chutes takes TAO, so an agent with its own wallet can fund itself; GM sells
- * prepaid credits only, so the owner pays. */
+/** pi-wireable providers — ONE table, aligned with the backend's
+ * provider_spec five (lib.rs): pinned local-models id (sha256(baseUrl)
+ * [..10]), plus the one fact a buyer needs — who can pay. Every row
+ * renders in the picker whether or not its key is set: fez's own bundled
+ * runtime is the product, and a shelf you can't see is a shelf that
+ * doesn't exist. Un-keyed rows show as "add a key to unlock". */
 const WIRED = [
   { id: "chutes", local: "local-56105ece7a", group: "Chutes — Bittensor, decentralized", hint: "Runs on Chutes GPUs (Bittensor). Agents can pay for their own inference in TAO. Key: Settings → secrets → chutes." },
   { id: "gm", local: "local-ebfd09756a", group: "GM — confidential frontier models", hint: "Frontier models through GM's TEE gateway (Bittensor). Prepaid credits only — agents can't self-fund with TAO. Key: Settings → secrets → gm." },
+  { id: "anthropic", local: "local-3ce36528bf", group: "Anthropic — direct API", hint: "Claude models over your own Anthropic API key (metered per token — separate from a Claude Code subscription). Key: Settings → secrets → anthropic." },
+  { id: "openai", local: "local-d9617135d6", group: "OpenAI", hint: "GPT models over your OpenAI API key. Key: Settings → secrets → openai." },
+  { id: "openrouter", local: "local-76ef4ad6f0", group: "OpenRouter — many labs, one key", hint: "Hundreds of models through one OpenRouter key. Key: Settings → secrets → openrouter." },
 ];
 
 export interface BrainSelection {
@@ -65,7 +70,12 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
           ? "router"
           : "";
 
+  // Picking a locked shelf doesn't change the agent — it tells you where
+  // the key goes. The selection stays put; the hint does the teaching.
+  const [lockedPick, setLockedPick] = useState<string>();
   const choose = (v: string) => {
+    if (v.startsWith("locked:")) { setLockedPick(v.slice("locked:".length)); return; }
+    setLockedPick(undefined);
     const wired = WIRED.find((w) => v.startsWith(`${w.id}:`));
     if (v === "claude-code") onChange({ harness: "claude-code", provider: "", model: "" });
     else if (wired) onChange({ harness: "pi", provider: wired.local, model: v.slice(wired.id.length + 1) });
@@ -73,6 +83,7 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
   };
 
   const hasOptions = claudeInstalled || WIRED.some((w) => (wiredModels[w.id] ?? []).length > 0);
+  const lockedEntry = WIRED.find((w) => w.id === lockedPick);
 
   return (
     <div className="settings-field">
@@ -80,29 +91,45 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
       {loading ? (
         <div className="settings-hint">◌ loading your models…</div>
       ) : (
-        <select className="manage-select" value={current} onChange={(e) => choose(e.target.value)}>
-          {!current && <option value="">Not configured — pick a model</option>}
-          {claudeInstalled && <option value="claude-code">Claude Code</option>}
-          {WIRED.filter((w) => (wiredModels[w.id] ?? []).length > 0).map((w) => (
-            <optgroup key={w.id} label={w.group}>
-              {wiredModels[w.id].map((m) => (
-                <option key={m} value={`${w.id}:${m}`}>{m}</option>
-              ))}
+        <select className="manage-select" value={lockedPick ? `locked:${lockedPick}` : current} onChange={(e) => choose(e.target.value)}>
+          {!current && !lockedPick && <option value="">Not configured — pick a model</option>}
+          {/* fez's own runtime leads the list; the guest harness follows. */}
+          {WIRED.map((w) => {
+            const models = wiredModels[w.id] ?? [];
+            return (
+              <optgroup key={w.id} label={w.group}>
+                {models.length > 0 ? (
+                  models.map((m) => <option key={m} value={`${w.id}:${m}`}>{m}</option>)
+                ) : (
+                  <option value={`locked:${w.id}`}>add a key to unlock…</option>
+                )}
+              </optgroup>
+            );
+          })}
+          {claudeInstalled && (
+            <optgroup label="On this machine">
+              <option value="claude-code">Claude Code</option>
             </optgroup>
-          ))}
+          )}
           {current === "router" && <option value="router">Router (advanced — edit in the .md)</option>}
         </select>
       )}
-      {current === "claude-code" && (
+      {current === "claude-code" && !lockedPick && (
         <div className="settings-hint">Uses Claude Code's own model — nothing to configure here.</div>
       )}
-      {selectedWired && current.startsWith(`${selectedWired.id}:`) && (
+      {selectedWired && current.startsWith(`${selectedWired.id}:`) && !lockedPick && (
         <div className="settings-hint">{selectedWired.hint}</div>
       )}
-      {wireError && <div className="settings-hint">⚠ {wireError}</div>}
-      {!loading && !hasOptions && !wireError && (
+      {lockedEntry && (
         <div className="settings-hint">
-          No models yet — install Claude Code, or add a Chutes or GM key in Settings → secrets, then reopen.
+          🔒 {lockedEntry.hint} Add the key, then reopen this editor — the models list themselves.
+        </div>
+      )}
+      {wireError && <div className="settings-hint">⚠ {wireError}</div>}
+      {!loading && !hasOptions && !wireError && !lockedPick && (
+        <div className="settings-hint">
+          Every shelf is locked right now — add any provider key in Settings → secrets (or install Claude
+          Code) and the models appear here.
         </div>
       )}
     </div>
