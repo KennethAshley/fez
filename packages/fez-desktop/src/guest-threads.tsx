@@ -485,7 +485,17 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
     setSettling(true); setHireErr(undefined);
     try {
       const args = ["escrow", verb, posterAddr, agentPayTo, arbiterAddr, hire.amount, "--json"];
-      const first = await walletCall([...args, "--as", hire.persona]);
+      const first = await walletCall([...args, "--as", hire.persona]).catch((err: unknown) => {
+        // The chain's raw voice for "can't reserve the multisig deposit"
+        // is InsufficientBalance — translate it, because the money's
+        // already locked in escrow when this hits and a raw error reads
+        // as lost funds. The deposit (~0.2 tτ) is refunded on execution.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/InsufficientBalance|too low/i.test(msg)) {
+          throw new Error(`${hire.persona} can't cover the release deposit (~0.2 tτ, held by the chain during approval and refunded when it executes) — top up ${hire.persona} and press ${verb} again; the escrow is safe meanwhile`);
+        }
+        throw err;
+      });
       const exec = first.executed ? first : await walletCall([...args, "--as", ARBITER]);
       const done: Hire = {
         ...hire,
@@ -644,7 +654,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             </select>
             <button className="guest-hire-btn" onClick={startHire} title="a handshake — nothing moves until you settle">lock terms</button>
             {agentPayTo && arbiterAddr ? (
-              <button className="guest-hire-btn" disabled={settling} onClick={() => void startEscrow()} title="funds move NOW into a 2-of-3 multisig the agent can verify; release or refund later needs two keys">
+              <button className="guest-hire-btn" disabled={settling} onClick={() => void startEscrow()} title="funds move NOW into a 2-of-3 multisig the agent can verify; release or refund needs two keys. Releasing also holds a ~0.2 tτ chain deposit from the paying account (refunded when it executes)">
                 {settling ? "funding…" : "hold in escrow"}
               </button>
             ) : null}
