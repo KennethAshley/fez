@@ -56,7 +56,8 @@ export function isPrivateAddress(ip: string): boolean {
   const low = ip.toLowerCase();
   if (low === "::1" || low === "::") return true;
   if (low.startsWith("fc") || low.startsWith("fd")) return true; // fc00::/7
-  if (low.startsWith("fe80")) return true; // link-local
+  if (/^fe[89ab]/.test(low)) return true; // fe80::/10 link-local (fe80-febf)
+  if (low.startsWith("fec0")) return true; // fec0::/10 site-local, deprecated but still routable internally
   return false;
 }
 
@@ -96,6 +97,7 @@ export async function guardedFetch(
       const loc = res.headers.get("location");
       if (!loc) throw new Error(`redirect with no location from ${url.hostname}`);
       url = new URL(loc, url); // relative redirects resolve against current
+      void res.body?.cancel().catch(() => {});
       continue;
     }
     const reader = res.body?.getReader();

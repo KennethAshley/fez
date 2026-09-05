@@ -51,7 +51,7 @@ export const PERM_LABEL: Record<string, string> = {
   "network:relay": "talk to your relay",
 };
 
-export const SENSITIVE = new Set(["publish", "personas", "background", "processes"]);
+export const SENSITIVE = new Set(["publish", "personas", "background", "processes", "network:*"]);
 
 /** Human label for a permission id — network:<host> ids get a real
  * sentence instead of falling through to raw code, since half the new

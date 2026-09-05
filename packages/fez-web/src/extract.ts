@@ -27,11 +27,11 @@ export function extractReadable(html: string, url: string, maxChars = DEFAULT_MA
   return { title, text: truncated ? text.slice(0, cap) : text, truncated };
 }
 
-export async function fetchReadable(url: string, maxChars?: number): Promise<{ url: string; title: string; text: string; truncated: boolean }> {
+export async function fetchReadable(url: string, maxChars?: number): Promise<{ url: string; status: number; title: string; text: string; truncated: boolean }> {
   const res = await guardedFetch(url);
   if (!/html|xml|text|json/.test(res.contentType) && res.contentType) {
-    return { url: res.finalUrl, title: "", text: `(${res.contentType}, ${res.body.length} bytes — not a text page)`, truncated: false };
+    return { url: res.finalUrl, status: res.status, title: "", text: `(${res.contentType}, ${res.body.length} bytes — not a text page)`, truncated: false };
   }
   const r = extractReadable(res.body, res.finalUrl, maxChars);
-  return { url: res.finalUrl, ...r };
+  return { url: res.finalUrl, status: res.status, ...r };
 }
