@@ -435,6 +435,12 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       ws.send(JSON.stringify(["EVENT", signed]));
       setEvents((prev) => new Map(prev).set((signed as WireEvent).id, signed as WireEvent));
       setDraft("");
+      // Clear the ledger copy too — a prefilled draft that already went out
+      // must never resurrect on a later reopen and look like a fresh, unsent
+      // task. Unconditional (not gated on guest.draft, which can be stale in
+      // this closure) — JSON.stringify drops the undefined key, so it never
+      // lingers as a literal "draft" field in storage.
+      addGuest({ ...guest, draft: undefined });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
