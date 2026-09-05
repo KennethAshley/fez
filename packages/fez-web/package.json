@@ -1,0 +1,40 @@
+{
+  "name": "@fezchat/web",
+  "version": "0.1.0",
+  "description": "Web tools for fez agents — search and readable-page extraction, with an SSRF guard between every agent and the open internet.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "fez": {
+    "type": "extension",
+    "parts": { "skill": { "command": "node", "args": ["dist/mcp.js"] } },
+    "permissions": ["network:*"],
+    "minFezVersion": "0.2.0"
+  },
+  "scripts": {
+    "build": "esbuild src/mcp.ts src/index.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && tsc -p tsconfig.types.json",
+    "check": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "linkedom": "^0.18.5",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "private": true
+}
