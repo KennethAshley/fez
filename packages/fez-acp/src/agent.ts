@@ -63,7 +63,7 @@ import { isAddressedTo } from "./addressing.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
-import { capReply as capReplyPure, stripHarnessNoise } from "./bridge-policy.js";
+import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
@@ -203,9 +203,10 @@ async function main() {
   // Prompt rules bend under manipulation; this doesn't — a bridge talked
   // into dumping a channel log still can't publish more than the cap.
   const maxReplyChars = Number(persona.extra.maxReplyChars) > 0 ? Number(persona.extra.maxReplyChars) : undefined;
-  // Noise first, cap second — a banner that survives the cap wastes the
-  // budget on plumbing.
-  const capReply = (text: string): string => capReplyPure(stripHarnessNoise(text), maxReplyChars);
+  // Noise first, then the self-address (smaller models mirror the
+  // transcript and open with their own @name), cap last — a banner that
+  // survives the cap wastes the budget on plumbing.
+  const capReply = (text: string): string => capReplyPure(stripSelfAddress(stripHarnessNoise(text), personaId), maxReplyChars);
   const shareLevel = (persona.extra.shareLevel as string | undefined)?.trim();
   // Resolve declared skills; the unresolved ones aren't silently dropped
   // — the agent is told about the gap so it can SAY SO when a task needs

@@ -22,3 +22,15 @@ export function stripHarnessNoise(text: string): string {
     .join("\n")
     .trim();
 }
+
+/**
+ * Strip a reply's self-address. Smaller models mirror the transcript
+ * format they're shown and open with their own name — "@steph: Swish!"
+ * — which reads as an agent talking to itself. Only the LEADING
+ * self-mention goes; a reply that legitimately mentions its own name
+ * mid-sentence keeps it, and other agents' mentions are untouched.
+ */
+export function stripSelfAddress(text: string, personaId: string): string {
+  const pattern = new RegExp(`^@?${personaId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:,—-]\\s*`, "i");
+  return text.replace(pattern, "").trimStart();
+}
