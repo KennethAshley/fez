@@ -14,12 +14,14 @@ attach it to any agent with `mcpServers: [targon]`.
 
 A thin wrapper over `api.targon.com/tha/v3` — no CLI to install (Targon's
 is cargo-build-from-source with no release binaries), just fetch with a
-Bearer token. The one subprocess is `ssh`, argv-only, for exec:
+Bearer token. Endpoints and shapes verified against the official CLI
+source (manifold-inc/targon-sdk), not just the docs — even exec is an
+API call, so no shell and no ssh subprocess anywhere:
 
 - `targon_inventory(gpu?)` — what's rentable, at what $/hour, how many units.
 - `targon_workloads()` — your workloads: uid, status, burn rate.
 - `targon_up(resource, image?, name?)` — create + deploy a RENTAL.
-- `targon_exec(workload, command)` — run a command over SSH.
+- `targon_exec(workload, command)` — run a command via Targon's exec API.
 - `targon_rm(workload)` — delete, stop paying.
 - `targon_balance()` — the org's prepaid credits. Top-ups happen at
   targon.com; agents cannot move money in.

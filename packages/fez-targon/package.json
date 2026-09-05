@@ -18,8 +18,7 @@
       }
     },
     "permissions": [
-      "network:api.targon.com",
-      "network:ssh.deployments.targon.com"
+      "network:api.targon.com"
     ]
   },
   "scripts": {
