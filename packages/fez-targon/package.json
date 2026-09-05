@@ -1,0 +1,40 @@
+{
+  "name": "@fezchat/targon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Targon (Bittensor subnet 4) GPU rentals for fez — agents rent a machine by the hour over Targon's REST API, run jobs on it, and give it back. No marketplace TTL exists on Targon: billing runs until the workload is deleted, so the price ceiling, balance check, and ledger carry the whole spend story.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ],
+        "env": {
+          "TARGON_API_KEY": ""
+        }
+      }
+    },
+    "permissions": [
+      "network:api.targon.com",
+      "network:ssh.deployments.targon.com"
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
