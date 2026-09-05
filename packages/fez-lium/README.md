@@ -18,10 +18,11 @@ agent-facing surface, `--format json` everywhere):
 - `lium_up(node, template?, ttl?)` — rent. **TTL mandatory** (default 1h);
   Lium itself stops billing when it expires, even if fez is gone.
 - `lium_exec(pod, command)` — run a command on the pod.
-- `lium_copy(pod, from, to)` — files in/out.
+- `lium_copy(pod, source, destination?, download?)` — files in/out.
 - `lium_rm(pod)` — terminate, stop paying.
-- `lium_balance()` / `lium_topup(usd)` — funds; topup emits an invoice for
-  the HUMAN to pay. Agents cannot move money in.
+- `lium_balance()` / `lium_topup(usd, network)` — funds; topup emits a USDT
+  invoice for the HUMAN to pay (the network — e.g. tron — is theirs to name).
+  Agents cannot move money in.
 
 ## The guards (checked before any spend)
 
