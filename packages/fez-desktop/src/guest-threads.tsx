@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import type { BrowserWire } from "./wire";
-import { latestPendingFor, updateRecord, tauriStore } from "./orchestration";
+import { latestPendingFor, latestSentFor, updateRecord, tauriStore } from "./orchestration";
 
 const MD_PLUGINS = [remarkGfm, remarkBreaks];
 
@@ -535,12 +535,20 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         throw err;
       });
       const exec = first.executed ? first : await walletCall([...args, "--as", ARBITER]);
+      const releaseTxHash = String(exec.txHash ?? "");
       const done: Hire = {
         ...hire,
         escrow: { ...hire.escrow, state: verb === "release" ? "released" : "refunded" },
-        ...(verb === "release" ? { settled: { txHash: String(exec.txHash ?? ""), at: Date.now() } } : {}),
+        ...(verb === "release" ? { settled: { txHash: releaseTxHash, at: Date.now() } } : {}),
       };
       setHire(guest.pk, done); setHireState(done);
+      // Orchestration corpus: an escrow release is a paid hire — record
+      // what moved. Best-effort, and only on release (a refund paid nobody).
+      if (verb === "release") {
+        void latestSentFor(tauriStore.read, guest.pk)
+          .then((rec) => rec && updateRecord(tauriStore.read, tauriStore.write, rec.id, { hire: { kind: "escrow", paid: hire.amount, txHash: releaseTxHash } }))
+          .catch(() => {});
+      }
     } catch (err) {
       setHireErr(err instanceof Error ? err.message : String(err));
     } finally { setSettling(false); }
@@ -588,8 +596,14 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       });
       if (res.code !== 0) throw new Error(res.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() || `settle exited ${res.code}`);
       const out = JSON.parse(res.stdout.trim().split("\n").pop() ?? "{}") as { txHash?: string };
-      const settled: Hire = { ...hire, settled: { txHash: out.txHash ?? "", at: Date.now() } };
+      const settleTxHash = out.txHash ?? "";
+      const settled: Hire = { ...hire, settled: { txHash: settleTxHash, at: Date.now() } };
       setHire(guest.pk, settled); setHireState(settled);
+      // Orchestration corpus: what was actually paid, once settle succeeds.
+      // Best-effort — a log failure must never look like a failed settle.
+      void latestSentFor(tauriStore.read, guest.pk)
+        .then((rec) => rec && updateRecord(tauriStore.read, tauriStore.write, rec.id, { hire: { kind: "settle", paid: hire.amount, txHash: settleTxHash } }))
+        .catch(() => {});
     } catch (err) {
       setHireErr(err instanceof Error ? err.message : String(err));
     } finally {

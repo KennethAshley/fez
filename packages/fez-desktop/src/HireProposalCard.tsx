@@ -3,19 +3,30 @@
  * 2026-09-04). "hire" opens the guest DM with the task prefilled — the
  * user's send is the send, and any money moves through the DM strip's
  * proven rails on this machine's wallet. "not now" is a real decision,
- * logged: declines are the preference signal the corpus needs.
+ * logged: declines are the preference signal the corpus needs. An IGNORED
+ * proposal is a decision too (spec 2026-09-04, C1a) — the mount effect
+ * records it "pending" immediately rather than waiting for a click, so a
+ * card nobody touches still lands in the corpus instead of vanishing.
  */
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { parseHireProposal } from "./hire-proposal";
 import { recordProposal, updateRecord, findByProposal, tauriStore } from "./orchestration";
 import { openGuestDm } from "./gui-extensions";
-
-const BAZAAR_RELAY = "wss://bazaar.fez.chat";
+import { BAZAAR_RELAY } from "./bazaar-record";
+import { MdContext } from "./App";
 
 export default function HireProposalCard({ fenceText, roster }: { fenceText: string; roster: string[] }) {
   const p = parseHireProposal(fenceText);
+  const { authorName } = useContext(MdContext);
   const [decision, setDecision] = useState<"pending" | "accepted" | "declined">("pending");
   const [recId, setRecId] = useState<string>();
+
+  const recordInput = (proposal: NonNullable<typeof p>) => ({
+    task: proposal.task, roster,
+    picked: { pk: proposal.pk, name: proposal.name, ...(proposal.rateTaoHr !== undefined ? { rateTaoHr: proposal.rateTaoHr } : {}) },
+    why: proposal.why, kind: proposal.kind,
+    ...(proposal.priceEstTao !== undefined ? { priceEstTao: proposal.priceEstTao } : {}),
+  });
 
   // A remounted card (leave the channel, come back) starts with no state
   // of its own — without this it re-offers the buttons on an
@@ -25,10 +36,27 @@ export default function HireProposalCard({ fenceText, roster }: { fenceText: str
     if (!p) return;
     let live = true;
     void findByProposal(tauriStore.read, p.pk, p.task)
-      .then((rec) => {
-        if (!live || !rec) return;
-        setRecId(rec.id);
-        if (rec.decision !== "pending") setDecision(rec.decision);
+      .then(async (rec) => {
+        if (!live) return;
+        if (rec) {
+          setRecId(rec.id);
+          if (rec.decision !== "pending") setDecision(rec.decision);
+          return;
+        }
+        // No record: this proposal has never been seen before, ignored or
+        // not. Record it now (decision starts "pending") so an ignored
+        // card still leaves a trace. Re-check right before creating — two
+        // card instances (or a StrictMode double-invoke) can both reach
+        // here before either write lands.
+        const recheck = await findByProposal(tauriStore.read, p.pk, p.task);
+        if (!live) return;
+        if (recheck) {
+          setRecId(recheck.id);
+          if (recheck.decision !== "pending") setDecision(recheck.decision);
+          return;
+        }
+        const id = await recordProposal(tauriStore.read, tauriStore.write, recordInput(p));
+        if (live) setRecId(id);
       })
       .catch(() => {});
     return () => { live = false; };
@@ -40,20 +68,17 @@ export default function HireProposalCard({ fenceText, roster }: { fenceText: str
   const log = async (d: "accepted" | "declined") => {
     setDecision(d);
     try {
-      const id = recId ?? await recordProposal(tauriStore.read, tauriStore.write, {
-        task: p.task, roster,
-        picked: { pk: p.pk, name: p.name, ...(p.rateTaoHr !== undefined ? { rateTaoHr: p.rateTaoHr } : {}) },
-        why: p.why, kind: p.kind,
-        ...(p.priceEstTao !== undefined ? { priceEstTao: p.priceEstTao } : {}),
-      });
+      const id = recId ?? await recordProposal(tauriStore.read, tauriStore.write, recordInput(p));
       setRecId(id);
       await updateRecord(tauriStore.read, tauriStore.write, id, { decision: d });
     } catch { /* the log must never block the hire */ }
   };
 
+  const relay = p.relay ?? BAZAAR_RELAY;
+
   return (
     <span className="hire-proposal">
-      <span className="hp-head">@fez suggests the market</span>
+      <span className="hp-head">{authorName ? `@${authorName} suggests the market` : "a market proposal"}</span>
       <span className="hp-why">{p.why}</span>
       <span className="hp-who">
         {p.name}
@@ -67,7 +92,7 @@ export default function HireProposalCard({ fenceText, roster }: { fenceText: str
             title={`opens a public DM with ${p.name}, task prefilled — you press send; payment happens in the DM through your own wallet`}
             onClick={() => {
               void log("accepted");
-              openGuestDm({ pk: p.pk, relay: BAZAAR_RELAY, name: p.name, ...(p.rateTaoHr !== undefined ? { rateTaoHr: p.rateTaoHr } : {}), draft: p.task });
+              openGuestDm({ pk: p.pk, relay, name: p.name, ...(p.rateTaoHr !== undefined ? { rateTaoHr: p.rateTaoHr } : {}), draft: p.task });
             }}
           >
             open the hire

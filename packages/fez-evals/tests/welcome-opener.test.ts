@@ -79,6 +79,7 @@ describe("welcome opener", () => {
     expect(md).toContain("market_directory");
     expect(md).toContain("fez-hire-proposal");
     expect(md).toContain("AT MOST ONE");
+    expect(md).toContain("do not mention the market");
     expect(md).toMatch(/mcpServers:.*bazaar/);
   });
 

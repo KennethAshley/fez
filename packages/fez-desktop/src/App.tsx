@@ -3491,7 +3491,7 @@ function Bubble({
         </div>
       ) : (
         <div className="bubble-body md">
-          <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} media={msg.media} />
+          <MdBody text={stripArtifactMarkers(stripInstallMarkers(msg.content))} tagged={mentionNames} onMention={openMention} media={msg.media} authorName={client.displayName(msg.authorPk)} />
         </div>
       )}
       {proposalIdsIn(msg.content).map((id) => (
@@ -3597,10 +3597,14 @@ function renderMentions(text: string, tagged?: ReadonlySet<string>, onMention?: 
  * arriving message kills whatever the user was watching. Buzz hit exactly
  * this (desktop/src/shared/ui/markdown/MarkdownVideoPlayer.tsx).
  */
-const MdContext = createContext<{
+export const MdContext = createContext<{
   tagged?: ReadonlySet<string>;
   onMention?: (name: string) => void;
   media?: MediaAttachment[];
+  /** The message's author display name — a hire-proposal card renders
+   *  inside this provider and reads it so its head can say who suggested
+   *  the market instead of hardcoding @fez. */
+  authorName?: string;
 }>({});
 
 /** Reserve the box before the bytes land, so arriving media doesn't shove the timeline. */
@@ -3705,13 +3709,15 @@ function MdBody({
   tagged,
   onMention,
   media,
+  authorName,
 }: {
   text: string;
   tagged?: ReadonlySet<string>;
   onMention?: (name: string) => void;
   media?: MediaAttachment[];
+  authorName?: string;
 }) {
-  const context = useMemo(() => ({ tagged, onMention, media }), [tagged, onMention, media]);
+  const context = useMemo(() => ({ tagged, onMention, media, authorName }), [tagged, onMention, media, authorName]);
   const embeds = useMemo(() => embedUrls(text, media), [text, media]);
   return (
     <MdContext.Provider value={context}>

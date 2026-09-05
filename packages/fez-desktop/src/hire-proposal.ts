@@ -12,6 +12,10 @@ export interface HireProposal {
   kind: "settle" | "lease" | "escrow";
   priceEstTao?: number;
   rateTaoHr?: number;
+  /** The relay the bridge shopped on — falls back to BAZAAR_RELAY when
+   *  absent or malformed. Never trusted blindly: a bad value here would
+   *  point the card's DM at an arbitrary URL. */
+  relay?: string;
 }
 
 const KINDS = new Set(["settle", "lease", "escrow"]);
@@ -26,9 +30,12 @@ export function parseHireProposal(fenceText: string): HireProposal | undefined {
   if (!/^[0-9a-f]{64}$/.test(pk)) return undefined;
   if (!KINDS.has(kind)) return undefined;
   if (task.length > 4000 || why.length > 1000 || name.length > 64) return undefined;
+  const relay = s(raw.relay);
+  const validRelay = relay && relay.length <= 200 && /^wss?:\/\/[^\s]+$/.test(relay) ? relay : undefined;
   return {
     task, pk, name, why, kind: kind as HireProposal["kind"],
     ...(n(raw.price_est_tao) !== undefined ? { priceEstTao: n(raw.price_est_tao) } : {}),
     ...(n(raw.rate_tao_hr) !== undefined ? { rateTaoHr: n(raw.rate_tao_hr) } : {}),
+    ...(validRelay !== undefined ? { relay: validRelay } : {}),
   };
 }

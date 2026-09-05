@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recordProposal, updateRecord, latestPendingFor, findByProposal, type OrchestrationRecord } from "../../fez-desktop/src/orchestration";
+import { recordProposal, updateRecord, latestPendingFor, latestSentFor, findByProposal, type OrchestrationRecord } from "../../fez-desktop/src/orchestration";
 
 function memoryStore(initial?: string) {
   let blob = initial;
@@ -61,5 +61,25 @@ describe("findByProposal (remount hydration)", () => {
     await recordProposal(s.read, s.write, base);
     const found = await findByProposal(s.read, base.picked.pk, "a different task");
     expect(found).toBeUndefined();
+  });
+});
+
+describe("latestSentFor + hire patch (C1b: what a paid hire actually cost)", () => {
+  it("finds the sent, un-paid record and takes a hire patch", async () => {
+    const s = memoryStore();
+    const id = await recordProposal(s.read, s.write, base);
+    await updateRecord(s.read, s.write, id, { decision: "accepted", sentTaskId: "evt1" });
+    const found = await latestSentFor(s.read, base.picked.pk);
+    expect(found?.id).toBe(id);
+    await updateRecord(s.read, s.write, id, { hire: { kind: "settle", paid: "0.13", txHash: "0xabc" } });
+    const rec = s.dump().records!.find((r) => r.id === id)!;
+    expect(rec.hire).toEqual({ kind: "settle", paid: "0.13", txHash: "0xabc" });
+  });
+  it("is undefined for a record with no sent task, and skips one already paid", async () => {
+    const s = memoryStore();
+    const id = await recordProposal(s.read, s.write, base);
+    expect(await latestSentFor(s.read, base.picked.pk)).toBeUndefined();
+    await updateRecord(s.read, s.write, id, { decision: "accepted", sentTaskId: "evt1", hire: { kind: "settle", paid: "0.13", txHash: "0xabc" } });
+    expect(await latestSentFor(s.read, base.picked.pk)).toBeUndefined();
   });
 });

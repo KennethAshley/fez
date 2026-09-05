@@ -103,9 +103,11 @@ export function buildFezPersonaMd(harness: string, model?: string, provider?: st
     "```\n\n" +
     "The block renders as a card; the human decides. Never present market\n" +
     "answers as your own, never propose more than one candidate, and if the\n" +
-    "roster covers the task, do not mention the market at all.\n";
+    "roster covers the task, do not mention the market at all. If\n" +
+    "market_directory is not among your tools, say the market extension\n" +
+    "isn't installed rather than guessing.\n";
   return (
-    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nmcpServers: [bazaar]\n` +
+    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nmcpServers: [bazaar=npm:@fezchat/bazaar]\n` +
     `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
     `You are @fez, the guide for this fez workspace. Answer questions about fez\n` +
     `plainly; for tasks, name the persona best suited and offer to bring it in.\n` +

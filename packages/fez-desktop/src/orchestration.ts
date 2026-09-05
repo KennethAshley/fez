@@ -4,7 +4,9 @@
  * the training data the router eventually becomes — logged LOCALLY only
  * (it contains the user's task text); export is a later, opt-in act.
  * Storage: the extension-storage blob "orchestration" as {records: [...]}
- * — read-modify-write, small records, no new Rust.
+ * — read-modify-write, small records, no new Rust. On disk this lands as
+ * prefs.records.{records: [...]} — extension-storage wraps every key under
+ * "prefs", so tauriStore unwraps one extra layer on read (see below).
  * ponytail: unbounded array; rotate/export when it measurably matters.
  */
 import { invoke } from "@tauri-apps/api/core";
@@ -21,6 +23,10 @@ export interface OrchestrationRecord {
   decision: "pending" | "accepted" | "declined";
   sentTaskId?: string;
   outcome?: { delivered: boolean; latencyS?: number };
+  /** What was actually paid, once a settle or escrow release closes the
+   *  hire — the corpus's other half of "accepted": not just that a human
+   *  said yes, but what it cost. */
+  hire?: { kind: string; paid: string; txHash: string };
 }
 
 export type ReadFn = () => Promise<string | undefined>;
@@ -60,6 +66,16 @@ export async function latestPendingFor(read: ReadFn, pk: string): Promise<Orches
   const records = await load(read);
   return [...records].reverse().find((r) => r.picked.pk === pk && r.decision === "pending")
     ?? [...records].reverse().find((r) => r.picked.pk === pk && r.decision === "accepted" && !r.outcome);
+}
+
+/** The record a payment should attach to: newest for this candidate that
+ *  has a sent task but no recorded hire yet. `latestPendingFor` is shaped
+ *  for the "still deciding / delivered?" callers and can skip past a
+ *  record that's already been sent — this is the narrower lookup the
+ *  settle/escrow sites need. */
+export async function latestSentFor(read: ReadFn, pk: string): Promise<OrchestrationRecord | undefined> {
+  const records = await load(read);
+  return [...records].reverse().find((r) => r.picked.pk === pk && r.sentTaskId && !r.hire);
 }
 
 /** The latest record for exactly this proposal (same candidate, same task

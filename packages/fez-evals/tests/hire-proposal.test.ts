@@ -28,4 +28,18 @@ describe("parseHireProposal", () => {
     const noWhy = JSON.parse(good); delete noWhy.why;
     expect(parseHireProposal(JSON.stringify(noWhy))).toBeUndefined();
   });
+  it("rejects a missing task", () => {
+    const noTask = JSON.parse(good); delete noTask.task;
+    expect(parseHireProposal(JSON.stringify(noTask))).toBeUndefined();
+  });
+  it("rejects a task over the length cap", () => {
+    const tooLong = { ...JSON.parse(good), task: "x".repeat(4001) };
+    expect(parseHireProposal(JSON.stringify(tooLong))).toBeUndefined();
+  });
+  it("accepts a valid wss relay, omits an invalid one", () => {
+    const withRelay = parseHireProposal(JSON.stringify({ ...JSON.parse(good), relay: "wss://miner-relay.example" }))!;
+    expect(withRelay.relay).toBe("wss://miner-relay.example");
+    const junkRelay = parseHireProposal(JSON.stringify({ ...JSON.parse(good), relay: "not a relay" }))!;
+    expect(junkRelay.relay).toBeUndefined();
+  });
 });
