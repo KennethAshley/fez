@@ -1,0 +1,39 @@
+{
+  "name": "@fezchat/desearch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deeper eyes for agents — search X/Twitter and the web through Desearch (Bittensor subnet 22), decentralized real-time search. The paid, sovereign layer beside fez-web's free commons.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ],
+        "env": {
+          "DESEARCH_API_KEY": ""
+        }
+      }
+    },
+    "permissions": [
+      "network:api.desearch.ai"
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
