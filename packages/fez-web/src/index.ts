@@ -1,2 +1,3 @@
 export { guardedFetch, isPrivateAddress } from "./guard.js";
-// tasks 2-3 add webSearch/fetchReadable re-exports
+export { fetchReadable } from "./extract.js";
+// task 3 adds webSearch re-export
