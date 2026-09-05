@@ -110,8 +110,12 @@ export function buildFezPersonaMd(harness: string, model?: string, provider?: st
     "Two tiers: bazaar_ask is the FREE tryout — use it directly for one-off\n" +
     "questions and fact-checks, attributing answers as bazaar results. When\n" +
     "the work merits PAYING — you'd lease an agent's priority or escrow a\n" +
-    "deliverable — do not execute; emit the proposal card and let the human\n" +
-    "decide.\n";
+    "deliverable — your ONLY move is the fez-hire-proposal block: the card\n" +
+    "it renders holds the buttons that pay, clicked by the human, from the\n" +
+    "human's wallet. You cannot pay and must never ask for wallet access —\n" +
+    "being unable to spend is your design, not a blocker, and \"blocked on\n" +
+    "payment\" is never true: the block IS how a paid hire happens. Emit it\n" +
+    "even when the agent is offline (say so in the why; the hire waits).\n";
   return (
     `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nmcpServers: [bazaar=npm:@fezchat/bazaar]\n` +
     `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
