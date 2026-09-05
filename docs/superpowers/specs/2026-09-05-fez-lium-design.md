@@ -39,9 +39,12 @@ tool that exists), not the chutes pattern (speak HTTPS ourselves).
 - **skill** — `dist/mcp.js`, tools below, `LIUM_API_KEY` injected from
   SKILLS & SECRETS (keychain custody, the chutes rule: an API key, not a
   coldkey — a leak costs at most the balance, never the wallet).
-- **personas** — `@rig`, the compute agent (aliases: `lium`, `gpu` —
-  `compute` is taken, @chip claimed it). The @vault of machines: rents,
-  runs, reports, returns.
+- **no persona** — the skill attaches to any agent via
+  `mcpServers: [lium]` (the fez-web model, not the @vault model). The
+  behavioral rules ride in the tool descriptions themselves — setup and
+  topup name the human as the approver, exec frames its output as
+  untrusted — so every attached agent inherits them, not just a
+  house-branded one.
 
 Users never run curl. Setup is a tool, consent-gated: `lium_setup`
 downloads the official binary (the installer script is just a one-file
@@ -94,13 +97,15 @@ human's name are both theirs to approve. Absent tools answer with
   precedent): "this lets attached agents run commands on rented
   machines and pay for them from your Lium balance."
 
-## @rig, the persona
+## The etiquette (in the tool descriptions, not a persona)
 
-Rents small by default, states the price before `up`, ships anything
-worth keeping to @vault before `rm` (buckets outlive bodies), and never
-leaves a pod running past its errand — the TTL is a backstop, not a
-plan. If asked for something the balance can't carry, it emits the
-topup invoice and stops.
+Rent small, state the price before `up`, ship anything worth keeping to
+@vault before `rm` (buckets outlive bodies), never leave a pod running
+past its errand — the TTL is a backstop, not a plan. Balance can't carry
+the job → emit the topup invoice and stop. These live in the tools'
+descriptions and refusal messages so every attached agent gets them; a
+dedicated persona was considered and dropped as a layer the skill
+doesn't need.
 
 ## Parked (named so it's chosen later, not drifted into)
 

@@ -1,17 +1,18 @@
 # @fezchat/lium
 
 **Bodies for agents.** Lium (formerly Celium, Bittensor subnet 51) is a
-decentralized GPU rental marketplace; this extension ships **@rig**, an agent
-that rents a machine sized to the job, runs it, ships the results, and gives
-it back. Compute becomes a line item, not a place.
+decentralized GPU rental marketplace; this extension gives any agent the
+tools to rent a machine sized to the job, run it, ship the results, and
+give it back. Compute becomes a line item, not a place.
 
 Phase 2 of the Bittensor integration, compute edition: discovery (@scout),
-inference (@chip), storage (@vault), and now the machine itself.
+inference (@chip), storage (@vault), and now the machine itself. No
+persona of its own — attach it to any agent with `mcpServers: [lium]`.
 
-## What @rig does
+## The tools
 
-Tools (the `lium` skill, a thin wrapper over the `lium` CLI — Lium's own
-agent-facing surface, `--format json` everywhere):
+A thin wrapper over the `lium` CLI — Lium's own agent-facing surface,
+`--format json` everywhere:
 
 - `lium_nodes(gpu?, country?)` — what's rentable, at what $/hour.
 - `lium_pods()` — your pods: status, uptime, burn rate.
@@ -35,7 +36,7 @@ agent-facing surface, `--format json` everywhere):
 
 ## Setup (in-channel, consent-gated)
 
-No curl, no terminal. Say yes when @rig offers **lium_setup**:
+No curl, no terminal. Say yes when an attached agent offers **lium_setup**:
 
 - without an email it downloads the official `lium` binary (one static
   file from Lium's GitHub releases, into `~/.fez/lium/bin` — no shell
@@ -44,8 +45,9 @@ No curl, no terminal. Say yes when @rig offers **lium_setup**:
   generates a password, stores the API key in `~/.lium/config.ini`,
   registers an SSH key, and grants the $5 signup credit when available.
 
-@rig is instructed to run it only after you agree in the channel — the
-binary is an executable and signup creates an account in your name.
+The tool's own description tells agents to run it only after you agree in
+the channel — the binary is an executable and signup creates an account
+in your name.
 Already have an account? Skip signup: `lium init`, or set `LIUM_API_KEY`
 in SKILLS & SECRETS (keychain custody — a leaked key costs at most the
 balance, never a wallet).

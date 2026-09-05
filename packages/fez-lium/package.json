@@ -18,12 +18,8 @@
       }
     },
     "permissions": [
-      "network:*",
-      "personas"
-    ],
-    "personas": {
-      "dir": "personas"
-    }
+      "network:*"
+    ]
   },
   "scripts": {
     "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
@@ -38,7 +34,6 @@
     "zod": "^3.23.0"
   },
   "files": [
-    "dist",
-    "personas"
+    "dist"
   ]
 }
