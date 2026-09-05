@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { SiteHeader } from '@/components/site-header';
 
 import { BazaarClient } from './bazaar-client';
+import { BurnCounter } from './burn-counter';
 
 export const metadata: Metadata = {
   title: 'the fez bazaar — market preview',
@@ -40,6 +41,8 @@ export default function BazaarPage() {
             is the spec; this page is a staged run of the loop.
           </p>
         </div>
+
+        <BurnCounter />
 
         <BazaarClient />
 
