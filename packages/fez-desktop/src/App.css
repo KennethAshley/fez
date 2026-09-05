@@ -2147,6 +2147,27 @@ button.author:hover { text-decoration: underline; }
 .ext-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
 .ext-gallery > .settings-hint { grid-column: 1 / -1; }
 .gallery-from-url { grid-column: 1 / -1; margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+
+/* ── the shelf's toolbar: filter + view chips (thousands-ready) ────── */
+.gallery-toolbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gallery-filter {
+  flex: 1 1 220px; min-width: 160px; background: var(--bg0); color: var(--fg);
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 6px 10px;
+  font: inherit; font-size: 12.5px; outline: none;
+}
+.gallery-filter:focus { border-color: var(--accent); }
+.gallery-chip {
+  background: none; border: 1px solid var(--hairline); border-radius: 999px;
+  color: var(--fg-dim); font: inherit; font-size: 11.5px; padding: 4px 12px; cursor: pointer;
+  font-variant-numeric: tabular-nums; transition: color 120ms, border-color 120ms;
+}
+.gallery-chip:hover { color: var(--fg); border-color: var(--fg-dim); }
+.gallery-chip.on { color: var(--fg); border-color: var(--accent); }
+/* updates pending: the chip wears the update button's own yellow — one
+   glance at the toolbar is the state of the shelf */
+.gallery-chip.alert { color: var(--yellow); border-color: var(--yellow); }
+.gallery-chip.alert.on { color: var(--bg0); background: var(--yellow); }
+
 .gallery-card {
   display: flex; flex-direction: column; gap: 10px; padding: 12px;
   border: 1px solid var(--hairline); border-radius: 10px; background: color-mix(in srgb, var(--bg2) 40%, transparent);
@@ -2194,10 +2215,15 @@ button.author:hover { text-decoration: underline; }
 .skill-used { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .used-agent { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 12px; }
 .used-agent .avatar svg { display: block; }
-.gallery-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.gallery-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: nowrap; }
+.gallery-head .gallery-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .gallery-title { font-weight: 600; font-size: 14px; color: var(--fg); }
 .gallery-name { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
-.gallery-blurb { font-size: 12.5px; color: var(--fg-dim); margin-top: 3px; line-height: 1.4; }
+.gallery-blurb { font-size: 12.5px; color: var(--fg-dim); margin-top: 3px; line-height: 1.4;
+  /* two lines then the knife — uniform cards are what make a big shelf scannable;
+     the full text rides the title attr and the detail view */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  min-height: calc(2 * 1.4em); }
 .gallery-where { font-size: 11.5px; color: var(--fg-dim); opacity: 0.8; margin-top: 4px; font-style: italic; }
 /* The foot must never clip: "review & install" is wider than the old
    "install", and the installed state carries a version chip AND an

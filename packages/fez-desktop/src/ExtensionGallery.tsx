@@ -42,6 +42,10 @@ export function ExtensionGallery({
   const [info, setInfo] = useState<{ version?: string; description?: string; readme?: string }>();
   const [urlDraft, setUrlDraft] = useState<string>("");
   const [submitted, setSubmitted] = useState<string>();
+  // The shelf's scale furniture: a filter and three views. Built for a
+  // catalog of thousands, honest at a dozen — search-first, uniform cells.
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<"all" | "installed" | "updates">("all");
 
   // Fetch the registry README when a detail page opens.
   useEffect(() => {
@@ -205,13 +209,59 @@ export function ExtensionGallery({
     );
   }
 
+  // Chip math + the filtered shelf. hasUpdate mirrors the card's own
+  // "newer" logic so the chip and the yellow button can never disagree.
+  const hasUpdate = (entry: GalleryEntry) => {
+    const key = norm(entry.name);
+    const cur = installedVer[key];
+    return !!(latest[key] && cur && latest[key] !== cur);
+  };
+  const q = query.trim().toLowerCase();
+  const shelf = GALLERY.filter((e) => {
+    if (view === "installed" && !isInstalled(e)) return false;
+    if (view === "updates" && !hasUpdate(e)) return false;
+    if (!q) return true;
+    return `${e.title} ${e.name} ${e.blurb}`.toLowerCase().includes(q);
+  });
+  const updateCount = GALLERY.filter(hasUpdate).length;
+  const installedCount = GALLERY.filter(isInstalled).length;
+
   return (
     <div className="ext-gallery">
       <div className="settings-hint">
         Official fez extensions. Installing fetches the package from npm and grants the permissions shown — no
         terminal needed. Anything not listed: <code>fez install &lt;name&gt;</code> in a terminal.
       </div>
-      {GALLERY.map((entry) => {
+      {/* The shelf's toolbar: filter + views. The updates chip wears the
+          update button's own yellow when something needs you — one glance
+          at this row is the state of the shelf. */}
+      <div className="gallery-toolbar">
+        <input
+          className="gallery-filter"
+          value={query}
+          spellCheck={false}
+          placeholder="filter extensions…"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <button className={`gallery-chip${view === "all" ? " on" : ""}`} onClick={() => setView("all")}>
+          all · {GALLERY.length}
+        </button>
+        <button className={`gallery-chip${view === "installed" ? " on" : ""}`} onClick={() => setView("installed")}>
+          installed · {installedCount}
+        </button>
+        <button
+          className={`gallery-chip${view === "updates" ? " on" : ""}${updateCount ? " alert" : ""}`}
+          onClick={() => setView("updates")}
+        >
+          updates · {updateCount}
+        </button>
+      </div>
+      {shelf.length === 0 && (
+        <div className="settings-hint">
+          {view === "updates" && !updateCount ? "Everything installed is current." : `Nothing matches “${query.trim()}”.`}
+        </div>
+      )}
+      {shelf.map((entry) => {
         const done = isInstalled(entry);
         const busy = installing === entry.name;
         const key = norm(entry.name);
@@ -229,8 +279,11 @@ export function ExtensionGallery({
                   <span className="gallery-title">{entry.title}</span>
                   <code className="gallery-name">{entry.name}</code>
                 </span>
-                <span className="gallery-blurb">{entry.blurb}</span>
-                <span className="gallery-where">↳ {entry.where}</span>
+                {/* Two lines, then the knife — the full pitch and the
+                    "adds…" prose live one click away in the detail view.
+                    A shelf of thousands is scannable only if every card
+                    is the same shape. */}
+                <span className="gallery-blurb" title={`${entry.blurb}\n\n↳ ${entry.where}`}>{entry.blurb}</span>
               </span>
             </button>
             <div className="gallery-foot">
