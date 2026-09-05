@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import type { BrowserWire } from "./wire";
+import { latestPendingFor, updateRecord, tauriStore } from "./orchestration";
 
 const MD_PLUGINS = [remarkGfm, remarkBreaks];
 
@@ -334,6 +335,19 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
           } catch { /* unparseable beat */ }
           return;
         }
+        if (ev.kind === KIND_RESULT && ev.pubkey === guest.pk) {
+          // Orchestration corpus: an answer to the sent task closes the
+          // "delivered" leg of the record. Best-effort — a log failure
+          // must never look like a dropped result.
+          const rootId = ev.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? ev.tags.find((t) => t[0] === "e")?.[1];
+          void latestPendingFor(tauriStore.read, guest.pk)
+            .then((rec) => {
+              if (!rec?.sentTaskId || rec.outcome) return;
+              if (rootId !== rec.sentTaskId) return; // only the proposed task closes the record
+              return updateRecord(tauriStore.read, tauriStore.write, rec.id, { outcome: { delivered: true } });
+            })
+            .catch(() => {});
+        }
         setEvents((prev) => (prev.has(ev.id) ? prev : new Map(prev).set(ev.id, ev)));
       };
       ws.onclose = () => { if (!closed) setTimeout(connect, 4000); };
@@ -441,6 +455,12 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       // this closure) — JSON.stringify drops the undefined key, so it never
       // lingers as a literal "draft" field in storage.
       addGuest({ ...guest, draft: undefined });
+      // Orchestration corpus: if @fez proposed this hire, the send closes
+      // the "accepted" loop with the real task id. Best-effort — a log
+      // failure must never look like a failed send.
+      void latestPendingFor(tauriStore.read, guest.pk)
+        .then((rec) => rec && updateRecord(tauriStore.read, tauriStore.write, rec.id, { sentTaskId: (signed as WireEvent).id }))
+        .catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
