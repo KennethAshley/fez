@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, writeFile, mkdir, access, chmod } from "node:fs/promises";
+import { readFile, writeFile, mkdir, access, chmod, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -47,7 +47,8 @@ const NO_KEY =
   "no valid Lium API key — the human adds one in SKILLS & SECRETS as LIUM_API_KEY " +
   "(from their lium.io dashboard). Agents don't create accounts.";
 
-const FEZ_BIN = join(homedir(), ".fez", "lium", "bin", "lium");
+// The release tarball is a PyInstaller onedir: lium/lium beside lium/_internal.
+const FEZ_BIN = join(homedir(), ".fez", "lium", "bin", "lium", "lium");
 const exists = (p: string) => access(p).then(() => true, () => false);
 
 /** The binary: the official installer's home, then ours, then PATH. */
@@ -287,6 +288,7 @@ server.registerTool(
       const tarball = join(dir, "lium.tar.gz");
       await writeFile(tarball, Buffer.from(await res.arrayBuffer()));
       await pexecFile("tar", ["-xzf", tarball, "-C", dir]);
+      await rm(tarball, { force: true });
       await chmod(FEZ_BIN, 0o755);
       const v = await lium(["--version"], 10_000);
       if (!v.ok) return text(`downloaded but it won't run: ${v.err}`);
