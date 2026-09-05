@@ -41,8 +41,11 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 const INSTALL =
   "the `lium` CLI isn't installed on this machine. With the human's OK, call lium_setup — " +
-  "it downloads the official binary from Lium's GitHub releases (no shell scripts, no sudo). " +
-  "Then lium_setup again with their email to create the account.";
+  "it downloads the official binary from Lium's GitHub releases (no shell scripts, no sudo).";
+
+const NO_KEY =
+  "no valid Lium API key — the human adds one in SKILLS & SECRETS as LIUM_API_KEY " +
+  "(from their lium.io dashboard). Agents don't create accounts.";
 
 const FEZ_BIN = join(homedir(), ".fez", "lium", "bin", "lium");
 const exists = (p: string) => access(p).then(() => true, () => false);
@@ -67,7 +70,9 @@ async function lium(args: string[], timeoutMs = 60_000): Promise<{ ok: true; out
     const err = e as NodeJS.ErrnoException & { stderr?: string; killed?: boolean };
     if (err.code === "ENOENT") return { ok: false, err: INSTALL };
     if (err.killed) return { ok: false, err: `lium ${args[0]} timed out after ${timeoutMs / 1000}s.` };
-    return { ok: false, err: `lium ${args[0]} failed: ${String(err.stderr || err.message || err).slice(0, 400)}` };
+    const detail = String(err.stderr || err.message || err).slice(0, 400);
+    if (/unauthoriz|401|api.?key/i.test(detail)) return { ok: false, err: NO_KEY };
+    return { ok: false, err: `lium ${args[0]} failed: ${detail}` };
   }
 }
 
@@ -262,49 +267,35 @@ server.registerTool(
   "lium_setup",
   {
     description:
-      "Set up Lium on this machine — ONLY after the human has said yes in the conversation. Without an email: downloads the official lium binary (a single ~tens-of-MB file from Lium's GitHub releases, into ~/.fez/lium/bin — no shell scripts, no sudo). With an email: also creates the account non-interactively (lium signup generates a password, stores the API key in ~/.lium/config.ini, registers an SSH key; a $5 signup credit is granted once per IP when available).",
-    inputSchema: {
-      email: z.string().optional().describe("The human's real email for account creation — the verification link goes there. Omit to only install the binary."),
-    },
+      "Install the lium CLI binary on this machine — ONLY after the human has said yes in the conversation: it downloads a single executable (~tens of MB) from Lium's official GitHub releases into ~/.fez/lium/bin (no shell scripts, no sudo). Accounts are NOT created here — the human signs up at lium.io themselves and adds their key in SKILLS & SECRETS as LIUM_API_KEY.",
+    inputSchema: {},
   },
-  async ({ email }) => {
-    const lines: string[] = [];
-
+  async () => {
     const installed = await liumBin();
     if (installed !== "lium" || (await lium(["--version"], 10_000)).ok) {
-      lines.push("binary: already installed.");
-    } else {
-      const os = process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : null;
-      const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "amd64" : null;
-      if (!os || !arch) return text(`unsupported platform ${process.platform}/${process.arch} — lium ships darwin/linux, amd64/arm64.`);
-      const url = `https://github.com/Datura-ai/lium-cli/releases/latest/download/lium-${os}-${arch}.tar.gz`;
-      const dir = join(homedir(), ".fez", "lium", "bin");
-      try {
-        const res = await fetch(url);
-        if (!res.ok) return text(`download failed: ${res.status} for ${url}`);
-        await mkdir(dir, { recursive: true });
-        const tarball = join(dir, "lium.tar.gz");
-        await writeFile(tarball, Buffer.from(await res.arrayBuffer()));
-        await pexecFile("tar", ["-xzf", tarball, "-C", dir]);
-        await chmod(FEZ_BIN, 0o755);
-        const v = await lium(["--version"], 10_000);
-        if (!v.ok) return text(`downloaded but it won't run: ${v.err}`);
-        lines.push(`binary: installed ${v.out.trim()} to ${FEZ_BIN}.`);
-      } catch (e) {
-        return text(`install failed: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
-      }
+      return text("binary: already installed. If tools still fail, the human adds LIUM_API_KEY in SKILLS & SECRETS (from their lium.io dashboard).");
     }
-
-    if (email) {
-      const r = await lium(["signup", "--email", email, "--json"], 60_000);
-      lines.push(r.ok
-        ? `account: created for ${email} — API key stored in ~/.lium/config.ini, SSH key registered. Check lium_balance for the $5 signup credit.\n${r.out.slice(0, 1_000)}`
-        : `account: signup failed — ${r.err}`);
-    } else {
-      lines.push("account: none created (no email given). Ask the human for their email and call lium_setup again to sign up, or skip this if they already have an account (`lium init` / LIUM_API_KEY).");
+    const os = process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : null;
+    const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "amd64" : null;
+    if (!os || !arch) return text(`unsupported platform ${process.platform}/${process.arch} — lium ships darwin/linux, amd64/arm64.`);
+    const url = `https://github.com/Datura-ai/lium-cli/releases/latest/download/lium-${os}-${arch}.tar.gz`;
+    const dir = join(homedir(), ".fez", "lium", "bin");
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return text(`download failed: ${res.status} for ${url}`);
+      await mkdir(dir, { recursive: true });
+      const tarball = join(dir, "lium.tar.gz");
+      await writeFile(tarball, Buffer.from(await res.arrayBuffer()));
+      await pexecFile("tar", ["-xzf", tarball, "-C", dir]);
+      await chmod(FEZ_BIN, 0o755);
+      const v = await lium(["--version"], 10_000);
+      if (!v.ok) return text(`downloaded but it won't run: ${v.err}`);
+      return text(
+        `binary: installed ${v.out.trim()} to ${FEZ_BIN}. Next: the human signs up at lium.io and adds LIUM_API_KEY in SKILLS & SECRETS.`
+      );
+    } catch (e) {
+      return text(`install failed: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
     }
-
-    return text(lines.join("\n"));
   }
 );
 

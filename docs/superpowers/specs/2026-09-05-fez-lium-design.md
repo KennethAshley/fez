@@ -46,16 +46,18 @@ tool that exists), not the chutes pattern (speak HTTPS ourselves).
   untrusted — so every attached agent inherits them, not just a
   house-branded one.
 
-Users never run curl. Setup is a tool, consent-gated: `lium_setup`
-downloads the official binary (the installer script is just a one-file
-GitHub-releases download — we do the same, into `~/.fez/lium/bin`, no
-shell scripts, no sudo), and with the human's email runs `lium signup`,
-which is non-interactive by design ("safe to run from an agent"):
-generated password, API key stored, SSH key registered, $5 credit when
-available. @rig offers setup and runs it only after a yes in the
-channel — installing an executable and creating an account in the
-human's name are both theirs to approve. Absent tools answer with
-"ask me to run lium_setup", the chutes "no key set" convention.
+Users never run curl, and agents never create accounts — the chutes
+pattern exactly: the human signs up at lium.io, puts the API key in
+SKILLS & SECRETS as `LIUM_API_KEY` (the CLI honors the env var over
+stored config), and the only thing `lium_setup` does is install the
+binary — the installer script is just a one-file GitHub-releases
+download, so the tool does the same into `~/.fez/lium/bin` (no shell
+scripts, no sudo), consent-gated because it's an executable. `lium
+signup` IS non-interactive and agent-runnable, but an agent minting an
+account in the human's name cuts against fez's identity ethos — that
+stays in the self-signup parking lot below. SSH needs no ceremony:
+`lium up` registers a key itself on first rent. Absent tools answer
+with "ask me to run lium_setup", the chutes "no key set" convention.
 
 ## Tools (agent-facing)
 

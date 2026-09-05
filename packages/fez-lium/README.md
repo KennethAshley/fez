@@ -34,23 +34,20 @@ A thin wrapper over the `lium` CLI — Lium's own agent-facing surface,
 - every up/rm/refusal is a row in `~/.fez/lium-pods.json`, so "what did
   compute cost this week" has an exact answer
 
-## Setup (in-channel, consent-gated)
+## Setup — the chutes pattern
 
-No curl, no terminal. Say yes when an attached agent offers **lium_setup**:
+1. **You** sign up at [lium.io](https://lium.io) and copy your API key
+   from the dashboard. Accounts are yours; agents never create one.
+2. **You** add it in SKILLS & SECRETS as `LIUM_API_KEY` (keychain
+   custody — a leaked key costs at most the balance, never a wallet).
+3. **The agent** installs the CLI when first needed: say yes when it
+   offers **lium_setup**, which downloads the official `lium` binary
+   (one static file from Lium's GitHub releases, into `~/.fez/lium/bin`
+   — no shell scripts, no sudo). Consent-gated by the tool's own
+   description; it downloads an executable, so it asks first.
 
-- without an email it downloads the official `lium` binary (one static
-  file from Lium's GitHub releases, into `~/.fez/lium/bin` — no shell
-  scripts, no sudo);
-- with your email it also runs `lium signup` — non-interactive by design,
-  generates a password, stores the API key in `~/.lium/config.ini`,
-  registers an SSH key, and grants the $5 signup credit when available.
-
-The tool's own description tells agents to run it only after you agree in
-the channel — the binary is an executable and signup creates an account
-in your name.
-Already have an account? Skip signup: `lium init`, or set `LIUM_API_KEY`
-in SKILLS & SECRETS (keychain custody — a leaked key costs at most the
-balance, never a wallet).
+No SSH ceremony either: `lium up` registers an SSH key itself on the
+first rent.
 
 **Plain words on permissions:** this extension lets attached agents run
 commands on rented machines (arbitrary miner IPs, over SSH via the CLI) and
