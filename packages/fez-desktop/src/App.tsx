@@ -54,6 +54,7 @@ import FirstRun from "./FirstRun";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
 import { EMOJI, searchEmoji } from "./emoji";
+import HireProposalCard from "./HireProposalCard";
 import "./App.css";
 import "./fez-utilities.css";
 
@@ -3645,6 +3646,11 @@ const MD_COMPONENTS = {
     return <MediaEmbed src={src} alt={alt} entry={media?.find((m) => m.url === src)} />;
   },
   code: ({ className, children }: { className?: string; children?: React.ReactNode }) => {
+    // ```fez-hire-proposal fences are @fez's market suggestion — rendered
+    // as a card with a human button, never as JSON (spec 2026-09-04).
+    if (/language-fez-hire-proposal/.test(className ?? "")) {
+      return <HireProposalCard fenceText={String(children ?? "")} roster={[]} />;
+    }
     // ```diff fences render like the transcript's diff blocks —
     // agents posting patches into channels get real diffs.
     if (/language-diff/.test(className ?? "")) {

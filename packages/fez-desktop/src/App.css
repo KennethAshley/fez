@@ -4341,3 +4341,12 @@ a.page-fact:hover { color: var(--fg); }
 .rate-row { display: flex; align-items: center; gap: 8px; }
 .rate-input { max-width: 8rem; }
 .rate-unit { color: var(--muted, #999); font-size: 0.85em; }
+
+/* ── @fez's market proposal card ─────────────────────────────── */
+.hire-proposal { display: block; border: 1px solid var(--hairline); padding: 10px 12px; margin: 6px 0; }
+.hire-proposal .hp-head { display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.hire-proposal .hp-why { display: block; margin-top: 4px; color: var(--fg-dim); }
+.hire-proposal .hp-who { display: block; margin-top: 4px; font-weight: 500; }
+.hire-proposal .hp-rate { color: var(--ok); font-weight: 400; font-variant-numeric: tabular-nums; }
+.hire-proposal .hp-actions { display: flex; gap: 10px; margin-top: 8px; }
+.hire-proposal .hp-decided { display: block; margin-top: 6px; color: var(--fg-dim); }
