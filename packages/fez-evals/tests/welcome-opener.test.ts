@@ -80,11 +80,11 @@ describe("welcome opener", () => {
     expect(md).toContain("fez-hire-proposal");
     expect(md).toContain("AT MOST ONE");
     expect(md).toContain("do not mention the market");
-    // The two-tier ruling: free tryouts execute, paid work gets the card —
-    // and the card is named as the ONLY payment path, because the first
-    // live run had @fez asking for wallet access instead of playing it.
+    // The two-tier ruling: free tryouts execute; paid work goes through the
+    // propose_hire TOOL (prose alone kept losing to the model's "I have no
+    // payment tool, so I'm blocked" reflex — the tool removes that premise).
     expect(md).toContain("FREE tryout");
-    expect(md).toContain("your ONLY move is the fez-hire-proposal block");
+    expect(md).toContain("call the propose_hire TOOL and relay its output");
     expect(md).toContain("must never ask for wallet access");
     expect(md).toMatch(/mcpServers:.*bazaar/);
   });
