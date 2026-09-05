@@ -431,6 +431,40 @@ async function main() {
       const packages = persona.extra.packages.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean);
       if (packages.length > 0) piSettings.packages = packages;
     }
+    // MCP for pi rides pi's OWN extension system, not ACP: pi-acp accepts
+    // the session's mcpServers and never spawns them (verified against
+    // pi-acp 0.0.33 source — stored on the session object, unused; found
+    // live when steph, the first pi agent, saw only read/bash/edit/write
+    // and reached for curl). pi-mcp-adapter is the canonical bridge: it
+    // reads the project override .pi/mcp.json and exposes every server
+    // through a lazy mcp() proxy tool. Same resolved list claude-code
+    // gets — different delivery door.
+    if (mcpServers.length > 0) {
+      const pkgs = new Set([...(piSettings.packages as string[] | undefined) ?? [], "npm:pi-mcp-adapter"]);
+      piSettings.packages = [...pkgs];
+      const asObject = (env: unknown): Record<string, string> | undefined => {
+        if (!env) return undefined;
+        if (Array.isArray(env)) {
+          const out: Record<string, string> = {};
+          for (const e of env as { name?: string; value?: string }[]) if (e?.name) out[e.name] = e.value ?? "";
+          return Object.keys(out).length ? out : undefined;
+        }
+        return Object.keys(env as Record<string, string>).length ? (env as Record<string, string>) : undefined;
+      };
+      const mcpJson = {
+        mcpServers: Object.fromEntries(
+          mcpServers
+            .filter((srv): srv is typeof srv & { command: string } => "command" in srv && typeof (srv as { command?: unknown }).command === "string")
+            .map((srv) => {
+              const entry = srv as { name: string; command: string; args?: string[]; env?: unknown };
+              const env = asObject(entry.env);
+              return [entry.name, { command: entry.command, args: entry.args ?? [], ...(env ? { env } : {}) }];
+            })
+        ),
+      };
+      fs.writeFileSync(path.join(piDir, "mcp.json"), JSON.stringify(mcpJson, null, 1) + "\n");
+      console.log(`🔌 pi mcp bridge: ${Object.keys(mcpJson.mcpServers).length} server(s) via pi-mcp-adapter (.pi/mcp.json)`);
+    }
     fs.writeFileSync(path.join(piDir, "settings.json"), JSON.stringify(piSettings, null, 1) + "\n");
     try {
       const trustFile = path.join(os.homedir(), ".pi", "agent", "trust.json");
@@ -1613,6 +1647,9 @@ async function main() {
             `- Boards: if the fez_board_* tools are available, some pages are kanban boards and work you're given may be a CARD on one. Move your own card: fez_board_move to the in-progress column when you start and to the done column when you finish, so the board shows the truth without anyone asking you for a status. fez_board_add files work you found but aren't doing now. Never rewrite a board page with fez_wiki_write — use the board tools, which leave the rest of the document untouched.`,
             `- Doc comments: when a message says someone commented on a doc line, use fez_doc_comments to read the thread, do the work, then fez_comment_reply to answer IN that thread (resolve only when it is actually done) — the comment is the request, so answering in chat alone leaves it open.`,
             UNTRUSTED_CONTENT_NOTICE,
+            ...(persona.harness === "pi" && mcpServers.length > 0
+              ? [`- MCP tools: your attached tools (${mcpServers.map((m) => m.name).join(", ")}) live behind the \`mcp\` proxy, not as direct functions. To use one, first call mcp({ search: "<capability>" }) to find the exact tool name (search by what you want to DO — "search", "fetch", "pay" — not by your query text), then call it. Don't reach for shell curl/wget when a tool exists; discover it through mcp first.`]
+              : []),
             `- Names: everyone in a channel appears by their name, not a key. An @mention only reaches someone if you use that NAME — writing @ followed by a hex id reaches nobody, notifies nobody, and merely looks like it worked. If all you can see for someone is a short hex id they have no name published; refer to them without an @.`,
             `- Handoffs: writing @name in your reply SUMMONS that agent — it will act on your message. Use this ONLY when you need that agent to act ("if X, ping @coder" → "@coder please …" with the context they need). Referring to an agent without needing action? Write the name WITHOUT the @ ("reviewer already confirmed this") — an @ is a summons, not a courtesy. If the task's handoff condition is NOT met, mention nobody and state the outcome. If a task is complete and needs no one, reply briefly and mention nobody — do not thank, acknowledge, or wrap up with another @.`,
             ...(shareLevel
