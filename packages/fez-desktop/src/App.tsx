@@ -2050,10 +2050,19 @@ function ChannelView({
     }
   }
 
+  // Re-entry latch: a second Enter racing the first (key repeat, or two
+  // presses inside one render) reads the same un-cleared draft and sends
+  // twice. Time-released rather than finally-released so the early
+  // returns below need no restructuring — the state guard covers
+  // everything past the race window.
+  const sendBusy = useRef(false);
   const send = async () => {
     const text = draft.trim();
     if (!text && pending.length === 0) return;
     if (editing && !text) return;
+    if (sendBusy.current) return;
+    sendBusy.current = true;
+    setTimeout(() => { sendBusy.current = false; }, 600);
     // Cleared optimistically for a snappy composer — but a throw before
     // the wire (not a member, bad scope) used to eat the typed message
     // with no trace; the catch puts the words back and says why.
@@ -2613,8 +2622,13 @@ function DmView({
     if (nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "auto" });
   });
 
+  // Same double-send latch as the channel composer — see its comment.
+  const sendBusy = useRef(false);
   const send = async () => {
     const text = draft.trim();
+    if (sendBusy.current) return;
+    sendBusy.current = true;
+    setTimeout(() => { sendBusy.current = false; }, 600);
     if (editing) {
       // Edit replaces words only — attachments stay whatever they were.
       if (!text) return;

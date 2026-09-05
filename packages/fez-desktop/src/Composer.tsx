@@ -371,7 +371,10 @@ export default function Composer({
             }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              onSend();
+              // Auto-repeat fires keydown again while Enter is held — the
+              // second landing before the cleared draft re-renders is the
+              // classic double-send. Only the first press sends.
+              if (!e.repeat) onSend();
             } else if (e.key === "ArrowUp" && !value && onArrowUpEmpty) {
               e.preventDefault();
               onArrowUpEmpty();
