@@ -74,6 +74,14 @@ describe("welcome opener", () => {
     }
   });
 
+  it("@fez knows the market is a fallback, not a first resort", () => {
+    const md = buildFezPersonaMd("pi");
+    expect(md).toContain("market_directory");
+    expect(md).toContain("fez-hire-proposal");
+    expect(md).toContain("AT MOST ONE");
+    expect(md).toMatch(/mcpServers:.*bazaar/);
+  });
+
   it("starter team: summons by mention, inherits the brain, waits for real intros", () => {
     const { STARTER_TEAM, teamOpenerText, kickoffText, buildStarterPersonaMd, parsePersonaBrain, introCount } =
       core;

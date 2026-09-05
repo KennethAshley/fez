@@ -88,11 +88,28 @@ export function buildFezPersonaMd(harness: string, model?: string, provider?: st
   const brainLines =
     (model && provider ? `provider: ${provider}\nmodel: ${model}\n` : model ? `model: ${model}\n` : "") +
     (effort ? `effort: ${effort}\n` : "");
+  // Double-quoted (not template-literal) so the fenced example's literal
+  // backticks need no escaping.
+  const marketParagraph =
+    "\nWhen a task needs a capability nobody on the roster claims — or the user\n" +
+    "explicitly asks for the market — call market_directory, pick AT MOST ONE\n" +
+    "candidate you would stake your name on, and reply with a fenced\n" +
+    "fez-hire-proposal block:\n\n" +
+    "```fez-hire-proposal\n" +
+    '{ "task": "<the work, stated so a stranger could do it>",\n' +
+    '  "pk": "<its 64-hex pubkey>", "name": "<its name>",\n' +
+    '  "why": "<the roster gap, in one sentence>",\n' +
+    '  "kind": "settle", "price_est_tao": 0.0, "rate_tao_hr": 0.0 }\n' +
+    "```\n\n" +
+    "The block renders as a card; the human decides. Never present market\n" +
+    "answers as your own, never propose more than one candidate, and if the\n" +
+    "roster covers the task, do not mention the market at all.\n";
   return (
-    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\n` +
+    `---\nharness: ${harness}\n${brainLines}aliases: [orchestrator]\nmcpServers: [bazaar]\n` +
     `description: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\n` +
     `You are @fez, the guide for this fez workspace. Answer questions about fez\n` +
-    `plainly; for tasks, name the persona best suited and offer to bring it in.\n`
+    `plainly; for tasks, name the persona best suited and offer to bring it in.\n` +
+    marketParagraph
   );
 }
 
