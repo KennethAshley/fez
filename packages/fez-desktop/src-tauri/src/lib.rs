@@ -886,7 +886,43 @@ fn wire_provider_pi(provider: String) -> Result<String, String> {
     if models.is_empty() {
         return Err(format!("{} returned no models", spec.name));
     }
-    Ok(serde_json::json!({ "provider": format!("local-{frag}"), "models": models }).to_string())
+
+    // Write the file pi ACTUALLY reads: ~/.pi/agent/models.json, schema
+    // {providers:{<id>:{name,baseUrl,api,apiKey,models:[...]}}} — verified
+    // empirically against the bundled pi's own validator (2026-09-05; the
+    // local-models.json path above predates that discovery and is kept only
+    // so older personas keep resolving). Model entries carry pragmatic
+    // defaults: cost zeros (display-only), a generous context window, and
+    // reasoning=true so thinking models get output headroom.
+    let api_shape = match spec.auth {
+        ProviderAuth::XApiKey => "anthropic-messages",
+        ProviderAuth::Bearer => "openai-completions",
+    };
+    let models_cfg = std::path::Path::new(&home).join(".pi").join("agent").join("models.json");
+    let mut doc: serde_json::Value = std::fs::read_to_string(&models_cfg)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({ "providers": {} }));
+    if !doc.is_object() { doc = serde_json::json!({ "providers": {} }); }
+    let entries: Vec<serde_json::Value> = models
+        .iter()
+        .map(|id| serde_json::json!({
+            "id": id, "name": id, "reasoning": true, "input": ["text"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 131072, "maxTokens": 16384,
+        }))
+        .collect();
+    doc["providers"][spec.id] = serde_json::json!({
+        "name": spec.name, "baseUrl": spec.base_url, "api": api_shape,
+        "apiKey": key, "models": entries,
+    });
+    if let Some(parent) = models_cfg.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&models_cfg, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())? + "\n")
+        .map_err(|e| format!("couldn't write pi models.json: {e}"))?;
+
+    Ok(serde_json::json!({ "provider": spec.id, "models": models }).to_string())
 }
 
 /// Kept as a thin wrapper so existing webview callers (ModelPicker,

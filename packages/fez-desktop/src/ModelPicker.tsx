@@ -18,11 +18,11 @@ import { useHarnesses } from "./harnesses";
  * runtime is the product, and a shelf you can't see is a shelf that
  * doesn't exist. Un-keyed rows show as "add a key to unlock". */
 const WIRED = [
-  { id: "chutes", local: "local-56105ece7a", group: "Chutes — Bittensor, decentralized", hint: "Runs on Chutes GPUs (Bittensor). Agents can pay for their own inference in TAO. Key: Settings → secrets → chutes." },
-  { id: "gm", local: "local-ebfd09756a", group: "GM — confidential frontier models", hint: "Frontier models through GM's TEE gateway (Bittensor). Prepaid credits only — agents can't self-fund with TAO. Key: Settings → secrets → gm." },
-  { id: "anthropic", local: "local-3ce36528bf", group: "Anthropic — direct API", hint: "Claude models over your own Anthropic API key (metered per token — separate from a Claude Code subscription). Key: Settings → secrets → anthropic." },
-  { id: "openai", local: "local-d9617135d6", group: "OpenAI", hint: "GPT models over your OpenAI API key. Key: Settings → secrets → openai." },
-  { id: "openrouter", local: "local-76ef4ad6f0", group: "OpenRouter — many labs, one key", hint: "Hundreds of models through one OpenRouter key. Key: Settings → secrets → openrouter." },
+  { id: "chutes", local: "chutes", group: "Chutes — Bittensor, decentralized", hint: "Runs on Chutes GPUs (Bittensor). Agents can pay for their own inference in TAO. Key: Settings → secrets → chutes." },
+  { id: "gm", local: "gm", group: "GM — confidential frontier models", hint: "Frontier models through GM's TEE gateway (Bittensor). Prepaid credits only — agents can't self-fund with TAO. Key: Settings → secrets → gm." },
+  { id: "anthropic", local: "anthropic", group: "Anthropic — direct API", hint: "Claude models over your own Anthropic API key (metered per token — separate from a Claude Code subscription). Key: Settings → secrets → anthropic." },
+  { id: "openai", local: "openai", group: "OpenAI", hint: "GPT models over your OpenAI API key. Key: Settings → secrets → openai." },
+  { id: "openrouter", local: "openrouter", group: "OpenRouter — many labs, one key", hint: "Hundreds of models through one OpenRouter key. Key: Settings → secrets → openrouter." },
 ];
 
 export interface BrainSelection {
@@ -60,7 +60,12 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
   }, []);
 
   // What's selected right now, derived from the raw harness/provider/model.
-  const selectedWired = WIRED.find((w) => w.local === value.provider);
+  // Plain provider ids now (pi's models.json providers key). Old personas
+  // may still carry the legacy local-<hash> id — match those too so their
+  // editor doesn't read as unconfigured.
+  const LEGACY: Record<string, string> = { "local-56105ece7a": "chutes", "local-ebfd09756a": "gm", "local-3ce36528bf": "anthropic", "local-d9617135d6": "openai", "local-76ef4ad6f0": "openrouter" };
+  const effectiveProvider = LEGACY[value.provider] ?? value.provider;
+  const selectedWired = WIRED.find((w) => w.local === effectiveProvider);
   const current =
     value.harness === "claude-code"
       ? "claude-code"
