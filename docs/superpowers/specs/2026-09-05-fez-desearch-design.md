@@ -37,9 +37,16 @@ descriptions.
 - `desearch_x(query, count?, sort?)` — `GET /twitter`. The headline. Real
   posts: author, handle, engagement, link, date. Sort Top|Latest.
 - `desearch_web(query, max_results?, start?)` — `GET /web`. Decentralized
-  SERP → `{title, url, snippet}`, fez-web's exact shape. Second, not
-  first: the description tells agents to prefer free `web_search` unless
-  they want the sovereign backend.
+  SERP → `{title, url, snippet}`, fez-web's exact shape. **Written and
+  tested, but NOT registered in v1.** Live check 2026-09-05: both web
+  endpoints (`GET /web` and `POST /desearch/ai/search/links/web`) return
+  `{data:[]}` for every query while billing `cost_usd` — confirmed empty
+  on Desearch's own console too, so it's their web search that's dead, not
+  our parser (which reads the real empty shape correctly). A tool that
+  charges for nothing is dishonest; `searchWeb`/`shapeWeb` stay in
+  `desearch.ts` (tested) for a three-line re-add the day web returns.
+  desearch_x proved the whole pipeline live: real posts, exact fields,
+  cost surfaced ($0.00045/call).
 
 Deliberately NOT in v1 (YAGNI, named so it's a choice):
 - **Crawl** (`GET /get-web-crawl`) — a paid `web_fetch` twin. fez-web's
