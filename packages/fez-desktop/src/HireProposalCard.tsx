@@ -5,9 +5,9 @@
  * proven rails on this machine's wallet. "not now" is a real decision,
  * logged: declines are the preference signal the corpus needs.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { parseHireProposal } from "./hire-proposal";
-import { recordProposal, updateRecord, tauriStore } from "./orchestration";
+import { recordProposal, updateRecord, findByProposal, tauriStore } from "./orchestration";
 import { openGuestDm } from "./gui-extensions";
 
 const BAZAAR_RELAY = "wss://bazaar.fez.chat";
@@ -16,6 +16,25 @@ export default function HireProposalCard({ fenceText, roster }: { fenceText: str
   const p = parseHireProposal(fenceText);
   const [decision, setDecision] = useState<"pending" | "accepted" | "declined">("pending");
   const [recId, setRecId] = useState<string>();
+
+  // A remounted card (leave the channel, come back) starts with no state
+  // of its own — without this it re-offers the buttons on an
+  // already-decided proposal, and a click double-logs it. Hooks run
+  // unconditionally; the null-return for a malformed proposal stays below.
+  useEffect(() => {
+    if (!p) return;
+    let live = true;
+    void findByProposal(tauriStore.read, p.pk, p.task)
+      .then((rec) => {
+        if (!live || !rec) return;
+        setRecId(rec.id);
+        if (rec.decision !== "pending") setDecision(rec.decision);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p?.pk, p?.task]);
+
   if (!p) return null; // malformed proposal: nothing, never a broken card
 
   const log = async (d: "accepted" | "declined") => {

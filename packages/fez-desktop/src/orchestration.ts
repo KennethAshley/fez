@@ -62,6 +62,14 @@ export async function latestPendingFor(read: ReadFn, pk: string): Promise<Orches
     ?? [...records].reverse().find((r) => r.picked.pk === pk && r.decision === "accepted" && !r.outcome);
 }
 
+/** The latest record for exactly this proposal (same candidate, same task
+ *  text) — how a remounted card recovers its decided state instead of
+ *  re-offering buttons and double-logging. */
+export async function findByProposal(read: ReadFn, pk: string, task: string): Promise<OrchestrationRecord | undefined> {
+  const records = await load(read);
+  return [...records].reverse().find((r) => r.picked.pk === pk && r.task === task);
+}
+
 /** Real callers' store: the extension-storage blob named "orchestration". */
 export const tauriStore = {
   read: (async () => {

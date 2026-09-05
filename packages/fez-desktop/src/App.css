@@ -4343,7 +4343,12 @@ a.page-fact:hover { color: var(--fg); }
 .rate-unit { color: var(--muted, #999); font-size: 0.85em; }
 
 /* ── @fez's market proposal card ─────────────────────────────── */
-.hire-proposal { display: block; border: 1px solid var(--hairline); padding: 10px 12px; margin: 6px 0; }
+/* react-markdown wraps every fence in a bare <pre> (no <code> in between,
+ * same as .md-diff below) and MD_COMPONENTS has no `pre` override, so
+ * without this the card sits inside .md pre's own box — double border —
+ * and inherits the UA monospace .md pre sets, when this is prose. */
+.md pre:has(.hire-proposal) { background: transparent; border: none; padding: 0; }
+.hire-proposal { display: block; border: 1px solid var(--hairline); padding: 10px 12px; margin: 6px 0; font-family: -apple-system, "SF Pro Text", Helvetica, sans-serif; }
 .hire-proposal .hp-head { display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
 .hire-proposal .hp-why { display: block; margin-top: 4px; color: var(--fg-dim); }
 .hire-proposal .hp-who { display: block; margin-top: 4px; font-weight: 500; }
