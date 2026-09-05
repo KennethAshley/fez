@@ -118,30 +118,23 @@ function parseDotEnv(text: string): { key: string; value: string }[] {
 function EnvEditor({
   skill,
   config,
+  statuses,
+  onStatuses,
   onNotice,
 }: {
   skill: string;
   config: SkillConfig;
+  /** Keychain state per key — owned by the card so the header chips share it. */
+  statuses: Record<string, boolean>;
+  onStatuses: (patch: Record<string, boolean>) => void;
   onNotice: (text: string) => void;
 }) {
   const declared = Object.keys(config.env ?? {});
   const [rows, setRows] = useState<{ key: string; value: string }[]>(
     declared.length > 0 ? declared.map((key) => ({ key, value: "" })) : [{ key: "", value: "" }]
   );
-  const [statuses, setStatuses] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState<Record<number, boolean>>({});
-
-  useEffect(() => {
-    void (async () => {
-      const next: Record<string, boolean> = {};
-      for (const key of declared) {
-        next[key] = await invoke<boolean>("has_skill_secret", { skill, key }).catch(() => false);
-      }
-      setStatuses(next);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skill, declared.join(",")]);
 
   const setRow = (index: number, patch: Partial<{ key: string; value: string }>) =>
     setRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -183,7 +176,7 @@ function EnvEditor({
         onNotice(`✓ ${saved} secret${saved === 1 ? "" : "s"} for ${skill} → keychain (agents pick them up on next spawn)`);
         setRows((prev) => prev.map((row) => ({ ...row, value: "" })));
         setShown({});
-        setStatuses((prev) => ({ ...prev, ...Object.fromEntries(rows.filter((r) => r.key && r.value).map((r) => [r.key.trim(), true])) }));
+        onStatuses(Object.fromEntries(rows.filter((r) => r.key && r.value).map((r) => [r.key.trim(), true])));
       }
     } catch (err) {
       onNotice(`✗ ${err instanceof Error ? err.message : String(err)}`);
@@ -250,7 +243,6 @@ function EnvEditor({
         + Add Another
       </button>
       <div className="env-footer">
-        <span className="env-footer-hint">or paste .env contents in a Key field</span>
         <button
           className="env-save"
           disabled={busy || !rows.some((r) => r.key.trim() && r.value.trim())}
@@ -275,45 +267,135 @@ function EnvEditor({
  */
 const FEZ_SERVICE_KEYS: SkillConfig = { env: { FEZ_ORCHESTRATOR_KEY: "" } };
 
+/**
+ * One service, one keycard. A native <details>: the summary is the card
+ * head — name, hint, and a chip per declared key showing custody state —
+ * so which key belongs to which service is legible with every card
+ * closed. Cards missing a key open themselves and wear the ember notch;
+ * the page is a punch list that goes quiet when custody is complete.
+ */
+function SecretCard({
+  skill,
+  title,
+  hint,
+  config,
+  onNotice,
+}: {
+  skill: string;
+  title: string;
+  hint?: string;
+  config: SkillConfig;
+  onNotice: (text: string) => void;
+}) {
+  const declared = Object.keys(config.env ?? {});
+  const [statuses, setStatuses] = useState<Record<string, boolean>>();
+  const [open, setOpen] = useState<boolean>();
+  useEffect(() => {
+    void (async () => {
+      const next: Record<string, boolean> = {};
+      for (const key of declared) {
+        next[key] = await invoke<boolean>("has_skill_secret", { skill, key }).catch(() => false);
+      }
+      setStatuses(next);
+      // first knowledge decides the resting state; after that it's the user's
+      setOpen((prev) => prev ?? declared.some((k) => !next[k]));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skill, declared.join(",")]);
+  const missing = statuses ? declared.filter((k) => !statuses[k]).length : 0;
+  return (
+    <details
+      className="secret-card"
+      data-needs={statuses && missing > 0 ? "" : undefined}
+      open={open ?? false}
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="secret-card-head">
+        <span className="secret-card-name">{title}</span>
+        {hint && <span className="secret-card-hint">{hint}</span>}
+        <span className="secret-card-keys">
+          {declared.map((k) => (
+            <span
+              key={k}
+              className={"key-chip" + (statuses ? (statuses[k] ? " stored" : " missing") : "")}
+              title={statuses?.[k] ? "stored in the macOS keychain — write-only" : "no value yet"}
+            >
+              {statuses?.[k] ? "🔒 " : "○ "}
+              {k}
+            </span>
+          ))}
+        </span>
+      </summary>
+      <div className="secret-card-body">
+        <EnvEditor
+          skill={skill}
+          config={config}
+          statuses={statuses ?? {}}
+          onStatuses={(patch) => setStatuses((prev) => ({ ...(prev ?? {}), ...patch }))}
+          onNotice={onNotice}
+        />
+      </div>
+    </details>
+  );
+}
+
 export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => void }) {
   // One reactive source: the config store re-reads settings.json whenever an
-  // extension is installed/removed, so a skill's row appears here live.
-  const skills = Object.entries(useConfig().skills as Record<string, SkillConfig>);
+  // extension is installed/removed, so a skill's card appears here live.
+  const skills = Object.entries(useConfig().skills as Record<string, SkillConfig>).filter(
+    ([skill]) => !PROVIDERS.some((p) => p.id === skill)
+  );
   return (
-    <>
-      {/* Where secrets live is the page head's line now; what survives
-          here is the part that changes how you USE the fields. */}
+    <div className="secrets-page">
+      {/* Where secrets live is the page head's line; what survives here is
+          the part that changes how you USE the fields. */}
       <div className="settings-hint">
-        Paste a whole .env blob into any field and it splits into rows. Agents and services pick up new
-        values on their next spawn.
+        Paste a whole .env blob into any Key field and it splits into rows. Agents and services pick
+        up new values on their next spawn.
       </div>
-      <div className="env-skill">
-        <div className="manage-section">fez — service keys</div>
-        <EnvEditor skill="fez" config={FEZ_SERVICE_KEYS} onNotice={onNotice} />
+      <div className="manage-section">fez</div>
+      <div className="secret-grid">
+        <SecretCard
+          skill="fez"
+          title="service keys"
+          hint="keys fez's own services read — the orchestrator's router bearer, and whatever lands here"
+          config={FEZ_SERVICE_KEYS}
+          onNotice={onNotice}
+        />
       </div>
-      {/* Providers are first-class, not installed skills — their rows are
+      {/* Providers are first-class, not installed skills — their cards are
           always here, so a key has a home before anything else is set up.
           Wiring into an agent happens in the agent editor's model picker. */}
       <div className="manage-section">model providers</div>
       <div className="settings-hint">
-        Add a key and the provider's models appear in every agent editor — each agent picks its own provider and model there.
+        Add a key and the provider's models appear in every agent editor — each agent picks its own
+        provider and model there.
       </div>
-      {PROVIDERS.map((p) => (
-        <div key={p.id} className="env-skill">
-          <div className="manage-section">{p.id} <span className="skill-desc">— {p.hint}</span></div>
-          <EnvEditor skill={p.id} config={{ env: { [p.keyName]: "", ...p.extraKeys } }} onNotice={onNotice} />
-        </div>
-      ))}
+      <div className="secret-grid">
+        {PROVIDERS.map((p) => (
+          <SecretCard
+            key={p.id}
+            skill={p.id}
+            title={p.id}
+            hint={p.hint}
+            config={{ env: { [p.keyName]: "", ...p.extraKeys } }}
+            onNotice={onNotice}
+          />
+        ))}
+      </div>
+      <div className="manage-section">installed skills</div>
       {skills.length === 0 ? (
-        <div className="settings-hint">Install a skill and its own secrets appear here too.</div>
+        <div className="settings-hint">
+          Install an extension and its skill gets a card here — add the key once, and every agent
+          you attach the skill to can use it.
+        </div>
       ) : (
-        skills.filter(([skill]) => !PROVIDERS.some((p) => p.id === skill)).map(([skill, config]) => (
-          <div key={skill} className="env-skill">
-            <div className="manage-section">{skill}</div>
-            <EnvEditor skill={skill} config={config} onNotice={onNotice} />
-          </div>
-        ))
+        <div className="secret-grid">
+          {skills.map(([skill, config]) => (
+            <SecretCard key={skill} skill={skill} title={skill} config={config} onNotice={onNotice} />
+          ))}
+        </div>
       )}
-    </>
+    </div>
   );
 }

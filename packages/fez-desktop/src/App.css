@@ -3601,6 +3601,50 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
    The eye reveals what you just TYPED — it is never a read-back,
    because set_skill_secret has no counterpart. */
 .env-skill { margin-bottom: 18px; }
+
+/* Secrets as keycards: each service is a native <details>. The summary is
+   the card head — name, hint, one chip per key — so key→service is
+   legible with everything closed. A card missing a key opens itself and
+   wears the ember notch: the page is a punch list that goes quiet when
+   custody is complete. */
+.settings-col:has(.secrets-page) { max-width: 960px; }
+.secret-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 12px; margin-bottom: 18px; align-items: start;
+}
+.secret-card {
+  border: 1px solid var(--bg2); border-left: 2px solid var(--bg2);
+  border-radius: 10px; background: var(--bg1); min-width: 0;
+}
+.secret-card[data-needs] { border-left-color: var(--accent); }
+/* editing wants the full measure */
+.secret-card[open] { grid-column: 1 / -1; }
+.secret-card-head {
+  list-style: none; display: flex; align-items: baseline; gap: 8px;
+  padding: 10px 14px; cursor: pointer; user-select: none;
+}
+.secret-card-head::-webkit-details-marker { display: none; }
+.secret-card-head::before {
+  content: "▸"; color: var(--fg-dim); font-size: 10px;
+  align-self: center; transition: transform 0.12s ease;
+}
+.secret-card[open] > .secret-card-head::before { transform: rotate(90deg); }
+.secret-card-name { font-family: var(--font-mono); font-size: 12px; flex: none; }
+.secret-card-hint {
+  color: var(--fg-dim); font-size: 12px; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.secret-card-keys { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; flex: none; }
+.key-chip {
+  font-family: var(--font-mono); font-size: 10px; padding: 2px 7px;
+  border-radius: 999px; border: 1px solid var(--bg2); color: var(--fg-dim);
+  white-space: nowrap;
+}
+.key-chip.stored { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, transparent); }
+.key-chip.missing { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.secret-card-body { padding: 12px 14px 14px; border-top: 1px solid var(--bg2); }
+.secret-card .env-footer { justify-content: flex-end; }
+
 .env-editor { display: flex; flex-direction: column; gap: 14px; }
 .env-entry { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: end; }
 .env-field { display: flex; flex-direction: column; gap: 5px; grid-column: 1; }

@@ -558,7 +558,7 @@ export default function SettingsPane({ client, wire, onClose }: { client: FezCli
         <KeyboardSettings onNotice={flash} />
         </>)}
         {section === "skills" && (<>
-        <Head title="secrets" sub="API keys for services and tools. They go straight into the macOS keychain, never into files — saving is write-only, so nothing can read a value back." />
+        <Head title="secrets" sub="Add a key once and every agent you attach the skill to can use it. Keys go straight into the macOS keychain, never into files — saving is write-only, so nothing can read a value back." />
         <SkillSecretsSection onNotice={flash} />
 
         </>)}
