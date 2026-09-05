@@ -13,8 +13,17 @@
   },
   "fez": {
     "type": "extension",
-    "parts": { "skill": { "command": "node", "args": ["dist/mcp.js"] } },
-    "permissions": ["network:*"],
+    "parts": {
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ]
+      }
+    },
+    "permissions": [
+      "network:*"
+    ],
     "minFezVersion": "0.2.0"
   },
   "scripts": {
@@ -23,9 +32,9 @@
     "test": "vitest --run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "@mozilla/readability": "^0.5.0",
     "linkedom": "^0.18.5",
-    "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
