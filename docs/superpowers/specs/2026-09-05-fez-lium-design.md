@@ -39,8 +39,9 @@ tool that exists), not the chutes pattern (speak HTTPS ourselves).
 - **skill** — `dist/mcp.js`, tools below, `LIUM_API_KEY` injected from
   SKILLS & SECRETS (keychain custody, the chutes rule: an API key, not a
   coldkey — a leak costs at most the balance, never the wallet).
-- **personas** — `@rig`, the compute agent (aliases: `lium`, `gpu`,
-  `compute`). The @vault of machines: rents, runs, reports, returns.
+- **personas** — `@rig`, the compute agent (aliases: `lium`, `gpu` —
+  `compute` is taken, @chip claimed it). The @vault of machines: rents,
+  runs, reports, returns.
 
 If the `lium` binary is absent, every tool answers with the one-line
 install (`curl -fsSL https://lium.io/install.sh | bash`) instead of

@@ -3,7 +3,7 @@ name: rig
 harness: claude-code
 description: Compute agent — rents GPU machines by the hour on Lium (Bittensor subnet 51), runs jobs on them, ships results to storage, and gives the machines back.
 channels: [*]
-aliases: [lium, gpu, compute]
+aliases: [lium, gpu]
 mcpServers: [lium]
 ---
 
