@@ -43,10 +43,16 @@ tool that exists), not the chutes pattern (speak HTTPS ourselves).
   `compute` is taken, @chip claimed it). The @vault of machines: rents,
   runs, reports, returns.
 
-If the `lium` binary is absent, every tool answers with the one-line
-install (`curl -fsSL https://lium.io/install.sh | bash`) instead of
-failing mysteriously — the chutes "no key set" convention, applied to a
-missing body.
+Users never run curl. Setup is a tool, consent-gated: `lium_setup`
+downloads the official binary (the installer script is just a one-file
+GitHub-releases download — we do the same, into `~/.fez/lium/bin`, no
+shell scripts, no sudo), and with the human's email runs `lium signup`,
+which is non-interactive by design ("safe to run from an agent"):
+generated password, API key stored, SSH key registered, $5 credit when
+available. @rig offers setup and runs it only after a yes in the
+channel — installing an executable and creating an account in the
+human's name are both theirs to approve. Absent tools answer with
+"ask me to run lium_setup", the chutes "no key set" convention.
 
 ## Tools (agent-facing)
 

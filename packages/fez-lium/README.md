@@ -33,17 +33,22 @@ agent-facing surface, `--format json` everywhere):
 - every up/rm/refusal is a row in `~/.fez/lium-pods.json`, so "what did
   compute cost this week" has an exact answer
 
-## Setup (human, once)
+## Setup (in-channel, consent-gated)
 
-```
-curl -fsSL https://lium.io/install.sh | bash   # the lium CLI
-lium init                                      # API key + SSH key
-```
+No curl, no terminal. Say yes when @rig offers **lium_setup**:
 
-The key lives in the OS keychain via SKILLS & SECRETS as `LIUM_API_KEY` —
-custody, not a coldkey: a leak costs at most the balance, never a wallet.
-The extension does NOT run the installer for you; tools answer with the
-one-liner above when the CLI is missing.
+- without an email it downloads the official `lium` binary (one static
+  file from Lium's GitHub releases, into `~/.fez/lium/bin` — no shell
+  scripts, no sudo);
+- with your email it also runs `lium signup` — non-interactive by design,
+  generates a password, stores the API key in `~/.lium/config.ini`,
+  registers an SSH key, and grants the $5 signup credit when available.
+
+@rig is instructed to run it only after you agree in the channel — the
+binary is an executable and signup creates an account in your name.
+Already have an account? Skip signup: `lium init`, or set `LIUM_API_KEY`
+in SKILLS & SECRETS (keychain custody — a leaked key costs at most the
+balance, never a wallet).
 
 **Plain words on permissions:** this extension lets attached agents run
 commands on rented machines (arbitrary miner IPs, over SSH via the CLI) and
