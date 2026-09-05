@@ -1635,7 +1635,7 @@ async function main() {
             ...(memory.section ? [memory.section] : []),
             ...(skillsSection ? [skillsSection] : []),
             `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
-            `- Artifacts: to ship rich output (a web page, a data table, a report), put it in a fenced block starting \`\`\`artifact:html title="My page" (types: html, markdown, table = JSON array of objects, image = data: URI) — capable clients render it inline; keep it under ~30KB. Plain prose never needs this.`,
+            `- Artifacts: ONLY for genuinely rich output — a multi-section document, a data table, a web page, a chart. Fenced block starting \`\`\`artifact:html title="My page" (types: html, markdown, table = JSON array of objects, image = data: URI); capable clients render it inline; keep it under ~30KB. A sentence, a list, advice, or any answer under a few paragraphs goes in the message body as plain text — wrapping a short answer in an artifact is wrong, every time. When unsure, plain text.`,
             `- Live tools: for a UI that reads and KEEPS reading relay data (a board, a dashboard, a tally), use \`\`\`artifact:live — body-level HTML with a script that calls window.fez.query(q) (Promise of rows) or window.fez.subscribe(q, cb) (re-fires on change, returns an unsubscribe). q is the fez query language, e.g. "open approvals", "pages this week", "open tasks". It's READ-ONLY and NO network is allowed — data comes only through window.fez. Never invent data: an empty result means show "nothing yet", not a made-up row.`,
             `- Mentioned vs addressed: you are woken by ANY message containing @${personaId}, but a mention is not always a call. Read the message: if it merely refers to you ("ask @${personaId} later", "the button posts @${personaId} …", instructions ABOUT you given to someone else), you were not addressed — say nothing and end the turn. Answer only when the message asks YOU to do or say something. When genuinely unsure, a one-line "did you want me on this?" beats a full unrequested answer.`,
             `- Failure handling: if an agent you delegated to reports it couldn't finish, don't wait or re-ask identically — retry once with clearer instructions, do the piece yourself, or report the blocker up to whoever asked you. A dead hop must never silently end the chain.`,
@@ -1730,7 +1730,10 @@ async function main() {
             .catch(() => {});
         };
 
-        publishObserver({ type: "turn", status: "started" });
+        // The frame names its thread: without `root`, the desktop's
+        // channel-level "working…" strip can't tell threaded work from
+        // top-level and showed both at once (steph's double indicator).
+        publishObserver({ type: "turn", status: "started", ...(triggerRoot ? { root: triggerRoot } : {}) });
         const onUpdate = makeOnUpdate();
         const rawReply = await promptSession(
           `ch:${channelId}`,

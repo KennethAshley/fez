@@ -127,6 +127,30 @@ function LiveElapsed({ baseMs }: { baseMs: number }) {
   return <span className="turn-elapsed">{fmtDur(ms)}</span>;
 }
 
+/**
+ * How long since the agent last SAID anything — the signal that separates
+ * "slow model, still streaming" from "turn died mid-air". Elapsed time
+ * alone can't tell them apart (a Chutes TEE model can legitimately think
+ * for minutes), but silence can: fresh frames = working, long quiet =
+ * probably stuck. Silent under 15s (normal inter-frame gap); a dim
+ * "quiet Ns" after that; past 90s it says the honest thing out loud.
+ */
+function LiveQuiet({ lastTs }: { lastTs: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const quietMs = now - lastTs;
+  if (quietMs < 15_000) return null;
+  const stale = quietMs > 90_000;
+  return (
+    <span className={stale ? "turn-quiet stale" : "turn-quiet"} title="time since the agent's last activity frame — long silence usually means the turn is stuck, not slow">
+      · quiet {fmtDur(quietMs)}{stale ? " — likely stuck" : ""}
+    </span>
+  );
+}
+
 const OUTCOME_MARK: Record<string, string> = { done: "✓", failed: "✗", cancelled: "⊘" };
 
 /** What a collapsed turn did: a tally per tool kind, most-used first. */
@@ -193,6 +217,7 @@ export default function ActivityFeed({
                 {live ? "▸ working" : `${OUTCOME_MARK[group.outcome ?? ""] ?? "·"} turn ${group.outcome ?? "interrupted"}`}
               </span>
               {live && <LiveElapsed baseMs={dur ?? 0} />}
+              {live && group.lastTs !== undefined && <LiveQuiet lastTs={group.lastTs} />}
               {!live && dur !== undefined && dur > 0 && <span className="turn-elapsed">{fmtDur(dur)}</span>}
               {live && doing && (
                 <span className="turn-doing">

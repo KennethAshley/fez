@@ -4425,3 +4425,5 @@ a.page-fact:hover { color: var(--fg); }
 .hire-proposal .hp-rate { color: var(--ok); font-weight: 400; font-variant-numeric: tabular-nums; }
 .hire-proposal .hp-actions { display: flex; gap: 10px; margin-top: 8px; }
 .hire-proposal .hp-decided { display: block; margin-top: 6px; color: var(--fg-dim); }
+.turn-quiet { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.turn-quiet.stale { color: var(--yellow); }

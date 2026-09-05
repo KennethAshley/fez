@@ -603,7 +603,7 @@ export class FezClient {
   // jobs + observer + workflows
   private jobsMap = new Map<string, Job>();
   private observerFeedsMap = new Map<string, ObserverEntry[]>();
-  private workingAgentsMap = new Map<string, { activity: string; ts: number }>();
+  private workingAgentsMap = new Map<string, { activity: string; ts: number; root?: string }>();
   private workflowRunsMap = new Map<string, WorkflowRunInfo>();
 
   // DMs
@@ -908,7 +908,7 @@ export class FezClient {
   observerFeed(agent: string): readonly ObserverEntry[] {
     return this.observerFeedsMap.get(agent) ?? [];
   }
-  workingAgents(): ReadonlyMap<string, { activity: string; ts: number }> {
+  workingAgents(): ReadonlyMap<string, { activity: string; ts: number; root?: string }> {
     const now = Date.now();
     for (const [name, w] of this.workingAgentsMap) if (now - w.ts > 180_000) this.workingAgentsMap.delete(name);
     return this.workingAgentsMap;
@@ -2920,9 +2920,13 @@ export class FezClient {
     if (feed.length > 30) feed.splice(0, feed.length - 30);
     this.observerFeedsMap.set(agent, feed);
 
+    // `root` is sticky for the turn: only the turn-started frame carries
+    // it, later tool frames must not clobber it back to top-level.
+    const frameRoot = (frame as { root?: string }).root;
+    const heldRoot = this.workingAgentsMap.get(agent)?.root;
     if (frame.type === "turn" && frame.status !== "started") this.workingAgentsMap.delete(agent);
-    else if (frame.type === "tool" && frame.title) this.workingAgentsMap.set(agent, { activity: frame.title, ts: Date.now() });
-    else if (frame.type === "turn") this.workingAgentsMap.set(agent, { activity: "working…", ts: Date.now() });
+    else if (frame.type === "tool" && frame.title) this.workingAgentsMap.set(agent, { activity: frame.title, ts: Date.now(), root: heldRoot });
+    else if (frame.type === "turn") this.workingAgentsMap.set(agent, { activity: "working…", ts: Date.now(), root: frameRoot });
 
     // Jobs enrichment — owner-only detail the public wire can't provide.
     const agentPk = this.pkByName(agent);

@@ -1854,7 +1854,7 @@ function ChannelView({
   channelId: string;
   focusId?: string;
   drafts?: Map<string, { content: string; rootId?: string; ts: number }>;
-  working: ReadonlyMap<string, { activity: string; ts: number }>;
+  working: ReadonlyMap<string, { activity: string; ts: number; root?: string }>;
   onWatch: (agent: string) => void;
   onManage: () => void;
   onAgents: () => void;
@@ -1971,7 +1971,13 @@ function ChannelView({
   };
   const liveDrafts = [...(drafts?.entries() ?? [])].filter(([, d]) => now - d.ts < 15_000);
   const draftsForRoot = (rootId: string) => liveDrafts.filter(([, d]) => d.rootId === rootId);
-  const workingNow = [...working.entries()].filter(([, w]) => now - w.ts < 30_000);
+  // Threaded turns belong to their thread's own preview — showing them
+  // here too doubled the indicator (steph appeared "thinking" in the
+  // thread AND "working" at channel root). Frames without a root (older
+  // agents, DMs) keep today's behavior.
+  const workingNow = [...working.entries()].filter(
+    ([, w]) => now - w.ts < 30_000 && (threadRoot ? w.root === threadRoot || !w.root : !w.root)
+  );
 
   // One turn per working agent, at whichever phase it has reached:
   // streaming text wins over an activity line, an activity line over
