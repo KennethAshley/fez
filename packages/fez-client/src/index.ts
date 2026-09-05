@@ -2396,6 +2396,14 @@ export class FezClient {
   }
 
   private cacheMessage(channelId: string, event: WireEvent): Msg {
+    // Idempotent by event id: the sender's own optimistic cache races the
+    // relay's echo of the same event through the live subscription (the
+    // echo can land before publish() resolves, before seenMessages is
+    // marked), and both paths land here. Without this, one message
+    // rendered twice — identical reactions on each copy, since both rows
+    // shared the id.
+    const already = this.msgByIdMap.get(event.id);
+    if (already) return already;
     const msg = this.buildMsg(event);
     const list = this.messagesByChannel.get(channelId) ?? [];
     list.push(msg);
