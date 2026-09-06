@@ -36,8 +36,21 @@ export interface ConnectionEntry {
  * gains a clientId once the fez OAuth app is registered (until then,
  * connect explains instead of failing cryptically). */
 export const CONNECTIONS: ConnectionEntry[] = [
+  // Zero-config: these advertise dynamic registration (RFC 7591), so
+  // fez self-registers at connect time — nothing to pre-set. Probed live
+  // 2026-09-05. Scope omitted where the server's consent screen decides.
   { key: "linear", title: "Linear", url: "https://mcp.linear.app/mcp", scope: "read write", what: "issues, projects, comments — read and write" },
   { key: "notion", title: "Notion", url: "https://mcp.notion.com/mcp", what: "pages and databases the sign-in grants" },
+  { key: "sentry", title: "Sentry", url: "https://mcp.sentry.dev/mcp", what: "errors, issues, and releases across your projects" },
+  { key: "cloudflare", title: "Cloudflare", url: "https://mcp.cloudflare.com/mcp", what: "Workers, DNS, and account resources" },
+  { key: "stripe", title: "Stripe", url: "https://mcp.stripe.com", what: "customers, payments, and billing" },
+  { key: "paypal", title: "PayPal", url: "https://mcp.paypal.com/mcp", what: "invoices, orders, and transactions" },
+  { key: "vercel", title: "Vercel", url: "https://mcp.vercel.com", what: "deployments, projects, and logs" },
+  { key: "neon", title: "Neon", url: "https://mcp.neon.tech/mcp", what: "Postgres databases and branches" },
+  { key: "supabase", title: "Supabase", url: "https://mcp.supabase.com/mcp", what: "database, auth, and storage" },
+  { key: "canva", title: "Canva", url: "https://mcp.canva.com/mcp", what: "designs and brand assets" },
+  { key: "webflow", title: "Webflow", url: "https://mcp.webflow.com/mcp", what: "sites and CMS collections" },
+  // No DCR — needs fez's one-time registered client_id (the gh precedent).
   { key: "github", title: "GitHub", url: "https://api.githubcopilot.com/mcp/", what: "repos, PRs, issues", clientId: undefined },
 ];
 

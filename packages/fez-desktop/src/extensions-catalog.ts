@@ -56,6 +56,15 @@ export interface ConnectableEntry {
 export const CONNECTABLE: ConnectableEntry[] = [
   { key: "linear", title: "Linear", blurb: "Your agent reads and writes issues, projects, and comments. Sign in with your Linear account — no API key." },
   { key: "notion", title: "Notion", blurb: "Your agent works in the pages and databases you grant at sign-in — no API key." },
+  { key: "sentry", title: "Sentry", blurb: "Errors, issues, and releases across your projects. Sign in — no API key." },
+  { key: "cloudflare", title: "Cloudflare", blurb: "Workers, DNS, and account resources. Sign in with your Cloudflare account — no API key." },
+  { key: "stripe", title: "Stripe", blurb: "Customers, payments, and billing. Sign in — no API key." },
+  { key: "paypal", title: "PayPal", blurb: "Invoices, orders, and transactions. Sign in — no API key." },
+  { key: "vercel", title: "Vercel", blurb: "Deployments, projects, and logs. Sign in with your Vercel account — no API key." },
+  { key: "neon", title: "Neon", blurb: "Postgres databases and branches. Sign in — no API key." },
+  { key: "supabase", title: "Supabase", blurb: "Database, auth, and storage. Sign in with your Supabase account — no API key." },
+  { key: "canva", title: "Canva", blurb: "Designs and brand assets. Sign in — no API key." },
+  { key: "webflow", title: "Webflow", blurb: "Sites and CMS collections. Sign in — no API key." },
   { key: "github", title: "GitHub", blurb: "Repos, PRs, issues. Sign-in coming; today, paste a PAT in Settings → secrets and it works the same." },
 ];
 

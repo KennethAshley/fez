@@ -230,11 +230,21 @@ export function ExtensionGallery({
   const updateCount = GALLERY.filter(hasUpdate).length;
   const installedCount = GALLERY.filter(isInstalled).length;
 
+  const q2 = query.trim().toLowerCase();
+  const connShelf =
+    view === "updates"
+      ? []
+      : CONNECTABLE.filter((c) => {
+          const connected = c.key in (useConfigSkills as Record<string, unknown>);
+          if (view === "installed" && !connected) return false;
+          return !q2 || `${c.title} ${c.key} ${c.blurb}`.toLowerCase().includes(q2);
+        });
+
   return (
     <div className="ext-gallery">
       <div className="settings-hint">
-        Official fez extensions. Installing fetches the package from npm and grants the permissions shown — no
-        terminal needed. Anything not listed: <code>fez install &lt;name&gt;</code> in a terminal.
+        Two ways to give agents more reach. <b>Connections</b> — sign in to a service, no key to paste.
+        <b> Extensions</b> — install a package (a panel, a command, a tool); some grant permissions, shown before you install.
       </div>
       {/* The shelf's toolbar: filter + views. The updates chip wears the
           update button's own yellow when something needs you — one glance
@@ -265,18 +275,20 @@ export function ExtensionGallery({
           {view === "updates" && !updateCount ? "Everything installed is current." : `Nothing matches “${query.trim()}”.`}
         </div>
       )}
-      {/* Connections: sign in, don't paste. These aren't packages — the
-          button runs the OAuth flow via the bundled fez-agent and the
-          skill registers itself. Filtered by the same query box. */}
-      {view === "all" && (
+      {/* Connections: sign in, don't paste. Not packages — the button
+          runs the OAuth flow via the bundled fez-agent and the skill
+          registers itself. An unconnected card wears the ember notch,
+          the same "needs you" signal as the secrets keycards. */}
+      {connShelf.length > 0 && (
         <>
-          <div className="manage-section">connections</div>
-          <div className="settings-hint">Sign in once and any agent you attach the tool to can use it — tokens live in the keychain, refreshed automatically.</div>
-          {CONNECTABLE.filter((c) => !q || `${c.title} ${c.key} ${c.blurb}`.toLowerCase().includes(q)).map((c) => {
-            const connected = !!(useConfigSkills as Record<string, { auth?: string }>)[c.key];
+          <div className="manage-section">
+            connections<span className="section-fact">{connShelf.length}</span>
+          </div>
+          {connShelf.map((c) => {
+            const connected = c.key in (useConfigSkills as Record<string, unknown>);
             const busyC = connecting === c.key;
             return (
-              <div key={c.key} className={`gallery-card ${connected ? "lit" : "dormant"}`}>
+              <div key={c.key} className={`gallery-card connectable ${connected ? "lit" : "dormant"}`} data-needs={connected ? undefined : ""}>
                 <div className="gallery-main">
                   <span className="artifact-slot">
                     <AnimatedSprite sprite={generateArtifact(c.key)} scale={4} />
@@ -289,29 +301,36 @@ export function ExtensionGallery({
                     <span className="gallery-blurb">{c.blurb}</span>
                   </span>
                 </div>
-                {connected ? (
-                  <span className="gallery-installed">● connected</span>
-                ) : (
-                  <button
-                    className="gallery-install"
-                    disabled={busyC}
-                    onClick={() => {
-                      setConnecting(c.key);
-                      void invoke<string>("connect_service", { key: c.key })
-                        .then(() => onInstalled())
-                        .catch((e) => setConnectError(`${c.title}: ${String(e)}`))
-                        .finally(() => setConnecting(undefined));
-                    }}
-                  >
-                    {busyC ? "waiting for sign-in…" : "sign in to connect"}
-                  </button>
-                )}
+                <div className="gallery-foot">
+                  {connected ? (
+                    <span className="gallery-installed">🔒 connected</span>
+                  ) : (
+                    <button
+                      className="gallery-install connect"
+                      disabled={busyC}
+                      onClick={() => {
+                        setConnecting(c.key);
+                        setConnectError(undefined);
+                        void invoke<string>("connect_service", { key: c.key })
+                          .then(() => onInstalled())
+                          .catch((e) => setConnectError(`${c.title}: ${String(e)}`))
+                          .finally(() => setConnecting(undefined));
+                      }}
+                    >
+                      {busyC ? "waiting for sign-in…" : "sign in to connect"}
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
-          {connectError && <div className="settings-hint">✗ {connectError}</div>}
-          <div className="manage-section">extensions</div>
+          {connectError && <div className="settings-hint gallery-span">✗ {connectError}</div>}
         </>
+      )}
+      {shelf.length > 0 && (
+        <div className="manage-section">
+          extensions<span className="section-fact">{shelf.length}</span>
+        </div>
       )}
       {shelf.map((entry) => {
         const done = isInstalled(entry);

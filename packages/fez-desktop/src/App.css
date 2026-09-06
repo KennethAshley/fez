@@ -2145,7 +2145,12 @@ button.author:hover { text-decoration: underline; }
    state: a dormant relic sits muted, hovering makes it stir, installing
    lights it — the sprite is the badge. */
 .ext-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
-.ext-gallery > .settings-hint { grid-column: 1 / -1; }
+.ext-gallery > .settings-hint, .ext-gallery > .gallery-span { grid-column: 1 / -1; }
+/* Section dividers span the whole grid — the hairline-rule idiom at
+   shelf scale (see .manage-section): a label, a rule running out to a
+   count. Without the span they'd sit as one 280px cell mid-grid. */
+.ext-gallery > .manage-section { grid-column: 1 / -1; margin: 18px 0 2px; }
+.ext-gallery > .manage-section:first-child { margin-top: 4px; }
 .gallery-from-url { grid-column: 1 / -1; margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
 
 /* ── the shelf's toolbar: filter + view chips (thousands-ready) ────── */
@@ -2246,6 +2251,17 @@ button.author:hover { text-decoration: underline; }
 .gallery-install:hover:not(:disabled) { filter: brightness(1.1); }
 .gallery-install:disabled { cursor: default; }
 .gallery-install.installed { color: var(--fg-dim); background: none; border-color: var(--hairline); font-weight: 500; }
+
+/* Connectable service cards: a different KIND of thing (sign in, not
+   install), marked the same way the secrets keycards mark a missing
+   key — a 2px ember notch on the left while unconnected, quiet once
+   done. The connect button is ember-outlined, not filled, so it reads
+   as "start a flow" rather than the solid "install now". */
+.gallery-card.connectable { border-left: 2px solid var(--hairline); }
+.gallery-card.connectable[data-needs] { border-left-color: var(--accent); }
+.gallery-install.connect { color: var(--accent); background: none; border-color: var(--accent); }
+.gallery-install.connect:hover:not(:disabled) { color: var(--bg0); background: var(--accent); filter: none; }
+.gallery-card.connectable .gallery-installed { color: var(--green); font-family: var(--font-mono); font-size: 12px; }
 
 /* install-consent dialog — a distinct class from the extension SETTINGS
    modal (.ext-modal), which paints itself via .pane-body; sharing the class
