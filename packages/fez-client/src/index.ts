@@ -1819,6 +1819,24 @@ export class FezClient {
     await this.wire.publish({ kind: K.AGENT_ATTESTATION, tags: [["p", agentPk]], content: "" });
   }
 
+  /** Publish a chit — a signed note that this agent's work was accepted. */
+  async chitAgent(agentPk: string, opts: { note: string; workId?: string; channelId?: string }): Promise<void> {
+    const tags: string[][] = [["p", agentPk]];
+    if (opts.workId) tags.push(["e", opts.workId]);
+    if (opts.channelId) tags.push(["h", opts.channelId]);
+    await this.wire.publish({ kind: K.CHIT, tags, content: opts.note });
+  }
+
+  /** Vouch for an agent. Addressable: latest per signer wins. */
+  async saltAgent(agentPk: string, note = "trusted"): Promise<void> {
+    await this.wire.publish({ kind: K.SALT, tags: [["d", agentPk], ["p", agentPk]], content: note });
+  }
+
+  /** Revoke your vouch — republish the address empty. */
+  async unsaltAgent(agentPk: string): Promise<void> {
+    await this.wire.publish({ kind: K.SALT, tags: [["d", agentPk], ["p", agentPk]], content: "" });
+  }
+
   /**
    * Guard rail: an admin (not the owner) may not act on the owner or on
    * another admin. Only the owner outranks an admin.
