@@ -43,7 +43,7 @@ import MemoryView from "./MemoryView";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
 import ModerationQueue from "./ModerationQueue";
-import { AnimatedSprite } from "@fezchat/ui";
+import { AnimatedSprite, Avatar as UiAvatar } from "@fezchat/ui";
 import { SPRITES } from "@fezchat/ui";
 import HoverCard from "./HoverCard";
 import { uploadFile, shareLine, imetaTag, setMediaServer, reconcileMediaServer, type Uploaded } from "./upload";
@@ -1257,7 +1257,9 @@ function Shell({
                           {g.picture ? (
                             <img src={g.picture} alt="" width={16} height={16} style={{ imageRendering: "pixelated" }} />
                           ) : (
-                            <span className="group-mark">◌</span>
+                            // No published picture (external miners rarely have one) —
+                            // the pk seeds the same generative face as every other surface.
+                            <UiAvatar pk={g.pk} name={name} size={16} />
                           )}{" "}
                           {collides ? `${name} ·${g.pk.slice(0, 4)}` : name}
                           {unread > 0 && !active && <span className="badge">{unread}</span>}

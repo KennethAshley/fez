@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Avatar as UiAvatar } from "@fezchat/ui";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -637,7 +638,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
           {guest.picture ? (
             <img src={guest.picture} alt="" width={20} height={20} style={{ imageRendering: "pixelated", display: "block" }} />
           ) : (
-            <span style={{ color: "var(--fg-dim, #928374)" }}>◌</span>
+            // No published picture — the pk seeds the same generative face
+            // as every other surface (agents-face rule: a pk earns a face).
+            <UiAvatar pk={guest.pk} name={name} size={20} />
           )}
           <span>{name}</span>
           <span className="guest-chip" title={guest.pk}>{guest.pk.slice(0, 8)}</span>
