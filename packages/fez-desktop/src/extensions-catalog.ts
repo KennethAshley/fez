@@ -47,25 +47,31 @@ export const CATALOG: CatalogEntry[] = [
  * as unlockable rows in the agent editor's tool picker — a shelf you
  * can't see is a shelf that doesn't exist.
  */
+/** Broad buckets so a growing list stays scannable — the connections view
+ * groups by these, and CONNECTION_CATEGORIES fixes their order. */
+export type ConnCategory = "Dev" | "Data" | "Payments" | "Design & Docs" | "Support";
+export const CONNECTION_CATEGORIES: ConnCategory[] = ["Dev", "Data", "Payments", "Design & Docs", "Support"];
+
 export interface ConnectableEntry {
   /** The mcpServers key personas declare — and the keychain identity. */
   key: string;
   title: string;
+  category: ConnCategory;
   blurb: string;
 }
 export const CONNECTABLE: ConnectableEntry[] = [
-  { key: "linear", title: "Linear", blurb: "Your agent reads and writes issues, projects, and comments. Sign in with your Linear account — no API key." },
-  { key: "notion", title: "Notion", blurb: "Your agent works in the pages and databases you grant at sign-in — no API key." },
-  { key: "sentry", title: "Sentry", blurb: "Errors, issues, and releases across your projects. Sign in — no API key." },
-  { key: "cloudflare", title: "Cloudflare", blurb: "Workers, DNS, and account resources. Sign in with your Cloudflare account — no API key." },
-  { key: "stripe", title: "Stripe", blurb: "Customers, payments, and billing. Sign in — no API key." },
-  { key: "paypal", title: "PayPal", blurb: "Invoices, orders, and transactions. Sign in — no API key." },
-  { key: "vercel", title: "Vercel", blurb: "Deployments, projects, and logs. Sign in with your Vercel account — no API key." },
-  { key: "neon", title: "Neon", blurb: "Postgres databases and branches. Sign in — no API key." },
-  { key: "supabase", title: "Supabase", blurb: "Database, auth, and storage. Sign in with your Supabase account — no API key." },
-  { key: "canva", title: "Canva", blurb: "Designs and brand assets. Sign in — no API key." },
-  { key: "webflow", title: "Webflow", blurb: "Sites and CMS collections. Sign in — no API key." },
-  { key: "github", title: "GitHub", blurb: "Repos, PRs, issues. Sign-in coming; today, paste a PAT in Settings → secrets and it works the same." },
+  { key: "linear", title: "Linear", category: "Dev", blurb: "Your agent reads and writes issues, projects, and comments. Sign in with your Linear account — no API key." },
+  { key: "github", title: "GitHub", category: "Dev", blurb: "Repos, PRs, issues. Sign-in coming; today, paste a PAT in Settings → secrets and it works the same." },
+  { key: "sentry", title: "Sentry", category: "Dev", blurb: "Errors, issues, and releases across your projects. Sign in — no API key." },
+  { key: "vercel", title: "Vercel", category: "Dev", blurb: "Deployments, projects, and logs. Sign in with your Vercel account — no API key." },
+  { key: "cloudflare", title: "Cloudflare", category: "Dev", blurb: "Workers, DNS, and account resources. Sign in with your Cloudflare account — no API key." },
+  { key: "neon", title: "Neon", category: "Data", blurb: "Postgres databases and branches. Sign in — no API key." },
+  { key: "supabase", title: "Supabase", category: "Data", blurb: "Database, auth, and storage. Sign in with your Supabase account — no API key." },
+  { key: "stripe", title: "Stripe", category: "Payments", blurb: "Customers, payments, and billing. Sign in — no API key." },
+  { key: "paypal", title: "PayPal", category: "Payments", blurb: "Invoices, orders, and transactions. Sign in — no API key." },
+  { key: "notion", title: "Notion", category: "Design & Docs", blurb: "Your agent works in the pages and databases you grant at sign-in — no API key." },
+  { key: "canva", title: "Canva", category: "Design & Docs", blurb: "Designs and brand assets. Sign in — no API key." },
+  { key: "webflow", title: "Webflow", category: "Design & Docs", blurb: "Sites and CMS collections. Sign in — no API key." },
 ];
 
 export const PERM_LABEL: Record<string, string> = {

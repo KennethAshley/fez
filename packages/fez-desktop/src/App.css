@@ -2263,6 +2263,32 @@ button.author:hover { text-decoration: underline; }
 .gallery-install.connect:hover:not(:disabled) { color: var(--bg0); background: var(--accent); filter: none; }
 .gallery-card.connectable .gallery-installed { color: var(--green); font-family: var(--font-mono); font-size: 12px; }
 
+/* Connections view: dense, categorized, search-first — the shelf you
+   shop from once there are dozens. Tiles, not cards. */
+.conn-cat { margin-bottom: 6px; }
+.conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.conn-tile {
+  display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer;
+  padding: 8px 10px; border-radius: 9px; font: inherit;
+  border: 1px solid var(--hairline); border-left: 2px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg2) 40%, transparent); color: inherit;
+}
+.conn-tile[data-needs] { border-left-color: var(--accent); }
+.conn-tile:hover:not(:disabled) { border-color: var(--accent); }
+.conn-tile.connected { cursor: default; }
+.conn-tile:disabled:not(.connected) { opacity: 0.6; cursor: default; }
+.conn-tile-icon { width: 34px; height: 34px; flex: none; }
+.conn-tile-text { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.conn-tile-name { font-weight: 600; font-size: 13px; }
+.conn-tile-state { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim); }
+.conn-tile.connected .conn-tile-state { color: var(--green); }
+.conn-tile[data-needs] .conn-tile-state { color: var(--accent); }
+.conn-seeall {
+  justify-self: start; margin: 2px 0 4px; padding: 4px 0; font: inherit; font-size: 12px;
+  background: none; border: 0; color: var(--accent); cursor: pointer;
+}
+.conn-seeall:hover { text-decoration: underline; }
+
 /* install-consent dialog — a distinct class from the extension SETTINGS
    modal (.ext-modal), which paints itself via .pane-body; sharing the class
    double-padded that one. */
