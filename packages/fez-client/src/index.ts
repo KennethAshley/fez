@@ -451,6 +451,7 @@ export * from "./mentions.js";
 export * from "./skill-source.js";
 export * from "./persona-keys.js";
 export * from "./salt.js";
+import { deriveSalt, type SaltEvidence, type SaltPanel } from "./salt.js";
 import {
   resolveMentions,
   type MentionBindings,
@@ -1835,6 +1836,55 @@ export class FezClient {
   /** Revoke your vouch — republish the address empty. */
   async unsaltAgent(agentPk: string): Promise<void> {
     await this.wire.publish({ kind: K.SALT, tags: [["d", agentPk], ["p", agentPk]], content: "" });
+  }
+
+  /** One-shot salt evidence panel for an agent, from THIS viewer's vantage. */
+  async saltPanel(agentPk: string): Promise<SaltPanel> {
+    const [chits, vouches, pays, attestIn, myAttested, myVouches] = await Promise.all([
+      this.wire.query([{ kinds: [K.CHIT], "#p": [agentPk], limit: 500 }]),
+      this.wire.query([{ kinds: [K.SALT], "#d": [agentPk], limit: 500 }]),
+      this.wire.query([{ kinds: [K.PAYMENT_RECEIPT], "#p": [agentPk], limit: 500 }]),
+      this.wire.query([{ kinds: [K.AGENT_ATTESTATION], "#p": [agentPk], limit: 200 }]),
+      this.wire.query([{ kinds: [K.AGENT_ATTESTATION], authors: [this.pubkey], limit: 200 }]),
+      this.wire.query([{ kinds: [K.SALT], authors: [this.pubkey], limit: 500 }]),
+    ]);
+    const owners = [...new Set(attestIn.map((e) => e.pubkey))];
+    const siblingEvents = owners.length
+      ? await this.wire.query([{ kinds: [K.AGENT_ATTESTATION], authors: owners, limit: 500 }])
+      : [];
+
+    const p = (e: { tags: string[][] }, name: string) => e.tags.find((t) => t[0] === name)?.[1];
+    const evidence: SaltEvidence[] = [];
+    for (const e of [...chits, ...pays]) {
+      if (p(e, "p") !== agentPk) continue;
+      evidence.push({ signer: e.pubkey, kind: "chit", workId: p(e, "e"), note: e.content,
+        at: e.created_at, moneyBacked: e.kind === K.PAYMENT_RECEIPT });
+    }
+    // Latest vouch per signer; empty content = revoked.
+    const latestVouch = new Map<string, (typeof vouches)[number]>();
+    for (const v of vouches) {
+      const prev = latestVouch.get(v.pubkey);
+      if (!prev || v.created_at > prev.created_at) latestVouch.set(v.pubkey, v);
+    }
+    for (const v of latestVouch.values()) {
+      if (!v.content) continue;
+      evidence.push({ signer: v.pubkey, kind: "vouch", note: v.content, at: v.created_at, moneyBacked: false });
+    }
+
+    const attestations = [...attestIn, ...siblingEvents]
+      .map((e) => ({ owner: e.pubkey, agent: p(e, "p") ?? "" }))
+      .filter((a) => a.agent);
+    const mine = new Set(myAttested.map((e) => p(e, "p")).filter(Boolean) as string[]);
+    const vouched = new Set(myVouches.filter((e) => e.content).map((e) => p(e, "d")).filter(Boolean) as string[]);
+
+    return deriveSalt({
+      agent: agentPk,
+      viewer: this.pubkey,
+      evidence,
+      attestations,
+      isViewerAgent: (pk) => pk === this.pubkey || mine.has(pk),
+      inViewerCircle: (pk) => this.state.isMember(pk) || vouched.has(pk),
+    });
   }
 
   /**
