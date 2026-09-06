@@ -782,9 +782,9 @@ enum ProviderAuth {
     XApiKey,
 }
 
-/// The v1 provider table — chutes/anthropic/openai/openrouter. Adding a
-/// provider is adding a row here; wire_provider_pi and provider_key_present
-/// are both fully data-driven off it.
+/// The v1 provider table. Adding a provider is adding a row here (plus its
+/// mirrors in providers.ts and ModelPicker.tsx); wire_provider_pi and
+/// provider_key_present are both fully data-driven off it.
 fn provider_spec(id: &str) -> Option<&'static ProviderSpec> {
     const PROVIDERS: &[ProviderSpec] = &[
         ProviderSpec { id: "chutes", name: "Chutes", base_url: "https://llm.chutes.ai/v1", key_name: "CHUTES_API_KEY", auth: ProviderAuth::Bearer },
@@ -792,6 +792,7 @@ fn provider_spec(id: &str) -> Option<&'static ProviderSpec> {
         ProviderSpec { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1", key_name: "OPENAI_API_KEY", auth: ProviderAuth::Bearer },
         ProviderSpec { id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", key_name: "OPENROUTER_API_KEY", auth: ProviderAuth::Bearer },
         ProviderSpec { id: "gm", name: "GM", base_url: "https://api.saygm.com/v1", key_name: "GM_API_KEY", auth: ProviderAuth::Bearer },
+        ProviderSpec { id: "actual", name: "Actual", base_url: "https://api.actual.inc/v1", key_name: "ACTUAL_API_KEY", auth: ProviderAuth::Bearer },
     ];
     PROVIDERS.iter().find(|p| p.id == id)
 }

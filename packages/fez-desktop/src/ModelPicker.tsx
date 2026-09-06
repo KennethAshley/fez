@@ -12,7 +12,7 @@ import { useHarnesses } from "./harnesses";
  */
 
 /** pi-wireable providers — ONE table, aligned with the backend's
- * provider_spec five (lib.rs): pinned local-models id (sha256(baseUrl)
+ * provider_spec rows (lib.rs): pinned local-models id (sha256(baseUrl)
  * [..10]), plus the one fact a buyer needs — who can pay. Every row
  * renders in the picker whether or not its key is set: fez's own bundled
  * runtime is the product, and a shelf you can't see is a shelf that
@@ -23,6 +23,7 @@ const WIRED = [
   { id: "anthropic", local: "anthropic", group: "Anthropic — direct API", hint: "Claude models over your own Anthropic API key (metered per token — separate from a Claude Code subscription). Key: Settings → secrets → anthropic." },
   { id: "openai", local: "openai", group: "OpenAI", hint: "GPT models over your OpenAI API key. Key: Settings → secrets → openai." },
   { id: "openrouter", local: "openrouter", group: "OpenRouter — many labs, one key", hint: "Hundreds of models through one OpenRouter key. Key: Settings → secrets → openrouter." },
+  { id: "actual", local: "actual", group: "Actual — your own machines", hint: "Open models on your own hardware via Actual's private relay (Bittensor SN95). Needs the actual daemon on an authorized device. Key: Settings → secrets → actual." },
 ];
 
 export interface BrainSelection {

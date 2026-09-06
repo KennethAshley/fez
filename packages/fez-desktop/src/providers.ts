@@ -22,4 +22,5 @@ export const PROVIDERS: {
   { id: "openai", label: "OpenAI", keyName: "OPENAI_API_KEY", hint: "api key from platform.openai.com" },
   { id: "openrouter", label: "OpenRouter", keyName: "OPENROUTER_API_KEY", hint: "one key, many models — openrouter.ai" },
   { id: "gm", label: "GM", keyName: "GM_API_KEY", hint: "confidential frontier models — saygm.com" },
+  { id: "actual", label: "Actual", keyName: "ACTUAL_API_KEY", hint: "your own machines as a private inference cluster — actual.inc (ac_ token from the dashboard)" },
 ];
