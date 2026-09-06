@@ -4174,6 +4174,12 @@ a.page-fact:hover { color: var(--fg); }
 .skill-pick-setting { margin-left: auto; max-width: 110px; font-size: 12px; background: var(--bg-inset, transparent); color: var(--fg-dim); border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 5px; }
 .skill-pick-filter { width: 100%; margin-bottom: 4px; font-size: 12px; padding: 5px 8px; }
 .skill-pick { display: flex; align-items: flex-start; gap: 8px; padding: 4px 2px; cursor: pointer; }
+/* A connectable-but-unconnected service: same row shape, but it's a
+   button (the action is a sign-in, not a checkbox) and its name glows
+   ember until connected — the visible locked shelf. */
+.skill-pick-connect { border: 0; background: none; font: inherit; text-align: left; width: 100%; }
+.skill-pick-connect .skill-pick-name { color: var(--accent); }
+.skill-pick-connect:disabled { opacity: 0.6; cursor: default; }
 .skill-pick:hover { color: var(--fg); }
 .skill-pick-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .skill-pick-name { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }

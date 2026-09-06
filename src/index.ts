@@ -62,6 +62,8 @@ export { findPersona, listPersonas, validatePersonaFile, mergeDefaults, parseSki
 /** Where a declared skill comes from — see skill-source.ts on why a bare name resolves to nothing. */
 export { parseSkillSource, describeSkillSpec, wellKnownSource, installHint, machineLocalPath, resolveInstalledSkill, packageFromSource, safeSkillName, safeSkillSource, safeSkillEntries, SOURCE_SCHEMES, type SkillSpec, type SkillEntry } from "./extensions/skill-source.js";
 export { findMcpServer, registerMcpServer, loadMcpServersFromSettings, resolveDeclaredSkills } from "./extensions/mcp-servers.js";
+/** Connections — sign in, don't paste (MCP OAuth). See extensions/connections.ts. */
+export { CONNECTIONS, connectionEntry, connectService, disconnectService, freshToken, withFreshOAuth, markOAuthServer, readConnection, isStale, type ConnectionEntry } from "./extensions/connections.js";
 export { skillsInstalled, parseSkillMd, type InstalledSkill } from "./extensions/skills-md.js";
 export { getKey, setKey, loadOrCreateKey, listKeys, exportKey, importKey } from "./identity/keys.js";
 /** A background process needs the PATH a person has, not the one launchd gives it. */

@@ -39,6 +39,26 @@ export const CATALOG: CatalogEntry[] = [
   { name: "@fezchat/targon", title: "Targon", blurb: "Bodies for agents, Targon edition — rent GPU machines by the hour on Targon (Bittensor subnet 4) over its REST API. No marketplace TTL exists here: a workload bills until it's deleted, so the guards and the ledger carry the spend story.", where: "Adds the targon skills any attached agent can use. Plainly: agents you attach this to can rent machines, run commands on them, and pay from your prepaid Targon credits — gated by a price ceiling and a balance check before any spend, and told loudly that billing only stops at targon_rm.", permissions: ["network:api.targon.com"] },
 ];
 
+/**
+ * Connectable services (Connections — sign in, don't paste). Not npm
+ * packages: "installing" one is a browser sign-in the bundled fez-agent
+ * runs (connect_service), which lands tokens in the keychain and
+ * registers the skill in settings.json. Shown on the gallery shelf AND
+ * as unlockable rows in the agent editor's tool picker — a shelf you
+ * can't see is a shelf that doesn't exist.
+ */
+export interface ConnectableEntry {
+  /** The mcpServers key personas declare — and the keychain identity. */
+  key: string;
+  title: string;
+  blurb: string;
+}
+export const CONNECTABLE: ConnectableEntry[] = [
+  { key: "linear", title: "Linear", blurb: "Your agent reads and writes issues, projects, and comments. Sign in with your Linear account — no API key." },
+  { key: "notion", title: "Notion", blurb: "Your agent works in the pages and databases you grant at sign-in — no API key." },
+  { key: "github", title: "GitHub", blurb: "Repos, PRs, issues. Sign-in coming; today, paste a PAT in Settings → secrets and it works the same." },
+];
+
 export const PERM_LABEL: Record<string, string> = {
   ui: "add panels & views",
   commands: "add slash commands",

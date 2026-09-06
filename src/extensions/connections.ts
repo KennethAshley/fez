@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { execFile } from "node:child_process";
 import http from "node:http";
 import { auth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import { loadSettings, saveSettings } from "../shared/settings.js";
 
 /**
  * Connections — sign in, don't paste. One MCP OAuth flow (discovery →
@@ -40,8 +41,36 @@ export const CONNECTIONS: ConnectionEntry[] = [
   { key: "github", title: "GitHub", url: "https://api.githubcopilot.com/mcp/", what: "repos, PRs, issues", clientId: undefined },
 ];
 
-export const connectionEntry = (key: string): ConnectionEntry | undefined =>
-  CONNECTIONS.find((c) => c.key === key);
+/**
+ * Resolve a connection from BOTH homes: the shipped seed catalog above,
+ * and this machine's settings.json — any mcpServers entry with
+ * auth:"oauth" is connectable, which is what makes connections
+ * community-ownable: an extension (or a hand edit) that installs
+ *   "linear2": { type:"http", url:"…", auth:"oauth", scope?, clientId? }
+ * is a full citizen with zero presence in fez's own list. Settings win
+ * over the seed (this machine's truth), seed fills the gaps (titles,
+ * shipped client_ids).
+ */
+export function connectionEntry(key: string): ConnectionEntry | undefined {
+  const seed = CONNECTIONS.find((c) => c.key === key);
+  let s: { url?: unknown; auth?: unknown; scope?: unknown; clientId?: unknown; title?: unknown; what?: unknown } | undefined;
+  try {
+    s = (loadSettings() as { mcpServers?: Record<string, typeof s> }).mcpServers?.[key];
+  } catch {
+    /* settings unavailable — seed only */
+  }
+  if (s && s.auth === "oauth" && typeof s.url === "string") {
+    return {
+      key,
+      title: typeof s.title === "string" ? s.title : seed?.title ?? key,
+      url: s.url,
+      scope: typeof s.scope === "string" ? s.scope : seed?.scope,
+      clientId: typeof s.clientId === "string" ? s.clientId : seed?.clientId,
+      what: typeof s.what === "string" ? s.what : seed?.what ?? "",
+    };
+  }
+  return seed;
+}
 
 // ── keychain custody ────────────────────────────────────────────────────
 // One item per connection: service "fez-skill-env", account "<key>.OAUTH",
@@ -202,6 +231,17 @@ export async function connectService(
 
     const result = await auth(provider, { serverUrl: entry.url, authorizationCode: code });
     if (result !== "AUTHORIZED") throw new Error(`token exchange ended in ${result}`);
+
+    // Register the skill so personas can declare it — auth:"oauth" is
+    // what routes the entry through withFreshOAuth at spawn. Done here,
+    // not in the CLI, so every connect surface (CLI, desktop, in-chat)
+    // leaves the machine in the same state.
+    const settings = loadSettings() as { mcpServers?: Record<string, Record<string, unknown>> };
+    const existing = settings.mcpServers?.[key] ?? {};
+    saveSettings({
+      mcpServers: { ...settings.mcpServers, [key]: { headers: [], ...existing, type: "http", url: entry.url, auth: "oauth" } },
+    } as never);
+    markOAuthServer(key);
   } finally {
     server.close();
   }

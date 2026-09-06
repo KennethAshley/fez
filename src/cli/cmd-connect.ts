@@ -56,16 +56,8 @@ export function registerConnectCommands(program: Command): void {
         return;
       }
 
-      // Register the skill so personas can declare it. auth:"oauth" is
-      // what routes the entry through withFreshOAuth at spawn.
-      const { loadSettings, saveSettings } = await import("../shared/settings.js");
-      const settings = loadSettings() as { mcpServers?: Record<string, unknown> };
-      saveSettings({
-        mcpServers: {
-          ...settings.mcpServers,
-          [service]: { type: "http", url: entry.url, auth: "oauth", headers: [] },
-        },
-      } as never);
+      // connectService registered the skill in settings itself — every
+      // connect surface (CLI, desktop, in-chat) leaves the same state.
       console.log(chalk.green(`✓ ${entry.title} connected`) + ` — tokens in the keychain, refreshed before every use.`);
       console.log(chalk.dim(`  personas declaring mcpServers: [${service}] get it on next spawn.`));
     });

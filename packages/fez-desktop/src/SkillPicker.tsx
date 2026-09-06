@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { machineLocalPath, resolveInstalledSkill } from "@fezchat/client";
-import { useConfig } from "./config-store";
+import { bumpConfig, useConfig } from "./config-store";
+import { CONNECTABLE } from "./extensions-catalog";
 import type { InstalledSkillMd } from "./agent-skill-health";
 
 /**
@@ -51,6 +52,14 @@ export default function SkillPicker({
 }) {
   const { skills } = useConfig();
   const [query, setQuery] = useState("");
+  const [connecting, setConnecting] = useState<string>();
+  const [connectErr, setConnectErr] = useState<string>();
+  // Connectable services this machine hasn't signed in to yet — GitHub
+  // stays off this list until its sign-in ships (its blurb sends people
+  // to the PAT keycard instead).
+  const connectable = CONNECTABLE.filter(
+    (c) => c.key !== "github" && !(c.key in skills) && (!query.trim() || c.key.includes(query.trim().toLowerCase()))
+  );
   const [installedSkillMds, setInstalledSkillMds] = useState<InstalledSkillMd[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -390,6 +399,36 @@ export default function SkillPicker({
             )}
             <div className="skill-pick-list">
               {shown.length === 0 ? <div className="settings-hint">Nothing matches “{query}”.</div> : shown.map(row)}
+              {/* Connectable-but-unconnected services: a shelf you can't
+                  see is a shelf that doesn't exist (the model-picker
+                  rule). Clicking runs the sign-in, then attaches. */}
+              {connectable.map((c) => (
+                <button
+                  key={c.key}
+                  className="skill-pick skill-pick-connect"
+                  disabled={connecting === c.key}
+                  title={c.blurb}
+                  onClick={() => {
+                    setConnecting(c.key);
+                    setConnectErr(undefined);
+                    void invoke<string>("connect_service", { key: c.key })
+                      .then(() => {
+                        bumpConfig();
+                        toggle(c.key, undefined, true);
+                      })
+                      .catch((e) => setConnectErr(`${c.title}: ${String(e)}`))
+                      .finally(() => setConnecting(undefined));
+                  }}
+                >
+                  <span className="skill-pick-text">
+                    <span className="skill-pick-name">○ {c.key}</span>
+                    <span className="skill-pick-desc">
+                      {connecting === c.key ? "waiting for the browser sign-in…" : "sign in to add"}
+                    </span>
+                  </span>
+                </button>
+              ))}
+              {connectErr && <div className="settings-hint">✗ {connectErr}</div>}
             </div>
           </div>
         </details>

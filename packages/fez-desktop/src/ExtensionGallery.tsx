@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { reloadGuiExtensions } from "./gui-extensions";
-import { CATALOG, SENSITIVE, norm, permLabel, githubUrl, npmUrl, type CatalogEntry } from "./extensions-catalog";
+import { CATALOG, CONNECTABLE, SENSITIVE, norm, permLabel, githubUrl, npmUrl, type CatalogEntry } from "./extensions-catalog";
 import { useConfig } from "./config-store";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
@@ -38,6 +38,10 @@ export function ExtensionGallery({
 }) {
   const [confirming, setConfirming] = useState<GalleryEntry>();
   const [installing, setInstalling] = useState<string>();
+  // Connections: which sign-in is mid-flight, and the last failure.
+  const [connecting, setConnecting] = useState<string>();
+  const [connectError, setConnectError] = useState<string>();
+  const useConfigSkills = useConfig().skills;
   const [detail, setDetail] = useState<GalleryEntry>();
   const [info, setInfo] = useState<{ version?: string; description?: string; readme?: string }>();
   const [urlDraft, setUrlDraft] = useState<string>("");
@@ -260,6 +264,54 @@ export function ExtensionGallery({
         <div className="settings-hint">
           {view === "updates" && !updateCount ? "Everything installed is current." : `Nothing matches “${query.trim()}”.`}
         </div>
+      )}
+      {/* Connections: sign in, don't paste. These aren't packages — the
+          button runs the OAuth flow via the bundled fez-agent and the
+          skill registers itself. Filtered by the same query box. */}
+      {view === "all" && (
+        <>
+          <div className="manage-section">connections</div>
+          <div className="settings-hint">Sign in once and any agent you attach the tool to can use it — tokens live in the keychain, refreshed automatically.</div>
+          {CONNECTABLE.filter((c) => !q || `${c.title} ${c.key} ${c.blurb}`.toLowerCase().includes(q)).map((c) => {
+            const connected = !!(useConfigSkills as Record<string, { auth?: string }>)[c.key];
+            const busyC = connecting === c.key;
+            return (
+              <div key={c.key} className={`gallery-card ${connected ? "lit" : "dormant"}`}>
+                <div className="gallery-main">
+                  <span className="artifact-slot">
+                    <AnimatedSprite sprite={generateArtifact(c.key)} scale={4} />
+                  </span>
+                  <span className="gallery-body">
+                    <span className="gallery-head">
+                      <span className="gallery-title">{c.title}</span>
+                      <code className="gallery-name">{c.key}</code>
+                    </span>
+                    <span className="gallery-blurb">{c.blurb}</span>
+                  </span>
+                </div>
+                {connected ? (
+                  <span className="gallery-installed">● connected</span>
+                ) : (
+                  <button
+                    className="gallery-install"
+                    disabled={busyC}
+                    onClick={() => {
+                      setConnecting(c.key);
+                      void invoke<string>("connect_service", { key: c.key })
+                        .then(() => onInstalled())
+                        .catch((e) => setConnectError(`${c.title}: ${String(e)}`))
+                        .finally(() => setConnecting(undefined));
+                    }}
+                  >
+                    {busyC ? "waiting for sign-in…" : "sign in to connect"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {connectError && <div className="settings-hint">✗ {connectError}</div>}
+          <div className="manage-section">extensions</div>
+        </>
       )}
       {shelf.map((entry) => {
         const done = isInstalled(entry);
