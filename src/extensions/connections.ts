@@ -28,9 +28,25 @@ export interface ConnectionEntry {
    * (the `gh` CLI precedent). Absent for DCR servers — they mint one.
    */
   clientId?: string;
+  /** Shipped alongside clientId where the token endpoint demands one —
+   * Google's installed-app "secret" that is explicitly not confidential
+   * (the gcloud/rclone precedent). */
+  clientSecret?: string;
+  /** Extra query params appended to the authorize URL — e.g. Google's
+   * access_type=offline&prompt=consent, without which no refresh token
+   * is issued and every connection dies after an hour. */
+  extraAuthParams?: Record<string, string>;
+  /** For no-DCR services whose clientId hasn't shipped yet: connect
+   * explains with this message instead of failing cryptically. */
+  pendingClientId?: string;
   /** One line: what an agent gets. Shown by `fez connect` with no args. */
   what: string;
 }
+
+/** No refresh token from Google without these on the authorize URL. */
+const GOOGLE_OFFLINE = { access_type: "offline", prompt: "consent" };
+const GOOGLE_PENDING =
+  "Google's OAuth has no dynamic registration — fez needs its one-time registered client_id shipped in the catalog first (registration steps: docs/superpowers/research/2026-09-05-google-mcp-bridges.md §6).";
 
 /** The catalog. DCR servers need nothing but a URL; the GitHub bucket
  * gains a clientId once the fez OAuth app is registered (until then,
@@ -51,7 +67,17 @@ export const CONNECTIONS: ConnectionEntry[] = [
   { key: "canva", title: "Canva", url: "https://mcp.canva.com/mcp", what: "designs and brand assets" },
   { key: "webflow", title: "Webflow", url: "https://mcp.webflow.com/mcp", what: "sites and CMS collections" },
   // No DCR — needs fez's one-time registered client_id (the gh precedent).
-  { key: "github", title: "GitHub", url: "https://api.githubcopilot.com/mcp/", what: "repos, PRs, issues", clientId: undefined },
+  { key: "github", title: "GitHub", url: "https://api.githubcopilot.com/mcp/", what: "repos, PRs, issues",
+    pendingClientId: "GitHub's OAuth doesn't support dynamic registration — fez needs its one-time registered client_id shipped in the catalog first. Until then: paste a PAT into the github keycard (SKILLS & SECRETS), which its MCP server accepts." },
+  // Google's official Workspace MCP servers — probed live 2026-09-05, see
+  // docs/superpowers/research/2026-09-05-google-mcp-bridges.md. Same
+  // no-DCR bucket as GitHub: rows go live when fez's one registered
+  // Desktop-client id lands here. Gmail deliberately absent — restricted
+  // scopes mean an annual CASA assessment; these four verify for free.
+  { key: "google-drive", title: "Google Drive", url: "https://drivemcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/drive.file", what: "files you pick and files your agents create — drive.file, not the whole drive", extraAuthParams: GOOGLE_OFFLINE, pendingClientId: GOOGLE_PENDING },
+  { key: "google-calendar", title: "Google Calendar", url: "https://calendarmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/calendar", what: "events and calendars — read and write", extraAuthParams: GOOGLE_OFFLINE, pendingClientId: GOOGLE_PENDING },
+  { key: "google-sheets", title: "Google Sheets", url: "https://sheetsmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/spreadsheets", what: "spreadsheets — read and write", extraAuthParams: GOOGLE_OFFLINE, pendingClientId: GOOGLE_PENDING },
+  { key: "google-docs", title: "Google Docs", url: "https://docsmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/documents", what: "documents — read and write", extraAuthParams: GOOGLE_OFFLINE, pendingClientId: GOOGLE_PENDING },
 ];
 
 /**
@@ -66,7 +92,7 @@ export const CONNECTIONS: ConnectionEntry[] = [
  */
 export function connectionEntry(key: string): ConnectionEntry | undefined {
   const seed = CONNECTIONS.find((c) => c.key === key);
-  let s: { url?: unknown; auth?: unknown; scope?: unknown; clientId?: unknown; title?: unknown; what?: unknown } | undefined;
+  let s: { url?: unknown; auth?: unknown; scope?: unknown; clientId?: unknown; clientSecret?: unknown; extraAuthParams?: unknown; title?: unknown; what?: unknown } | undefined;
   try {
     s = (loadSettings() as { mcpServers?: Record<string, typeof s> }).mcpServers?.[key];
   } catch {
@@ -79,6 +105,9 @@ export function connectionEntry(key: string): ConnectionEntry | undefined {
       url: s.url,
       scope: typeof s.scope === "string" ? s.scope : seed?.scope,
       clientId: typeof s.clientId === "string" ? s.clientId : seed?.clientId,
+      clientSecret: typeof s.clientSecret === "string" ? s.clientSecret : seed?.clientSecret,
+      extraAuthParams: s.extraAuthParams && typeof s.extraAuthParams === "object" ? (s.extraAuthParams as Record<string, string>) : seed?.extraAuthParams,
+      pendingClientId: seed?.pendingClientId,
       what: typeof s.what === "string" ? s.what : seed?.what ?? "",
     };
   }
@@ -168,7 +197,7 @@ function makeProvider(
     },
     clientInformation() {
       // A shipped client_id (GitHub bucket) outranks anything DCR saved.
-      if (entry.clientId) return { client_id: entry.clientId };
+      if (entry.clientId) return { client_id: entry.clientId, ...(entry.clientSecret ? { client_secret: entry.clientSecret } : {}) };
       return readConnection(entry.key)?.client as never;
     },
     saveClientInformation(info) {
@@ -189,6 +218,7 @@ function makeProvider(
       return v;
     },
     redirectToAuthorization(url) {
+      for (const [k, v] of Object.entries(entry.extraAuthParams ?? {})) url.searchParams.set(k, v);
       if (!opts.onAuthUrl) throw new NeedsSignIn(url.href);
       opts.onAuthUrl(url.href);
     },
@@ -209,11 +239,7 @@ export async function connectService(
 ): Promise<void> {
   const entry = connectionEntry(key);
   if (!entry) throw new Error(`unknown connection "${key}" — \`fez connect\` lists what's available`);
-  if (entry.key === "github" && !entry.clientId) {
-    throw new Error(
-      "GitHub's OAuth doesn't support dynamic registration — fez needs its one-time registered client_id shipped in the catalog first. Until then: paste a PAT into the github keycard (SKILLS & SECRETS), which its MCP server accepts."
-    );
-  }
+  if (!entry.clientId && entry.pendingClientId) throw new Error(entry.pendingClientId);
 
   const server = http.createServer();
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

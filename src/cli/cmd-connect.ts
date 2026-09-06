@@ -28,8 +28,10 @@ export function registerConnectCommands(program: Command): void {
             ? isStale(blob)
               ? chalk.yellow("● stale (will refresh on use)")
               : chalk.green("● connected")
-            : chalk.dim("○ not connected");
-          console.log(`  ${c.key.padEnd(10)} ${state}  ${chalk.dim(c.what)}`);
+            : !c.clientId && c.pendingClientId
+              ? chalk.dim("◌ sign-in coming")
+              : chalk.dim("○ not connected");
+          console.log(`  ${c.key.padEnd(16)} ${state}  ${chalk.dim(c.what)}`);
         }
         return;
       }
