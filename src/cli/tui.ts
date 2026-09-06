@@ -831,6 +831,59 @@ export class FezTUI {
         break;
       }
 
+      case "trust": {
+        const reply = (content: string) =>
+          this.addMessage({
+            id: `cmd-trust-${Math.random().toString(36).slice(2)}`,
+            author: "orchestrator",
+            content,
+            timestamp: new Date(),
+          });
+        const usage = "usage: /trust @agent | /trust chit @agent <note> | /trust salt @agent [note] | /trust unsalt @agent";
+        const sub = ["chit", "salt", "unsalt"].includes(parts[1] ?? "") ? parts[1] : undefined;
+        const ref = sub ? parts[2] : parts[1];
+        const resolvePk = (r?: string): string | undefined => {
+          if (!r) return undefined;
+          if (/^[0-9a-f]{64}$/.test(r)) return r;
+          const name = r.replace(/^@/, "").toLowerCase();
+          return [...this.fezClient.agents().entries()].find(([, n]) => n.toLowerCase() === name)?.[0];
+        };
+        const pk = resolvePk(ref);
+        if (!pk) {
+          reply(usage);
+          break;
+        }
+        try {
+          if (sub === "chit") {
+            const note = parts.slice(3).join(" ");
+            if (!note) {
+              reply(usage);
+              break;
+            }
+            await this.fezClient.chitAgent(pk, { note });
+            reply(`chit published — ${note}`);
+          } else if (sub === "salt") {
+            await this.fezClient.saltAgent(pk, parts.slice(3).join(" ") || undefined);
+            reply("salt given");
+          } else if (sub === "unsalt") {
+            await this.fezClient.unsaltAgent(pk);
+            reply("salt revoked");
+          } else {
+            const panel = await this.fezClient.saltPanel(pk);
+            const lines = [...panel.ring0, ...panel.ring1].map(
+              (e) => `  ${e.note} — ${e.signer.slice(0, 8)} · ${new Date(e.at * 1000).toLocaleDateString()}${e.moneyBacked ? " · paid" : ""}`
+            );
+            const out = [`salt: ${panel.tier}`, ...lines];
+            if (panel.ring2Signers > 0) out.push(`  spoken of by ${panel.ring2Signers} key${panel.ring2Signers === 1 ? "" : "s"}`);
+            if (panel.excluded > 0) out.push(`  (${panel.excluded} household voices excluded)`);
+            reply(out.join("\n"));
+          }
+        } catch (err) {
+          reply(`trust error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        break;
+      }
+
       case "key":
         this.addMessage({
           id: `cmd-key`,
@@ -845,7 +898,7 @@ export class FezTUI {
         this.addMessage({
           id: `cmd-help`,
           author: "orchestrator",
-          content: `Commands:\n  /quit, /q       — exit\n  /discover       — find agents on the network\n  /agents, /list  — show installed agents\n  /key            — show your pubkey\n  /help           — this message`,
+          content: `Commands:\n  /quit, /q       — exit\n  /discover       — find agents on the network\n  /agents, /list  — show installed agents\n  /trust @agent   — salt panel; also: chit/salt/unsalt @agent\n  /key            — show your pubkey\n  /help           — this message`,
           timestamp: new Date(),
         });
         break;
