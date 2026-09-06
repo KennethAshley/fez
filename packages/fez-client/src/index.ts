@@ -219,6 +219,8 @@ export const K = {
   AGENT_METADATA: 47000,
   /** Owner-signed "this is my agent" — summon authority for siblings. */
   AGENT_ATTESTATION: 47006,
+  CHIT: 47007,
+  SALT: 47008,
   /** Retired with the flat model — the number stays burned. */
   COMMUNITY_RETIRED: 47100,
   CHANNEL: 47101,

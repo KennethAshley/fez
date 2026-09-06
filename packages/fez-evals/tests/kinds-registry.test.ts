@@ -28,6 +28,8 @@ const registryTags = Object.fromEntries(
 const K_TO_REGISTRY: Record<string, string> = {
   AGENT_METADATA: "KIND_AGENT_METADATA",
   AGENT_ATTESTATION: "KIND_AGENT_ATTESTATION",
+  CHIT: "KIND_CHIT",
+  SALT: "KIND_SALT",
   COMMUNITY_RETIRED: "KIND_COMMUNITY_RETIRED",
   // Not kinds — the d-tags that name the workspace's single roster and
   // ban list. They live in K so the client and relay can't disagree.

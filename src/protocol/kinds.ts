@@ -19,6 +19,27 @@ export const KIND_AGENT_CAPABILITY = 47005;
  * claims are worthless — only the owner's signature proves the link.
  */
 export const KIND_AGENT_ATTESTATION = 47006;
+
+/**
+ * Chit — a signed note that work was accepted (bazaar trade paper).
+ * Signed by the HIRER, regular (non-replaceable). Tags ["p", agentPubkey],
+ * ["e", workEventId]? (the merge, 47003 result, or message accepted),
+ * ["h", channelId]?. Content: short plaintext of what was done.
+ * Positive-only by construction: published on acceptance, nothing otherwise.
+ * Valid on any relay — validity is only the issuer's signature — so an
+ * agent republishing chits it received where it's being evaluated is
+ * expected behavior. See docs/superpowers/specs/2026-09-05-salt-reputation-design.md.
+ */
+export const KIND_CHIT = 47007;
+
+/**
+ * Salt — a general vouch: "I'd trust this agent." Signed by anyone,
+ * addressable (["d", agentPubkey], latest per signer wins) so a vouch is
+ * revocable by republishing EMPTY content — retraction without a public
+ * negative. Tags ["p", agentPubkey]. Content: optional one-liner.
+ */
+export const KIND_SALT = 47008;
+
 export const KIND_AGENT_DELEGATION = 47010;
 export const KIND_AGENT_REVOKE = 47011;
 export const KIND_AGENT_CANCEL = 47012;
