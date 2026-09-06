@@ -6,6 +6,9 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import type { BrowserWire } from "./wire";
 import { latestPendingFor, latestSentFor, updateRecord, tauriStore } from "./orchestration";
+import { relaySet } from "./relay";
+import { BAZAAR_RELAY } from "./bazaar-record";
+import { fetchSaltPanel, tierLabel, type SaltPanel } from "./salt-record";
 
 const MD_PLUGINS = [remarkGfm, remarkBreaks];
 
@@ -53,6 +56,8 @@ export interface Guest {
   /** A task prewritten by an extension (e.g. a proposal card) — prefills
    *  the composer. The human still presses send; this never auto-sends. */
   draft?: string;
+  /** The summon gate was shown and accepted — once per guest, ever. */
+  saltAck?: boolean;
 }
 
 const LEDGER_KEY = "fez-guests";
@@ -272,6 +277,26 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   // The hire (model A): persisted terms, plus the in-flight "start hire"
   // form and the settle spinner.
   const [hire, setHireState] = useState<Hire | undefined>(() => getHire(guest.pk));
+  // Salt: what people outside this agent's household say. No workspace
+  // client here, so rings are viewer-only — exactly the vantage that
+  // makes a stranger "nameless", which is who the gate is for.
+  const [salt, setSalt] = useState<SaltPanel>();
+  const [saltAck, setSaltAck] = useState(() => !!guest.saltAck);
+  useEffect(() => {
+    let cancelled = false;
+    setSalt(undefined);
+    setSaltAck(!!listGuests().find((g) => g.pk === guest.pk)?.saltAck);
+    void fetchSaltPanel({
+      pk: guest.pk,
+      viewer: selfPk,
+      relays: [...relaySet(), BAZAAR_RELAY],
+      isViewerAgent: (k) => k === selfPk,
+      inViewerCircle: () => false,
+    })
+      .then((p) => { if (!cancelled) setSalt(p); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [guest.pk, selfPk]);
   const [starting, setStarting] = useState(false);
   const [hireAmt, setHireAmt] = useState("");
   const [hirePersona, setHirePersona] = useState("");
@@ -662,6 +687,17 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
               {`${guest.rateTaoHr} tτ/hr`}
             </span>
           ) : null}
+          {/* The salt tier — ember when no one you can verify vouches
+              (the "needs you" signal), quiet otherwise. */}
+          {salt ? (
+            <span
+              className="guest-chip"
+              style={salt.tier === "nameless" || salt.tier === "spoken-of" ? { color: "var(--brand, #FF6A00)" } : undefined}
+              title={salt.tier === "spoken-of" ? "distinct keys, sybil-able — each is at least a real keypair vouching in public" : undefined}
+            >
+              {tierLabel(salt.tier)}
+            </span>
+          ) : null}
         </div>
       </header>
       <div className="guest-banner">
@@ -795,6 +831,39 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         ) : null}
         <div ref={bottomRef} />
       </div>
+      {/* The summon gate — inform, don't hard-block. Shown once per guest,
+          ever: accepting persists saltAck on the ledger entry. */}
+      {salt && !saltAck && (salt.tier === "nameless" || salt.tier === "spoken-of") ? (
+        <div className="guest-composer">
+          <div className="guest-banner" style={{ color: "var(--brand, #FF6A00)", padding: 0 }}>
+            no salt between you and anyone you know — summon anyway?
+          </div>
+          {[...salt.ring0, ...salt.ring1].slice(0, 5).map((e, i) => (
+            <div key={`${e.signer}${i}`} className="guest-banner" style={{ padding: 0 }}>
+              {`${e.note} — ${e.signer.slice(0, 8)} · ${new Date(e.at * 1000).toLocaleDateString()}${e.moneyBacked ? " · paid" : ""}`}
+            </div>
+          ))}
+          {salt.ring2Signers > 0 ? (
+            <div
+              className="guest-banner"
+              style={{ padding: 0 }}
+              title="distinct keys, sybil-able — each is at least a real keypair vouching in public"
+            >
+              {`spoken of by ${salt.ring2Signers} key${salt.ring2Signers === 1 ? "" : "s"}`}
+            </div>
+          ) : null}
+          <button
+            className="agent-action"
+            onClick={() => {
+              const hit = listGuests().find((g) => g.pk === guest.pk) ?? guest;
+              addGuest({ ...hit, saltAck: true });
+              setSaltAck(true);
+            }}
+          >
+            summon anyway
+          </button>
+        </div>
+      ) : (
       <div className="guest-composer">
         {error ? <p className="ob-error">{error}</p> : null}
         {attachingRepo ? (
@@ -833,6 +902,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
           {sending ? "…" : "send"}
         </button>
       </div>
+      )}
     </main>
   );
 }

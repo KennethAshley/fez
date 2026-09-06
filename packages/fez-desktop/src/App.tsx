@@ -420,7 +420,10 @@ function Shell({
     // Guest threads (spec 2026-09-03): an extension hands over a market
     // npub; the ledger entry and the conversation surface are ours.
     setGuestDmOpener((guest) => {
-      addGuest(guest);
+      // Merge onto any existing ledger entry — a reopen must not wipe
+      // sticky per-guest state (saltAck, remembered face).
+      const prev = listGuests().find((g) => g.pk === guest.pk);
+      addGuest(prev ? { ...prev, ...guest } : guest);
       setGuestNonce((n) => n + 1);
       setView({ kind: "guest", pk: guest.pk });
     });
