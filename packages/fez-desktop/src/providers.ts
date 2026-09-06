@@ -23,4 +23,5 @@ export const PROVIDERS: {
   { id: "openrouter", label: "OpenRouter", keyName: "OPENROUTER_API_KEY", hint: "one key, many models — openrouter.ai" },
   { id: "gm", label: "GM", keyName: "GM_API_KEY", hint: "confidential frontier models — saygm.com" },
   { id: "actual", label: "Actual", keyName: "ACTUAL_API_KEY", hint: "your own machines as a private inference cluster — actual.inc (ac_ token from the dashboard)" },
+  { id: "engy", label: "Engy", keyName: "ENGY_API_KEY", hint: "verified inference gateway (GLM, Qwen, DeepSeek) — engy.ai" },
 ];

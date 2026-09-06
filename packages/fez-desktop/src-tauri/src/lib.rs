@@ -793,6 +793,7 @@ fn provider_spec(id: &str) -> Option<&'static ProviderSpec> {
         ProviderSpec { id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", key_name: "OPENROUTER_API_KEY", auth: ProviderAuth::Bearer },
         ProviderSpec { id: "gm", name: "GM", base_url: "https://api.saygm.com/v1", key_name: "GM_API_KEY", auth: ProviderAuth::Bearer },
         ProviderSpec { id: "actual", name: "Actual", base_url: "https://api.actual.inc/v1", key_name: "ACTUAL_API_KEY", auth: ProviderAuth::Bearer },
+        ProviderSpec { id: "engy", name: "Engy", base_url: "https://api.engy.ai/v1", key_name: "ENGY_API_KEY", auth: ProviderAuth::Bearer },
     ];
     PROVIDERS.iter().find(|p| p.id == id)
 }

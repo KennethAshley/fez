@@ -24,6 +24,7 @@ const WIRED = [
   { id: "openai", local: "openai", group: "OpenAI", hint: "GPT models over your OpenAI API key. Key: Settings → secrets → openai." },
   { id: "openrouter", local: "openrouter", group: "OpenRouter — many labs, one key", hint: "Hundreds of models through one OpenRouter key. Key: Settings → secrets → openrouter." },
   { id: "actual", local: "actual", group: "Actual — your own machines", hint: "Open models on your own hardware via Actual's private relay (Bittensor SN95). Needs the actual daemon on an authorized device. Key: Settings → secrets → actual." },
+  { id: "engy", local: "engy", group: "Engy — verified inference", hint: "GLM, Qwen, and DeepSeek through Engy's verified-inference gateway. Key: Settings → secrets → engy." },
 ];
 
 export interface BrainSelection {
