@@ -9,6 +9,7 @@ import { CATALOG, CONNECTABLE, CONNECTION_CATEGORIES, SENSITIVE, norm, permLabel
 import { useConfig } from "./config-store";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
+import { ServiceIcon } from "./brand-icons";
 import { GitInstallOffer } from "./InstallOffer";
 
 /**
@@ -264,7 +265,7 @@ export function ExtensionGallery({
         onClick={() => doConnect(c)}
       >
         <span className="artifact-slot conn-tile-icon">
-          <AnimatedSprite sprite={generateArtifact(c.key)} scale={3} />
+          <ServiceIcon svcKey={c.key} size={22} />
         </span>
         <span className="conn-tile-text">
           <span className="conn-tile-name">{c.title}</span>
