@@ -90,6 +90,7 @@ import { registerSkillCommands } from "./cli/cmd-skill.js";
 import { registerExtensionCommands } from "./cli/cmd-extensions.js";
 import { registerPersonaCommands } from "./cli/cmd-persona.js";
 import { registerResetCommand } from "./cli/cmd-reset.js";
+import { registerConnectCommands } from "./cli/cmd-connect.js";
 
 registerIdentityCommands(program);
 registerMemCommands(program);
@@ -100,5 +101,6 @@ registerSkillCommands(program);
 registerExtensionCommands(program);
 registerPersonaCommands(program);
 registerResetCommand(program);
+registerConnectCommands(program);
 
 program.parse();

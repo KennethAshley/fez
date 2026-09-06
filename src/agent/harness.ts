@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
+import { withFreshOAuth } from "../extensions/connections.js";
 import type { SystemPromptMode } from "./system-prompt.js";
 import { notice } from "../cli/notices.js";
 import { classifyToolCall, type RiskVerdict } from "./command-risk.js";
@@ -627,7 +628,9 @@ function openAcpSession(
         let builder = systemPrompt
           ? ctx.buildSession({ cwd, mcpServers: [], _meta: { "fez/systemPrompt": systemPrompt } } as never)
           : ctx.buildSession(cwd);
-        for (const server of mcpServers ?? []) builder = builder.withMcpServer(server);
+        // oauth-marked skills get a fresh Bearer here, at spawn — tokens
+        // refresh before use, and a dead connection withholds its skill.
+        for (const server of await withFreshOAuth(mcpServers ?? [])) builder = builder.withMcpServer(server);
         const session = await builder.start();
         let pendingSystemPrompt = systemPrompt;
         // Set when a turn exits without its "stop" — the next prompt must
@@ -760,7 +763,7 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
 
         return await app.connectWith(stream, async (ctx) => {
           let builder = ctx.buildSession(cwd);
-          for (const server of mcpServers ?? []) {
+          for (const server of await withFreshOAuth(mcpServers ?? [])) {
             builder = builder.withMcpServer(server);
           }
           const session = await builder.start();

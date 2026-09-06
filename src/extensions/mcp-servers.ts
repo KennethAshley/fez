@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { resolveInstalledSkill, type SkillEntry } from "./skill-source.js";
+import { markOAuthServer } from "./connections.js";
 
 /**
  * Named MCP servers ("skills") personas can opt into via their
@@ -76,6 +77,10 @@ function normalizeSettingsServer(name: string, config: Record<string, unknown>):
     } as unknown as McpServer;
   }
   if ((type === "http" || type === "sse") && config.url) {
+    // auth:"oauth" — fez owns the token lifecycle (see connections.ts);
+    // the Authorization header is injected FRESH at spawn by
+    // withFreshOAuth, so nothing static is resolved here.
+    if (config.auth === "oauth") markOAuthServer(name);
     return {
       name,
       type,
