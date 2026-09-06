@@ -512,6 +512,9 @@ export default function AgentsPane({
             return !!hit && client.isOnline(hit[0]);
           })()}
           onEdit={() => setEditingPersona(viewingPersona)}
+          viewer={client.pubkey}
+          isViewerAgent={(k) => k === client.pubkey || client.agents().has(k)}
+          inViewerCircle={(k) => client.state.isMember(k)}
         />
       )}
       {editingPersona && (
