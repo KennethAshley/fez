@@ -5,10 +5,11 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FezClient } from "@fezchat/client";
 import { reloadGuiExtensions } from "./gui-extensions";
-import { CATALOG, SENSITIVE, norm, permLabel, githubUrl, npmUrl, type CatalogEntry } from "./extensions-catalog";
+import { CATALOG, CONNECTABLE, CONNECTION_CATEGORIES, SENSITIVE, norm, permLabel, githubUrl, npmUrl, type CatalogEntry, type ConnectableEntry } from "./extensions-catalog";
 import { useConfig } from "./config-store";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
+import { ServiceIcon } from "./brand-icons";
 import { GitInstallOffer } from "./InstallOffer";
 
 /**
@@ -38,6 +39,10 @@ export function ExtensionGallery({
 }) {
   const [confirming, setConfirming] = useState<GalleryEntry>();
   const [installing, setInstalling] = useState<string>();
+  // Connections: which sign-in is mid-flight, and the last failure.
+  const [connecting, setConnecting] = useState<string>();
+  const [connectError, setConnectError] = useState<string>();
+  const useConfigSkills = useConfig().skills;
   const [detail, setDetail] = useState<GalleryEntry>();
   const [info, setInfo] = useState<{ version?: string; description?: string; readme?: string }>();
   const [urlDraft, setUrlDraft] = useState<string>("");
@@ -45,7 +50,7 @@ export function ExtensionGallery({
   // The shelf's scale furniture: a filter and three views. Built for a
   // catalog of thousands, honest at a dozen — search-first, uniform cells.
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<"all" | "installed" | "updates">("all");
+  const [view, setView] = useState<"all" | "connections" | "installed" | "updates">("all");
 
   // Fetch the registry README when a detail page opens.
   useEffect(() => {
@@ -226,11 +231,57 @@ export function ExtensionGallery({
   const updateCount = GALLERY.filter(hasUpdate).length;
   const installedCount = GALLERY.filter(isInstalled).length;
 
+  const q2 = query.trim().toLowerCase();
+  const isConnected = (key: string) => key in (useConfigSkills as Record<string, unknown>);
+  const connectedCount = CONNECTABLE.filter((c) => isConnected(c.key)).length;
+  const matchesQuery = (c: ConnectableEntry) => !q2 || `${c.title} ${c.key} ${c.blurb}`.toLowerCase().includes(q2);
+  // Which connections show in the current view (the card band on all/installed).
+  const connShelf =
+    view === "updates" || view === "connections"
+      ? []
+      : CONNECTABLE.filter((c) => (view !== "installed" || isConnected(c.key)) && matchesQuery(c));
+
+  const doConnect = (c: ConnectableEntry) => {
+    setConnecting(c.key);
+    setConnectError(undefined);
+    void invoke<string>("connect_service", { key: c.key })
+      .then(() => onInstalled())
+      .catch((e) => setConnectError(`${c.title}: ${String(e)}`))
+      .finally(() => setConnecting(undefined));
+  };
+
+  /** A compact connection tile — the dense unit the connections view is
+   *  built from (a card is too heavy once there are dozens). */
+  const connTile = (c: ConnectableEntry) => {
+    const connected = isConnected(c.key);
+    const busyC = connecting === c.key;
+    return (
+      <button
+        key={c.key}
+        className={`conn-tile${connected ? " connected" : ""}`}
+        data-needs={connected ? undefined : ""}
+        disabled={busyC || connected}
+        title={connected ? `${c.title} — connected` : c.blurb}
+        onClick={() => doConnect(c)}
+      >
+        <span className="artifact-slot conn-tile-icon">
+          <ServiceIcon svcKey={c.key} size={22} />
+        </span>
+        <span className="conn-tile-text">
+          <span className="conn-tile-name">{c.title}</span>
+          <span className="conn-tile-state">
+            {connected ? "🔒 connected" : busyC ? "signing in…" : "sign in"}
+          </span>
+        </span>
+      </button>
+    );
+  };
+
   return (
     <div className="ext-gallery">
       <div className="settings-hint">
-        Official fez extensions. Installing fetches the package from npm and grants the permissions shown — no
-        terminal needed. Anything not listed: <code>fez install &lt;name&gt;</code> in a terminal.
+        Two ways to give agents more reach. <b>Connections</b> — sign in to a service, no key to paste.
+        <b> Extensions</b> — install a package (a panel, a command, a tool); some grant permissions, shown before you install.
       </div>
       {/* The shelf's toolbar: filter + views. The updates chip wears the
           update button's own yellow when something needs you — one glance
@@ -246,6 +297,9 @@ export function ExtensionGallery({
         <button className={`gallery-chip${view === "all" ? " on" : ""}`} onClick={() => setView("all")}>
           all · {GALLERY.length}
         </button>
+        <button className={`gallery-chip${view === "connections" ? " on" : ""}`} onClick={() => setView("connections")}>
+          connections · {CONNECTABLE.length}
+        </button>
         <button className={`gallery-chip${view === "installed" ? " on" : ""}`} onClick={() => setView("installed")}>
           installed · {installedCount}
         </button>
@@ -256,12 +310,59 @@ export function ExtensionGallery({
           updates · {updateCount}
         </button>
       </div>
-      {shelf.length === 0 && (
+      {shelf.length === 0 && view !== "connections" && (
         <div className="settings-hint">
           {view === "updates" && !updateCount ? "Everything installed is current." : `Nothing matches “${query.trim()}”.`}
         </div>
       )}
-      {shelf.map((entry) => {
+      {connectError && <div className="settings-hint gallery-span">✗ {connectError}</div>}
+
+      {/* The connections VIEW: a dense, categorized, search-first index —
+          a card each stops scaling past a dozen, so this is the shelf you
+          shop from. Sign in, don't paste. */}
+      {view === "connections" &&
+        CONNECTION_CATEGORIES.map((cat) => {
+          const inCat = CONNECTABLE.filter((c) => c.category === cat && matchesQuery(c));
+          if (inCat.length === 0) return null;
+          return (
+            <div className="conn-cat gallery-span" key={cat}>
+              <div className="manage-section">
+                {cat}<span className="section-fact">{inCat.filter((c) => isConnected(c.key)).length}/{inCat.length}</span>
+              </div>
+              <div className="conn-grid">{inCat.map(connTile)}</div>
+            </div>
+          );
+        })}
+      {view === "connections" && CONNECTABLE.filter(matchesQuery).length === 0 && (
+        <div className="settings-hint gallery-span">Nothing matches “{query.trim()}”.</div>
+      )}
+
+      {/* The all/installed VIEWS: a compact connections band (tiles, not
+          cards) above the extension grid. "all" previews the popular few
+          and sends you to the full index; "installed" shows what's on. */}
+      {(view === "all" || view === "installed") && connShelf.length > 0 && (
+        <>
+          <div className="manage-section gallery-span">
+            connections
+            <span className="section-fact">{view === "installed" ? connShelf.length : `${connectedCount}/${CONNECTABLE.length}`}</span>
+          </div>
+          <div className="conn-grid gallery-span">
+            {(view === "all" && !q2 ? connShelf.slice(0, 6) : connShelf).map(connTile)}
+          </div>
+          {view === "all" && !q2 && (
+            <button className="conn-seeall gallery-span" onClick={() => setView("connections")}>
+              see all {CONNECTABLE.length} connections →
+            </button>
+          )}
+        </>
+      )}
+
+      {view !== "connections" && shelf.length > 0 && (
+        <div className="manage-section">
+          extensions<span className="section-fact">{shelf.length}</span>
+        </div>
+      )}
+      {view !== "connections" && shelf.map((entry) => {
         const done = isInstalled(entry);
         const busy = installing === entry.name;
         const key = norm(entry.name);
@@ -339,14 +440,16 @@ export function ExtensionGallery({
         </div>
       )}
 
-      <div className="gallery-from-url">
-        <div className="settings-hint">install a prompt pack from GitHub — markdown skills only, repos with code are refused</div>
-        <form onSubmit={(e) => { e.preventDefault(); if (/^(https:\/\/)?github\.com\/[\w.-]+\/[\w.-]+/.test(urlDraft.trim())) setSubmitted(urlDraft.trim()); }}>
-          <input value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} placeholder="github.com/owner/repo" />
-          <button className="mini" type="submit">inspect</button>
-        </form>
-        {submitted && <GitInstallOffer key={submitted} url={submitted} authorName="you" client={client} />}
-      </div>
+      {view !== "connections" && (
+        <div className="gallery-from-url">
+          <div className="settings-hint">install a prompt pack from GitHub — markdown skills only, repos with code are refused</div>
+          <form onSubmit={(e) => { e.preventDefault(); if (/^(https:\/\/)?github\.com\/[\w.-]+\/[\w.-]+/.test(urlDraft.trim())) setSubmitted(urlDraft.trim()); }}>
+            <input value={urlDraft} onChange={(e) => setUrlDraft(e.target.value)} placeholder="github.com/owner/repo" />
+            <button className="mini" type="submit">inspect</button>
+          </form>
+          {submitted && <GitInstallOffer key={submitted} url={submitted} authorName="you" client={client} />}
+        </div>
+      )}
     </div>
   );
 }

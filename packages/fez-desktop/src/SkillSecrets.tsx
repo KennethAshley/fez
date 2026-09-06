@@ -14,6 +14,8 @@ interface SkillConfig {
   command?: string;
   url?: string;
   env?: Record<string, string>;
+  /** "oauth" — a sign-in connection (Connections), not a pasted key. */
+  auth?: string;
 }
 
 /** Write-only keychain input. */
@@ -274,6 +276,46 @@ const FEZ_SERVICE_KEYS: SkillConfig = { env: { FEZ_ORCHESTRATOR_KEY: "" } };
  * closed. Cards missing a key open themselves and wear the ember notch;
  * the page is a punch list that goes quiet when custody is complete.
  */
+/**
+ * An OAuth connection in the CUSTODY view. The token lives in the same
+ * keychain as pasted keys, but it's never shown — it rotates on refresh
+ * and isn't a value the human manages. So this is state, not a field:
+ * connected / not, with Disconnect. Signing IN happens at the point of
+ * intent (gallery, agent editor); this is where you REVOKE.
+ */
+function ConnectionCard({ skill, title, onNotice }: { skill: string; title: string; onNotice: (text: string) => void }) {
+  const [connected, setConnected] = useState<boolean>();
+  useEffect(() => {
+    void invoke<boolean>("has_skill_secret", { skill, key: "OAUTH" }).then(setConnected).catch(() => setConnected(false));
+  }, [skill]);
+  return (
+    <div className="secret-card" data-needs={connected === false ? "" : undefined}>
+      <div className="secret-card-head">
+        <span className="secret-card-name">{title}</span>
+        <span className="secret-card-hint">signed-in connection — token held in the keychain, refreshed automatically</span>
+        <span className="secret-card-keys">
+          <span className={"key-chip" + (connected === undefined ? "" : connected ? " stored" : " missing")}>
+            {connected === undefined ? "…" : connected ? "🔒 connected" : "○ not connected"}
+          </span>
+          {connected && (
+            <button
+              className="mini"
+              title="forget this connection's tokens — the agent loses the tool until you sign in again"
+              onClick={() => {
+                void invoke("delete_skill_secret", { skill, key: "OAUTH" })
+                  .then(() => { setConnected(false); onNotice(`✓ ${title} disconnected — tokens forgotten`); })
+                  .catch((e) => onNotice(`✗ ${String(e)}`));
+              }}
+            >
+              disconnect
+            </button>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function SecretCard({
   skill,
   title,
@@ -391,9 +433,13 @@ export function SkillSecretsSection({ onNotice }: { onNotice: (text: string) => 
         </div>
       ) : (
         <div className="secret-grid">
-          {skills.map(([skill, config]) => (
-            <SecretCard key={skill} skill={skill} title={skill} config={config} onNotice={onNotice} />
-          ))}
+          {skills.map(([skill, config]) =>
+            config.auth === "oauth" ? (
+              <ConnectionCard key={skill} skill={skill} title={skill} onNotice={onNotice} />
+            ) : (
+              <SecretCard key={skill} skill={skill} title={skill} config={config} onNotice={onNotice} />
+            )
+          )}
         </div>
       )}
     </div>

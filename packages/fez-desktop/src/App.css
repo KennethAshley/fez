@@ -2145,7 +2145,12 @@ button.author:hover { text-decoration: underline; }
    state: a dormant relic sits muted, hovering makes it stir, installing
    lights it — the sprite is the badge. */
 .ext-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
-.ext-gallery > .settings-hint { grid-column: 1 / -1; }
+.ext-gallery > .settings-hint, .ext-gallery > .gallery-span { grid-column: 1 / -1; }
+/* Section dividers span the whole grid — the hairline-rule idiom at
+   shelf scale (see .manage-section): a label, a rule running out to a
+   count. Without the span they'd sit as one 280px cell mid-grid. */
+.ext-gallery > .manage-section { grid-column: 1 / -1; margin: 18px 0 2px; }
+.ext-gallery > .manage-section:first-child { margin-top: 4px; }
 .gallery-from-url { grid-column: 1 / -1; margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
 
 /* ── the shelf's toolbar: filter + view chips (thousands-ready) ────── */
@@ -2246,6 +2251,43 @@ button.author:hover { text-decoration: underline; }
 .gallery-install:hover:not(:disabled) { filter: brightness(1.1); }
 .gallery-install:disabled { cursor: default; }
 .gallery-install.installed { color: var(--fg-dim); background: none; border-color: var(--hairline); font-weight: 500; }
+
+/* Connectable service cards: a different KIND of thing (sign in, not
+   install), marked the same way the secrets keycards mark a missing
+   key — a 2px ember notch on the left while unconnected, quiet once
+   done. The connect button is ember-outlined, not filled, so it reads
+   as "start a flow" rather than the solid "install now". */
+.gallery-card.connectable { border-left: 2px solid var(--hairline); }
+.gallery-card.connectable[data-needs] { border-left-color: var(--accent); }
+.gallery-install.connect { color: var(--accent); background: none; border-color: var(--accent); }
+.gallery-install.connect:hover:not(:disabled) { color: var(--bg0); background: var(--accent); filter: none; }
+.gallery-card.connectable .gallery-installed { color: var(--green); font-family: var(--font-mono); font-size: 12px; }
+
+/* Connections view: dense, categorized, search-first — the shelf you
+   shop from once there are dozens. Tiles, not cards. */
+.conn-cat { margin-bottom: 6px; }
+.conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.conn-tile {
+  display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer;
+  padding: 8px 10px; border-radius: 9px; font: inherit;
+  border: 1px solid var(--hairline); border-left: 2px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg2) 40%, transparent); color: inherit;
+}
+.conn-tile[data-needs] { border-left-color: var(--accent); }
+.conn-tile:hover:not(:disabled) { border-color: var(--accent); }
+.conn-tile.connected { cursor: default; }
+.conn-tile:disabled:not(.connected) { opacity: 0.6; cursor: default; }
+.conn-tile-icon { width: 34px; height: 34px; flex: none; }
+.conn-tile-text { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.conn-tile-name { font-weight: 600; font-size: 13px; }
+.conn-tile-state { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim); }
+.conn-tile.connected .conn-tile-state { color: var(--green); }
+.conn-tile[data-needs] .conn-tile-state { color: var(--accent); }
+.conn-seeall {
+  justify-self: start; margin: 2px 0 4px; padding: 4px 0; font: inherit; font-size: 12px;
+  background: none; border: 0; color: var(--accent); cursor: pointer;
+}
+.conn-seeall:hover { text-decoration: underline; }
 
 /* install-consent dialog — a distinct class from the extension SETTINGS
    modal (.ext-modal), which paints itself via .pane-body; sharing the class
@@ -4174,6 +4216,12 @@ a.page-fact:hover { color: var(--fg); }
 .skill-pick-setting { margin-left: auto; max-width: 110px; font-size: 12px; background: var(--bg-inset, transparent); color: var(--fg-dim); border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 5px; }
 .skill-pick-filter { width: 100%; margin-bottom: 4px; font-size: 12px; padding: 5px 8px; }
 .skill-pick { display: flex; align-items: flex-start; gap: 8px; padding: 4px 2px; cursor: pointer; }
+/* A connectable-but-unconnected service: same row shape, but it's a
+   button (the action is a sign-in, not a checkbox) and its name glows
+   ember until connected — the visible locked shelf. */
+.skill-pick-connect { border: 0; background: none; font: inherit; text-align: left; width: 100%; }
+.skill-pick-connect .skill-pick-name { color: var(--accent); }
+.skill-pick-connect:disabled { opacity: 0.6; cursor: default; }
 .skill-pick:hover { color: var(--fg); }
 .skill-pick-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .skill-pick-name { font-family: var(--font-mono); font-size: 12px; font-weight: 500; }

@@ -408,6 +408,21 @@ fn set_skill_secret(skill: String, key: String, value: String) -> Result<(), Str
 }
 
 /// Whether a secret exists (never its value).
+/// Delete a keychain secret — how a Connection is disconnected (the
+/// OAuth blob at "<skill>.OAUTH" is forgotten). Missing item is success:
+/// disconnect is idempotent.
+#[tauri::command]
+fn delete_skill_secret(skill: String, key: String) -> Result<(), String> {
+    if !valid_secret_name(&skill) || !valid_secret_name(&key) {
+        return Err("bad skill/key name".to_string());
+    }
+    let account = format!("{skill}.{key}");
+    let _ = Command::new("security")
+        .args(["delete-generic-password", "-s", "fez-skill-env", "-a", &account])
+        .status();
+    Ok(())
+}
+
 #[tauri::command]
 fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
     if !valid_secret_name(&skill) || !valid_secret_name(&key) {
@@ -1931,6 +1946,37 @@ fn runner_status() -> bool {
     pid_alive(&std::path::PathBuf::from(home).join(".fez").join("sentinel.pid")).is_some()
 }
 
+/// Run the OAuth sign-in for a connectable service (Connections — see
+/// src/extensions/connections.ts). The webview can't hold the loopback
+/// callback port, so the bundled fez-agent runs the whole flow: it opens
+/// the browser, catches the redirect, lands tokens in the keychain, and
+/// registers the skill in settings.json. Blocks until the sign-in
+/// finishes (minutes at worst), so it runs off the main thread.
+#[tauri::command]
+async fn connect_service(key: String) -> Result<String, String> {
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("bad connection key".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+        let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-agent");
+        if !bin.exists() {
+            return Err("fez-agent isn't installed yet — relaunch the app to install the bundled runtime".into());
+        }
+        let out = std::process::Command::new(&bin)
+            .args(["connect", &key])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn default_bin() -> String {
     "fez-agent".to_string()
 }
@@ -2651,7 +2697,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {

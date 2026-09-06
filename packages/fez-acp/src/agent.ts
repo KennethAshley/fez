@@ -53,6 +53,9 @@ import {
   attachmentNotice,
   allowedMediaHosts,
   loadSettings,
+  withFreshOAuth,
+  connectService,
+  connectionEntry,
 } from "@fezchat/protocol";
 import fs from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
@@ -158,6 +161,20 @@ function withNotice(
 }
 
 async function main() {
+  // `fez-agent connect <key>` — the OAuth sign-in flow, runnable from the
+  // compiled binary so the DESKTOP can trigger it (the webview can't hold
+  // the loopback callback port; this process can). Exits when connected.
+  if (process.argv[2] === "connect" && process.argv[3]) {
+    try {
+      await connectService(process.argv[3]);
+      console.log(`✓ ${process.argv[3]} connected`);
+      process.exit(0);
+    } catch (e) {
+      console.error(`✗ ${e instanceof Error ? e.message : e}`);
+      process.exit(1);
+    }
+  }
+
   const relayUrls = resolveRelays();
   const personaId = process.env.FEZ_AGENT_PERSONA;
   const channelSpecs = (process.env.FEZ_AGENT_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -246,7 +263,10 @@ async function main() {
     // one-line install and carry on without the tool.
     console.warn(`⚠️  Tools declared but not loadable here — the agent will disclose the gap when relevant:`);
     for (const m of missing) {
-      console.warn(`   ${installHint(m.name, m.source ?? wellKnownSource(m.name))}`);
+      // A connectable service gets the sign-in hint, not an install one —
+      // "fez connect linear" is the whole fix, no package involved.
+      const conn = connectionEntry(m.name);
+      console.warn(`   ${conn ? `${m.name}: fez connect ${m.name} — sign in, no API key to paste` : installHint(m.name, m.source ?? wellKnownSource(m.name))}`);
     }
   }
 
@@ -261,12 +281,14 @@ async function main() {
     persona.skillSettings
   );
   const skillsSection = skillsPromptSection(attachedSkills);
-  const mcpServers = resolved
-    // Copies, not registry objects — the command rewrite below must not
-    // reach back into the shared registry.
-    .map((r) => findMcpServer(r.key))
-    .filter((s): s is NonNullable<typeof s> => s !== undefined)
-    .map((s) => ({ ...s }));
+  const mcpServers = await withFreshOAuth(
+    resolved
+      // Copies, not registry objects — the command rewrite below must not
+      // reach back into the shared registry.
+      .map((r) => findMcpServer(r.key))
+      .filter((s): s is NonNullable<typeof s> => s !== undefined)
+      .map((s) => ({ ...s }))
+  );
 
   // A bare `command: node` (what the installer writes for every skill
   // part) is unrunnable from an app-spawned agent — the GUI PATH has no
