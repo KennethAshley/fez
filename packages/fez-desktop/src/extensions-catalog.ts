@@ -72,6 +72,10 @@ export const CONNECTABLE: ConnectableEntry[] = [
   { key: "notion", title: "Notion", category: "Design & Docs", blurb: "Your agent works in the pages and databases you grant at sign-in — no API key." },
   { key: "canva", title: "Canva", category: "Design & Docs", blurb: "Designs and brand assets. Sign in — no API key." },
   { key: "webflow", title: "Webflow", category: "Design & Docs", blurb: "Sites and CMS collections. Sign in — no API key." },
+  { key: "google-drive", title: "Google Drive", category: "Design & Docs", blurb: "Files you pick and files your agents create — drive.file, never the whole drive. Sign in with Google." },
+  { key: "google-docs", title: "Google Docs", category: "Design & Docs", blurb: "Documents, read and write. Sign in with Google." },
+  { key: "google-sheets", title: "Google Sheets", category: "Data", blurb: "Spreadsheets, read and write. Sign in with Google." },
+  { key: "google-calendar", title: "Google Calendar", category: "Design & Docs", blurb: "Events and calendars, read and write. Sign in with Google." },
 ];
 
 export const PERM_LABEL: Record<string, string> = {
