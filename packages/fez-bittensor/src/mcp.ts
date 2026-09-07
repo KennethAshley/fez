@@ -45,7 +45,7 @@ server.registerTool(
   "bittensor_subnet",
   {
     description:
-      "Full on-chain identity for one subnet by netuid — name, description, GitHub repo. The github repo is what you read (via git-mcp) to learn how to actually use the subnet.",
+      "Full on-chain identity for one subnet by netuid — name, description, GitHub repo, url, contact, discord. The github repo is what you read (via git-mcp) to learn how to actually use the subnet.",
     inputSchema: { netuid: z.number().describe("The subnet's netuid, e.g. 64 for Chutes.") },
   },
   async ({ netuid }) => {
@@ -56,6 +56,9 @@ server.registerTool(
         `# ${s.netuid} · ${s.name}`,
         s.description && `\n${s.description}`,
         s.github && `\n- repo: ${s.github}`,
+        s.url && `- url: ${s.url}`,
+        s.contact && `- contact: ${s.contact}`,
+        s.discord && `- discord: ${s.discord}`,
         `\nTo learn its interface, read ${s.github || "the repo"} with git-mcp.`,
       ]
         .filter(Boolean)
@@ -74,7 +77,7 @@ server.registerTool(
   async ({ query }) => {
     const q = query.toLowerCase();
     const hits = (await allSubnets()).filter(
-      (s) => s.name.toLowerCase().includes(q) || (s.description ?? "").toLowerCase().includes(q)
+      (s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
     );
     if (hits.length === 0) return text(`no subnet matches "${query}". Try a broader word, or bittensor_subnets to see them all.`);
     return text(`${hits.length} subnet(s) matching "${query}":\n${hits.map(line).join("\n")}`);

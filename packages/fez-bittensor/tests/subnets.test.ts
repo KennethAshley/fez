@@ -9,12 +9,16 @@ describe("subnetFromIdentity", () => {
       subnetName: hex("chutes"),
       description: hex("serverless compute"),
       githubRepo: hex("https://github.com/rayonlabs/chutes"),
+      subnetUrl: hex("https://chutes.ai"),
     });
     expect(s).toEqual({
       netuid: 64,
       name: "chutes",
       description: "serverless compute",
       github: "https://github.com/rayonlabs/chutes",
+      url: "https://chutes.ai",
+      contact: "",
+      discord: "",
     });
   });
   it("falls back to a placeholder name on an empty identity", () => {

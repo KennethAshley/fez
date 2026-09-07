@@ -26,8 +26,11 @@ function hexToStr(v: unknown): string {
 export interface Subnet {
   netuid: number;
   name: string;
-  description?: string;
-  github?: string;
+  description: string;
+  github: string;
+  url: string;
+  contact: string;
+  discord: string;
 }
 
 let apiPromise: Promise<ApiPromise> | undefined;
@@ -48,8 +51,11 @@ export function subnetFromIdentity(netuid: number, id: Record<string, unknown>):
   return {
     netuid,
     name: hexToStr(id.subnetName) || `subnet ${netuid}`,
-    description: hexToStr(id.description) || undefined,
-    github: hexToStr(id.githubRepo) || undefined,
+    description: hexToStr(id.description),
+    github: hexToStr(id.githubRepo),
+    url: hexToStr(id.subnetUrl),
+    contact: hexToStr(id.subnetContact),
+    discord: hexToStr(id.discord),
   };
 }
 
