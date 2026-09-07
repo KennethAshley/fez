@@ -34,12 +34,12 @@ describe("stripHarnessNoise", () => {
 });
 
 describe("stripSelfAddress", () => {
-  it("drops a leading self-mention, with or without @", async () => {
+  test("drops a leading self-mention, with or without @", async () => {
     const { stripSelfAddress } = await import("../../fez-acp/src/bridge-policy.js");
     expect(stripSelfAddress("@steph: Swish! What's up?", "steph")).toBe("Swish! What's up?");
     expect(stripSelfAddress("steph: on it", "steph")).toBe("on it");
   });
-  it("keeps mid-sentence self-mentions and other names", async () => {
+  test("keeps mid-sentence self-mentions and other names", async () => {
     const { stripSelfAddress } = await import("../../fez-acp/src/bridge-policy.js");
     expect(stripSelfAddress("ask @steph again later", "steph")).toBe("ask @steph again later");
     expect(stripSelfAddress("@quill: your turn", "steph")).toBe("@quill: your turn");

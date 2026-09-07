@@ -30,6 +30,9 @@ export default tseslint.config(
       // eslint-plugin-react predates flat config — loading it here
       // crashes the run. `next lint` covers it there.
       "web/**",
+      // Claude worktrees are full repo copies — linting them doubles
+      // every finding and reports errors in code that isn't on main.
+      "**/.claude/**",
       // Build artifacts. deploy/fez-relay.mjs is an esbuild bundle
       // (deploy/deploy.sh --outfile) — 10k lines of vendored code whose
       // findings are not ours to fix and drown the ones that are.
@@ -49,7 +52,10 @@ export default tseslint.config(
       // exist or the rule gets turned off wholesale.
       "@typescript-eslint/no-unused-vars": [
         "error",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+        // `h` is the JSX factory in shared-React extension guis
+        // (--jsx-factory=h) — used by every JSX element, invisible to
+        // eslint, which has no jsxFactory setting in flat config.
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_|^h$", caughtErrorsIgnorePattern: "^_" },
       ],
       // `catch {}` is how a real failure becomes a silent no-op. Today
       // it hid why an agent's mention carried no p tag.

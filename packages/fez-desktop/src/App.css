@@ -56,10 +56,13 @@ body {
 .sprite-anim { position: relative; display: block; line-height: 0; }
 .sprite-anim svg { display: block; }
 .sprite-anim .spr-b { position: absolute; inset: 0; opacity: 0; }
+
 @keyframes spr-frame-a { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
 @keyframes spr-frame-b { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
 .boot-sprite .spr-a { animation: spr-frame-a 0.6s steps(1) infinite; animation-delay: var(--flap-delay, 0s); }
 .boot-sprite .spr-b { animation: spr-frame-b 0.6s steps(1) infinite; animation-delay: var(--flap-delay, 0s); }
+
 @media (prefers-reduced-motion: reduce) {
   .boot-sprite .spr-a, .boot-sprite .spr-b { animation: none; }
 }
@@ -348,6 +351,7 @@ body {
 .search-empty-sprite { position: relative; line-height: 0; }
 .search-empty-sprite .spr-a { animation: spr-frame-a 0.7s steps(1) infinite; }
 .search-empty-sprite .spr-b { animation: spr-frame-b 0.7s steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .search-empty-sprite .spr-a, .search-empty-sprite .spr-b { animation: none; }
 }
@@ -435,7 +439,8 @@ body {
 .edit-col-prompt { grid-column: 1 / -1; display: flex; flex-direction: column; }
 .edit-col-prompt .persona-prompt { min-height: 320px; resize: vertical; }
 .edit-body > .edit-danger { grid-column: 1 / -1; }
-@media (max-width: 880px) {
+
+@media (width <= 880px) {
   .edit-body { display: block; }
 }
 
@@ -533,7 +538,7 @@ select.ob-input:hover { border-color: var(--accent); }
 .ob-key-row .ob-key { flex: 1; }
 .ob-copy {
   border: 1px solid var(--bg2); border-radius: 8px; background: var(--bg0);
-  color: var(--fg-dim); cursor: pointer; padding: 0 12px; font-size: 14px; font: inherit;
+  color: var(--fg-dim); cursor: pointer; padding: 0 12px; font: inherit; font-size: 14px;
 }
 .ob-copy:hover { color: var(--fg); border-color: var(--fg-dim); }
 .ob-copy.copied { color: var(--accent); border-color: var(--accent); }
@@ -613,7 +618,9 @@ select.ob-input:hover { border-color: var(--accent); }
 .live-dots span { animation: live-pip 1.2s ease-in-out infinite; opacity: 0.35; }
 .live-dots span:nth-child(2) { animation-delay: 0.18s; }
 .live-dots span:nth-child(3) { animation-delay: 0.36s; }
+
 @keyframes live-pip { 40% { opacity: 1; } }
+
 @media (prefers-reduced-motion: reduce) {
   .live-face .spr-a, .live-face .spr-b, .live-dots span, .live-cursor { animation: none; }
 }
@@ -709,6 +716,7 @@ select.ob-input:hover { border-color: var(--accent); }
 .agent-row > .agent-edit { margin-left: auto; }
 .agent-edit { opacity: 0; transition: opacity 110ms ease; }
 .agent-row:hover .agent-edit, .agent-row:focus-within .agent-edit { opacity: 1; }
+
 @media (prefers-reduced-motion: reduce) { .agent-edit { transition: none; } }
 .agent-sub {
   margin-left: auto; color: var(--fg-dim); font-size: 11px;
@@ -778,6 +786,7 @@ select.ob-input:hover { border-color: var(--accent); }
    are pointing at, the same idiom the agent pencil uses. */
 .manage-row .manage-actions { opacity: 0; transition: opacity 110ms ease; }
 .manage-row:hover .manage-actions, .manage-row:focus-within .manage-actions { opacity: 1; }
+
 @media (prefers-reduced-motion: reduce) { .manage-row .manage-actions { transition: none; } }
 .settings-hint p { margin: 0 0 6px; }
 .settings-hint p:last-child { margin-bottom: 0; }
@@ -944,11 +953,14 @@ select.ob-input:hover { border-color: var(--accent); }
   flex: 0 1 auto; min-width: 0;
 }
 /* The live rail breathes; a finished one is just a hairline. */
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .turn.live { animation: turn-breathe 2.4s ease-in-out infinite; }
+
 @keyframes turn-breathe {
   0%, 100% { border-left-color: color-mix(in srgb, var(--phosphor) 35%, var(--hairline)); }
   50% { border-left-color: var(--phosphor); }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .turn.live { animation: none; }
 }
@@ -959,6 +971,7 @@ select.ob-input:hover { border-color: var(--accent); }
 .feed-empty-face { position: relative; line-height: 0; flex: none; }
 .feed-empty-face .spr-a { animation: spr-frame-a 0.8s steps(1) infinite; }
 .feed-empty-face .spr-b { animation: spr-frame-b 0.8s steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .feed-empty-face .spr-a, .feed-empty-face .spr-b { animation: none; }
 }
@@ -968,6 +981,7 @@ select.ob-input:hover { border-color: var(--accent); }
 .turn-warming { display: flex; align-items: center; gap: 10px; padding: 8px 0 4px; font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
 .turn-warming .spr-a { animation: spr-frame-a 0.8s steps(1) infinite; }
 .turn-warming .spr-b { animation: spr-frame-b 0.8s steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .turn-warming .spr-a, .turn-warming .spr-b { animation: none; }
 }
@@ -979,6 +993,7 @@ select.ob-input:hover { border-color: var(--accent); }
    state, so no separate spinner glyph beside the name. */
 .watch-who.working .avatar-anim .spr-a { animation: spr-frame-a var(--spr-dur, 0.6s) steps(1) infinite; }
 .watch-who.working .avatar-anim .spr-b { animation: spr-frame-b var(--spr-dur, 0.6s) steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .watch-who.working .avatar-anim .spr-a, .watch-who.working .avatar-anim .spr-b { animation: none; }
 }
@@ -1040,6 +1055,7 @@ select.ob-input:hover { border-color: var(--accent); }
 .pulse-empty-face .spr-a { animation: spr-frame-a 0.8s steps(1) infinite; }
 .pulse-empty-face .spr-b { animation: spr-frame-b 0.8s steps(1) infinite; }
 .pulse-empty-line { font-family: var(--font-mono); font-size: 12px; color: var(--fg-dim); }
+
 @media (prefers-reduced-motion: reduce) {
   .pulse-empty-face .spr-a, .pulse-empty-face .spr-b { animation: none; }
 }
@@ -1204,6 +1220,7 @@ button.author:hover { text-decoration: underline; }
 .reminder-actions { display: flex; gap: 4px; flex: none; opacity: 0; transition: opacity 110ms ease; }
 .reminder-row:hover .reminder-actions,
 .reminder-row:focus-within .reminder-actions { opacity: 1; }
+
 @media (prefers-reduced-motion: reduce) { .reminder-actions { transition: none; } }
 .reminder-row.dim { color: var(--fg-dim); }
 .reminder-when {
@@ -1258,6 +1275,7 @@ button.author:hover { text-decoration: underline; }
 .avatar-anim .spr-b { position: absolute; inset: 0; opacity: 0; }
 .avatar-anim:hover .spr-a { animation: spr-frame-a var(--spr-dur, 0.6s) steps(1) infinite; }
 .avatar-anim:hover .spr-b { animation: spr-frame-b var(--spr-dur, 0.6s) steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .avatar-anim:hover .spr-a, .avatar-anim:hover .spr-b { animation: none; }
 }
@@ -1286,6 +1304,7 @@ button.author:hover { text-decoration: underline; }
 .doc-intro-sprite { position: relative; line-height: 0; }
 .doc-intro-sprite .spr-a { animation: spr-frame-a 0.8s steps(1) infinite; }
 .doc-intro-sprite .spr-b { animation: spr-frame-b 0.8s steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .doc-intro-sprite .spr-a, .doc-intro-sprite .spr-b { animation: none; }
 }
@@ -1458,7 +1477,7 @@ button.author:hover { text-decoration: underline; }
   position: absolute; top: 100%; left: 0; right: 0; z-index: 30;
   display: flex; flex-direction: column;
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38); padding: 4px;
+  box-shadow: 0 8px 22px rgb(0, 0, 0, 0.38); padding: 4px;
 }
 /* An agent announced on the relay but not yet a conversation: present,
    quieter — it brightens the moment you consider it. */
@@ -1529,6 +1548,7 @@ button.author:hover { text-decoration: underline; }
 .skill-section .skill-row:hover .skill-actions,
 .skill-section .skill-row:focus-within .skill-actions { opacity: 1; }
 .ext-missing .skill-row .skill-actions { opacity: 1; }
+
 @media (prefers-reduced-motion: reduce) { .skill-section .skill-row .skill-actions { transition: none; } }
 .skill-give { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 0 2px; }
 .publish-form { display: flex; gap: 6px; align-items: center; }
@@ -1635,6 +1655,7 @@ button.author:hover { text-decoration: underline; }
 .tool-pane-body { padding: 0; display: flex; }
 .tool-pane-body .artifact-frame { height: 100%; flex: 1; }
 .tool-building { color: var(--accent); font-weight: 400; opacity: 0.85; animation: pulse-dim 1.4s ease-in-out infinite; }
+
 @keyframes pulse-dim { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.9; } }
 
 /* ── ▣ tools gallery (fez-loom extension) ──
@@ -1678,6 +1699,7 @@ button.author:hover { text-decoration: underline; }
   background: var(--brand); transition: width 320ms ease;
 }
 .tool-card:hover .tool-card-preview::after { width: 100%; }
+
 @media (prefers-reduced-motion: reduce) {
   .tool-card, .tool-card-preview::after { transition: none; }
 }
@@ -1740,6 +1762,7 @@ button.author:hover { text-decoration: underline; }
 /* Carries a count as well as a glyph, so it keeps its own width — but
    it was two sizes below its neighbours and read as a different class
    of control. Same height, same row. */
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .topbar-members { width: auto; padding: 0 9px; font-size: 15px; gap: 5px; }
 .members-pop {
   position: absolute; top: calc(100% + 4px); right: 14px; z-index: 40; min-width: 220px;
@@ -1806,6 +1829,7 @@ button.author:hover { text-decoration: underline; }
    send button only existed once you were already typing. */
 .composer-send:disabled { background: var(--accent); color: var(--bg0); opacity: 0.4; cursor: default; }
 
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .agent-edit { margin-left: 4px; color: var(--fg-dim); padding: 3px 7px; border-radius: 6px; font-size: 14px; }
 .agent-edit:hover { color: var(--accent); background: var(--bg2); }
 
@@ -1853,6 +1877,7 @@ button.author:hover { text-decoration: underline; }
   top: auto; bottom: 100%;
   border-top-color: transparent; border-bottom-color: var(--bg2);
 }
+
 @keyframes quip-in {
   from { opacity: 0; margin-top: 3px; }
   to { opacity: 1; margin-top: 0; }
@@ -1943,6 +1968,7 @@ button.author:hover { text-decoration: underline; }
 .fez-corner-btn:hover .spr-b { animation: spr-frame-b 0.6s steps(1) infinite; }
 /* The hat-tip: one bounce per poke, replayed by the class toggling. */
 .fez-corner-btn.poked { animation: fez-tip 420ms ease-out; }
+
 @keyframes fez-tip {
   30% { transform: translateY(-5px) rotate(-6deg); }
   60% { transform: translateY(0) rotate(3deg); }
@@ -1952,6 +1978,7 @@ button.author:hover { text-decoration: underline; }
   font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim);
   padding: 0 2px 6px; max-width: 180px; animation: fez-say 200ms ease-out;
 }
+
 @keyframes fez-say { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 /* The rest of the cast files past, each a beat behind the last. */
 .fez-parade {
@@ -1962,12 +1989,14 @@ button.author:hover { text-decoration: underline; }
   position: absolute; bottom: 0; line-height: 0;
   animation: fez-march 4.4s linear var(--march, 0s) both;
 }
+
 @keyframes fez-march {
   from { transform: translateX(-40px); }
   to { transform: translateX(240px); }
 }
 .fez-parade-face .spr-a { animation: spr-frame-a 0.42s steps(1) infinite; }
 .fez-parade-face .spr-b { animation: spr-frame-b 0.42s steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .fez-corner-btn.poked, .fez-says, .fez-parade-face,
   .fez-corner-btn:hover .spr-a, .fez-corner-btn:hover .spr-b,
@@ -2063,6 +2092,7 @@ button.author:hover { text-decoration: underline; }
 /* Disabled by its master switch, not broken — dimmed as a group so the
    reason is legible (the thing above it is off), never hidden. */
 .toggle:disabled { opacity: 0.4; cursor: default; }
+
 @media (prefers-reduced-motion: reduce) {
   .toggle, .toggle-knob { transition: none; }
 }
@@ -2071,7 +2101,7 @@ button.author:hover { text-decoration: underline; }
 .set-diag { margin-top: 26px; font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-dim); }
 
 /* Narrow windows: the two columns stop being two. */
-@media (max-width: 900px) {
+@media (width <= 900px) {
   .settings-col { padding-left: 28px; padding-right: 24px; }
   .set-row { grid-template-columns: 1fr; }
   .set-control { grid-column: 1; grid-row: auto; justify-self: start; margin-top: 8px; }
@@ -2200,6 +2230,7 @@ button.author:hover { text-decoration: underline; }
 /* hover wakes the glint — same steps(1) frame flip the avatars use */
 .gallery-card:hover .artifact-slot .spr-a, .ext-detail-id:hover .artifact-slot .spr-a { animation: spr-frame-a 0.9s steps(1) infinite; }
 .gallery-card:hover .artifact-slot .spr-b, .ext-detail-id:hover .artifact-slot .spr-b { animation: spr-frame-b 0.9s steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .gallery-card:hover .artifact-slot .spr-a, .ext-detail-id:hover .artifact-slot .spr-a,
   .gallery-card:hover .artifact-slot .spr-b, .ext-detail-id:hover .artifact-slot .spr-b { animation: none; }
@@ -2211,6 +2242,7 @@ button.author:hover { text-decoration: underline; }
 .inv-row .artifact-slot { width: 46px; height: 46px; }
 .inv-row:hover .artifact-slot .spr-a { animation: spr-frame-a 0.9s steps(1) infinite; }
 .inv-row:hover .artifact-slot .spr-b { animation: spr-frame-b 0.9s steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .inv-row:hover .artifact-slot .spr-a, .inv-row:hover .artifact-slot .spr-b { animation: none; }
 }
@@ -2347,6 +2379,7 @@ button.author:hover { text-decoration: underline; }
 .install-offer:hover .artifact-slot .spr-a { animation: spr-frame-a 0.9s steps(1) infinite; }
 .install-offer:hover .artifact-slot .spr-b { animation: spr-frame-b 0.9s steps(1) infinite; }
 .install-offer.dormant:hover .artifact-slot .sprite-anim svg { filter: grayscale(0.45) opacity(0.8); }
+
 @media (prefers-reduced-motion: reduce) {
   .install-offer:hover .artifact-slot .spr-a, .install-offer:hover .artifact-slot .spr-b { animation: none; }
 }
@@ -2407,6 +2440,7 @@ button.author:hover { text-decoration: underline; }
   box-shadow: 0 6px 20px color-mix(in srgb, #000 28%, transparent);
   animation: toast-in 160ms ease-out;
 }
+
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .toast-success { border-color: color-mix(in srgb, var(--green) 40%, var(--hairline)); }
 .toast-error   { border-color: color-mix(in srgb, var(--red) 40%, var(--hairline)); }
@@ -2417,7 +2451,7 @@ button.author:hover { text-decoration: underline; }
 .toast-error   .toast-icon { color: var(--red); }
 .toast-warn    .toast-icon { color: var(--yellow); }
 .toast-info    .toast-icon { color: var(--accent); }
-.toast-msg { flex: 1; min-width: 0; word-break: break-word; }
+.toast-msg { flex: 1; min-width: 0; overflow-wrap: break-word; }
 .toast-x {
   flex: none; background: none; border: none; cursor: pointer; color: var(--fg-dim);
   font-size: 12px; line-height: 1.4; padding: 0 0 0 4px;
@@ -2928,11 +2962,13 @@ button.author:hover { text-decoration: underline; }
   opacity: 0; transition: opacity 110ms ease;
 }
 .channel-info-toggle:hover .channel-info-hint, .channel-info-toggle:focus-visible .channel-info-hint { opacity: 0.9; }
+
 @media (prefers-reduced-motion: reduce) { .channel-info-hint { transition: none; } }
 .channel-info-count { margin-left: 10px; flex: none; color: var(--yellow); }
 /* edit/write is a secondary action — the rail's idiom: hover or focus. */
 .channel-info-bar .mini { opacity: 0; transition: opacity 110ms ease; }
 .channel-info-bar:hover .mini, .channel-info-bar:focus-within .mini { opacity: 1; }
+
 @media (prefers-reduced-motion: reduce) { .channel-info-bar .mini { transition: none; } }
 .channel-info-body { padding: 2px 18px 12px; max-height: 42vh; overflow-y: auto; }
 .channel-info-doc { font-size: 13px; max-width: 780px; }
@@ -3400,6 +3436,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 }
 .ob-party-face .spr-a { animation: spr-frame-a var(--beat, 0.6s) steps(1) infinite; animation-delay: var(--wake, 0ms); }
 .ob-party-face .spr-b { animation: spr-frame-b var(--beat, 0.6s) steps(1) infinite; animation-delay: var(--wake, 0ms); }
+
 @keyframes ob-wake { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 /* The machine talking, in the same mono prompt ⌘K uses. */
 .ob-welcome .ob-lede {
@@ -3415,11 +3452,12 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
   font-family: var(--font-mono);
 }
 .ob-welcome .ob-alts {
-  display: flex; flex-direction: row; align-items: center; justify-content: center;
-  gap: 8px; flex-wrap: wrap; border: 0; padding: 0; margin: 0;
+  display: flex; flex-flow: row wrap; align-items: center; justify-content: center;
+  gap: 8px; border: 0; padding: 0; margin: 0;
 }
 .ob-welcome .ob-link { font-family: var(--font-mono); font-size: 11.5px; padding: 2px 4px; }
 .ob-alt-sep { color: var(--fg-dim); opacity: 0.5; font-size: 11px; }
+
 @media (prefers-reduced-motion: reduce) {
   .ob-party-face, .ob-party-face .spr-a, .ob-party-face .spr-b { animation: none; }
 }
@@ -3437,10 +3475,12 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .ob-spine-step.on { color: var(--brand); opacity: 1; font-weight: 700; }
 .ob-spine-rule { flex: 1; height: 1px; background: var(--hairline); }
 
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .ob-card h2 { font-family: var(--font-mono); font-size: 19px; letter-spacing: -0.01em; margin: 0; }
 .ob-card .ob-lede { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7; text-align: left; margin: 0; }
 /* The same ember action on every step: get started → continue → take me
    to fez is one button doing one job. */
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .ob-primary {
   background: var(--brand); color: var(--bg0); border: 0; font-weight: 700;
   padding: 11px 30px; border-radius: 9px; font-size: 14px; font-family: var(--font-mono); cursor: pointer;
@@ -3477,6 +3517,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 .ob-mine-note { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-dim); }
 
 .ob-team-job { display: block; letter-spacing: 0; font-size: 10px; opacity: 0.8; margin-top: 2px; text-transform: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .ob-escort-face .spr-a, .ob-escort-face .spr-b,
   .ob-mine-face .spr-a, .ob-mine-face .spr-b { animation: none; }
@@ -3813,6 +3854,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
 
 /* ── onboarding: the brain step (Buzz's harness cards, fez-sized) ──── */
 .ob-brains { display: flex; flex-direction: column; gap: 10px; margin: 18px 0 6px; text-align: left; }
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .ob-brain {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
   border: 1px solid var(--hairline); border-radius: 10px; background: var(--bg1);
@@ -3823,6 +3865,7 @@ h4:hover .heading-anchor, h5:hover .heading-anchor, h6:hover .heading-anchor { o
    chutes auth container) must not pretend to be doors. */
 button.ob-brain:hover, button.ob-brain:focus-visible { border-color: var(--accent); background: var(--bg2); }
 button.ob-brain:active { transform: translateY(1px); }
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .ob-brain.selected { border-color: var(--accent); }
 .ob-brain.unavailable { opacity: 0.75; }
 .ob-brain-name { font-weight: 700; }
@@ -3860,6 +3903,7 @@ button.ob-brain:active { transform: translateY(1px); }
 .ob-team-member .spr-b { animation: spr-frame-b 0.6s steps(1) infinite; animation-delay: var(--flap-delay, 0s); }
 .ob-team-member:nth-child(2) { --flap-delay: 0.2s; }
 .ob-team-member:nth-child(3) { --flap-delay: 0.4s; }
+
 @media (prefers-reduced-motion: reduce) {
   .ob-team-member .spr-a, .ob-team-member .spr-b { animation: none; }
 }
@@ -3874,6 +3918,7 @@ button.ob-brain:active { transform: translateY(1px); }
 .mention-hint-sprite { position: relative; line-height: 0; flex: none; }
 .mention-hint:hover .mention-hint-sprite .spr-a { animation: spr-frame-a 0.6s steps(1) infinite; }
 .mention-hint:hover .mention-hint-sprite .spr-b { animation: spr-frame-b 0.6s steps(1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .mention-hint:hover .mention-hint-sprite .spr-a, .mention-hint:hover .mention-hint-sprite .spr-b { animation: none; }
 }
@@ -3901,6 +3946,7 @@ button.ob-brain:active { transform: translateY(1px); }
    already borrow .settings-hint and .manage-input), so a nav view can
    look native by using the app's vocabulary instead of imitating it
    inline. Renaming anything here breaks third-party packages. */
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 :root {
   /* Two measures, because the content does two different things. Prose
      is read line by line and wants a comfortable line length; a roster
@@ -4061,6 +4107,7 @@ a.page-fact:hover { color: var(--fg); }
 .profile-name { font-weight: 700; font-size: 15px; }
 .profile-desc { color: var(--fg-dim); font-size: 12.5px; text-align: center; line-height: 1.5; max-width: 34ch; }
 .agent-egg.big { width: 96px; height: 96px; font-size: 46px; }
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .profile-actions { display: flex; gap: 8px; justify-content: center; padding-bottom: 20px; }
 
 /* A skill's state is the sentence, not a badge — the roster already
@@ -4104,6 +4151,7 @@ a.page-fact:hover { color: var(--fg); }
 }
 /* The scroll needs air under it: the foot is opaque and the last field
    should be able to clear it rather than stop against it. */
+/* stylelint-disable-next-line no-duplicate-selectors -- deliberate later-section override */
 .edit-body { padding-bottom: 4px; }
 
 /* The pane's floor. A sibling of .pane-body inside .pane's flex column,
@@ -4191,7 +4239,7 @@ a.page-fact:hover { color: var(--fg); }
 .skill-pick-more > .skill-pick-drawer {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30;
   background: var(--bg1); border: 1px solid var(--hairline); border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 10px 28px rgb(0, 0, 0, 0.38);
   padding: 8px 10px; max-height: 340px; overflow-y: auto;
 }
 .skill-pick-more > summary {
@@ -4342,7 +4390,7 @@ a.page-fact:hover { color: var(--fg); }
 .modq-fmsg { flex: 1; min-width: 0; }
 .modq-fwho { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--fg); margin-bottom: 2px; }
 .modq-loc { color: var(--fg-dim); font-size: 11.5px; font-weight: 400; }
-.modq-ftxt { color: var(--fg); font-size: 13px; word-break: break-word; }
+.modq-ftxt { color: var(--fg); font-size: 13px; overflow-wrap: break-word; }
 .modq-sev {
   font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap;
   color: var(--yellow); border: 1px solid #665c1e; background: #3a3418; padding: 2px 8px; border-radius: 11px;
@@ -4416,7 +4464,9 @@ a.page-fact:hover { color: var(--fg); }
   padding: 4px 0;
   animation: guest-lamp 1.6s steps(1) infinite;
 }
+
 @keyframes guest-lamp { 0%, 100% { opacity: 1; } 55% { opacity: 0.45; } }
+
 @media (prefers-reduced-motion: reduce) { .guest-progress { animation: none; } }
 .guest-unanswered {
   font-family: var(--font-mono);
@@ -4450,7 +4500,7 @@ a.page-fact:hover { color: var(--fg); }
   border-radius: 5px;
   background: var(--bg0);
   color: var(--fg-dim);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 4px 14px rgb(0, 0, 0, 0.18);
   font-size: 10.5px;
   font-weight: 400;
   font-family: var(--font-ui, sans-serif);

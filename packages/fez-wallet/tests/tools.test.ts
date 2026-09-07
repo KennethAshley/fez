@@ -280,7 +280,7 @@ describe("new payee consent", () => {
   it("asks the first time, even under the threshold", async () => {
     const { adapter, transfers } = fakeAdapter(1_000_000_000n);
     let asked = false;
-    const relay = autoRelay((ev) => { asked = true; return "✅"; });
+    const relay = autoRelay((_ev) => { asked = true; return "✅"; });
     await walletSend(
       {
         ...baseDeps(adapter),

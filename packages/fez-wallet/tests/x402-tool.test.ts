@@ -330,7 +330,7 @@ describe("x402Fetch: record-before-retry (the invariant)", () => {
     let sawSignedLogBeforePaidFetch = false;
     let sawTallyBeforePaidFetch = false;
     let calls = 0;
-    const fetchImpl: FetchLike = async (_url, init) => {
+    const fetchImpl: FetchLike = async (_url, _init) => {
       calls++;
       if (calls === 1) return paymentRequiredResponse([offer()]);
       // This is the paid retry: the invariant says the write already happened.

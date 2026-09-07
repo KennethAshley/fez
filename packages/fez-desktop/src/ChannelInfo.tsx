@@ -70,6 +70,7 @@ export default function ChannelInfo({
       // Keyed on the block's own content (not just the doc), so THIS
       // block's mount survives while a SIBLING block in the same doc
       // remounting for its own reasons doesn't disturb it.
+      // eslint-disable-next-line react-hooks/rules-of-hooks -- CodeBlock runs as a real component fiber (see comment above)
       const mountRender = useCallback(
         (host?: HTMLElement) =>
           blockRender!({ info: infoLine.trim().slice(3 + (lang?.length ?? 0)).trim(), body, raw, channelId }, host),

@@ -19,7 +19,6 @@ import {
   KIND_OBSERVER,
   KIND_PRESENCE,
   makeChannels,
-  summonMentions,
   isSafeWork,
   parseSealed,
 } from "@fezchat/protocol";

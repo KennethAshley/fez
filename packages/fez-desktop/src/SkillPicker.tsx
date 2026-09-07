@@ -118,7 +118,7 @@ export default function SkillPicker({
   const setSetting = (row: { declaredAs?: string }, raw: string) => {
     if (!row.declaredAs) return;
     // The line's own structure can't ride inside the parens.
-    const v = raw.replace(/[(),\[\]\n=]/g, "").trim();
+    const v = raw.replace(/[(),[\]\n=]/g, "").trim();
     const next = settingsFor(skillsValue);
     if (v) next[row.declaredAs] = v;
     else delete next[row.declaredAs];

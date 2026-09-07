@@ -24,7 +24,7 @@
 
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { keptTools, isKept, keepTool, unkeepTool, toolArtifact, type ArtifactLike, type KeptTool } from "./store.js";
+import { keptTools, keepTool, unkeepTool, toolArtifact, type ArtifactLike, type KeptTool } from "./store.js";
 import { exportFiles } from "./export.js";
 
 interface ClientLike {

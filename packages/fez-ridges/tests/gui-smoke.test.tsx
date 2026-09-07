@@ -44,7 +44,8 @@ function apiWith(jobs: RidgesJob[], network?: string, opts?: { withClient?: bool
 async function mountPane(api: GuiApi): Promise<{ host: HTMLDivElement; dispose: () => void }> {
   activate(api);
   const registerNavView = api.registerNavView as unknown as ReturnType<typeof vi.fn>;
-  expect(registerNavView).toHaveBeenCalledWith("ridges", { glyph: "⛏", label: "ridges" }, expect.any(Function));
+  // glyph is icon art (emoji then, brand SVG now) — pin the identity, not the art
+  expect(registerNavView).toHaveBeenCalledWith("ridges", { glyph: expect.any(String), label: "ridges" }, expect.any(Function));
   const mount = registerNavView.mock.calls[0][2];
   const host = document.createElement("div");
   let dispose!: () => void;

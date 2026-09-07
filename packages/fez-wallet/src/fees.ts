@@ -94,6 +94,7 @@ function registeredHotkey(netuid: number): string {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { homedir } = require("node:os") as typeof import("node:os");
     const state = JSON.parse(readFileSync(`${homedir()}/.fez/extension-data/wallet.json`, "utf8")) as
       { subnet?: Record<string, { netuid?: number; hotkey?: string }> };

@@ -8,8 +8,6 @@ import {
   parseSkillEntries,
   validatePersonaFile,
   SOURCE_SCHEMES,
-  resolveInstalledSkill,
-  packageFromSource,
 } from "@fezchat/protocol";
 import * as proto from "@fezchat/protocol";
 import * as mirror from "../../fez-client/dist/index.js";

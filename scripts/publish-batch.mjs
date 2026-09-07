@@ -105,7 +105,7 @@ function publishDir(dir, label) {
 }
 
 function restore(dir) {
-  try { run("git", ["checkout", "--", path.join(dir, "package.json")]); } catch {}
+  try { run("git", ["checkout", "--", path.join(dir, "package.json")]); } catch { /* best-effort restore */ }
 }
 
 let ok = 0, fail = 0;

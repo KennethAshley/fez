@@ -9,7 +9,7 @@
  * hardcoded under :root for its standalone preview.
  *
  * Every selector here is a hashed class (fez pack's CSS-Module pass) —
- * the loader injects this as a plain document-level <style>, so a bare
+ * the loader injects this as a plain document-level \3c style>, so a bare
  * element selector (the mock's own bare h1/body rules) would leak
  * app-wide. The mock's bare "h1" becomes the "h1" class here for that
  * reason; everything else was already class-scoped in the mock.
@@ -212,6 +212,7 @@
   animation: travel 2.6s linear infinite;
   box-shadow: 0 0 6px var(--phosphor);
 }
+
 @keyframes travel {
   from {
     left: 2%;
@@ -220,6 +221,7 @@
     left: 92%;
   }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .spark {
     animation: none;

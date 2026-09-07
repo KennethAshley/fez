@@ -16,7 +16,7 @@ export async function webSearch(
   try {
     body = (await fetcher(url)).body;
   } catch (e) {
-    throw new Error(`the search service is unreachable (${e instanceof Error ? e.message : String(e)}) — web_fetch still works if you have a URL`);
+    throw new Error(`the search service is unreachable (${e instanceof Error ? e.message : String(e)}) — web_fetch still works if you have a URL`, { cause: e });
   }
   let parsed: { results?: { title?: string; url?: string; content?: string }[] };
   try { parsed = JSON.parse(body) as typeof parsed; } catch { throw new Error("the search service answered with something that isn't JSON — it may be rate-limiting; try again shortly"); }

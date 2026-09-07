@@ -45,7 +45,7 @@ describe("a scaffolded GUI extension loads and activates like the host runs it",
   fs.rmSync(WORK, { recursive: true, force: true });
 
   // 1) scaffold exactly what `fez create probe-panel --gui` writes
-  const result = scaffold({ name: "probe-panel", dir, surfaces: ["gui"], apiVersion: "^0.1.0" });
+  scaffold({ name: "probe-panel", dir, surfaces: ["gui"], apiVersion: "^0.1.0" });
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8"));
 
   it("declares the permissions the host gates its calls on", () => {

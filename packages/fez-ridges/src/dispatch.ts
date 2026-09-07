@@ -151,6 +151,7 @@ export async function dispatchRidges(deps: DispatchDeps, args: { issueUrl: strin
  * a hostile third party's text must never carry a fake extra "line" into
  * a message a decorator might render as a card. */
 function oneLine(s: string): string {
+  // eslint-disable-next-line no-control-regex -- stripping control chars is the point
   return s.replace(/[\s\x00-\x1f\x7f]+/g, " ").trim();
 }
 

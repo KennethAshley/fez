@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pollOnce, createPollerState, type PollerState } from "../src/poller.js";
+import { pollOnce, createPollerState } from "../src/poller.js";
 import { upsertJob, readJobs, type RidgesJob } from "../src/store.js";
 
 let dir: string;

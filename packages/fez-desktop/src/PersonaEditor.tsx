@@ -319,7 +319,7 @@ export default function PersonaEditor({
             // per-attachment settings ride the parens. A setting can't
             // carry the line's own structure either.
             if (!safeSkillEntries(names, {})) return;
-            if (Object.values(settings).some((s) => /[(),\[\]\n=]/.test(s))) return;
+            if (Object.values(settings).some((s) => /[(),[\]\n=]/.test(s))) return;
             const sources = Object.fromEntries(names.filter((n) => skillMdDecls.sources[n]).map((n) => [n, skillMdDecls.sources[n]]));
             update("skills", names.length ? `[${formatSkillDecls(names, sources, settings)}]` : "");
           }}

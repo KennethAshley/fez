@@ -59,7 +59,6 @@ import {
 } from "@fezchat/protocol";
 import fs from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";

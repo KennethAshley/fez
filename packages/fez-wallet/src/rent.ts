@@ -63,7 +63,12 @@ export async function marketPublish(relayUrl: string, event: SignedEvent): Promi
     ws.onmessage = (m) => {
       let msg: unknown[];
       try { msg = JSON.parse(String(m.data)) as unknown[]; } catch { return; }
-      if (msg[0] === "OK") { clearTimeout(timer); try { ws.close(); } catch { /* */ } msg[2] ? resolve() : reject(new Error(`relay rejected the tick: ${msg[3] ?? "no reason"}`)); }
+      if (msg[0] === "OK") {
+        clearTimeout(timer);
+        try { ws.close(); } catch { /* */ }
+        if (msg[2]) resolve();
+        else reject(new Error(`relay rejected the tick: ${msg[3] ?? "no reason"}`));
+      }
     };
   });
 }

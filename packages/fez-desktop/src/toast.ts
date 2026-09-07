@@ -73,5 +73,6 @@ export function flash(text: string): number {
       : /^[⚠]/.test(t)
         ? "warn"
         : "info";
+  // eslint-disable-next-line no-misleading-character-class -- ℹ️ is ℹ+VS16 on purpose: strip the emoji exactly as senders type it
   return push(t.replace(/^[✓✅✗❌⚠📡📝ℹ️]+\s*/u, ""), variant);
 }

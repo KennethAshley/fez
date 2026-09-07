@@ -87,6 +87,7 @@ function resolveTo(to: string): string {
  * with whitespace in it is not a valid SS58 and never reaches the chain.
  */
 function oneLine(s: string): string {
+  // eslint-disable-next-line no-control-regex -- stripping control chars is the point
   return s.replace(/[\s\u0000-\u001f\u007f]+/g, " ").trim();
 }
 

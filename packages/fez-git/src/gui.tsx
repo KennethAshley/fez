@@ -1,5 +1,5 @@
 import { cloneBase, cloneUrl, repoDoc, REPO_NAME } from "./repo-name.js";
-import { resolveProtect } from "./policy.js";
+import { resolveProtect, withGrant, withoutGrant } from "./policy.js";
 import { lineOfRoot, makeLaneBoard } from "./board.js";
 import type { GuiExtensionApi, RepoChannelLike } from "@fezchat/extension-api/gui";
 
@@ -515,6 +515,38 @@ export default function activate(api: GuiExtensionApi): void {
       const body = (await res?.json().catch(() => undefined)) as { merged?: boolean; sha?: string; reason?: string } | undefined;
       if (body?.merged) return `⑂ merged \`${branch}\` → \`${body.sha?.slice(0, 8)}\`${body.reason ? ` (${body.reason})` : ""}`;
       return `⑂ not merged: ${body?.reason ?? `relay answered ${res?.status ?? "nothing"}`}`;
+    }
+
+    /**
+     * Grant or revoke a STRANGER's access to one repo — the same
+     * owner-signed, latest-wins channel meta the headless verb writes
+     * (spec 2026-09-04). Parity is pinned by git-command-parity.test.
+     */
+    if ((verb === "grant" || verb === "revoke") && value) {
+      const existing = repos.find((r) => r.repo === value || r.name === value.toLowerCase());
+      if (!existing) return `⑂ no repo called "${value}" here — /repo new ${value}`;
+      const pk = rest[0]?.trim().toLowerCase() ?? "";
+      if (!/^[0-9a-f]{64}$/.test(pk)) {
+        return `⑂ /repo ${verb} ${existing.repo} <64-hex pubkey>${verb === "grant" ? " [hours]" : ""} — the worker's key, from its bazaar record`;
+      }
+      const nowS = Math.floor(Date.now() / 1000);
+      let grants: string;
+      let told: string;
+      if (verb === "grant") {
+        const hours = rest[1] ? Number(rest[1]) : 72;
+        if (!(hours > 0) || hours > 24 * 30) return "⑂ hours must be between 0 and 720 — a hire has a deadline, not a tenure";
+        const expiresS = nowS + Math.round(hours * 3600);
+        grants = withGrant(existing.meta?.grants, pk, expiresS, nowS);
+        told = `⑂ **${existing.repo}**: ${pk.slice(0, 8)} may clone and push until ${new Date(expiresS * 1000).toLocaleString()} — hand it \`${existing.clone}\`. Protected refs stay owner-only; the grant expires on its own.`;
+      } else {
+        grants = withoutGrant(existing.meta?.grants, pk, nowS);
+        told = `⑂ **${existing.repo}**: ${pk.slice(0, 8)}'s grant is revoked.`;
+      }
+      const carry = { ...existing.meta, repo: existing.repo, clone: existing.clone, protect: existing.protect } as Record<string, string>;
+      if (grants) carry.grants = grants;
+      else delete carry.grants;
+      const id = await client.ensureChannel({ name: existing.name, source: "fez-git", meta: carry });
+      return id ? told : "⑂ only the workspace owner can change this";
     }
 
     if (verb === "protect" && value) {
