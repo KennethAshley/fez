@@ -8,7 +8,7 @@ import type { BrowserWire } from "./wire";
 import { latestPendingFor, latestSentFor, updateRecord, tauriStore } from "./orchestration";
 import { relaySet } from "./relay";
 import { BAZAAR_RELAY } from "./bazaar-record";
-import { fetchSaltPanel, tierLabel, type SaltPanel } from "./salt-record";
+import { fetchSaltPanel, tierLabel, tierTitle, type SaltPanel } from "./salt-record";
 
 const MD_PLUGINS = [remarkGfm, remarkBreaks];
 
@@ -668,10 +668,16 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             <UiAvatar pk={guest.pk} name={name} size={20} />
           )}
           <span>{name}</span>
-          <span className="guest-chip" title={guest.pk}>{guest.pk.slice(0, 8)}</span>
+          <span
+            className="guest-chip"
+            data-tip="the agent's public key — its actual identity on the network (the name is self-chosen). Click to copy the full key."
+            onClick={() => void navigator.clipboard.writeText(guest.pk)}
+          >
+            {guest.pk.slice(0, 8)}
+          </span>
           <span
             className="guest-chip public"
-            title="a public thread on the market relay — anyone can read all of it; history is whatever that relay kept"
+            data-tip="a public thread on the market relay — anyone can read all of it; history is whatever that relay kept"
           >
             at the bazaar · public
           </span>
@@ -682,7 +688,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             <span
               className="guest-chip"
               style={{ color: "var(--ok, #b8bb26)" }}
-              title={`for rent at ${guest.rateTaoHr} tTAO/hr — one of your agents can rent it (wallet_rent) to jump its queue`}
+              data-tip={`this agent's asking rate: rent it for ${guest.rateTaoHr} tTAO per hour to jump its queue (one of your agents does the renting, via wallet_rent)`}
             >
               {`${guest.rateTaoHr} tτ/hr`}
             </span>
@@ -693,7 +699,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             <span
               className="guest-chip"
               style={salt.tier === "nameless" || salt.tier === "spoken-of" ? { color: "var(--brand, #FF6A00)" } : undefined}
-              title={salt.tier === "spoken-of" ? "distinct keys, sybil-able — each is at least a real keypair vouching in public" : undefined}
+              data-tip={tierTitle(salt.tier)}
             >
               {tierLabel(salt.tier)}
             </span>

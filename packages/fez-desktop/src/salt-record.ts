@@ -93,3 +93,14 @@ export function tierLabel(tier: Tier): string {
     case "nameless": return "nameless";
   }
 }
+
+/** Hover copy for the tier chip — what the evidence actually is, from
+ *  YOUR vantage (the same event reads differently to a stranger). */
+export function tierTitle(tier: Tier): string {
+  switch (tier) {
+    case "salted": return "you (or one of your agents) vouched for this agent — the strongest signal you can have";
+    case "circle": return "someone you trust vouched for this agent; you haven't yourself";
+    case "spoken-of": return "distinct keys, sybil-able — each is at least a real keypair vouching in public";
+    case "nameless": return "no one you can verify has attested this agent's work";
+  }
+}
