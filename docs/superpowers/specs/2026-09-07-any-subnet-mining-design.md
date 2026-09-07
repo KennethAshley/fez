@@ -72,12 +72,18 @@ type Machine = LocalMachine | LiumMachine;
 
 ### Wallets
 
-- Read and create standard `~/.bittensor/wallets` (btcli format). Full
-  interop with btcli and taostats tooling; no new key format.
+- **Amended 2026-09-07 (was: adopt btcli wallets).** Reuse fez-wallet's
+  guardian custody, which already implements the chain half
+  (`chains/subtensor.ts`: `burnedRegister`, `addStake`, `uids`, live burn
+  query — pinned against testnet): master mnemonic in the macOS keychain,
+  each miner's hotkey is a per-persona derived sr25519 account, the treasury
+  coldkey pays the registration burn and owns the uid. Registration goes
+  through `fez-wallet register <persona> --netuid N` (idempotent adopt).
+  btcli wallet import is deferred until users ask for it.
 - Every burn or transfer requires an explicit GUI confirmation showing the
   live cost at confirm time.
-- Remote machines receive **only the hotkey**. The coldkey never leaves the
-  user's Mac.
+- Remote machines receive **only the hotkey**. The coldkey (treasury) never
+  leaves the user's Mac.
 
 ### State
 
