@@ -49,8 +49,8 @@ export const CATALOG: CatalogEntry[] = [
  */
 /** Broad buckets so a growing list stays scannable — the connections view
  * groups by these, and CONNECTION_CATEGORIES fixes their order. */
-export type ConnCategory = "Dev" | "Data" | "Payments" | "Design & Docs" | "Support";
-export const CONNECTION_CATEGORIES: ConnCategory[] = ["Dev", "Data", "Payments", "Design & Docs", "Support"];
+export type ConnCategory = "Dev" | "Projects" | "Data" | "Payments" | "Design & Docs" | "Support";
+export const CONNECTION_CATEGORIES: ConnCategory[] = ["Dev", "Projects", "Data", "Payments", "Design & Docs", "Support"];
 
 export interface ConnectableEntry {
   /** The mcpServers key personas declare — and the keychain identity. */
@@ -76,6 +76,13 @@ export const CONNECTABLE: ConnectableEntry[] = [
   { key: "google-docs", title: "Google Docs", category: "Design & Docs", blurb: "Documents, read and write. Sign in with Google." },
   { key: "google-sheets", title: "Google Sheets", category: "Data", blurb: "Spreadsheets, read and write. Sign in with Google." },
   { key: "google-calendar", title: "Google Calendar", category: "Design & Docs", blurb: "Events and calendars, read and write. Sign in with Google." },
+  { key: "atlassian", title: "Atlassian", category: "Dev", blurb: "Jira issues and Confluence pages — one sign-in covers both. No API key." },
+  { key: "buildkite", title: "Buildkite", category: "Dev", blurb: "Pipelines, builds, and logs. Sign in — no API key." },
+  { key: "asana", title: "Asana", category: "Projects", blurb: "Tasks, projects, and goals. Sign in — no API key." },
+  { key: "monday", title: "Monday", category: "Projects", blurb: "Boards, items, and updates. Sign in — no API key." },
+  { key: "todoist", title: "Todoist", category: "Projects", blurb: "Tasks and projects, read and write. Sign in — no API key." },
+  { key: "figma", title: "Figma", category: "Design & Docs", blurb: "Files, components, and dev-mode context. Sign-in coming." },
+  { key: "intercom", title: "Intercom", category: "Support", blurb: "Conversations, contacts, and help articles. Sign in — no API key." },
 ];
 
 export const PERM_LABEL: Record<string, string> = {

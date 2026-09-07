@@ -70,6 +70,19 @@ export const CONNECTIONS: ConnectionEntry[] = [
   { key: "supabase", title: "Supabase", url: "https://mcp.supabase.com/mcp", what: "database, auth, and storage" },
   { key: "canva", title: "Canva", url: "https://mcp.canva.com/mcp", what: "designs and brand assets" },
   { key: "webflow", title: "Webflow", url: "https://mcp.webflow.com/mcp", what: "sites and CMS collections" },
+  // Probed live 2026-09-07 (401 + WWW-Authenticate, registration_endpoint
+  // in AS metadata — same bar as the rows above).
+  { key: "atlassian", title: "Atlassian", url: "https://mcp.atlassian.com/v1/mcp", what: "Jira issues and Confluence pages — one sign-in covers both" },
+  { key: "asana", title: "Asana", url: "https://mcp.asana.com/mcp", what: "tasks, projects, and goals" },
+  { key: "monday", title: "Monday", url: "https://mcp.monday.com/mcp", what: "boards, items, and updates" },
+  { key: "intercom", title: "Intercom", url: "https://mcp.intercom.com/mcp", what: "conversations, contacts, and help articles" },
+  { key: "todoist", title: "Todoist", url: "https://ai.todoist.net/mcp", scope: "data:read_write", what: "tasks and projects — read and write" },
+  { key: "buildkite", title: "Buildkite", url: "https://mcp.buildkite.com/mcp", scope: "read write", what: "pipelines, builds, and logs" },
+  // Figma ADVERTISES a registration_endpoint but 403s every registration
+  // (probed 2026-09-07) — DCR in metadata only. GitHub bucket until fez
+  // ships a registered client_id.
+  { key: "figma", title: "Figma", url: "https://mcp.figma.com/mcp", scope: "mcp:connect", what: "files, components, and dev-mode context",
+    pendingClientId: "Figma's OAuth advertises dynamic registration but rejects it — fez needs its one-time registered client_id shipped in the catalog first." },
   // No DCR — needs fez's one-time registered client_id (the gh precedent).
   { key: "github", title: "GitHub", url: "https://api.githubcopilot.com/mcp/", what: "repos, PRs, issues",
     pendingClientId: "GitHub's OAuth doesn't support dynamic registration — fez needs its one-time registered client_id shipped in the catalog first. Until then: paste a PAT into the github keycard (SKILLS & SECRETS), which its MCP server accepts." },
