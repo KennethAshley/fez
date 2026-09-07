@@ -45,8 +45,12 @@ export interface ConnectionEntry {
 
 /** No refresh token from Google without these on the authorize URL. */
 const GOOGLE_OFFLINE = { access_type: "offline", prompt: "consent" };
-const GOOGLE_PENDING =
-  "Google's OAuth has no dynamic registration — fez needs its one-time registered client_id shipped in the catalog first (registration steps: docs/superpowers/research/2026-09-05-google-mcp-bridges.md §6).";
+// fez's registered Desktop client (Google has no DCR). The "secret" is the
+// installed-app not-a-secret — explicitly non-confidential, the
+// gcloud/rclone precedent; Google requires it at the token endpoint.
+const GOOGLE_CLIENT_ID = "612133160455-68rtt9hs8sukobff6af151ulmh57esfv.apps.googleusercontent.com";
+const GOOGLE_CLIENT_SECRET = "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";
+const GOOGLE = { clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET, extraAuthParams: GOOGLE_OFFLINE };
 
 /** The catalog. DCR servers need nothing but a URL; the GitHub bucket
  * gains a clientId once the fez OAuth app is registered (until then,
@@ -74,10 +78,10 @@ export const CONNECTIONS: ConnectionEntry[] = [
   // no-DCR bucket as GitHub: rows go live when fez's one registered
   // Desktop-client id lands here. Gmail deliberately absent — restricted
   // scopes mean an annual CASA assessment; these four verify for free.
-  { key: "google-drive", title: "Google Drive", url: "https://drivemcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/drive.file", what: "files you pick and files your agents create — drive.file, not the whole drive", extraAuthParams: GOOGLE_OFFLINE, pendingClientId: GOOGLE_PENDING },
-  { key: "google-calendar", title: "Google Calendar", url: "https://calendarmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/calendar", what: "events and calendars — read and write", extraAuthParams: GOOGLE_OFFLINE, pendingClientId: GOOGLE_PENDING },
-  { key: "google-sheets", title: "Google Sheets", url: "https://sheetsmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/spreadsheets", what: "spreadsheets — read and write", extraAuthParams: GOOGLE_OFFLINE, pendingClientId: GOOGLE_PENDING },
-  { key: "google-docs", title: "Google Docs", url: "https://docsmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/documents", what: "documents — read and write", extraAuthParams: GOOGLE_OFFLINE, pendingClientId: GOOGLE_PENDING },
+  { key: "google-drive", title: "Google Drive", url: "https://drivemcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/drive.file", what: "files you pick and files your agents create — drive.file, not the whole drive", ...GOOGLE },
+  { key: "google-calendar", title: "Google Calendar", url: "https://calendarmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/calendar", what: "events and calendars — read and write", ...GOOGLE },
+  { key: "google-sheets", title: "Google Sheets", url: "https://sheetsmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/spreadsheets", what: "spreadsheets — read and write", ...GOOGLE },
+  { key: "google-docs", title: "Google Docs", url: "https://docsmcp.googleapis.com/mcp/v1", scope: "https://www.googleapis.com/auth/documents", what: "documents — read and write", ...GOOGLE },
 ];
 
 /**
@@ -248,7 +252,10 @@ export async function connectService(
   const provider = makeProvider(entry, { port, onAuthUrl: openUrl });
 
   try {
-    const first = await auth(provider, { serverUrl: entry.url });
+    // Catalog scope must be passed explicitly: the SDK's SEP-835 selection
+    // otherwise prefers the server's full scopes_supported — for Google that
+    // means consenting to restricted `drive` instead of just drive.file.
+    const first = await auth(provider, { serverUrl: entry.url, scope: entry.scope });
     if (first === "AUTHORIZED") return; // valid tokens already in the keychain
 
     const code = await new Promise<string>((resolve, reject) => {
@@ -268,7 +275,7 @@ export async function connectService(
       });
     });
 
-    const result = await auth(provider, { serverUrl: entry.url, authorizationCode: code });
+    const result = await auth(provider, { serverUrl: entry.url, authorizationCode: code, scope: entry.scope });
     if (result !== "AUTHORIZED") throw new Error(`token exchange ended in ${result}`);
 
     // Register the skill so personas can declare it — auth:"oauth" is
