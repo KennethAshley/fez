@@ -39,9 +39,14 @@ cat > /tmp/latest.json <<EOF
 }
 EOF
 
+# A stable-named copy of the DMG rides every release so fez.chat's
+# download button can point at releases/latest/download/fez-macos-arm64.dmg
+# forever — the versioned name would break the link on every cut.
+cp "$DMG" /tmp/fez-macos-arm64.dmg
+
 echo "▸ creating GitHub release $TAG"
 gh release create "$TAG" \
   --title "fez $VERSION" \
   --generate-notes \
-  "$DMG" "/tmp/$ASSET_TARGZ" /tmp/latest.json
+  "$DMG" "/tmp/$ASSET_TARGZ" /tmp/latest.json /tmp/fez-macos-arm64.dmg
 echo "✓ released: $(gh release view "$TAG" --json url -q .url)"

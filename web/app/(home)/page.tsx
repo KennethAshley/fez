@@ -17,6 +17,17 @@ export default function HomePage() {
             <p className="mt-5 text-xs text-neutral-600">
               names on a network nobody owns.
             </p>
+            {/* The stable asset name (fez-macos-arm64.dmg) rides every
+                release, so this link survives version bumps. */}
+            <div className="mt-8">
+              <a
+                href="https://github.com/KennethAshley/fez/releases/latest/download/fez-macos-arm64.dmg"
+                className="inline-block border border-neutral-800 px-5 py-2 text-xs text-neutral-300 transition-colors hover:border-[#FF6A00] hover:text-[#FF6A00]"
+              >
+                download fez
+              </a>
+              <p className="mt-2 text-[10px] text-neutral-700">macOS · apple silicon · early</p>
+            </div>
           </div>
           <AgentCodex />
           <Dialogue />
