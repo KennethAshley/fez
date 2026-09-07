@@ -76,6 +76,11 @@ export default function activate(api: GuiExtensionApi): void {
     const [refreshing, setRefreshing] = useState(false);
     const [busy, setBusy] = useState<string | undefined>(undefined);
     const [error, setError] = useState<string | undefined>(undefined);
+    // Inline persona picker (point 3, multi-persona case): `window.prompt()`
+    // has no precedent here and is a known dead end in the Tauri/wry
+    // webview (returns null immediately) — a real in-view picker instead.
+    const [pickFor, setPickFor] = useState<number | undefined>(undefined);
+    const [pickChoice, setPickChoice] = useState<string>("");
 
     const loadCatalog = useCallback(async () => {
       const [s, c] = await Promise.all([
@@ -160,24 +165,11 @@ export default function activate(api: GuiExtensionApi): void {
       [run, loadMiners]
     );
 
-    // Point 3: pick persona → cost → confirm the exact burn → start → refresh.
-    const mine = useCallback(
-      async (netuid: number) => {
-        if (!run || !personasApi) return;
-        if (personas.length === 0) {
-          setError("no personas yet — create one before mining");
-          return;
-        }
-        let persona = personas[0];
-        if (personas.length > 1) {
-          const picked = prompt(`Mine netuid ${netuid} as which persona?\n(${personas.join(", ")})`, persona);
-          if (!picked) return;
-          if (!personas.includes(picked)) {
-            setError(`no persona named "${picked}"`);
-            return;
-          }
-          persona = picked;
-        }
+    // cost → confirm the exact burn → start → refresh, once a persona is
+    // settled on (single-persona case or the inline picker's Continue).
+    const doMine = useCallback(
+      async (netuid: number, persona: string) => {
+        if (!run) return;
         setBusy(`mine:${netuid}`);
         setError(undefined);
         try {
@@ -204,7 +196,32 @@ export default function activate(api: GuiExtensionApi): void {
           setBusy(undefined);
         }
       },
-      [run, personasApi, personas, loadMiners]
+      [run, loadMiners]
+    );
+
+    // Point 3: pick persona → doMine. `personasApi` absent gets a visible
+    // error (same posture as the page-level `run`-absent guard below), not
+    // a silent no-op.
+    const mine = useCallback(
+      (netuid: number) => {
+        if (!run) return;
+        if (!personasApi) {
+          setError("Mining needs the `personas` permission — reinstall the extension to grant it.");
+          return;
+        }
+        if (personas.length === 0) {
+          setError("no personas yet — create one before mining");
+          return;
+        }
+        setError(undefined);
+        if (personas.length === 1) {
+          void doMine(netuid, personas[0]);
+          return;
+        }
+        setPickFor(netuid);
+        setPickChoice(personas[0]);
+      },
+      [run, personasApi, personas, doMine]
     );
 
     if (!run) {
@@ -280,10 +297,39 @@ export default function activate(api: GuiExtensionApi): void {
                   </div>
                 </div>
                 {r.curated ? (
-                  <div className="skill-actions">
-                    <button className="agent-action" disabled={busy === busyKey} onClick={() => void mine(r.netuid)}>
-                      {busy === busyKey ? "working…" : "Mine"}
-                    </button>
+                  <div className="skill-actions" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    {pickFor === r.netuid ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <select
+                          value={pickChoice}
+                          onChange={(e: { target: { value: string } }) => setPickChoice(e.target.value)}
+                        >
+                          {personas.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className="agent-action"
+                          disabled={busy === busyKey}
+                          onClick={() => {
+                            const persona = pickChoice;
+                            setPickFor(undefined);
+                            void doMine(r.netuid, persona);
+                          }}
+                        >
+                          {busy === busyKey ? "working…" : "Continue"}
+                        </button>
+                        <button className="skill-link" onClick={() => setPickFor(undefined)}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button className="agent-action" disabled={busy === busyKey} onClick={() => mine(r.netuid)}>
+                        {busy === busyKey ? "working…" : "Mine"}
+                      </button>
+                    )}
                   </div>
                 ) : null}
               </div>
