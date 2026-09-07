@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "Mine any Bittensor subnet from fez — harness, CLI, and GUI.",
   "type": "module",
-  "bin": { "fez-mine": "dist/cli.js", "fez-mine-run": "dist/run.js" },
+  "bin": {
+    "fez-mine": "dist/cli.js",
+    "fez-mine-run": "dist/run.js"
+  },
   "scripts": {
     "build": "esbuild src/cli.ts src/run.ts --bundle --format=esm --platform=node --external:@fezchat/bittensor --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js",
     "check": "tsc --noEmit",
@@ -11,10 +14,28 @@
   },
   "fez": {
     "type": "extension",
-    "parts": { "gui": "dist/gui.js", "headless": "dist/headless.js", "background": true },
-    "permissions": ["ui", "processes", "personas", "background", "network:.opentensor.ai"],
+    "parts": {
+      "gui": "dist/gui.js",
+      "headless": "dist/headless.js",
+      "background": true
+    },
+    "permissions": [
+      "ui",
+      "processes",
+      "personas",
+      "background",
+      "network:.opentensor.ai"
+    ],
     "minFezVersion": "0.2.0"
   },
-  "dependencies": { "@fezchat/bittensor": "file:../fez-bittensor" },
-  "devDependencies": { "@fezchat/extension-api": "file:../fez-extension-api", "esbuild": "^0.21.5", "typescript": "^5.6.0", "vitest": "^2.1.0" }
+  "dependencies": {
+    "@fezchat/bittensor": "file:../fez-bittensor"
+  },
+  "devDependencies": {
+    "@fezchat/extension-api": "file:../fez-extension-api",
+    "@types/react": "^19.2.18",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
 }
