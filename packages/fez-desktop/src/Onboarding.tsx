@@ -1101,16 +1101,28 @@ function DefaultsStep({
     if (!brain.providerId) return;
     setBusy(true);
     setError(undefined);
+    // wire_provider_pi reads the key from the keychain, so store-then-
+    // verify is the only possible order — but a failed verify must take
+    // the key back OUT. It used to stay: readiness() only asks whether
+    // a key EXISTS, so a typo'd key sailed through, @fez posted the
+    // ready opener, and three agents spawned that could never complete
+    // a turn. Only a key stored by THIS attempt is deleted — a verify
+    // that reuses an older stored key may fail on a network blip, and
+    // that key isn't ours to discard.
+    const keyName = PROVIDERS.find((p) => p.id === brain.providerId)?.keyName;
+    const storedThisAttempt = !!(providerKey.trim() && keyName);
     try {
-      if (providerKey.trim()) {
-        const keyName = PROVIDERS.find((p) => p.id === brain.providerId)?.keyName;
-        if (keyName) await invoke("set_skill_secret", { skill: brain.providerId, key: keyName, value: providerKey.trim() });
+      if (storedThisAttempt) {
+        await invoke("set_skill_secret", { skill: brain.providerId, key: keyName, value: providerKey.trim() });
       }
       const json = await invoke<string>("wire_provider_pi", { provider: brain.providerId });
       const r = JSON.parse(json) as { provider: string; models: string[] };
       setModels(r.models);
       setBrain({ ...brain, harness: "pi", provider: r.provider, model: r.models[0], effort: brain.effort ?? "medium" });
     } catch (err) {
+      if (storedThisAttempt) {
+        await invoke("delete_skill_secret", { skill: brain.providerId, key: keyName }).catch(() => {});
+      }
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
