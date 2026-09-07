@@ -7,7 +7,7 @@ import { hasFace } from "./agent-face";
 import { agentSkillStrip, type InstalledSkillMd } from "./agent-skill-health";
 import { useConfig } from "./config-store";
 import { relaySet } from "./relay";
-import { BAZAAR_RELAY, aggregateRecord, type AttestationEvent, type RecordRow } from "./bazaar-record";
+import { BAZAAR_RELAY, aggregateRecord, bestRow, type AttestationEvent, type RecordRow } from "./bazaar-record";
 import { fetchSaltPanel, tierLabel, type SaltPanel } from "./salt-record";
 import { RelayConnection } from "../../../src/protocol/relay.js";
 
@@ -66,20 +66,7 @@ async function fetchRecord(pk: string): Promise<RecordRow[] | "error"> {
  * has a record, so it gets its own sentence (same rule as the wallet's
  * mirror states).
  */
-function TrackRecord({ pk }: { pk: string }) {
-  const [rows, setRows] = useState<RecordRow[] | "error">();
-
-  useEffect(() => {
-    let cancelled = false;
-    setRows(undefined);
-    void fetchRecord(pk).then((r) => {
-      if (!cancelled) setRows(r);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [pk]);
-
+function TrackRecord({ rows }: { rows: RecordRow[] | "error" | undefined }) {
   if (rows === undefined) return <div className="settings-hint">◌ checking the bazaar…</div>;
   if (rows === "error") return <div className="settings-hint">bazaar relay unreachable — record unknown, not empty</div>;
   if (rows.length === 0) return <div className="settings-hint">no public record yet — this agent hasn't worked the bazaar</div>;
@@ -105,24 +92,7 @@ function TrackRecord({ pk }: { pk: string }) {
  * agents the self-dealing filter excludes your chits by design: this
  * section shows what others say, which is the only part worth reading.
  */
-function SaltSection({ pk, viewer, isViewerAgent, inViewerCircle }: {
-  pk: string;
-  viewer: string;
-  isViewerAgent: (pk: string) => boolean;
-  inViewerCircle: (pk: string) => boolean;
-}) {
-  const [panel, setPanel] = useState<SaltPanel | "error">();
-
-  useEffect(() => {
-    let cancelled = false;
-    setPanel(undefined);
-    void fetchSaltPanel({ pk, viewer, relays: [...relaySet(), BAZAAR_RELAY], isViewerAgent, inViewerCircle })
-      .then((p) => { if (!cancelled) setPanel(p); })
-      .catch(() => { if (!cancelled) setPanel("error"); });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pk, viewer]);
-
+function SaltSection({ panel }: { panel: SaltPanel | "error" | undefined }) {
   if (panel === undefined) return <div className="settings-hint">◌ checking for salt…</div>;
   if (panel === "error") return <div className="settings-hint">relays unreachable — salt unknown, not absent</div>;
   if (panel.tier === "nameless" && panel.ring2Signers === 0) {
@@ -191,6 +161,34 @@ export default function AgentProfile({
   const { skills: catalog } = useConfig();
   const [content, setContent] = useState<string>();
   const [installedMds, setInstalledMds] = useState<InstalledSkillMd[]>([]);
+  // Standing data lives here, not in the sections: the header strip and
+  // the standing section read the same fetch, so one relay round-trip
+  // feeds both the glance and the detail.
+  const [record, setRecord] = useState<RecordRow[] | "error">();
+  const [salt, setSalt] = useState<SaltPanel | "error">();
+
+  useEffect(() => {
+    let cancelled = false;
+    setRecord(undefined);
+    setSalt(undefined);
+    if (!pk) return;
+    void fetchRecord(pk).then((r) => {
+      if (!cancelled) setRecord(r);
+    });
+    if (viewer) {
+      void fetchSaltPanel({
+        pk,
+        viewer,
+        relays: [...relaySet(), BAZAAR_RELAY],
+        isViewerAgent: isViewerAgent ?? ((k) => k === viewer),
+        inViewerCircle: inViewerCircle ?? (() => false),
+      })
+        .then((p) => { if (!cancelled) setSalt(p); })
+        .catch(() => { if (!cancelled) setSalt("error"); });
+    }
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pk, viewer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -239,6 +237,31 @@ export default function AgentProfile({
           </span>
           <div className="profile-name">@{name}</div>
           {description && <div className="profile-desc">{description}</div>}
+          {/* The glance: standing and body compressed to chips, so a
+              reader who never scrolls still knows how this agent is
+              judged and what runs it. Ember bar = the tier that needs
+              you; online already lives on the face's dot. */}
+          {(salt || record || harness) && (
+            <div className="profile-strip">
+              {typeof record === "object" && bestRow(record) ? (
+                <span className="skill-chip" title="strongest suit on the bazaar — judged, scored work">
+                  {(() => {
+                    const b = bestRow(record)!;
+                    return `${b.taskType}${b.percentile !== undefined ? ` · ${b.percentile}th` : ` · ${b.count} task${b.count === 1 ? "" : "s"}`}`;
+                  })()}
+                </span>
+              ) : null}
+              {salt && salt !== "error" ? (
+                <span
+                  className={salt.tier === "nameless" || salt.tier === "spoken-of" ? "skill-chip attn" : "skill-chip"}
+                  title="peer standing from your vantage — details under standing"
+                >
+                  {tierLabel(salt.tier)}
+                </span>
+              ) : null}
+              {harness ? <span className="skill-chip" title="what runs it — details under runtime">{harness}</span> : null}
+            </div>
+          )}
         </div>
 
         <div className="profile-actions">
@@ -252,7 +275,18 @@ export default function AgentProfile({
           </button>
         </div>
 
-        <div className="manage-section">skills</div>
+        <div className="manage-section">
+          capabilities
+          {packSkills.length + skills.length > 0 ? (
+            <span className="section-fact">
+              {[
+                packSkills.length ? `${packSkills.length} pack${packSkills.length === 1 ? "" : "s"}` : "",
+                skills.length ? `${skills.length} tool${skills.length === 1 ? "" : "s"}` : "",
+              ].filter(Boolean).join(" + ")}
+            </span>
+          ) : null}
+        </div>
+        <div className="manage-sub">skill packs</div>
         {packSkills.length === 0 ? (
           <div className="settings-hint">No skills attached. Add packs in edit — or DM @fez a GitHub link to install more.</div>
         ) : (
@@ -271,7 +305,7 @@ export default function AgentProfile({
           </ul>
         )}
 
-        <div className="manage-section">tools</div>
+        <div className="manage-sub">tools</div>
         {skills.length === 0 ? (
           <div className="settings-hint">
             No tools. Give it one from the tools tab, or in edit.
@@ -303,17 +337,15 @@ export default function AgentProfile({
           </ul>
         )}
 
-        <div className="manage-section">track record</div>
-        {pk ? <TrackRecord pk={pk} /> : <div className="settings-hint">no public key — record unknowable</div>}
-
-        <div className="manage-section">salt</div>
+        {/* Two evidence systems, one question — "is it any good?" —
+            so they share a section: judged bazaar scores first (dense,
+            scored), peer salt beneath. */}
+        <div className="manage-section">standing</div>
+        <div className="manage-sub">bazaar grades</div>
+        {pk ? <TrackRecord rows={record} /> : <div className="settings-hint">no public key — record unknowable</div>}
+        <div className="manage-sub">salt</div>
         {pk && viewer ? (
-          <SaltSection
-            pk={pk}
-            viewer={viewer}
-            isViewerAgent={isViewerAgent ?? ((k) => k === viewer)}
-            inViewerCircle={inViewerCircle ?? (() => false)}
-          />
+          <SaltSection panel={salt} />
         ) : (
           <div className="settings-hint">no public key — salt unknowable</div>
         )}

@@ -4044,6 +4044,11 @@ a.page-fact:hover { color: var(--fg); }
    is the agent's own sentence, so it sets in the humanist face
    while every machine fact below it sets in mono. */
 .profile-id { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0 18px; }
+/* The glance strip: the pane's sections compressed to chips under the
+   name. Same chip idiom as everywhere else; the ember bar is the one
+   loud thing (a tier that needs the reader), so nothing else here is. */
+.profile-strip { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; margin-top: 2px; }
+.skill-chip.attn { border-left-color: var(--brand); }
 .profile-face { position: relative; line-height: 0; }
 .profile-face.online::after {
   content: ""; position: absolute; right: 4px; bottom: 4px;
