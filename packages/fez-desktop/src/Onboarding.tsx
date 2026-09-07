@@ -281,12 +281,27 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
   const acceptInvite = (code: string): boolean => {
     const trimmed = code.trim();
     const bare = /^wss?:\/\/.+/i.test(trimmed) ? trimmed : undefined;
-    const match = /^fez-join:(.+)#([0-9a-f-]+)$/i.exec(trimmed);
+    // Same shapes ManagePane mints and accepts: modern codes are just
+    // fez-join:<relay> (the workspace IS the relay), the legacy
+    // #<community> suffix still parses. This regex once demanded the
+    // suffix — onboarding rejected the app's own invites.
+    const match = /^fez-join:([^#]+)(?:#.*)?$/i.exec(trimmed);
     if (!bare && !match) {
       setError("that doesn't look like an invite — paste a fez-join:… code or the community's wss:// URL");
       return false;
     }
-    const relay = bare ?? match![1];
+    const relay = (bare ?? match![1]).trim();
+    // What we unshift into the relay set must BE a relay URL: an
+    // invite like fez-join:hello parsed fine here, then poisoned the
+    // stored set — createWorkspace skips the local spawn when a
+    // pending invite exists, boot's self-heal only fires on an
+    // all-loopback set, and normalizeUrls silently drops the garbage —
+    // net effect, the exact "reconnecting…" strand the self-heal
+    // exists to prevent.
+    if (!/^wss?:\/\/.+/i.test(relay)) {
+      setError("that invite doesn't name a relay — expected fez-join:wss://…");
+      return false;
+    }
     const set = relayUrl.split(",").map((r) => r.trim()).filter(Boolean);
     if (!set.includes(relay)) set.unshift(relay);
     setRelayUrl(set.join(","));

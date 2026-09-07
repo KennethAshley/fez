@@ -25,6 +25,29 @@ test("join door accepts a fez-join code and returns to profile", async ({ page }
     .toBe("wss://relay.example");
 });
 
+test("join door accepts the MODERN invite — no #fragment, the shape ManagePane mints", async ({ page }) => {
+  await installMockBridge(page);
+  await toCommunity(page);
+  await page.getByRole("button", { name: /join a community/i }).click();
+  await page.getByPlaceholder(/fez-join/i).fill("fez-join:wss://relay.example");
+  await page.getByRole("button", { name: /accept invite/i }).click();
+  await expect(page.getByText("Build your profile")).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("fez-pending-invite")))
+    .toBe("wss://relay.example");
+});
+
+test("join door rejects a fez-join code whose body is not a relay URL", async ({ page }) => {
+  // fez-join:hello#abc used to parse, poisoning the relay set into the
+  // "reconnecting…" strand — the body must be a wss:// URL.
+  await installMockBridge(page);
+  await toCommunity(page);
+  await page.getByRole("button", { name: /join a community/i }).click();
+  await page.getByPlaceholder(/fez-join/i).fill("fez-join:hello#abc123-def");
+  await page.getByRole("button", { name: /accept invite/i }).click();
+  await expect(page.getByText(/doesn't name a relay/i)).toBeVisible();
+});
+
 test("join door rejects garbage with the honest error", async ({ page }) => {
   await installMockBridge(page);
   await toCommunity(page);
