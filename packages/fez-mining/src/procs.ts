@@ -11,5 +11,5 @@ export function spawnDetached(bin: string, args: string[], env: Record<string, s
   return child.pid;
 }
 export function kill(pid: number): void {
-  try { process.kill(-pid, "SIGTERM"); } catch { try { process.kill(pid, "SIGTERM"); } catch {} }
+  try { process.kill(-pid, "SIGTERM"); } catch { try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ } }
 }

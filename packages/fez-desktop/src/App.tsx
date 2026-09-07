@@ -179,7 +179,7 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
         // exists to prevent. Thrown, it lands on BootError, which is
         // retryable (buzz's rule: a failed boot is a door, not a wall).
         const detail = err instanceof Error ? err.message : String(err);
-        throw new Error(`couldn't start your local workspace: ${detail}`);
+        throw new Error(`couldn't start your local workspace: ${detail}`, { cause: err });
       }
     }
     const wire = new BrowserWire(relaySet(), rustSigner(pubkey));
