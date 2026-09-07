@@ -108,6 +108,8 @@ export interface FezManifest {
       relay?: string;
       /** → ~/.fez/workspace-providers; gives a `repo:` persona a checkout to work in */
       workspace?: string;
+      /** → ~/.fez/miners; SubnetMiner[] descriptors; loaded by the mining harness (fez-mining), not by any host process. */
+      miner?: string;
       /** opt in to running scheduled tasks inside the always-on sentinel */
       background?: boolean;
     };
@@ -694,6 +696,7 @@ export class PackageManager {
     if (parts?.gui) await this.removeIfOwned(name, this.home("gui-extensions", `${name}.js`));
     if (parts?.relay) await this.removeIfOwned(name, this.home("relay-extensions", `${name}.js`));
     if (parts?.workspace) await this.removeIfOwned(name, this.home("workspace-providers", `${name}.js`));
+    if (parts?.miner) await this.removeIfOwned(name, this.home("miners", `${name}.js`));
     for (const cmd of Object.keys(manifest.bin ?? {})) {
       await this.removeIfOwned(name, this.home("bin", cmd));
     }
@@ -943,6 +946,7 @@ export class PackageManager {
       /** Code that runs INSIDE a relay — see packages/fez-relay/src/extensions.ts. */
       relay?: string;
       workspace?: string;
+      miner?: string;
       background?: boolean;
     },
     provenance: { manifestName?: string; description?: string; source?: string } = {}
@@ -994,6 +998,15 @@ export class PackageManager {
       this.linkIndex(dest, path.join(wsDir, `${name}.js`));
       console.log(chalk.dim(`   Created ~/.fez/workspace-providers/${name}.js`));
       console.log(chalk.dim("   Personas can now set `repo:` to work from a checkout."));
+    }
+    if (parts.miner) {
+      // → ~/.fez/miners: SubnetMiner[] descriptors; loaded by the mining
+      // harness (fez-mining), not by any host process.
+      const minersDir = this.home("miners");
+      await fs.mkdir(minersDir, { recursive: true });
+      const dest = await this.materializeIntoPackage(name, parts.miner);
+      this.linkIndex(dest, path.join(minersDir, `${name}.js`));
+      console.log(chalk.dim(`   Created ~/.fez/miners/${name}.js`));
     }
     if (parts.background) {
       const settings = this.settings.load() as { backgroundExtensions?: string[] };
