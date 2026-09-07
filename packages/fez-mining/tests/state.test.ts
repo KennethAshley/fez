@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readState, writeState, upsertMiner, removeMiner, type MiningState } from "../src/state.js";
+import { readState, writeState, upsertMiner, removeMiner, storageName, type MiningState } from "../src/state.js";
 
 const home = () => mkdtempSync(path.join(tmpdir(), "fez-mine-"));
 
@@ -24,5 +24,18 @@ describe("mining state", () => {
     s = upsertMiner(s, { netuid: 2, persona: "a", hotkey: "x", desired: "running" });
     s = removeMiner(s, 1, "a");
     expect(s.miners.map((m) => m.netuid)).toEqual([2]);
+  });
+});
+
+describe("storageName", () => {
+  it("names by the installed package dir under ~/.fez/packages/", () => {
+    expect(storageName("/Users/x/.fez/packages/mining/dist/cli.js")).toBe("mining");
+  });
+  it("names by the repo checkout's package dir when not installed", () => {
+    expect(storageName("/Users/x/fez/packages/fez-mining/src/state.ts")).toBe("fez-mining");
+    expect(storageName("/Users/x/fez/packages/fez-mining/dist/cli.js")).toBe("fez-mining");
+  });
+  it("falls back to fez-mining off any recognizable package dir", () => {
+    expect(storageName("/tmp/some/random/file.js")).toBe("fez-mining");
   });
 });

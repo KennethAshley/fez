@@ -32,7 +32,12 @@ async function cmdSubnets(json: boolean, refresh: boolean): Promise<void> {
     const { allSubnets } = await import("@fezchat/bittensor/subnets");
     const subnets = await allSubnets();
     const covered = (await loadDescriptors(home)).map((d) => d.netuid);
-    s = { ...s, subnets, covered };
+    // The chain fetch above takes multiple seconds; re-read + merge rather
+    // than writing the whole (possibly stale) state we read before it, so
+    // a stop/runner-exit/sentinel write racing the fetch isn't clobbered
+    // (worst case: resurrecting a stopped miner).
+    const fresh = await readState(home);
+    s = { ...fresh, subnets, covered };
     await writeState(home, s);
   }
   if (json) console.log(JSON.stringify({ subnets: s.subnets, covered: s.covered }));
@@ -48,6 +53,17 @@ async function cmdStart(netuid: number, persona: string, json: boolean): Promise
   const home = fezHome();
   // Idempotent adopt — this call IS the burn on a real registration; the
   // GUI confirms with the human before ever invoking `fez-mine start`.
+  // The bare CLI has no such confirmation step, so disclose the live cost
+  // here — to stderr, so --json's stdout stays a clean single object.
+  // Typing the command is consent; this line is disclosure, not a prompt.
+  try {
+    const cost = JSON.parse(
+      execFileSync(WALLET_BIN, ["cost", "--netuid", String(netuid), "--json"], { encoding: "utf8" })
+    ) as { tao: string };
+    console.error(`registration may burn ${cost.tao} tTAO from the treasury (free if already registered)`);
+  } catch {
+    /* cost-fetch failure never blocks start */
+  }
   const r = JSON.parse(
     execFileSync(WALLET_BIN, ["register", persona, "--netuid", String(netuid), "--json"], { encoding: "utf8" })
   ) as RegisterResult;
