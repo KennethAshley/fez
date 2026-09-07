@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadDescriptors } from "./descriptors.js";
@@ -51,8 +52,23 @@ export async function runMiner(
   return code;
 }
 
-// bin entry
-if (process.argv[1]?.endsWith("run.js")) {
+// bin entry — run only when INVOKED, not when imported. installBins copies
+// dist/run.js to a canonical file renamed to the bin key (bin/fez-mine-run,
+// no extension) and symlinks it into ~/.fez/bin, so argv[1] never ends in
+// "run.js" in production; a naive endsWith("run.js") check is dead code
+// there. realpath BOTH sides — under the symlink, import.meta.url is the
+// real file while argv[1] is the link (same fix as fez-git/credential.ts,
+// review finding F9).
+import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+const invoked = (() => {
+  try {
+    return process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : undefined;
+  } catch {
+    return process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
+  }
+})();
+if (invoked && import.meta.url === invoked) {
   const [netuid, persona] = process.argv.slice(2);
   if (!netuid || !persona) { console.error("usage: fez-mine-run <netuid> <persona>"); process.exit(2); }
   runMiner(Number(netuid), persona).then((c) => process.exit(c), (e) => { console.error(e.message); process.exit(1); });
