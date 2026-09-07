@@ -141,8 +141,12 @@ const invoked = (() => {
   }
 })();
 if (invoked && import.meta.url === invoked) {
-  main().catch((e) => {
-    console.error(`fez-mine: ${(e as Error).message}`);
-    process.exit(1);
-  });
+  main().then(
+    () => process.exit(0), // @polkadot/api's websocket (via allSubnets) keeps the event
+    // loop alive otherwise — same fix as fez-wallet/src/cli.ts.
+    (e) => {
+      console.error(`fez-mine: ${(e as Error).message}`);
+      process.exit(1);
+    }
+  );
 }
