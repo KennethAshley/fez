@@ -248,6 +248,29 @@ export async function cmdRegister(io: CliIo, persona: string, netuid = DEFAULT_N
   else io.print(`registered ${persona}: uid ${r.uid} on netuid ${r.netuid} (burned ${r.burned} tTAO, tx ${r.txHash})`);
 }
 
+export interface CostResult {
+  netuid: number;
+  rao: string;
+  tao: string;
+}
+
+/** Pure shaping so the gui's json contract is testable without a chain. */
+export function costResult(netuid: number, rao: bigint): CostResult {
+  return { netuid, rao: rao.toString(), tao: formatRao(rao) };
+}
+
+/** Read-only: what registering on netuid would burn, before anyone pays it.
+ * Never touches the root mnemonic or signs anything — just an api read. */
+export async function registrationCost(netuid = DEFAULT_NETUID): Promise<CostResult> {
+  const api = await subtensorFor(loadConfig().endpoints.tao);
+  return costResult(netuid, await burnCost(api, netuid));
+}
+
+export async function cmdCost(io: CliIo, netuid = DEFAULT_NETUID): Promise<void> {
+  const r = await registrationCost(netuid);
+  io.print(`netuid ${r.netuid}: registration burn ${r.tao} tTAO`);
+}
+
 export interface PayoutResult {
   persona: string;
   netuid: number;
