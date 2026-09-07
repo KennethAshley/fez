@@ -1184,54 +1184,66 @@ fn read_extension_versions() -> Result<String, String> {
 }
 
 /// Registry detail for an extension's page — version, description, README.
+/// Async + spawn_blocking (like connect_service): a sync command runs on
+/// the main thread, and a blocking npm fetch there freezes every other
+/// invoke — the gallery stalled seconds on open before this.
 #[tauri::command]
-fn package_info(name: String) -> Result<String, String> {
-    if name.is_empty()
-        || name.len() > 128
-        || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '-' | '.' | '_'))
-    {
-        return Err("not a valid package name".to_string());
-    }
-    let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
-    let body = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(30))
-        .call()
-        .map_err(|e| format!("couldn't reach npm: {e}"))?
-        .into_string()
-        .map_err(|e| e.to_string())?;
-    let meta: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    let latest = meta.pointer("/dist-tags/latest").and_then(|v| v.as_str()).unwrap_or("");
-    let ver = meta.pointer(&format!("/versions/{latest}"));
-    let info = serde_json::json!({
-        "version": latest,
-        "description": ver.and_then(|v| v.get("description")).cloned().unwrap_or(serde_json::Value::Null),
-        // npm keeps the README at the packument top level, from the latest publish.
-        "readme": meta.get("readme").cloned().unwrap_or(serde_json::Value::Null),
-    });
-    Ok(info.to_string())
+async fn package_info(name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if name.is_empty()
+            || name.len() > 128
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '-' | '.' | '_'))
+        {
+            return Err("not a valid package name".to_string());
+        }
+        let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
+        let body = ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(30))
+            .call()
+            .map_err(|e| format!("couldn't reach npm: {e}"))?
+            .into_string()
+            .map_err(|e| e.to_string())?;
+        let meta: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+        let latest = meta.pointer("/dist-tags/latest").and_then(|v| v.as_str()).unwrap_or("");
+        let ver = meta.pointer(&format!("/versions/{latest}"));
+        let info = serde_json::json!({
+            "version": latest,
+            "description": ver.and_then(|v| v.get("description")).cloned().unwrap_or(serde_json::Value::Null),
+            // npm keeps the README at the packument top level, from the latest publish.
+            "readme": meta.get("readme").cloned().unwrap_or(serde_json::Value::Null),
+        });
+        Ok(info.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The latest published version of a package, from the npm registry.
+/// Async + spawn_blocking for the same reason as package_info.
 #[tauri::command]
-fn latest_version(name: String) -> Result<String, String> {
-    if name.is_empty()
-        || name.len() > 128
-        || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '-' | '.' | '_'))
-    {
-        return Err("not a valid package name".to_string());
-    }
-    let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
-    let body = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(30))
-        .call()
-        .map_err(|e| format!("couldn't reach npm: {e}"))?
-        .into_string()
-        .map_err(|e| e.to_string())?;
-    let meta: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    meta.pointer("/dist-tags/latest")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| format!("{name} has no published version"))
+async fn latest_version(name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if name.is_empty()
+            || name.len() > 128
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '-' | '.' | '_'))
+        {
+            return Err("not a valid package name".to_string());
+        }
+        let url = format!("https://registry.npmjs.org/{}", name.replace('/', "%2f"));
+        let body = ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(30))
+            .call()
+            .map_err(|e| format!("couldn't reach npm: {e}"))?
+            .into_string()
+            .map_err(|e| e.to_string())?;
+        let meta: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+        meta.pointer("/dist-tags/latest")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| format!("{name} has no published version"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Which installed agents still depend on what an uninstall just removed.

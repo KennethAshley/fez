@@ -49,14 +49,14 @@ describe("catalog", () => {
     expect(connectionEntry("notion")?.url).toContain("mcp.notion.com");
     expect(connectionEntry("nope")).toBeUndefined();
   });
-  it("google rows carry the offline params (no refresh token without them)", () => {
+  it("google rows carry the offline params (no refresh token without them) and the shipped client", () => {
     const g = connectionEntry("google-drive");
     expect(g?.url).toContain("drivemcp.googleapis.com");
     expect(g?.extraAuthParams).toMatchObject({ access_type: "offline", prompt: "consent" });
     expect(g?.scope).toContain("drive.file");
+    expect(g?.clientId).toContain(".apps.googleusercontent.com");
   });
   it("a no-DCR row without its shipped client_id refuses with the honest message", async () => {
-    await expect(connectService("google-drive")).rejects.toThrow(/client_id/);
     await expect(connectService("github")).rejects.toThrow(/PAT/);
   });
 });
