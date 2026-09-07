@@ -21,4 +21,5 @@ export type * from "./gui.js";
 export type * from "./relay.js";
 export type * from "./workspace.js";
 export type * from "./manifest.js";
+export type * from "./miner.js";
 export type * from "./nostr.js";
