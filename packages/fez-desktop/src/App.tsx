@@ -173,7 +173,13 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
         });
         setRelays(url);
       } catch (err) {
-        console.warn("local relay self-heal failed:", err);
+        // Surface it, don't warn it: with a loopback-only set, a failed
+        // spawn means the connect below is GUARANTEED dead — swallowing
+        // the error produced the indefinite "reconnecting…" this block
+        // exists to prevent. Thrown, it lands on BootError, which is
+        // retryable (buzz's rule: a failed boot is a door, not a wall).
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`couldn't start your local workspace: ${detail}`);
       }
     }
     const wire = new BrowserWire(relaySet(), rustSigner(pubkey));

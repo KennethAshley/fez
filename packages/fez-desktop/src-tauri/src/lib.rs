@@ -1908,25 +1908,62 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
                     PortState::Foreign
                 }
             }
-            Err(_) => PortState::Free,
+            // A failed HTTP probe does NOT mean the port is free: a
+            // non-HTTP squatter (or a listener slower than the 500ms
+            // budget) errors exactly like a closed port, and binding
+            // onto it killed the relay with EADDRINUSE while the
+            // 7778+ fallback scan never ran. A bare TCP connect
+            // splits the two — buzz's mesh-ingress learned this the
+            // hard way (bound-but-busy is not dead).
+            Err(_) => match std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+                std::time::Duration::from_millis(300),
+            ) {
+                Ok(_) => PortState::Foreign,
+                Err(_) => PortState::Free,
+            },
         }
     };
 
-    let (port, already_ours) = choose_relay_port(desired_port, probe)
-        .ok_or("no loopback port near 7777 is free — every candidate hosts a foreign relay")?;
+    // Our own relay mid-startup is TCP-bound but not yet answering
+    // NIP-11 — the probe would read that as Foreign and scan onward,
+    // spawning a SECOND relay one port over. The pidfile (verified by
+    // process name) says it's ours booting: hold the remembered port
+    // and let the health wait below do its job.
+    let pidfile = dir.join("relay.pid");
+    let (port, already_ours) = if pid_alive_named(&pidfile, "fez-relay").is_some() {
+        (desired_port, false)
+    } else {
+        choose_relay_port(desired_port, probe).ok_or(
+            "every loopback port near 7777 is taken by something that isn't your relay — \
+             quit whatever is using them (or restart) and try again",
+        )?
+    };
 
     // Persist the CHOSEN port with the identity — a respawn must come back
     // on the same port the client remembers.
     let v = serde_json::json!({ "owner": owner, "name": name, "port": port });
     std::fs::write(&args_file, v.to_string()).map_err(|e| format!("args.json: {e}"))?;
 
-    let pidfile = dir.join("relay.pid");
     if !already_ours && pid_alive_named(&pidfile, "fez-relay").is_none() {
         let home = std::env::var("HOME").unwrap_or_default();
         let bin = std::path::PathBuf::from(&home).join(".fez").join("bin").join("fez-relay");
+        // First launch races the bundled-binary copy (a detached thread
+        // moving ~140MB, fez-relay landing last) — "isn't bundled" was
+        // a false statement that steered brand-new users to the invite
+        // door. Give the copy a real chance to finish before concluding.
+        if !bin.exists() {
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if bin.exists() {
+                    break;
+                }
+            }
+        }
         if !bin.exists() {
             return Err(
-                "fez-relay isn't bundled in this build — join a workspace by invite instead"
+                "the bundled fez-relay hasn't finished installing — try again in a moment \
+                 (if this keeps happening, reinstall fez)"
                     .to_string(),
             );
         }
