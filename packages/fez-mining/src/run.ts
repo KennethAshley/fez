@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadDescriptors } from "./descriptors.js";
+import { localMachine } from "./machine-local.js";
 import { fezHome, readState, upsertMiner, writeState } from "./state.js";
 
 export async function runMiner(
@@ -26,7 +27,7 @@ export async function runMiner(
     fs.appendFile(logFile, stamped).catch(() => {});
     process.stdout.write(stamped);
   };
-  const ctx = { workDir, persona, hotkey, netuid, env: { ...process.env } as Record<string, string>, log };
+  const ctx = { workDir, persona, hotkey, netuid, env: { ...process.env } as Record<string, string>, machine: localMachine(), log };
 
   const record = async (patch: Partial<import("./state.js").MinerEntry>) => {
     const s = await readState(home);
