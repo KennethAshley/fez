@@ -65,11 +65,17 @@ machine?: { kind: "lium"; podId: string; externalIp: string; externalPort: numbe
 
 ## 3. Keys: hotkey to the pod, coldkey never
 
-- New guarded fez-wallet verb: `fez-wallet export-hotkey <persona> --json`
-  — emits ONLY the derived persona account's keypair (the hotkey), never
-  the treasury mnemonic or any coldkey material. Same custody invariant
-  style as the existing root-mnemonic rules: the export path must be
-  unreachable from the MCP server's import graph.
+- **Amended 2026-09-07 (was: export the derived hotkey).** A hard-derived
+  sr25519 pair has no exportable mini-secret that bittensor's keyfile
+  format accepts, and any exportable secretPhrase would contain the root
+  mnemonic — never. Instead, remote miners use a **standalone remote
+  hotkey** per persona: a fresh mnemonic generated once, stored in the
+  keychain (service fez-wallet, entry `remote-hotkey/<persona>`), its
+  keypair exportable as a normal btcli keyfile. New guarded verb:
+  `fez-wallet export-hotkey <persona> --json` (create-or-load). The
+  treasury registers that hotkey's address exactly as it registers a
+  derived one. Custody invariant unchanged: the export path lives in
+  cli-commands.ts only, unreachable from the MCP server's import graph.
 - The harness `machine.copy`s it into the pod's bittensor wallet layout
   (`~/.bittensor/wallets/<wallet>/hotkeys/<persona>`), because subnet
   miner code loads hotkey files directly.
