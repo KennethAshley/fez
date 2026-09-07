@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { readState, writeState, upsertMiner, removeMiner } from "../src/state.js";
+import { readState, writeState, upsertMiner, removeMiner, type MiningState } from "../src/state.js";
 
 const home = () => mkdtempSync(path.join(tmpdir(), "fez-mine-"));
 
@@ -19,7 +19,7 @@ describe("mining state", () => {
     expect((await readState(h)).miners[0].netuid).toBe(553);
   });
   it("removes by key and leaves others", async () => {
-    let s = { miners: [], subnets: [], covered: [] as number[] };
+    let s: MiningState = { miners: [], subnets: [], covered: [] };
     s = upsertMiner(s, { netuid: 1, persona: "a", hotkey: "x", desired: "running" });
     s = upsertMiner(s, { netuid: 2, persona: "a", hotkey: "x", desired: "running" });
     s = removeMiner(s, 1, "a");

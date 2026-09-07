@@ -2,14 +2,12 @@ import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
 
+// Structural view of @fezchat/bittensor's Subnet (which carries additional fields at runtime)
 export interface Subnet {
   netuid: number;
   name: string;
-  description: string;
-  github: string;
-  url: string;
-  contact: string;
-  discord: string;
+  description?: string;
+  github?: string;
 }
 
 export interface MinerEntry {
