@@ -494,10 +494,15 @@ function RestoreStep({ onRestored, onBack }: { onRestored: (hex: string) => void
     setError(undefined);
     try {
       const hex = await openBackup(await file.text(), password);
-      await invoke("set_identity", { hex, account: ACCOUNT });
+      // replace: an explicit act — restoring means "use MY key", and a
+      // mint from an earlier "get started" click isn't allowed to block
+      // the identity the user actually owns.
+      await invoke("set_identity", { hex, account: ACCOUNT, replace: true });
       onRestored(hex);
     } catch (err) {
-      setError(String(err instanceof Error ? err.message : err));
+      const raw = String(err instanceof Error ? err.message : err);
+      // A non-JSON file surfaces as a parser error — say what it means.
+      setError(/JSON|Unexpected token/i.test(raw) ? "that file isn't a fez backup" : raw);
     } finally {
       setBusy(false);
     }
@@ -596,7 +601,10 @@ function PairingStep({ relayUrl, onPaired, onBack }: { relayUrl: string; onPaire
         const hex = payload.key.toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(hex)) return;
         sendPayload(event.pubkey, { type: "done" });
-        void invoke("set_identity", { hex, account: ACCOUNT })
+        // replace: the SAS ceremony just succeeded — discarding the
+        // transferred key because an earlier "get started" minted a
+        // throwaway would betray the ceremony the user completed.
+        void invoke("set_identity", { hex, account: ACCOUNT, replace: true })
           .then(() => onPaired(hex))
           .catch((err) => {
             setError(String(err));

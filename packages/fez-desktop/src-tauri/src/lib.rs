@@ -245,15 +245,23 @@ async fn dm_unwrap(event: String, account: Option<String>) -> Result<String, Str
 }
 
 /// Store a newly generated (or paired-in) identity in the keychain —
-/// the onboarding writer. Refuses to overwrite: an existing identity is
-/// never silently replaced from the GUI.
+/// the onboarding writer. Refuses to overwrite by default: an existing
+/// identity is never SILENTLY replaced from the GUI. `replace: true` is
+/// the explicit exception for restore-from-backup and device pairing —
+/// without it, one click on "get started" (which mints on the first
+/// screen) permanently locked both doors: restore dead-ended on this
+/// very error, and pairing completed the SAS ceremony then threw the
+/// transferred key away. A minutes-old mint that owns nothing is the
+/// user's to replace with the identity they actually meant.
+/// ponytail: if a workspace was already claimed this run, replacing
+/// leaves it owned by the discarded key — re-claim flow if that bites.
 #[tauri::command]
-fn set_identity(account: Option<String>, hex: String) -> Result<(), String> {
+fn set_identity(account: Option<String>, hex: String, replace: Option<bool>) -> Result<(), String> {
     let account = account.unwrap_or_else(|| "default".to_string());
     if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("not a 64-hex key".to_string());
     }
-    if get_identity(Some(account.clone())).is_ok() {
+    if replace != Some(true) && get_identity(Some(account.clone())).is_ok() {
         return Err(format!("account \"{account}\" already holds an identity"));
     }
     let status = Command::new("security")
