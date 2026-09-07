@@ -294,6 +294,8 @@ program
           relay?: string;
           /** → ~/.fez/workspace-providers; gives a `repo:` persona a checkout to work in */
           workspace?: string;
+          /** → ~/.fez/miners; the descriptor realpaths import.meta.url for sibling dist files */
+          miner?: string;
           /** opt in to running scheduled tasks inside the always-on sentinel */
           background?: boolean;
         };
@@ -417,17 +419,32 @@ program
         fsSync.copyFileSync(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
         console.log(chalk.green(`✓ workspace provider → ~/.fez/workspace-providers/${name}.js (personas with repo: use it)`));
       }
+      if (parts?.miner) {
+        // Symlink, not copy: the descriptor realpaths import.meta.url to
+        // find sibling dist files in its package, and a symlink keeps a
+        // linked dev repo's rebuilds live (same reason gui parts point at
+        // the package dir). Replace any stale entry.
+        const minersDir = fezHome("miners");
+        fsSync.mkdirSync(minersDir, { recursive: true });
+        const dest = path.join(minersDir, `${name}.js`);
+        fsSync.rmSync(dest, { force: true });
+        fsSync.symlinkSync(path.join(pkgDir, parts.miner), dest);
+        console.log(chalk.green(`✓ miner part → ~/.fez/miners/${name}.js (the mining harness loads it)`));
+      }
 
-      // bins: same seam install honors, so a linked package's
-      // executables (credential helper, fez-adopt) exist in the one
-      // predictable place things resolve them from.
+      // bins: symlink like install does. The executable realpaths
+      // node_modules through the link, so external deps (fez-mine →
+      // @fezchat/bittensor) resolve from the package's own node_modules.
+      // A symlink also keeps a linked dev repo's rebuilds live.
       if (manifest.bin) {
         const binDir = fezHome("bin");
         fsSync.mkdirSync(binDir, { recursive: true });
         for (const [cmd, rel] of Object.entries(manifest.bin)) {
           const target = path.join(binDir, cmd);
-          fsSync.copyFileSync(path.join(pkgDir, rel), target);
-          fsSync.chmodSync(target, 0o755);
+          const source = path.join(pkgDir, rel);
+          fsSync.rmSync(target, { force: true });
+          fsSync.symlinkSync(source, target);
+          fsSync.chmodSync(source, 0o755);
           console.log(chalk.green(`✓ bin → ~/.fez/bin/${cmd}`));
         }
         if (!(process.env.PATH ?? "").split(":").includes(fezHome("bin"))) {

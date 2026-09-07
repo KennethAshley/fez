@@ -4,7 +4,7 @@ import { loadConfig } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
 import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
-  cmdRegister, cmdPersonaStatus, cmdPayout, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury,
+  cmdRegister, cmdPersonaStatus, cmdPayout, cmdCost, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury, registrationCost,
 } from "./cli-commands.js";
 import { rentAgent, payAddress } from "./rent.js";
 import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
@@ -61,6 +61,10 @@ try {
       if (!rest[0]) throw new Error("usage: fez-wallet register <persona> [--netuid 553]");
       if (json) console.log(JSON.stringify(await registerPersona(rest[0], netuidArg())));
       else await cmdRegister(io, rest[0], netuidArg());
+      break;
+    case "cost":
+      if (json) console.log(JSON.stringify(await registrationCost(netuidArg())));
+      else await cmdCost(io, netuidArg());
       break;
     case "stake":
       if (!rest[0] || !rest[1]) throw new Error("usage: fez-wallet stake <persona> <amount>");
@@ -154,6 +158,7 @@ try {
       io.print("  fund <persona> <amt>    treasury → agent (TAO)");
       io.print("  status [persona]        balances — with a persona: uid + free + staked");
       io.print("  register <persona>      register on the subnet (treasury pays the burn)");
+      io.print("  cost [--netuid 553]     read-only: what registering would burn, before paying it");
       io.print("  stake <persona> <amt>   the agent stakes to its own hotkey");
       io.print("  unstake <persona> <amt> symmetric");
       io.print("  payout <persona> [amt]  sweep earned alpha from the treasury to the agent's own name");

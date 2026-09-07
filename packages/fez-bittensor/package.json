@@ -24,12 +24,18 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outfile=dist/mcp.js",
-    "check": "tsc --noEmit"
+    "build": "esbuild src/mcp.ts src/subnets.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist",
+    "check": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "exports": {
+    ".": "./dist/mcp.js",
+    "./subnets": "./dist/subnets.js"
   },
   "devDependencies": {
     "esbuild": "^0.21.5",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

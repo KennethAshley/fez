@@ -22,6 +22,8 @@ export interface FezManifest {
       relay?: string;
       /** → ~/.fez/workspace-providers: a `repo:` persona's checkout. */
       workspace?: string;
+      /** → ~/.fez/miners: SubnetMiner[] descriptors the mining harness loads. */
+      miner?: string;
       /** Opt the headless part's scheduled tasks into the always-on sentinel. */
       background?: boolean;
     };
