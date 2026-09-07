@@ -226,7 +226,10 @@ export default function AgentProfile({
   return (
     <div className="pane-body">
         <div className="profile-id">
-          <span className={online ? "profile-face online" : "profile-face"}>
+          <span
+            className={online ? "profile-face online" : "profile-face"}
+            title={online ? "seen on the relay" : undefined}
+          >
             {faced ? (
               <Avatar pk={pk ?? ""} title={name} size={96} />
             ) : (
@@ -352,7 +355,7 @@ export default function AgentProfile({
 
         <div className="manage-section">runtime</div>
         <dl className="profile-facts">
-          <dt>body</dt>
+          <dt>status</dt>
           <dd className="mono">
             <RestartRow name={name} owner={owner} />
           </dd>
@@ -385,11 +388,21 @@ function RestartRow({ name, owner }: { name: string; owner?: string }) {
   const [alive, setAlive] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // The one moment the restart button matters: the persona was edited
+  // AFTER this body spawned, so the running process is behind the file.
+  const [spawnedAt, setSpawnedAt] = useState<number>();
+  const [personaMtime, setPersonaMtime] = useState<number>();
   useEffect(() => {
     let live = true;
     void invoke<boolean>("agent_alive", { persona: name, bin: null })
       .then((a) => { if (live) setAlive(a); })
       .catch(() => { if (live) setAlive(false); });
+    void invoke<{ persona: string; spawned_at?: number }[]>("spawned_agents")
+      .then((rows) => { if (live) setSpawnedAt(rows.find((r) => r.persona === name)?.spawned_at); })
+      .catch(() => {});
+    void invoke<number>("persona_mtime", { name })
+      .then((m) => { if (live) setPersonaMtime(m); })
+      .catch(() => {});
     return () => { live = false; };
   }, [name, busy]);
 
@@ -418,9 +431,13 @@ function RestartRow({ name, owner }: { name: string; owner?: string }) {
   if (alive === undefined) return <span>checking…</span>;
   if (busy) return <span>{alive ? "restarting…" : "starting…"}</span>;
   const verb = alive ? "restart" : "start";
+  const stale = alive && spawnedAt !== undefined && personaMtime !== undefined && personaMtime > spawnedAt;
+  const since = alive && spawnedAt
+    ? ` since ${new Date(spawnedAt * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
+    : "";
   return (
-    <span>
-      <span>{alive ? "running" : "asleep"}</span>
+    <span title="the process on this machine — the relay dot on the face is a separate truth">
+      <span>{alive ? `running${since}` : "asleep"}</span>
       {owner ? (
         <>
           {" "}
@@ -428,8 +445,8 @@ function RestartRow({ name, owner }: { name: string; owner?: string }) {
             className="skill-link"
             title={
               alive
-                ? `stop @${name}'s body and spawn a fresh one against the persona as it stands now (tools included)`
-                : `spawn @${name} now — same as mentioning it, without the message`
+                ? `stop @${name} and start it fresh against the persona as it stands now (tools included)`
+                : `start @${name} now — same as mentioning it, without the message`
             }
             onClick={() => void bounce(alive)}
           >
@@ -439,6 +456,11 @@ function RestartRow({ name, owner }: { name: string; owner?: string }) {
       ) : (
         <span> — wakes on mention</span>
       )}
+      {stale ? (
+        <span style={{ color: "var(--brand, #FF6A00)" }}>
+          {" "}· edited since it started — restart to pick up the changes
+        </span>
+      ) : null}
       {error ? <span className="ob-error"> {error}</span> : null}
     </span>
   );

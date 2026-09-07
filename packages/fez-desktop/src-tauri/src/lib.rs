@@ -335,6 +335,21 @@ fn list_personas() -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// Unix-seconds mtime of a persona file — the "was it edited since its
+/// body spawned?" half of the profile's restart hint.
+#[tauri::command]
+fn persona_mtime(name: String) -> Result<u64, String> {
+    if !valid_persona_name(&name) {
+        return Err("bad persona name".to_string());
+    }
+    std::fs::metadata(persona_dir()?.join(format!("{name}.md")))
+        .and_then(|m| m.modified())
+        .map_err(|e| format!("couldn't stat persona \"{name}\": {e}"))?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn read_persona(name: String) -> Result<String, String> {
     if !valid_persona_name(&name) {
@@ -1999,6 +2014,12 @@ pub(crate) struct SpawnedAgent {
     /// agents was spawned — all of which were fez-agent.
     #[serde(default = "default_bin", skip_serializing_if = "is_default_bin")]
     pub(crate) bin: String,
+    /// Unix seconds when this row's process was spawned. The profile
+    /// compares it with the persona file's mtime to say "edited since
+    /// spawn — restart to pick up changes". Absent on rows written
+    /// before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spawned_at: Option<u64>,
 }
 
 fn agents_registry_path() -> std::path::PathBuf {
@@ -2427,6 +2448,10 @@ fn spawn_tracked_process(
         line: base_branch,
         pid,
         bin: bin.to_string(),
+        spawned_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs()),
     });
     save_agents_registry(&rows);
     Ok(pid)
@@ -2697,7 +2722,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
+        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {
