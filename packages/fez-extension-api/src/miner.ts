@@ -9,6 +9,29 @@
  * restart, and the GUI. A descriptor owns only what is subnet-specific.
  */
 
+/** A public endpoint mapping on the machine — how a serving miner (an
+ *  axon) is reached from the internet. Empty on a local machine. */
+export interface MachinePort {
+  externalIp: string;
+  externalPort: number;
+  internalPort: number;
+}
+
+/**
+ * The machine seam — where a miner's commands actually run. Descriptors
+ * call these instead of spawning directly, so one descriptor works on
+ * any machine kind whose requirements it fits. "ssh" is the designed-for
+ * third member (spec §7), not yet built.
+ */
+export interface MinerMachine {
+  kind: "local" | "lium";
+  /** Run a shell command on the machine; resolves when it exits. */
+  exec(cmd: string, opts?: { env?: Record<string, string>; cwd?: string; timeoutMs?: number }): Promise<{ code: number; stdout: string; stderr: string }>;
+  /** Copy a local file or directory onto the machine. */
+  copy(localPath: string, remotePath: string): Promise<void>;
+  ports: MachinePort[];
+}
+
 /** What the harness hands every verb. */
 export interface MinerContext {
   /** Absolute dir this miner may write — venv, checkout, logs. Created by the harness. */
@@ -20,6 +43,9 @@ export interface MinerContext {
   netuid: number;
   /** Extra env the harness was configured with for this miner. */
   env: Record<string, string>;
+  /** Where this miner's commands run. Local shell today; a rented pod
+   *  when the harness provisioned one. */
+  machine: MinerMachine;
   /** Append a line to the miner's log (harness tees to file + stdout). */
   log(line: string): void;
 }
