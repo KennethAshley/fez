@@ -130,7 +130,7 @@ describe("adopting an existing local repo", () => {
     // "go get it, then it is the directory case", so any git URL proves it.
     const upstreamDir = path.join(root, "upstream", "gitfolio.git");
     mkdirSync(path.dirname(upstreamDir), { recursive: true });
-    await run("git", ["init", "--bare", "--quiet", upstreamDir], { encoding: "utf-8" });
+    await run("git", ["init", "--bare", "--quiet", "--initial-branch=main", upstreamDir], { encoding: "utf-8" });
     const seed = path.join(root, "seed");
     mkdirSync(seed, { recursive: true });
     const git = (args: string[], cwd = seed) => run("git", args, { cwd, encoding: "utf-8" });

@@ -49,6 +49,10 @@ test("post-onboarding boot: #welcome opens with hello, opener, summons, intros, 
       {
         get_pubkey: () => ownerPk, // boots as the owner the relay was claimed by
         provider_key_present: () => true, // authed: the choreography must fire
+        // The boot gate (709fd4c) reads "onboarded" as identity AND the
+        // fez persona on disk — without this the spec's finished user is
+        // shunted back into the wizard.
+        list_personas: () => ["fez", "drift", "quill"],
         read_persona: () => "---\nharness: pi\nprovider: local-56105ece7a\nmodel: mock/model-a\neffort: medium\n---\n",
       },
       { identities }

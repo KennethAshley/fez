@@ -299,8 +299,14 @@ export function gitServer(options: GitOptions): GitServer {
         if (!write || options.createOnPush === false) {
           return deny(res, 404, `no such repository: ${route.repo}`);
         }
-        // First authorized push brings the repo into being.
-        await run("git", ["init", "--bare", "--quiet", repoDir]);
+        // First authorized push brings the repo into being. HEAD is
+        // pinned to main explicitly: a bare init inherits the HOST's
+        // init.defaultBranch (stock linux: master), and a bare repo
+        // whose HEAD names a branch nobody pushes clones out as an
+        // EMPTY working tree — quietly, with only a warning the cloner
+        // never reads. fez's convention is main (the composer protects
+        // it at creation), so the serve side says so too.
+        await run("git", ["init", "--bare", "--quiet", "--initial-branch=main", repoDir]);
         // Partial clone, on by default.
         //
         // A fleet of agents each takes its own checkout, so the cost that

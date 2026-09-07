@@ -280,7 +280,7 @@ describe("a repo nobody has pushed to yet", () => {
     // `/repo new` opens the channel; the repo exists only after a push.
     // An agent told to start one must not treat emptiness as failure.
     const empty = path.join(gitRoot, "blank.git");
-    await run("git", ["init", "--bare", "--quiet", empty]);
+    await run("git", ["init", "--bare", "--quiet", "--initial-branch=main", empty]);
     const ws = await prepareWorkspace({
       ...spec(alice, path.join(root, "blank"), "alice/first"),
       repo: "blank",

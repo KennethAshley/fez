@@ -194,7 +194,7 @@ describe("merging a branch into its line", () => {
     // channel exactly as fez-adopt records it, and read back through
     // rosterAccess.upstreamOf — the same seam production uses.
     const upstreamDir = path.join(root, "shop-window.git");
-    await run("git", ["init", "--bare", "--quiet", upstreamDir], { encoding: "utf-8" });
+    await run("git", ["init", "--bare", "--quiet", "--initial-branch=main", upstreamDir], { encoding: "utf-8" });
     await publish(owner, {
       kind: 47101,
       tags: [["d", "chan-m"]],
