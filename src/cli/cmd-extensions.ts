@@ -294,6 +294,8 @@ program
           relay?: string;
           /** → ~/.fez/workspace-providers; gives a `repo:` persona a checkout to work in */
           workspace?: string;
+          /** → ~/.fez/miners; the descriptor realpaths import.meta.url for sibling dist files */
+          miner?: string;
           /** opt in to running scheduled tasks inside the always-on sentinel */
           background?: boolean;
         };
@@ -416,6 +418,18 @@ program
         fsSync.mkdirSync(wsDir, { recursive: true });
         fsSync.copyFileSync(path.join(pkgDir, parts.workspace), path.join(wsDir, `${name}.js`));
         console.log(chalk.green(`✓ workspace provider → ~/.fez/workspace-providers/${name}.js (personas with repo: use it)`));
+      }
+      if (parts?.miner) {
+        // Symlink, not copy: the descriptor realpaths import.meta.url to
+        // find sibling dist files in its package, and a symlink keeps a
+        // linked dev repo's rebuilds live (same reason gui parts point at
+        // the package dir). Replace any stale entry.
+        const minersDir = fezHome("miners");
+        fsSync.mkdirSync(minersDir, { recursive: true });
+        const dest = path.join(minersDir, `${name}.js`);
+        fsSync.rmSync(dest, { force: true });
+        fsSync.symlinkSync(path.join(pkgDir, parts.miner), dest);
+        console.log(chalk.green(`✓ miner part → ~/.fez/miners/${name}.js (the mining harness loads it)`));
       }
 
       // bins: same seam install honors, so a linked package's
