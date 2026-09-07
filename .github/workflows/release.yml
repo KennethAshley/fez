@@ -77,7 +77,15 @@ jobs:
           tar -xzf /tmp/pi-agent.tar.gz -C packages/fez-desktop/src-tauri
           test -x packages/fez-desktop/src-tauri/pi-agent/pi
           test -x packages/fez-desktop/src-tauri/pi-agent/fez-relay
-          echo "seeded pi-agent $(cat packages/fez-desktop/src-tauri/pi-agent/VERSION)"
+          # The seed's identity must match the source constant, or the
+          # runner (no bun by design — see header) dies mid-release, or
+          # worse ships stale binaries under a fresh marker. Fail HERE,
+          # with the fix in the message. (v0.4.24's first run died on
+          # exactly this: seed at +svc9, source at +svc10.)
+          SEED_VER=$(cat packages/fez-desktop/src-tauri/pi-agent/VERSION)
+          WANT_VER=$(node -p "const s=require('fs').readFileSync('packages/fez-desktop/scripts/prepare-pi-agent.mjs','utf8'); const pi=s.match(/const PI_VERSION = \"([^\"]+)\"/)[1]; const svc=s.match(/PI_VERSION\}\+(svc\d+)/)[1]; pi+'+'+svc")
+          [ "$SEED_VER" = "$WANT_VER" ] || { echo "✗ seed pi-agent is $SEED_VER but source wants $WANT_VER — refresh it: run prepare-pi-agent.mjs on a dev machine, tar pi-agent/, gh release upload pi-agent-v${PI_VER} --clobber"; exit 1; }
+          echo "seeded pi-agent $SEED_VER"
 
       - name: Tag must match the version being built
         run: |
