@@ -713,6 +713,9 @@ select.ob-input:hover { border-color: var(--accent); }
 .agent-sub {
   margin-left: auto; color: var(--fg-dim); font-size: 11px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;
+  /* The status never shrinks below its (capped) size — when it shares a
+     row with the wider skill-warn badge, the badge truncates, not this. */
+  flex: none;
 }
 .agent-head { padding: 12px 14px; border-bottom: 1px solid var(--bg2); }
 .agent-title { font-weight: 700; display: flex; align-items: center; gap: 6px; }

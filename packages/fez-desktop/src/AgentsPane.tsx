@@ -563,8 +563,8 @@ export default function AgentsPane({
             const localName = localPersonas.find((name) => name.toLowerCase() === agent.name.toLowerCase());
             // Presence rides the creature (the self card's rule): a dot
             // beside the word "online" said it twice. Offline rows dim
-            // instead — absence you can see at a glance.
-            const sub = active ? busy.activity : client.statusOf(agent.pk) ?? (agent.online ? "" : "offline");
+            // instead — absence you can see at a glance, so no word here.
+            const sub = active ? busy.activity : client.statusOf(agent.pk) ?? "";
             return (
               <button key={agent.pk} className={agent.online ? "agent-row" : "agent-row away"} onClick={() => setSelected(agent.pk)}>
                 <span className="agent-face">
