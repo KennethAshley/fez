@@ -412,7 +412,8 @@ function AccessPicker({
       .then((names) => {
         if (!live || !client) return;
         const mine = new Set(names.map((n) => n.toLowerCase()));
-        setOwnAgents(new Set([...client.agents().entries()].filter(([, n]) => mine.has(n.toLowerCase())).map(([pk]) => pk)));
+        // The viewer is the owner — always admitted, same dead checkbox.
+        setOwnAgents(new Set([client.pubkey, ...[...client.agents().entries()].filter(([, n]) => mine.has(n.toLowerCase())).map(([pk]) => pk)]));
       })
       .catch(() => {});
     return () => { live = false; };
