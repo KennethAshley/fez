@@ -1,33 +1,59 @@
 import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
 import { readState, writeState, upsertMiner, fezHome } from "./state.js";
 import { alive, spawnDetached } from "./procs.js";
-import { plan } from "./reconcile.js";
+import { planRemote } from "./reconcile.js";
+import { podAlive } from "./machine-lium.js";
 
 /**
  * fez-mining, headless part — the sentinel-side reconcile loop.
  *
- * Every 120s: read desired state, respawn any miner marked "running"
- * whose recorded pid is no longer alive (crash, OOM, host reboot).
- * Pure planning lives in reconcile.ts; this just wires it to procs/state.
+ * Every 120s: read desired state, resolve pod-liveness for every distinct
+ * lium podId once, then hand both to the pure planRemote (reconcile.ts) —
+ * respawn a dead runner onto a still-live pod, reprovision when the pod's
+ * gone, or (past the daily reprovision cap) flag the miner for a human
+ * instead of looping money away.
  *
- * Each miner is isolated: a failed spawn is logged and skipped rather
- * than aborting the tick, and state is persisted right after each
- * successful spawn (not once at the end) — so one miner's crash never
- * loses another's freshly-spawned pid and causes a double-spawn next
- * tick.
+ * Each miner is isolated: a failed action is logged and skipped rather
+ * than aborting the tick, and state is persisted right after each action
+ * (not once at the end) — so one miner's crash never loses another's
+ * freshly-spawned pid and causes a double-spawn next tick.
  */
 export default function activate(api: FezExtensionAPI): void {
   api.registerScheduledTask("mining-reconcile", 120_000, async () => {
     const home = fezHome();
     let s = await readState(home);
-    for (const m of plan(s.miners, alive)) {
+
+    const podIds = [...new Set(s.miners.map((m) => (m.machine?.kind === "lium" ? m.machine.podId : undefined)).filter((id): id is string => !!id))];
+    const podAliveMap = new Map<string, boolean>();
+    for (const id of podIds) podAliveMap.set(id, await podAlive(id));
+    const podIsAlive = (podId: string) => podAliveMap.get(podId) ?? false;
+
+    const now = Date.now();
+    for (const { miner: m, action } of planRemote(s.miners, alive, podIsAlive, now)) {
       try {
+        if (action === "needs-attention") {
+          s = upsertMiner(s, m); // m already carries the attention text planRemote set
+          await writeState(home, s);
+          console.error(`mining-reconcile: ${m.netuid}:${m.persona} — ${m.attention}`);
+          continue;
+        }
+        let entry = m;
+        if (action === "reprovision" && entry.machine) {
+          // Clear the dead pod (and its now-stale port info) and count the
+          // reprovision against the daily cap; the runner provisions a
+          // fresh pod on respawn (Task 7).
+          entry = {
+            ...entry,
+            machine: { ...entry.machine, podId: undefined, externalIp: undefined, externalPort: undefined },
+            provisions: [...(entry.provisions ?? []), now],
+          };
+        }
         const bin = process.env.FEZ_MINE_RUN_BIN || "fez-mine-run";
-        const pid = spawnDetached(bin, [String(m.netuid), m.persona]);
-        s = upsertMiner(s, { ...m, pid, startedAt: Date.now() });
+        const pid = spawnDetached(bin, [String(entry.netuid), entry.persona]);
+        s = upsertMiner(s, { ...entry, pid, startedAt: Date.now() });
         await writeState(home, s);
       } catch (err) {
-        console.error(`mining-reconcile: failed to respawn ${m.netuid}:${m.persona}`, err);
+        console.error(`mining-reconcile: failed to ${action} ${m.netuid}:${m.persona}`, err);
       }
     }
   });

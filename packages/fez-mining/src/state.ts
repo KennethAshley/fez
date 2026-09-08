@@ -33,6 +33,10 @@ export interface MinerEntry {
   startedAt?: number;
   lastExit?: string;
   machine?: MinerMachineState;
+  /** Epoch-ms timestamps of auto-reprovisions, for the sentinel's per-day spend guard. */
+  provisions?: number[];
+  /** Human sentence set by the sentinel when it stops auto-recovering a miner; cleared on the next manual start. */
+  attention?: string;
 }
 export interface MiningState { miners: MinerEntry[]; subnets: Subnet[]; covered: number[] }
 

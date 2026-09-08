@@ -87,7 +87,7 @@ async function cmdStart(netuid: number, persona: string, json: boolean, machine?
   const pid = spawnDetached(MINE_RUN_BIN, [String(netuid), persona]);
   s = await readState(home);
   const cur = s.miners.find((m) => m.netuid === netuid && m.persona === persona)!;
-  await writeState(home, upsertMiner(s, { ...cur, pid, startedAt: Date.now() }));
+  await writeState(home, upsertMiner(s, { ...cur, pid, startedAt: Date.now(), attention: undefined }));
   if (json) console.log(JSON.stringify({ ...r, pid }));
   else console.log(`started ${persona} on netuid ${netuid} (uid ${r.uid}, pid ${pid})`);
 }
