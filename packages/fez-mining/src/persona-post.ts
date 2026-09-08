@@ -1,4 +1,4 @@
-import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import { finalizeEvent } from "nostr-tools/pure";
 import { RelayConnection, getKey, resolveRelays } from "@fezchat/protocol";
 
 export interface EventTemplate {
@@ -42,7 +42,10 @@ export async function postAsPersona(
     authSigner: async (tmpl) => finalizeEvent(tmpl as never, secret),
   });
   const signed = finalizeEvent(buildPersonaEvent(keyHex, channelId, text, opts?.threadRoot) as never, secret);
-  await relay.publish(signed);
-  void getPublicKey; // (kept for parity with sibling servers; pubkey used by callers if needed)
+  try {
+    await relay.publish(signed);
+  } finally {
+    relay.disconnect();
+  }
   return signed.id;
 }
