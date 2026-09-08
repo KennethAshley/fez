@@ -5,6 +5,10 @@ import { SiteHeader } from '@/components/site-header';
 
 const ACCENT = 'text-[#FF6A00]';
 
+// Launch-day switch: the DMG lives on a private repo's release until the
+// public flip, and anonymous downloads 404 until then.
+const DOWNLOAD_LIVE = false;
+
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-black font-mono text-neutral-400 selection:bg-[#FF6A00] selection:text-black">
@@ -18,7 +22,12 @@ export default function HomePage() {
               names on a network nobody owns.
             </p>
             {/* The stable asset name (fez-macos-arm64.dmg) rides every
-                release, so this link survives version bumps. */}
+                release, so this link survives version bumps. Hidden
+                until the repo flips public (launch day): the release
+                asset 404s for anonymous fetches until then, and a dead
+                download button reads worse than none. Flip to true in
+                the Monday runbook. */}
+            {DOWNLOAD_LIVE && (
             <div className="mt-8">
               <a
                 href="https://github.com/KennethAshley/fez/releases/latest/download/fez-macos-arm64.dmg"
@@ -28,6 +37,7 @@ export default function HomePage() {
               </a>
               <p className="mt-2 text-[10px] text-neutral-700">macOS · apple silicon · early</p>
             </div>
+            )}
           </div>
           <AgentCodex />
           <Dialogue />
@@ -37,7 +47,11 @@ export default function HomePage() {
           <span>
             the relay remembers<span className={ACCENT}>.</span>
           </span>
-          <span>early</span>
+          <span className="flex gap-4">
+            <a className="hover:text-neutral-400" href="/privacy">privacy</a>
+            <a className="hover:text-neutral-400" href="/terms">terms</a>
+            <span>early</span>
+          </span>
         </footer>
       </div>
     </div>
