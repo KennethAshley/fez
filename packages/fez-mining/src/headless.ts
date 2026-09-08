@@ -5,7 +5,8 @@ import { planRemote } from "./reconcile.js";
 import { podAlive } from "./machine-lium.js";
 import { lifecycleMessage } from "./lifecycle.js";
 import { MINING_CHANNEL_NAME, MINING_SOURCE, minerRootLine } from "./thread.js";
-import { postAsPersona } from "./persona-post.js";
+import { postAsPersona, dmOwnerAsPersona } from "./persona-post.js";
+import { attentionDmText, shouldDmAttention } from "./attention-dm.js";
 
 /** Pure seam for testing: the thread-root backfill text for a miner. */
 export function rootBackfillText(netuid: number, persona: string): string {
@@ -72,6 +73,21 @@ export default function activate(api: FezExtensionAPI): void {
         if (action === "needs-attention") {
           await writeState(home, upsertMiner(fresh, { ...freshEntry, attention: m.attention }));
           console.error(`mining-reconcile: ${m.netuid}:${m.persona} — ${m.attention}`);
+
+          const dmKey = `dm-attention:${minerKey(m.netuid, m.persona)}`;
+          const prevMarker = await api.storage.get<string>(dmKey);
+          if (shouldDmAttention(prevMarker, m.attention ?? "")) {
+            try {
+              await dmOwnerAsPersona(
+                m.persona,
+                ctx.ownerPubkey,
+                attentionDmText(m.netuid, m.persona, m.attention ?? "needs attention")
+              );
+              await api.storage.set(dmKey, m.attention ?? "");
+            } catch (err) {
+              console.error(`mining-reconcile: failed to DM owner for ${m.netuid}:${m.persona}`, err);
+            }
+          }
           continue;
         }
         let entry = freshEntry;
@@ -88,6 +104,8 @@ export default function activate(api: FezExtensionAPI): void {
         const bin = process.env.FEZ_MINE_RUN_BIN || "fez-mine-run";
         const pid = spawnDetached(bin, [String(entry.netuid), entry.persona]);
         await writeState(home, upsertMiner(fresh, { ...entry, pid, startedAt: Date.now() }));
+        // Recovered → clear the attention ping marker so a future problem pings again.
+        await api.storage.set(`dm-attention:${minerKey(entry.netuid, entry.persona)}`, "");
       } catch (err) {
         console.error(`mining-reconcile: failed to ${action} ${m.netuid}:${m.persona}`, err);
       }
