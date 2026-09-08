@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import type { ConfigField } from "@fezchat/extension-api";
 
 /** Absolute path to the installed fez-mine — never trust PATH (mirrors
  *  WALLET_BIN/resolveBin in cli.ts; the MCP server is spawned by the
@@ -38,4 +39,17 @@ export const mineArgs = {
       ...(machine === "lium" ? ["--machine", "lium"] : [])],
   stop: (persona: string, netuid: number) =>
     ["stop", "--netuid", String(netuid), "--persona", persona],
+  describe: (netuid: number) => ["describe", "--netuid", String(netuid), "--json"],
+  configSet: (persona: string, netuid: number, key: string, value: string) =>
+    ["config", "set", "--netuid", String(netuid), "--persona", persona, "--key", key, "--value", value],
 };
+
+/** Is `key` settable by a non-secret config path? Reads the subnet's declared
+ *  ConfigField schema (from `fez-mine describe`). Secrets are refused so no key
+ *  ever transits an LLM turn; unknown keys are refused so typos don't write junk. */
+export function classifyConfigKey(schema: ConfigField[], key: string): "secret" | "unknown" | "ok" {
+  const field = schema.find((f) => f.key === key);
+  if (!field) return "unknown";
+  if (field.type === "secret") return "secret";
+  return "ok";
+}
