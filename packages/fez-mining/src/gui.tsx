@@ -194,22 +194,37 @@ export default function activate(api: GuiExtensionApi): void {
           let liumLine = "";
           if (machine === "lium") {
             const parts: string[] = [];
+            let cheapestRate: number | null = null;
             try {
               const out = await run("fez-mine", ["machines", "--json"]);
               if (out.code === 0) {
                 const nodes = JSON.parse(out.stdout) as { node: string; usdHour: number | null }[];
                 const prices = nodes.map((n) => n.usdHour).filter((p): p is number => p !== null);
-                if (prices.length) parts.push(`from $${Math.min(...prices).toFixed(2)}/hr`);
+                if (prices.length) {
+                  cheapestRate = Math.min(...prices);
+                  parts.push(`from $${cheapestRate.toFixed(2)}/hr`);
+                }
               }
             } catch { /* best-effort — the confirm still shows the burn */ }
+            let balanceUsd: number | null = null;
             try {
               const out = await run("fez-mine", ["balance", "--json"]);
               if (out.code === 0) {
                 const bal = JSON.parse(out.stdout) as { balanceUsd: number | null };
-                if (bal.balanceUsd !== null) parts.push(`balance $${bal.balanceUsd.toFixed(2)}`);
+                balanceUsd = bal.balanceUsd;
+                if (balanceUsd !== null) parts.push(`balance $${balanceUsd.toFixed(2)}`);
               }
             } catch { /* best-effort */ }
             if (parts.length) liumLine = `\n\nLium: ${parts.join(" · ")}`;
+            // M2: a balance that can't cover even 1h at the shown rate blocks
+            // outright rather than proceeding into a rental that fails (or
+            // worse, half-succeeds) on insufficient funds.
+            if (balanceUsd !== null && cheapestRate !== null && balanceUsd < cheapestRate) {
+              setError(
+                `Lium balance ($${balanceUsd.toFixed(2)}) won't cover 1h at the shown rate ($${cheapestRate.toFixed(2)}/hr) — top up at lium.io / lium_topup before mining.`
+              );
+              return;
+            }
           }
 
           const ok = confirm(
@@ -311,9 +326,17 @@ export default function activate(api: GuiExtensionApi): void {
                     {m.machine?.kind === "lium" && m.machine.podId
                       ? ` · pod ${m.machine.podId}${m.machine.hourlyRate ? ` · $${m.machine.hourlyRate}/hr` : ""}`
                       : ""}
+                    {m.machine?.kind === "lium" && m.machine.externalIp && m.machine.externalPort
+                      ? ` · ${m.machine.externalIp}:${m.machine.externalPort}`
+                      : ""}
                     {m.startedAt ? ` · started ${new Date(m.startedAt).toLocaleString()}` : ""}
                     {m.lastExit ? ` · ${m.lastExit}` : ""}
                   </div>
+                  {m.attention ? (
+                    <div className="skill-desc" style={{ color: "var(--warn, #d79921)" }}>
+                      ⚠ {m.attention}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="skill-actions">
                   <button className="agent-action" disabled={busy === k} onClick={() => void stop(m.netuid, m.persona)}>

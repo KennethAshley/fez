@@ -20,11 +20,19 @@ import { podAlive } from "./machine-lium.js";
  * than aborting the tick, and state is persisted right after each action
  * (not once at the end) — so one miner's crash never loses another's
  * freshly-spawned pid and causes a double-spawn next tick.
+ *
+ * The plan itself (`planRemote`) is computed once, from the snapshot read
+ * at the top of the tick — fine, since it only decides WHAT to do. But
+ * applying that decision re-reads state fresh right before each write:
+ * a `fez-mine stop` landing on this miner mid-tick (a `describe`/`ps`
+ * round-trip is real network time) must not get overwritten back to
+ * "running" by a decision made on stale state, so every action is
+ * skipped once `desired !== "running"` on the fresh read.
  */
 export default function activate(api: FezExtensionAPI): void {
   api.registerScheduledTask("mining-reconcile", 120_000, async () => {
     const home = fezHome();
-    let s = await readState(home);
+    const s = await readState(home);
 
     const podIds = [
       ...new Set(
@@ -41,13 +49,18 @@ export default function activate(api: FezExtensionAPI): void {
     const now = Date.now();
     for (const { miner: m, action } of planRemote(s.miners, alive, podIsAlive, now)) {
       try {
+        // Re-read fresh right before applying — a stop (or another tick's
+        // write) may have landed since the plan was computed above.
+        const fresh = await readState(home);
+        const freshEntry = fresh.miners.find((e) => e.netuid === m.netuid && e.persona === m.persona);
+        if (!freshEntry || freshEntry.desired !== "running") continue; // a stop landed meanwhile
+
         if (action === "needs-attention") {
-          s = upsertMiner(s, m); // m already carries the attention text planRemote set
-          await writeState(home, s);
+          await writeState(home, upsertMiner(fresh, { ...freshEntry, attention: m.attention }));
           console.error(`mining-reconcile: ${m.netuid}:${m.persona} — ${m.attention}`);
           continue;
         }
-        let entry = m;
+        let entry = freshEntry;
         if (action === "reprovision" && entry.machine) {
           // Clear the dead pod (and its now-stale port info) and count the
           // reprovision against the daily cap; the runner provisions a
@@ -60,8 +73,7 @@ export default function activate(api: FezExtensionAPI): void {
         }
         const bin = process.env.FEZ_MINE_RUN_BIN || "fez-mine-run";
         const pid = spawnDetached(bin, [String(entry.netuid), entry.persona]);
-        s = upsertMiner(s, { ...entry, pid, startedAt: Date.now() });
-        await writeState(home, s);
+        await writeState(home, upsertMiner(fresh, { ...entry, pid, startedAt: Date.now() }));
       } catch (err) {
         console.error(`mining-reconcile: failed to ${action} ${m.netuid}:${m.persona}`, err);
       }

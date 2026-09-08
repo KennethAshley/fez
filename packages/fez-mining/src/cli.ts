@@ -88,11 +88,20 @@ async function cmdStart(netuid: number, persona: string, json: boolean, machine?
   }
   const r = JSON.parse(execFileSync(WALLET_BIN, registerArgs, { encoding: "utf8" })) as RegisterResult;
   let s = await readState(home);
-  // No podId yet — the runner provisions the pod on first spawn and
-  // records it back onto this entry.
+  // upsertMiner fully replaces the entry, so a restart of an already-lium
+  // miner must carry its recorded `machine` (podId included) forward
+  // itself — otherwise a live pod goes unreferenced and the runner's
+  // reattach path never finds it, provisioning (and paying for) a second
+  // one. No podId yet on a genuinely first start — the runner provisions
+  // the pod on first spawn and records it back onto this entry.
+  const existing = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
   s = upsertMiner(s, {
     netuid, persona, hotkey: r.hotkey, uid: r.uid, desired: "running",
-    ...(machine === "lium" ? { machine: { kind: "lium" as const } } : {}),
+    ...(existing?.machine
+      ? { machine: existing.machine }
+      : machine === "lium"
+        ? { machine: { kind: "lium" as const } }
+        : {}),
   });
   await writeState(home, s);
   const pid = spawnDetached(MINE_RUN_BIN, [String(netuid), persona]);
@@ -109,18 +118,27 @@ async function cmdStop(netuid: number, persona: string, json: boolean): Promise<
   const m = s.miners.find((e) => e.netuid === netuid && e.persona === persona);
   if (m?.pid && alive(m.pid)) kill(m.pid);
   if (m) {
-    let machine = m.machine;
-    if (machine?.kind === "lium" && machine.podId) {
+    const podId = m.machine?.kind === "lium" ? m.machine.podId : undefined;
+    if (podId) {
       try {
-        await teardownPod(machine.podId);
+        await teardownPod(podId);
       } catch (e) {
         // Best-effort — a pod that's already gone (or a `lium` hiccup)
         // must not block `stop` from recording the desired state.
-        console.error(`fez-mine: teardown of pod ${machine.podId} failed: ${(e as Error).message}`);
+        console.error(`fez-mine: teardown of pod ${podId} failed: ${(e as Error).message}`);
       }
-      machine = { ...machine, podId: undefined };
     }
-    await writeState(home, upsertMiner(s, { ...m, desired: "stopped", pid: undefined, machine }));
+    // The teardown call above can take a while — re-read rather than write
+    // the snapshot taken before it, so a runner write that landed in the
+    // meantime (e.g. it just finished recording a fresh provision) isn't
+    // clobbered by this stop.
+    const fresh = await readState(home);
+    const freshEntry = fresh.miners.find((e) => e.netuid === netuid && e.persona === persona);
+    if (freshEntry) {
+      const machine =
+        freshEntry.machine?.kind === "lium" ? { ...freshEntry.machine, podId: undefined } : freshEntry.machine;
+      await writeState(home, upsertMiner(fresh, { ...freshEntry, desired: "stopped", pid: undefined, machine }));
+    }
   }
   if (json) console.log(JSON.stringify({ netuid, persona, stopped: true }));
   else console.log(`stopped ${persona} on netuid ${netuid}`);
