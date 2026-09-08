@@ -1,0 +1,13 @@
+{
+  "name": "@fezchat/gradients",
+  "version": "0.1.0",
+  "description": "Gradients (SN56) miner descriptor for the fez mining harness.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/miner-part.ts --bundle --format=esm --platform=node --outfile=dist/miner.js",
+    "check": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "fez": { "type": "extension", "parts": { "miner": "dist/miner.js" }, "permissions": [], "minFezVersion": "0.2.0" },
+  "devDependencies": { "@fezchat/extension-api": "file:../fez-extension-api", "esbuild": "^0.21.5", "typescript": "^5.6.0", "vitest": "^2.1.0" }
+}
