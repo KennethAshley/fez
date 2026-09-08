@@ -1,5 +1,5 @@
 import type { MinerMachine, MachinePort } from "@fezchat/extension-api";
-import { lium, parseJson, DEFAULT_TTL, record } from "@fezchat/lium/cli";
+import { lium, parseJson, priceOf, DEFAULT_TTL, record } from "@fezchat/lium/cli";
 
 /**
  * The Lium machine seam: a rented GPU pod behind the same MinerMachine
@@ -9,10 +9,11 @@ import { lium, parseJson, DEFAULT_TTL, record } from "@fezchat/lium/cli";
  * Real shapes below were pinned read-only against the installed `lium`
  * 0.0.33 CLI (`--help` on every verb, plus `describe --json`'s error
  * envelope) and against fez-lium's own mcp.ts, which already drives this
- * exact CLI in production. `up`, `ps`'s success shape, and `describe`'s
- * success shape were NOT observable read-only (no API key configured on
- * this machine) — those parsers are marked "unverified" and coded
- * defensively; Task 12 confirms them live.
+ * exact CLI in production. Task 12's live smoke since confirmed the two
+ * that weren't observable read-only: `lium up` with no NODE_ID and no
+ * filters refuses outright ("Must provide either NODE_ID or filters"), and
+ * `ps --format json` (not `ps --json`) is the real flag. `describe`'s
+ * success shape is still coded defensively pending a live pod to confirm it.
  */
 
 export interface LiumHandle {
@@ -69,6 +70,15 @@ export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMac
   };
 }
 
+/** A `lium ls` row's id, in the same key preference `matchesNode` checks against — huid first (what a human/agent would target it by). */
+function nodeIdOf(row: Record<string, unknown>): string | null {
+  for (const k of ["huid", "id", "index"]) {
+    const v = row[k];
+    if (v !== undefined && v !== null && String(v) !== "") return String(v);
+  }
+  return null;
+}
+
 /** Pull a pod id + $/hr out of `up`'s output, JSON or plain text (see note below). */
 function parseUpOutput(out: string): { podId: string | null; priceUsdHour: number | null } {
   // Unverified against live CLI: `lium up --help` exposes no --json/--format
@@ -122,17 +132,44 @@ export async function describePod(podId: string, exec: LiumExec = lium): Promise
   return { podId, ports, sshHost };
 }
 
-/** `lium up` (auto-selected node via filters) then `lium describe` for the port map. */
+/**
+ * `lium ls` (pick the cheapest node at/under the ceiling ourselves — `up`
+ * with no NODE_ID and no filters refuses outright, verified live) then
+ * `lium up <node>` then `lium describe` for the port map.
+ */
 export async function provisionPod(
   opts: { template?: string; ports?: number; ttl?: string; maxUsdHour?: number },
   exec: LiumExec = lium
 ): Promise<LiumHandle> {
   const ttl = opts.ttl || DEFAULT_TTL;
-  // Pinned: `lium up --help` — no NODE_ID means auto-select via filters
-  // (--ports is one). --yes skips the confirmation prompt; --no-ssh stops
-  // `up` from opening an interactive SSH session (it does by default),
-  // which would otherwise hang this process — mirrors fez-lium's lium_up.
-  const args = ["up", "--yes", "--no-ssh", "--ttl", ttl];
+  const ceiling = opts.maxUsdHour ?? Infinity;
+
+  // Node selection IS the price ceiling now — pre-rent, not a post-hoc
+  // refuse-and-teardown. `ls --format json` is the verified-live flag.
+  const lsRes = await exec(["ls", "--format", "json"], 30_000);
+  if (!lsRes.ok) throw new Error(lsRes.err);
+  const rows = parseJson<Record<string, unknown>[]>(lsRes.out) ?? [];
+  let best: { id: string; price: number } | null = null;
+  let cheapestSeen: number | null = null;
+  for (const row of rows) {
+    const price = priceOf(row);
+    const id = nodeIdOf(row);
+    if (price === null || !id) continue;
+    if (cheapestSeen === null || price < cheapestSeen) cheapestSeen = price;
+    if (price <= ceiling && (best === null || price < best.price)) best = { id, price };
+  }
+  if (!best) {
+    throw new Error(
+      cheapestSeen === null
+        ? "provisionPod: refused — `lium ls` returned no node with a readable price, not renting blind."
+        : `provisionPod: refused — no node at or under the $${ceiling}/h ceiling (cheapest seen: $${cheapestSeen}/h).`
+    );
+  }
+
+  // --yes skips the confirmation prompt; --no-ssh stops `up` from opening
+  // an interactive SSH session (it does by default), which would otherwise
+  // hang this process — mirrors fez-lium's lium_up.
+  const args = ["up", best.id, "--yes", "--no-ssh", "--ttl", ttl];
   if (opts.ports) args.push("--ports", String(opts.ports));
   if (opts.template) args.push("--template_id", opts.template);
   const r = await exec(args, 120_000);
@@ -141,8 +178,8 @@ export async function provisionPod(
   const { podId, priceUsdHour } = parseUpOutput(r.out);
   if (!podId) throw new Error(`provisionPod: couldn't find a pod id in \`lium up\` output: ${r.out.slice(0, 400)}`);
 
-  // Fail closed on money, same spirit as fez-lium's checkUp: an unreadable
-  // price under a ceiling is treated as over it, not waved through.
+  // Belt-and-suspenders against a race (the price could have moved between
+  // `ls` and `up`) — same fail-closed spirit as fez-lium's checkUp.
   if (opts.maxUsdHour !== undefined && (priceUsdHour === null || priceUsdHour > opts.maxUsdHour)) {
     await teardownPod(podId, exec);
     throw new Error(
@@ -163,11 +200,14 @@ export async function provisionPod(
 
 /** Is this pod still in `lium ps`? */
 export async function podAlive(podId: string, exec: LiumExec = lium): Promise<boolean> {
+  // Pinned live (Task 12): `ps --format json` (not `ps --json`) → `[]` when
+  // no pods are running.
   const r = await exec(["ps", "--format", "json"], 30_000);
   if (!r.ok) return false;
   const rows = parseJson<Record<string, unknown>[]>(r.out) ?? [];
-  // Unverified against live CLI (auth-gated): tolerate pod/id/name/huid,
-  // mirroring cli-lib's matchesNode tolerance for `ls` node rows.
+  // Row-key tolerance (pod/id/name/huid) still unverified against a row
+  // with an actual pod in it — mirrors cli-lib's matchesNode tolerance for
+  // `ls` node rows.
   return rows.some((row) => ["pod", "id", "name", "huid"].some((k) => String(row[k] ?? "") === podId));
 }
 

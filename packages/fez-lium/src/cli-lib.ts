@@ -45,10 +45,13 @@ export async function lium(args: string[], timeoutMs = 60_000): Promise<{ ok: tr
     });
     return { ok: true, out: stdout };
   } catch (e) {
-    const err = e as NodeJS.ErrnoException & { stderr?: string; killed?: boolean };
+    const err = e as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean };
     if (err.code === "ENOENT") return { ok: false, err: INSTALL };
     if (err.killed) return { ok: false, err: `lium ${args[0]} timed out after ${timeoutMs / 1000}s.` };
-    const detail = String(err.stderr || err.message || err).slice(0, 400);
+    // A refusal (e.g. `up` with no NODE_ID/filters) prints to STDOUT with a
+    // non-zero exit — execFile still rejects, but err.stderr alone missed
+    // it, swallowing the actual reason. Check stdout too.
+    const detail = String(err.stderr || err.stdout || err.message).slice(0, 400);
     if (/unauthoriz|401|api.?key/i.test(detail)) return { ok: false, err: NO_KEY };
     return { ok: false, err: `lium ${args[0]} failed: ${detail}` };
   }

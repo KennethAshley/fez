@@ -58,28 +58,43 @@ describe("liumMachine", () => {
     expect(calls[0]).toEqual(["scp", "p1", "./a.txt", "/root/a.txt"]);
   });
 
-  it("provisionPod runs up then describe and returns the port map", async () => {
+  // Pinned live (Task 12): `lium up` with no NODE_ID and no filters
+  // refuses outright ("Must provide either NODE_ID or filters"), so
+  // provisionPod picks the node itself — `ls --format json`, cheapest row
+  // at/under the ceiling, then `up <node>` positionally.
+  it("provisionPod picks the cheapest ls node under the ceiling, then up <node>, then describe", async () => {
     const { exec, calls } = script({
+      ls: JSON.stringify([
+        { huid: "eager-wolf-aa", price_per_hour: "0.42" },
+        { huid: "pricier-node-zz", price_per_hour: "9.99" },
+      ]),
       up: JSON.stringify({ pod: "p9", price_per_hour: "0.42" }),
       describe: JSON.stringify({ host_ip: "1.2.3.4", ports: [{ external: 20001, internal: 22 }, { external: 20002, internal: 8091 }] }),
     });
-    const h = await provisionPod({ ports: 2, ttl: "12h" }, exec);
+    const h = await provisionPod({ ports: 2, ttl: "12h", maxUsdHour: 5 }, exec);
     expect(h.podId).toBe("p9");
     expect(h.sshHost).toBe("1.2.3.4");
     expect(h.hourlyRate).toBe("0.42");
     expect(h.ports).toContainEqual({ externalIp: "1.2.3.4", externalPort: 20002, internalPort: 8091 });
-    // Pinned: `lium up --help` has no --format/--json flag at all (unlike
-    // ls/ps/exec/describe). No NODE_ID positional either — filters
-    // (--ports) auto-select the node. --yes/--no-ssh avoid a confirmation
-    // prompt and an interactive SSH session hanging the process (mirrors
-    // fez-lium's lium_up handler).
-    expect(calls[0]).toEqual(["up", "--yes", "--no-ssh", "--ttl", "12h", "--ports", "2"]);
-    expect(calls[1][0]).toBe("describe");
-    expect(calls[1]).toContain("--json");
+    expect(calls[0]).toEqual(["ls", "--format", "json"]);
+    // --yes/--no-ssh avoid a confirmation prompt and an interactive SSH
+    // session hanging the process (mirrors fez-lium's lium_up handler).
+    expect(calls[1]).toEqual(["up", "eager-wolf-aa", "--yes", "--no-ssh", "--ttl", "12h", "--ports", "2"]);
+    expect(calls[2][0]).toBe("describe");
+    expect(calls[2]).toContain("--json");
   });
 
-  it("provisionPod refuses and tears down when the price exceeds the ceiling", async () => {
+  it("provisionPod refuses when no ls node is at/under the ceiling — never calls up", async () => {
     const { exec, calls } = script({
+      ls: JSON.stringify([{ huid: "pricier-node-zz", price_per_hour: "9.99" }]),
+    });
+    await expect(provisionPod({ maxUsdHour: 1 }, exec)).rejects.toThrow(/no node at or under/);
+    expect(calls.some((c) => c[0] === "up")).toBe(false);
+  });
+
+  it("provisionPod's post-up check refuses and tears down when the price moved above the ceiling (a race)", async () => {
+    const { exec, calls } = script({
+      ls: JSON.stringify([{ huid: "cheap-node-1", price_per_hour: "0.5" }]),
       up: JSON.stringify({ pod: "p9", price_per_hour: "9.99" }),
       rm: "{}",
     });
@@ -89,9 +104,10 @@ describe("liumMachine", () => {
 
   // Unverified against live CLI — `up` has no --json flag, so a real
   // deployment's success output is plain text, not JSON. This is the
-  // documented fallback path (Task 12 confirms the real text shape).
+  // documented fallback path.
   it("provisionPod falls back to scraping a HUID pod name out of plain-text up output", async () => {
     const { exec } = script({
+      ls: JSON.stringify([{ huid: "eager-wolf-aa", price_per_hour: "0.75" }]),
       up: "Creating pod...\nPod eager-wolf-aa is ready ($0.75/hr)\nSSH: ssh root@eager-wolf-aa.lium.io",
       describe: JSON.stringify({ host_ip: "5.6.7.8", ports: [] }),
     });
@@ -99,13 +115,13 @@ describe("liumMachine", () => {
     expect(h.podId).toBe("eager-wolf-aa");
   });
 
-  // Unverified against live CLI (auth-gated) — real `ps --format json` row
-  // shape for active pods wasn't observable read-only. Tolerates pod/id/
-  // name/huid key names the way cli-lib's matchesNode tolerates them for
-  // `ls` rows. Task 12 confirms.
+  // Pinned live (Task 12): `ps --format json` (not `ps --json`) → `[]` when
+  // no pods are running. Row-key tolerance (pod/id/name/huid) itself is
+  // still unverified against a row with an actual pod in it.
   it("podAlive is false when ps lacks the pod", async () => {
-    const { exec } = script({ ps: JSON.stringify([{ pod: "other" }]) });
+    const { exec, calls } = script({ ps: JSON.stringify([{ pod: "other" }]) });
     expect(await podAlive("p9", exec)).toBe(false);
+    expect(calls[0]).toEqual(["ps", "--format", "json"]);
   });
 
   it("podAlive is true when ps has the pod under any tolerated key", async () => {
