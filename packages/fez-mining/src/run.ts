@@ -342,10 +342,11 @@ export async function runMiner(
           )
         : ({ ...process.env } as Record<string, string>);
     // A local machine keeps v1's identical workDir (the same dir as
-    // localDir). A lium machine gets a fixed path on ITS OWN filesystem —
-    // never the Mac's home dir, which doesn't exist on the pod (root cause
-    // of round 8's copy failure). See remoteWorkDir's doc comment.
-    const workDir = machine.kind === "lium" ? remoteWorkDir(netuid, persona) : localDir;
+    // localDir). Any REMOTE machine (lium pod, ssh host) gets a fixed path
+    // on ITS OWN filesystem — never the Mac's home dir, which doesn't exist
+    // there (root cause of round 8's copy failure; found again live when
+    // the first ssh miner faithfully created /Users/ken/... on a droplet).
+    const workDir = machine.kind === "local" ? localDir : remoteWorkDir(netuid, persona);
     // Non-secrets from state (this same `known` entry read above), secrets
     // from the keychain, merged over the descriptor's schema defaults —
     // same resolver the CLI's `config get` uses to shape its own view.
