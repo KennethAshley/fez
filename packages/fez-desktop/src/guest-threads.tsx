@@ -34,6 +34,13 @@ const KIND_TASK = 47001;
 const KIND_PROGRESS = 47002;
 const KIND_RESULT = 47003;
 const KIND_ANNOUNCE = 47000;
+/** Bazaar enrollment binding — an EMPTY one is the miner's clean
+ *  shutdown ("retired"), the one explicit offline signal on the wire. */
+const KIND_BINDING = 47041;
+/** Liveness lease: miners re-announce every 5 minutes (fez-bazaar
+ *  miner/main.ts), so 3× that is the staleness bound — buzz's rule: a
+ *  bounded wrong dot, never an indefinite one. */
+const FRESH_S = 15 * 60;
 /** What the live fleet serves — mirrors the bazaar's DEFAULT_TASK_TYPE. */
 const TASK_TYPE = "research-citations";
 const DEADLINE_S = 180;
@@ -348,6 +355,16 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   const wsRef = useRef<WebSocket | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Liveness: newest announce (the 5-min heartbeat) vs newest EMPTY
+  // binding (clean shutdown). Both are read from events already flowing
+  // through this socket — the thread used to receive and discard them.
+  const [lastBeatAt, setLastBeatAt] = useState(0);
+  const [retiredAt, setRetiredAt] = useState(0);
+  // Sends awaiting the relay's OK, by event id — buzz's model: render
+  // optimistically, but bounded and reversible.
+  const pendingOk = useRef(new Map<string, { ok: () => void; fail: (reason: string) => void }>());
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
+
   // Read the wallet extension's public mirror (~/.fez/extension-data/…) for
   // the accounts you could pay FROM. Read-only; the wallet owns writes.
   useEffect(() => {
@@ -383,10 +400,22 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         // The agent's announce carries its receive address (pay_to) — where
         // a settlement would land. Latest one wins.
         ws.send(JSON.stringify(["REQ", "gt-pay", { kinds: [KIND_ANNOUNCE], authors: [guest.pk], limit: 1 }]));
+        // Latest binding: empty content = the miner said goodbye cleanly.
+        ws.send(JSON.stringify(["REQ", "gt-bind", { kinds: [KIND_BINDING], authors: [guest.pk], limit: 1 }]));
       };
       ws.onmessage = (m) => {
         let msg: unknown[];
         try { msg = JSON.parse(String(m.data)) as unknown[]; } catch { return; }
+        if (msg[0] === "OK") {
+          const [, id, accepted, reason] = msg as [string, string, boolean, string?];
+          const waiter = pendingOk.current.get(id);
+          if (waiter) {
+            pendingOk.current.delete(id);
+            if (accepted) waiter.ok();
+            else waiter.fail(reason || "the relay rejected the message");
+          }
+          return;
+        }
         if (msg[0] !== "EVENT") return;
         const ev = msg[2] as WireEvent;
         if (ev.kind === KIND_PROFILE) {
@@ -397,11 +426,19 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
           return;
         }
         if (ev.kind === KIND_ANNOUNCE) {
+          // The announce IS the heartbeat (miners re-send every 5 min) —
+          // its timestamp is the liveness lease, not just its payload.
+          setLastBeatAt((prev) => Math.max(prev, ev.created_at));
           try {
             const beat = JSON.parse(ev.content) as { pay_to?: string; rate?: { tao_hr?: number } };
             if (beat.pay_to) setAgentPayTo(beat.pay_to);
             if (beat.rate?.tao_hr && beat.rate.tao_hr > 0) setAgentRate(beat.rate.tao_hr);
           } catch { /* unparseable beat */ }
+          return;
+        }
+        if (ev.kind === KIND_BINDING) {
+          if (ev.content) setLastBeatAt((prev) => Math.max(prev, ev.created_at)); // fresh enrollment = alive
+          else setRetiredAt((prev) => Math.max(prev, ev.created_at));
           return;
         }
         if (ev.kind === KIND_RESULT && ev.pubkey === guest.pk) {
@@ -419,7 +456,13 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         }
         setEvents((prev) => (prev.has(ev.id) ? prev : new Map(prev).set(ev.id, ev)));
       };
-      ws.onclose = () => { if (!closed) setTimeout(connect, 4000); };
+      ws.onclose = () => {
+        // A send the relay never acknowledged must fail loudly, not spin —
+        // buzz rejects every in-flight publish on disconnect.
+        for (const waiter of pendingOk.current.values()) waiter.fail("connection dropped before the relay confirmed");
+        pendingOk.current.clear();
+        if (!closed) setTimeout(connect, 4000);
+      };
     };
     connect();
     return () => { closed = true; ws?.close(); };
@@ -428,6 +471,15 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   // The clock drives the ephemeral bits (progress that ages out, the
   // unanswered line) — declared here because the timeline below reads it.
   const [nowTick, setNowTick] = useState(() => Date.now());
+
+  // Three liveness states, present-tense only (buzz keeps no last-seen):
+  // a fresh lease is "here", a retirement or an expired lease is "away",
+  // and no signal at all stays silent rather than guessing.
+  const liveness: "here" | "away" | "unknown" =
+    retiredAt > lastBeatAt ? "away"
+    : lastBeatAt === 0 ? "unknown"
+    : nowTick / 1000 - lastBeatAt > FRESH_S ? "away"
+    : "here";
 
   // Timeline: my tasks, and ONLY guest events threaded to them — a guest
   // event aimed at someone else's task is not part of this conversation.
@@ -515,8 +567,34 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       });
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error(`not connected to ${guest.relay}`);
+      const sid = (signed as WireEvent).id;
+      // Optimistic, but bounded and reversible (buzz's send model): the
+      // turn renders as "sending…" until the relay's OK lands; rejection
+      // or a 25s silence removes the delivered-looking bubble and hands
+      // the text back — a message the relay never took must not sit in
+      // the thread looking sent while the deadline clock runs on nothing.
+      const acked = new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => {
+          pendingOk.current.delete(sid);
+          reject(new Error("the relay didn't acknowledge the message — check the connection and try again"));
+        }, 25_000);
+        pendingOk.current.set(sid, {
+          ok: () => { clearTimeout(t); resolve(); },
+          fail: (reason) => { clearTimeout(t); reject(new Error(reason)); },
+        });
+      });
       ws.send(JSON.stringify(["EVENT", signed]));
-      setEvents((prev) => new Map(prev).set((signed as WireEvent).id, signed as WireEvent));
+      setEvents((prev) => new Map(prev).set(sid, signed as WireEvent));
+      setPendingIds((prev) => new Set(prev).add(sid));
+      try {
+        await acked;
+      } catch (err) {
+        setEvents((prev) => { const next = new Map(prev); next.delete(sid); return next; });
+        setDraft(text);
+        throw err;
+      } finally {
+        setPendingIds((prev) => { const next = new Set(prev); next.delete(sid); return next; });
+      }
       setDraft("");
       // Clear the ledger copy too — a prefilled draft that already went out
       // must never resurrect on a later reopen and look like a fresh, unsent
@@ -711,6 +789,24 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             <UiAvatar pk={guest.pk} name={name} size={20} />
           )}
           <span>{name}</span>
+          {/* The liveness dot — derived from the announce heartbeat the
+              thread already receives. Unknown renders nothing: no signal
+              is not the same claim as away. */}
+          {liveness !== "unknown" ? (
+            <span
+              className="guest-chip"
+              style={liveness === "here" ? { color: "var(--ok, #b8bb26)" } : undefined}
+              data-tip={
+                liveness === "here"
+                  ? "announcing at the bazaar — heartbeat within the last 15 minutes"
+                  : retiredAt > lastBeatAt
+                    ? "left the bazaar (clean shutdown) — tasks wait on the relay until it returns"
+                    : "no heartbeat lately — tasks wait on the relay until it returns"
+              }
+            >
+              {liveness === "here" ? "● here" : "○ away"}
+            </span>
+          ) : null}
           <span
             className="guest-chip"
             data-tip="the agent's public key — its actual identity on the network (the name is self-chosen). Click to copy the full key."
@@ -887,6 +983,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             <div key={t.id} className="guest-turn">
               <div className="guest-turn-meta">
                 {t.kind === "mine" ? <span>you</span> : <span className="who-them">{name}</span>}
+                {t.kind === "mine" && pendingIds.has(t.id) ? <span className="dim">{" · sending…"}</span> : null}
                 {t.kind === "theirs" && t.status !== "success" ? ` · ${t.status}` : ""}
                 {" · "}
                 {new Date(t.ts * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
@@ -901,7 +998,13 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
           )
         )}
         {turns.length === 0 ? (
-          <p className="guest-empty">{`The counter is open. Say what you need — ${name} usually answers within a minute.`}</p>
+          <p className="guest-empty">
+            {liveness === "here"
+              ? `The counter is open. Say what you need — ${name} usually answers within a minute.`
+              : liveness === "away"
+                ? `The counter is open, but ${name} is away right now — say what you need and it waits on the relay until they return.`
+                : `The counter is open. Say what you need — it goes out signed with your name.`}
+          </p>
         ) : null}
         <div ref={bottomRef} />
       </div>
