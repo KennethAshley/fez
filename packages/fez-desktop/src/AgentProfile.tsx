@@ -7,6 +7,7 @@ import { hasFace } from "./agent-face";
 import { agentSkillStrip, type InstalledSkillMd } from "./agent-skill-health";
 import { useConfig } from "./config-store";
 import { relaySet } from "./relay";
+import { markWaking, clearWaking, wakingSince, wakeLabel, subscribeWaking } from "./waking";
 import { BAZAAR_RELAY, aggregateRecord, bestRow, type AttestationEvent, type RecordRow } from "./bazaar-record";
 import { fetchSaltPanel, tierLabel, type SaltPanel } from "./salt-record";
 import { RelayConnection } from "../../../src/protocol/relay.js";
@@ -358,7 +359,7 @@ export default function AgentProfile({
         <dl className="profile-facts">
           <dt>status</dt>
           <dd className="mono">
-            <RestartRow name={name} owner={owner} />
+            <RestartRow name={name} owner={owner} online={online} />
           </dd>
           <dt>harness</dt>
           <dd className="mono">{harness ?? "—"}</dd>
@@ -385,21 +386,32 @@ export default function AgentProfile({
  * there is nothing to spawn under, so the row degrades to the old
  * wakes-on-mention prose rather than a button that can't deliver.
  */
-function RestartRow({ name, owner }: { name: string; owner?: string }) {
+function RestartRow({ name, owner, online }: { name: string; owner?: string; online?: boolean }) {
   const [alive, setAlive] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // pid 0 = a live sentinel owns spawning on this machine — nothing
+  // started HERE, and saying "running" would be the lie Ken watched.
+  const [deferred, setDeferred] = useState(false);
   // The one moment the restart button matters: the persona was edited
   // AFTER this body spawned, so the running process is behind the file.
   const [spawnedAt, setSpawnedAt] = useState<number>();
   const [personaMtime, setPersonaMtime] = useState<number>();
+  // A persona with no registry row has never been started — "asleep"
+  // reads as a fault for something that simply hasn't happened yet.
+  const [everStarted, setEverStarted] = useState(true);
   useEffect(() => {
     let live = true;
     void invoke<boolean>("agent_alive", { persona: name, bin: null })
       .then((a) => { if (live) setAlive(a); })
       .catch(() => { if (live) setAlive(false); });
     void invoke<{ persona: string; spawned_at?: number }[]>("spawned_agents")
-      .then((rows) => { if (live) setSpawnedAt(rows.find((r) => r.persona === name)?.spawned_at); })
+      .then((rows) => {
+        if (!live) return;
+        const row = rows.find((r) => r.persona === name);
+        setEverStarted(!!row);
+        setSpawnedAt(row?.spawned_at);
+      })
       .catch(() => {});
     void invoke<number>("persona_mtime", { name })
       .then((m) => { if (live) setPersonaMtime(m); })
@@ -407,14 +419,26 @@ function RestartRow({ name, owner }: { name: string; owner?: string }) {
     return () => { live = false; };
   }, [name, busy]);
 
+  // The waking window: re-draw as it ages (the stall message is time-
+  // based), stop the moment the agent announces or something clears it
+  // (the death toast does, so the row never claims a corpse is waking).
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (online) clearWaking(name);
+    const unsub = subscribeWaking(() => tick((n) => n + 1));
+    const timer = wakingSince(name) !== undefined ? setInterval(() => tick((n) => n + 1), 1000) : undefined;
+    return () => { unsub(); if (timer) clearInterval(timer); };
+  }, [name, online, busy]);
+
   const bounce = async (wasAlive: boolean) => {
     setBusy(true);
     setError(undefined);
+    setDeferred(false);
     try {
       if (wasAlive) await invoke("kill_agent", { persona: name, bin: null }).catch(() => {});
       const rows = await invoke<{ persona: string; channels: string[]; repo?: string; line?: string }[]>("spawned_agents").catch(() => []);
       const row = rows.find((r) => r.persona === name);
-      await invoke("spawn_agent", {
+      const pid = await invoke<number>("spawn_agent", {
         persona: name,
         channels: row?.channels ?? [],
         owner,
@@ -422,6 +446,8 @@ function RestartRow({ name, owner }: { name: string; owner?: string }) {
         repo: row?.repo ?? null,
         baseBranch: row?.line ?? null,
       });
+      if (pid === 0) setDeferred(true);
+      else markWaking(name);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -432,13 +458,21 @@ function RestartRow({ name, owner }: { name: string; owner?: string }) {
   if (alive === undefined) return <span>checking…</span>;
   if (busy) return <span>{alive ? "restarting…" : "starting…"}</span>;
   const verb = alive ? "restart" : "start";
+  const wake = wakeLabel(name);
   const stale = alive && spawnedAt !== undefined && personaMtime !== undefined && personaMtime > spawnedAt;
   const since = alive && spawnedAt
     ? ` since ${new Date(spawnedAt * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
     : "";
   return (
     <span title="the process on this machine — the relay dot on the face is a separate truth">
-      <span>{alive ? `running${since}` : "asleep"}</span>
+      <span>
+        {alive
+          ? wake && !online
+            ? wake.text
+            : `running${since}`
+          : everStarted ? "asleep" : "not started yet"}
+      </span>
+      {deferred ? <span> — a sentinel owns spawning on this machine; it will pick this up</span> : null}
       {owner ? (
         <>
           {" "}
