@@ -11,6 +11,18 @@ export interface Subnet {
   github?: string;
 }
 
+// Absent = local (v1 shape, still valid). podId is optional because
+// `fez-mine start --machine lium` records the intent before the runner
+// has provisioned anything — the runner fills podId (and the port/rate
+// fields) in once `lium up` returns.
+export interface MinerMachineState {
+  kind: "lium";
+  podId?: string;
+  externalIp?: string;
+  externalPort?: number;
+  hourlyRate?: string;
+}
+
 export interface MinerEntry {
   netuid: number;
   persona: string;
@@ -20,6 +32,7 @@ export interface MinerEntry {
   pid?: number;
   startedAt?: number;
   lastExit?: string;
+  machine?: MinerMachineState;
 }
 export interface MiningState { miners: MinerEntry[]; subnets: Subnet[]; covered: number[] }
 

@@ -1,15 +1,89 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import type { MinerMachine } from "@fezchat/extension-api";
 import { loadDescriptors } from "./descriptors.js";
+import { liumMachine, podAlive, provisionPod } from "./machine-lium.js";
 import { localMachine } from "./machine-local.js";
+import type { MinerEntry, MinerMachineState } from "./state.js";
 import { fezHome, readState, upsertMiner, writeState } from "./state.js";
+
+// Same PATH-resolved-bin convention as cli.ts's WALLET_BIN.
+const WALLET_BIN = process.env.FEZ_WALLET_BIN || "fez-wallet";
+
+/**
+ * Deploy the persona's standalone remote-signing key onto a freshly
+ * provisioned pod — called ONLY right after `provisionPod`, never on a
+ * reattach (the key is already there from the first deploy). The keyfile
+ * touches disk just long enough to be copied: written 0600, deleted in
+ * `finally`, never logged.
+ */
+async function deployHotkey(persona: string, machine: MinerMachine): Promise<void> {
+  const exported = JSON.parse(
+    execFileSync(WALLET_BIN, ["export-hotkey", persona, "--json"], { encoding: "utf8" })
+  ) as { keyfile: unknown };
+  const tmpFile = path.join(os.tmpdir(), `fez-hotkey-${crypto.randomUUID()}.json`);
+  try {
+    await fs.writeFile(tmpFile, JSON.stringify(exported.keyfile), { mode: 0o600 });
+    await machine.exec("mkdir -p ~/.bittensor/wallets/default/hotkeys");
+    await machine.copy(tmpFile, `~/.bittensor/wallets/default/hotkeys/${persona}`);
+  } finally {
+    await fs.rm(tmpFile, { force: true });
+  }
+}
+
+/**
+ * Where this miner's commands run. `opts.machineFactory` short-circuits
+ * everything below it for tests — no real pod, no `lium` binary touched.
+ * Otherwise: an entry with no `machine` (or `kind !== "lium"`) is the v1
+ * local path, byte-identical to before this task. A `lium` entry reattaches
+ * to its recorded pod if `podAlive`, else provisions a fresh one and
+ * deploys the hotkey onto it (only on that fresh-provision branch).
+ */
+async function resolveMachine(
+  entry: MinerEntry | undefined,
+  persona: string,
+  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine> }
+): Promise<{ machine: MinerMachine; machineState?: MinerMachineState }> {
+  if (opts.machineFactory) {
+    if (!entry) throw new Error("machineFactory requires a recorded miner entry");
+    return { machine: await opts.machineFactory(entry) };
+  }
+  if (entry?.machine?.kind === "lium") {
+    if (entry.machine.podId && (await podAlive(entry.machine.podId))) {
+      // ponytail: internalPort isn't persisted in state, so a reattach
+      // approximates it with externalPort. Good enough until a later task
+      // re-describes the pod on reattach instead.
+      const ports = entry.machine.externalPort !== undefined
+        ? [{ externalIp: entry.machine.externalIp ?? "", externalPort: entry.machine.externalPort, internalPort: entry.machine.externalPort }]
+        : [];
+      return { machine: liumMachine({ podId: entry.machine.podId, hourlyRate: entry.machine.hourlyRate, ports }) };
+    }
+    const handle = await provisionPod({});
+    const machine = liumMachine(handle);
+    await deployHotkey(persona, machine);
+    return {
+      machine,
+      machineState: {
+        kind: "lium",
+        podId: handle.podId,
+        hourlyRate: handle.hourlyRate,
+        externalIp: handle.ports[0]?.externalIp,
+        externalPort: handle.ports[0]?.externalPort,
+      },
+    };
+  }
+  return { machine: localMachine() };
+}
 
 export async function runMiner(
   netuid: number,
   persona: string,
   home = fezHome(),
-  opts: { hotkey?: string } = {}
+  opts: { hotkey?: string; machineFactory?: (entry: MinerEntry) => Promise<MinerMachine> } = {}
 ): Promise<number> {
   const d = (await loadDescriptors(home)).find((m) => m.netuid === netuid);
   if (!d) throw new Error(`no miner descriptor for netuid ${netuid} — is the subnet's extension installed?`);
@@ -27,15 +101,16 @@ export async function runMiner(
     fs.appendFile(logFile, stamped).catch(() => {});
     process.stdout.write(stamped);
   };
-  const ctx = { workDir, persona, hotkey, netuid, env: { ...process.env } as Record<string, string>, machine: localMachine(), log };
+  const { machine, machineState } = await resolveMachine(known, persona, opts);
+  const ctx = { workDir, persona, hotkey, netuid, env: { ...process.env } as Record<string, string>, machine, log };
 
-  const record = async (patch: Partial<import("./state.js").MinerEntry>) => {
+  const record = async (patch: Partial<MinerEntry>) => {
     const s = await readState(home);
     const cur = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
     await writeState(home, upsertMiner(s, { netuid, persona, hotkey, desired: "running", ...cur, ...patch }));
   };
 
-  await record({ pid: process.pid, startedAt: Date.now() });
+  await record({ pid: process.pid, startedAt: Date.now(), ...(machineState ? { machine: machineState } : {}) });
   let code = 0;
   try {
     if (d.install) await d.install(ctx);

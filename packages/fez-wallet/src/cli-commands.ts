@@ -231,6 +231,12 @@ export async function registerPersona(
   netuid = DEFAULT_NETUID,
   opts?: { hotkeyAddress?: string }
 ): Promise<RegisterResult> {
+  // The override path below skips requirePersonaPair entirely (there's no
+  // local pair to derive from), which is where persona-name validation
+  // normally happens — so it must happen here instead, before any chain
+  // or keychain access, or a garbage persona (path traversal, the
+  // reserved root name) would sail straight through to the state mirror.
+  if (opts?.hotkeyAddress) requireUsablePersonaName(persona);
   const hotkey = opts?.hotkeyAddress ?? requirePersonaPair(persona).address;
   const mnemonic = requireRoot();
   const config = loadConfig();
@@ -299,10 +305,15 @@ export function keyfileFor(mnemonic: string): {
   return { accountId: publicKey, publicKey, secretPhrase: mnemonic, ss58Address: pair.address };
 }
 
-export async function cmdRegister(io: CliIo, persona: string, netuid = DEFAULT_NETUID): Promise<void> {
+export async function cmdRegister(
+  io: CliIo,
+  persona: string,
+  netuid = DEFAULT_NETUID,
+  opts?: { hotkeyAddress?: string }
+): Promise<void> {
   const api = await subtensorFor(loadConfig().endpoints.tao).catch(() => undefined);
   if (api) io.print(`registration on netuid ${netuid} burns ${formatRao(await burnCost(api, netuid))} tTAO from the treasury`);
-  const r = await registerPersona(persona, netuid);
+  const r = await registerPersona(persona, netuid, opts);
   if (r.adopted) io.print(`${persona} was already registered — adopted uid ${r.uid} on netuid ${r.netuid}`);
   else io.print(`registered ${persona}: uid ${r.uid} on netuid ${r.netuid} (burned ${r.burned} tTAO, tx ${r.txHash})`);
 }

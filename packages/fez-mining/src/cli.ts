@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import type { MinerEntry } from "./state.js";
 import { fezHome, readState, writeState, upsertMiner } from "./state.js";
 import { loadDescriptors } from "./descriptors.js";
+import { teardownPod } from "./machine-lium.js";
 import { alive, kill, spawnDetached } from "./procs.js";
 
 // Both bins resolve via ~/.fez/bin on PATH once installed; these overrides
@@ -49,7 +50,7 @@ function cmdCost(netuid: number): void {
   process.stdout.write(execFileSync(WALLET_BIN, ["cost", "--netuid", String(netuid), "--json"], { encoding: "utf8" }));
 }
 
-async function cmdStart(netuid: number, persona: string, json: boolean): Promise<void> {
+async function cmdStart(netuid: number, persona: string, json: boolean, machine?: "lium"): Promise<void> {
   const home = fezHome();
   // Idempotent adopt — this call IS the burn on a real registration; the
   // GUI confirms with the human before ever invoking `fez-mine start`.
@@ -64,11 +65,24 @@ async function cmdStart(netuid: number, persona: string, json: boolean): Promise
   } catch {
     /* cost-fetch failure never blocks start */
   }
-  const r = JSON.parse(
-    execFileSync(WALLET_BIN, ["register", persona, "--netuid", String(netuid), "--json"], { encoding: "utf8" })
-  ) as RegisterResult;
+  // For a lium miner, the signing key lives on the pod, not this
+  // keychain — export the standalone remote hotkey first and register
+  // ITS address (the Task 5 override), not a locally-derived pair's.
+  const registerArgs = ["register", persona, "--netuid", String(netuid), "--json"];
+  if (machine === "lium") {
+    const exported = JSON.parse(
+      execFileSync(WALLET_BIN, ["export-hotkey", persona, "--json"], { encoding: "utf8" })
+    ) as { ss58Address: string };
+    registerArgs.push("--hotkey", exported.ss58Address);
+  }
+  const r = JSON.parse(execFileSync(WALLET_BIN, registerArgs, { encoding: "utf8" })) as RegisterResult;
   let s = await readState(home);
-  s = upsertMiner(s, { netuid, persona, hotkey: r.hotkey, uid: r.uid, desired: "running" });
+  // No podId yet — the runner provisions the pod on first spawn and
+  // records it back onto this entry.
+  s = upsertMiner(s, {
+    netuid, persona, hotkey: r.hotkey, uid: r.uid, desired: "running",
+    ...(machine === "lium" ? { machine: { kind: "lium" as const } } : {}),
+  });
   await writeState(home, s);
   const pid = spawnDetached(MINE_RUN_BIN, [String(netuid), persona]);
   s = await readState(home);
@@ -83,7 +97,20 @@ async function cmdStop(netuid: number, persona: string, json: boolean): Promise<
   const s = await readState(home);
   const m = s.miners.find((e) => e.netuid === netuid && e.persona === persona);
   if (m?.pid && alive(m.pid)) kill(m.pid);
-  if (m) await writeState(home, upsertMiner(s, { ...m, desired: "stopped", pid: undefined }));
+  if (m) {
+    let machine = m.machine;
+    if (machine?.kind === "lium" && machine.podId) {
+      try {
+        await teardownPod(machine.podId);
+      } catch (e) {
+        // Best-effort — a pod that's already gone (or a `lium` hiccup)
+        // must not block `stop` from recording the desired state.
+        console.error(`fez-mine: teardown of pod ${machine.podId} failed: ${(e as Error).message}`);
+      }
+      machine = { ...machine, podId: undefined };
+    }
+    await writeState(home, upsertMiner(s, { ...m, desired: "stopped", pid: undefined, machine }));
+  }
   if (json) console.log(JSON.stringify({ netuid, persona, stopped: true }));
   else console.log(`stopped ${persona} on netuid ${netuid}`);
 }
@@ -96,7 +123,7 @@ async function cmdStatus(json: boolean): Promise<void> {
 
 function usage(): never {
   console.error(
-    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P | stop --netuid N --persona P | status [--json]"
+    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json]"
   );
   process.exit(2);
 }
@@ -109,6 +136,9 @@ async function main(): Promise<void> {
   const netuidValue = netuidFlag >= 0 ? Number(argv[netuidFlag + 1]) : undefined;
   const personaFlag = argv.indexOf("--persona");
   const personaValue = personaFlag >= 0 ? argv[personaFlag + 1] : undefined;
+  const machineFlag = argv.indexOf("--machine");
+  const machineValue = machineFlag >= 0 ? argv[machineFlag + 1] : undefined;
+  if (machineValue !== undefined && machineValue !== "lium") usage();
   const [cmd] = argv.filter(
     (a, i) =>
       a !== "--json" &&
@@ -116,7 +146,9 @@ async function main(): Promise<void> {
       a !== "--netuid" &&
       !(netuidFlag >= 0 && i === netuidFlag + 1) &&
       a !== "--persona" &&
-      !(personaFlag >= 0 && i === personaFlag + 1)
+      !(personaFlag >= 0 && i === personaFlag + 1) &&
+      a !== "--machine" &&
+      !(machineFlag >= 0 && i === machineFlag + 1)
   );
 
   switch (cmd) {
@@ -129,7 +161,7 @@ async function main(): Promise<void> {
       break;
     case "start":
       if (netuidValue === undefined || !personaValue) usage();
-      await cmdStart(netuidValue, personaValue, json);
+      await cmdStart(netuidValue, personaValue, json, machineValue as "lium" | undefined);
       break;
     case "stop":
       if (netuidValue === undefined || !personaValue) usage();
