@@ -70,19 +70,21 @@ async function deployHotkey(persona: string, machine: MinerMachine, log: (line: 
     execFileSync(walletBin(), ["export-hotkey", persona, "--json"], { encoding: "utf8" })
   ) as { keyfile: unknown };
   const tmpFile = path.join(os.tmpdir(), `fez-hotkey-${crypto.randomUUID()}.json`);
+  // lium scp does not expand ~ — pinned live 2026-09-08
+  const hotkeyDir = "/root/.bittensor/wallets/default/hotkeys";
   try {
     await fs.writeFile(tmpFile, JSON.stringify(exported.keyfile), { mode: 0o600 });
     await retryFirstContact(
       "deployHotkey: mkdir",
       async () => {
-        const r = await machine.exec("mkdir -p ~/.bittensor/wallets/default/hotkeys");
+        const r = await machine.exec(`mkdir -p ${hotkeyDir}`);
         if (r.code !== 0) throw new Error(r.stderr || `mkdir exited ${r.code}`);
       },
       log
     );
     await retryFirstContact(
       "deployHotkey: scp",
-      () => machine.copy(tmpFile, `~/.bittensor/wallets/default/hotkeys/${persona}`),
+      () => machine.copy(tmpFile, `${hotkeyDir}/${persona}`),
       log
     );
   } finally {
