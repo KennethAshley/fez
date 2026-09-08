@@ -8,7 +8,7 @@ import type { BrowserWire } from "./wire";
 import { latestPendingFor, latestSentFor, updateRecord, tauriStore } from "./orchestration";
 import { relaySet } from "./relay";
 import { BAZAAR_RELAY } from "./bazaar-record";
-import { fetchSaltPanel, tierLabel, tierTitle, type SaltPanel } from "./salt-record";
+import { fetchSaltPanel, invalidateSaltPanel, tierLabel, tierTitle, type SaltPanel } from "./salt-record";
 
 const MD_PLUGINS = [remarkGfm, remarkBreaks];
 
@@ -300,6 +300,46 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   // The once-per-guest gate: real salt, no ack, and a tier where nobody
   // the viewer can verify has vouched. "error" is excluded on purpose.
   const summonGate = !!(salt && salt !== "error" && !saltAck && (salt.tier === "nameless" || salt.tier === "spoken-of"));
+  // YOUR standing vouch, specifically — ring0 also holds your agents'
+  // evidence, and "revoke" may only withdraw what your key signed.
+  const myVouch = !!(salt && salt !== "error" && salt.ring0.some((e) => e.kind === "vouch" && e.signer === selfPk));
+  const [vouching, setVouching] = useState(false);
+  /**
+   * The write half of salt, finally somewhere a human can reach it: the
+   * guest thread is the only surface fez has for a stranger, and
+   * strangers are the only agents whose vouches count (deriveSalt's
+   * household filter discards an owner's evidence for their own).
+   * Sign once with the USER's key, publish to the workspace relay AND
+   * the guest's venue — evidence accumulates where the agent works.
+   * Revoke is the addressable convention: same d-tag, empty content.
+   */
+  const vouch = async (revoke: boolean) => {
+    if (vouching) return;
+    setVouching(true);
+    setError(undefined);
+    try {
+      const ev = await wire.publish({
+        kind: 47008,
+        tags: [["d", guest.pk], ["p", guest.pk]],
+        content: revoke ? "" : "vouched after working together in a guest thread",
+      });
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(["EVENT", ev]));
+      invalidateSaltPanel(guest.pk);
+      const p = await fetchSaltPanel({
+        pk: guest.pk,
+        viewer: selfPk,
+        relays: [...relaySet(), BAZAAR_RELAY],
+        isViewerAgent: (k) => k === selfPk,
+        inViewerCircle: () => false,
+      });
+      setSalt(p);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVouching(false);
+    }
+  };
   const [starting, setStarting] = useState(false);
   const [hireAmt, setHireAmt] = useState("");
   const [hirePersona, setHirePersona] = useState("");
@@ -712,6 +752,25 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             >
               {tierLabel(salt.tier)}
             </span>
+          ) : null}
+          {/* The write half of the chip beside it: vouch where the
+              judgment forms. Hidden while salt is unknown — you can't
+              meaningfully vouch (or revoke) against evidence you can't
+              read. */}
+          {salt && salt !== "error" ? (
+            <button
+              className="guest-chip"
+              style={{ background: "transparent", cursor: "pointer" }}
+              disabled={vouching}
+              data-tip={
+                myVouch
+                  ? "withdraw your vouch — republishes your signed note as empty; the tier re-derives without it"
+                  : `publish a signed vouch for ${name} — you become part of its public reputation, and anyone who trusts your key sees it as vouched`
+              }
+              onClick={() => void vouch(myVouch)}
+            >
+              {vouching ? "…" : myVouch ? "revoke vouch" : "vouch"}
+            </button>
           ) : null}
         </div>
       </header>

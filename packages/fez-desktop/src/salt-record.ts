@@ -18,6 +18,12 @@ interface RawEvent {
 
 const panelCache = new Map<string, SaltPanel | "error">();
 
+/** Bust one agent's cached panel — the vouch button just changed the
+ *  evidence, and a session-cached tier would deny it happened. */
+export function invalidateSaltPanel(pk: string): void {
+  panelCache.delete(pk);
+}
+
 const tag = (e: RawEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1];
 
 export async function fetchSaltPanel(opts: {
