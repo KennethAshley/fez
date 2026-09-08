@@ -18,6 +18,23 @@ describe("resolveConfig", () => {
     expect(out.providerKey).toBeUndefined();
     expect(out.provider).toBe("chutes");
   });
+  it("coerces a stored string to the field's declared type", () => {
+    const boolSchema: ConfigField[] = [{ key: "refreshNodes", label: "Refresh nodes", type: "boolean", default: true }];
+    // argv strings land in stored config as-is (cmdConfigSet never types
+    // them) — "false" must resolve to the boolean false, not stay a
+    // truthy string.
+    const out = resolveConfig(boolSchema, { refreshNodes: "false" }, () => undefined);
+    expect(out.refreshNodes).toBe(false);
+
+    const numSchema: ConfigField[] = [{ key: "dailyCap", label: "Daily cap", type: "number", default: 8 }];
+    const numOut = resolveConfig(numSchema, { dailyCap: "12" }, () => undefined);
+    expect(numOut.dailyCap).toBe(12);
+  });
+  it("falls back to default when a stored number can't coerce", () => {
+    const numSchema: ConfigField[] = [{ key: "dailyCap", label: "Daily cap", type: "number", default: 8 }];
+    const out = resolveConfig(numSchema, { dailyCap: "not-a-number" }, () => undefined);
+    expect(out.dailyCap).toBe(8);
+  });
 });
 describe("validateConfig", () => {
   it("names the first missing required field", () => {
