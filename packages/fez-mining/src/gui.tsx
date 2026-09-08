@@ -5,6 +5,7 @@ import { subnetRows, machineChoices, initialFormValues, HARDWARE_GATED, type Mac
 import { validateConfig } from "./config.js";
 import { MINING_SOURCE, MINING_CHANNEL_NAME, minerRootLine, parseMinerRoot } from "./thread.js";
 import { ensureMiningSkill, removeMiningSkill } from "./persona-skill.js";
+import { SUBNET_LOGOS } from "./subnet-logos.js";
 
 /**
  * fez-mining, GUI part — the "Mining" nav view: active miners up top (each
@@ -194,16 +195,13 @@ export default function activate(api: GuiExtensionApi): void {
     background: "var(--bg1, transparent)",
   };
   const mono = { fontFamily: "var(--font-mono, monospace)" };
-  // A subnet's badge: a gruvbox-tinted monogram — a colored disc keyed to the
-  // netuid with the name's first letter, so each subnet reads as a distinct
-  // mark. (Real per-subnet logos aren't cleanly available: taostats holds
-  // them behind an authenticated API keyed to each team's own GitHub/S3
-  // asset, with no public netuid→URL pattern. A bundled logo map is the way
-  // in if we ever want the real marks — until then this stays self-contained
-  // and needs no network.) `logoUrls` lets a curated map light up specific
-  // subnets over the monogram without a broad remote dependency.
+  // A subnet's badge: the team's real logo (bundled netuid→URL map pointing
+  // at each team's own public asset — see subnet-logos.ts) painted over a
+  // gruvbox-tinted monogram. The monogram is the base layer, so the 39
+  // subnets with no logo — or any URL that has since died — degrade to a
+  // colored initial rather than a broken image.
   const AVATAR_HUES = ["#83a598", "#b8bb26", "#fabd2f", "#fe8019", "#d3869b", "#8ec07c"];
-  const logoUrls: Record<number, string> = {};
+  const logoUrls: Record<number, string> = SUBNET_LOGOS;
   const subnetAvatar = (netuid: number, name: string): JSX.Element => {
     const hue = AVATAR_HUES[netuid % AVATAR_HUES.length];
     const letter = (name.trim()[0] ?? "?").toUpperCase();
