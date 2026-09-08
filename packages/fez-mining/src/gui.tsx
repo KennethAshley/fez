@@ -194,17 +194,20 @@ export default function activate(api: GuiExtensionApi): void {
     background: "var(--bg1, transparent)",
   };
   const mono = { fontFamily: "var(--font-mono, monospace)" };
-  // A subnet's badge: the real logo (taostats, keyed by netuid) painted over
-  // a gruvbox-tinted monogram. The monogram is the base layer, so a subnet
-  // with no logo — or if the remote path ever changes or is blocked —
-  // degrades silently to a colored disc with the name's initial rather than
-  // a broken image. Lazy-loaded so an off-screen list doesn't fetch 100 at
-  // once. The URL is one line to swap if a more official source appears.
+  // A subnet's badge: a gruvbox-tinted monogram — a colored disc keyed to the
+  // netuid with the name's first letter, so each subnet reads as a distinct
+  // mark. (Real per-subnet logos aren't cleanly available: taostats holds
+  // them behind an authenticated API keyed to each team's own GitHub/S3
+  // asset, with no public netuid→URL pattern. A bundled logo map is the way
+  // in if we ever want the real marks — until then this stays self-contained
+  // and needs no network.) `logoUrls` lets a curated map light up specific
+  // subnets over the monogram without a broad remote dependency.
   const AVATAR_HUES = ["#83a598", "#b8bb26", "#fabd2f", "#fe8019", "#d3869b", "#8ec07c"];
-  const subnetLogoUrl = (netuid: number) => `https://taostats.io/images/subnets/${netuid}.webp?w=56&q=90`;
+  const logoUrls: Record<number, string> = {};
   const subnetAvatar = (netuid: number, name: string): JSX.Element => {
     const hue = AVATAR_HUES[netuid % AVATAR_HUES.length];
     const letter = (name.trim()[0] ?? "?").toUpperCase();
+    const logo = logoUrls[netuid];
     return (
       <span
         style={{
@@ -225,22 +228,17 @@ export default function activate(api: GuiExtensionApi): void {
         }}
       >
         {letter}
-        <img
-          src={subnetLogoUrl(netuid)}
-          alt=""
-          loading="lazy"
-          onError={(e: { currentTarget: { style: { display: string } } }) => {
-            e.currentTarget.style.display = "none";
-          }}
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            background: "var(--bg1, #282828)",
-          }}
-        />
+        {logo ? (
+          <img
+            src={logo}
+            alt=""
+            loading="lazy"
+            onError={(e: { currentTarget: { style: { display: string } } }) => {
+              e.currentTarget.style.display = "none";
+            }}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", background: "var(--bg1, #282828)" }}
+          />
+        ) : null}
       </span>
     );
   };
