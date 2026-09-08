@@ -70,9 +70,15 @@ export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMac
   };
 }
 
-/** A `lium ls` row's id, in the same key preference `matchesNode` checks against — huid first (what a human/agent would target it by). */
+/**
+ * A `lium ls` row's id, in the same key set `matchesNode` checks against —
+ * but id (UUID) first: live `up <huid>` failed ("Node 'noble-raven-af' not
+ * found") while `up <uuid>` (the row's `id` field) deployed and tore down
+ * cleanly — huid apparently doesn't resolve for `up` in this CLI version,
+ * pinned 2026-09-08.
+ */
 function nodeIdOf(row: Record<string, unknown>): string | null {
-  for (const k of ["huid", "id", "index"]) {
+  for (const k of ["id", "huid", "index"]) {
     const v = row[k];
     if (v !== undefined && v !== null && String(v) !== "") return String(v);
   }

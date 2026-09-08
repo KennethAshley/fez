@@ -83,7 +83,9 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
             : { ok: true, out: JSON.stringify({ host_ip: "5.5.5.5", ports: [{ external: 40001, internal: 8091 }] }) }, // provisionPod's own describe
         // `up` with no NODE_ID/filters refuses live — provisionPod picks
         // the node itself from `ls` first.
-        ls: () => ({ ok: true, out: JSON.stringify([{ huid: "fresh-node-1", price_per_hour: "0.5" }]) }),
+        // Pinned live 2026-09-08: `up <huid>` fails ("Node ... not found"),
+        // `up <uuid>` (the row's `id`) deploys — provisionPod prefers id.
+        ls: () => ({ ok: true, out: JSON.stringify([{ huid: "fresh-node-1", id: "b8b06429-0000-0000-0000-000000000009", price_per_hour: "0.5" }]) }),
         up: () => ({ ok: true, out: JSON.stringify({ pod: "p10", price_per_hour: "0.5" }) }),
         rm: () => ({ ok: true, out: "{}" }),
         exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }),
@@ -98,7 +100,9 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       expect(calls.some((c) => c[0] === "scp")).toBe(true); // the hotkey got deployed onto the fresh pod
       // I1-I3: the production call site's ports/ttl, not provisionPod's bare defaults.
       const upCall = calls.find((c) => c[0] === "up")!;
-      expect(upCall).toEqual(["up", "fresh-node-1", "--yes", "--no-ssh", "--ttl", "24h", "--ports", "2"]);
+      expect(upCall).toEqual([
+        "up", "b8b06429-0000-0000-0000-000000000009", "--yes", "--no-ssh", "--ttl", "24h", "--ports", "2",
+      ]);
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;
@@ -122,7 +126,9 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
           call === 1
             ? { ok: false, err: "pod half-dead" }
             : { ok: true, out: JSON.stringify({ host_ip: "5.5.5.5", ports: [{ external: 40001, internal: 8091 }] }) },
-        ls: () => ({ ok: true, out: JSON.stringify([{ huid: "fresh-node-1", price_per_hour: "0.5" }]) }),
+        // Pinned live 2026-09-08: `up <huid>` fails ("Node ... not found"),
+        // `up <uuid>` (the row's `id`) deploys — provisionPod prefers id.
+        ls: () => ({ ok: true, out: JSON.stringify([{ huid: "fresh-node-1", id: "b8b06429-0000-0000-0000-000000000009", price_per_hour: "0.5" }]) }),
         up: () => ({ ok: true, out: JSON.stringify({ pod: "p10", price_per_hour: "0.5" }) }),
         rm: () => ({ ok: true, out: "{}" }),
         exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }),

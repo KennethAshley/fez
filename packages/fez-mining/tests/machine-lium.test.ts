@@ -62,11 +62,11 @@ describe("liumMachine", () => {
   // refuses outright ("Must provide either NODE_ID or filters"), so
   // provisionPod picks the node itself — `ls --format json`, cheapest row
   // at/under the ceiling, then `up <node>` positionally.
-  it("provisionPod picks the cheapest ls node under the ceiling, then up <node>, then describe", async () => {
+  it("provisionPod picks the cheapest ls node under the ceiling, then up <uuid> (not huid), then describe", async () => {
     const { exec, calls } = script({
       ls: JSON.stringify([
-        { huid: "eager-wolf-aa", price_per_hour: "0.42" },
-        { huid: "pricier-node-zz", price_per_hour: "9.99" },
+        { huid: "eager-wolf-aa", id: "b8b06429-0000-0000-0000-000000000001", price_per_hour: "0.42" },
+        { huid: "pricier-node-zz", id: "b8b06429-0000-0000-0000-000000000002", price_per_hour: "9.99" },
       ]),
       up: JSON.stringify({ pod: "p9", price_per_hour: "0.42" }),
       describe: JSON.stringify({ host_ip: "1.2.3.4", ports: [{ external: 20001, internal: 22 }, { external: 20002, internal: 8091 }] }),
@@ -77,9 +77,11 @@ describe("liumMachine", () => {
     expect(h.hourlyRate).toBe("0.42");
     expect(h.ports).toContainEqual({ externalIp: "1.2.3.4", externalPort: 20002, internalPort: 8091 });
     expect(calls[0]).toEqual(["ls", "--format", "json"]);
-    // --yes/--no-ssh avoid a confirmation prompt and an interactive SSH
-    // session hanging the process (mirrors fez-lium's lium_up handler).
-    expect(calls[1]).toEqual(["up", "eager-wolf-aa", "--yes", "--no-ssh", "--ttl", "12h", "--ports", "2"]);
+    // Pinned live 2026-09-08: `up <huid>` fails ("Node ... not found"),
+    // `up <uuid>` (the row's `id`) deploys — nodeIdOf prefers id over huid.
+    expect(calls[1]).toEqual([
+      "up", "b8b06429-0000-0000-0000-000000000001", "--yes", "--no-ssh", "--ttl", "12h", "--ports", "2",
+    ]);
     expect(calls[2][0]).toBe("describe");
     expect(calls[2]).toContain("--json");
   });
