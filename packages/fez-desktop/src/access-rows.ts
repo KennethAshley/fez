@@ -11,8 +11,12 @@
  * Rules, in order:
  * - workspace names first, then guests (deduped — a guest who later
  *   publishes a profile shows once, as the workspace name)
- * - a pubkey already ON the allowlist always gets a row, even if nothing
- *   can name it — a ticked box that isn't rendered can never be unticked
+ * - this machine's own agents are dropped: owner mode already admits
+ *   them, so their row is a checkbox that does nothing (Ken ticked
+ *   quill believing it granted something)
+ * - a pubkey already ON the allowlist always gets a row — even an own
+ *   agent, even unnameable — a ticked box that isn't rendered can never
+ *   be unticked
  */
 export interface AccessRow {
   pk: string;
@@ -24,13 +28,17 @@ export interface AccessRow {
 export function accessRows(
   known: ReadonlyArray<[string, string]>,
   guests: ReadonlyArray<{ pk: string; name?: string }>,
-  allowlisted: ReadonlyArray<string>
+  allowlisted: ReadonlyArray<string>,
+  /** Pubkeys of this machine's own agents — hidden unless already ticked. */
+  ownAgents: ReadonlySet<string> = new Set()
 ): AccessRow[] {
   const rows: AccessRow[] = [];
   const seen = new Set<string>();
+  const ticked = new Set(allowlisted);
   for (const [pk, name] of known) {
     if (seen.has(pk)) continue;
     seen.add(pk);
+    if (ownAgents.has(pk) && !ticked.has(pk)) continue;
     rows.push({ pk, name });
   }
   for (const g of guests) {

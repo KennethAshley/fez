@@ -27,4 +27,14 @@ describe("allowlist picker rows", () => {
   test("a nameless guest falls back to short hex", () => {
     expect(accessRows([], [{ pk: PK_B }], [])[0].name).toBe(`${PK_B.slice(0, 8)}…`);
   });
+
+  test("this machine's own agents are hidden — their checkbox does nothing", () => {
+    const rows = accessRows([[PK_A, "quill"], [PK_B, "lebron"]], [], [], new Set([PK_A]));
+    expect(rows).toEqual([{ pk: PK_B, name: "lebron" }]);
+  });
+
+  test("an own agent that is already ticked stays visible so it can be unticked", () => {
+    const rows = accessRows([[PK_A, "quill"]], [], [PK_A], new Set([PK_A]));
+    expect(rows).toEqual([{ pk: PK_A, name: "quill" }]);
+  });
 });

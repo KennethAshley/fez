@@ -403,7 +403,21 @@ function AccessPicker({
 }) {
   const mode = value.startsWith("allowlist:") ? "allowlist" : value === "anyone" ? "anyone" : "owner";
   const pks = mode === "allowlist" ? value.slice("allowlist:".length).split(",").map((s) => s.trim()).filter(Boolean) : [];
-  const rows = accessRows(client ? [...client.knownNames().entries()] : [], listGuests(), pks);
+  // This machine's own agents are hidden from the list — owner mode
+  // already admits them, so their checkbox would grant nothing.
+  const [ownAgents, setOwnAgents] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    let live = true;
+    void invoke<string[]>("list_personas")
+      .then((names) => {
+        if (!live || !client) return;
+        const mine = new Set(names.map((n) => n.toLowerCase()));
+        setOwnAgents(new Set([...client.agents().entries()].filter(([, n]) => mine.has(n.toLowerCase())).map(([pk]) => pk)));
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [client]);
+  const rows = accessRows(client ? [...client.knownNames().entries()] : [], listGuests(), pks, ownAgents);
 
   const setMode = (next: string) => {
     if (next === "allowlist") onChange(pks.length ? `allowlist:${pks.join(",")}` : "allowlist:");
