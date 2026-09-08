@@ -1,5 +1,5 @@
 import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored, deriveAgentEvm } from "./derive.js";
-import { readEntry, writeEntry, readRootEntry, writeRootEntry } from "./store.js";
+import { readEntry, writeEntry, readRootEntry, writeRootEntry, readRemoteHotkeyEntry, writeRemoteHotkeyEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, x402Settings, type Network } from "./config.js";
 import { NETWORKS } from "./networks.js";
@@ -218,26 +218,85 @@ export interface RegisterResult {
   adopted?: boolean;
 }
 
-export async function registerPersona(persona: string, netuid = DEFAULT_NETUID): Promise<RegisterResult> {
-  const pair = requirePersonaPair(persona);
+/**
+ * `opts.hotkeyAddress`, when given, registers THAT address instead of the
+ * derived pair's — the standalone-remote-hotkey path (see
+ * exportRemoteHotkey below): the signing key lives on a rented machine,
+ * never in this keychain, so there is no local persona pair to derive an
+ * address from. The treasury still signs the burn either way (requireRoot
+ * always runs) — only the address being registered/adopted changes.
+ */
+export async function registerPersona(
+  persona: string,
+  netuid = DEFAULT_NETUID,
+  opts?: { hotkeyAddress?: string }
+): Promise<RegisterResult> {
+  const hotkey = opts?.hotkeyAddress ?? requirePersonaPair(persona).address;
   const mnemonic = requireRoot();
   const config = loadConfig();
   requireRehearsalNetwork(config.network);
   const api = await subtensorFor(config.endpoints.tao);
 
-  const existing = await uidFor(api, netuid, pair.address);
+  const existing = await uidFor(api, netuid, hotkey);
   if (existing !== undefined) {
     // Idempotent adopt: already registered (a re-click, or a pre-wipe uid
     // that survived) — record it and report, never a refusal.
-    await mirrorSubnet({ name: persona, entry: { netuid, uid: existing, hotkey: pair.address } });
-    return { persona, netuid, uid: existing, hotkey: pair.address, adopted: true };
+    await mirrorSubnet({ name: persona, entry: { netuid, uid: existing, hotkey } });
+    return { persona, netuid, uid: existing, hotkey, adopted: true };
   }
 
   const burn = await burnCost(api, netuid);
-  const { txHash, uid } = await register(api, treasuryPair(mnemonic), pair.address, netuid);
+  const { txHash, uid } = await register(api, treasuryPair(mnemonic), hotkey, netuid);
   if (uid === undefined) throw new Error("registration landed but the uid did not resolve — run: fez-wallet status " + persona);
-  await mirrorSubnet({ name: persona, entry: { netuid, uid, hotkey: pair.address } });
-  return { persona, netuid, uid, hotkey: pair.address, txHash, burned: formatRao(burn) };
+  await mirrorSubnet({ name: persona, entry: { netuid, uid, hotkey } });
+  return { persona, netuid, uid, hotkey, txHash, burned: formatRao(burn) };
+}
+
+/**
+ * A standalone remote-signing key: a FRESH mnemonic, unrelated to the
+ * treasury tree (no //<persona> derivation — the money tree's whole point
+ * is a hard path that can't be climbed back to the parent, which is
+ * backwards here: this key must stand alone so leaking it never exposes
+ * the treasury). Stored under its own namespaced entry
+ * (remote-hotkey/<persona>, via store.ts's sibling helpers) — the root
+ * entry is never touched by this path. Create-or-load: idempotent, so
+ * re-running `export-hotkey` after the first time re-exports the same key.
+ */
+export async function exportRemoteHotkey(
+  persona: string
+): Promise<{ persona: string; ss58Address: string; keyfile: ReturnType<typeof keyfileFor>; created: boolean }> {
+  requireUsablePersonaName(persona);
+  const existing = readRemoteHotkeyEntry(persona);
+  const mnemonic = existing ?? generateWalletMnemonic();
+  if (!existing) writeRemoteHotkeyEntry(persona, mnemonic);
+  const keyfile = keyfileFor(mnemonic);
+  return { persona, ss58Address: keyfile.ss58Address, keyfile, created: !existing };
+}
+
+/**
+ * Shapes a bittensor-loadable keyfile from a BARE mnemonic (no derivation
+ * path — this IS the key, not a branch of a tree). Field set pinned
+ * against opentensor/btwallet's src/keyfile.rs (fetched 2026-09-07,
+ * serialized_keypair_to_keyfile_data / deserialize_keypair_from_keyfile_data):
+ * the loader tries `secretPhrase` first (falls back to `secretSeed`, then
+ * `privateKey`, then a watch-only `ss58Address`-only entry), and defaults
+ * `cryptoType` to sr25519 when the field is absent — so `secretPhrase` +
+ * `ss58Address` alone is a complete, sr25519 load path; no mini-secret or
+ * explicit cryptoType needed. `accountId` and `publicKey` are both written
+ * as the same 0x-prefixed hex of the public key by the Rust serializer —
+ * kept identical here for the same reason (some readers key off one name,
+ * some the other; only `secretPhrase`'s presence actually reconstructs
+ * the signing keypair, the rest is display/matching).
+ */
+export function keyfileFor(mnemonic: string): {
+  accountId: string;
+  publicKey: string;
+  secretPhrase: string;
+  ss58Address: string;
+} {
+  const pair = treasuryPair(mnemonic); // bare pair: sr25519 from the mnemonic directly, no //path
+  const publicKey = `0x${pair.publicKeyHex}`;
+  return { accountId: publicKey, publicKey, secretPhrase: mnemonic, ss58Address: pair.address };
 }
 
 export async function cmdRegister(io: CliIo, persona: string, netuid = DEFAULT_NETUID): Promise<void> {

@@ -101,6 +101,28 @@ export function writeRootEntry(value: string): void {
   rawWrite(rootEntryName(), value);
 }
 
+/** A standalone remote-signing key's mnemonic — a SEPARATE namespace from
+ * both the general per-persona entries (readEntry/writeEntry, which stay
+ * "/"-free) and the reserved root entry. `persona` is still run through
+ * the same validity check (no "/", no leading ".", not the reserved word)
+ * before it's spliced into the compound name below — this name is built
+ * from caller input and lands in a file path on the file backend, so the
+ * traversal/dotfile guard has to hold here too, not just on the generic
+ * path. Sibling to readRootEntry/writeRootEntry, not a replacement for
+ * them: the root entry itself is untouched by this pair. */
+function remoteHotkeyEntryName(persona: string): string {
+  assertUsableEntryName(persona);
+  return `remote-hotkey/${persona}`;
+}
+
+export function readRemoteHotkeyEntry(persona: string): string | undefined {
+  return rawRead(remoteHotkeyEntryName(persona));
+}
+
+export function writeRemoteHotkeyEntry(persona: string, value: string): void {
+  rawWrite(remoteHotkeyEntryName(persona), value);
+}
+
 /** The agent's NOSTR key (service fez-keys, account agent:<persona>) — read-only here; fez core owns that service. Used to sign consent requests. */
 export function readAgentNostrKey(persona: string): string | undefined {
   if (useKeychain()) {

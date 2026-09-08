@@ -5,6 +5,7 @@ import { substrateAdapter } from "./chains/substrate.js";
 import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
   cmdRegister, cmdPersonaStatus, cmdPayout, cmdCost, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury, registrationCost,
+  exportRemoteHotkey,
 } from "./cli-commands.js";
 import { rentAgent, payAddress } from "./rent.js";
 import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
@@ -66,6 +67,13 @@ try {
       if (json) console.log(JSON.stringify(await registrationCost(netuidArg())));
       else await cmdCost(io, netuidArg());
       break;
+    case "export-hotkey": {
+      if (!rest[0]) throw new Error("usage: fez-wallet export-hotkey <persona> [--json]");
+      const r = await exportRemoteHotkey(rest[0]);
+      if (json) console.log(JSON.stringify(r));
+      else io.print(`${r.created ? "created" : "loaded"} remote hotkey for ${r.persona}: ${r.ss58Address}`);
+      break;
+    }
     case "stake":
       if (!rest[0] || !rest[1]) throw new Error("usage: fez-wallet stake <persona> <amount>");
       if (json) console.log(JSON.stringify(await stakePersona(rest[0], rest[1], netuidArg())));
@@ -159,6 +167,7 @@ try {
       io.print("  status [persona]        balances — with a persona: uid + free + staked");
       io.print("  register <persona>      register on the subnet (treasury pays the burn)");
       io.print("  cost [--netuid 553]     read-only: what registering would burn, before paying it");
+      io.print("  export-hotkey <persona> [--json]   create-or-load a standalone remote-signing key, print its address (or the loadable keyfile with --json)");
       io.print("  stake <persona> <amt>   the agent stakes to its own hotkey");
       io.print("  unstake <persona> <amt> symmetric");
       io.print("  payout <persona> [amt]  sweep earned alpha from the treasury to the agent's own name");
