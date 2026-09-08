@@ -50,5 +50,35 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "mining_start",
+  {
+    description:
+      "Start mining a Bittensor subnet as THIS agent. `machine: \"lium\"` rents a GPU pod (costs real money — the host will ask you to confirm); omit for a local miner. Requires any needed secret (e.g. the Lium key) to already be set in the mining cockpit.",
+    inputSchema: {
+      netuid: z.number().int().describe("the subnet to mine"),
+      machine: z.enum(["local", "lium"]).optional().describe("where to run it (default local)"),
+    },
+  },
+  async ({ netuid, machine }) => {
+    const out = runMine(mineArgs.start(persona, netuid, machine));
+    if (out.code !== 0) return text(`could not start netuid ${netuid}: ${out.stderr.trim() || out.stdout.trim()}`);
+    return text(`started mining netuid ${netuid}${machine === "lium" ? " on a Lium pod" : ""}. ${out.stdout.trim()}`);
+  }
+);
+
+server.registerTool(
+  "mining_stop",
+  {
+    description: "Stop THIS agent's miner on a subnet (tears down a rented pod if there is one).",
+    inputSchema: { netuid: z.number().int().describe("the subnet to stop mining") },
+  },
+  async ({ netuid }) => {
+    const out = runMine(mineArgs.stop(persona, netuid));
+    if (out.code !== 0) return text(`could not stop netuid ${netuid}: ${out.stderr.trim() || out.stdout.trim()}`);
+    return text(`stopped mining netuid ${netuid}. ${out.stdout.trim()}`);
+  }
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
