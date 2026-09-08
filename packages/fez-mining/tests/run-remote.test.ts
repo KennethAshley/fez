@@ -115,6 +115,39 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     }
   });
 
+  // Pinned live 2026-09-08: a freshly-provisioned pod's `up` can report
+  // ready before sshd actually accepts connections — an scp failed
+  // seconds after `up` returned, then an identical manual scp minutes
+  // later succeeded. deployHotkey's first-contact ops retry instead of
+  // treating one failure as fatal.
+  it("deployHotkey retries a boot-readiness scp failure and succeeds on a later attempt", async () => {
+    const freshEntry: MinerEntry = { netuid: 1, persona: "p", hotkey: "5F", desired: "running", machine: { kind: "lium" } };
+    const prevBin = process.env.FEZ_WALLET_BIN;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // collapse the 15s wait for the test
+    try {
+      const { exec, calls } = scriptedExec({
+        ls: () => ({ ok: true, out: JSON.stringify([{ huid: "n1", price_per_hour: "0.3" }]) }),
+        up: () => ({ ok: true, out: JSON.stringify({ pod: "pX", price_per_hour: "0.3" }) }),
+        describe: () => ({ ok: true, out: JSON.stringify({ host_ip: "1.1.1.1", ports: [] }) }),
+        exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }), // mkdir
+        // Fails twice (sshd not up yet), succeeds on the 3rd attempt.
+        scp: (_args, call) => (call < 3 ? { ok: false, err: "Failed to upload to: pX" } : { ok: true, out: "" }),
+      });
+      const logs: string[] = [];
+      const { provisioned } = await resolveMachine(freshEntry, "p", {}, exec, noRecord, (line) => logs.push(line));
+      expect(provisioned).toBe(true);
+      expect(calls.filter((c) => c[0] === "scp").length).toBe(3);
+      expect(logs.some((l) => l.includes("deployHotkey: scp") && l.includes("retrying"))).toBe(true);
+    } finally {
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
+      else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+    }
+  });
+
   it("a runner-side fresh provision (after a half-dead describe) bumps the provisions ledger against the daily cap", async () => {
     const home = homeWithFixture();
     let s = await readState(home);
@@ -150,6 +183,46 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;
+    }
+  });
+
+  // Live smoke: a hotkey-deploy failure right after a fresh provision left
+  // the pod orphaned — nothing in state pointed to it. Ruling: persist
+  // podId BEFORE deployHotkey, then on a failure anywhere after that,
+  // best-effort teardown + clear the entry back to "no pod yet".
+  it("a deploy failure after a fresh provision persists the pod first, then tears it down and clears it", async () => {
+    const home = homeWithFixture();
+    let s = await readState(home);
+    s = upsertMiner(s, { netuid: 9998, persona: "p", hotkey: "5FAKE", desired: "running", machine: { kind: "lium" } });
+    await writeState(home, s);
+    const prevBin = process.env.FEZ_WALLET_BIN;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // exhaust the 6 retries fast
+    try {
+      const { exec, calls } = scriptedExec({
+        ls: () => ({ ok: true, out: JSON.stringify([{ huid: "n1", price_per_hour: "0.3" }]) }),
+        up: () => ({ ok: true, out: JSON.stringify({ pod: "pX", price_per_hour: "0.3" }) }),
+        describe: () => ({ ok: true, out: JSON.stringify({ host_ip: "1.1.1.1", ports: [] }) }),
+        exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }), // mkdir ok
+        scp: () => ({ ok: false, err: "Failed to upload to: pX" }), // permanent — not the boot race, exhausts retries
+        rm: () => ({ ok: true, out: "{}" }),
+      });
+      const code = await runMiner(9998, "p", home, { hotkey: "5FAKE", exec, recorder: noRecord });
+      expect(code).toBe(1);
+      expect(calls.filter((c) => c[0] === "scp").length).toBe(6); // all retries exhausted
+      expect(calls.some((c) => c[0] === "rm" && c[1] === "pX")).toBe(true); // the orphan risk: torn down instead
+
+      const after = await readState(home);
+      const entry = after.miners.find((m) => m.netuid === 9998 && m.persona === "p")!;
+      expect(entry.machine).toEqual({ kind: "lium" }); // cleared back to "no pod yet", not left pointing at pX
+      expect(entry.lastExit).toContain("exit 1");
+      expect(entry.provisions?.length).toBe(1); // still counted (I8), even though the run failed
+    } finally {
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
+      else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
     }
   });
 

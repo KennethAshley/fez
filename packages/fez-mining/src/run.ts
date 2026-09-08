@@ -18,22 +18,64 @@ import { fezHome, readState, upsertMiner, writeState } from "./state.js";
 // after this module is already loaded.
 const walletBin = (): string => process.env.FEZ_WALLET_BIN || "fez-wallet";
 
+// Same per-call-env convention — lets tests collapse the 15s wait to
+// ~nothing without touching the retry logic itself.
+const firstContactRetryDelayMs = (): number => Number(process.env.FEZ_MINE_RETRY_DELAY_MS) || 15_000;
+const FIRST_CONTACT_MAX_ATTEMPTS = 6;
+
+/**
+ * Pinned live 2026-09-08: a freshly-provisioned pod's `up` can report
+ * "ready" before sshd actually accepts connections — a `scp` failed
+ * seconds after `up` returned, then an IDENTICAL manual `scp` minutes
+ * later succeeded. Retry first-contact ops instead of treating one
+ * failure as fatal: 6 attempts, 15s apart, one log line per retry (or
+ * silent if the caller passed no logger).
+ */
+async function retryFirstContact(label: string, attempt: () => Promise<void>, log: (line: string) => void): Promise<void> {
+  for (let n = 1; n <= FIRST_CONTACT_MAX_ATTEMPTS; n++) {
+    try {
+      await attempt();
+      return;
+    } catch (e) {
+      if (n === FIRST_CONTACT_MAX_ATTEMPTS) throw e;
+      log(
+        `${label} failed (attempt ${n}/${FIRST_CONTACT_MAX_ATTEMPTS}): ${(e as Error).message} — retrying in ${firstContactRetryDelayMs() / 1000}s (fresh pod, sshd may not be up yet)`
+      );
+      await new Promise((r) => setTimeout(r, firstContactRetryDelayMs()));
+    }
+  }
+}
+
 /**
  * Deploy the persona's standalone remote-signing key onto a freshly
  * provisioned pod — called ONLY right after `provisionPod`, never on a
  * reattach (the key is already there from the first deploy). The keyfile
  * touches disk just long enough to be copied: written 0600, deleted in
- * `finally`, never logged.
+ * `finally`, never logged. Both the mkdir and the copy are first contact
+ * with a pod that may not have sshd up yet, so both retry (see
+ * retryFirstContact); mkdir's "failure" is a non-zero exit, not a throw,
+ * so it's normalized into one here.
  */
-async function deployHotkey(persona: string, machine: MinerMachine): Promise<void> {
+async function deployHotkey(persona: string, machine: MinerMachine, log: (line: string) => void = () => {}): Promise<void> {
   const exported = JSON.parse(
     execFileSync(walletBin(), ["export-hotkey", persona, "--json"], { encoding: "utf8" })
   ) as { keyfile: unknown };
   const tmpFile = path.join(os.tmpdir(), `fez-hotkey-${crypto.randomUUID()}.json`);
   try {
     await fs.writeFile(tmpFile, JSON.stringify(exported.keyfile), { mode: 0o600 });
-    await machine.exec("mkdir -p ~/.bittensor/wallets/default/hotkeys");
-    await machine.copy(tmpFile, `~/.bittensor/wallets/default/hotkeys/${persona}`);
+    await retryFirstContact(
+      "deployHotkey: mkdir",
+      async () => {
+        const r = await machine.exec("mkdir -p ~/.bittensor/wallets/default/hotkeys");
+        if (r.code !== 0) throw new Error(r.stderr || `mkdir exited ${r.code}`);
+      },
+      log
+    );
+    await retryFirstContact(
+      "deployHotkey: scp",
+      () => machine.copy(tmpFile, `~/.bittensor/wallets/default/hotkeys/${persona}`),
+      log
+    );
   } finally {
     await fs.rm(tmpFile, { force: true });
   }
@@ -60,7 +102,9 @@ export async function resolveMachine(
   persona: string,
   opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine> },
   exec?: LiumExec,
-  recorder?: Recorder
+  recorder?: Recorder,
+  log: (line: string) => void = () => {},
+  persistProvision?: (machineState: MinerMachineState) => Promise<void>
 ): Promise<{ machine: MinerMachine; machineState?: MinerMachineState; provisioned?: boolean }> {
   if (opts.machineFactory) {
     if (!entry) throw new Error("machineFactory requires a recorded miner entry");
@@ -98,19 +142,22 @@ export async function resolveMachine(
       exec,
       recorder
     );
-    const machine = liumMachine(handle, exec);
-    await deployHotkey(persona, machine);
-    return {
-      machine,
-      provisioned: true,
-      machineState: {
-        kind: "lium",
-        podId: handle.podId,
-        hourlyRate: handle.hourlyRate,
-        externalIp: handle.ports[0]?.externalIp,
-        externalPort: handle.ports[0]?.externalPort,
-      },
+    const machineState: MinerMachineState = {
+      kind: "lium",
+      podId: handle.podId,
+      hourlyRate: handle.hourlyRate,
+      externalIp: handle.ports[0]?.externalIp,
+      externalPort: handle.ports[0]?.externalPort,
     };
+    // Persist BEFORE deployHotkey — a pod that fails deploy/install/start
+    // right after this must still be findable (billing, reattach,
+    // sentinel, `fez-mine stop`), not silently orphaned. Live smoke: a
+    // hotkey-deploy failure here once left a pod nobody's state pointed
+    // to, found and torn down by hand.
+    if (persistProvision) await persistProvision(machineState);
+    const machine = liumMachine(handle, exec);
+    await deployHotkey(persona, machine, log);
+    return { machine, provisioned: true, machineState };
   }
   return { machine: localMachine() };
 }
@@ -160,8 +207,28 @@ export async function runMiner(
   // process's own stdout (which nothing reads). Now it gets the same
   // logging + lastExit as an install/register/start failure.
   let code = 0;
+  // Set only when THIS run fresh-provisioned a pod (persistProvision below)
+  // — the signal the catch block uses to know there's something to tear
+  // down. A reattach or local run leaves this undefined, so a LATER
+  // install/start failure there never touches a pod this run didn't rent.
+  let freshMachineState: MinerMachineState | undefined;
   try {
-    const { machine, machineState, provisioned } = await resolveMachine(known, persona, opts, opts.exec, opts.recorder);
+    const { machine, machineState, provisioned } = await resolveMachine(
+      known,
+      persona,
+      opts,
+      opts.exec,
+      opts.recorder,
+      log,
+      async (ms) => {
+        freshMachineState = ms;
+        // Counts against the 3/day cap the same way headless's
+        // reprovision does (I8) — at decision time, not at eventual
+        // outcome, so a runner-side reprovision loop is never invisible
+        // to planRemote's spend guard even if this run goes on to fail.
+        await record({ pid: process.pid, startedAt: Date.now(), machine: ms, bumpProvisions: true });
+      }
+    );
     if (provisioned && machineState) {
       log(`provisioned pod ${machineState.podId} at $${machineState.hourlyRate ?? "?"}/hr (ttl ${process.env.FEZ_MINE_POD_TTL || "24h"})`);
     }
@@ -184,16 +251,12 @@ export async function runMiner(
         : ({ ...process.env } as Record<string, string>);
     const ctx = { workDir, persona, hotkey, netuid, env, machine, log };
 
-    // A fresh provision (first-ever or after a half-dead reattach fell
-    // through) counts against the 3/day cap the same way headless's
-    // reprovision does — otherwise a runner-side reprovision loop would be
-    // invisible to planRemote's spend guard.
-    await record({
-      pid: process.pid,
-      startedAt: Date.now(),
-      ...(machineState ? { machine: machineState } : {}),
-      bumpProvisions: !!provisioned,
-    });
+    // Reattach/local already got their pid/startedAt/machine recorded —
+    // a fresh provision recorded its own above, before deployHotkey ran
+    // (see the persistProvision callback), so it isn't repeated here.
+    if (!provisioned) {
+      await record({ pid: process.pid, startedAt: Date.now(), ...(machineState ? { machine: machineState } : {}) });
+    }
 
     if (d.install) await d.install(ctx);
     const flag = path.join(workDir, "registered");
@@ -205,6 +268,16 @@ export async function runMiner(
   } catch (e) {
     log(`miner error: ${(e as Error).message}`);
     code = 1;
+    if (freshMachineState?.podId) {
+      // This run rented the pod and then failed before mining anything —
+      // whether the failure was the deploy itself or install/register/
+      // start afterward. A pod that never mines must never keep billing:
+      // best-effort teardown, then clear the entry back to "no pod yet"
+      // so the next start/reprovision rents fresh instead of reattaching
+      // to a half-configured pod.
+      await teardownPod(freshMachineState.podId, opts.exec, opts.recorder).catch(() => {});
+      await record({ machine: { kind: "lium" } });
+    }
   }
   await record({ pid: undefined, lastExit: `exit ${code} at ${new Date().toISOString()}` });
   return code;
