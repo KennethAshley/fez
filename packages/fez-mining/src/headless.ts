@@ -7,11 +7,14 @@ import { podAlive } from "./machine-lium.js";
 /**
  * fez-mining, headless part — the sentinel-side reconcile loop.
  *
- * Every 120s: read desired state, resolve pod-liveness for every distinct
- * lium podId once, then hand both to the pure planRemote (reconcile.ts) —
- * respawn a dead runner onto a still-live pod, reprovision when the pod's
- * gone, or (past the daily reprovision cap) flag the miner for a human
- * instead of looping money away.
+ * Every 120s: read desired state, resolve pod-liveness (a real `lium ps`
+ * call, serialized, up to 30s) only for distinct lium podIds belonging to
+ * miners whose runner is already dead — planRemote's pod branch can't act
+ * on a healthy miner anyway, so a healthy fleet costs zero pod calls — then
+ * hand both to the pure planRemote (reconcile.ts): respawn a dead runner
+ * onto a still-live pod, reprovision when the pod's gone, or (past the
+ * daily reprovision cap) flag the miner for a human instead of looping
+ * money away.
  *
  * Each miner is isolated: a failed action is logged and skipped rather
  * than aborting the tick, and state is persisted right after each action
@@ -23,7 +26,14 @@ export default function activate(api: FezExtensionAPI): void {
     const home = fezHome();
     let s = await readState(home);
 
-    const podIds = [...new Set(s.miners.map((m) => (m.machine?.kind === "lium" ? m.machine.podId : undefined)).filter((id): id is string => !!id))];
+    const podIds = [
+      ...new Set(
+        s.miners
+          .filter((m) => !alive(m.pid))
+          .map((m) => (m.machine?.kind === "lium" ? m.machine.podId : undefined))
+          .filter((id): id is string => !!id)
+      ),
+    ];
     const podAliveMap = new Map<string, boolean>();
     for (const id of podIds) podAliveMap.set(id, await podAlive(id));
     const podIsAlive = (podId: string) => podAliveMap.get(podId) ?? false;

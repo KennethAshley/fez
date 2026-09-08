@@ -36,4 +36,22 @@ describe("planRemote", () => {
   it("leaves healthy miners alone", () => {
     expect(planRemote([remote("p1")], () => true, () => true, DAY)).toEqual([]);
   });
+
+  // Binding amendment: `start --machine lium` records intent before the
+  // runner provisions anything, so `machine.podId` can be absent — that
+  // counts as pod-dead (never call podIsAlive with no id), not as a live
+  // pod to respawn onto.
+  const noPod = (provisions: number[] = []) =>
+    ({ netuid: 56, persona: "p", hotkey: "5F", desired: "running" as const, pid: 99, machine: { kind: "lium" as const }, provisions });
+
+  it("reprovisions when podId was never recorded, under the daily cap", () => {
+    const out = planRemote([noPod()], () => false, () => true, DAY);
+    expect(out[0].action).toBe("reprovision");
+  });
+  it("goes to needs-attention at the cap when podId was never recorded", () => {
+    const now = 10 * DAY;
+    const recent = [now - 1000, now - 2000, now - 3000];
+    const out = planRemote([noPod(recent)], () => false, () => true, now);
+    expect(out[0].action).toBe("needs-attention");
+  });
 });

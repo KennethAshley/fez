@@ -8,11 +8,13 @@ export type ReconcileAction = { miner: MinerEntry; action: "respawn-runner" | "r
  * Desired-running miners whose recorded pid is gone, mapped to what the
  * sentinel should do about it. Local miners (no `machine`) always just
  * respawn — the v1 rule. Lium miners get a pod check first: pod still up
- * (or podId never got recorded) means the process died but the rental
- * didn't, so respawn the runner onto it; pod gone means a fresh rental is
- * needed (reprovision), UNLESS this miner has already reprovisioned
- * `maxPerDay` times in the last 24h — then it's a spend-guard trip:
- * needs-attention instead of an unbounded reprovision loop.
+ * means the process died but the rental didn't, so respawn the runner onto
+ * it; pod gone — including a `podId` that never got recorded (start
+ * recorded before the runner provisioned anything, or cleared on a prior
+ * stop) — counts as pod-dead too, so it needs a fresh rental (reprovision),
+ * UNLESS this miner has already reprovisioned `maxPerDay` times in the
+ * last 24h — then it's a spend-guard trip: needs-attention instead of an
+ * unbounded reprovision loop.
  */
 export function planRemote(
   miners: MinerEntry[],
