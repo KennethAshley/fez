@@ -8,7 +8,7 @@ import type { MinerMachine } from "@fezchat/extension-api";
 import { DEFAULT_MAX_USD_HOUR } from "@fezchat/lium/cli";
 import { loadDescriptors } from "./descriptors.js";
 import { describePod, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
-import type { LiumExec } from "./machine-lium.js";
+import type { LiumExec, Recorder } from "./machine-lium.js";
 import { localMachine } from "./machine-local.js";
 import type { MinerEntry, MinerMachineState } from "./state.js";
 import { fezHome, readState, upsertMiner, writeState } from "./state.js";
@@ -59,7 +59,8 @@ export async function resolveMachine(
   entry: MinerEntry | undefined,
   persona: string,
   opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine> },
-  exec?: LiumExec
+  exec?: LiumExec,
+  recorder?: Recorder
 ): Promise<{ machine: MinerMachine; machineState?: MinerMachineState; provisioned?: boolean }> {
   if (opts.machineFactory) {
     if (!entry) throw new Error("machineFactory requires a recorded miner entry");
@@ -75,8 +76,9 @@ export async function resolveMachine(
         // describe failed on a pod `ps` said was there (half-dead) —
         // best-effort teardown of the stale rental (never blocks the fresh
         // provision below on a `lium rm` hiccup) then fall through, rather
-        // than run with fabricated ports.
-        await teardownPod(podId, exec).catch(() => {});
+        // than run with fabricated ports. podId here is the entry's own
+        // recorded pod id — an actual pod, never a pre-rent node id.
+        await teardownPod(podId, exec, recorder).catch(() => {});
       }
     }
     const handle = await provisionPod(
@@ -93,7 +95,8 @@ export async function resolveMachine(
         // the CLI via provisionPod and was never routed through checkUp.
         ttl: process.env.FEZ_MINE_POD_TTL || "24h",
       },
-      exec
+      exec,
+      recorder
     );
     const machine = liumMachine(handle, exec);
     await deployHotkey(persona, machine);
@@ -120,6 +123,7 @@ export async function runMiner(
     hotkey?: string;
     machineFactory?: (entry: MinerEntry) => Promise<MinerMachine>;
     exec?: LiumExec;
+    recorder?: Recorder;
   } = {}
 ): Promise<number> {
   const d = (await loadDescriptors(home)).find((m) => m.netuid === netuid);
@@ -138,28 +142,6 @@ export async function runMiner(
     fs.appendFile(logFile, stamped).catch(() => {});
     process.stdout.write(stamped);
   };
-  const { machine, machineState, provisioned } = await resolveMachine(known, persona, opts, opts.exec);
-  if (provisioned && machineState) {
-    log(`provisioned pod ${machineState.podId} at $${machineState.hourlyRate ?? "?"}/hr (ttl ${process.env.FEZ_MINE_POD_TTL || "24h"})`);
-  }
-  // Local machines keep v1's full-environment forward. A REMOTE (lium) pod
-  // gets ONLY what FEZ_MINE_FORWARD_ENV (comma-separated names, default
-  // empty) names out of this process's own env — the Mac's PATH/HOME/etc.
-  // have no business on a rented pod; a miner that needs a secret there is
-  // configured through this allowlist deliberately, not by accident.
-  const env: Record<string, string> =
-    machine.kind === "lium"
-      ? Object.fromEntries(
-          (process.env.FEZ_MINE_FORWARD_ENV ?? "")
-            .split(",")
-            .map((k) => k.trim())
-            .filter(Boolean)
-            .filter((k) => process.env[k] !== undefined)
-            .map((k) => [k, process.env[k] as string])
-        )
-      : ({ ...process.env } as Record<string, string>);
-  const ctx = { workDir, persona, hotkey, netuid, env, machine, log };
-
   const record = async (patch: Partial<MinerEntry> & { bumpProvisions?: boolean }) => {
     const s = await readState(home);
     const cur = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
@@ -171,18 +153,48 @@ export async function runMiner(
     );
   };
 
-  // A fresh provision (first-ever or after a half-dead reattach fell
-  // through) counts against the 3/day cap the same way headless's
-  // reprovision does — otherwise a runner-side reprovision loop would be
-  // invisible to planRemote's spend guard.
-  await record({
-    pid: process.pid,
-    startedAt: Date.now(),
-    ...(machineState ? { machine: machineState } : {}),
-    bumpProvisions: !!provisioned,
-  });
+  // resolveMachine (a real `lium up`/`describe`/`rm` round-trip on the
+  // remote path) is inside this same try — a provision failure used to
+  // throw before any of this ran, dying silently: no `miner error:` line
+  // in miner.log, no lastExit in state, visible only on the detached
+  // process's own stdout (which nothing reads). Now it gets the same
+  // logging + lastExit as an install/register/start failure.
   let code = 0;
   try {
+    const { machine, machineState, provisioned } = await resolveMachine(known, persona, opts, opts.exec, opts.recorder);
+    if (provisioned && machineState) {
+      log(`provisioned pod ${machineState.podId} at $${machineState.hourlyRate ?? "?"}/hr (ttl ${process.env.FEZ_MINE_POD_TTL || "24h"})`);
+    }
+    // Local machines keep v1's full-environment forward. A REMOTE (lium)
+    // pod gets ONLY what FEZ_MINE_FORWARD_ENV (comma-separated names,
+    // default empty) names out of this process's own env — the Mac's
+    // PATH/HOME/etc. have no business on a rented pod; a miner that needs
+    // a secret there is configured through this allowlist deliberately,
+    // not by accident.
+    const env: Record<string, string> =
+      machine.kind === "lium"
+        ? Object.fromEntries(
+            (process.env.FEZ_MINE_FORWARD_ENV ?? "")
+              .split(",")
+              .map((k) => k.trim())
+              .filter(Boolean)
+              .filter((k) => process.env[k] !== undefined)
+              .map((k) => [k, process.env[k] as string])
+          )
+        : ({ ...process.env } as Record<string, string>);
+    const ctx = { workDir, persona, hotkey, netuid, env, machine, log };
+
+    // A fresh provision (first-ever or after a half-dead reattach fell
+    // through) counts against the 3/day cap the same way headless's
+    // reprovision does — otherwise a runner-side reprovision loop would be
+    // invisible to planRemote's spend guard.
+    await record({
+      pid: process.pid,
+      startedAt: Date.now(),
+      ...(machineState ? { machine: machineState } : {}),
+      bumpProvisions: !!provisioned,
+    });
+
     if (d.install) await d.install(ctx);
     const flag = path.join(workDir, "registered");
     if (d.register && !(await fs.access(flag).then(() => true, () => false))) {

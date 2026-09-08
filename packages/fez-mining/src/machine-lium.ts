@@ -1,5 +1,6 @@
 import type { MinerMachine, MachinePort } from "@fezchat/extension-api";
-import { lium, parseJson, priceOf, DEFAULT_TTL, record } from "@fezchat/lium/cli";
+import { lium, parseJson, priceOf, DEFAULT_TTL, record as defaultRecord } from "@fezchat/lium/cli";
+import type { Row } from "@fezchat/lium/cli";
 
 /**
  * The Lium machine seam: a rented GPU pod behind the same MinerMachine
@@ -24,6 +25,13 @@ export interface LiumHandle {
 }
 
 export type LiumExec = (args: string[], timeoutMs?: number) => Promise<{ ok: true; out: string } | { ok: false; err: string }>;
+
+// `record()` from @fezchat/lium/cli writes unconditionally to the REAL
+// ~/.fez/lium-pods.json — fine in production, not fine when unit tests
+// script fake rents. Injectable here (default: the real thing) so tests
+// pass a stub instead of polluting the live ledger; fez-lium's own record()
+// signature is untouched, this just wraps the call site.
+export type Recorder = (row: Omit<Row, "id" | "at">) => Promise<void>;
 
 /** A pod HUID looks like "eager-wolf-aa" / "cosmic-hawk-f2" (word-word-alnum2), per `lium up --help`'s examples. */
 const HUID_RE = /\b[a-z]+-[a-z]+-[a-z0-9]{2}\b/;
@@ -85,22 +93,24 @@ function nodeIdOf(row: Record<string, unknown>): string | null {
   return null;
 }
 
-/** Pull a pod id + $/hr out of `up`'s output, JSON or plain text (see note below). */
-function parseUpOutput(out: string): { podId: string | null; priceUsdHour: number | null } {
+/**
+ * Pull the pod id out of `up`'s output, JSON or plain text (see note below).
+ * Price is NOT parsed here — pinned live 2026-09-08: `up`'s real output is
+ * plain, non-JSON text with no reliably-parseable price, and re-deriving one
+ * here to re-check it caused a live false-positive fail-closed teardown
+ * right after a good rent. The pre-selected `ls` row's price (validated
+ * against the ceiling before `up` ever ran, see provisionPod) is
+ * authoritative instead.
+ */
+function parseUpPodId(out: string): string | null {
   // Unverified against live CLI: `lium up --help` exposes no --json/--format
   // flag at all (unlike every other verb here), so a real run's stdout is
   // plain human text by default. Tolerate a hypothetical JSON envelope
-  // first (in case a future/local build emits one), else scrape the HUID
-  // and a "$X.XX" price out of the text. Task 12 confirms the real shape.
+  // first (in case a future/local build emits one), else scrape a HUID out
+  // of the text.
   const j = parseJson<Record<string, unknown>>(out);
-  if (j) {
-    const podId = String(j.pod ?? j.pod_id ?? j.id ?? j.name ?? "") || null;
-    const price = Number(j.price_per_hour ?? j.price ?? j.hourly_rate);
-    return { podId, priceUsdHour: Number.isFinite(price) ? price : null };
-  }
-  const podId = HUID_RE.exec(out)?.[0] ?? null;
-  const price = /\$(\d+(?:\.\d+)?)/.exec(out);
-  return { podId, priceUsdHour: price ? Number(price[1]) : null };
+  if (j) return String(j.pod ?? j.pod_id ?? j.id ?? j.name ?? "") || null;
+  return HUID_RE.exec(out)?.[0] ?? null;
 }
 
 /** Pull host/ports out of `describe --json`. */
@@ -145,7 +155,8 @@ export async function describePod(podId: string, exec: LiumExec = lium): Promise
  */
 export async function provisionPod(
   opts: { template?: string; ports?: number; ttl?: string; maxUsdHour?: number },
-  exec: LiumExec = lium
+  exec: LiumExec = lium,
+  recorder: Recorder = defaultRecord
 ): Promise<LiumHandle> {
   const ttl = opts.ttl || DEFAULT_TTL;
   const ceiling = opts.maxUsdHour ?? Infinity;
@@ -181,27 +192,20 @@ export async function provisionPod(
   const r = await exec(args, 120_000);
   if (!r.ok) throw new Error(r.err);
 
-  const { podId, priceUsdHour } = parseUpOutput(r.out);
+  const podId = parseUpPodId(r.out);
   if (!podId) throw new Error(`provisionPod: couldn't find a pod id in \`lium up\` output: ${r.out.slice(0, 400)}`);
 
-  // Belt-and-suspenders against a race (the price could have moved between
-  // `ls` and `up`) — same fail-closed spirit as fez-lium's checkUp.
-  if (opts.maxUsdHour !== undefined && (priceUsdHour === null || priceUsdHour > opts.maxUsdHour)) {
-    await teardownPod(podId, exec);
-    throw new Error(
-      priceUsdHour === null
-        ? `provisionPod: refused — couldn't read ${podId}'s hourly price, not renting blind.`
-        : `provisionPod: refused — $${priceUsdHour}/h exceeds the $${opts.maxUsdHour}/h ceiling.`
-    );
-  }
+  // best.price — validated against the ceiling above, BEFORE `up` ran — is
+  // the authoritative rate. No post-up re-check against a re-parsed price.
+  const priceUsdHour = best.price;
 
   // Honest ledger row for the rental — best-effort, never blocks (record()
   // swallows its own errors); a real row so "what did compute cost" has an
   // answer even for pods the runner rented without a human in the loop.
-  await record({ action: "up", pod: podId, usdHour: priceUsdHour ?? undefined, ttl });
+  await recorder({ action: "up", pod: podId, usdHour: priceUsdHour, ttl });
 
   const { sshHost, ports } = await describePod(podId, exec).catch(() => ({ sshHost: undefined, ports: [] as MachinePort[] }));
-  return { podId, hourlyRate: priceUsdHour !== null ? String(priceUsdHour) : undefined, ports, sshHost };
+  return { podId, hourlyRate: String(priceUsdHour), ports, sshHost };
 }
 
 /** Is this pod still in `lium ps`? */
@@ -217,9 +221,16 @@ export async function podAlive(podId: string, exec: LiumExec = lium): Promise<bo
   return rows.some((row) => ["pod", "id", "name", "huid"].some((k) => String(row[k] ?? "") === podId));
 }
 
-/** `lium rm <pod> --yes` — stop billing, disk dies with it. */
-export async function teardownPod(podId: string, exec: LiumExec = lium): Promise<void> {
+/**
+ * `lium rm <pod> --yes` — stop billing, disk dies with it. `podId` must be
+ * an actual pod id (from a prior provisionPod/describePod), never a
+ * pre-rent node id — the ledger's `pod` field is exactly what's passed
+ * here, and a caller that passed a node id would mislabel the row (this
+ * is what happened on the now-removed post-up re-check teardown, which
+ * fed it a value re-parsed from `up`'s ambiguous plain-text output).
+ */
+export async function teardownPod(podId: string, exec: LiumExec = lium, recorder: Recorder = defaultRecord): Promise<void> {
   const r = await exec(["rm", podId, "--yes"], 120_000);
-  await record({ action: "rm", pod: podId, detail: r.ok ? undefined : r.err });
+  await recorder({ action: "rm", pod: podId, detail: r.ok ? undefined : r.err });
   if (!r.ok) throw new Error(r.err);
 }

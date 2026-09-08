@@ -15,6 +15,11 @@ const script = (responses: Record<string, string>) => {
   return { exec, calls };
 };
 
+// record() from @fezchat/lium/cli writes unconditionally to the REAL
+// ~/.fez/lium-pods.json — every provisionPod/teardownPod call below passes
+// this stub instead so the test suite never touches the live ledger file.
+const noRecord = async () => {};
+
 describe("liumMachine", () => {
   // Pinned: `lium exec --help` — real flag is bare `--json` (not
   // `--format json`), and the CLI always wraps in `results` even for one
@@ -71,7 +76,7 @@ describe("liumMachine", () => {
       up: JSON.stringify({ pod: "p9", price_per_hour: "0.42" }),
       describe: JSON.stringify({ host_ip: "1.2.3.4", ports: [{ external: 20001, internal: 22 }, { external: 20002, internal: 8091 }] }),
     });
-    const h = await provisionPod({ ports: 2, ttl: "12h", maxUsdHour: 5 }, exec);
+    const h = await provisionPod({ ports: 2, ttl: "12h", maxUsdHour: 5 }, exec, noRecord);
     expect(h.podId).toBe("p9");
     expect(h.sshHost).toBe("1.2.3.4");
     expect(h.hourlyRate).toBe("0.42");
@@ -90,18 +95,25 @@ describe("liumMachine", () => {
     const { exec, calls } = script({
       ls: JSON.stringify([{ huid: "pricier-node-zz", price_per_hour: "9.99" }]),
     });
-    await expect(provisionPod({ maxUsdHour: 1 }, exec)).rejects.toThrow(/no node at or under/);
+    await expect(provisionPod({ maxUsdHour: 1 }, exec, noRecord)).rejects.toThrow(/no node at or under/);
     expect(calls.some((c) => c[0] === "up")).toBe(false);
   });
 
-  it("provisionPod's post-up check refuses and tears down when the price moved above the ceiling (a race)", async () => {
+  // Pinned live 2026-09-08: `up`'s plain-text output has no reliably
+  // parseable price, and re-checking one there previously misfired — a
+  // GOOD rent (price already validated from the ls row, under the
+  // ceiling) got torn down immediately as "couldn't read the price, not
+  // renting blind." The ls-selected price is authoritative now; nothing
+  // in up's output — however it reads — can override or refuse it.
+  it("provisionPod's hourlyRate is the ls-selected price, ignoring anything in up's own output", async () => {
     const { exec, calls } = script({
-      ls: JSON.stringify([{ huid: "cheap-node-1", price_per_hour: "0.5" }]),
-      up: JSON.stringify({ pod: "p9", price_per_hour: "9.99" }),
-      rm: "{}",
+      ls: JSON.stringify([{ huid: "cheap-node-aa", price_per_hour: "0.5" }]),
+      up: "Pod cheap-node-aa is ready. Setup fee waived (was $9.99/hr)",
     });
-    await expect(provisionPod({ maxUsdHour: 1 }, exec)).rejects.toThrow(/exceeds/);
-    expect(calls.some((c) => c[0] === "rm" && c[1] === "p9")).toBe(true);
+    const h = await provisionPod({ maxUsdHour: 1 }, exec, noRecord);
+    expect(h.podId).toBe("cheap-node-aa");
+    expect(h.hourlyRate).toBe("0.5"); // from ls — NOT the $9.99 mentioned in up's text
+    expect(calls.some((c) => c[0] === "rm")).toBe(false); // no post-up refusal/teardown anymore
   });
 
   // Unverified against live CLI — `up` has no --json flag, so a real
@@ -113,7 +125,7 @@ describe("liumMachine", () => {
       up: "Creating pod...\nPod eager-wolf-aa is ready ($0.75/hr)\nSSH: ssh root@eager-wolf-aa.lium.io",
       describe: JSON.stringify({ host_ip: "5.6.7.8", ports: [] }),
     });
-    const h = await provisionPod({}, exec);
+    const h = await provisionPod({}, exec, noRecord);
     expect(h.podId).toBe("eager-wolf-aa");
   });
 
@@ -147,7 +159,7 @@ describe("liumMachine", () => {
 
   it("teardown calls rm", async () => {
     const { exec, calls } = script({ rm: "{}" });
-    await teardownPod("p9", exec);
+    await teardownPod("p9", exec, noRecord);
     expect(calls[0][0]).toBe("rm");
     expect(calls[0]).toEqual(["rm", "p9", "--yes"]);
   });

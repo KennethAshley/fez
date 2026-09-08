@@ -33,6 +33,12 @@ function scriptedExec(handlers: Record<string, (args: string[], call: number) =>
 const fakeWalletBin = path.join(here, "fixtures", "fake-wallet-bin.js");
 chmodSync(fakeWalletBin, 0o755);
 
+// record() from @fezchat/lium/cli writes unconditionally to the REAL
+// ~/.fez/lium-pods.json — any test that drives a real provisionPod/
+// teardownPod call (i.e. NOT short-circuited by machineFactory) passes
+// this stub instead so the suite never touches the live ledger file.
+const noRecord = async () => {};
+
 describe("remote runner path", () => {
   it("uses the injected machine and records its pod on the entry", async () => {
     const home = homeWithFixture();
@@ -91,7 +97,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
         exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }),
         scp: () => ({ ok: true, out: "" }),
       });
-      const { machine, machineState, provisioned } = await resolveMachine(entry, "p", {}, exec);
+      const { machine, machineState, provisioned } = await resolveMachine(entry, "p", {}, exec, noRecord);
       expect(machineState?.podId).toBe("p10"); // a NEW pod, not the stale p9
       expect(provisioned).toBe(true);
       expect(machine.ports).toEqual([{ externalIp: "5.5.5.5", externalPort: 40001, internalPort: 8091 }]);
@@ -134,7 +140,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
         exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }),
         scp: () => ({ ok: true, out: "" }),
       });
-      const code = await runMiner(9998, "p", home, { hotkey: "5FAKE", exec });
+      const code = await runMiner(9998, "p", home, { hotkey: "5FAKE", exec, recorder: noRecord });
       expect(code).toBe(0);
       expect(calls.some((c) => c[0] === "rm" && c[1] === "p9")).toBe(true);
       const after = await readState(home);
