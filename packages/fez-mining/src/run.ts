@@ -20,28 +20,37 @@ const walletBin = (): string => process.env.FEZ_WALLET_BIN || "fez-wallet";
 
 // Same per-call-env convention — lets tests collapse the 15s wait to
 // ~nothing without touching the retry logic itself.
-const firstContactRetryDelayMs = (): number => Number(process.env.FEZ_MINE_RETRY_DELAY_MS) || 15_000;
-const FIRST_CONTACT_MAX_ATTEMPTS = 6;
+const firstContactRetryDelayMs = (): number => Number(process.env.FEZ_MINE_RETRY_DELAY_MS) || 20_000;
+const firstContactInitialWaitMs = (): number => Number(process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS) || 45_000;
+const firstContactMaxAttempts = (): number => Number(process.env.FEZ_MINE_RETRY_ATTEMPTS) || 12;
 
 /**
  * Pinned live 2026-09-08: a freshly-provisioned pod's `up` can report
  * "ready" before sshd actually accepts connections — a `scp` failed
  * seconds after `up` returned, then an IDENTICAL manual `scp` minutes
  * later succeeded. Retry first-contact ops instead of treating one
- * failure as fatal: 6 attempts, 15s apart, one log line per retry (or
- * silent if the caller passed no logger).
+ * failure as fatal: wait 45s initially (fresh pods are never ready
+ * instantly), then up to 12 attempts, 20s apart (~4.5 min total budget),
+ * one log line per retry (or silent if the caller passed no logger).
  */
 async function retryFirstContact(label: string, attempt: () => Promise<void>, log: (line: string) => void): Promise<void> {
-  for (let n = 1; n <= FIRST_CONTACT_MAX_ATTEMPTS; n++) {
+  const maxAttempts = firstContactMaxAttempts();
+  const initialWait = firstContactInitialWaitMs();
+  const retryDelay = firstContactRetryDelayMs();
+
+  // Wait before first attempt — fresh pods need time to boot sshd.
+  await new Promise((r) => setTimeout(r, initialWait));
+
+  for (let n = 1; n <= maxAttempts; n++) {
     try {
       await attempt();
       return;
     } catch (e) {
-      if (n === FIRST_CONTACT_MAX_ATTEMPTS) throw e;
+      if (n === maxAttempts) throw e;
       log(
-        `${label} failed (attempt ${n}/${FIRST_CONTACT_MAX_ATTEMPTS}): ${(e as Error).message} — retrying in ${firstContactRetryDelayMs() / 1000}s (fresh pod, sshd may not be up yet)`
+        `${label} failed (attempt ${n}/${maxAttempts}): ${(e as Error).message} — retrying in ${retryDelay / 1000}s (fresh pod, sshd may not be up yet)`
       );
-      await new Promise((r) => setTimeout(r, firstContactRetryDelayMs()));
+      await new Promise((r) => setTimeout(r, retryDelay));
     }
   }
 }

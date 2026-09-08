@@ -79,7 +79,11 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
 
   it("falls through to a fresh provision when describe fails on a pod ps still lists, tearing down the stale pod first", async () => {
     const prevBin = process.env.FEZ_WALLET_BIN;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
     process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // collapse inter-attempt delay for the test
+    process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1"; // collapse initial wait for the test
     try {
       const { exec, calls } = scriptedExec({
         ps: () => ({ ok: true, out: JSON.stringify([{ pod: "p9" }]) }),
@@ -112,6 +116,10 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
     }
   });
 
@@ -124,8 +132,10 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     const freshEntry: MinerEntry = { netuid: 1, persona: "p", hotkey: "5F", desired: "running", machine: { kind: "lium" } };
     const prevBin = process.env.FEZ_WALLET_BIN;
     const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
     process.env.FEZ_WALLET_BIN = fakeWalletBin;
-    process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // collapse the 15s wait for the test
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // collapse inter-attempt delay for the test
+    process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1"; // collapse initial wait for the test
     try {
       const { exec, calls } = scriptedExec({
         ls: () => ({ ok: true, out: JSON.stringify([{ huid: "n1", price_per_hour: "0.3" }]) }),
@@ -145,6 +155,8 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       else process.env.FEZ_WALLET_BIN = prevBin;
       if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
       else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
     }
   });
 
@@ -157,7 +169,11 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     });
     await writeState(home, s);
     const prevBin = process.env.FEZ_WALLET_BIN;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
     process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // collapse inter-attempt delay for the test
+    process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1"; // collapse initial wait for the test
     try {
       const { exec, calls } = scriptedExec({
         ps: () => ({ ok: true, out: JSON.stringify([{ pod: "p9" }]) }),
@@ -183,6 +199,10 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
     }
   });
 
@@ -197,8 +217,10 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     await writeState(home, s);
     const prevBin = process.env.FEZ_WALLET_BIN;
     const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
     process.env.FEZ_WALLET_BIN = fakeWalletBin;
-    process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // exhaust the 6 retries fast
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // exhaust the retries fast
+    process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1"; // collapse initial wait for the test
     try {
       const { exec, calls } = scriptedExec({
         ls: () => ({ ok: true, out: JSON.stringify([{ huid: "n1", price_per_hour: "0.3" }]) }),
@@ -210,7 +232,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       });
       const code = await runMiner(9998, "p", home, { hotkey: "5FAKE", exec, recorder: noRecord });
       expect(code).toBe(1);
-      expect(calls.filter((c) => c[0] === "scp").length).toBe(6); // all retries exhausted
+      expect(calls.filter((c) => c[0] === "scp").length).toBe(12); // all retries exhausted (12 attempts)
       expect(calls.some((c) => c[0] === "rm" && c[1] === "pX")).toBe(true); // the orphan risk: torn down instead
 
       const after = await readState(home);
@@ -223,6 +245,8 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       else process.env.FEZ_WALLET_BIN = prevBin;
       if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
       else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
     }
   });
 
