@@ -276,6 +276,15 @@ async function cmdConfigUnset(netuid: number, persona: string, key: string): Pro
   }
 }
 
+// The GUI's New-miner picker needs a subnet's config schema before it can
+// render the form — this is that schema, straight off the loaded
+// descriptor. `--json` is the only shape (nothing to eyeball here).
+async function cmdDescribe(netuid: number): Promise<void> {
+  const d = (await loadDescriptors(fezHome())).find((x) => x.netuid === netuid);
+  if (!d) throw new Error(`no descriptor for netuid ${netuid}`);
+  console.log(JSON.stringify({ netuid: d.netuid, name: d.name, requirements: d.requirements, config: d.config }));
+}
+
 // GUI calls this right after posting the #mining root message; the headless
 // side reads it back to know where to reply. One-liner upsert.
 async function cmdThreadSetRoot(netuid: number, persona: string, root: string): Promise<void> {
@@ -290,7 +299,7 @@ function usage(): never {
   console.error(
     "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
-      "thread set-root --netuid N --persona P --root <eventId>"
+      "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json"
   );
   process.exit(2);
 }
@@ -378,6 +387,10 @@ async function main(): Promise<void> {
     case "thread":
       if (sub !== "set-root" || netuidValue === undefined || !personaValue || !rootValue) usage();
       await cmdThreadSetRoot(netuidValue, personaValue, rootValue);
+      break;
+    case "describe":
+      if (netuidValue === undefined) usage();
+      await cmdDescribe(netuidValue);
       break;
     default:
       usage();

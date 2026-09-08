@@ -1,4 +1,7 @@
 import type { Subnet } from "@fezchat/bittensor/subnets";
+import type { ConfigField } from "@fezchat/extension-api";
+
+export type ConfigFormValues = Record<string, string | number | boolean>;
 
 // Targon-class hardware-gated netuids — descriptor-declared flag can
 // replace this hardcoded list later.
@@ -37,4 +40,24 @@ export function subnetRows(subnets: Subnet[], covered: number[], gated: number[]
   return subnets
     .map((s) => ({ ...s, curated: covered.includes(s.netuid), gated: gated.includes(s.netuid) }))
     .sort((a, b) => Number(b.curated) - Number(a.curated) || a.netuid - b.netuid);
+}
+
+/**
+ * Seed values for the New-miner config form, pure. Non-secret fields start
+ * at their schema default (omitted when there isn't one — an uncontrolled
+ * field renders blank). Secrets NEVER seed from a default (there isn't one
+ * in the schema anyway — the value lives in the keychain, not here) and
+ * always start blank, so a re-opened form can't leak or restate a stored
+ * secret onto the screen.
+ */
+export function initialFormValues(schema: ConfigField[]): ConfigFormValues {
+  const out: ConfigFormValues = {};
+  for (const f of schema) {
+    if (f.type === "secret") {
+      out[f.key] = "";
+      continue;
+    }
+    if (f.default !== undefined) out[f.key] = f.default;
+  }
+  return out;
 }
