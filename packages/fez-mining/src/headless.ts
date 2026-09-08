@@ -4,7 +4,7 @@ import { alive, spawnDetached } from "./procs.js";
 import { planRemote } from "./reconcile.js";
 import { podAlive } from "./machine-lium.js";
 import { lifecycleMessage } from "./lifecycle.js";
-import { MINING_CHANNEL_NAME, MINING_SOURCE } from "./thread.js";
+import { MINING_CHANNEL_NAME, MINING_SOURCE, minerRootLine } from "./thread.js";
 
 /**
  * fez-mining, headless part — the sentinel-side reconcile loop.
@@ -88,17 +88,37 @@ export default function activate(api: FezExtensionAPI): void {
     }
 
     // Lifecycle replies — best-effort, and never the reconcile's problem.
-    // Only miners with a threadRootId get a timeline: the GUI is the sole
-    // root poster, so a CLI-started miner nobody opened in the desktop
-    // just has no thread to reply into (acceptable — see Task 9 brief).
+    // Every RUNNING miner gets a thread: the GUI posts a root on start, but
+    // if that post flaked (the relay hadn't absorbed it inside the GUI's
+    // retry window) the miner would otherwise have no thread and no
+    // history. So here we BACKFILL a root for any running miner missing
+    // one — `say` returns the event id, which we record as threadRootId so
+    // the GUI reuses it (its recordedRootId fast path) and we never double
+    // post. A stopped miner with no thread stays threadless (its history
+    // is nothing to show); the GUI-vs-headless race is bounded by the 120s
+    // tick against the GUI's seconds-long set-root, so a duplicate root is
+    // vanishingly rare and at worst a stray line.
     if (!api.channels) return; // no key/relay on this host at all
     try {
       const channelId = await ctx.channels.ensure({ name: MINING_CHANNEL_NAME, source: MINING_SOURCE });
       if (!channelId) return; // unclaimed relay, or we're not the owner — nothing to post into
 
-      const final = await readState(home);
+      let final = await readState(home);
       for (const miner of final.miners) {
-        if (!miner.threadRootId) continue;
+        if (!miner.threadRootId) {
+          if (miner.desired !== "running") continue; // no thread for a stopped, never-opened miner
+          try {
+            const rootId = await ctx.channels.say(channelId, minerRootLine(miner.netuid, miner.persona));
+            const st = await readState(home);
+            const e = st.miners.find((x) => x.netuid === miner.netuid && x.persona === miner.persona);
+            if (e) await writeState(home, upsertMiner(st, { ...e, threadRootId: rootId }));
+            miner.threadRootId = rootId; // use it for this tick's lifecycle reply too
+            final = await readState(home);
+          } catch (err) {
+            console.error(`mining-reconcile: failed to backfill a root for ${miner.netuid}:${miner.persona}`, err);
+            continue;
+          }
+        }
         const snapKey = `lifecycle:${minerKey(miner.netuid, miner.persona)}`;
         const prev = await api.storage.get<MinerEntry>(snapKey);
         const text = lifecycleMessage(prev, miner);
