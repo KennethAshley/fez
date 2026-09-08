@@ -291,11 +291,12 @@ export async function runMiner(
       log(`provisioned pod ${machineState.podId} at $${machineState.hourlyRate ?? "?"}/hr (ttl ${process.env.FEZ_MINE_POD_TTL || "24h"})`);
     }
     // Local machines keep v1's full-environment forward. A REMOTE (lium)
-    // pod gets ONLY what FEZ_MINE_FORWARD_ENV (comma-separated names,
-    // default empty) names out of this process's own env — the Mac's
-    // PATH/HOME/etc. have no business on a rented pod; a miner that needs
-    // a secret there is configured through this allowlist deliberately,
-    // not by accident.
+    // pod's env is now built primarily from ctx.config (resolved below from
+    // the descriptor's schema, merged with state + keychain secrets). For raw
+    // env passthrough (an escape hatch for future descriptors), FEZ_MINE_FORWARD_ENV
+    // (comma-separated names, default empty) names additional vars from this
+    // process's own env to forward — the Mac's PATH/HOME/etc. have no business
+    // on a rented pod by default; deliberately chosen via the allowlist only.
     const env: Record<string, string> =
       machine.kind === "lium"
         ? Object.fromEntries(
