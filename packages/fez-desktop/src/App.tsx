@@ -338,12 +338,27 @@ export default function App() {
         if (!cancelled) setBoot({ phase: "onboarding" });
         return;
       }
-      const [identity, personas] = await Promise.all([
-        invoke<string>("get_identity", { account: ACCOUNT }).catch(() => undefined),
-        invoke<string[]>("list_personas").catch(() => [] as string[]),
-      ]);
+      // The gate must not collapse "can't read" into "not onboarded":
+      // a denied keychain prompt routed a finished user into the wizard
+      // (whose mint could then clobber their identity), and a transient
+      // list_personas failure did the same via `.catch(() => [])`. Only
+      // POSITIVE evidence of absence sends anyone to onboarding;
+      // access failures get the retryable error screen, and an
+      // unreadable persona list lets boot proceed (get_pubkey re-checks
+      // identity anyway, and a missing brain degrades with its own
+      // honest message downstream).
+      try {
+        await invoke<string>("get_identity", { account: ACCOUNT });
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        if (/no fez identity/i.test(message)) setBoot({ phase: "onboarding" });
+        else setBoot({ phase: "error", message });
+        return;
+      }
+      const personas = await invoke<string[]>("list_personas").catch(() => undefined);
       if (cancelled) return;
-      if (!identity || !personas.some((n) => n.toLowerCase() === "fez")) {
+      if (personas !== undefined && !personas.some((n) => n.toLowerCase() === "fez")) {
         setBoot({ phase: "onboarding" });
         return;
       }

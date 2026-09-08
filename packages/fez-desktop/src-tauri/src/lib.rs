@@ -261,8 +261,17 @@ fn set_identity(account: Option<String>, hex: String, replace: Option<bool>) -> 
     if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("not a 64-hex key".to_string());
     }
-    if replace != Some(true) && get_identity(Some(account.clone())).is_ok() {
-        return Err(format!("account \"{account}\" already holds an identity"));
+    if replace != Some(true) {
+        // The guard must fail CLOSED: a denied keychain prompt makes
+        // get_identity error exactly like an absent identity, and
+        // treating "can't read" as "doesn't exist" made prompt-denial
+        // the one path that could clobber the root identity (-U is an
+        // update). Only the not-found error means it's safe to write.
+        match get_identity(Some(account.clone())) {
+            Ok(_) => return Err(format!("account \"{account}\" already holds an identity")),
+            Err(e) if e.contains("no fez identity") => {} // genuinely absent — mint away
+            Err(e) => return Err(format!("can't tell whether an identity already exists — {e}")),
+        }
     }
     let status = Command::new("security")
         .args([

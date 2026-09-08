@@ -157,8 +157,15 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
     if (step === "welcome" || keyHex) return;
     invoke<string>("get_identity", { account: ACCOUNT })
       .then((hex) => setKeyHex(hex))
-      .catch(() => {
-        localStorage.removeItem(SNAPSHOT_KEY);
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Only a genuinely ABSENT identity makes the snapshot a lie. A
+        // denied prompt / locked keychain means the identity likely
+        // still exists — dropping the snapshot and restarting the
+        // wizard re-prompted forever with no explanation. Keep the
+        // snapshot, show the failure, let the user re-answer the prompt.
+        if (/no fez identity/i.test(msg)) localStorage.removeItem(SNAPSHOT_KEY);
+        else setError(msg);
         setStep("welcome");
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -267,7 +274,16 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
       for (const p of STARTER_TEAM) {
         await invoke("write_persona", { name: p.id, content: buildStarterPersonaMd(p, harness, model, brain.provider, brain.effort) }).catch(() => {});
       }
-    } catch { /* welcome.ts's fallback persona still lands */ }
+    } catch (err) {
+      // The boot gate REQUIRES the fez persona on disk — swallowing this
+      // and clearing the stamp anyway sent the user around the whole
+      // wizard again (and again), silently, forever. The old comment's
+      // escape hatch was wrong: welcome.ts's fallback runs downstream of
+      // a boot the gate never lets happen. Stay here, say it, stamp
+      // intact so the wizard resumes rather than restarts.
+      setError(`couldn't save your team's setup: ${err instanceof Error ? err.message : String(err)} — finish again to retry`);
+      return;
+    }
     localStorage.removeItem(SNAPSHOT_KEY);
     onComplete(relayRaw());
   };
@@ -475,7 +491,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           />
         )}
 
-        {step === "team" && <TeamStep keyHex={keyHex} onFinish={() => void finishWizard()} onBack={() => setStep(prevStep(step))} />}
+        {step === "team" && <TeamStep keyHex={keyHex} error={error} onFinish={() => void finishWizard()} onBack={() => setStep(prevStep(step))} />}
       </div>
     </div>
   );
@@ -833,7 +849,7 @@ function ProfileStep({
  * since TeamStep IS the terminal step (Buzz's flow ends at "team"; there
  * is no separate "done").
  */
-function TeamStep({ keyHex, onFinish, onBack }: { keyHex?: string; onFinish: () => void; onBack: () => void }) {
+function TeamStep({ keyHex, error, onFinish, onBack }: { keyHex?: string; error?: string; onFinish: () => void; onBack: () => void }) {
   const [showBackup, setShowBackup] = useState(false);
   const [copied, setCopied] = useState(false);
   const copyKey = () => {
@@ -882,6 +898,7 @@ function TeamStep({ keyHex, onFinish, onBack }: { keyHex?: string; onFinish: () 
           )}
         </div>
       )}
+      {error && <p className="ob-error">{error}</p>}
       <button className="ob-primary" onClick={onFinish}>take me to fez</button>
       <button className="ob-secondary" onClick={onBack}>back</button>
     </>

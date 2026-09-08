@@ -62,12 +62,28 @@ function indexAdd(name: string): void {
   fs.writeFileSync(INDEX_FILE, JSON.stringify({ names: [...names].sort() }, null, 1), { mode: 0o600 });
 }
 
+/**
+ * Read one key from the keychain. Absent (`security` exit 44,
+ * errSecItemNotFound) returns undefined; any OTHER failure — a denied
+ * prompt, a locked keychain — throws. The two used to collapse into
+ * undefined, and loadOrCreateKey's read-or-generate then MINTED A
+ * REPLACEMENT for an agent whose key still existed, silently orphaning
+ * its roster membership and attestations. Same distinction the Rust
+ * side's get_identity has always drawn.
+ */
 function keychainRead(name: string): string | undefined {
   const out = spawnSync("security", ["find-generic-password", "-s", SERVICE, "-a", name, "-w"], {
     encoding: "utf-8",
   });
-  const value = out.status === 0 ? out.stdout.trim() : undefined;
-  return value && HEX64.test(value) ? value.toLowerCase() : undefined;
+  if (out.status !== 0) {
+    const stderr = String(out.stderr ?? "");
+    if (out.status === 44 || /could not be found/i.test(stderr)) return undefined;
+    throw new Error(
+      `keychain access failed for "${name}": ${stderr.trim() || `security exited ${out.status}`} — not minting a replacement key`
+    );
+  }
+  const value = out.stdout.trim();
+  return HEX64.test(value) ? value.toLowerCase() : undefined;
 }
 
 function keychainWrite(name: string, hex: string): void {
@@ -155,9 +171,13 @@ export function listKeys(): { name: string; pubkey: string; backend: "keychain" 
   } catch { /* no agents dir yet */ }
   const out: { name: string; pubkey: string; backend: "keychain" | "file" }[] = [];
   for (const name of [...names].sort()) {
-    const backend = useKeychain() && keychainRead(name) ? "keychain" : "file";
-    const hex = backend === "keychain" ? keychainRead(name) : fileRead(name);
-    if (hex) out.push({ name, pubkey: getPublicKey(hexToBytes(hex)), backend });
+    try {
+      const backend = useKeychain() && keychainRead(name) ? "keychain" : "file";
+      const hex = backend === "keychain" ? keychainRead(name) : fileRead(name);
+      if (hex) out.push({ name, pubkey: getPublicKey(hexToBytes(hex)), backend });
+    } catch {
+      // access denied for this one item — listing the others still helps
+    }
   }
   return out;
 }
