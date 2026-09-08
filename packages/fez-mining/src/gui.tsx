@@ -653,6 +653,12 @@ export default function activate(api: GuiExtensionApi): void {
           ) : (
             <p style={dim}>{picker.persona}</p>
           )}
+          {/* Surface a start failure (e.g. "no wallet for steph — run:
+              fez-wallet derive steph") right here at the picker, not only in
+              the page-top banner the user isn't looking at while choosing a
+              persona — a non-wallet persona would otherwise just snap back to
+              "Continue" with no visible reason. */}
+          {error ? <p className="ob-error" style={{ marginTop: 8 }}>{error}</p> : null}
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
             <button
               className="agent-action"
