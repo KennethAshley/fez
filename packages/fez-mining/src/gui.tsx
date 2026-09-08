@@ -193,15 +193,42 @@ export default function activate(api: GuiExtensionApi): void {
     borderRadius: 8,
     background: "var(--bg1, transparent)",
   };
-  const tableRowStyle = {
-    display: "grid",
-    gridTemplateColumns: "52px 1fr 150px",
-    gap: 10,
-    alignItems: "center",
-    padding: "6px 2px",
-    borderBottom: "1px solid color-mix(in srgb, var(--hairline, #333) 60%, transparent)",
-  };
   const mono = { fontFamily: "var(--font-mono, monospace)" };
+  // A subnet's badge: we don't ship per-subnet logos, so a gruvbox-tinted
+  // monogram stands in — a colored disc keyed to the netuid with the name's
+  // first letter, so each subnet reads as a distinct mark at a glance.
+  const AVATAR_HUES = ["#83a598", "#b8bb26", "#fabd2f", "#fe8019", "#d3869b", "#8ec07c"];
+  const subnetAvatar = (netuid: number, name: string): JSX.Element => {
+    const hue = AVATAR_HUES[netuid % AVATAR_HUES.length];
+    const letter = (name.trim()[0] ?? "?").toUpperCase();
+    return (
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          flex: "none",
+          background: `color-mix(in srgb, ${hue} 20%, var(--bg1, #282828))`,
+          color: hue,
+          fontWeight: 700,
+          fontSize: 12.5,
+          fontFamily: "var(--font-mono, monospace)",
+        }}
+      >
+        {letter}
+      </span>
+    );
+  };
+  const subnetRowStyle = {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "9px 6px",
+    borderBottom: "1px solid color-mix(in srgb, var(--hairline, #333) 55%, transparent)",
+  };
 
   // The New-miner picker's state machine — one step at a time, each
   // carrying forward what earlier steps decided. `undefined` = picker
@@ -388,6 +415,30 @@ export default function activate(api: GuiExtensionApi): void {
         }
       },
       [run, loadMiners, personasApi]
+    );
+
+    // Restart a crashed miner — re-issue start on the same machine kind it
+    // was on (so a lium miner re-provisions a pod rather than falling back
+    // to local). No teardown: a dead runner has nothing to stop first.
+    const restart = useCallback(
+      async (m: MinerRow) => {
+        if (!run) return;
+        const k = minerKey(m.netuid, m.persona);
+        setBusy(k);
+        setError(undefined);
+        try {
+          const args = ["start", "--netuid", String(m.netuid), "--persona", m.persona, "--json"];
+          if (m.machine?.kind === "lium") args.push("--machine", "lium");
+          const out = await run("fez-mine", args);
+          if (out.code !== 0) throw new Error(out.stderr.trim() || `start exited ${out.code}`);
+          await loadMiners();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          setBusy(undefined);
+        }
+      },
+      [run, loadMiners]
     );
 
     // Find a miner's chat-thread root: `threadRootId` when it's already
@@ -882,17 +933,36 @@ export default function activate(api: GuiExtensionApi): void {
                       {m.machine?.kind === "lium" && m.machine.externalIp && m.machine.externalPort
                         ? ` · ${m.machine.externalIp}:${m.machine.externalPort}`
                         : ""}
-                      {m.startedAt ? ` · up since ${new Date(m.startedAt).toLocaleString()}` : ""}
-                      {m.lastExit ? ` · ${m.lastExit}` : ""}
+                      {m.alive && m.startedAt ? ` · up since ${new Date(m.startedAt).toLocaleString()}` : ""}
                     </div>
                     {m.attention ? (
                       <div className="skill-desc" style={{ color: "var(--yellow, #fabd2f)" }}>
                         ⚠ {m.attention}
                       </div>
                     ) : null}
-                    {metricStrip(metagraphByKey[k])}
+                    {m.alive ? (
+                      metricStrip(metagraphByKey[k])
+                    ) : (
+                      <div className="skill-desc" style={{ color: "var(--red, #fb4934)", marginTop: 4 }}>
+                        {requirementsByNetuid[m.netuid]?.publicEndpoint && m.machine?.kind !== "lium"
+                          ? `Not running — ${subnetName(m.netuid)} needs a reachable endpoint a local Mac can't provide. Restart on a Lium pod, or open the thread for logs.`
+                          : `Not running${m.lastExit ? ` — ${m.lastExit}` : ""}. Restart, or open the thread for logs.`}
+                      </div>
+                    )}
                   </div>
                   <div className="skill-actions">
+                    {!m.alive ? (
+                      <button
+                        className="agent-action"
+                        disabled={busy === k}
+                        onClick={(e: { stopPropagation: () => void }) => {
+                          e.stopPropagation();
+                          void restart(m);
+                        }}
+                      >
+                        {busy === k ? "working…" : "Restart"}
+                      </button>
+                    ) : null}
                     <button
                       className="agent-action"
                       disabled={busy === k}
@@ -901,7 +971,7 @@ export default function activate(api: GuiExtensionApi): void {
                         void stop(m.netuid, m.persona);
                       }}
                     >
-                      {busy === k ? "stopping…" : "Stop"}
+                      {busy === k ? "working…" : "Stop"}
                     </button>
                   </div>
                 </div>
@@ -926,9 +996,12 @@ export default function activate(api: GuiExtensionApi): void {
                 <div style={tileGrid}>
                   {readyRows.map((r) => (
                     <div key={r.netuid} style={tile}>
-                      <div>
-                        <div className="skill-name">{r.name}</div>
-                        <div style={{ ...dim, ...mono }}>netuid {r.netuid}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {subnetAvatar(r.netuid, r.name)}
+                        <div style={{ minWidth: 0 }}>
+                          <div className="skill-name">{r.name}</div>
+                          <div style={{ ...dim, ...mono, fontSize: 11.5 }}>SN{r.netuid}</div>
+                        </div>
                       </div>
                       <div style={{ ...dim, flex: 1 }}>{machineHint(r.netuid)}</div>
                       <button className="agent-action" onClick={() => selectSubnet(r.netuid)}>
@@ -946,24 +1019,8 @@ export default function activate(api: GuiExtensionApi): void {
                 placeholder="Search subnets…"
                 value={subnetFilter}
                 onChange={(e: { target: { value: string } }) => setSubnetFilter(e.target.value)}
-                style={{ marginTop: 6, width: "100%", boxSizing: "border-box" }}
+                style={{ marginTop: 6, marginBottom: 4, width: "100%", boxSizing: "border-box" }}
               />
-              <div
-                style={{
-                  ...tableRowStyle,
-                  ...mono,
-                  borderBottom: "1px solid var(--hairline, #333)",
-                  color: "var(--fg-dim, #999)",
-                  fontSize: 10.5,
-                  letterSpacing: "0.06em",
-                  textTransform: "uppercase",
-                  marginTop: 8,
-                }}
-              >
-                <span>netuid</span>
-                <span>name</span>
-                <span>status</span>
-              </div>
               {tableRows.length === 0 ? (
                 <p style={dim}>{searching ? `No subnets match “${subnetFilter}”.` : "No subnets yet — Refresh to load the catalog."}</p>
               ) : (
@@ -972,20 +1029,23 @@ export default function activate(api: GuiExtensionApi): void {
                   return (
                     <div
                       key={r.netuid}
-                      style={{ ...tableRowStyle, cursor: mineable ? "pointer" : undefined }}
+                      style={{ ...subnetRowStyle, cursor: mineable ? "pointer" : undefined }}
                       title={mineable ? `Launch a miner on ${r.name}` : r.description}
                       onClick={mineable ? () => selectSubnet(r.netuid) : undefined}
                     >
-                      <span style={{ ...mono, color: "var(--fg-dim, #999)" }}>{r.netuid}</span>
-                      <span className="skill-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {r.name}
-                      </span>
+                      {subnetAvatar(r.netuid, r.name)}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="skill-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {r.name}
+                        </div>
+                        <div style={{ ...dim, ...mono, fontSize: 11.5 }}>SN{r.netuid}</div>
+                      </div>
                       {mineable ? (
-                        <span style={{ color: "var(--green, #b8bb26)" }}>● Mineable</span>
+                        <span style={{ color: "var(--green, #b8bb26)", flex: "none" }}>● Mineable</span>
                       ) : r.gated ? (
-                        <span style={{ color: "var(--yellow, #fabd2f)" }}>◐ Needs hardware</span>
+                        <span style={{ color: "var(--yellow, #fabd2f)", flex: "none" }}>◐ Needs hardware</span>
                       ) : (
-                        <span style={dim}>— Agent-run soon</span>
+                        <span style={{ ...dim, flex: "none" }}>— Agent-run soon</span>
                       )}
                     </div>
                   );
