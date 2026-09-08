@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { MinerEntry } from "./state.js";
+import type { MinerEntry, MinerMachineState } from "./state.js";
 import { fezHome, readState, writeState, upsertMiner } from "./state.js";
 import { loadDescriptors } from "./descriptors.js";
 import { teardownPod } from "./machine-lium.js";
@@ -108,6 +108,17 @@ async function cmdStart(
   ssh?: { target: string; keyPath?: string; servePort?: number }
 ): Promise<void> {
   const home = fezHome();
+  // Validate the ssh target BEFORE the register call below — that call is
+  // the burn on a real registration, and a config error must never land
+  // after money moved.
+  if (machine === "ssh" && !ssh?.target) {
+    const s0 = await readState(home);
+    const prior = s0.miners.find((m) => m.netuid === netuid && m.persona === persona);
+    if (prior?.machine?.kind !== "ssh") {
+      console.error("--machine ssh needs --host user@host[:port] (no prior ssh host recorded for this miner)");
+      process.exit(1);
+    }
+  }
   // Idempotent adopt — this call IS the burn on a real registration; the
   // GUI confirms with the human before ever invoking `fez-mine start`.
   // The bare CLI has no such confirmation step, so disclose the live cost
@@ -170,14 +181,17 @@ async function cmdStart(
     // from state, never through cmdStart.
     ...(machine === "lium"
       ? { machine: existing?.machine?.kind === "lium" ? existing.machine : { kind: "lium" as const } }
-      : machine === "ssh" && ssh
+      : machine === "ssh"
         ? {
-            machine: {
-              kind: "ssh" as const,
-              ...parseSshTarget(ssh.target),
-              ...(ssh.keyPath ? { keyPath: ssh.keyPath } : {}),
-              ...(ssh.servePort ? { servePort: ssh.servePort } : {}),
-            },
+            machine: ssh?.target
+              ? {
+                  kind: "ssh" as const,
+                  ...parseSshTarget(ssh.target),
+                  ...(ssh.keyPath ? { keyPath: ssh.keyPath } : {}),
+                  ...(ssh.servePort ? { servePort: ssh.servePort } : {}),
+                }
+              : // guarded at the top of cmdStart: no target ⇒ a prior ssh entry exists
+                (existing!.machine as Extract<MinerMachineState, { kind: "ssh" }>),
           }
         : {}),
   });
@@ -393,10 +407,8 @@ async function main(): Promise<void> {
   const sshKeyValue = sshKeyFlag >= 0 ? argv[sshKeyFlag + 1] : undefined;
   const servePortFlag = argv.indexOf("--serve-port");
   const servePortValue = servePortFlag >= 0 ? Number(argv[servePortFlag + 1]) || undefined : undefined;
-  if (machineValue === "ssh" && !hostValue) {
-    console.error("--machine ssh needs --host user@host[:port]");
-    process.exit(1);
-  }
+  // `--machine ssh` with no --host is legal on a RESTART — cmdStart
+  // reuses the entry's recorded host, same as lium reuses its pod.
   const secret = argv.includes("--secret");
   const keyFlag = argv.indexOf("--key");
   const keyValue = keyFlag >= 0 ? argv[keyFlag + 1] : undefined;

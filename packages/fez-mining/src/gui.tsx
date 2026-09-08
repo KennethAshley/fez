@@ -282,6 +282,11 @@ export default function activate(api: GuiExtensionApi): void {
     // separate since it's mutated per-keystroke, unlike the step object).
     const [picker, setPicker] = useState<PickerStep | undefined>(undefined);
     const [machineChoice, setMachineChoice] = useState<MachineChoice>("local");
+    // The ssh machine's identity — typed once at the machine step, carried
+    // to `start --machine ssh` as flags. Target is user@host[:port].
+    const [sshTarget, setSshTarget] = useState("");
+    const [sshKeyPath, setSshKeyPath] = useState("");
+    const [sshServePort, setSshServePort] = useState("");
     const [subnetFilter, setSubnetFilter] = useState("");
     const [showAllSubnets, setShowAllSubnets] = useState(false);
 
@@ -447,6 +452,8 @@ export default function activate(api: GuiExtensionApi): void {
         try {
           const args = ["start", "--netuid", String(m.netuid), "--persona", m.persona, "--json"];
           if (m.machine?.kind === "lium") args.push("--machine", "lium");
+          // Host/key/port are preserved by cmdStart from the recorded entry.
+          if (m.machine?.kind === "ssh") args.push("--machine", "ssh");
           const out = await run("fez-mine", args);
           if (out.code !== 0) throw new Error(out.stderr.trim() || `start exited ${out.code}`);
           await loadMiners();
@@ -572,9 +579,14 @@ export default function activate(api: GuiExtensionApi): void {
 
     const confirmMachine = useCallback(
       (netuid: number, machine: MachineChoice) => {
+        if (machine === "ssh" && !sshTarget.trim()) {
+          setError("ssh needs a host — user@host or user@host:port");
+          return;
+        }
+        setError(undefined);
         void enterConfigStep(netuid, machine);
       },
-      [enterConfigStep]
+      [enterConfigStep, sshTarget]
     );
 
     const confirmConfig = useCallback(() => {
@@ -684,6 +696,11 @@ export default function activate(api: GuiExtensionApi): void {
 
           const startArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
           if (machine === "lium") startArgs.push("--machine", "lium");
+          if (machine === "ssh") {
+            startArgs.push("--machine", "ssh", "--host", sshTarget.trim());
+            if (sshKeyPath.trim()) startArgs.push("--ssh-key", sshKeyPath.trim());
+            if (sshServePort.trim()) startArgs.push("--serve-port", sshServePort.trim());
+          }
           const startOut = await run("fez-mine", startArgs);
           if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
 
@@ -748,7 +765,7 @@ export default function activate(api: GuiExtensionApi): void {
           setBusy(undefined);
         }
       },
-      [run, loadMiners, findRoot, personasApi]
+      [run, loadMiners, findRoot, personasApi, sshTarget, sshKeyPath, sshServePort]
     );
 
     if (!run) {
@@ -794,6 +811,32 @@ export default function activate(api: GuiExtensionApi): void {
                 {c.reason ? ` — ${c.reason}` : ""}
               </label>
             ))}
+            {machineChoice === "ssh" && (
+              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                <input
+                  className="manage-input"
+                  value={sshTarget}
+                  spellCheck={false}
+                  placeholder="root@165.1.2.3 or user@host:2222"
+                  onChange={(e) => setSshTarget(e.target.value)}
+                />
+                <input
+                  className="manage-input"
+                  value={sshKeyPath}
+                  spellCheck={false}
+                  placeholder="identity file (optional — ssh-agent otherwise)"
+                  onChange={(e) => setSshKeyPath(e.target.value)}
+                />
+                <input
+                  className="manage-input"
+                  value={sshServePort}
+                  spellCheck={false}
+                  inputMode="numeric"
+                  placeholder="serving port (optional — for axon miners; open it in the host's firewall)"
+                  onChange={(e) => setSshServePort(e.target.value)}
+                />
+              </div>
+            )}
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               <button className="agent-action" onClick={() => confirmMachine(picker.netuid, machineChoice)}>
                 Continue
@@ -1303,6 +1346,7 @@ export default function activate(api: GuiExtensionApi): void {
           if (stopOut.code !== 0) throw new Error(stopOut.stderr.trim() || `stop exited ${stopOut.code}`);
           const startArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
           if (status?.machine?.kind === "lium") startArgs.push("--machine", "lium");
+          if (status?.machine?.kind === "ssh") startArgs.push("--machine", "ssh");
           const startOut = await run("fez-mine", startArgs);
           if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
         }

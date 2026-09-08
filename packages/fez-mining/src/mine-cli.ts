@@ -34,9 +34,10 @@ export const mineArgs = {
   status: () => ["status", "--json"],
   metagraph: (persona: string, netuid: number) =>
     ["metagraph", "--netuid", String(netuid), "--persona", persona, "--json"],
-  start: (persona: string, netuid: number, machine?: "local" | "lium") =>
+  start: (persona: string, netuid: number, machine?: "local" | "lium" | "ssh") =>
     ["start", "--netuid", String(netuid), "--persona", persona,
-      ...(machine === "lium" ? ["--machine", "lium"] : [])],
+      // ssh carries no host here: cmdStart preserves the recorded one.
+      ...(machine === "lium" ? ["--machine", "lium"] : machine === "ssh" ? ["--machine", "ssh"] : [])],
   stop: (persona: string, netuid: number) =>
     ["stop", "--netuid", String(netuid), "--persona", persona],
   describe: (netuid: number) => ["describe", "--netuid", String(netuid), "--json"],

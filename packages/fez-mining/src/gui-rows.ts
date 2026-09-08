@@ -7,14 +7,17 @@ export type ConfigFormValues = Record<string, string | number | boolean>;
 // replace this hardcoded list later.
 export const HARDWARE_GATED: number[] = [4];
 
-export type MachineChoice = "local" | "lium";
+export type MachineChoice = "local" | "lium" | "ssh";
 
 /**
  * Which machine kinds a descriptor's requirements permit, pure. No
  * requirement → local only (v1 flow, no picker shown). A GPU floor or a
  * public-endpoint need both rule out a NAT'd local Mac, but for different
  * reasons — surfaced separately so the GUI's disabled-option tooltip is
- * accurate.
+ * accurate. ssh (a host you already run) satisfies a public-endpoint
+ * need but is NOT offered for a GPU floor — nothing can verify a GPU on
+ * an arbitrary owned box, and offering it would imply mineability the
+ * honesty badge exists to prevent.
  */
 export function machineChoices(
   req: { gpu?: string; publicEndpoint?: boolean } | undefined
@@ -25,6 +28,7 @@ export function machineChoices(
     : "validators must reach this miner — your Mac has no public port";
   return [
     { choice: "local", enabled: false, reason },
+    ...(req.gpu ? [] : [{ choice: "ssh" as const, enabled: true, reason: "a public host you already run" }]),
     { choice: "lium", enabled: true },
   ];
 }

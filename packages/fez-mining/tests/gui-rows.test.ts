@@ -34,6 +34,16 @@ describe("machineChoices", () => {
   it("no requirement → local only, no picker", () => {
     expect(machineChoices(undefined)).toEqual([{ choice: "local", enabled: true }]);
   });
+
+  it("publicEndpoint offers ssh — a host you already run satisfies it", () => {
+    const c = machineChoices({ publicEndpoint: true });
+    expect(c.map((x) => x.choice)).toEqual(["local", "ssh", "lium"]);
+    expect(c.find((x) => x.choice === "ssh")).toMatchObject({ enabled: true });
+  });
+
+  it("gpu requirement does NOT offer ssh — nothing can verify a GPU on an owned box", () => {
+    expect(machineChoices({ gpu: "24GB" }).some((x) => x.choice === "ssh")).toBe(false);
+  });
 });
 
 describe("gated badge", () => {
