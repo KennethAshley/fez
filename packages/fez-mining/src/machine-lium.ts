@@ -91,6 +91,22 @@ function parseDescribe(out: string): { sshHost?: string; ports: MachinePort[] } 
   return { sshHost, ports };
 }
 
+/**
+ * `lium describe <pod> --json` alone — the real, current port map for an
+ * ALREADY-provisioned pod. Used both by provisionPod (right after `up`)
+ * and by a reattach (run.ts): lium's external↔internal port mapping isn't
+ * derivable from state.ts's persisted externalIp/externalPort, so a
+ * reattach must re-describe rather than fabricate. Throws on failure —
+ * callers that mean "pod's gone, not just unreachable this second" (a
+ * reattach) should catch and fall through to a fresh provision.
+ */
+export async function describePod(podId: string, exec: LiumExec = lium): Promise<LiumHandle> {
+  const d = await exec(["describe", podId, "--json"], 30_000);
+  if (!d.ok) throw new Error(d.err);
+  const { sshHost, ports } = parseDescribe(d.out);
+  return { podId, ports, sshHost };
+}
+
 /** `lium up` (auto-selected node via filters) then `lium describe` for the port map. */
 export async function provisionPod(
   opts: { template?: string; ports?: number; ttl?: string; maxUsdHour?: number },
@@ -121,8 +137,7 @@ export async function provisionPod(
     );
   }
 
-  const d = await exec(["describe", podId, "--json"], 30_000);
-  const { sshHost, ports } = d.ok ? parseDescribe(d.out) : { sshHost: undefined, ports: [] };
+  const { sshHost, ports } = await describePod(podId, exec).catch(() => ({ sshHost: undefined, ports: [] as MachinePort[] }));
   return { podId, hourlyRate: priceUsdHour !== null ? String(priceUsdHour) : undefined, ports, sshHost };
 }
 

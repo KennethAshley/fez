@@ -6,13 +6,16 @@ import os from "node:os";
 import path from "node:path";
 import type { MinerMachine } from "@fezchat/extension-api";
 import { loadDescriptors } from "./descriptors.js";
-import { liumMachine, podAlive, provisionPod } from "./machine-lium.js";
+import { describePod, liumMachine, podAlive, provisionPod } from "./machine-lium.js";
+import type { LiumExec } from "./machine-lium.js";
 import { localMachine } from "./machine-local.js";
 import type { MinerEntry, MinerMachineState } from "./state.js";
 import { fezHome, readState, upsertMiner, writeState } from "./state.js";
 
-// Same PATH-resolved-bin convention as cli.ts's WALLET_BIN.
-const WALLET_BIN = process.env.FEZ_WALLET_BIN || "fez-wallet";
+// Same PATH-resolved-bin convention as cli.ts's WALLET_BIN — read per-call
+// (not a frozen module-level const) so tests can point it at a fake bin
+// after this module is already loaded.
+const walletBin = (): string => process.env.FEZ_WALLET_BIN || "fez-wallet";
 
 /**
  * Deploy the persona's standalone remote-signing key onto a freshly
@@ -23,7 +26,7 @@ const WALLET_BIN = process.env.FEZ_WALLET_BIN || "fez-wallet";
  */
 async function deployHotkey(persona: string, machine: MinerMachine): Promise<void> {
   const exported = JSON.parse(
-    execFileSync(WALLET_BIN, ["export-hotkey", persona, "--json"], { encoding: "utf8" })
+    execFileSync(walletBin(), ["export-hotkey", persona, "--json"], { encoding: "utf8" })
   ) as { keyfile: unknown };
   const tmpFile = path.join(os.tmpdir(), `fez-hotkey-${crypto.randomUUID()}.json`);
   try {
@@ -40,30 +43,41 @@ async function deployHotkey(persona: string, machine: MinerMachine): Promise<voi
  * everything below it for tests — no real pod, no `lium` binary touched.
  * Otherwise: an entry with no `machine` (or `kind !== "lium"`) is the v1
  * local path, byte-identical to before this task. A `lium` entry reattaches
- * to its recorded pod if `podAlive`, else provisions a fresh one and
- * deploys the hotkey onto it (only on that fresh-provision branch).
+ * to its recorded pod if `podAlive`, re-`describe`ing it for the REAL port
+ * map (lium's external↔internal mapping isn't derivable from what state.ts
+ * persisted, so it is never fabricated from stored fields). If `describe`
+ * itself fails — a pod `ps` still lists but is otherwise unreachable — that
+ * pod is treated as gone, falling through to a fresh `provisionPod` (which
+ * also deploys the hotkey, done only on that fresh-provision branch).
+ *
+ * `exec` is exposed (default: machine-lium's own `lium` binary call) so
+ * this resolution logic itself — reattach vs. fresh-provision — is
+ * unit-testable without `machineFactory` bypassing it entirely.
  */
-async function resolveMachine(
+export async function resolveMachine(
   entry: MinerEntry | undefined,
   persona: string,
-  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine> }
+  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine> },
+  exec?: LiumExec
 ): Promise<{ machine: MinerMachine; machineState?: MinerMachineState }> {
   if (opts.machineFactory) {
     if (!entry) throw new Error("machineFactory requires a recorded miner entry");
     return { machine: await opts.machineFactory(entry) };
   }
   if (entry?.machine?.kind === "lium") {
-    if (entry.machine.podId && (await podAlive(entry.machine.podId))) {
-      // ponytail: internalPort isn't persisted in state, so a reattach
-      // approximates it with externalPort. Good enough until a later task
-      // re-describes the pod on reattach instead.
-      const ports = entry.machine.externalPort !== undefined
-        ? [{ externalIp: entry.machine.externalIp ?? "", externalPort: entry.machine.externalPort, internalPort: entry.machine.externalPort }]
-        : [];
-      return { machine: liumMachine({ podId: entry.machine.podId, hourlyRate: entry.machine.hourlyRate, ports }) };
+    const podId = entry.machine.podId;
+    if (podId && (await podAlive(podId, exec))) {
+      try {
+        const handle = await describePod(podId, exec);
+        return { machine: liumMachine(handle, exec) };
+      } catch {
+        // describe failed on a pod `ps` said was there (half-dead) — fall
+        // through to provisioning a fresh one rather than run with
+        // fabricated ports.
+      }
     }
-    const handle = await provisionPod({});
-    const machine = liumMachine(handle);
+    const handle = await provisionPod({}, exec);
+    const machine = liumMachine(handle, exec);
     await deployHotkey(persona, machine);
     return {
       machine,

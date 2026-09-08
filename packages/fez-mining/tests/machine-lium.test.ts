@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { liumMachine, provisionPod, podAlive, teardownPod } from "../src/machine-lium.js";
+import { describePod, liumMachine, provisionPod, podAlive, teardownPod } from "../src/machine-lium.js";
 
 // Fake exec scripted by argv[0] (or "argv[0] argv[1]" for a more specific
 // match) — mirrors the real LiumExec signature: (args, timeoutMs?) =>
@@ -97,6 +97,20 @@ describe("liumMachine", () => {
   it("podAlive is true when ps has the pod under any tolerated key", async () => {
     const { exec } = script({ ps: JSON.stringify([{ huid: "p9" }]) });
     expect(await podAlive("p9", exec)).toBe(true);
+  });
+
+  it("describePod returns the real, current port map for an already-running pod", async () => {
+    const { exec, calls } = script({
+      describe: JSON.stringify({ host_ip: "9.9.9.9", ports: [{ external: 30001, internal: 22 }] }),
+    });
+    const h = await describePod("p9", exec);
+    expect(h).toEqual({ podId: "p9", sshHost: "9.9.9.9", ports: [{ externalIp: "9.9.9.9", externalPort: 30001, internalPort: 22 }] });
+    expect(calls[0]).toEqual(["describe", "p9", "--json"]);
+  });
+
+  it("describePod throws (doesn't fabricate) when the describe call itself fails", async () => {
+    const { exec } = script({});
+    await expect(describePod("p9", exec)).rejects.toThrow(/no script for describe/);
   });
 
   it("teardown calls rm", async () => {
