@@ -53,7 +53,8 @@ async function fetchRecord(pk: string): Promise<RecordRow[] | "error"> {
     recordCache.set(pk, rows);
     return rows;
   } catch {
-    recordCache.set(pk, "error");
+    // NOT cached: "unreachable" pinned for the whole session meant
+    // reconnecting and reopening the profile still said unreachable.
     return "error";
   } finally {
     relay.disconnect();

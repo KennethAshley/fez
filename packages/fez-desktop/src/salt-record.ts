@@ -26,12 +26,19 @@ export async function fetchSaltPanel(opts: {
   relays: string[];
   isViewerAgent(pk: string): boolean;
   inViewerCircle(pk: string): boolean;
-}): Promise<SaltPanel> {
+}): Promise<SaltPanel | "error"> {
   const hit = panelCache.get(opts.pk);
   if (hit && hit !== "error") return hit;
   const relay = new RelayConnection({ urls: opts.relays });
   try {
     await relay.connect();
+    // connect()/query() never reject on a dead relay (fetchRecord's
+    // comment tells the whole story) — so without this, an unreachable
+    // network produced four empty queries and the UI asserted "no one
+    // you can verify has attested this agent's work" AS FACT. Offline
+    // is "unknown", never "nameless". The error is deliberately NOT
+    // cached: reconnecting and reopening the profile should recover.
+    if (!relay.health().some((h) => h.connected)) return "error";
     const q = async (filter: object): Promise<RawEvent[]> => {
       const events = (await relay.query([filter as never])) as unknown as RawEvent[];
       // Same relay/dedup posture as fetchRecord: merge by id, verify sigs.
@@ -80,6 +87,8 @@ export async function fetchSaltPanel(opts: {
     });
     panelCache.set(opts.pk, panel);
     return panel;
+  } catch {
+    return "error";
   } finally {
     relay.disconnect();
   }

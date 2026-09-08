@@ -280,7 +280,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   // Salt: what people outside this agent's household say. No workspace
   // client here, so rings are viewer-only — exactly the vantage that
   // makes a stranger "nameless", which is who the gate is for.
-  const [salt, setSalt] = useState<SaltPanel>();
+  const [salt, setSalt] = useState<SaltPanel | "error">();
   const [saltAck, setSaltAck] = useState(() => !!guest.saltAck);
   useEffect(() => {
     let cancelled = false;
@@ -694,8 +694,14 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             </span>
           ) : null}
           {/* The salt tier — ember when no one you can verify vouches
-              (the "needs you" signal), quiet otherwise. */}
-          {salt ? (
+              (the "needs you" signal), quiet otherwise. Unreachable
+              relays are "unknown", never "nameless" — offline says
+              nothing about who vouches. */}
+          {salt === "error" ? (
+            <span className="guest-chip" data-tip="relays unreachable — salt unknown, not absent">
+              salt unknown
+            </span>
+          ) : salt ? (
             <span
               className="guest-chip"
               style={salt.tier === "nameless" || salt.tier === "spoken-of" ? { color: "var(--brand, #FF6A00)" } : undefined}
@@ -839,7 +845,10 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       </div>
       {/* The summon gate — inform, don't hard-block. Shown once per guest,
           ever: accepting persists saltAck on the ledger entry. */}
-      {salt && !saltAck && (salt.tier === "nameless" || salt.tier === "spoken-of") ? (
+      {/* An "error" panel skips the gate deliberately: unverifiable is
+          not the same claim as unvouched, and blocking the composer on
+          a network blip would gate every offline conversation. */}
+      {salt && salt !== "error" && !saltAck && (salt.tier === "nameless" || salt.tier === "spoken-of") ? (
         <div className="guest-composer">
           <div className="guest-banner" style={{ color: "var(--brand, #FF6A00)", padding: 0 }}>
             no salt between you and anyone you know — summon anyway?
