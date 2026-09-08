@@ -143,7 +143,8 @@ export default function activate(api: GuiExtensionApi): void {
     | { kind: "subnet" }
     | { kind: "machine"; netuid: number }
     | { kind: "config"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues }
-    | { kind: "persona"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues; persona: string };
+    | { kind: "persona"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues; persona: string }
+    | { kind: "confirm"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues; persona: string; message: string };
 
   function MiningPage(): JSX.Element {
     const run = api.processes?.run;
@@ -438,11 +439,34 @@ export default function activate(api: GuiExtensionApi): void {
             }
           }
 
-          const ok = confirm(
-            `Register ${persona} on netuid ${netuid}?\n\nBurns ~${cost.tao} tTAO — skipped (free) if ${persona} is already registered there.${liumLine}`
-          );
-          if (!ok) return;
+          // Native confirm()/alert()/prompt() are dead in the Tauri/wry
+          // webview (they return falsy without ever showing — proven live
+          // for prompt(), and confirm() is the same family), which would
+          // silently abort every start. So the burn confirmation is an
+          // in-view step, same as the persona picker replaced prompt().
+          setPicker({
+            kind: "confirm", netuid, persona, machine, schema, values,
+            message: `Register ${persona} on netuid ${netuid}? Burns ~${cost.tao} tTAO — skipped (free) if ${persona} is already registered there.${liumLine}`,
+          });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          setBusy(undefined);
+        }
+      },
+      [run]
+    );
 
+    // The post-confirm half of startFlow — run only after the in-view
+    // confirm step's Confirm. config set (per field) → single start → open
+    // the thread. Split from the prepare half so the native-dialog-free
+    // confirm can sit between them.
+    const doStart = useCallback(
+      async (netuid: number, persona: string, machine: MachineChoice | undefined, schema: ConfigField[], values: ConfigFormValues) => {
+        if (!run) return;
+        setBusy(`mine:${netuid}`);
+        setError(undefined);
+        try {
           // Write the form's values BEFORE start — `config set` (state
           // branch) now creates a stopped stub entry when none exists yet,
           // so this no longer needs `start` to have run first. One
@@ -626,6 +650,29 @@ export default function activate(api: GuiExtensionApi): void {
             <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
               <button className="agent-action" onClick={confirmConfig}>
                 Continue
+              </button>
+              <button className="skill-link" onClick={cancel}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      if (picker.kind === "confirm") {
+        const busyKey = `mine:${picker.netuid}`;
+        return (
+          <div style={card}>
+            {Label(`confirm — ${subnetName(picker.netuid)}`)}
+            <p style={{ whiteSpace: "pre-wrap" }}>{picker.message}</p>
+            {error ? <p className="ob-error" style={{ marginTop: 8 }}>{error}</p> : null}
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <button
+                className="agent-action"
+                disabled={busy === busyKey}
+                onClick={() => void doStart(picker.netuid, picker.persona, picker.machine, picker.schema, picker.values)}
+              >
+                {busy === busyKey ? "working…" : "Confirm & start"}
               </button>
               <button className="skill-link" onClick={cancel}>
                 Cancel
