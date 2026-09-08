@@ -36,6 +36,26 @@ export function machineChoices(
  * requirements not yet supported on any machine) render a badge instead
  * of a Mine button.
  */
+/**
+ * The subnet-stacking story, pure: which OTHER subnets a miner composes with
+ * to mine this one ("mine Bittensor with Bittensor"). Two sources — a
+ * curated map for descriptor-level composition the requirements can't
+ * express (Bazaar answers through a Chutes LLM key), and a derivation for
+ * machine needs (a GPU floor or public endpoint is met by renting a Lium
+ * pod). Returned as netuids so the GUI renders each component with its own
+ * subnet badge.
+ */
+export const LIUM_NETUID = 51;
+export const CHUTES_NETUID = 64;
+const CURATED_STACK: Record<number, number[]> = {
+  553: [CHUTES_NETUID], // Bazaar — answers priced through a Chutes inference key
+};
+export function stackFor(netuid: number, req?: { gpu?: string; publicEndpoint?: boolean }): number[] {
+  const curated = CURATED_STACK[netuid] ?? [];
+  const machine = req?.gpu || req?.publicEndpoint ? [LIUM_NETUID] : [];
+  return [...curated, ...machine];
+}
+
 export function subnetRows(subnets: Subnet[], covered: number[], gated: number[] = []) {
   return subnets
     .map((s) => ({ ...s, curated: covered.includes(s.netuid), gated: gated.includes(s.netuid) }))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { subnetRows, machineChoices, HARDWARE_GATED } from "../src/gui-rows.js";
+import { subnetRows, machineChoices, stackFor, HARDWARE_GATED } from "../src/gui-rows.js";
 
 describe("subnetRows", () => {
   it("badges covered subnets and sorts them first", () => {
@@ -45,5 +45,20 @@ describe("gated badge", () => {
   it("does not gate netuids outside the list", () => {
     const rows = subnetRows([{ netuid: 553, name: "bazaar" }], [553], HARDWARE_GATED);
     expect(rows[0]).toMatchObject({ gated: false, curated: true });
+  });
+});
+
+describe("stackFor — subnet stacking components", () => {
+  it("bazaar composes with Chutes (curated)", () => {
+    expect(stackFor(553, undefined)).toEqual([64]);
+  });
+  it("an endpoint requirement composes with Lium", () => {
+    expect(stackFor(56, { publicEndpoint: true })).toEqual([51]);
+  });
+  it("a gpu requirement composes with Lium", () => {
+    expect(stackFor(99, { gpu: "A100" })).toEqual([51]);
+  });
+  it("no requirement, no curation → no stack", () => {
+    expect(stackFor(7, undefined)).toEqual([]);
   });
 });

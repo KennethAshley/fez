@@ -1,7 +1,7 @@
 import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
 import type { ConfigField } from "@fezchat/extension-api";
 import type { MinerEntry, Subnet } from "./state.js";
-import { subnetRows, machineChoices, initialFormValues, HARDWARE_GATED, type MachineChoice, type ConfigFormValues } from "./gui-rows.js";
+import { subnetRows, machineChoices, initialFormValues, stackFor, HARDWARE_GATED, type MachineChoice, type ConfigFormValues } from "./gui-rows.js";
 import { validateConfig } from "./config.js";
 import { MINING_SOURCE, MINING_CHANNEL_NAME, minerRootLine, parseMinerRoot } from "./thread.js";
 import { ensureMiningSkill, removeMiningSkill } from "./persona-skill.js";
@@ -921,6 +921,35 @@ export default function activate(api: GuiExtensionApi): void {
       return "runs locally";
     };
 
+    // The stacking story on a tile: this subnet's badge with its component
+    // subnets' badges overlapped behind it (Gradients ⟵ Lium; Bazaar ⟵
+    // Chutes), plus a plain line naming what each component contributes.
+    const stackCluster = (netuid: number, name: string): JSX.Element => {
+      const comps = stackFor(netuid, requirementsByNetuid[netuid]);
+      return (
+        <span style={{ display: "inline-flex", alignItems: "center", flex: "none" }}>
+          {subnetAvatar(netuid, name)}
+          {comps.map((c) => (
+            <span key={c} style={{ marginLeft: -9, display: "inline-flex", borderRadius: "50%", boxShadow: "0 0 0 2px var(--bg1, #282828)" }}>
+              {subnetAvatar(c, subnetName(c))}
+            </span>
+          ))}
+        </span>
+      );
+    };
+    const stackLine = (netuid: number): string => {
+      const comps = stackFor(netuid, requirementsByNetuid[netuid]);
+      if (comps.length === 0) return machineHint(netuid);
+      const what = (c: number): string => {
+        const nm = subnetName(c).replace(/\.io$/, "");
+        const req = requirementsByNetuid[netuid];
+        if (c === 51) return req?.gpu ? `${nm} GPU pod` : `${nm} pod for the endpoint`;
+        if (c === 64) return `${nm} inference key`;
+        return nm;
+      };
+      return `mined with ${comps.map(what).join(" + ")}`;
+    };
+
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, padding: "4px 24px 0" }}>
         {error ? <p className="ob-error">{error}</p> : null}
@@ -1015,13 +1044,13 @@ export default function activate(api: GuiExtensionApi): void {
                   {readyRows.map((r) => (
                     <div key={r.netuid} style={tile}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        {subnetAvatar(r.netuid, r.name)}
+                        {stackCluster(r.netuid, r.name)}
                         <div style={{ minWidth: 0 }}>
                           <div className="skill-name">{r.name}</div>
                           <div style={{ ...dim, ...mono, fontSize: 11.5 }}>SN{r.netuid}</div>
                         </div>
                       </div>
-                      <div style={{ ...dim, flex: 1 }}>{machineHint(r.netuid)}</div>
+                      <div style={{ ...dim, flex: 1 }}>{stackLine(r.netuid)}</div>
                       <button className="agent-action" onClick={() => selectSubnet(r.netuid)}>
                         Launch
                       </button>
