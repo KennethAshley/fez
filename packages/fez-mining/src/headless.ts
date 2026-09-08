@@ -91,7 +91,9 @@ export default function activate(api: FezExtensionAPI): void {
           continue;
         }
         let entry = freshEntry;
-        if (action === "reprovision" && entry.machine) {
+        // Reprovision only means anything for a machine the harness rents —
+        // an ssh host is owned, there is nothing to re-rent.
+        if (action === "reprovision" && entry.machine?.kind === "lium") {
           // Clear the dead pod (and its now-stale port info) and count the
           // reprovision against the daily cap; the runner provisions a
           // fresh pod on respawn (Task 7).

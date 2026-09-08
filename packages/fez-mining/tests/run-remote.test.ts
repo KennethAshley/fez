@@ -58,6 +58,62 @@ describe("remote runner path", () => {
   });
 });
 
+describe("resolveMachine ssh (owned host: no provisioning, probe → workDir → hotkey)", () => {
+  const sshEntry: MinerEntry = {
+    netuid: 2, persona: "p", hotkey: "5F", desired: "running",
+    machine: { kind: "ssh", host: "165.1.2.3", user: "root", servePort: 8091 },
+  };
+
+  it("builds the machine from declared state, probes, makes workDir, deploys the hotkey", async () => {
+    const prevBin = process.env.FEZ_WALLET_BIN;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    const prevInitial = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+    process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    try {
+      const calls: string[][] = [];
+      const sshRun = async (argv: string[]) => {
+        calls.push(argv);
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const { machine, machineState, provisioned } = await resolveMachine(sshEntry, "p", { sshRun });
+      expect(machine.kind).toBe("ssh");
+      // Declared, identity-mapped endpoint — no provisioner to discover one.
+      expect(machine.ports).toEqual([{ externalIp: "165.1.2.3", externalPort: 8091, internalPort: 8091 }]);
+      expect(machineState).toBeUndefined(); // nothing provisioned, nothing to persist
+      expect(provisioned).toBeUndefined();
+      const cmds = calls.filter((c) => c[0] === "ssh").map((c) => c[c.length - 1]);
+      expect(cmds[0]).toBe("true"); // first-contact probe
+      expect(cmds.some((c) => c.startsWith("mkdir -p '/root/fez-mining/2-p'"))).toBe(true);
+      expect(calls.some((c) => c[0] === "scp")).toBe(true); // hotkey deployed
+    } finally {
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
+      else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitial === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitial;
+    }
+  });
+
+  it("a host that never answers fails the start with a transport error, not a hang into later steps", async () => {
+    const prev = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    const prevInitial = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    try {
+      const sshRun = async () => ({ code: 255, stdout: "", stderr: "Connection refused" });
+      await expect(resolveMachine(sshEntry, "p", { sshRun })).rejects.toThrow(/Connection refused/);
+    } finally {
+      if (prev === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_RETRY_DELAY_MS = prev;
+      if (prevInitial === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitial;
+    }
+  });
+});
+
 describe("resolveMachine (production resolution path, no machineFactory)", () => {
   const entry: MinerEntry = {
     netuid: 1, persona: "p", hotkey: "5F", desired: "running",
@@ -103,7 +159,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
         scp: () => ({ ok: true, out: "" }),
       });
       const { machine, machineState, provisioned } = await resolveMachine(entry, "p", {}, exec, noRecord);
-      expect(machineState?.podId).toBe("p10"); // a NEW pod, not the stale p9
+      expect(machineState?.kind === "lium" && machineState.podId).toBe("p10"); // a NEW pod, not the stale p9
       expect(provisioned).toBe(true);
       expect(machine.ports).toEqual([{ externalIp: "5.5.5.5", externalPort: 40001, internalPort: 8091 }]);
       expect(calls.filter((c) => c[0] === "describe").length).toBe(2);
@@ -243,7 +299,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       expect(calls.some((c) => c[0] === "rm" && c[1] === "p9")).toBe(true);
       const after = await readState(home);
       const updated = after.miners.find((m) => m.netuid === 9998 && m.persona === "p")!;
-      expect(updated.machine?.podId).toBe("p10");
+      expect(updated.machine?.kind === "lium" && updated.machine.podId).toBe("p10");
       expect(updated.provisions).toEqual([1000, expect.any(Number)]);
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;

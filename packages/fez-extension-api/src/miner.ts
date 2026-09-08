@@ -20,11 +20,11 @@ export interface MachinePort {
 /**
  * The machine seam — where a miner's commands actually run. Descriptors
  * call these instead of spawning directly, so one descriptor works on
- * any machine kind whose requirements it fits. "ssh" is the designed-for
- * third member (spec §7), not yet built.
+ * any machine kind whose requirements it fits. "ssh" is any user-owned
+ * host — no provisioning step, same verbs (spec §7).
  */
 export interface MinerMachine {
-  kind: "local" | "lium";
+  kind: "local" | "lium" | "ssh";
   /** Run a shell command on the machine; resolves when it exits.
    *  `transportError: true` means the CALL to the machine failed to run the
    *  command at all (unreachable/timeout/API hiccup) — distinct from the

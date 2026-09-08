@@ -10,6 +10,7 @@ import { DEFAULT_MAX_USD_HOUR } from "@fezchat/lium/cli";
 import { loadDescriptors } from "./descriptors.js";
 import { describePod, escapeShellValue, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
 import type { LiumExec, Recorder } from "./machine-lium.js";
+import { sshMachine, type SshRun } from "./machine-ssh.js";
 import { localMachine } from "./machine-local.js";
 import { resolveConfig } from "./config.js";
 import { getSecret } from "./secrets.js";
@@ -133,7 +134,7 @@ async function deployHotkey(persona: string, machine: MinerMachine): Promise<voi
 export async function resolveMachine(
   entry: MinerEntry | undefined,
   persona: string,
-  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine> },
+  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine>; sshRun?: SshRun },
   exec?: LiumExec,
   recorder?: Recorder,
   log: (line: string) => void = () => {},
@@ -213,6 +214,38 @@ export async function resolveMachine(
     await deployHotkey(persona, machine);
     return { machine, provisioned: true, machineState };
   }
+  if (entry?.machine?.kind === "ssh") {
+    const st = entry.machine;
+    const machine = sshMachine(
+      {
+        host: st.host,
+        user: st.user,
+        port: st.port,
+        keyPath: st.keyPath,
+        // An owned host's endpoint is declared, identity-mapped — there is
+        // no provisioner to discover a mapping from.
+        ports: st.servePort
+          ? [{ externalIp: st.host, externalPort: st.servePort, internalPort: st.servePort }]
+          : [],
+      },
+      opts.sshRun
+    );
+    // Same first-contact discipline as a fresh pod: prove the transport
+    // once, then everything after runs single-attempt. An owned host that
+    // never answers fails the start here, loudly, instead of five steps in.
+    await retryFirstContact(
+      "ssh host readiness",
+      async () => {
+        const r = await machine.exec("true");
+        if (r.code !== 0) throw new Error(r.stderr || `exec exited ${r.code}`);
+      },
+      log
+    );
+    const mk = await machine.exec(`mkdir -p ${escapeShellValue(remoteWorkDir(entry.netuid, persona))}`);
+    if (mk.code !== 0) throw new Error(mk.stderr || `mkdir workDir exited ${mk.code}`);
+    await deployHotkey(persona, machine);
+    return { machine };
+  }
   return { machine: localMachine() };
 }
 
@@ -287,7 +320,7 @@ export async function runMiner(
         await record({ pid: process.pid, startedAt: Date.now(), machine: ms, bumpProvisions: true });
       }
     );
-    if (provisioned && machineState) {
+    if (provisioned && machineState?.kind === "lium") {
       log(`provisioned pod ${machineState.podId} at $${machineState.hourlyRate ?? "?"}/hr (ttl ${process.env.FEZ_MINE_POD_TTL || "24h"})`);
     }
     // Local machines keep v1's full-environment forward. A REMOTE (lium)
@@ -339,7 +372,7 @@ export async function runMiner(
   } catch (e) {
     log(`miner error: ${(e as Error).message}`);
     code = 1;
-    if (freshMachineState?.podId) {
+    if (freshMachineState?.kind === "lium" && freshMachineState.podId) {
       // This run rented the pod and then failed before mining anything —
       // whether the failure was the deploy itself or install/register/
       // start afterward. A pod that never mines must never keep billing:

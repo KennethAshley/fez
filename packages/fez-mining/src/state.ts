@@ -14,14 +14,25 @@ export interface Subnet {
 // Absent = local (v1 shape, still valid). podId is optional because
 // `fez-mine start --machine lium` records the intent before the runner
 // has provisioned anything — the runner fills podId (and the port/rate
-// fields) in once `lium up` returns.
-export interface MinerMachineState {
-  kind: "lium";
-  podId?: string;
-  externalIp?: string;
-  externalPort?: number;
-  hourlyRate?: string;
-}
+// fields) in once `lium up` returns. An ssh machine is an owned host:
+// everything about it is declared at start time, nothing provisioned.
+export type MinerMachineState =
+  | {
+      kind: "lium";
+      podId?: string;
+      externalIp?: string;
+      externalPort?: number;
+      hourlyRate?: string;
+    }
+  | {
+      kind: "ssh";
+      host: string;
+      user: string;
+      port?: number;
+      keyPath?: string;
+      /** Declared serving port (identity-mapped) for axon-class miners. */
+      servePort?: number;
+    };
 
 export interface MinerEntry {
   netuid: number;

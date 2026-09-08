@@ -68,6 +68,23 @@ export function escapeShellValue(v: string): string {
 // anything else has no business being forwarded at all.
 const VALID_ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/i;
 
+/**
+ * The remote command with the cwd/env discipline both remote machines
+ * (lium, ssh) share: cd and exports are their OWN `;`-terminated
+ * statements so a trailing `&` in the user command backgrounds only the
+ * user command, env names are validated and loader-affecting ones
+ * refused, and every value is single-quote-escaped. Extracted when
+ * machine-ssh landed — one discipline, two transports.
+ */
+export function buildRemoteCommand(cmd: string, opts: { env?: Record<string, string>; cwd?: string } = {}): string {
+  const exports = Object.entries(opts.env ?? {})
+    .filter(([k]) => VALID_ENV_NAME_RE.test(k) && !isRefusedEnvName(k))
+    .map(([k, v]) => `export ${k}=${escapeShellValue(v)};`)
+    .join(" ");
+  const cdGuard = opts.cwd ? `cd ${escapeShellValue(opts.cwd)} || exit 97; ` : "";
+  return `${cdGuard}${exports ? `${exports} ` : ""}${cmd}`;
+}
+
 /** Wrap an already-provisioned pod as a MinerMachine. */
 export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMachine {
   return {
@@ -89,15 +106,7 @@ export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMac
       // (inherited from the exec session, not redirected) stays open as
       // long as the miner runs, so `lium exec` waits on it — a 60s hang.
       // Pinned live 2026-09-08.
-      const exports = Object.entries(opts.env ?? {})
-        .filter(([k]) => VALID_ENV_NAME_RE.test(k) && !isRefusedEnvName(k))
-        .map(([k, v]) => `export ${k}=${escapeShellValue(v)};`)
-        .join(" ");
-      // Single-quoted (I2, defense-in-depth) — cwd is normally a harness-
-      // controlled constant, not attacker input, but quoting it here is
-      // free and matches the discipline applied to env values above.
-      const cdGuard = opts.cwd ? `cd ${escapeShellValue(opts.cwd)} || exit 97; ` : "";
-      const full = `${cdGuard}${exports ? `${exports} ` : ""}${cmd}`;
+      const full = buildRemoteCommand(cmd, opts);
       const args = ["exec", handle.podId, full, "--json"];
       const r = await exec(args, opts.timeoutMs);
       // C1: the lium CLI call itself failed (network blip, API hiccup, a 60s

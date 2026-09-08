@@ -7,6 +7,7 @@ import type { MinerEntry } from "./state.js";
 import { fezHome, readState, writeState, upsertMiner } from "./state.js";
 import { loadDescriptors } from "./descriptors.js";
 import { teardownPod } from "./machine-lium.js";
+import { parseSshTarget } from "./machine-ssh.js";
 import { alive, kill, spawnDetached } from "./procs.js";
 import { lium, parseJson, priceOf } from "@fezchat/lium/cli";
 import { deleteSecret, getSecret, setSecret } from "./secrets.js";
@@ -99,7 +100,13 @@ async function cmdMetagraph(netuid: number, persona: string): Promise<void> {
   console.log(JSON.stringify(out));
 }
 
-async function cmdStart(netuid: number, persona: string, json: boolean, machine?: "lium"): Promise<void> {
+async function cmdStart(
+  netuid: number,
+  persona: string,
+  json: boolean,
+  machine?: "lium" | "ssh",
+  ssh?: { target: string; keyPath?: string; servePort?: number }
+): Promise<void> {
   const home = fezHome();
   // Idempotent adopt — this call IS the burn on a real registration; the
   // GUI confirms with the human before ever invoking `fez-mine start`.
@@ -114,11 +121,11 @@ async function cmdStart(netuid: number, persona: string, json: boolean, machine?
   } catch {
     /* cost-fetch failure never blocks start */
   }
-  // For a lium miner, the signing key lives on the pod, not this
-  // keychain — export the standalone remote hotkey first and register
-  // ITS address (the Task 5 override), not a locally-derived pair's.
+  // For a remote miner (lium pod or ssh host), the signing key lives on
+  // the machine, not this keychain — export the standalone remote hotkey
+  // first and register ITS address, not a locally-derived pair's.
   const registerArgs = ["register", persona, "--netuid", String(netuid), "--json"];
-  if (machine === "lium") {
+  if (machine === "lium" || machine === "ssh") {
     const exported = JSON.parse(
       execFileSync(WALLET_BIN, ["export-hotkey", persona, "--json"], { encoding: "utf8" })
     ) as { ss58Address: string };
@@ -163,7 +170,16 @@ async function cmdStart(netuid: number, persona: string, json: boolean, machine?
     // from state, never through cmdStart.
     ...(machine === "lium"
       ? { machine: existing?.machine?.kind === "lium" ? existing.machine : { kind: "lium" as const } }
-      : {}),
+      : machine === "ssh" && ssh
+        ? {
+            machine: {
+              kind: "ssh" as const,
+              ...parseSshTarget(ssh.target),
+              ...(ssh.keyPath ? { keyPath: ssh.keyPath } : {}),
+              ...(ssh.servePort ? { servePort: ssh.servePort } : {}),
+            },
+          }
+        : {}),
   });
   await writeState(home, s);
   const pid = spawnDetached(MINE_RUN_BIN, [String(netuid), persona]);
@@ -352,7 +368,7 @@ async function cmdThreadSetRoot(netuid: number, persona: string, root: string): 
 
 function usage(): never {
   console.error(
-    "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
+    "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium | --machine ssh --host user@host[:port] [--ssh-key path] [--serve-port N]] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
       "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
       "logs --netuid N --persona P [--lines 12]"
@@ -370,7 +386,17 @@ async function main(): Promise<void> {
   const personaValue = personaFlag >= 0 ? argv[personaFlag + 1] : undefined;
   const machineFlag = argv.indexOf("--machine");
   const machineValue = machineFlag >= 0 ? argv[machineFlag + 1] : undefined;
-  if (machineValue !== undefined && machineValue !== "lium") usage();
+  if (machineValue !== undefined && machineValue !== "lium" && machineValue !== "ssh") usage();
+  const hostFlag = argv.indexOf("--host");
+  const hostValue = hostFlag >= 0 ? argv[hostFlag + 1] : undefined;
+  const sshKeyFlag = argv.indexOf("--ssh-key");
+  const sshKeyValue = sshKeyFlag >= 0 ? argv[sshKeyFlag + 1] : undefined;
+  const servePortFlag = argv.indexOf("--serve-port");
+  const servePortValue = servePortFlag >= 0 ? Number(argv[servePortFlag + 1]) || undefined : undefined;
+  if (machineValue === "ssh" && !hostValue) {
+    console.error("--machine ssh needs --host user@host[:port]");
+    process.exit(1);
+  }
   const secret = argv.includes("--secret");
   const keyFlag = argv.indexOf("--key");
   const keyValue = keyFlag >= 0 ? argv[keyFlag + 1] : undefined;
@@ -398,7 +424,13 @@ async function main(): Promise<void> {
       a !== "--root" &&
       !(rootFlag >= 0 && i === rootFlag + 1) &&
       a !== "--lines" &&
-      !(linesFlag >= 0 && i === linesFlag + 1)
+      !(linesFlag >= 0 && i === linesFlag + 1) &&
+      a !== "--host" &&
+      !(hostFlag >= 0 && i === hostFlag + 1) &&
+      a !== "--ssh-key" &&
+      !(sshKeyFlag >= 0 && i === sshKeyFlag + 1) &&
+      a !== "--serve-port" &&
+      !(servePortFlag >= 0 && i === servePortFlag + 1)
   );
 
   switch (cmd) {
@@ -415,7 +447,15 @@ async function main(): Promise<void> {
       break;
     case "start":
       if (netuidValue === undefined || !personaValue) usage();
-      await cmdStart(netuidValue, personaValue, json, machineValue as "lium" | undefined);
+      await cmdStart(
+        netuidValue,
+        personaValue,
+        json,
+        machineValue as "lium" | "ssh" | undefined,
+        machineValue === "ssh" && hostValue
+          ? { target: hostValue, keyPath: sshKeyValue, servePort: servePortValue }
+          : undefined
+      );
       break;
     case "stop":
       if (netuidValue === undefined || !personaValue) usage();
