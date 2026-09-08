@@ -668,6 +668,11 @@ export default function activate(api: GuiExtensionApi): void {
 
       if (picker.kind === "confirm") {
         const busyKey = `mine:${picker.netuid}`;
+        // Cancel steps BACK to the persona picker, not out of the whole
+        // flow — a wrong persona (e.g. one with no wallet) should let you
+        // pick another without restarting subnet → config from scratch.
+        const backToPersona = (): void =>
+          setPicker({ kind: "persona", netuid: picker.netuid, machine: picker.machine, schema: picker.schema, values: picker.values, persona: picker.persona });
         return (
           <div style={card}>
             {Label(`confirm — ${subnetName(picker.netuid)}`)}
@@ -680,6 +685,9 @@ export default function activate(api: GuiExtensionApi): void {
                 onClick={() => void doStart(picker.netuid, picker.persona, picker.machine, picker.schema, picker.values)}
               >
                 {busy === busyKey ? "working…" : "Confirm & start"}
+              </button>
+              <button className="skill-link" onClick={backToPersona}>
+                Back
               </button>
               <button className="skill-link" onClick={cancel}>
                 Cancel
