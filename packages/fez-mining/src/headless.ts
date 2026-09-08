@@ -5,6 +5,12 @@ import { planRemote } from "./reconcile.js";
 import { podAlive } from "./machine-lium.js";
 import { lifecycleMessage } from "./lifecycle.js";
 import { MINING_CHANNEL_NAME, MINING_SOURCE, minerRootLine } from "./thread.js";
+import { postAsPersona } from "./persona-post.js";
+
+/** Pure seam for testing: the thread-root backfill text for a miner. */
+export function rootBackfillText(netuid: number, persona: string): string {
+  return minerRootLine(netuid, persona);
+}
 
 /**
  * fez-mining, headless part — the sentinel-side reconcile loop.
@@ -108,7 +114,7 @@ export default function activate(api: FezExtensionAPI): void {
         if (!miner.threadRootId) {
           if (miner.desired !== "running") continue; // no thread for a stopped, never-opened miner
           try {
-            const rootId = await ctx.channels.say(channelId, minerRootLine(miner.netuid, miner.persona));
+            const rootId = await postAsPersona(miner.persona, channelId, rootBackfillText(miner.netuid, miner.persona));
             const st = await readState(home);
             const e = st.miners.find((x) => x.netuid === miner.netuid && x.persona === miner.persona);
             if (e) await writeState(home, upsertMiner(st, { ...e, threadRootId: rootId }));
@@ -124,7 +130,7 @@ export default function activate(api: FezExtensionAPI): void {
         const text = lifecycleMessage(prev, miner);
         if (text) {
           try {
-            await ctx.channels.say(channelId, text, { threadRoot: miner.threadRootId });
+            await postAsPersona(miner.persona, channelId, text, { threadRoot: miner.threadRootId });
           } catch (err) {
             console.error(`mining-reconcile: failed to post lifecycle reply for ${miner.netuid}:${miner.persona}`, err);
             continue; // don't advance the snapshot — retry this transition next tick
