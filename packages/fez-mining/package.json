@@ -39,7 +39,9 @@
   "dependencies": {
     "@fezchat/bittensor": "file:../fez-bittensor",
     "@fezchat/lium": "file:../fez-lium",
+    "@fezchat/protocol": "file:../..",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "nostr-tools": "^2.14.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
