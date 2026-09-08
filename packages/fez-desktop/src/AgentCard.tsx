@@ -35,6 +35,7 @@ export default function AgentCard({
   description,
   skills,
   online,
+  waking,
   selected,
   record,
   onOpen,
@@ -45,6 +46,8 @@ export default function AgentCard({
   description?: string;
   skills: AgentCardSkill[];
   online?: boolean;
+  /** Started on this machine, not yet announced — the window between the button and the face. */
+  waking?: boolean;
   selected?: boolean;
   /** Judged bazaar record, e.g. "research · 91st · 240 tasks". */
   record?: string;
@@ -54,7 +57,7 @@ export default function AgentCard({
   // or has minted its key (pubkey seeds the generative creature). Only a
   // persona that is neither has genuinely never worn a face.
   const faced = hasFace(name, pk);
-  const faceClass = ["agent-card-face", online && "online", !faced && "unhatched"]
+  const faceClass = ["agent-card-face", online && "online", !faced && "unhatched", waking && !online && "waking"]
     .filter(Boolean)
     .join(" ");
 
@@ -80,6 +83,7 @@ export default function AgentCard({
         )}
       </span>
       <span className="agent-card-name">@{name}</span>
+      {waking && !online && <span className="agent-card-desc">waking — announcing to the relay…</span>}
       {description ? (
         <span className="agent-card-desc">{description}</span>
       ) : (

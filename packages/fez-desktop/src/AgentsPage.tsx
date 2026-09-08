@@ -6,6 +6,7 @@ import { agentSkillStrip } from "./agent-skill-health";
 import { useConfig } from "./config-store";
 import { useBazaarRecords } from "./useBazaarRecords";
 import { bestRow } from "./bazaar-record";
+import { wakingSince, clearWaking, subscribeWaking } from "./waking";
 
 /**
  * The agents page.
@@ -42,6 +43,18 @@ export default function AgentsPage({
   const records = useBazaarRecords(useMemo(() => rows.map((r) => r.pk).filter((pk): pk is string => !!pk), [rows]));
   const [loaded, setLoaded] = useState(false);
 
+  // The waking window: redraw when it opens or closes, close it the
+  // moment the roster shows the agent online, and re-read the roster on
+  // announcements so a freshly woken agent gains its face live instead
+  // of on the next visit (the "pops in from nowhere" Ken watched).
+  const [, wakeTick] = useState(0);
+  useEffect(() => subscribeWaking(() => wakeTick((n) => n + 1)), []);
+  const [liveNonce, setLiveNonce] = useState(0);
+  useEffect(() => client.on("presenceChanged", () => setLiveNonce((n) => n + 1)), [client]);
+  useEffect(() => {
+    for (const r of rows) if (r.online) clearWaking(r.name);
+  }, [rows]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -77,7 +90,7 @@ export default function AgentsPage({
     return () => {
       cancelled = true;
     };
-  }, [client, catalog, nonce]);
+  }, [client, catalog, nonce, liveNonce]);
 
   // The page's one live fact. "Broken" is the word the rule earns: an
   // agent naming a skill this machine cannot resolve runs reduced and
@@ -129,6 +142,7 @@ export default function AgentsPage({
               description={row.description}
               skills={row.skills}
               online={row.online}
+              waking={wakingSince(row.name) !== undefined}
               record={(() => {
                 const top = row.pk && records ? bestRow(records.get(row.pk) ?? []) : undefined;
                 return top

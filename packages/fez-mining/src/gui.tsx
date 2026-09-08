@@ -838,11 +838,12 @@ export default function activate(api: GuiExtensionApi): void {
     const sortedRows = [...catalogRows].sort((a, b) => statusRank(a) - statusRank(b) || a.netuid - b.netuid);
     const q = subnetFilter.trim().toLowerCase();
     const searching = q.length > 0;
+    const DEFAULT_SUBNET_COUNT = 20;
     const tableRows = searching
       ? sortedRows.filter((r) => r.name.toLowerCase().includes(q) || String(r.netuid).includes(q))
       : showAllSubnets
         ? sortedRows
-        : sortedRows.filter((r) => r.curated || r.gated); // mineable + needs-hardware
+        : sortedRows.slice(0, DEFAULT_SUBNET_COUNT); // actionable sorted first, then a page of the rest
     const hiddenCount = sortedRows.length - tableRows.length;
     const machineHint = (netuid: number): string => {
       const req = requirementsByNetuid[netuid];
@@ -855,7 +856,7 @@ export default function activate(api: GuiExtensionApi): void {
       <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, padding: "4px 24px 0" }}>
         {error ? <p className="ob-error">{error}</p> : null}
 
-        <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", paddingTop: 8, paddingBottom: 28, maxWidth: 1040 }}>
+        <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", paddingTop: 8, paddingBottom: 28 }}>
           {Label("your miners")}
           {activeMiners.length === 0 ? (
             <p style={dim}>No miners running. Launch one below.</p>

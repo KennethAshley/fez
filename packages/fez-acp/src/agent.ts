@@ -689,6 +689,8 @@ async function main() {
    * mid-conversation) is picked up on the next miss.
    */
   const nameCache = new Map<string, string | undefined>();
+  /** Announced "also answers to" names, filled by the same lookup — a handoff to an alias must tag like one to the name. */
+  const aliasCache = new Map<string, string[]>();
 
   async function resolveName(pubkey: string): Promise<string | undefined> {
     if (nameCache.has(pubkey)) return nameCache.get(pubkey);
@@ -698,16 +700,18 @@ async function main() {
         { kinds: [0], authors: [pubkey], limit: 3 },
         { kinds: [KIND_AGENT_METADATA], authors: [pubkey], limit: 3 },
       ]);
-      name = events
+      const metas = events
         .sort((a, b) => b.created_at - a.created_at)
         .map((e) => {
           try {
-            return (JSON.parse(e.content) as { name?: string }).name?.trim();
+            return JSON.parse(e.content) as { name?: string; aliases?: unknown };
           } catch {
             return undefined;
           }
-        })
-        .find((candidate) => !!candidate);
+        });
+      name = metas.map((m) => m?.name?.trim()).find((candidate) => !!candidate);
+      const aliases = metas.map((m) => m?.aliases).find((a) => Array.isArray(a)) as unknown[] | undefined;
+      if (aliases) aliasCache.set(pubkey, aliases.filter((a): a is string => typeof a === "string").slice(0, 8));
     } catch { /* relay hiccup — fall back to hex, and retry on the next miss */ }
     // Only cache a hit. A miss stays uncached so a profile published
     // later is picked up rather than being wrong for the whole session.
@@ -733,6 +737,8 @@ async function main() {
     for (const pubkey of roster.members) {
       const known = await resolveName(pubkey);
       if (known && known.toLowerCase() === wanted) return pubkey;
+      // resolveName just filled the alias cache for this pubkey (if it announced any).
+      if (aliasCache.get(pubkey)?.some((a) => a.toLowerCase() === wanted)) return pubkey;
     }
     return undefined;
   }
@@ -1429,7 +1435,7 @@ async function main() {
   // Addressing rules live in addressing.ts (pure, shared with
   // fez-evals — regressions fail a gate instead of shipping).
   const isMention = (event: { pubkey: string; content: string; tags: string[][] }) =>
-    isAddressedTo(event, personaId!, myPubkey, owner);
+    isAddressedTo(event, personaId!, myPubkey, owner, persona.aliases ?? []);
 
   const handleChannelMessage = async (
     event: {

@@ -769,9 +769,9 @@ export class FezClient {
 
     throw new Error(`"${query.source}" isn't wired up yet — tasks, approvals, pages, mentions and runs are`);
   }
-  private agentMeta = new Map<string, { about?: string; skills?: string[]; repo?: string; branch?: string }>();
-  /** What an agent announced about itself (47000 about/skills/repo/branch) — undefined for humans. */
-  agentInfo(pk: string): { about?: string; skills?: string[]; repo?: string; branch?: string } | undefined {
+  private agentMeta = new Map<string, { about?: string; skills?: string[]; repo?: string; branch?: string; aliases?: string[] }>();
+  /** What an agent announced about itself (47000 about/skills/repo/branch/aliases) — undefined for humans. */
+  agentInfo(pk: string): { about?: string; skills?: string[]; repo?: string; branch?: string; aliases?: string[] } | undefined {
     return this.agentMeta.get(pk);
   }
 
@@ -803,7 +803,7 @@ export class FezClient {
       const name = this.names.get(pubkey) ?? this.profiles.get(pubkey);
       if (!name || seen.has(pubkey)) continue;
       seen.add(pubkey);
-      out.push({ pubkey, name, isMember: true });
+      out.push({ pubkey, name, isMember: true, aliases: this.agentMeta.get(pubkey)?.aliases });
     }
     return out;
   }
@@ -2548,7 +2548,7 @@ export class FezClient {
 
   private absorbName(event: WireEvent, emitChange = true): void {
     try {
-      const meta = JSON.parse(event.content) as { name?: string; about?: string; skills?: unknown; repo?: unknown; branch?: unknown };
+      const meta = JSON.parse(event.content) as { name?: string; about?: string; skills?: unknown; repo?: unknown; branch?: unknown; aliases?: unknown };
       if (meta.name && this.names.get(event.pubkey) !== meta.name) {
         this.names.set(event.pubkey, meta.name);
         if (emitChange) this.emit("presenceChanged");
@@ -2562,6 +2562,10 @@ export class FezClient {
           // reach a header.
           repo: typeof meta.repo === "string" ? meta.repo.slice(0, 100) : undefined,
           branch: typeof meta.branch === "string" ? meta.branch.slice(0, 100) : undefined,
+          // Capped like skills: an announcement is self-asserted wire input.
+          aliases: Array.isArray(meta.aliases)
+            ? meta.aliases.filter((a): a is string => typeof a === "string").slice(0, 8).map((a) => a.slice(0, 64))
+            : undefined,
         });
       }
     } catch { /* ignore */ }

@@ -47,9 +47,14 @@ export function isAddressedTo(
   event: AddressableEvent,
   personaId: string,
   myPubkey: string,
-  owner: string | undefined
+  owner: string | undefined,
+  /** The persona's "also answers to" nicknames — matched exactly like the id. */
+  aliases: readonly string[] = []
 ): boolean {
   const named = addressees(event.content);
-  if (named.length > 0) return named.includes(personaId.toLowerCase());
+  if (named.length > 0) {
+    const mine = new Set([personaId, ...aliases].map((n) => n.toLowerCase()));
+    return named.some((n) => mine.has(n));
+  }
   return event.pubkey === owner && event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
 }

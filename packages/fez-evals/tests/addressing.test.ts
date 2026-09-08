@@ -75,3 +75,27 @@ describe("segment-start fan-out (comms battery: one message, many tasks)", () =>
     expect(isAddressedTo(msg('@a say "done." @b then archive it'), "b", ME, OWNER)).toBe(true);
   });
 });
+
+describe("aliases (the persona editor's 'also answers to')", () => {
+  test("an alias addresses the agent like its name does", () => {
+    expect(isAddressedTo(msg("@research dig this up"), "researcher", ME, OWNER, ["research"])).toBe(true);
+  });
+
+  test("alias match is case-insensitive both ways", () => {
+    expect(isAddressedTo(msg("@Research hello"), "researcher", ME, OWNER, ["research"])).toBe(true);
+    expect(isAddressedTo(msg("@research hello"), "researcher", ME, OWNER, ["Research"])).toBe(true);
+  });
+
+  test("an alias does not leak onto an agent that doesn't carry it", () => {
+    expect(isAddressedTo(msg("@research dig this up"), "reviewer", OTHER_AGENT, OWNER, ["deputy"])).toBe(false);
+  });
+
+  test("a mid-sentence alias stays a downstream handoff", () => {
+    expect(isAddressedTo(msg("@reviewer check it, then ping @research"), "researcher", ME, OWNER, ["research"])).toBe(false);
+  });
+
+  test("no aliases given behaves exactly as before", () => {
+    expect(isAddressedTo(msg("@researcher hi"), "researcher", ME, OWNER)).toBe(true);
+    expect(isAddressedTo(msg("@research hi"), "researcher", ME, OWNER)).toBe(false);
+  });
+});
