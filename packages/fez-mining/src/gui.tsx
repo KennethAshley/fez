@@ -4,6 +4,7 @@ import type { MinerEntry, Subnet } from "./state.js";
 import { subnetRows, machineChoices, initialFormValues, HARDWARE_GATED, type MachineChoice, type ConfigFormValues } from "./gui-rows.js";
 import { validateConfig } from "./config.js";
 import { MINING_SOURCE, MINING_CHANNEL_NAME, minerRootLine, parseMinerRoot } from "./thread.js";
+import { ensureMiningSkill, removeMiningSkill } from "./persona-skill.js";
 
 /**
  * fez-mining, GUI part — the "Mining" nav view: active miners up top (each
@@ -317,6 +318,30 @@ export default function activate(api: GuiExtensionApi): void {
         try {
           const out = await run("fez-mine", ["stop", "--netuid", String(netuid), "--persona", persona, "--json"]);
           if (out.code !== 0) throw new Error(out.stderr.trim() || `stop exited ${out.code}`);
+
+          // Revert the mining-skill opt-in once this was P's last miner.
+          // Re-reads status rather than trusting the (not-yet-reloaded)
+          // `miners` state, so a persona with another still-running miner
+          // keeps the skill. Best-effort — the stop itself already
+          // succeeded either way.
+          if (personasApi) {
+            try {
+              const statusOut = await run("fez-mine", ["status", "--json"]);
+              const rows = statusOut.code === 0 ? (JSON.parse(statusOut.stdout) as StatusRow[]) : [];
+              const stillMining = rows.some((r) => r.persona === persona && (r.alive || r.desired === "running"));
+              if (!stillMining) {
+                const md = await personasApi.read(persona);
+                const next = removeMiningSkill(md);
+                if (next !== md) await personasApi.update(persona, next);
+              }
+            } catch (err) {
+              api.toast?.(
+                `${persona} stopped mining but chat-skill revert failed: ${err instanceof Error ? err.message : String(err)}`,
+                "error"
+              );
+            }
+          }
+
           await loadMiners();
         } catch (err) {
           setError(err instanceof Error ? err.message : String(err));
@@ -324,7 +349,7 @@ export default function activate(api: GuiExtensionApi): void {
           setBusy(undefined);
         }
       },
-      [run, loadMiners]
+      [run, loadMiners, personasApi]
     );
 
     // Find a miner's chat-thread root: `threadRootId` when it's already
@@ -555,6 +580,24 @@ export default function activate(api: GuiExtensionApi): void {
           const startOut = await run("fez-mine", startArgs);
           if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
 
+          // Roster P into #mining and grant it the mining skill so it can
+          // answer mining questions there. Best-effort — mining itself
+          // already succeeded above; a missing `personas` permission or a
+          // hiccup here shouldn't fail the whole start.
+          if (personasApi) {
+            try {
+              await personasApi.invite?.(persona, "bot");
+              const md = await personasApi.read(persona);
+              const next = ensureMiningSkill(md);
+              if (next !== md) await personasApi.update(persona, next);
+            } catch (err) {
+              api.toast?.(
+                `${persona} started mining but chat wiring failed: ${err instanceof Error ? err.message : String(err)}`,
+                "error"
+              );
+            }
+          }
+
           // Ensure #mining, then ensure a root — idempotently. This is the
           // GUI's only restart path for a previously-stopped miner (stopped
           // miners drop off the active list, so re-running the picker is
@@ -598,7 +641,7 @@ export default function activate(api: GuiExtensionApi): void {
           setBusy(undefined);
         }
       },
-      [run, loadMiners, findRoot]
+      [run, loadMiners, findRoot, personasApi]
     );
 
     if (!run) {
