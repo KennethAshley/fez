@@ -2,7 +2,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { runMine, minersForPersona, mineArgs } from "./mine-cli.js";
+import { runMine, minersForPersona, mineArgs, classifyConfigKey } from "./mine-cli.js";
+import type { ConfigField } from "@fezchat/extension-api";
 
 /**
  * fez-mining, skill part — an MCP server that lets a running agent inspect
@@ -77,6 +78,34 @@ server.registerTool(
     const out = runMine(mineArgs.stop(persona, netuid));
     if (out.code !== 0) return text(`could not stop netuid ${netuid}: ${out.stderr.trim() || out.stdout.trim()}`);
     return text(`stopped mining netuid ${netuid}. ${out.stdout.trim()}`);
+  }
+);
+
+server.registerTool(
+  "mining_config",
+  {
+    description:
+      "Set a NON-secret config parameter on THIS agent's miner for a subnet (e.g. daily cap, model). Secrets like API keys are REFUSED here — set those in the mining cockpit. The change applies on the next restart; ask the user before restarting (a Lium restart costs money).",
+    inputSchema: {
+      netuid: z.number().int().describe("the subnet"),
+      key: z.string().describe("the config field to set"),
+      value: z.string().describe("the new value"),
+    },
+  },
+  async ({ netuid, key, value }) => {
+    const desc = runMine(mineArgs.describe(netuid));
+    if (desc.code !== 0) return text(`could not read netuid ${netuid} config schema: ${desc.stderr.trim()}`);
+    let schema: ConfigField[] = [];
+    try { schema = (JSON.parse(desc.stdout).config ?? []) as ConfigField[]; } catch { schema = []; }
+    const verdict = classifyConfigKey(schema, key);
+    if (verdict === "secret") return text(`"${key}" is a secret — set it in the mining cockpit, not chat.`);
+    if (verdict === "unknown") {
+      const settable = schema.filter((f) => f.type !== "secret").map((f) => f.key);
+      return text(`netuid ${netuid} has no settable field "${key}". Settable: ${settable.join(", ") || "(none)"}.`);
+    }
+    const out = runMine(mineArgs.configSet(persona, netuid, key, value));
+    if (out.code !== 0) return text(`could not set ${key}: ${out.stderr.trim() || out.stdout.trim()}`);
+    return text(`set ${key} = ${value} for netuid ${netuid}. This applies on the next restart — say the word and I'll stop and restart the miner.`);
   }
 );
 
