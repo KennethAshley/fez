@@ -127,6 +127,11 @@ async function cmdStart(netuid: number, persona: string, json: boolean, machine?
   }
   s = upsertMiner(s, {
     netuid, persona, hotkey: r.hotkey, uid: r.uid, desired: "running",
+    // upsertMiner fully replaces (see the comment above) — a `config set`
+    // written onto a stub BEFORE this first start (the New-miner picker's
+    // flow) would otherwise vanish right here, the moment `start` gives
+    // the stub its real hotkey/uid.
+    ...(existing?.config ? { config: existing.config } : {}),
     // The preserve is scoped to a lium→lium restart ONLY — carrying
     // `existing.machine` forward unconditionally (any kind, whenever
     // present) meant a later PLAIN `start` (no --machine) on a
@@ -253,13 +258,22 @@ async function cmdConfigGet(netuid: number, persona: string, json: boolean): Pro
   else for (const [k, v] of Object.entries(view)) console.log(`${k}\t${v}`);
 }
 
-async function cmdConfigSet(netuid: number, persona: string, key: string, value: string, secret: boolean): Promise<void> {
+// The state (non-secret) branch used to require an existing MinerEntry —
+// `start` was the only thing that created one, which forced the GUI's
+// New-miner flow into start → config set → stop → start just to get
+// config committed before the real run, double-provisioning a Lium pod
+// every time. A fresh (netuid,persona) now gets a stopped stub instead of
+// an error; `cmdStart`'s register+upsert (upsertMiner merges by key)
+// fills in the real hotkey/uid and flips desired to "running" without
+// losing the config this wrote. `config unset`/`thread set-root` keep
+// requiring a real entry — nothing writes those before a first start.
+export async function cmdConfigSet(netuid: number, persona: string, key: string, value: string, secret: boolean): Promise<void> {
   if (secret) { setSecret(netuid, persona, key, value); return; }
   const home = fezHome();
   const s = await readState(home);
   const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
-  if (!entry) throw new Error(`no recorded miner ${netuid}:${persona} — start it once with: fez-mine start`);
-  await writeState(home, upsertMiner(s, { ...entry, config: { ...entry.config, [key]: value } }));
+  const base: MinerEntry = entry ?? { netuid, persona, hotkey: "", desired: "stopped" };
+  await writeState(home, upsertMiner(s, { ...base, config: { ...base.config, [key]: value } }));
 }
 
 // No --secret flag here — a caller may not know where a key landed, so this

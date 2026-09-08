@@ -387,8 +387,8 @@ export default function activate(api: GuiExtensionApi): void {
       setPicker({ kind: "persona", netuid: picker.netuid, machine: picker.machine, schema: picker.schema, values: picker.values, persona: personas[0] ?? "" });
     }, [picker, personas]);
 
-    // cost → confirm the exact burn → start → apply any config → ensure
-    // #mining + post the root + open the thread. `machine` set means the
+    // cost → confirm the exact burn → apply any config → start (once) →
+    // ensure #mining + post the root + open the thread. `machine` set means the
     // requirement step chose "lium" — the confirm line then adds the
     // cheapest available $/hr and the account balance next to the burn,
     // and start gets `--machine lium`.
@@ -442,32 +442,26 @@ export default function activate(api: GuiExtensionApi): void {
             `Register ${persona} on netuid ${netuid}?\n\nBurns ~${cost.tao} tTAO — skipped (free) if ${persona} is already registered there.${liumLine}`
           );
           if (!ok) return;
+
+          // Write the form's values BEFORE start — `config set` (state
+          // branch) now creates a stopped stub entry when none exists yet,
+          // so this no longer needs `start` to have run first. One
+          // `start` after means one provision (a Lium pod isn't rented,
+          // torn down, and re-rented just to pick up config it could have
+          // had from the first spawn).
+          for (const f of schema) {
+            const raw = values[f.key];
+            if (raw === undefined || raw === "") continue;
+            const setArgs = ["config", "set", "--netuid", String(netuid), "--persona", persona, "--key", f.key, "--value", String(raw)];
+            if (f.type === "secret") setArgs.push("--secret");
+            const setOut = await run("fez-mine", setArgs);
+            if (setOut.code !== 0) throw new Error(setOut.stderr.trim() || `config set ${f.key} exited ${setOut.code}`);
+          }
+
           const startArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
           if (machine === "lium") startArgs.push("--machine", "lium");
           const startOut = await run("fez-mine", startArgs);
           if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
-
-          // `start` above just spawned the miner with schema defaults (no
-          // recorded config yet — `config set` needs the miner entry
-          // `start` creates, so it can only run after). Write the form's
-          // values now, then relaunch so the running process actually
-          // picks them up instead of running the whole session on
-          // defaults it already captured.
-          if (schema.length > 0) {
-            for (const f of schema) {
-              const raw = values[f.key];
-              if (raw === undefined || raw === "") continue;
-              const setArgs = ["config", "set", "--netuid", String(netuid), "--persona", persona, "--key", f.key, "--value", String(raw)];
-              if (f.type === "secret") setArgs.push("--secret");
-              const setOut = await run("fez-mine", setArgs);
-              if (setOut.code !== 0) throw new Error(setOut.stderr.trim() || `config set ${f.key} exited ${setOut.code}`);
-            }
-            await run("fez-mine", ["stop", "--netuid", String(netuid), "--persona", persona, "--json"]);
-            const restartArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
-            if (machine === "lium") restartArgs.push("--machine", "lium");
-            const restartOut = await run("fez-mine", restartArgs);
-            if (restartOut.code !== 0) throw new Error(restartOut.stderr.trim() || `restart exited ${restartOut.code}`);
-          }
 
           // Ensure #mining, post this miner's root, recover its event id
           // (sendChannelMessage returns `unknown`, not an id), persist it
