@@ -965,9 +965,10 @@ export default function activate(api: GuiExtensionApi): void {
                 <div
                   key={k}
                   className="skill-row"
-                  style={{ cursor: hasChannels ? "pointer" : undefined }}
+                  style={{ cursor: hasChannels ? "pointer" : undefined, alignItems: "center" }}
                   onClick={() => void openMinerThread(m)}
                 >
+                  {stackCluster(m.netuid, subnetName(m.netuid))}
                   <div className="skill-main">
                     <span className="skill-name">
                       {dot(m.alive)} {m.persona} · {subnetName(m.netuid)}
@@ -1080,7 +1081,7 @@ export default function activate(api: GuiExtensionApi): void {
                       title={mineable ? `Launch a miner on ${r.name}` : r.description}
                       onClick={mineable ? () => selectSubnet(r.netuid) : undefined}
                     >
-                      {subnetAvatar(r.netuid, r.name)}
+                      {stackCluster(r.netuid, r.name)}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="skill-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {r.name}
