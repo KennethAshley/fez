@@ -1,5 +1,5 @@
 import { finalizeEvent } from "nostr-tools/pure";
-import { RelayConnection, getKey, resolveRelays } from "@fezchat/protocol";
+import { RelayConnection, getKey, resolveRelays, buildDmWraps } from "@fezchat/protocol";
 
 export interface EventTemplate {
   kind: number;
@@ -48,4 +48,28 @@ export async function postAsPersona(
     relay.disconnect();
   }
   return signed.id;
+}
+
+/**
+ * DM the owner a status line signed as `agent:<persona>` — same custody path
+ * as postAsPersona, but a NIP-17 gift-wrapped DM (buildDmWraps → publish both
+ * the peer wrap and the sender self-copy) instead of a channel message.
+ * Returns the peer wrap's event id. Throws if the persona has no local key.
+ */
+export async function dmOwnerAsPersona(persona: string, ownerPubkey: string, text: string): Promise<string> {
+  const keyHex = getKey(`agent:${persona}`);
+  if (!keyHex) throw new Error(`no local key for agent "${persona}"`);
+  const secret = Uint8Array.from(Buffer.from(keyHex, "hex"));
+  const relay = new RelayConnection({
+    urls: resolveRelays(),
+    authSigner: async (tmpl) => finalizeEvent(tmpl as never, secret),
+  });
+  const { toPeer, toSelf } = buildDmWraps(secret, ownerPubkey, text);
+  try {
+    await relay.publish(toPeer);
+    await relay.publish(toSelf);
+  } finally {
+    relay.disconnect();
+  }
+  return toPeer.id;
 }
