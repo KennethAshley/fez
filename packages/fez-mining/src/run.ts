@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { MinerMachine } from "@fezchat/extension-api";
@@ -16,7 +17,14 @@ import { fezHome, readState, upsertMiner, writeState } from "./state.js";
 // Same PATH-resolved-bin convention as cli.ts's WALLET_BIN — read per-call
 // (not a frozen module-level const) so tests can point it at a fake bin
 // after this module is already loaded.
-const walletBin = (): string => process.env.FEZ_WALLET_BIN || "fez-wallet";
+// Absolute ~/.fez/bin path when installed (the sentinel/detached runner
+// has no ~/.fez/bin on PATH either), bare name as the dev/test fallback;
+// env override wins. Mirrors cli.ts's resolveBin.
+const walletBin = (): string => {
+  if (process.env.FEZ_WALLET_BIN) return process.env.FEZ_WALLET_BIN;
+  const installed = path.join(os.homedir(), ".fez", "bin", "fez-wallet");
+  return existsSync(installed) ? installed : "fez-wallet";
+};
 
 // Same per-call-env convention — lets tests collapse the 45s initial wait
 // to ~nothing without touching the retry logic itself.

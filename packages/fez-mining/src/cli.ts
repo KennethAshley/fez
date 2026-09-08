@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { MinerEntry } from "./state.js";
 import { fezHome, readState, writeState, upsertMiner } from "./state.js";
 import { loadDescriptors } from "./descriptors.js";
@@ -7,10 +10,20 @@ import { teardownPod } from "./machine-lium.js";
 import { alive, kill, spawnDetached } from "./procs.js";
 import { lium, parseJson, priceOf } from "@fezchat/lium/cli";
 
-// Both bins resolve via ~/.fez/bin on PATH once installed; these overrides
-// let the CLI run straight from dist/ before an install (dev + tests).
-const WALLET_BIN = process.env.FEZ_WALLET_BIN || "fez-wallet";
-const MINE_RUN_BIN = process.env.FEZ_MINE_RUN_BIN || "fez-mine-run";
+// Resolve a sibling bin (fez-wallet, fez-mine-run) by ABSOLUTE path under
+// ~/.fez/bin when it exists there, not by bare name — the desktop spawns
+// this CLI without ~/.fez/bin on PATH, so a bare "fez-wallet" would ENOENT
+// the moment the GUI's Mine flow shells out. Falls back to the bare name
+// (dev/test, running straight from dist before an install); env override
+// wins for both.
+const resolveBin = (envVar: string, name: string): string => {
+  const override = process.env[envVar];
+  if (override) return override;
+  const installed = path.join(os.homedir(), ".fez", "bin", name);
+  return existsSync(installed) ? installed : name;
+};
+const WALLET_BIN = resolveBin("FEZ_WALLET_BIN", "fez-wallet");
+const MINE_RUN_BIN = resolveBin("FEZ_MINE_RUN_BIN", "fez-mine-run");
 
 interface RegisterResult {
   persona: string;

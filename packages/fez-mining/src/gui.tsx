@@ -157,6 +157,15 @@ export default function activate(api: GuiExtensionApi): void {
       }
     }, [run, loadCatalog]);
 
+    // Refresh from chain on mount so `covered` and the machine
+    // requirements are current the first time the page opens — a
+    // freshly-linked descriptor (a new curated subnet) won't badge as
+    // curated until a refresh recomputes it. loadCatalog above already
+    // painted the cached catalog instantly; this brings it up to date.
+    useEffect(() => {
+      void refresh();
+    }, [refresh]);
+
     const stop = useCallback(
       async (netuid: number, persona: string) => {
         if (!run) return;
@@ -304,16 +313,25 @@ export default function activate(api: GuiExtensionApi): void {
 
     const rows = subnetRows(subnets, covered, HARDWARE_GATED);
     const subnetName = (netuid: number) => subnets.find((s) => s.netuid === netuid)?.name ?? `netuid ${netuid}`;
+    // "Active" means running-or-meant-to-be: a crashed miner the sentinel
+    // will respawn still belongs here (dead dot). A miner the user stopped
+    // (desired:"stopped", dead) is not active — it drops off, so a stale
+    // stopped entry never clutters the top of the page.
+    const activeMiners = miners.filter((m) => m.alive || m.desired === "running");
 
     return (
-      <div>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
         {error ? <p className="ob-error">{error}</p> : null}
 
+        {/* One scroll region for the whole catalog — the subnet list is
+            ~129 rows and must reach the bottom (and the Refresh control
+            scrolls with its header). */}
+        <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", paddingBottom: 16 }}>
         {Label("active miners")}
-        {miners.length === 0 ? (
+        {activeMiners.length === 0 ? (
           <p style={dim}>no miners running yet</p>
         ) : (
-          miners.map((m) => {
+          activeMiners.map((m) => {
             const k = minerKey(m.netuid, m.persona);
             return (
               <div key={k} className="skill-row">
@@ -458,6 +476,7 @@ export default function activate(api: GuiExtensionApi): void {
             );
           })
         )}
+        </div>
       </div>
     );
   }
