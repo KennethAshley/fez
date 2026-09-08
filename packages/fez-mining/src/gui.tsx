@@ -194,16 +194,21 @@ export default function activate(api: GuiExtensionApi): void {
     background: "var(--bg1, transparent)",
   };
   const mono = { fontFamily: "var(--font-mono, monospace)" };
-  // A subnet's badge: we don't ship per-subnet logos, so a gruvbox-tinted
-  // monogram stands in — a colored disc keyed to the netuid with the name's
-  // first letter, so each subnet reads as a distinct mark at a glance.
+  // A subnet's badge: the real logo (taostats, keyed by netuid) painted over
+  // a gruvbox-tinted monogram. The monogram is the base layer, so a subnet
+  // with no logo — or if the remote path ever changes or is blocked —
+  // degrades silently to a colored disc with the name's initial rather than
+  // a broken image. Lazy-loaded so an off-screen list doesn't fetch 100 at
+  // once. The URL is one line to swap if a more official source appears.
   const AVATAR_HUES = ["#83a598", "#b8bb26", "#fabd2f", "#fe8019", "#d3869b", "#8ec07c"];
+  const subnetLogoUrl = (netuid: number) => `https://taostats.io/images/subnets/${netuid}.webp?w=56&q=90`;
   const subnetAvatar = (netuid: number, name: string): JSX.Element => {
     const hue = AVATAR_HUES[netuid % AVATAR_HUES.length];
     const letter = (name.trim()[0] ?? "?").toUpperCase();
     return (
       <span
         style={{
+          position: "relative",
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
@@ -211,6 +216,7 @@ export default function activate(api: GuiExtensionApi): void {
           height: 28,
           borderRadius: "50%",
           flex: "none",
+          overflow: "hidden",
           background: `color-mix(in srgb, ${hue} 20%, var(--bg1, #282828))`,
           color: hue,
           fontWeight: 700,
@@ -219,6 +225,22 @@ export default function activate(api: GuiExtensionApi): void {
         }}
       >
         {letter}
+        <img
+          src={subnetLogoUrl(netuid)}
+          alt=""
+          loading="lazy"
+          onError={(e: { currentTarget: { style: { display: string } } }) => {
+            e.currentTarget.style.display = "none";
+          }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            background: "var(--bg1, #282828)",
+          }}
+        />
       </span>
     );
   };
