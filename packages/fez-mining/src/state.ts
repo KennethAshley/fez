@@ -37,6 +37,10 @@ export interface MinerEntry {
   provisions?: number[];
   /** Human sentence set by the sentinel when it stops auto-recovering a miner; cleared on the next manual start. */
   attention?: string;
+  /** Non-secret resolved config values (schema defaults + stored overrides); secrets live in the keychain, not here. */
+  config?: Record<string, string | number | boolean>;
+  /** The #mining channel event id of this miner's root message; set once by whichever side (GUI/headless) posts it first, so the other never double-posts. */
+  threadRootId?: string;
 }
 export interface MiningState {
   miners: MinerEntry[];
