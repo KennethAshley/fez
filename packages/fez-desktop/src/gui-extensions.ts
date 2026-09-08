@@ -5,6 +5,7 @@ import type { Artifact, FezClient } from "@fezchat/client";
 import { parseQuery } from "@fezchat/client";
 import { registerArtifactViewer } from "./artifact-viewers";
 import { notifyEvent } from "./notify";
+import { toast } from "./toast";
 import { invitePersona } from "./invite-persona";
 import type { Dispose, MountRender } from "./mount-result";
 
@@ -134,6 +135,12 @@ export interface GuiExtensionApi {
    * "needs_action" (default) for things the owner should act on.
    */
   notify?: (title: string, body: string, kind?: "agent_error" | "needs_action") => void;
+  /**
+   * A toast through the host's app-wide layer (toast.ts) — the same
+   * toasts core fires, so extension feedback isn't trapped in the pane
+   * that produced it. Gated on `ui`.
+   */
+  toast?: (message: string, variant?: "success" | "error" | "warn" | "info") => void;
   agents?: {
     /** Start `bin` as an agent called `name`; resolves to its pid. */
     spawn(bin: string, opts: { name: string; env?: Record<string, string> }): Promise<number>;
@@ -1007,6 +1014,9 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
               label: name,
             })
         : (refuse("notifications", "send a notification") as never),
+      toast: may("ui")
+        ? (message: string, v?: "success" | "error" | "warn" | "info") => toast[v ?? "info"](message)
+        : (refuse("ui", "show a toast") as never),
       agents: may("processes")
         ? {
             spawn: (bin: string, opts: { name: string; env?: Record<string, string> }) =>

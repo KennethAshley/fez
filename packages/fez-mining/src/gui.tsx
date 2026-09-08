@@ -159,7 +159,14 @@ export default function activate(api: GuiExtensionApi): void {
     const [personas, setPersonas] = useState<string[]>([]);
     const [refreshing, setRefreshing] = useState(false);
     const [busy, setBusy] = useState<string | undefined>(undefined);
-    const [error, setError] = useState<string | undefined>(undefined);
+    const [error, setErrorState] = useState<string | undefined>(undefined);
+    // A failure renders inline where the user is looking AND fires the
+    // host's red toast — visible from any pane, the way core surfaces its
+    // own failures. Hosts without api.toast just keep the inline copy.
+    const setError = useCallback((msg: string | undefined): void => {
+      setErrorState(msg);
+      if (msg) api.toast?.(msg, "error");
+    }, []);
     // The picker, and the machine-step's in-progress radio choice (kept
     // separate since it's mutated per-keystroke, unlike the step object).
     const [picker, setPicker] = useState<PickerStep | undefined>(undefined);

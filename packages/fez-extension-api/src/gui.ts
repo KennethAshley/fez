@@ -227,6 +227,13 @@ export interface GuiExtensionApi {
    * act on. Absent without the grant.
    */
   notify?: (title: string, body: string, kind?: "agent_error" | "needs_action") => void;
+  /**
+   * A toast through the host's app-wide notification layer — the same
+   * toasts core fires, so extension feedback (a start failure, a saved
+   * confirmation) isn't trapped in the pane that produced it. Optional:
+   * hosts predating it don't offer it.
+   */
+  toast?: (message: string, variant?: "success" | "error" | "warn" | "info") => void;
   agents?: {
     /** Start `bin` as an agent called `name`; resolves to its pid. */
     spawn(bin: string, opts: { name: string; env?: Record<string, string> }): Promise<number>;
