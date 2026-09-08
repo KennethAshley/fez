@@ -2014,6 +2014,14 @@ fn ensure_local_relay(owner: String, name: String) -> Result<String, String> {
                 &owner,
                 "--name",
                 if name.is_empty() { "your workspace" } else { &name },
+                // Governed store: without this any pubkey that can reach the
+                // port (it binds every interface — the whole LAN) can write
+                // into channels. Found live: a stranger key's channel message
+                // was accepted; only the agents' author-gate stood behind it.
+                // Membership gates h-tagged writes to the roster and h-tagged
+                // reads to NIP-42-authed members — both wires already auth.
+                "--policy",
+                "membership",
             ])
             .stdout(log)
             .stderr(log_err)

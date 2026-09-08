@@ -4,6 +4,8 @@ import { flash } from "./toast";
 import type { FezClient } from "@fezchat/client";
 import { parseSkillEntries, formatSkillEntries, parseSkillDecls, formatSkillDecls, safeSkillEntries, nearestKnownKey } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
+import { accessRows } from "./access-rows";
+import { listGuests } from "./guest-threads";
 import SkillPicker from "./SkillPicker";
 import Avatar from "./Avatar";
 import { hasFace } from "./agent-face";
@@ -401,7 +403,22 @@ function AccessPicker({
 }) {
   const mode = value.startsWith("allowlist:") ? "allowlist" : value === "anyone" ? "anyone" : "owner";
   const pks = mode === "allowlist" ? value.slice("allowlist:".length).split(",").map((s) => s.trim()).filter(Boolean) : [];
-  const known = client ? [...client.knownNames().entries()] : [];
+  // This machine's own agents are hidden from the list — owner mode
+  // already admits them, so their checkbox would grant nothing.
+  const [ownAgents, setOwnAgents] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    let live = true;
+    void invoke<string[]>("list_personas")
+      .then((names) => {
+        if (!live || !client) return;
+        const mine = new Set(names.map((n) => n.toLowerCase()));
+        // The viewer is the owner — always admitted, same dead checkbox.
+        setOwnAgents(new Set([client.pubkey, ...[...client.agents().entries()].filter(([, n]) => mine.has(n.toLowerCase())).map(([pk]) => pk)]));
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [client]);
+  const rows = accessRows(client ? [...client.knownNames().entries()] : [], listGuests(), pks, ownAgents);
 
   const setMode = (next: string) => {
     if (next === "allowlist") onChange(pks.length ? `allowlist:${pks.join(",")}` : "allowlist:");
@@ -421,7 +438,7 @@ function AccessPicker({
     mode === "anyone"
       ? "Every member of the channels it serves can trigger it."
       : mode === "allowlist"
-        ? "Only the people ticked below can trigger it."
+        ? "The people ticked below can trigger it — on top of you and your own agents, who always can. Ticking your own agents changes nothing."
         : "You and your attested agents can trigger it. This is the default.";
 
   return (
@@ -434,11 +451,12 @@ function AccessPicker({
       <div className="field-note">{explain}</div>
       {mode === "allowlist" && (
         <div className="access-picker">
-          {known.length === 0 && <span className="settings-hint">no known names — edit the frontmatter respondTo directly with pubkeys</span>}
-          {known.map(([pk, personName]) => (
-            <label key={pk} className="settings-check access-row">
-              <input type="checkbox" checked={pks.includes(pk)} onChange={() => toggle(pk)} />
-              {personName} <code className="access-pk">{pk.slice(0, 12)}…</code>
+          {rows.length === 0 && <span className="settings-hint">no known names — edit the frontmatter respondTo directly with pubkeys</span>}
+          {rows.map((row) => (
+            <label key={row.pk} className="settings-check access-row">
+              <input type="checkbox" checked={pks.includes(row.pk)} onChange={() => toggle(row.pk)} />
+              {row.name} {row.guest && <span className="mention-key">guest</span>}{" "}
+              <code className="access-pk">{row.pk.slice(0, 12)}…</code>
             </label>
           ))}
         </div>
