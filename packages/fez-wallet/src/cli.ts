@@ -4,7 +4,7 @@ import { loadConfig } from "./config.js";
 import { substrateAdapter } from "./chains/substrate.js";
 import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
-  cmdRegister, cmdPersonaStatus, cmdPayout, cmdCost, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury, registrationCost,
+  cmdRegister, cmdPersonaStatus, cmdPayout, cmdCost, cmdMetagraph, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury, registrationCost, metagraphInfo,
   exportRemoteHotkey,
 } from "./cli-commands.js";
 import { rentAgent, payAddress } from "./rent.js";
@@ -74,6 +74,14 @@ try {
       if (json) console.log(JSON.stringify(await registrationCost(netuidArg())));
       else await cmdCost(io, netuidArg());
       break;
+    case "metagraph": {
+      const hotkey = hotkeyFlag >= 0 ? argv[hotkeyFlag + 1] : undefined;
+      const netuid = netuidArg();
+      if (!hotkey || netuid === undefined) throw new Error("usage: fez-wallet metagraph --netuid N --hotkey <ss58> [--json]");
+      if (json) console.log(JSON.stringify((await metagraphInfo(netuid, hotkey)) ?? {}));
+      else await cmdMetagraph(io, netuid, hotkey);
+      break;
+    }
     case "export-hotkey": {
       if (!rest[0]) throw new Error("usage: fez-wallet export-hotkey <persona> [--json]");
       const r = await exportRemoteHotkey(rest[0]);
@@ -174,6 +182,7 @@ try {
       io.print("  status [persona]        balances — with a persona: uid + free + staked");
       io.print("  register <persona> [--hotkey <ss58>]   register on the subnet (treasury pays the burn); --hotkey registers a remote address instead of deriving one");
       io.print("  cost [--netuid 553]     read-only: what registering would burn, before paying it");
+      io.print("  metagraph --netuid N --hotkey <ss58> [--json]   read-only: live incentive/emission/trust/rank/stake/immunity for a registered hotkey");
       io.print("  export-hotkey <persona> [--json]   create-or-load a standalone remote-signing key, print its address (or the loadable keyfile with --json)");
       io.print("  stake <persona> <amt>   the agent stakes to its own hotkey");
       io.print("  unstake <persona> <amt> symmetric");

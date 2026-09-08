@@ -35,6 +35,13 @@ export interface SubtensorApi extends SubstrateApi {
       owner(hotkey: string): Promise<{ toString(): string }>;
       subnetTAO(netuid: number): Promise<{ toBigInt(): bigint }>;
       subnetAlphaIn(netuid: number): Promise<{ toBigInt(): bigint }>;
+      /** Blocks a uid stays weight-immune after registering — verified live
+       *  against 553 (2026-09-08): 5000. */
+      immunityPeriod(netuid: number): Promise<{ toNumber(): number }>;
+      /** The block a uid registered on — fixed at signup, the correct anchor
+       *  for immunity-left math (getNeuron carries no registration block).
+       *  Verified live against 553/uid 5 (2026-09-08): 7925697. */
+      blockAtRegistration(netuid: number, uid: number): Promise<{ toNumber(): number }>;
     };
   };
   tx: SubstrateApi["tx"] & {
@@ -59,7 +66,59 @@ export interface SubtensorApi extends SubstrateApi {
     stakeInfoRuntimeApi: {
       getStakeInfoForHotkeyColdkeyNetuid(hotkey: string, coldkey: string, netuid: number): Promise<unknown>;
     };
+    /**
+     * One runtime-api call bundling everything a uid's row needs — rank,
+     * emission, incentive, consensus, trust, dividends, active, lastUpdate,
+     * coldkey — instead of five separate `Vec<u16>` storage reads indexed
+     * by uid. Verified live against wss://test.finney.opentensor.ai,
+     * netuid 553, uid 5 (quill's hotkey) on 2026-09-08: `trust` and `rank`
+     * do NOT exist as their own `subtensorModule` storage items on this
+     * runtime (only `validatorTrust` does) — this runtime api is where
+     * they actually live now, and it's the same struct bittensor's own
+     * metagraph tooling reads.
+     */
+    neuronInfoRuntimeApi: {
+      getNeuron(netuid: number, uid: number): Promise<{ toJSON(): unknown }>;
+    };
   };
+}
+
+/** The bits of getNeuron's JSON this file reads — u16 fields (0..65535,
+ * normalized below) plus the u64 emission and the block-numbered lastUpdate. */
+export interface RawNeuron {
+  coldkey: string;
+  active: boolean;
+  rank: number;
+  emission: number | string;
+  incentive: number;
+  consensus: number;
+  trust: number;
+  dividends: number;
+  lastUpdate: number;
+  /** [coldkey, amount] pairs staked to this hotkey — the neuron's total
+   *  stake, summed. The authoritative source: it matches `fez-wallet status`
+   *  and bittensor's own metagraph, where the separate stakeInfoRuntimeApi
+   *  path attributes the same total to a different coldkey and can read 0.
+   *  ponytail: amounts arrive as JS numbers via toJSON — precision-safe below
+   *  ~9M TAO per neuron; sum as BigInt so the total itself never rounds. */
+  stake: Array<[string, number | string]>;
+}
+
+export interface MetagraphInfo {
+  uid: number;
+  /** u16 fields normalized 0..65535 -> 0..1 floats. */
+  incentive: number;
+  trust: number;
+  rank: number;
+  consensus: number;
+  dividends: number;
+  /** rao/block, formatted the same as every other TAO figure in this wallet. */
+  emission: string;
+  active: boolean;
+  /** Absent when the chain won't say — stakedAlpha's own "unknown, not zero" contract. */
+  stake?: string;
+  /** max(0, immunityPeriod - (currentBlock - blockAtRegistration)); 0 once immunity has lapsed. */
+  immunityLeftBlocks: number;
 }
 
 export async function connectSubtensor(endpoint: string): Promise<SubtensorApi> {
@@ -201,6 +260,51 @@ export async function alphaPriceTao(api: SubtensorApi, netuid: number): Promise<
   } catch {
     return undefined;
   }
+}
+
+/** Pure shaping — u16 normalization + the immunity countdown, injected
+ * values only, no chain: this is what the unit test pins. */
+export function shapeMetagraph(
+  uid: number,
+  neuron: RawNeuron,
+  immunityPeriod: number,
+  currentBlock: number,
+  registeredAt: number,
+  stake: bigint | undefined
+): MetagraphInfo {
+  const norm = (v: number) => v / 65535;
+  return {
+    uid,
+    incentive: norm(neuron.incentive),
+    trust: norm(neuron.trust),
+    rank: norm(neuron.rank),
+    consensus: norm(neuron.consensus),
+    dividends: norm(neuron.dividends),
+    emission: formatRao(BigInt(neuron.emission)),
+    active: neuron.active,
+    ...(stake !== undefined ? { stake: formatRao(stake) } : {}),
+    // Anchored on the registration block, not neuron.lastUpdate: lastUpdate
+    // refreshes every epoch for any actively-scored miner, which would make
+    // immunity read "full" forever. blockAtRegistration is fixed at signup.
+    immunityLeftBlocks: Math.max(0, immunityPeriod - (currentBlock - registeredAt)),
+  };
+}
+
+/** Live on-chain miner performance for a hotkey's uid on a netuid — the
+ * mining GUI's enrichment read. Undefined when the hotkey isn't registered
+ * on this netuid (not an error — the caller renders nothing). */
+export async function metagraph(api: SubtensorApi, netuid: number, hotkey: string): Promise<MetagraphInfo | undefined> {
+  const uid = await uidFor(api, netuid, hotkey);
+  if (uid === undefined) return undefined;
+  const [neuronRaw, immunityRaw, registeredRaw, header] = await Promise.all([
+    api.call.neuronInfoRuntimeApi.getNeuron(netuid, uid),
+    api.query.subtensorModule.immunityPeriod(netuid),
+    api.query.subtensorModule.blockAtRegistration(netuid, uid),
+    api.rpc.chain.getHeader(),
+  ]);
+  const neuron = neuronRaw.toJSON() as unknown as RawNeuron;
+  const stake = (neuron.stake ?? []).reduce((sum, [, amt]) => sum + BigInt(amt), 0n);
+  return shapeMetagraph(uid, neuron, immunityRaw.toNumber(), header.number.toNumber(), registeredRaw.toNumber(), stake);
 }
 
 /** Rao → decimal TAO/alpha text, 9 decimals, trailing zeros trimmed. */

@@ -6,7 +6,7 @@ import { NETWORKS } from "./networks.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs, mirrorEvmAddress, mirrorX402Meta, mirrorSubnet } from "./storage-mirror.js";
 import { migrateLog } from "./log.js";
-import { burnCost, formatRao, ownerOf, register, stakedAlpha, transferStake, uidFor } from "./chains/subtensor.js";
+import { burnCost, formatRao, metagraph, ownerOf, register, stakedAlpha, transferStake, uidFor, type MetagraphInfo } from "./chains/subtensor.js";
 import { TAO_DECIMALS } from "./chains/substrate.js";
 import { DEFAULT_NETUID, personaStatus, requirePersonaPair, requireRehearsalNetwork, subtensorFor } from "./stake.js";
 
@@ -339,6 +339,23 @@ export async function registrationCost(netuid = DEFAULT_NETUID): Promise<CostRes
 export async function cmdCost(io: CliIo, netuid = DEFAULT_NETUID): Promise<void> {
   const r = await registrationCost(netuid);
   io.print(`netuid ${r.netuid}: registration burn ${r.tao} tTAO`);
+}
+
+/** Read-only: a hotkey's live on-chain miner performance. `undefined`
+ * (not an error) when the hotkey isn't registered on this netuid. */
+export async function metagraphInfo(netuid: number, hotkey: string): Promise<MetagraphInfo | undefined> {
+  const api = await subtensorFor(loadConfig().endpoints.tao);
+  return metagraph(api, netuid, hotkey);
+}
+
+export async function cmdMetagraph(io: CliIo, netuid: number, hotkey: string): Promise<void> {
+  const m = await metagraphInfo(netuid, hotkey);
+  if (!m) { io.print(`${hotkey} is not registered on netuid ${netuid}`); return; }
+  io.print(
+    `uid ${m.uid}  incentive ${m.incentive.toFixed(4)}  emission ${m.emission}  trust ${m.trust.toFixed(4)}  ` +
+      `rank ${m.rank.toFixed(4)}  dividends ${m.dividends.toFixed(4)}  active ${m.active}  ` +
+      `stake ${m.stake ?? "unknown"}  immunity ${m.immunityLeftBlocks} blk left`
+  );
 }
 
 export interface PayoutResult {

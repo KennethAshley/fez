@@ -27,7 +27,7 @@ import { MINING_SOURCE, MINING_CHANNEL_NAME, minerRootLine, parseMinerRoot } fro
  */
 export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
-  const { useState, useEffect, useCallback } = api.React;
+  const { useState, useEffect, useCallback, useRef } = api.React;
   const { client } = api;
   const hasChannels = !!client && typeof client.ensureChannel === "function";
 
@@ -136,6 +136,35 @@ export default function activate(api: GuiExtensionApi): void {
   type CostResult = { netuid: number; rao: string; tao: string };
   type StatusRow = MinerEntry & { alive: boolean };
 
+  // Mirrors fez-wallet's chains/subtensor.ts MetagraphInfo — this GUI
+  // reaches it only through `fez-mine metagraph`'s JSON passthrough, so
+  // the shape is copied rather than imported across the package boundary.
+  // `{}` (no `uid`) is what a failed/unregistered read prints — never
+  // rendered.
+  type MetagraphInfo = {
+    uid?: number;
+    incentive: number;
+    trust: number;
+    rank: number;
+    consensus: number;
+    dividends: number;
+    emission: string;
+    active: boolean;
+    stake?: string;
+    immunityLeftBlocks: number;
+  };
+
+  // Compact enrichment line for an active-miner row / the thread card.
+  // 0..1 chain scores print to 2dp; absent/zero-value fields that would
+  // just be noise (no stake reading, immunity already lapsed) are omitted.
+  const metaLine = (m?: MetagraphInfo): string | undefined => {
+    if (!m || m.uid === undefined) return undefined;
+    const parts = [`incentive ${m.incentive.toFixed(2)}`, `emission ${m.emission}`, `trust ${m.trust.toFixed(2)}`, `rank ${m.rank.toFixed(2)}`];
+    if (m.stake !== undefined) parts.push(`stake ${m.stake}`);
+    if (m.immunityLeftBlocks > 0) parts.push(`immunity ${m.immunityLeftBlocks} blk left`);
+    return parts.join(" · ");
+  };
+
   // The New-miner picker's state machine — one step at a time, each
   // carrying forward what earlier steps decided. `undefined` = picker
   // closed (the normal "active miners" view).
@@ -217,6 +246,38 @@ export default function activate(api: GuiExtensionApi): void {
       const id = setInterval(() => void loadMiners(), 10_000);
       return () => clearInterval(id);
     }, [loadMiners]);
+
+    // Metagraph enrichment: best-effort, ~30s, one `fez-mine metagraph`
+    // call per active miner. Reads `miners` through a ref rather than as
+    // an effect dependency — the poll interval shouldn't reset every time
+    // the 10s status poll above replaces the `miners` array.
+    const [metagraphByKey, setMetagraphByKey] = useState<Record<string, MetagraphInfo>>({});
+    const minersRef = useRef<MinerRow[]>(miners);
+    useEffect(() => {
+      minersRef.current = miners;
+    }, [miners]);
+    const loadMetagraph = useCallback(async () => {
+      if (!run) return;
+      const active = minersRef.current.filter((m) => m.alive || m.desired === "running");
+      const results = await Promise.all(
+        active.map(async (m): Promise<[string, MetagraphInfo] | undefined> => {
+          try {
+            const out = await run("fez-mine", ["metagraph", "--netuid", String(m.netuid), "--persona", m.persona, "--json"]);
+            if (out.code !== 0) return undefined;
+            const parsed = JSON.parse(out.stdout) as MetagraphInfo;
+            return parsed.uid !== undefined ? [minerKey(m.netuid, m.persona), parsed] : undefined;
+          } catch {
+            return undefined; // best-effort — the row just shows no enrichment line
+          }
+        })
+      );
+      setMetagraphByKey(Object.fromEntries(results.filter((r): r is [string, MetagraphInfo] => r !== undefined)));
+    }, [run]);
+    useEffect(() => {
+      void loadMetagraph();
+      const id = setInterval(() => void loadMetagraph(), 30_000);
+      return () => clearInterval(id);
+    }, [loadMetagraph]);
 
     useEffect(() => {
       if (!personasApi) return;
@@ -775,6 +836,11 @@ export default function activate(api: GuiExtensionApi): void {
                         ⚠ {m.attention}
                       </div>
                     ) : null}
+                    {metaLine(metagraphByKey[k]) ? (
+                      <div className="skill-desc" style={dim}>
+                        {metaLine(metagraphByKey[k])}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="skill-actions">
                     <button
@@ -877,14 +943,30 @@ export default function activate(api: GuiExtensionApi): void {
       }
     }, [run, netuid, persona]);
 
+    const [metagraph, setMetagraph] = useState<MetagraphInfo | undefined>(undefined);
+    const loadMetagraph = useCallback(async () => {
+      if (!run || !parsed) return;
+      try {
+        const out = await run("fez-mine", ["metagraph", "--netuid", String(netuid), "--persona", persona, "--json"]);
+        if (out.code === 0) {
+          const m = JSON.parse(out.stdout) as MetagraphInfo;
+          setMetagraph(m.uid !== undefined ? m : undefined);
+        }
+      } catch {
+        // best-effort — last-known reading stays on screen
+      }
+    }, [run, netuid, persona]);
+
     useEffect(() => {
       void loadStatus();
       void loadLogs();
       void loadConfig();
-    }, [loadStatus, loadLogs, loadConfig]);
+      void loadMetagraph();
+    }, [loadStatus, loadLogs, loadConfig, loadMetagraph]);
 
     // Poll status + logs while the thread is open; config only reloads on
-    // mount and after a save (it doesn't drift on its own).
+    // mount and after a save (it doesn't drift on its own). Metagraph gets
+    // its own slower ~30s cadence — a chain read, not a local status check.
     useEffect(() => {
       const id = setInterval(() => {
         void loadStatus();
@@ -892,6 +974,10 @@ export default function activate(api: GuiExtensionApi): void {
       }, 10_000);
       return () => clearInterval(id);
     }, [loadStatus, loadLogs]);
+    useEffect(() => {
+      const id = setInterval(() => void loadMetagraph(), 30_000);
+      return () => clearInterval(id);
+    }, [loadMetagraph]);
 
     if (!parsed) return null;
     if (!run) {
@@ -996,6 +1082,11 @@ export default function activate(api: GuiExtensionApi): void {
         {status?.attention ? (
           <div className="skill-desc" style={{ color: "var(--warn, #d79921)" }}>
             ⚠ {status.attention}
+          </div>
+        ) : null}
+        {metaLine(metagraph) ? (
+          <div className="skill-desc" style={dim}>
+            {metaLine(metagraph)}
           </div>
         ) : null}
         <div style={{ marginTop: 8 }}>

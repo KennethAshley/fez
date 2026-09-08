@@ -78,6 +78,8 @@ export interface SubstrateApi {
           }>;
         };
       }>;
+      /** Current chain tip — used by metagraph's immunity countdown. */
+      getHeader(): Promise<{ number: { toNumber(): number } }>;
     };
   };
 }

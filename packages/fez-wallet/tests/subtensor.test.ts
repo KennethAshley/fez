@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatRao, stakedAlpha, uidFor, type SubtensorApi } from "../src/chains/subtensor.js";
+import { formatRao, shapeMetagraph, stakedAlpha, uidFor, type RawNeuron, type SubtensorApi } from "../src/chains/subtensor.js";
 
 describe("formatRao", () => {
   it("renders 9-decimal base units as decimal text", () => {
@@ -50,6 +50,47 @@ describe("stakedAlpha", () => {
     expect(await stakedAlpha(apiWith(null), 553, "h", "c")).toBeUndefined();
     expect(await stakedAlpha(apiWith({ nope: 1 }), 553, "h", "c")).toBeUndefined();
     expect(await stakedAlpha(apiWith(undefined, true), 553, "h", "c")).toBeUndefined();
+  });
+});
+
+describe("shapeMetagraph — u16 normalization + immunity math (pure, injected values)", () => {
+  const neuron = (over: Partial<RawNeuron> = {}): RawNeuron => ({
+    coldkey: "5Coldkey",
+    active: true,
+    rank: 0,
+    emission: 55218234994,
+    incentive: 24516,
+    consensus: 24516,
+    trust: 0,
+    dividends: 65535,
+    lastUpdate: 7877446,
+    stake: [["5Coldkey", 248111176225]],
+    ...over,
+  });
+
+  it("normalizes u16 fields 0..65535 -> 0..1 and formats emission via formatRao", () => {
+    const m = shapeMetagraph(1, neuron(), 5000, 7877446, 7877446, undefined);
+    expect(m.uid).toBe(1);
+    expect(m.incentive).toBeCloseTo(24516 / 65535, 10);
+    expect(m.consensus).toBeCloseTo(24516 / 65535, 10);
+    expect(m.trust).toBe(0);
+    expect(m.dividends).toBe(1); // 65535/65535
+    expect(m.emission).toBe(formatRao(55218234994n));
+    expect(m.active).toBe(true);
+    expect(m.stake).toBeUndefined();
+  });
+
+  it("passes stake through formatRao when known", () => {
+    const m = shapeMetagraph(5, neuron(), 5000, 7877446, 7877446, 248111176225n);
+    expect(m.stake).toBe(formatRao(248111176225n));
+  });
+
+  it("immunityLeftBlocks: immunityPeriod - (currentBlock - blockAtRegistration), floored at 0", () => {
+    const fresh = shapeMetagraph(1, neuron(), 5000, 1200, 1000, undefined);
+    expect(fresh.immunityLeftBlocks).toBe(4800); // 5000 - (1200-1000)
+
+    const lapsed = shapeMetagraph(1, neuron(), 5000, 10_000, 1000, undefined);
+    expect(lapsed.immunityLeftBlocks).toBe(0); // never negative
   });
 });
 

@@ -78,6 +78,27 @@ function cmdCost(netuid: number): void {
   process.stdout.write(execFileSync(WALLET_BIN, ["cost", "--netuid", String(netuid), "--json"], { encoding: "utf8" }));
 }
 
+// Live on-chain miner performance for the active-miner rows + thread card —
+// a best-effort passthrough to `fez-wallet metagraph`. Tolerates every
+// failure (no persona, no hotkey yet, chain unreachable) by printing `{}`
+// and exiting 0: this is polled every ~30s by the GUI, which must degrade
+// to showing nothing rather than surfacing an error banner.
+async function cmdMetagraph(netuid: number, persona: string): Promise<void> {
+  let out: unknown = {};
+  try {
+    const entry = await findMiner(fezHome(), netuid, persona);
+    const hotkey =
+      entry?.hotkey ||
+      (JSON.parse(execFileSync(WALLET_BIN, ["status", persona, "--netuid", String(netuid), "--json"], { encoding: "utf8" })) as { address?: string }).address;
+    if (hotkey) {
+      out = JSON.parse(execFileSync(WALLET_BIN, ["metagraph", "--netuid", String(netuid), "--hotkey", hotkey, "--json"], { encoding: "utf8" }));
+    }
+  } catch {
+    /* best-effort — the GUI renders nothing over a stale/failed read */
+  }
+  console.log(JSON.stringify(out));
+}
+
 async function cmdStart(netuid: number, persona: string, json: boolean, machine?: "lium"): Promise<void> {
   const home = fezHome();
   // Idempotent adopt — this call IS the burn on a real registration; the
@@ -331,7 +352,7 @@ async function cmdThreadSetRoot(netuid: number, persona: string, root: string): 
 
 function usage(): never {
   console.error(
-    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
+    "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
       "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
       "logs --netuid N --persona P [--lines 12]"
@@ -387,6 +408,10 @@ async function main(): Promise<void> {
     case "cost":
       if (netuidValue === undefined) usage();
       cmdCost(netuidValue);
+      break;
+    case "metagraph":
+      if (netuidValue === undefined || !personaValue) usage();
+      await cmdMetagraph(netuidValue, personaValue);
       break;
     case "start":
       if (netuidValue === undefined || !personaValue) usage();
