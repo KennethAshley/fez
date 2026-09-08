@@ -463,20 +463,37 @@ export default function activate(api: GuiExtensionApi): void {
           const startOut = await run("fez-mine", startArgs);
           if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
 
-          // Ensure #mining, post this miner's root, recover its event id
-          // (sendChannelMessage returns `unknown`, not an id), persist it
-          // so the headless side replies into the same thread, then open
-          // it. Best-effort: a missing `read:channels` grant, or the
-          // client not yet absorbing its own publish, leaves the miner
-          // running with no thread rather than failing the whole flow.
+          // Ensure #mining, then ensure a root — idempotently. This is the
+          // GUI's only restart path for a previously-stopped miner (stopped
+          // miners drop off the active list, so re-running the picker is
+          // how they come back); posting unconditionally here would give a
+          // second root line, and `findRoot`/`thread set-root` would then
+          // have two matches to pick between. Recorded state
+          // (`threadRootId`, the fast path) wins; failing that, scan
+          // #mining for an already-posted root (e.g. one that got posted
+          // but never made it into state); only when neither turns one up
+          // is a fresh root posted. Best-effort throughout: a missing
+          // `read:channels` grant, or the client not yet absorbing its own
+          // publish, leaves the miner running with no thread rather than
+          // failing the whole flow.
           if (hasChannels && client) {
             const channelId = await client.ensureChannel({ name: MINING_CHANNEL_NAME, source: MINING_SOURCE });
             if (channelId) {
-              await client.sendChannelMessage(minerRootLine(netuid, persona), { channelId });
-              const root = await findRoot(channelId, netuid, persona, 6);
-              if (root) {
-                await run("fez-mine", ["thread", "set-root", "--netuid", String(netuid), "--persona", persona, "--root", root.id]);
-                api.openThread(channelId, root.id);
+              const statusOut = await run("fez-mine", ["status", "--json"]);
+              const rows = statusOut.code === 0 ? (JSON.parse(statusOut.stdout) as StatusRow[]) : [];
+              const recordedRootId = rows.find((r) => r.netuid === netuid && r.persona === persona)?.threadRootId;
+              if (recordedRootId) {
+                api.openThread(channelId, recordedRootId);
+              } else {
+                let root = await findRoot(channelId, netuid, persona);
+                if (!root) {
+                  await client.sendChannelMessage(minerRootLine(netuid, persona), { channelId });
+                  root = await findRoot(channelId, netuid, persona, 6);
+                }
+                if (root) {
+                  await run("fez-mine", ["thread", "set-root", "--netuid", String(netuid), "--persona", persona, "--root", root.id]);
+                  api.openThread(channelId, root.id);
+                }
               }
             }
           }
@@ -727,9 +744,14 @@ export default function activate(api: GuiExtensionApi): void {
   // The thread-view card: one root per (netuid, persona), rendered above
   // its replies in #mining. Status + a log tail poll every 10s; config is
   // read-only with an Edit toggle that reuses ConfigFieldRow — on save this
-  // is a genuine restart-to-apply on an ALREADY-RUNNING miner (a pod, when
-  // there is one, already exists — this restarts it, never re-provisions),
-  // unlike the New-miner picker's write-before-first-start above.
+  // is a restart-to-apply on an ALREADY-RUNNING miner: `cmdStop` tears the
+  // pod down and clears `podId`, so the following `start` PROVISIONS A
+  // FRESH POD at current market rate (it does not reattach). That's an
+  // acceptable, once-confirmed-by-alive-Save cost for a running miner; a
+  // STOPPED miner has no pod to tear down, so Save there only writes
+  // config and skips the restart entirely (see saveConfig below) rather
+  // than silently starting a pod from $0. Unlike the New-miner picker's
+  // write-before-first-start above.
   type ConfigView = Record<string, string | number | boolean>;
 
   function MinerCard(props: { channelId: string; rootId: string; rootContent: string }): JSX.Element | null {
@@ -844,12 +866,15 @@ export default function activate(api: GuiExtensionApi): void {
       setEditing(true);
     };
 
-    // config set per changed field, then stop+start to apply — a genuine
-    // restart on an already-running miner, correct here (see the block
-    // comment above). Carries `--machine lium` forward when this miner is
-    // already on one, so the restart reattaches its pod instead of the
-    // orphan-teardown path in cmdStart tearing it down (a plain `start`
-    // with no `--machine lium` reads as "go local" there).
+    // config set per changed field; then, only for an already-running
+    // miner, stop+start to apply. That stop+start is a genuine tear-down
+    // and re-provision, not a reattach — see the block comment above — so
+    // a STOPPED miner skips it: config alone is written and picked up on
+    // the next manual start, rather than a Save click silently spinning up
+    // a fresh pod. Carries `--machine lium` forward when this miner is
+    // already on one, so the restart re-provisions on the same machine
+    // kind instead of the orphan-teardown path in cmdStart tearing it down
+    // (a plain `start` with no `--machine lium` reads as "go local" there).
     const saveConfig = async (): Promise<void> => {
       const missing = validateConfig(schema, values);
       if (missing) {
@@ -867,12 +892,14 @@ export default function activate(api: GuiExtensionApi): void {
           const out = await run("fez-mine", setArgs);
           if (out.code !== 0) throw new Error(out.stderr.trim() || `config set ${f.key} exited ${out.code}`);
         }
-        const stopOut = await run("fez-mine", ["stop", "--netuid", String(netuid), "--persona", persona, "--json"]);
-        if (stopOut.code !== 0) throw new Error(stopOut.stderr.trim() || `stop exited ${stopOut.code}`);
-        const startArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
-        if (status?.machine?.kind === "lium") startArgs.push("--machine", "lium");
-        const startOut = await run("fez-mine", startArgs);
-        if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
+        if (status?.alive) {
+          const stopOut = await run("fez-mine", ["stop", "--netuid", String(netuid), "--persona", persona, "--json"]);
+          if (stopOut.code !== 0) throw new Error(stopOut.stderr.trim() || `stop exited ${stopOut.code}`);
+          const startArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
+          if (status?.machine?.kind === "lium") startArgs.push("--machine", "lium");
+          const startOut = await run("fez-mine", startArgs);
+          if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
+        }
         setEditing(false);
         await Promise.all([loadStatus(), loadConfig()]);
       } catch (err) {
@@ -929,7 +956,7 @@ export default function activate(api: GuiExtensionApi): void {
             {schema.map((f) => ConfigFieldRow(f, values, (key, val) => setValues((prev) => ({ ...prev, [key]: val }))))}
             <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
               <button className="agent-action" disabled={busy} onClick={() => void saveConfig()}>
-                {busy ? "restarting…" : "Save (restarts miner)"}
+                {status?.alive ? (busy ? "restarting…" : "Save (restarts miner)") : busy ? "saving…" : "Save"}
               </button>
               <button className="skill-link" onClick={() => setEditing(false)}>
                 Cancel
