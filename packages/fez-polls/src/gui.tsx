@@ -30,6 +30,7 @@ interface GuiApi {
     render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => unknown
   ): void;
   registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
+  toast?(message: string, variant?: "success" | "error" | "warn" | "info"): void;
 }
 
 // h is bound at activate() time to the host page's React
@@ -72,11 +73,17 @@ export default function activate(api: GuiApi): void {
       const vote = async (index: number) => {
         if (closed) return;
         const target = OPTION_EMOJI[index];
-        // change-of-vote: clear my other option reactions first
-        for (const emoji of OPTION_EMOJI.slice(0, poll.options.length)) {
-          if (emoji !== target && mine.has(emoji)) await client.toggleReaction(channelId, msgId, emoji);
+        try {
+          // change-of-vote: clear my other option reactions first
+          for (const emoji of OPTION_EMOJI.slice(0, poll.options.length)) {
+            if (emoji !== target && mine.has(emoji)) await client.toggleReaction(channelId, msgId, emoji);
+          }
+          if (!mine.has(target)) await client.toggleReaction(channelId, msgId, target);
+        } catch (err) {
+          // A failed publish means the vote didn't register — without this
+          // the click just does nothing and the user assumes it counted.
+          api.toast?.(`vote failed: ${err instanceof Error ? err.message : String(err)}`, "error");
         }
-        if (!mine.has(target)) await client.toggleReaction(channelId, msgId, target);
       };
 
       return (

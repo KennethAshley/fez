@@ -46,6 +46,7 @@ interface GuiApi {
   client: ClientLike;
   registerBlockRenderer(lang: string, render: (props: BlockProps) => unknown): void;
   registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
+  toast?(message: string, variant?: "success" | "error" | "warn" | "info"): void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -62,11 +63,18 @@ export default function activate(api: GuiApi): void {
     const refresh = async () => {
       if (!block.agent) return;
       const pk = client.pkByName(block.agent);
-      await client.publishDocComment(
-        channelId,
-        `@${block.agent} refresh this live block. Do the task below, then rewrite ONLY this block in the document — keep the \`\`\`${LIVE_LANG}\`\`\` fence and its agent=/every= attributes, set updated=${Math.floor(Date.now() / 1000)}, put your result under the --- line, and leave the rest of the page untouched.\n\nTask: ${block.prompt}`,
-        { anchor: raw.split("\n")[0], slug, mentionPks: pk ? [pk] : [] }
-      );
+      try {
+        await client.publishDocComment(
+          channelId,
+          `@${block.agent} refresh this live block. Do the task below, then rewrite ONLY this block in the document — keep the \`\`\`${LIVE_LANG}\`\`\` fence and its agent=/every= attributes, set updated=${Math.floor(Date.now() / 1000)}, put your result under the --- line, and leave the rest of the page untouched.\n\nTask: ${block.prompt}`,
+          { anchor: raw.split("\n")[0], slug, mentionPks: pk ? [pk] : [] }
+        );
+        // The work happens off-screen in a doc thread, so ↻ has no visible
+        // effect of its own — say that the ask went out (or didn't).
+        api.toast?.(`asked @${block.agent} to refresh`, "success");
+      } catch (err) {
+        api.toast?.(`refresh failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
     };
 
     return (

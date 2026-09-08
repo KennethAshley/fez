@@ -44,6 +44,7 @@ interface GuiApi {
   ): void;
   openTool(artifact: ArtifactLike): void;
   exportTool(files: { slug: string; guiJs: string; pkgJson: string; readme: string }): Promise<string>;
+  toast?(message: string, variant?: "success" | "error" | "warn" | "info"): void;
 }
 
 export default function activate(api: GuiApi): void {
@@ -88,9 +89,6 @@ export default function activate(api: GuiApi): void {
   // ▣ tools — the gallery, as a rail view.
   function ToolsGallery() {
     const tools = useKept();
-    // Share/export outcomes land here — a gui part has no host toast, and
-    // a line under the heading is enough for a you-just-clicked result.
-    const [status, setStatus] = useState<string | undefined>(undefined);
 
     // Crystallize, rung 2: publish the kept tool back into its home channel
     // (fallback: the one in scope) as a user-signed artifact — it lands as a
@@ -98,25 +96,25 @@ export default function activate(api: GuiApi): void {
     const share = async (t: KeptTool) => {
       const channelId = t.channelId ?? client.state.scope?.channelId;
       if (!channelId) {
-        setStatus("no channel to share into — open a channel first");
+        api.toast?.("no channel to share into — open a channel first", "warn");
         return;
       }
       const name = client.state.workspace.channels.get(channelId)?.name ?? "the channel";
       if (!confirm(`Share "${t.title}" into #${name}? Everyone there can open and keep it.`)) return;
       try {
         await client.publishArtifact(channelId, { type: t.type, title: t.title, content: t.content });
-        setStatus(`Shared "${t.title}" to #${name}`);
+        api.toast?.(`Shared "${t.title}" to #${name}`, "success");
       } catch (e) {
-        setStatus(`Share failed: ${String((e as Error)?.message ?? e)}`);
+        api.toast?.(`Share failed: ${String((e as Error)?.message ?? e)}`, "error");
       }
     };
 
     const doExport = async (t: KeptTool) => {
       try {
         const path = await api.exportTool(exportFiles(t));
-        setStatus(`Exported to ${path} — build & publish to share`);
+        api.toast?.(`Exported to ${path} — build & publish to share`, "success");
       } catch (e) {
-        setStatus(`Export failed: ${String((e as Error)?.message ?? e)}`);
+        api.toast?.(`Export failed: ${String((e as Error)?.message ?? e)}`, "error");
       }
     };
 
@@ -141,7 +139,6 @@ export default function activate(api: GuiApi): void {
             {/* Nothing when the page is empty: the block below says so once,
                 at full size. The rule still draws — it is the column's edge. */}
             {tools.length === 0 ? null : <span className="page-fact">{tools.length} kept</span>}
-            {status ? <span className="page-fact">{status}</span> : null}
           </div>
         </div>
         {tools.length === 0 ? (
