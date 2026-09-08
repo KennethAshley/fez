@@ -97,11 +97,17 @@ async function cmdStart(netuid: number, persona: string, json: boolean, machine?
   const existing = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
   s = upsertMiner(s, {
     netuid, persona, hotkey: r.hotkey, uid: r.uid, desired: "running",
-    ...(existing?.machine
-      ? { machine: existing.machine }
-      : machine === "lium"
-        ? { machine: { kind: "lium" as const } }
-        : {}),
+    // The preserve is scoped to a lium→lium restart ONLY — carrying
+    // `existing.machine` forward unconditionally (any kind, whenever
+    // present) meant a later PLAIN `start` (no --machine) on a
+    // previously-remote miner reused the stale lium entry and tried the
+    // pod path with no key. A local start intentionally writes NO machine
+    // field, clearing any stale lium entry back to local. The sentinel/
+    // runner reattach path is unaffected — it reads `machine` straight
+    // from state, never through cmdStart.
+    ...(machine === "lium"
+      ? { machine: existing?.machine?.kind === "lium" ? existing.machine : { kind: "lium" as const } }
+      : {}),
   });
   await writeState(home, s);
   const pid = spawnDetached(MINE_RUN_BIN, [String(netuid), persona]);

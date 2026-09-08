@@ -18,6 +18,20 @@ describe("mining state", () => {
     await writeState(h, s);
     expect((await readState(h)).miners[0].netuid).toBe(553);
   });
+  // cmdStart (cli.ts) isn't unit-testable directly — it calls execFileSync
+  // against a module-level WALLET_BIN const (read once at import time, not
+  // per-call like run.ts's walletBin() helper) plus a real spawnDetached,
+  // with no injection seam. Its fix relies entirely on upsertMiner's
+  // replace-not-merge semantics, so THAT'S what this pins: a patch that
+  // omits `machine` (what cmdStart now sends on a plain, local start)
+  // clears whatever the entry had before, rather than preserving it.
+  it("upsert replaces the entry wholesale — omitting `machine` from the patch clears a previously-recorded one", async () => {
+    let s: MiningState = { miners: [], subnets: [], covered: [] };
+    s = upsertMiner(s, { netuid: 553, persona: "quill", hotkey: "5F", desired: "running", machine: { kind: "lium", podId: "p1" } });
+    expect(s.miners[0].machine).toEqual({ kind: "lium", podId: "p1" });
+    s = upsertMiner(s, { netuid: 553, persona: "quill", hotkey: "5F", desired: "running" });
+    expect(s.miners[0].machine).toBeUndefined();
+  });
   it("removes by key and leaves others", async () => {
     let s: MiningState = { miners: [], subnets: [], covered: [] };
     s = upsertMiner(s, { netuid: 1, persona: "a", hotkey: "x", desired: "running" });
