@@ -110,6 +110,18 @@ const gradients: SubnetMiner = {
   // reachability (validators call this miner's endpoint directly).
   requirements: { alwaysOn: true, publicEndpoint: true },
 
+  // No LLM provider/API key here — G.O.D's miner process answers
+  // "here's my training repo", it never calls an inference API (see the
+  // GPU-floor note above). What WAS hardcoded is the .1.env wizard's own
+  // defaults (see start()) and fiber-post-ip's --wallet.name — those are
+  // the real per-persona knobs, so those are what's configurable.
+  config: [
+    { key: "walletName", label: "Bittensor wallet name", type: "string", default: "default", help: "coldkey wallet name on this machine (task miner-config's WALLET_NAME)" },
+    { key: "subtensorNetwork", label: "Subtensor network", type: "select", options: ["finney", "test"], default: "finney", help: "NETUID stays 56 either way — testnet pairing (241) is not wired, see file header" },
+    { key: "minStakeThreshold", label: "Min validator stake threshold", type: "number", default: 1000 },
+    { key: "refreshNodes", label: "Refresh nodes", type: "boolean", default: true },
+  ],
+
   // Idempotent: guarded on a done-file stamped with the pinned commit, so a
   // repeat call (the harness calls install() every start, per the
   // SubnetMiner contract) is a no-op once the venv exists.
@@ -160,10 +172,12 @@ const gradients: SubnetMiner = {
         `gradients: no external port mapping for internal port ${MINER_PORT} on ${ctx.persona} — the machine must expose ${MINER_PORT} publicly before fiber-post-ip can run`
       );
     }
+    const walletName = String(ctx.config.walletName ?? "default");
+    const subtensorNetwork = String(ctx.config.subtensorNetwork ?? "finney");
     ctx.log(`gradients: posting ip ${port.externalIp}:${port.externalPort} to the metagraph`);
     await run(
       ctx,
-      `.venv/bin/fiber-post-ip --netuid 56 --subtensor.network finney --external_port ${port.externalPort} --wallet.name default --wallet.hotkey ${ctx.persona} --external_ip ${port.externalIp}`,
+      `.venv/bin/fiber-post-ip --netuid 56 --subtensor.network ${subtensorNetwork} --external_port ${port.externalPort} --wallet.name ${walletName} --wallet.hotkey ${ctx.persona} --external_ip ${port.externalIp}`,
       dir
     );
   },
@@ -176,14 +190,16 @@ const gradients: SubnetMiner = {
     const dir = repoDir(ctx.workDir);
     // .1.env field names come from ops/tools/config/models.py::MinerConfig
     // (see the file header) — this replaces `task miner-config`'s
-    // interactive wizard for a mainnet miner with the same defaults it uses.
+    // interactive wizard for a mainnet miner, seeded from ctx.config (which
+    // the harness has already merged over these same defaults) instead of
+    // the wizard's hardcoded mainnet-miner values.
     const envFile = [
-      "WALLET_NAME=default",
+      `WALLET_NAME=${ctx.config.walletName ?? "default"}`,
       `HOTKEY_NAME=${ctx.persona}`,
-      "SUBTENSOR_NETWORK=finney",
+      `SUBTENSOR_NETWORK=${ctx.config.subtensorNetwork ?? "finney"}`,
       "NETUID=56",
-      "REFRESH_NODES=True",
-      "MIN_STAKE_THRESHOLD=1000",
+      `REFRESH_NODES=${(ctx.config.refreshNodes ?? true) ? "True" : "False"}`,
+      `MIN_STAKE_THRESHOLD=${ctx.config.minStakeThreshold ?? 1000}`,
       // ENV=prod here vs. ENV=DEV on the uvicorn command line below is not
       // a contradiction: uvicorn's `--env-file` loads via python-dotenv,
       // which does NOT override a name already present in the process's
