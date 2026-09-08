@@ -4046,6 +4046,9 @@ a.page-fact:hover { color: var(--fg); }
 /* No key yet, so no creature yet: the sprite is generated from the
    agent's key and the key is minted when it first wakes. */
 .agent-card-face.unhatched { opacity: 0.5; }
+/* Started here, not yet announced — the face breathes so the window
+   between the start button and the announcement reads as work, not dead air. */
+.agent-card-face.waking { animation: pulse-dim 1.2s ease-in-out infinite; }
 .agent-egg {
   display: grid; place-items: center; width: 72px; height: 72px;
   font-size: 34px; color: var(--fg-dim); line-height: 1;

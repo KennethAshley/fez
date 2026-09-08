@@ -30,6 +30,7 @@ import { viewerFor } from "./artifact-viewers";
 import { shareArtifact } from "./share-artifact";
 import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
 import { toast } from "./toast";
+import { clearWaking } from "./waking";
 import { listen } from "@tauri-apps/api/event";
 
 // The bundled-agent copy runs on a detached Rust thread whose only other
@@ -568,6 +569,9 @@ function Shell({
     void import("@tauri-apps/api/event").then(({ listen }) =>
       listen<{ name: string; bin: string; reason: string }>("fez-agent-exit", (e) => {
         const { name, bin, reason } = e.payload;
+        // Dead is not waking — without this, a spawn that crashes during
+        // boot leaves the roster pulsing at a corpse.
+        clearWaking(name);
         if (reason.startsWith("exited cleanly")) return;
         // An ownership yield is the protocol RESOLVING a double-spawn, not
         // an incident — the surviving instance is fine. (The double-spawn

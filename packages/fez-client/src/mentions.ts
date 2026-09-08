@@ -37,6 +37,8 @@ export interface MentionCandidate {
   name: string;
   /** Whether they are on this channel's creator-signed roster. */
   isMember: boolean;
+  /** Extra names this pubkey answers to (an agent's announced "also answers to"). */
+  aliases?: string[];
 }
 
 export interface MentionResolution {
@@ -114,7 +116,10 @@ export function resolveMentions(
 
     // The longest candidate name that the written token starts with —
     // so "@deployer" prefers "deployer" over a member called "dep".
-    const best = byLength.filter((member) => wanted === normalize(member.name));
+    // Aliases count as names: "also answers to" must tag, not just look addressed.
+    const best = byLength.filter(
+      (member) => wanted === normalize(member.name) || (member.aliases ?? []).some((a) => wanted === normalize(a))
+    );
     if (best.length === 0) {
       unresolved.push(cleaned);
       continue;
