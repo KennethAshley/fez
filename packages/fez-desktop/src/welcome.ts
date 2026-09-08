@@ -12,6 +12,7 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import type { FezClient } from "@fezchat/client";
 import { BrowserWire } from "./wire";
 import { relaySet } from "./relay";
+import { toast } from "./toast";
 import { detectHarnesses } from "./harnesses";
 import {
   WELCOME_CHANNEL_ID,
@@ -150,7 +151,16 @@ async function ensureStarterTeam(
     let hex: string;
     try {
       hex = await invoke<string>("get_identity", { account: `agent:${p.id}` });
-    } catch {
+    } catch (err) {
+      // Mint only on genuine absence. A denied keychain prompt errors
+      // too, and minting then would re-key an agent that already owns a
+      // roster seat (set_identity's fail-closed guard would refuse
+      // anyway — skip the teammate and say why instead of dying here).
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/no fez identity/i.test(msg)) {
+        toast.warn(`@${p.id} skipped: ${msg}`);
+        continue;
+      }
       hex = bytesToHex(generateSecretKey());
       await invoke("set_identity", { hex, account: `agent:${p.id}` });
     }
@@ -159,7 +169,13 @@ async function ensureStarterTeam(
       await client.invite(pk, "bot").catch(() => {});
       await client.attestAgent(pk).catch(() => {});
     }
-    await invoke("start_managed_agent", { persona: p.id, owner, relay, channels: `${channelId},bootstrap-general` }).catch(() => {});
+    // Surface a failed spawn (summoner.ts learned this first): swallowed,
+    // the teammate greets via the scripted opener and then never answers
+    // a mention — indistinguishable from a working agent until you talk
+    // to it. The welcome itself continues; the toast says who's down.
+    await invoke("start_managed_agent", { persona: p.id, owner, relay, channels: `${channelId},bootstrap-general` }).catch((err) => {
+      toast.error(`@${p.id} couldn't start: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   const teamPosted = await ensureMarkedMessage(
@@ -254,12 +270,17 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
     await client.attestAgent(agentPk).catch(() => {});
   }
   // The guide should answer real mentions, not only post scripted lines.
+  // A swallowed failure here was the cruelest first-run outcome: @fez
+  // posts its welcome (owner-signed markers, no process needed), then
+  // never answers a single mention, with no trace anywhere.
   await invoke("start_managed_agent", {
     persona: "fez",
     owner: client.pubkey,
     relay: relaySet()[0],
     channels: `${channel.id},bootstrap-general`,
-  }).catch(() => {});
+  }).catch((err) => {
+    toast.error(`@fez couldn't start: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   const r = await readiness();
   const userName = localStorage.getItem("fez-name") ?? "";

@@ -1705,7 +1705,7 @@ fn remove_skill(name: String) -> Result<(), String> {
 /// every launch forever, and the only cure was hand-deleting the marker.
 /// Now a failed install simply retries next launch; until one succeeds the
 /// user falls back to a system pi if they have one.
-fn install_bundled_agent(src: std::path::PathBuf) {
+fn install_bundled_agent(app: tauri::AppHandle, src: std::path::PathBuf) {
     // A build made without bun ships a marker but no binary (see
     // prepare-pi-agent.mjs) — nothing to install, fall back to system pi.
     if !src.join("pi").exists() {
@@ -1731,13 +1731,25 @@ fn install_bundled_agent(src: std::path::PathBuf) {
             let _ = std::fs::write(&marker, &version);
             eprintln!("✓ installed bundled agent {version} → {}", bin.display());
         }
-        Err(e) => eprintln!("bundled agent install failed ({e}) — will retry next launch"),
+        Err(e) => {
+            // stderr goes nowhere a packaged-app user can see — a machine
+            // where the copy keeps failing (disk full, unwritable
+            // ~/.fez/bin) was indistinguishable from a working one until
+            // an agent silently refused to start. The webview toasts it.
+            eprintln!("bundled agent install failed ({e}) — will retry next launch");
+            use tauri::Emitter;
+            let _ = app.emit(
+                "agent-install-failed",
+                format!("fez's bundled agent couldn't install ({e}) — agents may not start; it retries next launch"),
+            );
+        }
     }
 }
 
-/// Every file the bundle ships is required for a successful install —
-/// pi + pi-acp executable, theme (pi needs it even in --mode rpc), and
-/// the wasm behind the image tools. Any failure aborts before the
+/// Every file the bundle SHIPS is required for a successful install —
+/// pi + pi-acp executable always; theme (pi needs it even in --mode
+/// rpc) and the image-tools wasm when present, since prepare-pi-agent
+/// bundles those only if they exist. Any failure aborts before the
 /// version marker is stamped.
 fn fez_relay_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -2680,17 +2692,27 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
     }
     // Replace the theme dir wholesale — additive copies left stale files
     // from older agent versions behind forever.
-    let theme_dst = bin.join("theme");
-    let _ = std::fs::remove_dir_all(&theme_dst);
-    std::fs::create_dir_all(&theme_dst).map_err(|e| format!("mkdir theme: {e}"))?;
-    let entries = std::fs::read_dir(src.join("theme")).map_err(|e| format!("read theme: {e}"))?;
-    for e in entries {
-        let e = e.map_err(|e| format!("read theme: {e}"))?;
-        std::fs::copy(e.path(), theme_dst.join(e.file_name()))
-            .map_err(|err| format!("copy theme/{}: {err}", e.file_name().to_string_lossy()))?;
+    //
+    // Theme and wasm are OPTIONAL in the bundle (prepare-pi-agent.mjs
+    // copies each only `if existsSync`), so their absence must be
+    // optional here too: a required copy failed AFTER the binaries were
+    // already renamed into place, the version marker never stamped, and
+    // every launch re-copied 140MB while appearing to work.
+    if src.join("theme").is_dir() {
+        let theme_dst = bin.join("theme");
+        let _ = std::fs::remove_dir_all(&theme_dst);
+        std::fs::create_dir_all(&theme_dst).map_err(|e| format!("mkdir theme: {e}"))?;
+        let entries = std::fs::read_dir(src.join("theme")).map_err(|e| format!("read theme: {e}"))?;
+        for e in entries {
+            let e = e.map_err(|e| format!("read theme: {e}"))?;
+            std::fs::copy(e.path(), theme_dst.join(e.file_name()))
+                .map_err(|err| format!("copy theme/{}: {err}", e.file_name().to_string_lossy()))?;
+        }
     }
-    std::fs::copy(src.join("photon_rs_bg.wasm"), bin.join("photon_rs_bg.wasm"))
-        .map_err(|e| format!("copy photon_rs_bg.wasm: {e}"))?;
+    if src.join("photon_rs_bg.wasm").is_file() {
+        std::fs::copy(src.join("photon_rs_bg.wasm"), bin.join("photon_rs_bg.wasm"))
+            .map_err(|e| format!("copy photon_rs_bg.wasm: {e}"))?;
+    }
     Ok(())
 }
 
@@ -2746,7 +2768,8 @@ pub fn run() {
             // first launch looked hung with no window and no progress.
             use tauri::Manager;
             if let Ok(dir) = app.path().resource_dir() {
-                std::thread::spawn(move || install_bundled_agent(dir.join("pi-agent")));
+                let handle = app.handle().clone();
+                std::thread::spawn(move || install_bundled_agent(handle, dir.join("pi-agent")));
             }
             // A machine that chose a local workspace gets its relay back on
             // every launch — args.json replays the original owner/name, so

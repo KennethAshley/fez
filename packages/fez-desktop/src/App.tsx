@@ -30,6 +30,12 @@ import { viewerFor } from "./artifact-viewers";
 import { shareArtifact } from "./share-artifact";
 import { configureLiveBridge, configureLiveConsent } from "./live-artifact";
 import { toast } from "./toast";
+import { listen } from "@tauri-apps/api/event";
+
+// The bundled-agent copy runs on a detached Rust thread whose only other
+// voice is stderr — this is how its failure reaches a human (same
+// module-level wiring as updater.ts).
+void listen<string>("agent-install-failed", (e) => toast.error(e.payload));
 import { startSummoner } from "./summoner";
 import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, setGuestDmOpener, extensionNavViews, extensionArtifactActions, type ArtifactAction } from "./gui-extensions";
 import { GuestThreadView, addGuest, listGuests, removeGuest, useGuestUnreads } from "./guest-threads";
