@@ -1,6 +1,6 @@
 import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
 import type { MinerEntry, Subnet } from "./state.js";
-import { subnetRows } from "./gui-rows.js";
+import { subnetRows, machineChoices, HARDWARE_GATED, type MachineChoice } from "./gui-rows.js";
 
 /**
  * fez-mining, GUI part — the "Mining" nav view: active miners up top, the
@@ -71,6 +71,9 @@ export default function activate(api: GuiExtensionApi): void {
 
     const [subnets, setSubnets] = useState<Subnet[]>([]);
     const [covered, setCovered] = useState<number[]>([]);
+    const [requirementsByNetuid, setRequirementsByNetuid] = useState<
+      Record<number, { gpu?: string; publicEndpoint?: boolean }>
+    >({});
     const [miners, setMiners] = useState<MinerRow[]>([]);
     const [personas, setPersonas] = useState<string[]>([]);
     const [refreshing, setRefreshing] = useState(false);
@@ -81,14 +84,22 @@ export default function activate(api: GuiExtensionApi): void {
     // webview (returns null immediately) — a real in-view picker instead.
     const [pickFor, setPickFor] = useState<number | undefined>(undefined);
     const [pickChoice, setPickChoice] = useState<string>("");
+    // Machine step (gpu / publicEndpoint requirement): shown before the
+    // persona picker, same in-view pattern. `pendingMachine` carries the
+    // chosen kind through the persona step into doMine.
+    const [pickMachineFor, setPickMachineFor] = useState<number | undefined>(undefined);
+    const [machineChoice, setMachineChoice] = useState<MachineChoice>("local");
+    const [pendingMachine, setPendingMachine] = useState<MachineChoice | undefined>(undefined);
 
     const loadCatalog = useCallback(async () => {
-      const [s, c] = await Promise.all([
+      const [s, c, req] = await Promise.all([
         api.storage.get<Subnet[]>("subnets"),
         api.storage.get<number[]>("covered"),
+        api.storage.get<Record<number, { gpu?: string; publicEndpoint?: boolean }>>("requirementsByNetuid"),
       ]);
       setSubnets(s ?? []);
       setCovered(c ?? []);
+      setRequirementsByNetuid(req ?? {});
     }, []);
 
     // Point 4: storage.get("miners") for the recorded fields (persona,
@@ -167,8 +178,11 @@ export default function activate(api: GuiExtensionApi): void {
 
     // cost → confirm the exact burn → start → refresh, once a persona is
     // settled on (single-persona case or the inline picker's Continue).
+    // `machine` is set when the requirement/machine step chose "lium" —
+    // the confirm line then adds the cheapest available $/hr and the
+    // account balance next to the burn, and start gets `--machine lium`.
     const doMine = useCallback(
-      async (netuid: number, persona: string) => {
+      async (netuid: number, persona: string, machine?: MachineChoice) => {
         if (!run) return;
         setBusy(`mine:${netuid}`);
         setError(undefined);
@@ -176,18 +190,35 @@ export default function activate(api: GuiExtensionApi): void {
           const costOut = await run("fez-mine", ["cost", "--netuid", String(netuid), "--json"]);
           if (costOut.code !== 0) throw new Error(costOut.stderr.trim() || `cost exited ${costOut.code}`);
           const cost = JSON.parse(costOut.stdout) as CostResult;
+
+          let liumLine = "";
+          if (machine === "lium") {
+            const parts: string[] = [];
+            try {
+              const out = await run("fez-mine", ["machines", "--json"]);
+              if (out.code === 0) {
+                const nodes = JSON.parse(out.stdout) as { node: string; usdHour: number | null }[];
+                const prices = nodes.map((n) => n.usdHour).filter((p): p is number => p !== null);
+                if (prices.length) parts.push(`from $${Math.min(...prices).toFixed(2)}/hr`);
+              }
+            } catch { /* best-effort — the confirm still shows the burn */ }
+            try {
+              const out = await run("fez-mine", ["balance", "--json"]);
+              if (out.code === 0) {
+                const bal = JSON.parse(out.stdout) as { balanceUsd: number | null };
+                if (bal.balanceUsd !== null) parts.push(`balance $${bal.balanceUsd.toFixed(2)}`);
+              }
+            } catch { /* best-effort */ }
+            if (parts.length) liumLine = `\n\nLium: ${parts.join(" · ")}`;
+          }
+
           const ok = confirm(
-            `Register ${persona} on netuid ${netuid}?\n\nBurns ~${cost.tao} tTAO — skipped (free) if ${persona} is already registered there.`
+            `Register ${persona} on netuid ${netuid}?\n\nBurns ~${cost.tao} tTAO — skipped (free) if ${persona} is already registered there.${liumLine}`
           );
           if (!ok) return;
-          const startOut = await run("fez-mine", [
-            "start",
-            "--netuid",
-            String(netuid),
-            "--persona",
-            persona,
-            "--json",
-          ]);
+          const startArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
+          if (machine === "lium") startArgs.push("--machine", "lium");
+          const startOut = await run("fez-mine", startArgs);
           if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
           await loadMiners();
         } catch (err) {
@@ -201,7 +232,8 @@ export default function activate(api: GuiExtensionApi): void {
 
     // Point 3: pick persona → doMine. `personasApi` absent gets a visible
     // error (same posture as the page-level `run`-absent guard below), not
-    // a silent no-op.
+    // a silent no-op. A gpu/publicEndpoint requirement inserts a machine
+    // step first — local is disabled there, so lium is the only choice.
     const mine = useCallback(
       (netuid: number) => {
         if (!run) return;
@@ -214,6 +246,13 @@ export default function activate(api: GuiExtensionApi): void {
           return;
         }
         setError(undefined);
+        const req = requirementsByNetuid[netuid];
+        if (req) {
+          const choices = machineChoices(req);
+          setMachineChoice(choices.find((c) => c.enabled)?.choice ?? "local");
+          setPickMachineFor(netuid);
+          return;
+        }
         if (personas.length === 1) {
           void doMine(netuid, personas[0]);
           return;
@@ -221,7 +260,23 @@ export default function activate(api: GuiExtensionApi): void {
         setPickFor(netuid);
         setPickChoice(personas[0]);
       },
-      [run, personasApi, personas, doMine]
+      [run, personasApi, personas, requirementsByNetuid, doMine]
+    );
+
+    // Machine step's Continue: carry the chosen kind into the persona step
+    // (or straight to doMine on a single persona).
+    const confirmMachine = useCallback(
+      (netuid: number, machine: MachineChoice) => {
+        setPickMachineFor(undefined);
+        if (personas.length === 1) {
+          void doMine(netuid, personas[0], machine);
+          return;
+        }
+        setPendingMachine(machine);
+        setPickFor(netuid);
+        setPickChoice(personas[0]);
+      },
+      [personas, doMine]
     );
 
     if (!run) {
@@ -232,7 +287,7 @@ export default function activate(api: GuiExtensionApi): void {
       );
     }
 
-    const rows = subnetRows(subnets, covered);
+    const rows = subnetRows(subnets, covered, HARDWARE_GATED);
     const subnetName = (netuid: number) => subnets.find((s) => s.netuid === netuid)?.name ?? `netuid ${netuid}`;
 
     return (
@@ -253,6 +308,9 @@ export default function activate(api: GuiExtensionApi): void {
                   </span>
                   <div className="skill-desc" style={dim}>
                     {m.uid !== undefined ? `uid ${m.uid}` : "unregistered"}
+                    {m.machine?.kind === "lium" && m.machine.podId
+                      ? ` · pod ${m.machine.podId}${m.machine.hourlyRate ? ` · $${m.machine.hourlyRate}/hr` : ""}`
+                      : ""}
                     {m.startedAt ? ` · started ${new Date(m.startedAt).toLocaleString()}` : ""}
                     {m.lastExit ? ` · ${m.lastExit}` : ""}
                   </div>
@@ -287,7 +345,11 @@ export default function activate(api: GuiExtensionApi): void {
                     {r.description ? ` — ${r.description}` : ""}
                   </span>
                   <div className="skill-desc" style={dim}>
-                    {r.curated ? (
+                    {r.gated ? (
+                      <span className="badge" title="needs hardware this harness can't provision yet" style={{ opacity: 0.6 }}>
+                        hardware-gated
+                      </span>
+                    ) : r.curated ? (
                       <span className="badge">curated</span>
                     ) : (
                       <span className="badge" title="not yet supported — coming in a future release" style={{ opacity: 0.6 }}>
@@ -296,9 +358,38 @@ export default function activate(api: GuiExtensionApi): void {
                     )}
                   </div>
                 </div>
-                {r.curated ? (
+                {r.curated && !r.gated ? (
                   <div className="skill-actions" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    {pickFor === r.netuid ? (
+                    {pickMachineFor === r.netuid ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {machineChoices(requirementsByNetuid[r.netuid]).map((c) => (
+                          <label
+                            key={c.choice}
+                            title={c.reason}
+                            style={{ display: "flex", alignItems: "center", gap: 4, opacity: c.enabled ? 1 : 0.55 }}
+                          >
+                            <input
+                              type="radio"
+                              name={`machine-${r.netuid}`}
+                              value={c.choice}
+                              disabled={!c.enabled}
+                              checked={machineChoice === c.choice}
+                              onChange={() => setMachineChoice(c.choice)}
+                            />
+                            {c.choice}
+                            {c.reason ? ` — ${c.reason}` : ""}
+                          </label>
+                        ))}
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button className="agent-action" onClick={() => confirmMachine(r.netuid, machineChoice)}>
+                            Continue
+                          </button>
+                          <button className="skill-link" onClick={() => setPickMachineFor(undefined)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : pickFor === r.netuid ? (
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <select
                           value={pickChoice}
@@ -315,13 +406,21 @@ export default function activate(api: GuiExtensionApi): void {
                           disabled={busy === busyKey}
                           onClick={() => {
                             const persona = pickChoice;
+                            const machine = pendingMachine;
+                            setPendingMachine(undefined);
                             setPickFor(undefined);
-                            void doMine(r.netuid, persona);
+                            void doMine(r.netuid, persona, machine);
                           }}
                         >
                           {busy === busyKey ? "working…" : "Continue"}
                         </button>
-                        <button className="skill-link" onClick={() => setPickFor(undefined)}>
+                        <button
+                          className="skill-link"
+                          onClick={() => {
+                            setPendingMachine(undefined);
+                            setPickFor(undefined);
+                          }}
+                        >
                           Cancel
                         </button>
                       </div>

@@ -5,6 +5,7 @@ import { fezHome, readState, writeState, upsertMiner } from "./state.js";
 import { loadDescriptors } from "./descriptors.js";
 import { teardownPod } from "./machine-lium.js";
 import { alive, kill, spawnDetached } from "./procs.js";
+import { lium, parseJson, priceOf } from "@fezchat/lium/cli";
 
 // Both bins resolve via ~/.fez/bin on PATH once installed; these overrides
 // let the CLI run straight from dist/ before an install (dev + tests).
@@ -32,16 +33,26 @@ async function cmdSubnets(json: boolean, refresh: boolean): Promise<void> {
   if (refresh) {
     const { allSubnets } = await import("@fezchat/bittensor/subnets");
     const subnets = await allSubnets();
-    const covered = (await loadDescriptors(home)).map((d) => d.netuid);
+    const descriptors = await loadDescriptors(home);
+    const covered = descriptors.map((d) => d.netuid);
+    const requirementsByNetuid: Record<number, { gpu?: string; publicEndpoint?: boolean }> = {};
+    for (const d of descriptors) {
+      if (d.requirements?.gpu || d.requirements?.publicEndpoint) {
+        requirementsByNetuid[d.netuid] = {
+          ...(d.requirements.gpu ? { gpu: d.requirements.gpu } : {}),
+          ...(d.requirements.publicEndpoint ? { publicEndpoint: true } : {}),
+        };
+      }
+    }
     // The chain fetch above takes multiple seconds; re-read + merge rather
     // than writing the whole (possibly stale) state we read before it, so
     // a stop/runner-exit/sentinel write racing the fetch isn't clobbered
     // (worst case: resurrecting a stopped miner).
     const fresh = await readState(home);
-    s = { ...fresh, subnets, covered };
+    s = { ...fresh, subnets, covered, requirementsByNetuid };
     await writeState(home, s);
   }
-  if (json) console.log(JSON.stringify({ subnets: s.subnets, covered: s.covered }));
+  if (json) console.log(JSON.stringify({ subnets: s.subnets, covered: s.covered, requirementsByNetuid: s.requirementsByNetuid ?? {} }));
   else for (const sn of s.subnets) console.log(`${sn.netuid}\t${sn.name}${s.covered.includes(sn.netuid) ? "\t[covered]" : ""}`);
 }
 
@@ -121,9 +132,45 @@ async function cmdStatus(json: boolean): Promise<void> {
   else for (const row of rows) console.log(`${row.netuid}:${row.persona}\t${row.desired}\t${row.alive ? "alive" : "dead"}`);
 }
 
+/** Pure — the part the test pins. Row shape per lium-cli ls/display.py compact_executor(). */
+export function machineNodeRows(rows: Record<string, unknown>[]): { node: string; usdHour: number | null }[] {
+  return rows.map((r) => ({ node: String(r.huid ?? r.id ?? r.index ?? ""), usdHour: priceOf(r) }));
+}
+
+// Rentable Lium nodes + prices, for the GUI's machine picker. Tolerates a
+// missing/unauthed `lium` CLI — a rented-machine flow one flag away from
+// "just use local" must never crash the picker over it.
+async function cmdMachines(json: boolean): Promise<void> {
+  const r = await lium(["ls", "--format", "json"]);
+  if (!r.ok) {
+    if (json) console.log(JSON.stringify({ error: r.err }));
+    else console.error(r.err);
+    return;
+  }
+  const nodes = machineNodeRows(parseJson<Record<string, unknown>[]>(r.out) ?? []);
+  if (json) console.log(JSON.stringify(nodes));
+  else for (const n of nodes) console.log(`${n.node}\t${n.usdHour !== null ? `$${n.usdHour}/hr` : "?"}`);
+}
+
+// The Lium account balance, for the confirm line next to the burn.
+// `lium balance --json` (not `--format json`) is the real flag, pinned
+// already in fez-lium's mcp.ts (lium_balance) against the installed CLI.
+async function cmdBalance(json: boolean): Promise<void> {
+  const r = await lium(["balance", "--json"]);
+  if (!r.ok) {
+    if (json) console.log(JSON.stringify({ error: r.err }));
+    else console.error(r.err);
+    return;
+  }
+  const n = Number(parseJson<{ balance_usd?: unknown }>(r.out)?.balance_usd);
+  const balanceUsd = Number.isFinite(n) ? n : null;
+  if (json) console.log(JSON.stringify({ balanceUsd }));
+  else console.log(balanceUsd !== null ? `$${balanceUsd}` : "unknown");
+}
+
 function usage(): never {
   console.error(
-    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json]"
+    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json]"
   );
   process.exit(2);
 }
@@ -169,6 +216,12 @@ async function main(): Promise<void> {
       break;
     case "status":
       await cmdStatus(json);
+      break;
+    case "machines":
+      await cmdMachines(json);
+      break;
+    case "balance":
+      await cmdBalance(json);
       break;
     default:
       usage();

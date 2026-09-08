@@ -38,7 +38,13 @@ export interface MinerEntry {
   /** Human sentence set by the sentinel when it stops auto-recovering a miner; cleared on the next manual start. */
   attention?: string;
 }
-export interface MiningState { miners: MinerEntry[]; subnets: Subnet[]; covered: number[] }
+export interface MiningState {
+  miners: MinerEntry[];
+  subnets: Subnet[];
+  covered: number[];
+  /** Descriptor-declared requirements, by netuid — drives the GUI's machine picker. */
+  requirementsByNetuid?: Record<number, { gpu?: string; publicEndpoint?: boolean }>;
+}
 
 export const fezHome = (): string => process.env.FEZ_MINE_HOME || path.join(homedir(), ".fez");
 
@@ -66,7 +72,12 @@ const stateFile = (home: string) => path.join(home, "extension-data", `${storage
 export async function readState(home = fezHome()): Promise<MiningState> {
   try {
     const raw = JSON.parse(await fs.readFile(stateFile(home), "utf8"));
-    return { miners: raw.miners ?? [], subnets: raw.subnets ?? [], covered: raw.covered ?? [] };
+    return {
+      miners: raw.miners ?? [],
+      subnets: raw.subnets ?? [],
+      covered: raw.covered ?? [],
+      requirementsByNetuid: raw.requirementsByNetuid ?? {},
+    };
   } catch {
     return { miners: [], subnets: [], covered: [] };
   }

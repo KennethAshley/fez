@@ -21,5 +21,6 @@ declare module "@fezchat/lium/cli" {
     timeoutMs?: number
   ): Promise<{ ok: true; out: string } | { ok: false; err: string }>;
   export function parseJson<T>(out: string): T | null;
+  export function priceOf(row: Record<string, unknown>): number | null;
   export const DEFAULT_TTL: string;
 }
