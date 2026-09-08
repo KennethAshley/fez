@@ -24,6 +24,8 @@
       "processes",
       "personas",
       "background",
+      "read:channels",
+      "publish",
       "network:.opentensor.ai"
     ],
     "minFezVersion": "0.2.0"

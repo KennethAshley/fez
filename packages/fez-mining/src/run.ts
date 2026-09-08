@@ -11,6 +11,8 @@ import { loadDescriptors } from "./descriptors.js";
 import { describePod, escapeShellValue, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
 import type { LiumExec, Recorder } from "./machine-lium.js";
 import { localMachine } from "./machine-local.js";
+import { resolveConfig } from "./config.js";
+import { getSecret } from "./secrets.js";
 import type { MinerEntry, MinerMachineState } from "./state.js";
 import { fezHome, readState, upsertMiner, writeState } from "./state.js";
 
@@ -289,11 +291,12 @@ export async function runMiner(
       log(`provisioned pod ${machineState.podId} at $${machineState.hourlyRate ?? "?"}/hr (ttl ${process.env.FEZ_MINE_POD_TTL || "24h"})`);
     }
     // Local machines keep v1's full-environment forward. A REMOTE (lium)
-    // pod gets ONLY what FEZ_MINE_FORWARD_ENV (comma-separated names,
-    // default empty) names out of this process's own env — the Mac's
-    // PATH/HOME/etc. have no business on a rented pod; a miner that needs
-    // a secret there is configured through this allowlist deliberately,
-    // not by accident.
+    // pod's env is now built primarily from ctx.config (resolved below from
+    // the descriptor's schema, merged with state + keychain secrets). For raw
+    // env passthrough (an escape hatch for future descriptors), FEZ_MINE_FORWARD_ENV
+    // (comma-separated names, default empty) names additional vars from this
+    // process's own env to forward — the Mac's PATH/HOME/etc. have no business
+    // on a rented pod by default; deliberately chosen via the allowlist only.
     const env: Record<string, string> =
       machine.kind === "lium"
         ? Object.fromEntries(
@@ -310,7 +313,11 @@ export async function runMiner(
     // never the Mac's home dir, which doesn't exist on the pod (root cause
     // of round 8's copy failure). See remoteWorkDir's doc comment.
     const workDir = machine.kind === "lium" ? remoteWorkDir(netuid, persona) : localDir;
-    const ctx = { workDir, persona, hotkey, netuid, env, machine, log };
+    // Non-secrets from state (this same `known` entry read above), secrets
+    // from the keychain, merged over the descriptor's schema defaults —
+    // same resolver the CLI's `config get` uses to shape its own view.
+    const config = resolveConfig(d.config, known?.config, (k) => getSecret(netuid, persona, k));
+    const ctx = { workDir, persona, hotkey, netuid, env, config, machine, log };
 
     // Reattach/local already got their pid/startedAt/machine recorded —
     // a fresh provision recorded its own above, before deployHotkey ran

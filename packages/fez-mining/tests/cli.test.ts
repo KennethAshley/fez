@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { statusRows, machineNodeRows } from "../src/cli.js";
+import { statusRows, machineNodeRows, tailLines } from "../src/cli.js";
 
 describe("statusRows", () => {
   it("annotates miners with liveness", () => {
@@ -13,6 +13,18 @@ describe("statusRows", () => {
       () => false
     );
     expect(dead[0].alive).toBe(false);
+  });
+});
+
+describe("tailLines", () => {
+  it("keeps the last n lines, dropping a trailing newline", () => {
+    expect(tailLines("a\nb\nc\nd\n", 2)).toBe("c\nd");
+  });
+  it("returns everything when there are fewer lines than n", () => {
+    expect(tailLines("only\n", 12)).toBe("only");
+  });
+  it("passes through empty text", () => {
+    expect(tailLines("", 12)).toBe("");
   });
 });
 

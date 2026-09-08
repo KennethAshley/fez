@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { MinerEntry } from "./state.js";
@@ -9,6 +9,10 @@ import { loadDescriptors } from "./descriptors.js";
 import { teardownPod } from "./machine-lium.js";
 import { alive, kill, spawnDetached } from "./procs.js";
 import { lium, parseJson, priceOf } from "@fezchat/lium/cli";
+import { deleteSecret, getSecret, setSecret } from "./secrets.js";
+import type { ConfigField } from "@fezchat/extension-api";
+
+type ConfigVal = string | number | boolean;
 
 // Resolve a sibling bin (fez-wallet, fez-mine-run) by ABSOLUTE path under
 // ~/.fez/bin when it exists there, not by bare name — the desktop spawns
@@ -123,6 +127,11 @@ async function cmdStart(netuid: number, persona: string, json: boolean, machine?
   }
   s = upsertMiner(s, {
     netuid, persona, hotkey: r.hotkey, uid: r.uid, desired: "running",
+    // upsertMiner fully replaces (see the comment above) — a `config set`
+    // written onto a stub BEFORE this first start (the New-miner picker's
+    // flow) would otherwise vanish right here, the moment `start` gives
+    // the stub its real hotkey/uid.
+    ...(existing?.config ? { config: existing.config } : {}),
     // The preserve is scoped to a lium→lium restart ONLY — carrying
     // `existing.machine` forward unconditionally (any kind, whenever
     // present) meant a later PLAIN `start` (no --machine) on a
@@ -218,9 +227,114 @@ async function cmdBalance(json: boolean): Promise<void> {
   else console.log(balanceUsd !== null ? `$${balanceUsd}` : "unknown");
 }
 
+/** Pure — the part the test pins. Non-secrets from stored-or-default; secrets never leave the keychain, only whether one is set. */
+export function maskConfigView(
+  schema: ConfigField[] | undefined,
+  stored: Record<string, ConfigVal> | undefined,
+  hasSecretFn: (key: string) => boolean
+): Record<string, ConfigVal | "set" | "unset"> {
+  const out: Record<string, ConfigVal | "set" | "unset"> = {};
+  for (const f of schema ?? []) {
+    if (f.type === "secret") {
+      out[f.key] = hasSecretFn(f.key) ? "set" : "unset";
+      continue;
+    }
+    if (stored && f.key in stored) out[f.key] = stored[f.key];
+    else if (f.default !== undefined) out[f.key] = f.default;
+  }
+  return out;
+}
+
+async function findMiner(home: string, netuid: number, persona: string): Promise<MinerEntry | undefined> {
+  return (await readState(home)).miners.find((m) => m.netuid === netuid && m.persona === persona);
+}
+
+async function cmdConfigGet(netuid: number, persona: string, json: boolean): Promise<void> {
+  const home = fezHome();
+  const [descriptors, entry] = await Promise.all([loadDescriptors(home), findMiner(home, netuid, persona)]);
+  const schema = descriptors.find((d) => d.netuid === netuid)?.config;
+  const view = maskConfigView(schema, entry?.config, (k) => getSecret(netuid, persona, k) !== undefined);
+  if (json) console.log(JSON.stringify(view));
+  else for (const [k, v] of Object.entries(view)) console.log(`${k}\t${v}`);
+}
+
+// The state (non-secret) branch used to require an existing MinerEntry —
+// `start` was the only thing that created one, which forced the GUI's
+// New-miner flow into start → config set → stop → start just to get
+// config committed before the real run, double-provisioning a Lium pod
+// every time. A fresh (netuid,persona) now gets a stopped stub instead of
+// an error; `cmdStart`'s register+upsert (upsertMiner merges by key)
+// fills in the real hotkey/uid and flips desired to "running" without
+// losing the config this wrote. `config unset`/`thread set-root` keep
+// requiring a real entry — nothing writes those before a first start.
+export async function cmdConfigSet(netuid: number, persona: string, key: string, value: string, secret: boolean): Promise<void> {
+  if (secret) { setSecret(netuid, persona, key, value); return; }
+  const home = fezHome();
+  const s = await readState(home);
+  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+  const base: MinerEntry = entry ?? { netuid, persona, hotkey: "", desired: "stopped" };
+  await writeState(home, upsertMiner(s, { ...base, config: { ...base.config, [key]: value } }));
+}
+
+// No --secret flag here — a caller may not know where a key landed, so this
+// clears BOTH possible locations (keychain + state config); whichever one
+// actually held it goes away, the other is a no-op.
+async function cmdConfigUnset(netuid: number, persona: string, key: string): Promise<void> {
+  deleteSecret(netuid, persona, key);
+  const home = fezHome();
+  const s = await readState(home);
+  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+  if (entry?.config && key in entry.config) {
+    const { [key]: _omit, ...rest } = entry.config;
+    await writeState(home, upsertMiner(s, { ...entry, config: rest }));
+  }
+}
+
+// The GUI's New-miner picker needs a subnet's config schema before it can
+// render the form — this is that schema, straight off the loaded
+// descriptor. `--json` is the only shape (nothing to eyeball here).
+async function cmdDescribe(netuid: number): Promise<void> {
+  const d = (await loadDescriptors(fezHome())).find((x) => x.netuid === netuid);
+  if (!d) throw new Error(`no descriptor for netuid ${netuid}`);
+  console.log(JSON.stringify({ netuid: d.netuid, name: d.name, requirements: d.requirements, config: d.config }));
+}
+
+/** Pure — the part the test pins. Last `n` lines of `text`, in order. */
+export function tailLines(text: string, n: number): string {
+  const lines = text.split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop(); // trailing "\n"
+  return lines.slice(-n).join("\n");
+}
+
+// The GUI's thread-view card tails this for its log panel. `miner-child.log`
+// (a descriptor's own subprocess, when it has one) takes priority over
+// `miner.log` (the runner's own bookkeeping — see run.ts's localDir); most
+// descriptors only ever write the latter. Prints nothing (not an error) when
+// neither file exists yet — a miner that hasn't logged anything, not a bug.
+function cmdLogs(netuid: number, persona: string, lines: number): void {
+  const dir = path.join(fezHome(), "mining", `${netuid}-${persona}`);
+  const childLog = path.join(dir, "miner-child.log");
+  const file = existsSync(childLog) ? childLog : path.join(dir, "miner.log");
+  if (!existsSync(file)) return;
+  console.log(tailLines(readFileSync(file, "utf8"), lines));
+}
+
+// GUI calls this right after posting the #mining root message; the headless
+// side reads it back to know where to reply. One-liner upsert.
+async function cmdThreadSetRoot(netuid: number, persona: string, root: string): Promise<void> {
+  const home = fezHome();
+  const s = await readState(home);
+  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+  if (!entry) throw new Error(`no recorded miner ${netuid}:${persona} — start it once with: fez-mine start`);
+  await writeState(home, upsertMiner(s, { ...entry, threadRootId: root }));
+}
+
 function usage(): never {
   console.error(
-    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json]"
+    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
+      "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
+      "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
+      "logs --netuid N --persona P [--lines 12]"
   );
   process.exit(2);
 }
@@ -236,16 +350,34 @@ async function main(): Promise<void> {
   const machineFlag = argv.indexOf("--machine");
   const machineValue = machineFlag >= 0 ? argv[machineFlag + 1] : undefined;
   if (machineValue !== undefined && machineValue !== "lium") usage();
-  const [cmd] = argv.filter(
+  const secret = argv.includes("--secret");
+  const keyFlag = argv.indexOf("--key");
+  const keyValue = keyFlag >= 0 ? argv[keyFlag + 1] : undefined;
+  const valueFlag = argv.indexOf("--value");
+  const valueValue = valueFlag >= 0 ? argv[valueFlag + 1] : undefined;
+  const rootFlag = argv.indexOf("--root");
+  const rootValue = rootFlag >= 0 ? argv[rootFlag + 1] : undefined;
+  const linesFlag = argv.indexOf("--lines");
+  const linesValue = linesFlag >= 0 ? Number(argv[linesFlag + 1]) || 12 : 12;
+  const [cmd, sub] = argv.filter(
     (a, i) =>
       a !== "--json" &&
       a !== "--refresh" &&
+      a !== "--secret" &&
       a !== "--netuid" &&
       !(netuidFlag >= 0 && i === netuidFlag + 1) &&
       a !== "--persona" &&
       !(personaFlag >= 0 && i === personaFlag + 1) &&
       a !== "--machine" &&
-      !(machineFlag >= 0 && i === machineFlag + 1)
+      !(machineFlag >= 0 && i === machineFlag + 1) &&
+      a !== "--key" &&
+      !(keyFlag >= 0 && i === keyFlag + 1) &&
+      a !== "--value" &&
+      !(valueFlag >= 0 && i === valueFlag + 1) &&
+      a !== "--root" &&
+      !(rootFlag >= 0 && i === rootFlag + 1) &&
+      a !== "--lines" &&
+      !(linesFlag >= 0 && i === linesFlag + 1)
   );
 
   switch (cmd) {
@@ -272,6 +404,36 @@ async function main(): Promise<void> {
       break;
     case "balance":
       await cmdBalance(json);
+      break;
+    case "config":
+      if (netuidValue === undefined || !personaValue) usage();
+      switch (sub) {
+        case "get":
+          await cmdConfigGet(netuidValue, personaValue, json);
+          break;
+        case "set":
+          if (!keyValue || !valueValue) usage();
+          await cmdConfigSet(netuidValue, personaValue, keyValue, valueValue, secret);
+          break;
+        case "unset":
+          if (!keyValue) usage();
+          await cmdConfigUnset(netuidValue, personaValue, keyValue);
+          break;
+        default:
+          usage();
+      }
+      break;
+    case "thread":
+      if (sub !== "set-root" || netuidValue === undefined || !personaValue || !rootValue) usage();
+      await cmdThreadSetRoot(netuidValue, personaValue, rootValue);
+      break;
+    case "describe":
+      if (netuidValue === undefined) usage();
+      await cmdDescribe(netuidValue);
+      break;
+    case "logs":
+      if (netuidValue === undefined || !personaValue) usage();
+      cmdLogs(netuidValue, personaValue, linesValue);
       break;
     default:
       usage();

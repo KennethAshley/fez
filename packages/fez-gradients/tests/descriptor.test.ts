@@ -13,15 +13,22 @@ describe("gradients descriptor", () => {
     expect(miners[0].requirements?.gpu).toBeUndefined();
     expect(typeof miners[0].start).toBe("function");
   });
+
+  it("declares its config schema — wallet/network/stake/refresh, no LLM provider or secret", () => {
+    const keys = miners[0].config?.map((f) => f.key) ?? [];
+    expect(keys).toEqual(["walletName", "subtensorNetwork", "minStakeThreshold", "refreshNodes"]);
+    expect(miners[0].config?.some((f) => f.type === "secret")).toBe(false);
+  });
 });
 
-function fakeCtx(ports: MachinePort[], execCalls: string[]): MinerContext {
+function fakeCtx(ports: MachinePort[], execCalls: string[], config: Record<string, string | number | boolean> = {}): MinerContext {
   return {
     workDir: "/tmp/gradients-test",
     persona: "p",
     hotkey: "5F",
     netuid: 56,
     env: {},
+    config,
     log: () => {},
     machine: {
       kind: "lium",
@@ -57,5 +64,17 @@ describe("gradients register() port selection", () => {
     await miners[0].register!(ctx);
     expect(execCalls[0]).toContain("--external_port 20002");
     expect(execCalls[0]).toContain("--external_ip 1.2.3.4");
+  });
+
+  it("maps ctx.config.walletName/subtensorNetwork into fiber-post-ip instead of the old hardcoded default/finney", async () => {
+    const execCalls: string[] = [];
+    const ctx = fakeCtx(
+      [{ externalIp: "1.2.3.4", externalPort: 20002, internalPort: 7999 }],
+      execCalls,
+      { walletName: "quill", subtensorNetwork: "test" }
+    );
+    await miners[0].register!(ctx);
+    expect(execCalls[0]).toContain("--wallet.name quill");
+    expect(execCalls[0]).toContain("--subtensor.network test");
   });
 });

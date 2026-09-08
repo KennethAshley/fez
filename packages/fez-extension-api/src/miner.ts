@@ -54,6 +54,10 @@ export interface MinerContext {
   netuid: number;
   /** Extra env the harness was configured with for this miner. */
   env: Record<string, string>;
+  /** Resolved config values for this miner — non-secrets from state,
+   *  secrets from the keychain, merged over the schema defaults. In-memory
+   *  only; the descriptor maps these into how it runs (env vars, args). */
+  config: Record<string, string | number | boolean>;
   /** Where this miner's commands run. Local shell today; a rented pod
    *  when the harness provisioned one. */
   machine: MinerMachine;
@@ -64,6 +68,22 @@ export interface MinerContext {
 export interface MinerStatus {
   running: boolean;
   detail?: string;
+}
+
+/**
+ * One configurable field a subnet miner exposes. The harness renders a
+ * form from these, stores the values per-miner (secrets in the OS
+ * keychain, everything else in state), and hands the resolved values to
+ * the descriptor as MinerContext.config at launch.
+ */
+export interface ConfigField {
+  key: string;                                  // unique per descriptor
+  label: string;
+  type: "string" | "number" | "boolean" | "select" | "secret";
+  default?: string | number | boolean;
+  options?: string[];                           // for type "select"
+  required?: boolean;
+  help?: string;
 }
 
 export interface SubnetMiner {
@@ -78,6 +98,7 @@ export interface SubnetMiner {
     /** Validators must reach this miner from the internet — a NAT'd laptop can't serve it. */
     publicEndpoint?: boolean;
   };
+  config?: ConfigField[];
   /** One-time machine setup (clone, deps). MUST be idempotent — the runner calls it every start. */
   install?(ctx: MinerContext): Promise<void>;
   /**
