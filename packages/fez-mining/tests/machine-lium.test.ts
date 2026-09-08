@@ -37,11 +37,11 @@ describe("liumMachine", () => {
   // exec wait on the whole remote process tree — a detached background
   // child hangs the call past 180s. The identical command with env inlined
   // as `export K=V; ...` returns in ~2s and the child survives.
-  it("exec prefixes cwd with cd (no cwd flag on the real CLI) and inlines env as export statements", async () => {
+  it("exec prefixes cwd as a guarded cd-statement (no cwd flag on the real CLI) and inlines env as export statements", async () => {
     const { exec, calls } = script({ exec: JSON.stringify({ results: [{ pod: "p1", exit_code: 0, stdout: "", stderr: "" }] }) });
     const m = liumMachine({ podId: "p1", ports: [] }, exec);
     await m.exec("ls", { cwd: "/root/work", env: { FOO: "bar" } });
-    expect(calls[0]).toEqual(["exec", "p1", "export FOO='bar'; cd /root/work && ls", "--json"]);
+    expect(calls[0]).toEqual(["exec", "p1", "cd /root/work || exit 97; export FOO='bar'; ls", "--json"]);
   });
 
   it("exec single-quote-escapes an env value containing a literal quote", async () => {
@@ -49,6 +49,21 @@ describe("liumMachine", () => {
     const m = liumMachine({ podId: "p1", ports: [] }, exec);
     await m.exec("ls", { env: { FOO: "it's" } });
     expect(calls[0]).toEqual(["exec", "p1", "export FOO='it'\\''s'; ls", "--json"]);
+  });
+
+  // Pinned live 2026-09-08: cd/exports must be their OWN statements (`;`),
+  // never `&&`-chained into the user command — a trailing `&` in the user
+  // command (backgrounding a detached child, e.g. `./miner & echo $! >
+  // pid`) would otherwise background the WHOLE `cd && ... && cmd` compound;
+  // that subshell's own stdio (inherited from the session) stays open as
+  // long as the miner runs, hanging `lium exec` on it for 60s.
+  it("exec never && -chains cwd/env into a user command that backgrounds a detached child", async () => {
+    const { exec, calls } = script({ exec: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) });
+    const m = liumMachine({ podId: "p1", ports: [] }, exec);
+    await m.exec("./miner & echo $! > miner.pid", { cwd: "/root/work", env: { FOO: "bar" } });
+    const [, , sent] = calls[0];
+    expect(sent).toBe("cd /root/work || exit 97; export FOO='bar'; ./miner & echo $! > miner.pid");
+    expect(sent).not.toContain("&&");
   });
 
   // Pinned: `lium scp --help` — TARGETS (pod) then SOURCE then optional

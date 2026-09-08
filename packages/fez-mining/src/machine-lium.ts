@@ -72,12 +72,21 @@ export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMac
       // K=V cmd` only covers a simple command (ours can be compound: `a &&
       // b`, `x & echo $!`), so prepend `export` statements instead, which
       // apply to everything after them regardless of shape.
+      //
+      // cd and exports are their OWN statements ending in `;`, never `&&`
+      // into the user command — a trailing `&` in the user command (e.g.
+      // `./miner & echo $! > miner.pid`) would otherwise background the
+      // WHOLE `cd && ... && cmd` compound, and that subshell's own stdio
+      // (inherited from the exec session, not redirected) stays open as
+      // long as the miner runs, so `lium exec` waits on it — a 60s hang.
+      // Pinned live 2026-09-08.
       const exports = Object.entries(opts.env ?? {})
         .filter(([k]) => !isRefusedEnvName(k))
         .map(([k, v]) => `export ${k}=${escapeShellValue(v)};`)
         .join(" ");
-      const body = opts.cwd ? `cd ${opts.cwd} && ${cmd}` : cmd;
-      const args = ["exec", handle.podId, exports ? `${exports} ${body}` : body, "--json"];
+      const cdGuard = opts.cwd ? `cd ${opts.cwd} || exit 97; ` : "";
+      const full = `${cdGuard}${exports ? `${exports} ` : ""}${cmd}`;
+      const args = ["exec", handle.podId, full, "--json"];
       const r = await exec(args, opts.timeoutMs);
       if (!r.ok) return { code: 1, stdout: "", stderr: r.err };
       // Pinned via fez-lium's mcp.ts lium_exec: the CLI always wraps in
