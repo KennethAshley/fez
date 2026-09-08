@@ -1,8 +1,10 @@
 import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
-import { readState, writeState, upsertMiner, fezHome } from "./state.js";
+import { readState, writeState, upsertMiner, minerKey, fezHome, type MinerEntry } from "./state.js";
 import { alive, spawnDetached } from "./procs.js";
 import { planRemote } from "./reconcile.js";
 import { podAlive } from "./machine-lium.js";
+import { lifecycleMessage } from "./lifecycle.js";
+import { MINING_CHANNEL_NAME, MINING_SOURCE } from "./thread.js";
 
 /**
  * fez-mining, headless part — the sentinel-side reconcile loop.
@@ -28,9 +30,15 @@ import { podAlive } from "./machine-lium.js";
  * round-trip is real network time) must not get overwritten back to
  * "running" by a decision made on stale state, so every action is
  * skipped once `desired !== "running"` on the fresh read.
+ *
+ * After the reconcile, the same tick posts each miner's news into its
+ * GUI-opened thread — `channels` on `ctx` is what a scheduled task
+ * actually gets handed (see fez-github's headless.ts for the same
+ * pattern); `api.channels` is the coarser "does this host have a key
+ * and a relay at all" signal, checked once as a cheap early-out.
  */
 export default function activate(api: FezExtensionAPI): void {
-  api.registerScheduledTask("mining-reconcile", 120_000, async () => {
+  api.registerScheduledTask("mining-reconcile", 120_000, async (ctx) => {
     const home = fezHome();
     const s = await readState(home);
 
@@ -77,6 +85,35 @@ export default function activate(api: FezExtensionAPI): void {
       } catch (err) {
         console.error(`mining-reconcile: failed to ${action} ${m.netuid}:${m.persona}`, err);
       }
+    }
+
+    // Lifecycle replies — best-effort, and never the reconcile's problem.
+    // Only miners with a threadRootId get a timeline: the GUI is the sole
+    // root poster, so a CLI-started miner nobody opened in the desktop
+    // just has no thread to reply into (acceptable — see Task 9 brief).
+    if (!api.channels) return; // no key/relay on this host at all
+    try {
+      const channelId = await ctx.channels.ensure({ name: MINING_CHANNEL_NAME, source: MINING_SOURCE });
+      if (!channelId) return; // unclaimed relay, or we're not the owner — nothing to post into
+
+      const final = await readState(home);
+      for (const miner of final.miners) {
+        if (!miner.threadRootId) continue;
+        const snapKey = `lifecycle:${minerKey(miner.netuid, miner.persona)}`;
+        const prev = await api.storage.get<MinerEntry>(snapKey);
+        const text = lifecycleMessage(prev, miner);
+        if (text) {
+          try {
+            await ctx.channels.say(channelId, text, { threadRoot: miner.threadRootId });
+          } catch (err) {
+            console.error(`mining-reconcile: failed to post lifecycle reply for ${miner.netuid}:${miner.persona}`, err);
+            continue; // don't advance the snapshot — retry this transition next tick
+          }
+        }
+        await api.storage.set(snapKey, miner);
+      }
+    } catch (err) {
+      console.error("mining-reconcile: lifecycle posting failed", err);
     }
   });
 }
