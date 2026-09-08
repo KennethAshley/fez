@@ -133,23 +133,74 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     const prevBin = process.env.FEZ_WALLET_BIN;
     const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
     const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+    const prevCopyDelay = process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
     process.env.FEZ_WALLET_BIN = fakeWalletBin;
     process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // collapse inter-attempt delay for the test
     process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1"; // collapse initial wait for the test
+    process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = "1"; // collapse copy()'s own inner retry delay
     try {
       const { exec, calls } = scriptedExec({
         ls: () => ({ ok: true, out: JSON.stringify([{ huid: "n1", price_per_hour: "0.3" }]) }),
         up: () => ({ ok: true, out: JSON.stringify({ pod: "pX", price_per_hour: "0.3" }) }),
         describe: () => ({ ok: true, out: JSON.stringify({ host_ip: "1.1.1.1", ports: [] }) }),
-        exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }), // mkdir
-        // Fails twice (sshd not up yet), succeeds on the 3rd attempt.
-        scp: (_args, call) => (call < 3 ? { ok: false, err: "Failed to upload to: pX" } : { ok: true, out: "" }),
+        exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }), // readiness probe + mkdir
+        // copy() itself now retries 3x (10s apart, collapsed to 1ms here)
+        // before giving up — fails all 3 on deployHotkey's first outer
+        // attempt (calls 1-3), then succeeds on deployHotkey's second
+        // outer attempt's first inner try (call 4). Exercises both the
+        // new inner copy-retry AND the existing outer retryFirstContact.
+        scp: (_args, call) => (call < 4 ? { ok: false, err: "Failed to upload to: pX" } : { ok: true, out: "" }),
       });
       const logs: string[] = [];
       const { provisioned } = await resolveMachine(freshEntry, "p", {}, exec, noRecord, (line) => logs.push(line));
       expect(provisioned).toBe(true);
-      expect(calls.filter((c) => c[0] === "scp").length).toBe(3);
+      expect(calls.filter((c) => c[0] === "scp").length).toBe(4);
       expect(logs.some((l) => l.includes("deployHotkey: scp") && l.includes("retrying"))).toBe(true);
+    } finally {
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
+      else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
+      if (prevCopyDelay === undefined) delete process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = prevCopyDelay;
+    }
+  });
+
+  // New: the readiness gate (machine.exec("true")) probes before
+  // deployHotkey ever runs — a fresh pod's `up` can report ready before
+  // sshd accepts ANY session, exec or scp. Reuses retryFirstContact's
+  // budget (same env overrides as every other first-contact op here).
+  it("readiness gate retries exec(\"true\") until the pod accepts a session, then deployHotkey runs", async () => {
+    const freshEntry: MinerEntry = { netuid: 1, persona: "p", hotkey: "5F", desired: "running", machine: { kind: "lium" } };
+    const prevBin = process.env.FEZ_WALLET_BIN;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+    process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    try {
+      const { exec, calls } = scriptedExec({
+        ls: () => ({ ok: true, out: JSON.stringify([{ huid: "n1", price_per_hour: "0.3" }]) }),
+        up: () => ({ ok: true, out: JSON.stringify({ pod: "pX", price_per_hour: "0.3" }) }),
+        describe: () => ({ ok: true, out: JSON.stringify({ host_ip: "1.1.1.1", ports: [] }) }),
+        // First 2 exec calls are the readiness probe failing (sshd not up
+        // yet); the 3rd succeeds (probe passes), the 4th is deployHotkey's
+        // mkdir (also succeeds).
+        exec: (_args, call) =>
+          call <= 2
+            ? { ok: false, err: "connection refused" }
+            : { ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) },
+        scp: () => ({ ok: true, out: "" }),
+      });
+      const { provisioned } = await resolveMachine(freshEntry, "p", {}, exec, noRecord);
+      expect(provisioned).toBe(true);
+      const firstExecIdx = calls.findIndex((c) => c[0] === "exec");
+      const firstScpIdx = calls.findIndex((c) => c[0] === "scp");
+      expect(firstExecIdx).toBeGreaterThanOrEqual(0);
+      expect(firstScpIdx).toBeGreaterThan(firstExecIdx); // scp (the hotkey deploy) happens after the readiness probe
+      expect(calls.filter((c) => c[0] === "exec").length).toBe(4); // 3 probe attempts + 1 mkdir
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;
@@ -218,21 +269,26 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     const prevBin = process.env.FEZ_WALLET_BIN;
     const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
     const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+    const prevCopyDelay = process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
     process.env.FEZ_WALLET_BIN = fakeWalletBin;
     process.env.FEZ_MINE_RETRY_DELAY_MS = "1"; // exhaust the retries fast
     process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1"; // collapse initial wait for the test
+    process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = "1"; // collapse copy()'s own inner retry delay
     try {
       const { exec, calls } = scriptedExec({
         ls: () => ({ ok: true, out: JSON.stringify([{ huid: "n1", price_per_hour: "0.3" }]) }),
         up: () => ({ ok: true, out: JSON.stringify({ pod: "pX", price_per_hour: "0.3" }) }),
         describe: () => ({ ok: true, out: JSON.stringify({ host_ip: "1.1.1.1", ports: [] }) }),
-        exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }), // mkdir ok
+        exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }), // readiness probe + mkdir ok
         scp: () => ({ ok: false, err: "Failed to upload to: pX" }), // permanent — not the boot race, exhausts retries
         rm: () => ({ ok: true, out: "{}" }),
       });
       const code = await runMiner(9998, "p", home, { hotkey: "5FAKE", exec, recorder: noRecord });
       expect(code).toBe(1);
-      expect(calls.filter((c) => c[0] === "scp").length).toBe(12); // all retries exhausted (12 attempts)
+      // deployHotkey's outer retryFirstContact attempts 12 times; each
+      // attempt calls copy(), which now retries 3x internally before
+      // throwing back out — 12 * 3 = 36 total scp calls before giving up.
+      expect(calls.filter((c) => c[0] === "scp").length).toBe(36);
       expect(calls.some((c) => c[0] === "rm" && c[1] === "pX")).toBe(true); // the orphan risk: torn down instead
 
       const after = await readState(home);
@@ -247,6 +303,8 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
       if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
       else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
+      if (prevCopyDelay === undefined) delete process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = prevCopyDelay;
     }
   });
 

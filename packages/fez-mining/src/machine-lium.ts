@@ -33,6 +33,11 @@ export type LiumExec = (args: string[], timeoutMs?: number) => Promise<{ ok: tru
 // signature is untouched, this just wraps the call site.
 export type Recorder = (row: Omit<Row, "id" | "at">) => Promise<void>;
 
+// Same per-call-env convention as run.ts's retry knobs (read live, not
+// frozen at module load, so tests can collapse it after this module is
+// already imported). Default 10s apart, 3 attempts total.
+const copyRetryDelayMs = (): number => Number(process.env.FEZ_MINE_COPY_RETRY_DELAY_MS) || 10_000;
+
 /** A pod HUID looks like "eager-wolf-aa" / "cosmic-hawk-f2" (word-word-alnum2), per `lium up --help`'s examples. */
 const HUID_RE = /\b[a-z]+-[a-z]+-[a-z0-9]{2}\b/;
 
@@ -72,8 +77,19 @@ export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMac
     async copy(localPath, remotePath) {
       // Pinned: `lium scp --help` — TARGETS(pod) SOURCE [DESTINATION], no
       // "pod:path" colon syntax. Matches mcp.ts's lium_copy exactly.
-      const r = await exec(["scp", handle.podId, localPath, remotePath], 300_000);
-      if (!r.ok) throw new Error(r.err);
+      //
+      // Bounded retry (3 attempts, 10s apart) — a young pod's sshd can
+      // refuse a copy for a couple minutes after `up` returns, and not
+      // every caller of `copy` (e.g. a descriptor's install step) wraps
+      // its own retry the way deployHotkey does. copy() carries a minimal
+      // one itself so every caller gets it for free.
+      const attempts = 3;
+      for (let n = 1; n <= attempts; n++) {
+        const r = await exec(["scp", handle.podId, localPath, remotePath], 300_000);
+        if (r.ok) return;
+        if (n === attempts) throw new Error(r.err);
+        await new Promise((res) => setTimeout(res, copyRetryDelayMs()));
+      }
     },
   };
 }

@@ -167,6 +167,18 @@ export async function resolveMachine(
     // to, found and torn down by hand.
     if (persistProvision) await persistProvision(machineState);
     const machine = liumMachine(handle, exec);
+    // A fresh pod's `up` can report ready well before sshd actually
+    // accepts a session — pinned live 2026-09-08 (same race as
+    // deployHotkey's own retry below). Probe with a no-op exec before
+    // trusting the pod with anything, reusing the same retry budget.
+    await retryFirstContact(
+      "pod readiness",
+      async () => {
+        const r = await machine.exec("true");
+        if (r.code !== 0) throw new Error(r.stderr || `exec exited ${r.code}`);
+      },
+      log
+    );
     await deployHotkey(persona, machine, log);
     return { machine, provisioned: true, machineState };
   }

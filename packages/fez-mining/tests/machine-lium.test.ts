@@ -63,6 +63,44 @@ describe("liumMachine", () => {
     expect(calls[0]).toEqual(["scp", "p1", "./a.txt", "/root/a.txt"]);
   });
 
+  // A young pod's sshd can refuse an scp for a while after `up` returns —
+  // copy() retries a bounded 3 attempts (10s apart, collapsed here) before
+  // giving up, so callers that don't wrap their own retry (unlike
+  // deployHotkey) still get one for free.
+  it("copy retries a failed scp and resolves once a later attempt succeeds", async () => {
+    const prevCopyDelay = process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
+    process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = "1";
+    try {
+      let call = 0;
+      const calls: string[][] = [];
+      const exec = async (args: string[]) => {
+        calls.push(args);
+        call++;
+        return call < 2 ? { ok: false as const, err: "Failed to upload" } : { ok: true as const, out: "" };
+      };
+      const m = liumMachine({ podId: "p1", ports: [] }, exec);
+      await expect(m.copy("./a.txt", "/root/a.txt")).resolves.toBeUndefined();
+      expect(calls.length).toBe(2);
+    } finally {
+      if (prevCopyDelay === undefined) delete process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = prevCopyDelay;
+    }
+  });
+
+  it("copy throws once all 3 attempts are exhausted", async () => {
+    const prevCopyDelay = process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
+    process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = "1";
+    try {
+      const { exec, calls } = script({}); // no script for scp — always fails
+      const m = liumMachine({ podId: "p1", ports: [] }, exec);
+      await expect(m.copy("./a.txt", "/root/a.txt")).rejects.toThrow(/no script for scp/);
+      expect(calls.length).toBe(3);
+    } finally {
+      if (prevCopyDelay === undefined) delete process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = prevCopyDelay;
+    }
+  });
+
   // Pinned live (Task 12): `lium up` with no NODE_ID and no filters
   // refuses outright ("Must provide either NODE_ID or filters"), so
   // provisionPod picks the node itself — `ls --format json`, cheapest row
