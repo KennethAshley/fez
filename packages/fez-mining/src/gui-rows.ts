@@ -14,10 +14,11 @@ export type MachineChoice = "local" | "lium" | "ssh";
  * requirement → local only (v1 flow, no picker shown). A GPU floor or a
  * public-endpoint need both rule out a NAT'd local Mac, but for different
  * reasons — surfaced separately so the GUI's disabled-option tooltip is
- * accurate. ssh (a host you already run) satisfies a public-endpoint
- * need but is NOT offered for a GPU floor — nothing can verify a GPU on
- * an arbitrary owned box, and offering it would imply mineability the
- * honesty badge exists to prevent.
+ * accurate. ssh (a host you already run) is offered for BOTH remote
+ * needs — the user may own the right hardware, and refusing them the
+ * option is paternalism, not honesty. Honesty lives in the label: a GPU
+ * floor fez cannot verify on an owned box is stated on the choice, and
+ * the informed pick is the user's.
  */
 export function machineChoices(
   req: { gpu?: string; publicEndpoint?: boolean } | undefined
@@ -28,7 +29,13 @@ export function machineChoices(
     : "validators must reach this miner — your Mac has no public port";
   return [
     { choice: "local", enabled: false, reason },
-    ...(req.gpu ? [] : [{ choice: "ssh" as const, enabled: true, reason: "a public host you already run" }]),
+    {
+      choice: "ssh",
+      enabled: true,
+      reason: req.gpu
+        ? `your own GPU server — it must actually have a ${req.gpu} GPU; fez can't check, and without one the miner earns nothing`
+        : "a public host you already run",
+    },
     { choice: "lium", enabled: true },
   ];
 }

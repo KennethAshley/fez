@@ -41,8 +41,11 @@ describe("machineChoices", () => {
     expect(c.find((x) => x.choice === "ssh")).toMatchObject({ enabled: true });
   });
 
-  it("gpu requirement does NOT offer ssh — nothing can verify a GPU on an owned box", () => {
-    expect(machineChoices({ gpu: "24GB" }).some((x) => x.choice === "ssh")).toBe(false);
+  it("gpu requirement offers ssh too — the user may own the hardware; the caveat lives in the label", () => {
+    const sshChoice = machineChoices({ gpu: "24GB" }).find((x) => x.choice === "ssh");
+    expect(sshChoice).toMatchObject({ enabled: true });
+    expect(sshChoice?.reason).toMatch(/24GB GPU/);
+    expect(sshChoice?.reason).toMatch(/can't check/);
   });
 });
 
