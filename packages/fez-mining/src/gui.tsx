@@ -202,7 +202,7 @@ export default function activate(api: GuiExtensionApi): void {
   // colored initial rather than a broken image.
   const AVATAR_HUES = ["#83a598", "#b8bb26", "#fabd2f", "#fe8019", "#d3869b", "#8ec07c"];
   const logoUrls: Record<number, string> = SUBNET_LOGOS;
-  const subnetAvatar = (netuid: number, name: string): JSX.Element => {
+  const subnetAvatar = (netuid: number, name: string, size = 28): JSX.Element => {
     const hue = AVATAR_HUES[netuid % AVATAR_HUES.length];
     const letter = (name.trim()[0] ?? "?").toUpperCase();
     const logo = logoUrls[netuid];
@@ -213,15 +213,15 @@ export default function activate(api: GuiExtensionApi): void {
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          width: 28,
-          height: 28,
+          width: size,
+          height: size,
           borderRadius: "50%",
           flex: "none",
           overflow: "hidden",
           background: `color-mix(in srgb, ${hue} 20%, var(--bg1, #282828))`,
           color: hue,
           fontWeight: 700,
-          fontSize: 12.5,
+          fontSize: size * 0.45,
           fontFamily: "var(--font-mono, monospace)",
         }}
       >
@@ -924,14 +924,28 @@ export default function activate(api: GuiExtensionApi): void {
     // The stacking story on a tile: this subnet's badge with its component
     // subnets' badges overlapped behind it (Gradients ⟵ Lium; Bazaar ⟵
     // Chutes), plus a plain line naming what each component contributes.
+    // The subnet's badge with its component subnets as SMALL satellites at
+    // the bottom-right corner — the main subnet is the thing you mine, the
+    // component is supporting infrastructure and reads subordinate.
     const stackCluster = (netuid: number, name: string): JSX.Element => {
       const comps = stackFor(netuid, requirementsByNetuid[netuid]);
       return (
-        <span style={{ display: "inline-flex", alignItems: "center", flex: "none" }}>
+        <span style={{ position: "relative", display: "inline-flex", flex: "none" }}>
           {subnetAvatar(netuid, name)}
-          {comps.map((c) => (
-            <span key={c} style={{ marginLeft: -9, display: "inline-flex", borderRadius: "50%", boxShadow: "0 0 0 2px var(--bg1, #282828)" }}>
-              {subnetAvatar(c, subnetName(c))}
+          {comps.map((c, i) => (
+            <span
+              key={c}
+              title={`mined with ${subnetName(c)}`}
+              style={{
+                position: "absolute",
+                right: -4 - i * 12,
+                bottom: -4,
+                display: "inline-flex",
+                borderRadius: "50%",
+                boxShadow: "0 0 0 2px var(--bg0, #1d2021)",
+              }}
+            >
+              {subnetAvatar(c, subnetName(c), 15)}
             </span>
           ))}
         </span>
