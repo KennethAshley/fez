@@ -43,11 +43,14 @@ export function rosterMatches(
   // The record routes the work: judged agents rank above blank ones,
   // better records rank higher. No records loaded → plain alphabetical.
   const score = (c: MentionCandidate) => (records ? recordScore(records.get(c.pubkey) ?? []) : 0);
+  // A candidate's aliases ("also answers to") match like its name, so
+  // typing a nickname still finds the agent that carries it.
+  const names = (c: MentionCandidate) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase());
   return roster
-    .filter((c) => c.isMember && c.pubkey !== selfPk && c.name.toLowerCase().includes(wanted))
+    .filter((c) => c.isMember && c.pubkey !== selfPk && names(c).some((n) => n.includes(wanted)))
     .sort((a, b) => {
-      const aStarts = a.name.toLowerCase().startsWith(wanted) ? 0 : 1;
-      const bStarts = b.name.toLowerCase().startsWith(wanted) ? 0 : 1;
+      const aStarts = names(a).some((n) => n.startsWith(wanted)) ? 0 : 1;
+      const bStarts = names(b).some((n) => n.startsWith(wanted)) ? 0 : 1;
       return aStarts - bStarts || score(b) - score(a) || a.name.localeCompare(b.name);
     })
     .slice(0, limit);
