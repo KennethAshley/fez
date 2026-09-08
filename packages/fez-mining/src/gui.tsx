@@ -68,7 +68,7 @@ export default function activate(api: GuiExtensionApi): void {
         width: 8,
         height: 8,
         borderRadius: "50%",
-        background: alive ? "var(--success, #2a2)" : "var(--fg-dim, #999)",
+        background: alive ? "var(--green, #b8bb26)" : "var(--fg-dim, #999)",
       }}
     />
   );
@@ -155,22 +155,58 @@ export default function activate(api: GuiExtensionApi): void {
     immunityLeftBlocks: number;
   };
 
-  // Compact enrichment line for an active-miner row / the thread card.
-  // 0..1 chain scores print to 2dp; absent/zero-value fields that would
-  // just be noise (no stake reading, immunity already lapsed) are omitted.
-  const metaLine = (m?: MetagraphInfo): string | undefined => {
-    if (!m || m.uid === undefined) return undefined;
-    const parts = [`incentive ${m.incentive.toFixed(2)}`, `emission ${m.emission}`, `trust ${m.trust.toFixed(2)}`, `rank ${m.rank.toFixed(2)}`];
-    if (m.stake !== undefined) parts.push(`stake ${m.stake}`);
-    if (m.immunityLeftBlocks > 0) parts.push(`immunity ${m.immunityLeftBlocks} blk left`);
-    return parts.join(" · ");
+  // The characteristic mining glance: the on-chain metrics as labelled
+  // monospace stats, with incentive lit phosphor-green the moment the miner
+  // is actually earning. This is the hero of a miner row — "is it working?"
+  // answered without reading a sentence. `{}` (no uid) renders nothing.
+  const metricStrip = (m?: MetagraphInfo): JSX.Element | null => {
+    if (!m || m.uid === undefined) return null;
+    const earning = m.incentive > 0;
+    const stat = (label: string, value: string, lit = false): JSX.Element => (
+      <span key={label} style={{ display: "inline-flex", gap: 4, alignItems: "baseline" }}>
+        <span style={{ color: "var(--fg-dim, #999)", fontSize: 10.5 }}>{label}</span>
+        <span style={{ color: lit ? "var(--green, #b8bb26)" : "var(--fg, #ddd)" }}>{value}</span>
+      </span>
+    );
+    return (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontFamily: "var(--font-mono, monospace)", fontSize: 12, marginTop: 5 }}>
+        {stat("incentive", m.incentive.toFixed(2), earning)}
+        {stat("emission", m.emission)}
+        {stat("trust", m.trust.toFixed(2))}
+        {stat("rank", m.rank.toFixed(2))}
+        {m.stake !== undefined ? stat("stake", `${m.stake}α`) : null}
+        {m.immunityLeftBlocks > 0 ? stat("immunity", `${m.immunityLeftBlocks}b`) : null}
+      </div>
+    );
   };
+
+  // Launch area: a grid of tiles for the few subnets you can start now, and
+  // a dense hairline table for the full Bittensor list. Two densities on
+  // purpose — the tiles are for acting, the table is for browsing.
+  const tileGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginTop: 8 };
+  const tile = {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 6,
+    padding: 10,
+    border: "1px solid var(--hairline, #333)",
+    borderRadius: 8,
+    background: "var(--bg1, transparent)",
+  };
+  const tableRowStyle = {
+    display: "grid",
+    gridTemplateColumns: "52px 1fr 150px",
+    gap: 10,
+    alignItems: "center",
+    padding: "6px 2px",
+    borderBottom: "1px solid color-mix(in srgb, var(--hairline, #333) 60%, transparent)",
+  };
+  const mono = { fontFamily: "var(--font-mono, monospace)" };
 
   // The New-miner picker's state machine — one step at a time, each
   // carrying forward what earlier steps decided. `undefined` = picker
   // closed (the normal "active miners" view).
   type PickerStep =
-    | { kind: "subnet" }
     | { kind: "machine"; netuid: number }
     | { kind: "config"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues }
     | { kind: "persona"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues; persona: string }
@@ -201,6 +237,8 @@ export default function activate(api: GuiExtensionApi): void {
     // separate since it's mutated per-keystroke, unlike the step object).
     const [picker, setPicker] = useState<PickerStep | undefined>(undefined);
     const [machineChoice, setMachineChoice] = useState<MachineChoice>("local");
+    const [subnetFilter, setSubnetFilter] = useState("");
+    const [showAllSubnets, setShowAllSubnets] = useState(false);
 
     const loadCatalog = useCallback(async () => {
       const [s, c, req] = await Promise.all([
@@ -664,58 +702,6 @@ export default function activate(api: GuiExtensionApi): void {
       if (!picker) return null;
       const cancel = (): void => setPicker(undefined);
 
-      if (picker.kind === "subnet") {
-        const rows = subnetRows(subnets, covered, HARDWARE_GATED);
-        return (
-          <div style={card}>
-            <div style={{ ...sectionLabel, marginTop: 0, justifyContent: "space-between" }}>
-              pick a subnet
-              <span style={labelRule} />
-              <button className="skill-link" disabled={refreshing} onClick={() => void refresh()}>
-                {refreshing ? "refreshing…" : "Refresh"}
-              </button>
-              <button className="skill-link" onClick={cancel}>
-                Cancel
-              </button>
-            </div>
-            {rows.length === 0 ? (
-              <p style={dim}>no subnets yet — Refresh to load the catalog</p>
-            ) : (
-              rows.map((r) => (
-                <div key={r.netuid} className="skill-row">
-                  <div className="skill-main">
-                    <span className="skill-name">
-                      {r.netuid} · {r.name}
-                      {r.description ? ` — ${r.description}` : ""}
-                    </span>
-                    <div className="skill-desc" style={dim}>
-                      {r.gated ? (
-                        <span className="badge" title="needs hardware this harness can't provision yet" style={{ opacity: 0.6 }}>
-                          hardware-gated
-                        </span>
-                      ) : r.curated ? (
-                        <span className="badge">curated</span>
-                      ) : (
-                        <span className="badge" title="not yet supported — coming in a future release" style={{ opacity: 0.6 }}>
-                          agent-run (v2)
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  {r.curated && !r.gated ? (
-                    <div className="skill-actions">
-                      <button className="agent-action" onClick={() => selectSubnet(r.netuid)}>
-                        Select
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ))
-            )}
-          </div>
-        );
-      }
-
       if (picker.kind === "machine") {
         const req = requirementsByNetuid[picker.netuid];
         return (
@@ -841,14 +827,38 @@ export default function activate(api: GuiExtensionApi): void {
       );
     };
 
+    // Launch-area data. The tiles are the few subnets you can start now; the
+    // table is the full catalog, sorted so the actionable rows sit up top
+    // (mineable → needs-hardware → not-yet-supported) and the long tail of
+    // agent-run subnets stays collapsed until you ask for it or search —
+    // otherwise 100+ dim rows bury everything above them.
+    const catalogRows = subnetRows(subnets, covered, HARDWARE_GATED);
+    const readyRows = catalogRows.filter((r) => r.curated && !r.gated);
+    const statusRank = (r: (typeof catalogRows)[number]): number => (r.curated && !r.gated ? 0 : r.gated ? 1 : 2);
+    const sortedRows = [...catalogRows].sort((a, b) => statusRank(a) - statusRank(b) || a.netuid - b.netuid);
+    const q = subnetFilter.trim().toLowerCase();
+    const searching = q.length > 0;
+    const tableRows = searching
+      ? sortedRows.filter((r) => r.name.toLowerCase().includes(q) || String(r.netuid).includes(q))
+      : showAllSubnets
+        ? sortedRows
+        : sortedRows.filter((r) => r.curated || r.gated); // mineable + needs-hardware
+    const hiddenCount = sortedRows.length - tableRows.length;
+    const machineHint = (netuid: number): string => {
+      const req = requirementsByNetuid[netuid];
+      if (req?.gpu) return "needs a GPU";
+      if (req?.publicEndpoint) return "public endpoint";
+      return "runs locally";
+    };
+
     return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, padding: "4px 24px 0" }}>
         {error ? <p className="ob-error">{error}</p> : null}
 
-        <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", paddingBottom: 16 }}>
-          {Label("active miners")}
+        <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", paddingTop: 8, paddingBottom: 28, maxWidth: 1040 }}>
+          {Label("your miners")}
           {activeMiners.length === 0 ? (
-            <p style={dim}>no miners running yet</p>
+            <p style={dim}>No miners running. Launch one below.</p>
           ) : (
             activeMiners.map((m) => {
               const k = minerKey(m.netuid, m.persona);
@@ -863,27 +873,23 @@ export default function activate(api: GuiExtensionApi): void {
                     <span className="skill-name">
                       {dot(m.alive)} {m.persona} · {subnetName(m.netuid)}
                     </span>
-                    <div className="skill-desc" style={dim}>
+                    <div className="skill-desc" style={{ ...dim, ...mono }}>
                       {m.uid !== undefined ? `uid ${m.uid}` : "unregistered"}
                       {m.machine?.kind === "lium" && m.machine.podId
                         ? ` · pod ${m.machine.podId}${m.machine.hourlyRate ? ` · $${m.machine.hourlyRate}/hr` : ""}`
-                        : ""}
+                        : " · local"}
                       {m.machine?.kind === "lium" && m.machine.externalIp && m.machine.externalPort
                         ? ` · ${m.machine.externalIp}:${m.machine.externalPort}`
                         : ""}
-                      {m.startedAt ? ` · started ${new Date(m.startedAt).toLocaleString()}` : ""}
+                      {m.startedAt ? ` · up since ${new Date(m.startedAt).toLocaleString()}` : ""}
                       {m.lastExit ? ` · ${m.lastExit}` : ""}
                     </div>
                     {m.attention ? (
-                      <div className="skill-desc" style={{ color: "var(--warn, #d79921)" }}>
+                      <div className="skill-desc" style={{ color: "var(--yellow, #fabd2f)" }}>
                         ⚠ {m.attention}
                       </div>
                     ) : null}
-                    {metaLine(metagraphByKey[k]) ? (
-                      <div className="skill-desc" style={dim}>
-                        {metaLine(metagraphByKey[k])}
-                      </div>
-                    ) : null}
+                    {metricStrip(metagraphByKey[k])}
                   </div>
                   <div className="skill-actions">
                     <button
@@ -902,15 +908,95 @@ export default function activate(api: GuiExtensionApi): void {
             })
           )}
 
-          <div style={{ ...sectionLabel, justifyContent: "space-between" }}>
-            mining
-            <span style={labelRule} />
-            <button className="agent-action" onClick={() => setPicker({ kind: "subnet" })}>
-              New miner
-            </button>
-          </div>
+          {picker ? (
+            renderPicker()
+          ) : (
+            <div>
+              <div style={{ ...sectionLabel, justifyContent: "space-between" }}>
+                ready to mine
+                <span style={labelRule} />
+                <button className="skill-link" disabled={refreshing} onClick={() => void refresh()}>
+                  {refreshing ? "refreshing…" : "Refresh"}
+                </button>
+              </div>
+              {readyRows.length === 0 ? (
+                <p style={dim}>No mineable subnets yet — Refresh to load the catalog.</p>
+              ) : (
+                <div style={tileGrid}>
+                  {readyRows.map((r) => (
+                    <div key={r.netuid} style={tile}>
+                      <div>
+                        <div className="skill-name">{r.name}</div>
+                        <div style={{ ...dim, ...mono }}>netuid {r.netuid}</div>
+                      </div>
+                      <div style={{ ...dim, flex: 1 }}>{machineHint(r.netuid)}</div>
+                      <button className="agent-action" onClick={() => selectSubnet(r.netuid)}>
+                        Launch
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-          {renderPicker()}
+              {Label("all subnets")}
+              <input
+                className="manage-input"
+                type="text"
+                placeholder="Search subnets…"
+                value={subnetFilter}
+                onChange={(e: { target: { value: string } }) => setSubnetFilter(e.target.value)}
+                style={{ marginTop: 6, width: "100%", boxSizing: "border-box" }}
+              />
+              <div
+                style={{
+                  ...tableRowStyle,
+                  ...mono,
+                  borderBottom: "1px solid var(--hairline, #333)",
+                  color: "var(--fg-dim, #999)",
+                  fontSize: 10.5,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  marginTop: 8,
+                }}
+              >
+                <span>netuid</span>
+                <span>name</span>
+                <span>status</span>
+              </div>
+              {tableRows.length === 0 ? (
+                <p style={dim}>{searching ? `No subnets match “${subnetFilter}”.` : "No subnets yet — Refresh to load the catalog."}</p>
+              ) : (
+                tableRows.map((r) => {
+                  const mineable = r.curated && !r.gated;
+                  return (
+                    <div
+                      key={r.netuid}
+                      style={{ ...tableRowStyle, cursor: mineable ? "pointer" : undefined }}
+                      title={mineable ? `Launch a miner on ${r.name}` : r.description}
+                      onClick={mineable ? () => selectSubnet(r.netuid) : undefined}
+                    >
+                      <span style={{ ...mono, color: "var(--fg-dim, #999)" }}>{r.netuid}</span>
+                      <span className="skill-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.name}
+                      </span>
+                      {mineable ? (
+                        <span style={{ color: "var(--green, #b8bb26)" }}>● Mineable</span>
+                      ) : r.gated ? (
+                        <span style={{ color: "var(--yellow, #fabd2f)" }}>◐ Needs hardware</span>
+                      ) : (
+                        <span style={dim}>— Agent-run soon</span>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+              {!searching && (hiddenCount > 0 || showAllSubnets) ? (
+                <button className="skill-link" style={{ marginTop: 8 }} onClick={() => setShowAllSubnets((v) => !v)}>
+                  {showAllSubnets ? "Show fewer" : `Show all ${sortedRows.length} subnets`}
+                </button>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1123,15 +1209,11 @@ export default function activate(api: GuiExtensionApi): void {
           {status?.lastExit ? ` · ${status.lastExit}` : ""}
         </div>
         {status?.attention ? (
-          <div className="skill-desc" style={{ color: "var(--warn, #d79921)" }}>
+          <div className="skill-desc" style={{ color: "var(--yellow, #fabd2f)" }}>
             ⚠ {status.attention}
           </div>
         ) : null}
-        {metaLine(metagraph) ? (
-          <div className="skill-desc" style={dim}>
-            {metaLine(metagraph)}
-          </div>
-        ) : null}
+        {metricStrip(metagraph)}
         <div style={{ marginTop: 8 }}>
           <button className="agent-action" disabled={busy} onClick={() => void doStop()}>
             {busy ? "working…" : "Stop"}
