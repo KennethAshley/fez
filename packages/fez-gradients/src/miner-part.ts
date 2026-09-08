@@ -59,11 +59,10 @@
 //     small FastAPI/uvicorn service that answers "here is my training
 //     repo/commit" — validators run the actual training on their own
 //     trainer infrastructure (see docs/developer.md "Trainer" role). The
-//     `requirements.gpu: "24GB"` below is NOT a G.O.D technical requirement;
-//     it is this harness's plan/contract value (task-9-brief.md, matched by
-//     this package's shape test) for the first curated rented-GPU
-//     descriptor. A real deploy of just this miner could run on a CPU-only
-//     box — flagged here rather than silently justified.
+//     real requirement is `publicEndpoint`: validators call
+//     `GET http://<external_ip>:<external_port>/training_repo/{task_type}`
+//     on this miner directly, so it needs a machine with a public port — a
+//     NAT'd laptop can't serve it. No GPU floor is claimed here.
 //
 // AMBIGUITY, called out rather than guessed past: the repo's documented
 // "Miner Setup" tells you to run `task bootstrap` before `task install`.
@@ -107,9 +106,9 @@ async function run(ctx: MinerContext, cmd: string, cwd?: string) {
 const gradients: SubnetMiner = {
   netuid: 56,
   name: "gradients",
-  // See "GPU floor" above — this is the harness contract value, not a
-  // technical need of the G.O.D miner process itself.
-  requirements: { gpu: "24GB", alwaysOn: true },
+  // See "GPU floor" above — no GPU is required; the real gate is public
+  // reachability (validators call this miner's endpoint directly).
+  requirements: { alwaysOn: true, publicEndpoint: true },
 
   // Idempotent: guarded on a done-file stamped with the pinned commit, so a
   // repeat call (the harness calls install() every start, per the

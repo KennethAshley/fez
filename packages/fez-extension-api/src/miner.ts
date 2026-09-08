@@ -59,7 +59,14 @@ export interface SubnetMiner {
   netuid: number;
   /** Short human name shown in the GUI row ("bazaar"). */
   name: string;
-  requirements?: { gpu?: string; ramGb?: number; diskGb?: number; alwaysOn?: boolean };
+  requirements?: {
+    gpu?: string;
+    ramGb?: number;
+    diskGb?: number;
+    alwaysOn?: boolean;
+    /** Validators must reach this miner from the internet — a NAT'd laptop can't serve it. */
+    publicEndpoint?: boolean;
+  };
   /** One-time machine setup (clone, deps). MUST be idempotent — the runner calls it every start. */
   install?(ctx: MinerContext): Promise<void>;
   /**
