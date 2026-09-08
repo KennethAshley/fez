@@ -21,8 +21,9 @@ export function runMine(args: string[]): { code: number; stdout: string; stderr:
  *  of malformed output (returns []). */
 export function minersForPersona(statusJson: string, persona: string): unknown[] {
   try {
-    const parsed = JSON.parse(statusJson) as { miners?: Array<{ persona?: string }> };
-    return (parsed.miners ?? []).filter((m) => m.persona === persona);
+    const parsed = JSON.parse(statusJson);
+    const list = Array.isArray(parsed) ? parsed : ((parsed?.miners as unknown[]) ?? []);
+    return (list as Array<{ persona?: string }>).filter((m) => m.persona === persona);
   } catch {
     return [];
   }

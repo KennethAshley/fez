@@ -3,12 +3,10 @@ import { minersForPersona, mineArgs } from "../src/mine-cli.js";
 
 describe("minersForPersona", () => {
   it("keeps only the persona's own miners", () => {
-    const json = JSON.stringify({
-      miners: [
-        { netuid: 56, persona: "quill", desired: "running" },
-        { netuid: 1, persona: "drift", desired: "running" },
-      ],
-    });
+    const json = JSON.stringify([
+      { netuid: 56, persona: "quill", desired: "running" },
+      { netuid: 1, persona: "drift", desired: "running" },
+    ]);
     expect(minersForPersona(json, "quill")).toEqual([
       { netuid: 56, persona: "quill", desired: "running" },
     ]);
