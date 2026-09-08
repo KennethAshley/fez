@@ -9,6 +9,10 @@ import { loadDescriptors } from "./descriptors.js";
 import { teardownPod } from "./machine-lium.js";
 import { alive, kill, spawnDetached } from "./procs.js";
 import { lium, parseJson, priceOf } from "@fezchat/lium/cli";
+import { deleteSecret, getSecret, setSecret } from "./secrets.js";
+import type { ConfigField } from "@fezchat/extension-api";
+
+type ConfigVal = string | number | boolean;
 
 // Resolve a sibling bin (fez-wallet, fez-mine-run) by ABSOLUTE path under
 // ~/.fez/bin when it exists there, not by bare name — the desktop spawns
@@ -218,9 +222,75 @@ async function cmdBalance(json: boolean): Promise<void> {
   else console.log(balanceUsd !== null ? `$${balanceUsd}` : "unknown");
 }
 
+/** Pure — the part the test pins. Non-secrets from stored-or-default; secrets never leave the keychain, only whether one is set. */
+export function maskConfigView(
+  schema: ConfigField[] | undefined,
+  stored: Record<string, ConfigVal> | undefined,
+  hasSecretFn: (key: string) => boolean
+): Record<string, ConfigVal | "set" | "unset"> {
+  const out: Record<string, ConfigVal | "set" | "unset"> = {};
+  for (const f of schema ?? []) {
+    if (f.type === "secret") {
+      out[f.key] = hasSecretFn(f.key) ? "set" : "unset";
+      continue;
+    }
+    if (stored && f.key in stored) out[f.key] = stored[f.key];
+    else if (f.default !== undefined) out[f.key] = f.default;
+  }
+  return out;
+}
+
+async function findMiner(home: string, netuid: number, persona: string): Promise<MinerEntry | undefined> {
+  return (await readState(home)).miners.find((m) => m.netuid === netuid && m.persona === persona);
+}
+
+async function cmdConfigGet(netuid: number, persona: string, json: boolean): Promise<void> {
+  const home = fezHome();
+  const [descriptors, entry] = await Promise.all([loadDescriptors(home), findMiner(home, netuid, persona)]);
+  const schema = descriptors.find((d) => d.netuid === netuid)?.config;
+  const view = maskConfigView(schema, entry?.config, (k) => getSecret(netuid, persona, k) !== undefined);
+  if (json) console.log(JSON.stringify(view));
+  else for (const [k, v] of Object.entries(view)) console.log(`${k}\t${v}`);
+}
+
+async function cmdConfigSet(netuid: number, persona: string, key: string, value: string, secret: boolean): Promise<void> {
+  if (secret) { setSecret(netuid, persona, key, value); return; }
+  const home = fezHome();
+  const s = await readState(home);
+  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+  if (!entry) throw new Error(`no recorded miner ${netuid}:${persona} — start it once with: fez-mine start`);
+  await writeState(home, upsertMiner(s, { ...entry, config: { ...entry.config, [key]: value } }));
+}
+
+// No --secret flag here — a caller may not know where a key landed, so this
+// clears BOTH possible locations (keychain + state config); whichever one
+// actually held it goes away, the other is a no-op.
+async function cmdConfigUnset(netuid: number, persona: string, key: string): Promise<void> {
+  deleteSecret(netuid, persona, key);
+  const home = fezHome();
+  const s = await readState(home);
+  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+  if (entry?.config && key in entry.config) {
+    const { [key]: _omit, ...rest } = entry.config;
+    await writeState(home, upsertMiner(s, { ...entry, config: rest }));
+  }
+}
+
+// GUI calls this right after posting the #mining root message; the headless
+// side reads it back to know where to reply. One-liner upsert.
+async function cmdThreadSetRoot(netuid: number, persona: string, root: string): Promise<void> {
+  const home = fezHome();
+  const s = await readState(home);
+  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+  if (!entry) throw new Error(`no recorded miner ${netuid}:${persona} — start it once with: fez-mine start`);
+  await writeState(home, upsertMiner(s, { ...entry, threadRootId: root }));
+}
+
 function usage(): never {
   console.error(
-    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json]"
+    "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
+      "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
+      "thread set-root --netuid N --persona P --root <eventId>"
   );
   process.exit(2);
 }
@@ -236,16 +306,30 @@ async function main(): Promise<void> {
   const machineFlag = argv.indexOf("--machine");
   const machineValue = machineFlag >= 0 ? argv[machineFlag + 1] : undefined;
   if (machineValue !== undefined && machineValue !== "lium") usage();
-  const [cmd] = argv.filter(
+  const secret = argv.includes("--secret");
+  const keyFlag = argv.indexOf("--key");
+  const keyValue = keyFlag >= 0 ? argv[keyFlag + 1] : undefined;
+  const valueFlag = argv.indexOf("--value");
+  const valueValue = valueFlag >= 0 ? argv[valueFlag + 1] : undefined;
+  const rootFlag = argv.indexOf("--root");
+  const rootValue = rootFlag >= 0 ? argv[rootFlag + 1] : undefined;
+  const [cmd, sub] = argv.filter(
     (a, i) =>
       a !== "--json" &&
       a !== "--refresh" &&
+      a !== "--secret" &&
       a !== "--netuid" &&
       !(netuidFlag >= 0 && i === netuidFlag + 1) &&
       a !== "--persona" &&
       !(personaFlag >= 0 && i === personaFlag + 1) &&
       a !== "--machine" &&
-      !(machineFlag >= 0 && i === machineFlag + 1)
+      !(machineFlag >= 0 && i === machineFlag + 1) &&
+      a !== "--key" &&
+      !(keyFlag >= 0 && i === keyFlag + 1) &&
+      a !== "--value" &&
+      !(valueFlag >= 0 && i === valueFlag + 1) &&
+      a !== "--root" &&
+      !(rootFlag >= 0 && i === rootFlag + 1)
   );
 
   switch (cmd) {
@@ -272,6 +356,28 @@ async function main(): Promise<void> {
       break;
     case "balance":
       await cmdBalance(json);
+      break;
+    case "config":
+      if (netuidValue === undefined || !personaValue) usage();
+      switch (sub) {
+        case "get":
+          await cmdConfigGet(netuidValue, personaValue, json);
+          break;
+        case "set":
+          if (!keyValue || !valueValue) usage();
+          await cmdConfigSet(netuidValue, personaValue, keyValue, valueValue, secret);
+          break;
+        case "unset":
+          if (!keyValue) usage();
+          await cmdConfigUnset(netuidValue, personaValue, keyValue);
+          break;
+        default:
+          usage();
+      }
+      break;
+    case "thread":
+      if (sub !== "set-root" || netuidValue === undefined || !personaValue || !rootValue) usage();
+      await cmdThreadSetRoot(netuidValue, personaValue, rootValue);
       break;
     default:
       usage();

@@ -11,6 +11,8 @@ import { loadDescriptors } from "./descriptors.js";
 import { describePod, escapeShellValue, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
 import type { LiumExec, Recorder } from "./machine-lium.js";
 import { localMachine } from "./machine-local.js";
+import { resolveConfig } from "./config.js";
+import { getSecret } from "./secrets.js";
 import type { MinerEntry, MinerMachineState } from "./state.js";
 import { fezHome, readState, upsertMiner, writeState } from "./state.js";
 
@@ -310,7 +312,11 @@ export async function runMiner(
     // never the Mac's home dir, which doesn't exist on the pod (root cause
     // of round 8's copy failure). See remoteWorkDir's doc comment.
     const workDir = machine.kind === "lium" ? remoteWorkDir(netuid, persona) : localDir;
-    const ctx = { workDir, persona, hotkey, netuid, env, machine, log };
+    // Non-secrets from state (this same `known` entry read above), secrets
+    // from the keychain, merged over the descriptor's schema defaults —
+    // same resolver the CLI's `config get` uses to shape its own view.
+    const config = resolveConfig(d.config, known?.config, (k) => getSecret(netuid, persona, k));
+    const ctx = { workDir, persona, hotkey, netuid, env, config, machine, log };
 
     // Reattach/local already got their pid/startedAt/machine recorded —
     // a fresh provision recorded its own above, before deployHotkey ran
