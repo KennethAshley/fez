@@ -71,7 +71,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     expect(calls.some((c) => c[0] === "up")).toBe(false); // never re-provisioned
   });
 
-  it("falls through to a fresh provision when describe fails on a pod ps still lists", async () => {
+  it("falls through to a fresh provision when describe fails on a pod ps still lists, tearing down the stale pod first", async () => {
     const prevBin = process.env.FEZ_WALLET_BIN;
     process.env.FEZ_WALLET_BIN = fakeWalletBin;
     try {
@@ -82,17 +82,91 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
             ? { ok: false, err: "pod half-dead" } // the reattach describe
             : { ok: true, out: JSON.stringify({ host_ip: "5.5.5.5", ports: [{ external: 40001, internal: 8091 }] }) }, // provisionPod's own describe
         up: () => ({ ok: true, out: JSON.stringify({ pod: "p10", price_per_hour: "0.5" }) }),
+        rm: () => ({ ok: true, out: "{}" }),
         exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }),
         scp: () => ({ ok: true, out: "" }),
       });
-      const { machine, machineState } = await resolveMachine(entry, "p", {}, exec);
+      const { machine, machineState, provisioned } = await resolveMachine(entry, "p", {}, exec);
       expect(machineState?.podId).toBe("p10"); // a NEW pod, not the stale p9
+      expect(provisioned).toBe(true);
       expect(machine.ports).toEqual([{ externalIp: "5.5.5.5", externalPort: 40001, internalPort: 8091 }]);
       expect(calls.filter((c) => c[0] === "describe").length).toBe(2);
+      expect(calls.some((c) => c[0] === "rm" && c[1] === "p9")).toBe(true); // stale pod torn down, best-effort
       expect(calls.some((c) => c[0] === "scp")).toBe(true); // the hotkey got deployed onto the fresh pod
+      // I1-I3: the production call site's ports/ttl, not provisionPod's bare defaults.
+      const upCall = calls.find((c) => c[0] === "up")!;
+      expect(upCall).toEqual(["up", "--yes", "--no-ssh", "--ttl", "24h", "--ports", "2"]);
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;
     }
+  });
+
+  it("a runner-side fresh provision (after a half-dead describe) bumps the provisions ledger against the daily cap", async () => {
+    const home = homeWithFixture();
+    let s = await readState(home);
+    s = upsertMiner(s, {
+      netuid: 9998, persona: "p", hotkey: "5FAKE", desired: "running",
+      machine: { kind: "lium", podId: "p9" }, provisions: [1000],
+    });
+    await writeState(home, s);
+    const prevBin = process.env.FEZ_WALLET_BIN;
+    process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    try {
+      const { exec, calls } = scriptedExec({
+        ps: () => ({ ok: true, out: JSON.stringify([{ pod: "p9" }]) }),
+        describe: (_args, call) =>
+          call === 1
+            ? { ok: false, err: "pod half-dead" }
+            : { ok: true, out: JSON.stringify({ host_ip: "5.5.5.5", ports: [{ external: 40001, internal: 8091 }] }) },
+        up: () => ({ ok: true, out: JSON.stringify({ pod: "p10", price_per_hour: "0.5" }) }),
+        rm: () => ({ ok: true, out: "{}" }),
+        exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }),
+        scp: () => ({ ok: true, out: "" }),
+      });
+      const code = await runMiner(9998, "p", home, { hotkey: "5FAKE", exec });
+      expect(code).toBe(0);
+      expect(calls.some((c) => c[0] === "rm" && c[1] === "p9")).toBe(true);
+      const after = await readState(home);
+      const updated = after.miners.find((m) => m.netuid === 9998 && m.persona === "p")!;
+      expect(updated.machine?.podId).toBe("p10");
+      expect(updated.provisions).toEqual([1000, expect.any(Number)]);
+    } finally {
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
+      else process.env.FEZ_WALLET_BIN = prevBin;
+    }
+  });
+
+  it("curates ctx.env to the FEZ_MINE_FORWARD_ENV allowlist for a lium miner (no PATH/HOME from the Mac)", async () => {
+    const home = homeWithFixture();
+    let s = await readState(home);
+    s = upsertMiner(s, { netuid: 9998, persona: "envp", hotkey: "5FAKE", desired: "running" });
+    await writeState(home, s);
+    let capturedEnv: Record<string, string> | undefined;
+    const machine = {
+      kind: "lium" as const,
+      ports: [],
+      exec: async (_cmd: string, opts?: { env?: Record<string, string> }) => {
+        capturedEnv = opts?.env;
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      copy: async () => {},
+    };
+    const prevForward = process.env.FEZ_MINE_FORWARD_ENV;
+    const prevFoo = process.env.FEZ_TEST_FORWARD_FOO;
+    process.env.FEZ_MINE_FORWARD_ENV = "FEZ_TEST_FORWARD_FOO";
+    process.env.FEZ_TEST_FORWARD_FOO = "bar";
+    try {
+      const code = await runMiner(9998, "envp", home, { hotkey: "5FAKE", machineFactory: async () => machine });
+      expect(code).toBe(0);
+    } finally {
+      if (prevForward === undefined) delete process.env.FEZ_MINE_FORWARD_ENV;
+      else process.env.FEZ_MINE_FORWARD_ENV = prevForward;
+      if (prevFoo === undefined) delete process.env.FEZ_TEST_FORWARD_FOO;
+      else process.env.FEZ_TEST_FORWARD_FOO = prevFoo;
+    }
+    expect(capturedEnv).toEqual({ FEZ_TEST_FORWARD_FOO: "bar" });
+    expect(capturedEnv?.PATH).toBeUndefined();
+    expect(capturedEnv?.HOME).toBeUndefined();
   });
 });

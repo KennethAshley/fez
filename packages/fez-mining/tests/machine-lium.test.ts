@@ -37,6 +37,20 @@ describe("liumMachine", () => {
 
   // Pinned: `lium scp --help` — TARGETS (pod) then SOURCE then optional
   // DESTINATION, no "pod:path" colon syntax. Matches mcp.ts's lium_copy.
+  // C1: regardless of who forwards it, a loader-affecting env name never
+  // reaches the pod — same philosophy as the host's gui.ts spawn seam.
+  it("exec refuses loader-affecting env names regardless of what the caller passes", async () => {
+    const { exec, calls } = script({ exec: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) });
+    const m = liumMachine({ podId: "p1", ports: [] }, exec);
+    await m.exec("ls", {
+      env: {
+        PATH: "/evil", HOME: "/evil", LD_PRELOAD: "x", DYLD_INSERT_LIBRARIES: "y",
+        NODE_OPTIONS: "z", FOO: "bar",
+      },
+    });
+    expect(calls[0]).toEqual(["exec", "p1", "-e", "FOO=bar", "ls", "--json"]);
+  });
+
   it("copy runs lium scp <pod> <local> <remote>", async () => {
     const { exec, calls } = script({ scp: "" });
     const m = liumMachine({ podId: "p1", ports: [] }, exec);

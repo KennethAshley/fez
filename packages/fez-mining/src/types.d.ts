@@ -23,4 +23,16 @@ declare module "@fezchat/lium/cli" {
   export function parseJson<T>(out: string): T | null;
   export function priceOf(row: Record<string, unknown>): number | null;
   export const DEFAULT_TTL: string;
+  export const DEFAULT_MAX_USD_HOUR: number;
+  export type Row = {
+    id: string;
+    at: string;
+    action: "up" | "rm" | "refused";
+    node?: string;
+    pod?: string;
+    usdHour?: number;
+    ttl?: string;
+    detail?: string;
+  };
+  export function record(row: Omit<Row, "id" | "at">): Promise<void>;
 }

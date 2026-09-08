@@ -1,5 +1,5 @@
 import type { MinerMachine, MachinePort } from "@fezchat/extension-api";
-import { lium, parseJson, DEFAULT_TTL } from "@fezchat/lium/cli";
+import { lium, parseJson, DEFAULT_TTL, record } from "@fezchat/lium/cli";
 
 /**
  * The Lium machine seam: a rented GPU pod behind the same MinerMachine
@@ -27,6 +27,18 @@ export type LiumExec = (args: string[], timeoutMs?: number) => Promise<{ ok: tru
 /** A pod HUID looks like "eager-wolf-aa" / "cosmic-hawk-f2" (word-word-alnum2), per `lium up --help`'s examples. */
 const HUID_RE = /\b[a-z]+-[a-z]+-[a-z0-9]{2}\b/;
 
+// Loader-affecting env names refused on every exec, regardless of who
+// forwards them (run.ts's own curation is layer one; this is layer two) —
+// same philosophy as the host's gui.ts spawn seam (see its doc comment on
+// env refusal): names that change how the remote shell loads code, not
+// what it does, have no business riding along to a rented pod.
+const REFUSED_ENV_PREFIXES = ["LD_", "DYLD_"];
+const REFUSED_ENV_NAMES = new Set(["PATH", "HOME", "NODE_OPTIONS"]);
+function isRefusedEnvName(name: string): boolean {
+  const upper = name.toUpperCase();
+  return REFUSED_ENV_NAMES.has(upper) || REFUSED_ENV_PREFIXES.some((p) => upper.startsWith(p));
+}
+
 /** Wrap an already-provisioned pod as a MinerMachine. */
 export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMachine {
   return {
@@ -36,7 +48,10 @@ export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMac
       // Pinned: `lium exec --help` — bare `--json` (not `--format json`),
       // `-e KEY=VALUE` (repeatable) for env, no cwd flag (so `cd` it).
       const args = ["exec", handle.podId];
-      for (const [k, v] of Object.entries(opts.env ?? {})) args.push("-e", `${k}=${v}`);
+      for (const [k, v] of Object.entries(opts.env ?? {})) {
+        if (isRefusedEnvName(k)) continue;
+        args.push("-e", `${k}=${v}`);
+      }
       args.push(opts.cwd ? `cd ${opts.cwd} && ${cmd}` : cmd, "--json");
       const r = await exec(args, opts.timeoutMs);
       if (!r.ok) return { code: 1, stdout: "", stderr: r.err };
@@ -137,6 +152,11 @@ export async function provisionPod(
     );
   }
 
+  // Honest ledger row for the rental — best-effort, never blocks (record()
+  // swallows its own errors); a real row so "what did compute cost" has an
+  // answer even for pods the runner rented without a human in the loop.
+  await record({ action: "up", pod: podId, usdHour: priceUsdHour ?? undefined, ttl });
+
   const { sshHost, ports } = await describePod(podId, exec).catch(() => ({ sshHost: undefined, ports: [] as MachinePort[] }));
   return { podId, hourlyRate: priceUsdHour !== null ? String(priceUsdHour) : undefined, ports, sshHost };
 }
@@ -154,5 +174,6 @@ export async function podAlive(podId: string, exec: LiumExec = lium): Promise<bo
 /** `lium rm <pod> --yes` — stop billing, disk dies with it. */
 export async function teardownPod(podId: string, exec: LiumExec = lium): Promise<void> {
   const r = await exec(["rm", podId, "--yes"], 120_000);
+  await record({ action: "rm", pod: podId, detail: r.ok ? undefined : r.err });
   if (!r.ok) throw new Error(r.err);
 }
