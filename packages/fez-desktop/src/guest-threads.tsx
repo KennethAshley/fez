@@ -297,6 +297,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       .catch(() => {});
     return () => { cancelled = true; };
   }, [guest.pk, selfPk]);
+  // The once-per-guest gate: real salt, no ack, and a tier where nobody
+  // the viewer can verify has vouched. "error" is excluded on purpose.
+  const summonGate = !!(salt && salt !== "error" && !saltAck && (salt.tier === "nameless" || salt.tier === "spoken-of"));
   const [starting, setStarting] = useState(false);
   const [hireAmt, setHireAmt] = useState("");
   const [hirePersona, setHirePersona] = useState("");
@@ -848,7 +851,12 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       {/* An "error" panel skips the gate deliberately: unverifiable is
           not the same claim as unvouched, and blocking the composer on
           a network blip would gate every offline conversation. */}
-      {salt && salt !== "error" && !saltAck && (salt.tier === "nameless" || salt.tier === "spoken-of") ? (
+      {/* Rendered ABOVE the composer, never in its place: salt resolves
+          5–10s after mount, and swapping the composer out yanked the
+          textarea from under a user mid-sentence — on their FIRST
+          conversation, since every stranger starts nameless. Typing
+          stays free; only send waits for the ack. */}
+      {summonGate ? (
         <div className="guest-composer">
           <div className="guest-banner" style={{ color: "var(--brand, #FF6A00)", padding: 0 }}>
             no salt between you and anyone you know — summon anyway?
@@ -878,7 +886,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             summon anyway
           </button>
         </div>
-      ) : (
+      ) : null}
       <div className="guest-composer">
         {error ? <p className="ob-error">{error}</p> : null}
         {attachingRepo ? (
@@ -909,15 +917,14 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
             e.stopPropagation();
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              void send();
+              if (!summonGate) void send();
             }
           }}
         />
-        <button className="agent-action" disabled={sending || !draft.trim()} onClick={() => void send()}>
+        <button className="agent-action" disabled={sending || !draft.trim() || summonGate} onClick={() => void send()}>
           {sending ? "…" : "send"}
         </button>
       </div>
-      )}
     </main>
   );
 }
