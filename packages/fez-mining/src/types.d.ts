@@ -12,3 +12,14 @@ declare module "@fezchat/bittensor/subnets" {
   }
   export function allSubnets(): Promise<Subnet[]>;
 }
+
+// @fezchat/lium ships dist/cli-lib.js under the "./cli" exports subpath but
+// no .d.ts. Declare the minimal shape machine-lium.ts actually uses.
+declare module "@fezchat/lium/cli" {
+  export function lium(
+    args: string[],
+    timeoutMs?: number
+  ): Promise<{ ok: true; out: string } | { ok: false; err: string }>;
+  export function parseJson<T>(out: string): T | null;
+  export const DEFAULT_TTL: string;
+}
