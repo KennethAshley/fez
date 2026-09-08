@@ -723,4 +723,244 @@ export default function activate(api: GuiExtensionApi): void {
   }
 
   api.registerNavView("mining", { glyph: "⛏", label: "Mining" }, () => <MiningPage />);
+
+  // The thread-view card: one root per (netuid, persona), rendered above
+  // its replies in #mining. Status + a log tail poll every 10s; config is
+  // read-only with an Edit toggle that reuses ConfigFieldRow — on save this
+  // is a genuine restart-to-apply on an ALREADY-RUNNING miner (a pod, when
+  // there is one, already exists — this restarts it, never re-provisions),
+  // unlike the New-miner picker's write-before-first-start above.
+  type ConfigView = Record<string, string | number | boolean>;
+
+  function MinerCard(props: { channelId: string; rootId: string; rootContent: string }): JSX.Element | null {
+    const run = api.processes?.run;
+    const parsed = parseMinerRoot(props.rootContent);
+    const netuid = parsed?.netuid ?? 0;
+    const persona = parsed?.persona ?? "";
+
+    const [status, setStatus] = useState<StatusRow | undefined>(undefined);
+    const [logs, setLogs] = useState("");
+    const [schema, setSchema] = useState<ConfigField[]>([]);
+    const [config, setConfig] = useState<ConfigView>({});
+    const [editing, setEditing] = useState(false);
+    const [values, setValues] = useState<ConfigFormValues>({});
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | undefined>(undefined);
+
+    const loadStatus = useCallback(async () => {
+      if (!run || !parsed) return;
+      try {
+        const out = await run("fez-mine", ["status", "--json"]);
+        if (out.code === 0) {
+          const rows = JSON.parse(out.stdout) as StatusRow[];
+          setStatus(rows.find((r) => r.netuid === netuid && r.persona === persona));
+        }
+      } catch {
+        // best-effort — last-known status stays on screen
+      }
+    }, [run, netuid, persona]);
+
+    const loadLogs = useCallback(async () => {
+      if (!run || !parsed) return;
+      try {
+        const out = await run("fez-mine", ["logs", "--netuid", String(netuid), "--persona", persona, "--lines", "12"]);
+        if (out.code === 0) setLogs(out.stdout);
+      } catch {
+        // best-effort
+      }
+    }, [run, netuid, persona]);
+
+    const loadConfig = useCallback(async () => {
+      if (!run || !parsed) return;
+      try {
+        const [schemaOut, configOut] = await Promise.all([
+          run("fez-mine", ["describe", "--netuid", String(netuid), "--json"]),
+          run("fez-mine", ["config", "get", "--netuid", String(netuid), "--persona", persona, "--json"]),
+        ]);
+        if (schemaOut.code === 0) {
+          const d = JSON.parse(schemaOut.stdout) as { config?: ConfigField[] };
+          setSchema(d.config ?? []);
+        }
+        if (configOut.code === 0) setConfig(JSON.parse(configOut.stdout) as ConfigView);
+      } catch {
+        // best-effort
+      }
+    }, [run, netuid, persona]);
+
+    useEffect(() => {
+      void loadStatus();
+      void loadLogs();
+      void loadConfig();
+    }, [loadStatus, loadLogs, loadConfig]);
+
+    // Poll status + logs while the thread is open; config only reloads on
+    // mount and after a save (it doesn't drift on its own).
+    useEffect(() => {
+      const id = setInterval(() => {
+        void loadStatus();
+        void loadLogs();
+      }, 10_000);
+      return () => clearInterval(id);
+    }, [loadStatus, loadLogs]);
+
+    if (!parsed) return null;
+    if (!run) {
+      return (
+        <p className="settings-hint">Mining needs the `processes` permission — reinstall the extension to grant it.</p>
+      );
+    }
+
+    const doStop = async (): Promise<void> => {
+      setBusy(true);
+      setError(undefined);
+      try {
+        const out = await run("fez-mine", ["stop", "--netuid", String(netuid), "--persona", persona, "--json"]);
+        if (out.code !== 0) throw new Error(out.stderr.trim() || `stop exited ${out.code}`);
+        await loadStatus();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    // Seed the edit form from the CURRENT resolved value (config get's
+    // masked view — "set"/"unset" for a secret, the live value otherwise),
+    // not the schema default: editing means changing what's already there.
+    // A secret still always starts blank (never re-displayed) — leaving it
+    // blank on save means "keep the stored one", same as the New-miner form.
+    const startEdit = (): void => {
+      const seeded: ConfigFormValues = {};
+      for (const f of schema) {
+        if (f.type === "secret") {
+          seeded[f.key] = "";
+          continue;
+        }
+        const v = config[f.key];
+        seeded[f.key] = v !== undefined ? v : (f.default ?? "");
+      }
+      setValues(seeded);
+      setError(undefined);
+      setEditing(true);
+    };
+
+    // config set per changed field, then stop+start to apply — a genuine
+    // restart on an already-running miner, correct here (see the block
+    // comment above). Carries `--machine lium` forward when this miner is
+    // already on one, so the restart reattaches its pod instead of the
+    // orphan-teardown path in cmdStart tearing it down (a plain `start`
+    // with no `--machine lium` reads as "go local" there).
+    const saveConfig = async (): Promise<void> => {
+      const missing = validateConfig(schema, values);
+      if (missing) {
+        setError(`${missing} is required`);
+        return;
+      }
+      setBusy(true);
+      setError(undefined);
+      try {
+        for (const f of schema) {
+          const raw = values[f.key];
+          if (raw === undefined || raw === "") continue;
+          const setArgs = ["config", "set", "--netuid", String(netuid), "--persona", persona, "--key", f.key, "--value", String(raw)];
+          if (f.type === "secret") setArgs.push("--secret");
+          const out = await run("fez-mine", setArgs);
+          if (out.code !== 0) throw new Error(out.stderr.trim() || `config set ${f.key} exited ${out.code}`);
+        }
+        const stopOut = await run("fez-mine", ["stop", "--netuid", String(netuid), "--persona", persona, "--json"]);
+        if (stopOut.code !== 0) throw new Error(stopOut.stderr.trim() || `stop exited ${stopOut.code}`);
+        const startArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
+        if (status?.machine?.kind === "lium") startArgs.push("--machine", "lium");
+        const startOut = await run("fez-mine", startArgs);
+        if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
+        setEditing(false);
+        await Promise.all([loadStatus(), loadConfig()]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    return (
+      <div style={card}>
+        {error ? <p className="ob-error">{error}</p> : null}
+
+        <div className="skill-desc">
+          {dot(!!status?.alive)} {persona} · netuid {netuid}
+          {status?.uid !== undefined ? ` · uid ${status.uid}` : " · unregistered"}
+          {status?.machine?.kind === "lium" && status.machine.podId
+            ? ` · pod ${status.machine.podId}${status.machine.hourlyRate ? ` · $${status.machine.hourlyRate}/hr` : ""}`
+            : ""}
+          {status?.machine?.kind === "lium" && status.machine.externalIp && status.machine.externalPort
+            ? ` · ${status.machine.externalIp}:${status.machine.externalPort}`
+            : ""}
+          {status?.startedAt ? ` · started ${new Date(status.startedAt).toLocaleString()}` : ""}
+          {status?.lastExit ? ` · ${status.lastExit}` : ""}
+        </div>
+        {status?.attention ? (
+          <div className="skill-desc" style={{ color: "var(--warn, #d79921)" }}>
+            ⚠ {status.attention}
+          </div>
+        ) : null}
+        <div style={{ marginTop: 8 }}>
+          <button className="agent-action" disabled={busy} onClick={() => void doStop()}>
+            {busy ? "working…" : "Stop"}
+          </button>
+        </div>
+
+        {Label("logs")}
+        <pre
+          style={{
+            ...dim,
+            whiteSpace: "pre-wrap",
+            fontFamily: "var(--font-mono, monospace)",
+            maxHeight: 220,
+            overflowY: "auto",
+            margin: 0,
+          }}
+        >
+          {logs || "no logs yet"}
+        </pre>
+
+        {Label("config")}
+        {editing ? (
+          <div>
+            {schema.map((f) => ConfigFieldRow(f, values, (key, val) => setValues((prev) => ({ ...prev, [key]: val }))))}
+            <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+              <button className="agent-action" disabled={busy} onClick={() => void saveConfig()}>
+                {busy ? "restarting…" : "Save (restarts miner)"}
+              </button>
+              <button className="skill-link" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            {schema.length === 0 ? (
+              <p style={dim}>no config for this subnet</p>
+            ) : (
+              schema.map((f) => (
+                <div key={f.key} className="skill-desc" style={dim}>
+                  {f.label}: {String(config[f.key] ?? "—")}
+                </div>
+              ))
+            )}
+            <button className="skill-link" onClick={startEdit}>
+              Edit
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (typeof api.registerThreadView === "function") {
+    api.registerThreadView(
+      "mining-miner",
+      (rootContent) => parseMinerRoot(rootContent) !== null,
+      (props) => <MinerCard {...props} />
+    );
+  }
 }

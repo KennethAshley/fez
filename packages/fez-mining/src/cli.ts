@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { MinerEntry } from "./state.js";
@@ -299,6 +299,26 @@ async function cmdDescribe(netuid: number): Promise<void> {
   console.log(JSON.stringify({ netuid: d.netuid, name: d.name, requirements: d.requirements, config: d.config }));
 }
 
+/** Pure — the part the test pins. Last `n` lines of `text`, in order. */
+export function tailLines(text: string, n: number): string {
+  const lines = text.split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop(); // trailing "\n"
+  return lines.slice(-n).join("\n");
+}
+
+// The GUI's thread-view card tails this for its log panel. `miner-child.log`
+// (a descriptor's own subprocess, when it has one) takes priority over
+// `miner.log` (the runner's own bookkeeping — see run.ts's localDir); most
+// descriptors only ever write the latter. Prints nothing (not an error) when
+// neither file exists yet — a miner that hasn't logged anything, not a bug.
+function cmdLogs(netuid: number, persona: string, lines: number): void {
+  const dir = path.join(fezHome(), "mining", `${netuid}-${persona}`);
+  const childLog = path.join(dir, "miner-child.log");
+  const file = existsSync(childLog) ? childLog : path.join(dir, "miner.log");
+  if (!existsSync(file)) return;
+  console.log(tailLines(readFileSync(file, "utf8"), lines));
+}
+
 // GUI calls this right after posting the #mining root message; the headless
 // side reads it back to know where to reply. One-liner upsert.
 async function cmdThreadSetRoot(netuid: number, persona: string, root: string): Promise<void> {
@@ -313,7 +333,8 @@ function usage(): never {
   console.error(
     "fez-mine subnets [--refresh] | cost --netuid N | start --netuid N --persona P [--machine lium] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
-      "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json"
+      "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
+      "logs --netuid N --persona P [--lines 12]"
   );
   process.exit(2);
 }
@@ -336,6 +357,8 @@ async function main(): Promise<void> {
   const valueValue = valueFlag >= 0 ? argv[valueFlag + 1] : undefined;
   const rootFlag = argv.indexOf("--root");
   const rootValue = rootFlag >= 0 ? argv[rootFlag + 1] : undefined;
+  const linesFlag = argv.indexOf("--lines");
+  const linesValue = linesFlag >= 0 ? Number(argv[linesFlag + 1]) || 12 : 12;
   const [cmd, sub] = argv.filter(
     (a, i) =>
       a !== "--json" &&
@@ -352,7 +375,9 @@ async function main(): Promise<void> {
       a !== "--value" &&
       !(valueFlag >= 0 && i === valueFlag + 1) &&
       a !== "--root" &&
-      !(rootFlag >= 0 && i === rootFlag + 1)
+      !(rootFlag >= 0 && i === rootFlag + 1) &&
+      a !== "--lines" &&
+      !(linesFlag >= 0 && i === linesFlag + 1)
   );
 
   switch (cmd) {
@@ -405,6 +430,10 @@ async function main(): Promise<void> {
     case "describe":
       if (netuidValue === undefined) usage();
       await cmdDescribe(netuidValue);
+      break;
+    case "logs":
+      if (netuidValue === undefined || !personaValue) usage();
+      cmdLogs(netuidValue, personaValue, linesValue);
       break;
     default:
       usage();
