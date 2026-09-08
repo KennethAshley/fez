@@ -24,6 +24,16 @@ const firstContactRetryDelayMs = (): number => Number(process.env.FEZ_MINE_RETRY
 const firstContactInitialWaitMs = (): number => Number(process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS) || 45_000;
 const firstContactMaxAttempts = (): number => Number(process.env.FEZ_MINE_RETRY_ATTEMPTS) || 12;
 
+// Root cause, live A/B (round 8): a descriptor's `ctx.machine.copy(local,
+// \`${ctx.workDir}/...\`)` failed because workDir was the MAC's own path
+// (~/.fez/mining/<netuid>-<persona>) — nonexistent on the pod, so scp's
+// parent dir was missing. ctx.workDir is now machine-side: on a lium pod,
+// a fixed dir under /root (never derived from the Mac's home), created once
+// on fresh provision (see resolveMachine). The runner's OWN bookkeeping
+// (miner.log, the registered flag) stays on the Mac under a separate
+// `localDir` — see runMiner.
+const remoteWorkDir = (netuid: number, persona: string): string => `/root/fez-mining/${netuid}-${persona}`;
+
 /**
  * Pinned live 2026-09-08: a freshly-provisioned pod's `up` can report
  * "ready" before sshd actually accepts connections — a `scp` failed
@@ -179,6 +189,14 @@ export async function resolveMachine(
       },
       log
     );
+    // ctx.workDir on this pod — created once here, right after readiness is
+    // confirmed. A failure here is a provision failure exactly like a
+    // deployHotkey failure (persistProvision already ran above, so
+    // runMiner's catch block tears the pod down and clears the entry — see
+    // freshMachineState there). A reattach to this SAME pod later skips
+    // this: the dir is already on disk from this fresh provision.
+    const workDirMk = await machine.exec(`mkdir -p ${remoteWorkDir(entry.netuid, persona)}`);
+    if (workDirMk.code !== 0) throw new Error(workDirMk.stderr || `mkdir workDir exited ${workDirMk.code}`);
     await deployHotkey(persona, machine, log);
     return { machine, provisioned: true, machineState };
   }
@@ -204,9 +222,13 @@ export async function runMiner(
   const known = (await readState(home)).miners.find((m) => m.netuid === netuid && m.persona === persona);
   const hotkey = opts.hotkey ?? known?.hotkey;
   if (!hotkey) throw new Error(`no recorded hotkey for ${netuid}:${persona} — start it once with: fez-mine start`);
-  const workDir = path.join(home, "mining", `${netuid}-${persona}`);
-  await fs.mkdir(workDir, { recursive: true });
-  const logFile = path.join(workDir, "miner.log");
+  // The runner's OWN bookkeeping (miner.log, the registered flag below) —
+  // always on the Mac, regardless of where the miner itself runs. Distinct
+  // from ctx.workDir (below), which is machine-side and may be a path on a
+  // rented pod that doesn't exist on this filesystem at all.
+  const localDir = path.join(home, "mining", `${netuid}-${persona}`);
+  await fs.mkdir(localDir, { recursive: true });
+  const logFile = path.join(localDir, "miner.log");
   const log = (line: string) => {
     const stamped = `${new Date().toISOString()} ${line}\n`;
     fs.appendFile(logFile, stamped).catch(() => {});
@@ -272,6 +294,11 @@ export async function runMiner(
               .map((k) => [k, process.env[k] as string])
           )
         : ({ ...process.env } as Record<string, string>);
+    // A local machine keeps v1's identical workDir (the same dir as
+    // localDir). A lium machine gets a fixed path on ITS OWN filesystem —
+    // never the Mac's home dir, which doesn't exist on the pod (root cause
+    // of round 8's copy failure). See remoteWorkDir's doc comment.
+    const workDir = machine.kind === "lium" ? remoteWorkDir(netuid, persona) : localDir;
     const ctx = { workDir, persona, hotkey, netuid, env, machine, log };
 
     // Reattach/local already got their pid/startedAt/machine recorded —
@@ -282,7 +309,10 @@ export async function runMiner(
     }
 
     if (d.install) await d.install(ctx);
-    const flag = path.join(workDir, "registered");
+    // The registered flag is host-side bookkeeping (localDir), not
+    // ctx.workDir — it tracks whether THIS runner has already driven
+    // register() once, independent of whatever machine mined that time.
+    const flag = path.join(localDir, "registered");
     if (d.register && !(await fs.access(flag).then(() => true, () => false))) {
       await d.register(ctx);
       await fs.writeFile(flag, "1");

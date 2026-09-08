@@ -34,7 +34,12 @@ export interface MinerMachine {
 
 /** What the harness hands every verb. */
 export interface MinerContext {
-  /** Absolute dir this miner may write — venv, checkout, logs. Created by the harness. */
+  /** Absolute dir this miner may write — venv, checkout, logs. Lives ON
+   *  ctx.machine's filesystem, NOT necessarily the host running the
+   *  harness — a rented pod's workDir is a path on that pod, unreachable
+   *  from the local disk. The harness creates it (via ctx.machine before
+   *  install() ever runs); a descriptor that needs a LOCAL-machine file
+   *  moved there must go through ctx.machine.copy, never node:fs directly. */
   workDir: string;
   /** The mining persona's name (its derived account IS the hotkey). */
   persona: string;

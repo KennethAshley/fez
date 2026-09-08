@@ -12,6 +12,7 @@ function homeWithFixture(): string {
   const home = mkdtempSync(path.join(tmpdir(), "fm-remote-"));
   mkdirSync(path.join(home, "miners"), { recursive: true });
   cpSync(path.join(here, "fixtures", "machine-miner.js"), path.join(home, "miners", "machine-miner.js"));
+  cpSync(path.join(here, "fixtures", "workdir-miner.js"), path.join(home, "miners", "workdir-miner.js"));
   return home;
 }
 
@@ -200,7 +201,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       const firstScpIdx = calls.findIndex((c) => c[0] === "scp");
       expect(firstExecIdx).toBeGreaterThanOrEqual(0);
       expect(firstScpIdx).toBeGreaterThan(firstExecIdx); // scp (the hotkey deploy) happens after the readiness probe
-      expect(calls.filter((c) => c[0] === "exec").length).toBe(4); // 3 probe attempts + 1 mkdir
+      expect(calls.filter((c) => c[0] === "exec").length).toBe(5); // 3 probe attempts + workDir mkdir + hotkey-dir mkdir
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;
@@ -339,5 +340,45 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     expect(capturedEnv).toEqual({ FEZ_TEST_FORWARD_FOO: "bar" });
     expect(capturedEnv?.PATH).toBeUndefined();
     expect(capturedEnv?.HOME).toBeUndefined();
+  });
+
+  // Round 8 root cause: ctx.workDir used to be the MAC's own path
+  // (~/.fez/mining/<netuid>-<persona>) even for a lium miner — nonexistent
+  // on the pod, so a descriptor's `ctx.machine.copy(local, \`${ctx.workDir}/x\`)`
+  // failed (missing parent dir). ctx.workDir is now machine-side, created
+  // on the pod right after the readiness gate passes.
+  it("a fresh lium provision gets a machine-side workDir, mkdir'd before the descriptor's start runs", async () => {
+    const home = homeWithFixture();
+    let s = await readState(home);
+    s = upsertMiner(s, { netuid: 9997, persona: "p", hotkey: "5FAKE", desired: "running", machine: { kind: "lium" } });
+    await writeState(home, s);
+    const prevBin = process.env.FEZ_WALLET_BIN;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
+    const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+    process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    try {
+      const { exec, calls } = scriptedExec({
+        ls: () => ({ ok: true, out: JSON.stringify([{ huid: "n1", price_per_hour: "0.3" }]) }),
+        up: () => ({ ok: true, out: JSON.stringify({ pod: "pX", price_per_hour: "0.3" }) }),
+        describe: () => ({ ok: true, out: JSON.stringify({ host_ip: "1.1.1.1", ports: [] }) }),
+        exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }),
+        scp: () => ({ ok: true, out: "" }),
+      });
+      const code = await runMiner(9997, "p", home, { hotkey: "5FAKE", exec, recorder: noRecord });
+      expect(code).toBe(0);
+      const mkdirIdx = calls.findIndex((c) => c[0] === "exec" && c[2] === "mkdir -p /root/fez-mining/9997-p");
+      const startIdx = calls.findIndex((c) => c[0] === "exec" && c[2] === "echo WORKDIR /root/fez-mining/9997-p");
+      expect(mkdirIdx).toBeGreaterThanOrEqual(0); // the workDir got created on the pod
+      expect(startIdx).toBeGreaterThan(mkdirIdx); // ...before the descriptor's start saw it
+    } finally {
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
+      else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
+    }
   });
 });
