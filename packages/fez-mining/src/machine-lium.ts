@@ -53,6 +53,12 @@ function isRefusedEnvName(name: string): boolean {
   return REFUSED_ENV_NAMES.has(upper) || REFUSED_ENV_PREFIXES.some((p) => upper.startsWith(p));
 }
 
+// Single-quote a shell value: close the quote, escape the literal quote,
+// reopen it. Safe for any byte — no need to enumerate "special" chars.
+function escapeShellValue(v: string): string {
+  return `'${v.replace(/'/g, `'\\''`)}'`;
+}
+
 /** Wrap an already-provisioned pod as a MinerMachine. */
 export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMachine {
   return {
@@ -60,13 +66,18 @@ export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMac
     ports: handle.ports,
     async exec(cmd, opts = {}) {
       // Pinned: `lium exec --help` — bare `--json` (not `--format json`),
-      // `-e KEY=VALUE` (repeatable) for env, no cwd flag (so `cd` it).
-      const args = ["exec", handle.podId];
-      for (const [k, v] of Object.entries(opts.env ?? {})) {
-        if (isRefusedEnvName(k)) continue;
-        args.push("-e", `${k}=${v}`);
-      }
-      args.push(opts.cwd ? `cd ${opts.cwd} && ${cmd}` : cmd, "--json");
+      // no cwd flag (so `cd` it). `-e KEY=VALUE` makes lium exec wait on
+      // the remote process tree — a detached background child hangs the
+      // call past 180s — inline env instead; pinned live 2026-09-08. `env
+      // K=V cmd` only covers a simple command (ours can be compound: `a &&
+      // b`, `x & echo $!`), so prepend `export` statements instead, which
+      // apply to everything after them regardless of shape.
+      const exports = Object.entries(opts.env ?? {})
+        .filter(([k]) => !isRefusedEnvName(k))
+        .map(([k, v]) => `export ${k}=${escapeShellValue(v)};`)
+        .join(" ");
+      const body = opts.cwd ? `cd ${opts.cwd} && ${cmd}` : cmd;
+      const args = ["exec", handle.podId, exports ? `${exports} ${body}` : body, "--json"];
       const r = await exec(args, opts.timeoutMs);
       if (!r.ok) return { code: 1, stdout: "", stderr: r.err };
       // Pinned via fez-lium's mcp.ts lium_exec: the CLI always wraps in

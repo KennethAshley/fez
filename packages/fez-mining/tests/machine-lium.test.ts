@@ -33,11 +33,22 @@ describe("liumMachine", () => {
     expect(calls[0]).toEqual(["exec", "p1", "echo hi", "--json"]);
   });
 
-  it("exec prefixes cwd with cd (no cwd flag on the real CLI) and forwards env as -e", async () => {
+  // Pinned live 2026-09-08 (probe pod, timed): `-e KEY=VALUE` makes lium
+  // exec wait on the whole remote process tree — a detached background
+  // child hangs the call past 180s. The identical command with env inlined
+  // as `export K=V; ...` returns in ~2s and the child survives.
+  it("exec prefixes cwd with cd (no cwd flag on the real CLI) and inlines env as export statements", async () => {
     const { exec, calls } = script({ exec: JSON.stringify({ results: [{ pod: "p1", exit_code: 0, stdout: "", stderr: "" }] }) });
     const m = liumMachine({ podId: "p1", ports: [] }, exec);
     await m.exec("ls", { cwd: "/root/work", env: { FOO: "bar" } });
-    expect(calls[0]).toEqual(["exec", "p1", "-e", "FOO=bar", "cd /root/work && ls", "--json"]);
+    expect(calls[0]).toEqual(["exec", "p1", "export FOO='bar'; cd /root/work && ls", "--json"]);
+  });
+
+  it("exec single-quote-escapes an env value containing a literal quote", async () => {
+    const { exec, calls } = script({ exec: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) });
+    const m = liumMachine({ podId: "p1", ports: [] }, exec);
+    await m.exec("ls", { env: { FOO: "it's" } });
+    expect(calls[0]).toEqual(["exec", "p1", "export FOO='it'\\''s'; ls", "--json"]);
   });
 
   // Pinned: `lium scp --help` — TARGETS (pod) then SOURCE then optional
@@ -53,7 +64,7 @@ describe("liumMachine", () => {
         NODE_OPTIONS: "z", FOO: "bar",
       },
     });
-    expect(calls[0]).toEqual(["exec", "p1", "-e", "FOO=bar", "ls", "--json"]);
+    expect(calls[0]).toEqual(["exec", "p1", "export FOO='bar'; ls", "--json"]);
   });
 
   it("copy runs lium scp <pod> <local> <remote>", async () => {
