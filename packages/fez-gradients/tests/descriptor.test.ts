@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { MachinePort, MinerContext } from "@fezchat/extension-api";
 import miners from "../src/miner-part.js";
 
 describe("gradients descriptor", () => {
@@ -11,5 +12,50 @@ describe("gradients descriptor", () => {
     });
     expect(miners[0].requirements?.gpu).toBeUndefined();
     expect(typeof miners[0].start).toBe("function");
+  });
+});
+
+function fakeCtx(ports: MachinePort[], execCalls: string[]): MinerContext {
+  return {
+    workDir: "/tmp/gradients-test",
+    persona: "p",
+    hotkey: "5F",
+    netuid: 56,
+    env: {},
+    log: () => {},
+    machine: {
+      kind: "lium",
+      ports,
+      exec: async (cmd: string) => {
+        execCalls.push(cmd);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      copy: async () => {},
+    },
+  };
+}
+
+// I2: register() must fail loudly, never fall back to ports[0] — posting
+// the wrong port (e.g. SSH) to the metagraph is worse than refusing.
+describe("gradients register() port selection", () => {
+  it("throws when no port maps to internal 7999, even with an unrelated ports[0]", async () => {
+    const execCalls: string[] = [];
+    const ctx = fakeCtx([{ externalIp: "1.2.3.4", externalPort: 20001, internalPort: 22 }], execCalls);
+    await expect(miners[0].register!(ctx)).rejects.toThrow(/7999/);
+    expect(execCalls).toHaveLength(0);
+  });
+
+  it("posts the internal:7999 mapping specifically, not ports[0]", async () => {
+    const execCalls: string[] = [];
+    const ctx = fakeCtx(
+      [
+        { externalIp: "1.2.3.4", externalPort: 20001, internalPort: 22 }, // ssh, ports[0]
+        { externalIp: "1.2.3.4", externalPort: 20002, internalPort: 7999 },
+      ],
+      execCalls
+    );
+    await miners[0].register!(ctx);
+    expect(execCalls[0]).toContain("--external_port 20002");
+    expect(execCalls[0]).toContain("--external_ip 1.2.3.4");
   });
 });

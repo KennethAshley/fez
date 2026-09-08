@@ -151,10 +151,13 @@ const gradients: SubnetMiner = {
   // so validators know where to reach the training-repo endpoint.
   async register(ctx) {
     const dir = repoDir(ctx.workDir);
-    const port = ctx.machine.ports.find((p) => p.internalPort === MINER_PORT) ?? ctx.machine.ports[0];
+    // Strictly the internal:7999 mapping — no ports[0] fallback. That could
+    // be the pod's SSH port; posting the wrong port to the metagraph is
+    // worse than failing loudly here.
+    const port = ctx.machine.ports.find((p) => p.internalPort === MINER_PORT);
     if (!port) {
       throw new Error(
-        `gradients: no external port mapping for ${ctx.persona} — the machine must expose ${MINER_PORT} publicly before fiber-post-ip can run`
+        `gradients: no external port mapping for internal port ${MINER_PORT} on ${ctx.persona} — the machine must expose ${MINER_PORT} publicly before fiber-post-ip can run`
       );
     }
     ctx.log(`gradients: posting ip ${port.externalIp}:${port.externalPort} to the metagraph`);
@@ -181,13 +184,25 @@ const gradients: SubnetMiner = {
       "NETUID=56",
       "REFRESH_NODES=True",
       "MIN_STAKE_THRESHOLD=1000",
+      // ENV=prod here vs. ENV=DEV on the uvicorn command line below is not
+      // a contradiction: uvicorn's `--env-file` loads via python-dotenv,
+      // which does NOT override a name already present in the process's
+      // OS environment (override=False). The shell prefix on the uvicorn
+      // line sets ENV in the process env before the file is even read, so
+      // ENV=DEV always wins at runtime regardless of what's written here.
+      // "prod" is kept in the file because it's what miner-config's wizard
+      // would have written for a mainnet miner (see file header) — for any
+      // OTHER tool that reads .1.env directly rather than going through
+      // this exact uvicorn invocation, not for uvicorn itself.
       "ENV=prod",
       "",
     ].join("\n");
     await run(ctx, `cat > .1.env <<'GRADIENTS_ENV'\n${envFile}GRADIENTS_ENV`, dir);
     // `--reload` (dev-only autorestart-on-file-change) dropped and
     // `--log-level debug` → `info`; `ENV=DEV` kept as the repo's own
-    // Taskfile hardcodes it for `task miner` — see file header.
+    // Taskfile hardcodes it for `task miner` — see file header. This is
+    // the value that actually governs at runtime (process env beats the
+    // env-file for a name both set — see the ENV=prod comment above).
     const r = await ctx.machine.exec(
       `ENV=DEV .venv/bin/uvicorn miner.asgi:app --host 0.0.0.0 --port ${MINER_PORT} --env-file .1.env --log-level info >> miner-child.log 2>&1`,
       { cwd: dir, env: ctx.env }
