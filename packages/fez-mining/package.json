@@ -8,7 +8,7 @@
     "fez-mine-run": "dist/run.js"
   },
   "scripts": {
-    "build": "esbuild src/cli.ts src/run.ts --bundle --format=esm --platform=node --external:@fezchat/bittensor --external:@fezchat/lium --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js",
+    "build": "esbuild src/cli.ts src/run.ts --bundle --format=esm --platform=node --external:@fezchat/bittensor --external:@fezchat/lium --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
@@ -17,7 +17,13 @@
     "parts": {
       "gui": "dist/gui.js",
       "headless": "dist/headless.js",
-      "background": true
+      "background": true,
+      "skill": {
+        "command": "node",
+        "args": [
+          "dist/mcp.js"
+        ]
+      }
     },
     "permissions": [
       "ui",
@@ -32,7 +38,9 @@
   },
   "dependencies": {
     "@fezchat/bittensor": "file:../fez-bittensor",
-    "@fezchat/lium": "file:../fez-lium"
+    "@fezchat/lium": "file:../fez-lium",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@fezchat/extension-api": "file:../fez-extension-api",
