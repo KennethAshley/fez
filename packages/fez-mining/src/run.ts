@@ -7,7 +7,7 @@ import path from "node:path";
 import type { MinerMachine } from "@fezchat/extension-api";
 import { DEFAULT_MAX_USD_HOUR } from "@fezchat/lium/cli";
 import { loadDescriptors } from "./descriptors.js";
-import { describePod, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
+import { describePod, escapeShellValue, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
 import type { LiumExec, Recorder } from "./machine-lium.js";
 import { localMachine } from "./machine-local.js";
 import type { MinerEntry, MinerMachineState } from "./state.js";
@@ -18,8 +18,8 @@ import { fezHome, readState, upsertMiner, writeState } from "./state.js";
 // after this module is already loaded.
 const walletBin = (): string => process.env.FEZ_WALLET_BIN || "fez-wallet";
 
-// Same per-call-env convention — lets tests collapse the 15s wait to
-// ~nothing without touching the retry logic itself.
+// Same per-call-env convention — lets tests collapse the 45s initial wait
+// to ~nothing without touching the retry logic itself.
 const firstContactRetryDelayMs = (): number => Number(process.env.FEZ_MINE_RETRY_DELAY_MS) || 20_000;
 const firstContactInitialWaitMs = (): number => Number(process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS) || 45_000;
 const firstContactMaxAttempts = (): number => Number(process.env.FEZ_MINE_RETRY_ATTEMPTS) || 12;
@@ -36,12 +36,21 @@ const remoteWorkDir = (netuid: number, persona: string): string => `/root/fez-mi
 
 /**
  * Pinned live 2026-09-08: a freshly-provisioned pod's `up` can report
- * "ready" before sshd actually accepts connections — a `scp` failed
- * seconds after `up` returned, then an IDENTICAL manual `scp` minutes
- * later succeeded. Retry first-contact ops instead of treating one
- * failure as fatal: wait 45s initially (fresh pods are never ready
- * instantly), then up to 12 attempts, 20s apart (~4.5 min total budget),
- * one log line per retry (or silent if the caller passed no logger).
+ * "ready" before sshd actually accepts connections — an exec failed
+ * seconds after `up` returned, then an IDENTICAL one minutes later
+ * succeeded. This is the FIRST-contact wait: 45s initially (fresh pods are
+ * never ready instantly), then up to 12 attempts, 20s apart (~4.75 min
+ * total budget), one log line per retry (or silent if the caller passed no
+ * logger).
+ *
+ * I4: this used to also wrap deployHotkey's mkdir+scp, nested on top of
+ * copy()'s own 3x inner retry — 12 outer × 3 inner = 36 scp attempts behind
+ * a readiness gate that already proved the pod reachable. The readiness
+ * gate below (resolveMachine's "pod readiness" call) is the ONE authoritative
+ * first-contact wait now; once it passes, deployHotkey runs single-attempt,
+ * leaning on copy()'s own bounded 3x retry (10s apart) for a mid-life
+ * transient upload blip. retryFirstContact itself is unchanged — it's just
+ * down to one caller (the readiness gate).
  */
 async function retryFirstContact(label: string, attempt: () => Promise<void>, log: (line: string) => void): Promise<void> {
   const maxAttempts = firstContactMaxAttempts();
@@ -70,12 +79,15 @@ async function retryFirstContact(label: string, attempt: () => Promise<void>, lo
  * provisioned pod — called ONLY right after `provisionPod`, never on a
  * reattach (the key is already there from the first deploy). The keyfile
  * touches disk just long enough to be copied: written 0600, deleted in
- * `finally`, never logged. Both the mkdir and the copy are first contact
- * with a pod that may not have sshd up yet, so both retry (see
- * retryFirstContact); mkdir's "failure" is a non-zero exit, not a throw,
- * so it's normalized into one here.
+ * `finally`, never logged.
+ *
+ * I4: this runs AFTER resolveMachine's readiness gate already proved the
+ * pod reachable (retryFirstContact("pod readiness", ...) below), so first
+ * contact is proven — mkdir is a single attempt, and the copy leans on
+ * copy()'s own bounded 3x inner retry (mid-life transient upload blips)
+ * instead of an outer wrap nested on top of it.
  */
-async function deployHotkey(persona: string, machine: MinerMachine, log: (line: string) => void = () => {}): Promise<void> {
+async function deployHotkey(persona: string, machine: MinerMachine): Promise<void> {
   const exported = JSON.parse(
     execFileSync(walletBin(), ["export-hotkey", persona, "--json"], { encoding: "utf8" })
   ) as { keyfile: unknown };
@@ -84,19 +96,9 @@ async function deployHotkey(persona: string, machine: MinerMachine, log: (line: 
   const hotkeyDir = "/root/.bittensor/wallets/default/hotkeys";
   try {
     await fs.writeFile(tmpFile, JSON.stringify(exported.keyfile), { mode: 0o600 });
-    await retryFirstContact(
-      "deployHotkey: mkdir",
-      async () => {
-        const r = await machine.exec(`mkdir -p ${hotkeyDir}`);
-        if (r.code !== 0) throw new Error(r.stderr || `mkdir exited ${r.code}`);
-      },
-      log
-    );
-    await retryFirstContact(
-      "deployHotkey: scp",
-      () => machine.copy(tmpFile, `${hotkeyDir}/${persona}`),
-      log
-    );
+    const r = await machine.exec(`mkdir -p ${escapeShellValue(hotkeyDir)}`);
+    if (r.code !== 0) throw new Error(r.stderr || `mkdir exited ${r.code}`);
+    await machine.copy(tmpFile, `${hotkeyDir}/${persona}`);
   } finally {
     await fs.rm(tmpFile, { force: true });
   }
@@ -178,9 +180,10 @@ export async function resolveMachine(
     if (persistProvision) await persistProvision(machineState);
     const machine = liumMachine(handle, exec);
     // A fresh pod's `up` can report ready well before sshd actually
-    // accepts a session — pinned live 2026-09-08 (same race as
-    // deployHotkey's own retry below). Probe with a no-op exec before
-    // trusting the pod with anything, reusing the same retry budget.
+    // accepts a session — pinned live 2026-09-08. Probe with a no-op exec
+    // before trusting the pod with anything: this IS the one authoritative
+    // first-contact wait (I4) — everything after it (workDir mkdir,
+    // deployHotkey) runs single-attempt.
     await retryFirstContact(
       "pod readiness",
       async () => {
@@ -195,9 +198,9 @@ export async function resolveMachine(
     // runMiner's catch block tears the pod down and clears the entry — see
     // freshMachineState there). A reattach to this SAME pod later skips
     // this: the dir is already on disk from this fresh provision.
-    const workDirMk = await machine.exec(`mkdir -p ${remoteWorkDir(entry.netuid, persona)}`);
+    const workDirMk = await machine.exec(`mkdir -p ${escapeShellValue(remoteWorkDir(entry.netuid, persona))}`);
     if (workDirMk.code !== 0) throw new Error(workDirMk.stderr || `mkdir workDir exited ${workDirMk.code}`);
-    await deployHotkey(persona, machine, log);
+    await deployHotkey(persona, machine);
     return { machine, provisioned: true, machineState };
   }
   return { machine: localMachine() };

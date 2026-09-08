@@ -10,11 +10,11 @@ import type { Row } from "@fezchat/lium/cli";
  * Real shapes below were pinned read-only against the installed `lium`
  * 0.0.33 CLI (`--help` on every verb, plus `describe --json`'s error
  * envelope) and against fez-lium's own mcp.ts, which already drives this
- * exact CLI in production. Task 12's live smoke since confirmed the two
+ * exact CLI in production. Task 12's live smoke since confirmed the three
  * that weren't observable read-only: `lium up` with no NODE_ID and no
- * filters refuses outright ("Must provide either NODE_ID or filters"), and
- * `ps --format json` (not `ps --json`) is the real flag. `describe`'s
- * success shape is still coded defensively pending a live pod to confirm it.
+ * filters refuses outright ("Must provide either NODE_ID or filters"),
+ * `ps --format json` (not `ps --json`) is the real flag, and `describe
+ * --json`'s success shape against a real live pod (see parseDescribe).
  */
 
 export interface LiumHandle {
@@ -55,9 +55,18 @@ function isRefusedEnvName(name: string): boolean {
 
 // Single-quote a shell value: close the quote, escape the literal quote,
 // reopen it. Safe for any byte — no need to enumerate "special" chars.
-function escapeShellValue(v: string): string {
+// Exported so run.ts can reuse it to quote paths it interpolates into its
+// own exec commands (mkdir targets) instead of growing a second escaper.
+export function escapeShellValue(v: string): string {
   return `'${v.replace(/'/g, `'\\''`)}'`;
 }
+
+// I2: the VALUE escaping above is airtight, but an env NAME riding through
+// raw would let a key like " LD_PRELOAD" (leading space) or "X=1
+// LD_PRELOAD" pass isRefusedEnvName and still get re-tokenized by the shell
+// into setting LD_PRELOAD. A real env var name is exactly this shape —
+// anything else has no business being forwarded at all.
+const VALID_ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/i;
 
 /** Wrap an already-provisioned pod as a MinerMachine. */
 export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMachine {
@@ -81,14 +90,20 @@ export function liumMachine(handle: LiumHandle, exec: LiumExec = lium): MinerMac
       // long as the miner runs, so `lium exec` waits on it — a 60s hang.
       // Pinned live 2026-09-08.
       const exports = Object.entries(opts.env ?? {})
-        .filter(([k]) => !isRefusedEnvName(k))
+        .filter(([k]) => VALID_ENV_NAME_RE.test(k) && !isRefusedEnvName(k))
         .map(([k, v]) => `export ${k}=${escapeShellValue(v)};`)
         .join(" ");
-      const cdGuard = opts.cwd ? `cd ${opts.cwd} || exit 97; ` : "";
+      // Single-quoted (I2, defense-in-depth) — cwd is normally a harness-
+      // controlled constant, not attacker input, but quoting it here is
+      // free and matches the discipline applied to env values above.
+      const cdGuard = opts.cwd ? `cd ${escapeShellValue(opts.cwd)} || exit 97; ` : "";
       const full = `${cdGuard}${exports ? `${exports} ` : ""}${cmd}`;
       const args = ["exec", handle.podId, full, "--json"];
       const r = await exec(args, opts.timeoutMs);
-      if (!r.ok) return { code: 1, stdout: "", stderr: r.err };
+      // C1: the lium CLI call itself failed (network blip, API hiccup, a 60s
+      // timeout) — not the remote command exiting non-zero. transportError
+      // tells callers polling liveness this is inconclusive, never "dead".
+      if (!r.ok) return { code: 1, stdout: "", stderr: r.err, transportError: true };
       // Pinned via fez-lium's mcp.ts lium_exec: the CLI always wraps in
       // `results` even for a single pod target: {results:[{pod,exit_code,stdout,stderr,error}]}.
       const j = parseJson<{ results?: { exit_code?: number; stdout?: string; stderr?: string }[] }>(r.out)?.results?.[0];
@@ -151,11 +166,14 @@ function parseUpPodId(out: string): string | null {
 
 /** Pull host/ports out of `describe --json`. */
 function parseDescribe(out: string): { sshHost?: string; ports: MachinePort[] } {
-  // Unverified against live CLI for the SUCCESS shape — only the error
-  // envelope {ok:false,error:{...}} was observed read-only (no pod to
-  // describe without an API key). Tolerates a {ok:true,pod:{...}} wrapper
-  // or bare fields, and both external/internal and
-  // external_port/internal_port port-item key names. Task 12 confirms.
+  // Confirmed live (Task 12/smoke, 2026-09-08) against a real pod's
+  // `describe --json` — the bare-fields shape (no `pod` wrapper), host_ip,
+  // and external/internal port-item keys all matched what's coded here.
+  // Still tolerates a hypothetical {ok:true,pod:{...}} wrapper and the
+  // external_port/internal_port key spelling defensively, since a bare
+  // `{ok:false,error:{...}}` envelope is also real (observed read-only,
+  // no pod to describe without an API key) and the CLI's shape could vary
+  // by version.
   const raw = parseJson<Record<string, unknown>>(out) ?? {};
   const body = (raw.pod && typeof raw.pod === "object" ? raw.pod : raw) as Record<string, unknown>;
   const sshHost = (body.host_ip ?? body.ip ?? body.ssh_host) as string | undefined;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describePod, liumMachine, provisionPod, podAlive, teardownPod } from "../src/machine-lium.js";
+import { describePod, escapeShellValue, liumMachine, provisionPod, podAlive, teardownPod } from "../src/machine-lium.js";
 
 // Fake exec scripted by argv[0] (or "argv[0] argv[1]" for a more specific
 // match) — mirrors the real LiumExec signature: (args, timeoutMs?) =>
@@ -37,11 +37,11 @@ describe("liumMachine", () => {
   // exec wait on the whole remote process tree — a detached background
   // child hangs the call past 180s. The identical command with env inlined
   // as `export K=V; ...` returns in ~2s and the child survives.
-  it("exec prefixes cwd as a guarded cd-statement (no cwd flag on the real CLI) and inlines env as export statements", async () => {
+  it("exec prefixes cwd as a guarded, single-quoted cd-statement (no cwd flag on the real CLI) and inlines env as export statements", async () => {
     const { exec, calls } = script({ exec: JSON.stringify({ results: [{ pod: "p1", exit_code: 0, stdout: "", stderr: "" }] }) });
     const m = liumMachine({ podId: "p1", ports: [] }, exec);
     await m.exec("ls", { cwd: "/root/work", env: { FOO: "bar" } });
-    expect(calls[0]).toEqual(["exec", "p1", "cd /root/work || exit 97; export FOO='bar'; ls", "--json"]);
+    expect(calls[0]).toEqual(["exec", "p1", "cd '/root/work' || exit 97; export FOO='bar'; ls", "--json"]);
   });
 
   it("exec single-quote-escapes an env value containing a literal quote", async () => {
@@ -62,7 +62,7 @@ describe("liumMachine", () => {
     const m = liumMachine({ podId: "p1", ports: [] }, exec);
     await m.exec("./miner & echo $! > miner.pid", { cwd: "/root/work", env: { FOO: "bar" } });
     const [, , sent] = calls[0];
-    expect(sent).toBe("cd /root/work || exit 97; export FOO='bar'; ./miner & echo $! > miner.pid");
+    expect(sent).toBe("cd '/root/work' || exit 97; export FOO='bar'; ./miner & echo $! > miner.pid");
     expect(sent).not.toContain("&&");
   });
 
@@ -80,6 +80,36 @@ describe("liumMachine", () => {
       },
     });
     expect(calls[0]).toEqual(["exec", "p1", "export FOO='bar'; ls", "--json"]);
+  });
+
+  // I2: a NAME like " LD_PRELOAD" (leading space) or "X=1 LD_PRELOAD" would
+  // pass isRefusedEnvName's exact-match/prefix check but still get
+  // re-tokenized by the shell into setting LD_PRELOAD once interpolated
+  // raw. Only a real identifier shape may ride along at all.
+  it("exec drops a forwarded env name with a leading space or an embedded '=' — never exported", async () => {
+    const { exec, calls } = script({ exec: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) });
+    const m = liumMachine({ podId: "p1", ports: [] }, exec);
+    await m.exec("ls", {
+      env: { " LD_PRELOAD": "x", "X=1 LD_PRELOAD": "y", FOO: "bar" },
+    });
+    expect(calls[0]).toEqual(["exec", "p1", "export FOO='bar'; ls", "--json"]);
+  });
+
+  // C1: the lium CLI call itself failing (network blip/timeout/API hiccup)
+  // must read as transportError, distinct from the remote command actually
+  // exiting non-zero — callers polling liveness must retry it, never treat
+  // it as the remote process being dead.
+  it("exec marks a failed lium call transportError:true, distinct from a real non-zero exit", async () => {
+    const { exec: failExec } = script({}); // no script for "exec" — the call itself fails
+    const m1 = liumMachine({ podId: "p1", ports: [] }, failExec);
+    const r1 = await m1.exec("ls");
+    expect(r1).toMatchObject({ code: 1, transportError: true });
+
+    const { exec: okExec } = script({ exec: JSON.stringify({ results: [{ exit_code: 3, stdout: "", stderr: "" }] }) });
+    const m2 = liumMachine({ podId: "p1", ports: [] }, okExec);
+    const r2 = await m2.exec("false");
+    expect(r2.code).toBe(3);
+    expect(r2.transportError).toBeUndefined();
   });
 
   it("copy runs lium scp <pod> <local> <remote>", async () => {
@@ -226,5 +256,19 @@ describe("liumMachine", () => {
     await teardownPod("p9", exec, noRecord);
     expect(calls[0][0]).toBe("rm");
     expect(calls[0]).toEqual(["rm", "p9", "--yes"]);
+  });
+});
+
+describe("escapeShellValue", () => {
+  // Single-quoting means the shell never re-interprets ANY of these — no
+  // enumeration of "special" chars needed, so this just proves the
+  // round-trip for a representative handful.
+  it("keeps $(...), backticks, and a literal newline verbatim inside the single quotes", () => {
+    const v = "$(rm -rf /) `echo pwned`\nnext-line";
+    expect(escapeShellValue(v)).toBe(`'${v}'`);
+  });
+
+  it("escapes a literal single quote by closing, escaping, and reopening the quote", () => {
+    expect(escapeShellValue("it's")).toBe("'it'\\''s'");
   });
 });

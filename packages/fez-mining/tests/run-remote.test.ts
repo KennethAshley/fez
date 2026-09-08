@@ -125,11 +125,13 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
   });
 
   // Pinned live 2026-09-08: a freshly-provisioned pod's `up` can report
-  // ready before sshd actually accepts connections — an scp failed
-  // seconds after `up` returned, then an identical manual scp minutes
-  // later succeeded. deployHotkey's first-contact ops retry instead of
-  // treating one failure as fatal.
-  it("deployHotkey retries a boot-readiness scp failure and succeeds on a later attempt", async () => {
+  // ready before sshd actually accepts connections. I4: the readiness gate
+  // (probed right before this) is now the ONE authoritative first-contact
+  // wait — deployHotkey itself runs single-attempt, leaning entirely on
+  // copy()'s own bounded 3x inner retry (10s apart) for a mid-life
+  // transient upload blip, no outer retryFirstContact wrap around it
+  // anymore (that used to nest 12 outer x 3 inner = 36 scp attempts).
+  it("deployHotkey leans on copy()'s bounded inner retry for a transient scp blip", async () => {
     const freshEntry: MinerEntry = { netuid: 1, persona: "p", hotkey: "5F", desired: "running", machine: { kind: "lium" } };
     const prevBin = process.env.FEZ_WALLET_BIN;
     const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS;
@@ -145,18 +147,13 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
         up: () => ({ ok: true, out: JSON.stringify({ pod: "pX", price_per_hour: "0.3" }) }),
         describe: () => ({ ok: true, out: JSON.stringify({ host_ip: "1.1.1.1", ports: [] }) }),
         exec: () => ({ ok: true, out: JSON.stringify({ results: [{ exit_code: 0, stdout: "", stderr: "" }] }) }), // readiness probe + mkdir
-        // copy() itself now retries 3x (10s apart, collapsed to 1ms here)
-        // before giving up — fails all 3 on deployHotkey's first outer
-        // attempt (calls 1-3), then succeeds on deployHotkey's second
-        // outer attempt's first inner try (call 4). Exercises both the
-        // new inner copy-retry AND the existing outer retryFirstContact.
-        scp: (_args, call) => (call < 4 ? { ok: false, err: "Failed to upload to: pX" } : { ok: true, out: "" }),
+        // Fails once, succeeds on copy()'s 2nd inner attempt — well within
+        // its bounded 3x retry, no outer wrap needed to cover it.
+        scp: (_args, call) => (call < 2 ? { ok: false, err: "Failed to upload to: pX" } : { ok: true, out: "" }),
       });
-      const logs: string[] = [];
-      const { provisioned } = await resolveMachine(freshEntry, "p", {}, exec, noRecord, (line) => logs.push(line));
+      const { provisioned } = await resolveMachine(freshEntry, "p", {}, exec, noRecord);
       expect(provisioned).toBe(true);
-      expect(calls.filter((c) => c[0] === "scp").length).toBe(4);
-      expect(logs.some((l) => l.includes("deployHotkey: scp") && l.includes("retrying"))).toBe(true);
+      expect(calls.filter((c) => c[0] === "scp").length).toBe(2);
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;
@@ -286,10 +283,12 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       });
       const code = await runMiner(9998, "p", home, { hotkey: "5FAKE", exec, recorder: noRecord });
       expect(code).toBe(1);
-      // deployHotkey's outer retryFirstContact attempts 12 times; each
-      // attempt calls copy(), which now retries 3x internally before
-      // throwing back out — 12 * 3 = 36 total scp calls before giving up.
-      expect(calls.filter((c) => c[0] === "scp").length).toBe(36);
+      // I4: deployHotkey no longer has its own outer retry wrap — it runs
+      // single-attempt on top of the already-proven readiness gate, leaning
+      // entirely on copy()'s bounded 3x inner retry. 3 scp calls total
+      // before giving up (was 36 — 12 outer x 3 inner nested on top of a
+      // gate that had already proven the pod reachable).
+      expect(calls.filter((c) => c[0] === "scp").length).toBe(3);
       expect(calls.some((c) => c[0] === "rm" && c[1] === "pX")).toBe(true); // the orphan risk: torn down instead
 
       const after = await readState(home);
@@ -368,7 +367,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       });
       const code = await runMiner(9997, "p", home, { hotkey: "5FAKE", exec, recorder: noRecord });
       expect(code).toBe(0);
-      const mkdirIdx = calls.findIndex((c) => c[0] === "exec" && c[2] === "mkdir -p /root/fez-mining/9997-p");
+      const mkdirIdx = calls.findIndex((c) => c[0] === "exec" && c[2] === "mkdir -p '/root/fez-mining/9997-p'");
       const startIdx = calls.findIndex((c) => c[0] === "exec" && c[2] === "echo WORKDIR /root/fez-mining/9997-p");
       expect(mkdirIdx).toBeGreaterThanOrEqual(0); // the workDir got created on the pod
       expect(startIdx).toBeGreaterThan(mkdirIdx); // ...before the descriptor's start saw it

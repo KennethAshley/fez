@@ -25,8 +25,14 @@ export interface MachinePort {
  */
 export interface MinerMachine {
   kind: "local" | "lium";
-  /** Run a shell command on the machine; resolves when it exits. */
-  exec(cmd: string, opts?: { env?: Record<string, string>; cwd?: string; timeoutMs?: number }): Promise<{ code: number; stdout: string; stderr: string }>;
+  /** Run a shell command on the machine; resolves when it exits.
+   *  `transportError: true` means the CALL to the machine failed to run the
+   *  command at all (unreachable/timeout/API hiccup) — distinct from the
+   *  command running and exiting non-zero. Callers polling liveness must
+   *  retry a transportError, never treat it as the remote process being
+   *  dead. Absent/false means the command actually ran; `code` is its real
+   *  exit status. */
+  exec(cmd: string, opts?: { env?: Record<string, string>; cwd?: string; timeoutMs?: number }): Promise<{ code: number; stdout: string; stderr: string; transportError?: boolean }>;
   /** Copy a local file or directory onto the machine. */
   copy(localPath: string, remotePath: string): Promise<void>;
   ports: MachinePort[];

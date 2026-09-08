@@ -95,6 +95,19 @@ async function cmdStart(netuid: number, persona: string, json: boolean, machine?
   // one. No podId yet on a genuinely first start — the runner provisions
   // the pod on first spawn and records it back onto this entry.
   const existing = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+  // I3: a plain start (no --machine) on a previously-lium entry clears the
+  // `machine` field below with no teardown — the pod it names would
+  // otherwise go unreferenced and keep billing. Best-effort tear it down
+  // first; never block the start over a `lium` hiccup.
+  if (machine !== "lium" && existing?.machine?.kind === "lium" && existing.machine.podId) {
+    const orphanPodId = existing.machine.podId;
+    try {
+      await teardownPod(orphanPodId);
+      console.error(`tore down orphaned pod ${orphanPodId} from a prior remote run`);
+    } catch {
+      console.error(`pod ${orphanPodId} may still be running — \`lium rm\` it`);
+    }
+  }
   s = upsertMiner(s, {
     netuid, persona, hotkey: r.hotkey, uid: r.uid, desired: "running",
     // The preserve is scoped to a lium→lium restart ONLY — carrying
