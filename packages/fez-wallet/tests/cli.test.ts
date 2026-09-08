@@ -130,6 +130,18 @@ describe("cli ceremony", () => {
     await expect(cmdDerive(io, "../x")).rejects.toThrow(/invalid persona name/i);
     await expect(cmdDerive(io, "a/b")).rejects.toThrow(/invalid persona name/i);
   });
+
+  it("register with a hotkey override refuses garbage persona names before touching chain or root", async () => {
+    // The override path skips requirePersonaPair (there's no local pair to
+    // derive from for a remote-signed hotkey), which is where persona-name
+    // validation normally happens — so it must be re-checked on this
+    // branch, and checked before any chain/keychain work (no cmdInit ran
+    // here at all, proving requireRoot is never reached).
+    const { registerPersona } = await import("../src/cli-commands.js");
+    await expect(registerPersona("../x", 553, { hotkeyAddress: "5FAKE" })).rejects.toThrow(/invalid persona name/i);
+    await expect(registerPersona("a/b", 553, { hotkeyAddress: "5FAKE" })).rejects.toThrow(/invalid persona name/i);
+    await expect(registerPersona("root", 553, { hotkeyAddress: "5FAKE" })).rejects.toThrow(/reserved/i);
+  });
 });
 
 describe("fez-wallet network", () => {

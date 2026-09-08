@@ -5,6 +5,7 @@ import { substrateAdapter } from "./chains/substrate.js";
 import {
   cmdInit, cmdDerive, cmdFund, cmdStatus, cmdNetwork, initWallet, derivePersona,
   cmdRegister, cmdPersonaStatus, cmdPayout, cmdCost, registerPersona, stakePersona, unstakePersona, personaStatus, payoutPersona, payFromTreasury, registrationCost,
+  exportRemoteHotkey,
 } from "./cli-commands.js";
 import { rentAgent, payAddress } from "./rent.js";
 import { escrowOpen, escrowApprove, escrowStatus } from "./stake.js";
@@ -25,10 +26,14 @@ const netuidArg = (): number | undefined => {
 };
 const asFlag = argv.indexOf("--as");
 const marketFlag = argv.indexOf("--market");
+// --hotkey <ss58>: register's remote-hotkey override (Task 5/7) — registers
+// that address instead of deriving one from a local persona pair.
+const hotkeyFlag = argv.indexOf("--hotkey");
 const [cmd, ...rest] = argv.filter((a, i) =>
   a !== "--json" && a !== "--netuid" && !(netuidFlag >= 0 && i === netuidFlag + 1)
   && a !== "--as" && !(asFlag >= 0 && i === asFlag + 1)
-  && a !== "--market" && !(marketFlag >= 0 && i === marketFlag + 1));
+  && a !== "--market" && !(marketFlag >= 0 && i === marketFlag + 1)
+  && a !== "--hotkey" && !(hotkeyFlag >= 0 && i === hotkeyFlag + 1));
 
 try {
   await cryptoWaitReady();
@@ -57,15 +62,25 @@ try {
         await cmdStatus(io, adapter());
       }
       break;
-    case "register":
-      if (!rest[0]) throw new Error("usage: fez-wallet register <persona> [--netuid 553]");
-      if (json) console.log(JSON.stringify(await registerPersona(rest[0], netuidArg())));
-      else await cmdRegister(io, rest[0], netuidArg());
+    case "register": {
+      if (!rest[0]) throw new Error("usage: fez-wallet register <persona> [--netuid 553] [--hotkey <ss58>]");
+      const hotkeyAddress = hotkeyFlag >= 0 ? argv[hotkeyFlag + 1] : undefined;
+      const registerOpts = hotkeyAddress ? { hotkeyAddress } : undefined;
+      if (json) console.log(JSON.stringify(await registerPersona(rest[0], netuidArg(), registerOpts)));
+      else await cmdRegister(io, rest[0], netuidArg(), registerOpts);
       break;
+    }
     case "cost":
       if (json) console.log(JSON.stringify(await registrationCost(netuidArg())));
       else await cmdCost(io, netuidArg());
       break;
+    case "export-hotkey": {
+      if (!rest[0]) throw new Error("usage: fez-wallet export-hotkey <persona> [--json]");
+      const r = await exportRemoteHotkey(rest[0]);
+      if (json) console.log(JSON.stringify(r));
+      else io.print(`${r.created ? "created" : "loaded"} remote hotkey for ${r.persona}: ${r.ss58Address}`);
+      break;
+    }
     case "stake":
       if (!rest[0] || !rest[1]) throw new Error("usage: fez-wallet stake <persona> <amount>");
       if (json) console.log(JSON.stringify(await stakePersona(rest[0], rest[1], netuidArg())));
@@ -157,8 +172,9 @@ try {
       io.print("  derive <persona>        create an agent's allowance account");
       io.print("  fund <persona> <amt>    treasury → agent (TAO)");
       io.print("  status [persona]        balances — with a persona: uid + free + staked");
-      io.print("  register <persona>      register on the subnet (treasury pays the burn)");
+      io.print("  register <persona> [--hotkey <ss58>]   register on the subnet (treasury pays the burn); --hotkey registers a remote address instead of deriving one");
       io.print("  cost [--netuid 553]     read-only: what registering would burn, before paying it");
+      io.print("  export-hotkey <persona> [--json]   create-or-load a standalone remote-signing key, print its address (or the loadable keyfile with --json)");
       io.print("  stake <persona> <amt>   the agent stakes to its own hotkey");
       io.print("  unstake <persona> <amt> symmetric");
       io.print("  payout <persona> [amt]  sweep earned alpha from the treasury to the agent's own name");

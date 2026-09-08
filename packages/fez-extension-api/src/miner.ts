@@ -9,9 +9,43 @@
  * restart, and the GUI. A descriptor owns only what is subnet-specific.
  */
 
+/** A public endpoint mapping on the machine — how a serving miner (an
+ *  axon) is reached from the internet. Empty on a local machine. */
+export interface MachinePort {
+  externalIp: string;
+  externalPort: number;
+  internalPort: number;
+}
+
+/**
+ * The machine seam — where a miner's commands actually run. Descriptors
+ * call these instead of spawning directly, so one descriptor works on
+ * any machine kind whose requirements it fits. "ssh" is the designed-for
+ * third member (spec §7), not yet built.
+ */
+export interface MinerMachine {
+  kind: "local" | "lium";
+  /** Run a shell command on the machine; resolves when it exits.
+   *  `transportError: true` means the CALL to the machine failed to run the
+   *  command at all (unreachable/timeout/API hiccup) — distinct from the
+   *  command running and exiting non-zero. Callers polling liveness must
+   *  retry a transportError, never treat it as the remote process being
+   *  dead. Absent/false means the command actually ran; `code` is its real
+   *  exit status. */
+  exec(cmd: string, opts?: { env?: Record<string, string>; cwd?: string; timeoutMs?: number }): Promise<{ code: number; stdout: string; stderr: string; transportError?: boolean }>;
+  /** Copy a local file or directory onto the machine. */
+  copy(localPath: string, remotePath: string): Promise<void>;
+  ports: MachinePort[];
+}
+
 /** What the harness hands every verb. */
 export interface MinerContext {
-  /** Absolute dir this miner may write — venv, checkout, logs. Created by the harness. */
+  /** Absolute dir this miner may write — venv, checkout, logs. Lives ON
+   *  ctx.machine's filesystem, NOT necessarily the host running the
+   *  harness — a rented pod's workDir is a path on that pod, unreachable
+   *  from the local disk. The harness creates it (via ctx.machine before
+   *  install() ever runs); a descriptor that needs a LOCAL-machine file
+   *  moved there must go through ctx.machine.copy, never node:fs directly. */
   workDir: string;
   /** The mining persona's name (its derived account IS the hotkey). */
   persona: string;
@@ -20,6 +54,9 @@ export interface MinerContext {
   netuid: number;
   /** Extra env the harness was configured with for this miner. */
   env: Record<string, string>;
+  /** Where this miner's commands run. Local shell today; a rented pod
+   *  when the harness provisioned one. */
+  machine: MinerMachine;
   /** Append a line to the miner's log (harness tees to file + stdout). */
   log(line: string): void;
 }
@@ -33,7 +70,14 @@ export interface SubnetMiner {
   netuid: number;
   /** Short human name shown in the GUI row ("bazaar"). */
   name: string;
-  requirements?: { gpu?: string; ramGb?: number; diskGb?: number; alwaysOn?: boolean };
+  requirements?: {
+    gpu?: string;
+    ramGb?: number;
+    diskGb?: number;
+    alwaysOn?: boolean;
+    /** Validators must reach this miner from the internet — a NAT'd laptop can't serve it. */
+    publicEndpoint?: boolean;
+  };
   /** One-time machine setup (clone, deps). MUST be idempotent — the runner calls it every start. */
   install?(ctx: MinerContext): Promise<void>;
   /**

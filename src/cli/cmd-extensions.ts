@@ -335,7 +335,7 @@ program
 
     const parts = manifest.fez?.parts;
     const entry = parts?.headless ?? manifest.fez?.extension?.entry;
-    if (!entry && !parts?.gui && !parts?.skill) {
+    if (!entry && !parts?.gui && !parts?.skill && !parts?.miner && !parts?.relay && !parts?.workspace) {
       console.error(chalk.red(`${manifest.name ?? pkgDir} declares no fez.parts (or fez.extension.entry) — nothing to link.`));
       process.exit(1);
     }

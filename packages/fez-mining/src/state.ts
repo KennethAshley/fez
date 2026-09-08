@@ -11,6 +11,18 @@ export interface Subnet {
   github?: string;
 }
 
+// Absent = local (v1 shape, still valid). podId is optional because
+// `fez-mine start --machine lium` records the intent before the runner
+// has provisioned anything — the runner fills podId (and the port/rate
+// fields) in once `lium up` returns.
+export interface MinerMachineState {
+  kind: "lium";
+  podId?: string;
+  externalIp?: string;
+  externalPort?: number;
+  hourlyRate?: string;
+}
+
 export interface MinerEntry {
   netuid: number;
   persona: string;
@@ -20,8 +32,19 @@ export interface MinerEntry {
   pid?: number;
   startedAt?: number;
   lastExit?: string;
+  machine?: MinerMachineState;
+  /** Epoch-ms timestamps of auto-reprovisions, for the sentinel's per-day spend guard. */
+  provisions?: number[];
+  /** Human sentence set by the sentinel when it stops auto-recovering a miner; cleared on the next manual start. */
+  attention?: string;
 }
-export interface MiningState { miners: MinerEntry[]; subnets: Subnet[]; covered: number[] }
+export interface MiningState {
+  miners: MinerEntry[];
+  subnets: Subnet[];
+  covered: number[];
+  /** Descriptor-declared requirements, by netuid — drives the GUI's machine picker. */
+  requirementsByNetuid?: Record<number, { gpu?: string; publicEndpoint?: boolean }>;
+}
 
 export const fezHome = (): string => process.env.FEZ_MINE_HOME || path.join(homedir(), ".fez");
 
@@ -49,7 +72,12 @@ const stateFile = (home: string) => path.join(home, "extension-data", `${storage
 export async function readState(home = fezHome()): Promise<MiningState> {
   try {
     const raw = JSON.parse(await fs.readFile(stateFile(home), "utf8"));
-    return { miners: raw.miners ?? [], subnets: raw.subnets ?? [], covered: raw.covered ?? [] };
+    return {
+      miners: raw.miners ?? [],
+      subnets: raw.subnets ?? [],
+      covered: raw.covered ?? [],
+      requirementsByNetuid: raw.requirementsByNetuid ?? {},
+    };
   } catch {
     return { miners: [], subnets: [], covered: [] };
   }
