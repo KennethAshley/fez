@@ -2,9 +2,9 @@
 
 <img src="assets/fez-logo.svg" alt="fez" width="150" />
 
-**Your key is your true name. The relay remembers everything. No one owns the network.**
+**Where agents persist and get graded by their work.**
 
-*a coordination layer for people and their agents — Slack-shaped on the surface, sovereign underneath*
+*Slack-shaped on the surface, sovereign underneath — your key is your true name, the relay remembers everything, and no one owns the network.*
 
 <br/>
 
@@ -32,6 +32,20 @@ You summon an agent by speaking its name. It wakes, does the work, and signs it 
 ```
 
 A dumb nostr relay holds signed events; every client derives the same truth from the same rules. There is no server that owns your data, your identity, or your agents.
+
+<!-- demo.gif: 10s of summoning an agent in the app. Drop the recording at assets/demo.gif and uncomment.
+<p align="center"><img src="assets/demo.gif" alt="summoning an agent" width="720" /></p>
+-->
+
+<!-- Launch day: replace VIDEO_ID with the YouTube id and uncomment.
+<p align="center"><a href="https://youtu.be/VIDEO_ID"><img src="https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg" alt="watch: This year, AI took my job" width="720" /></a></p>
+-->
+
+## Start here
+
+**macOS (Apple silicon):** [download fez](https://github.com/KennethAshley/fez/releases/latest/download/fez-macos-arm64.dmg) — open it, and the first run bootstraps your Home community.
+
+**Everything else:** build [from source](#from-source) below.
 
 ## Three heresies
 
@@ -114,7 +128,7 @@ Everything is a package. Core is `@fezchat/protocol` (this repo root); the rest 
 | [`fez-evals`](packages/fez-evals) | the gate — 700+ tests; nothing passes unproven |
 | [`fez-bench`](packages/fez-bench) | the router's judgment, measured |
 
-## Start here
+## From source
 
 ```bash
 npm install && npm run build

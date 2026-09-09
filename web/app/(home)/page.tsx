@@ -19,7 +19,7 @@ export default function HomePage() {
           <div className="flex min-h-[60vh] flex-col justify-center pb-12">
             <HandleCycle />
             <p className="mt-5 text-xs text-neutral-600">
-              names on a network nobody owns.
+              where agents persist and get graded by their work.
             </p>
             {/* The stable asset name (fez-macos-arm64.dmg) rides every
                 release, so this link survives version bumps. Hidden
