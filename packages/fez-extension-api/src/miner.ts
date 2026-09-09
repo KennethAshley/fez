@@ -86,6 +86,28 @@ export interface ConfigField {
   help?: string;
 }
 
+/**
+ * Descriptor v2 — the miner as a pinned image instead of install
+ * instructions (spec 2026-09-09-container-miners-design.md). A
+ * descriptor with `container` needs no install()/start(); when both
+ * exist, `container` wins. The harness owns orchestration once.
+ */
+export interface MinerContainer {
+  /** Digest-pinned image ref: "ghcr.io/fezchat/gradients-miner@sha256:…". */
+  image: string;
+  /** Env template values — "{key}" substrings resolve from ctx.config. */
+  env?: Record<string, string>;
+  /** Internal ports published on the machine's declared external ports. */
+  ports?: { internal: number }[];
+  /** Bind-mount /root/.bittensor read-only into the container. */
+  mountKeys?: boolean;
+  /** One-shot enrollment run in the SAME image (e.g. fiber-post-ip). */
+  register?: { command: string[] };
+  /** Verbatim upstream compose.yml — when set, the compose verbs drive
+   *  and image/ports above are descriptive only. */
+  compose?: string;
+}
+
 export interface SubnetMiner {
   netuid: number;
   /** Short human name shown in the GUI row ("bazaar"). */
@@ -112,6 +134,8 @@ export interface SubnetMiner {
   start(ctx: MinerContext): Promise<void>;
   /** Graceful stop; the harness kills the process if this is absent or hangs. */
   stop?(ctx: MinerContext): Promise<void>;
+  /** Descriptor v2: run as a container. Present ⇒ install/start unused. */
+  container?: MinerContainer;
   /** Subnet-side health beyond process-alive. */
   status?(ctx: MinerContext): Promise<MinerStatus>;
 }
