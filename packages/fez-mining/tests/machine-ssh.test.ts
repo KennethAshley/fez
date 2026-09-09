@@ -36,7 +36,7 @@ describe("sshMachine", () => {
     const m = sshMachine(SPEC, run);
     const r = await m.exec("echo hi");
     expect(r).toMatchObject({ code: 0, stdout: "hi" });
-    expect(calls[0]).toEqual(["ssh", "-o", "BatchMode=yes", "root@165.1.2.3", "echo hi"]);
+    expect(calls[0]).toEqual(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "root@165.1.2.3", "echo hi"]);
   });
 
   it("exec applies the shared cwd/env discipline (guarded cd, export statements)", async () => {
@@ -50,7 +50,7 @@ describe("sshMachine", () => {
     const { run, calls } = script({ ssh: { code: 0 } });
     const m = sshMachine({ ...SPEC, port: 2222, keyPath: "/k/id" }, run);
     await m.exec("true");
-    expect(calls[0]).toEqual(["ssh", "-o", "BatchMode=yes", "-p", "2222", "-i", "/k/id", "root@165.1.2.3", "true"]);
+    expect(calls[0]).toEqual(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-p", "2222", "-i", "/k/id", "root@165.1.2.3", "true"]);
   });
 
   it("ssh exit 255 (connection failure) is a transportError, not a dead process", async () => {
@@ -73,7 +73,7 @@ describe("sshMachine", () => {
     const { run, calls } = script({ scp: { code: 0 } });
     const m = sshMachine({ ...SPEC, port: 2222, keyPath: "/k/id" }, run);
     await m.copy("/tmp/f", "/root/dest");
-    expect(calls[0]).toEqual(["scp", "-o", "BatchMode=yes", "-P", "2222", "-i", "/k/id", "-r", "/tmp/f", "root@165.1.2.3:/root/dest"]);
+    expect(calls[0]).toEqual(["scp", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-P", "2222", "-i", "/k/id", "-r", "/tmp/f", "root@165.1.2.3:/root/dest"]);
   });
 
   it("copy failure throws with stderr", async () => {
