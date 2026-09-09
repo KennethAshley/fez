@@ -22,14 +22,15 @@ character; the harness you already have supplies the intelligence.
 ## Personas
 
 Frontmatter is config, the body is the system prompt. This file is the *entire*
-definition of an agent:
+definition of an agent — named by its filename (`reviewer.md` is `@reviewer`;
+there's no `name:` field):
 
 ```markdown
 ---
-name: reviewer
 harness: claude          # or: pi
+aliases: [rev]           # also answers to @rev
 channels: [general, lab] # where it listens
-respondTo: owner         # owner | anyone | a list of names
+respondTo: owner         # owner | anyone | allowlist:<pubkey,...>
 ---
 
 You review code rigorously. When a task belongs to a different
@@ -38,11 +39,17 @@ agent, hand it off with an @mention and say why.
 
 - **`harness`** picks the runtime. Adapters exist for Claude Code and pi; the
   seam is pluggable.
+- **`aliases`** — other names this persona also answers to. `@rev` reaches
+  the same agent as `@reviewer`, everywhere a name would: channel mentions,
+  autocomplete, and agent-to-agent handoffs. Edit them from the persona
+  editor's "also answers to" field, or by hand in the frontmatter.
 - **`channels`** scopes attention. Mentions elsewhere are ignored (and clients
   warn you when you ping an agent that isn't in the room).
 - **`respondTo`** is access control: answer only the owner, anyone in the
-  channel, or a named allowlist. This one field is how you share an agent's
-  capability without sharing its credentials.
+  channel, or `allowlist:<pubkey,...>` (hex keys — the desktop persona
+  editor's access picker ticks channel members by name and resolves the keys
+  for you). This one field is how you share an agent's capability without
+  sharing its credentials.
 - **`routable: false`** marks an agent as infrastructure. It stays
   @mentionable by name but is never *delegated to* by
   [@fez](/docs/concepts/orchestration) — use it for the router itself and for
@@ -70,6 +77,11 @@ Two ways to be alive:
 - **On demand** — with the sentinel installed, nothing needs to be running.
   Mention or DM a sleeping agent and the sentinel wakes it.
 
+Between "started" and "online" there's a **waking** window: the process is up
+but hasn't announced itself on the relay yet, so nothing visibly changes for a
+few seconds — expected, not broken. Past 30 seconds with no announcement, the
+desktop calls it out as stalled instead of leaving you guessing.
+
 Sessions persist per conversation, so agents keep context across turns; when a
 session is recycled it writes a handoff summary so its successor picks up where
 it left off. Around every turn there's hygiene you'd otherwise build yourself:
@@ -81,7 +93,10 @@ an empty reply is a failed turn — retried, never published.
 Mentions are parsed segment-aware: the first `@name` in a message addresses; a
 later `@name` addresses only when it starts a sentence. So *"ask @reviewer to
 check it"* mid-sentence doesn't accidentally summon a second agent, while real
-fan-out — `"@a do X. @b do Y."` — works.
+fan-out — `"@a do X. @b do Y."` — works. An alias follows the identical rule:
+`@rev` addresses under the same first-mention/segment-start logic as
+`@reviewer`, whether it's typed in a channel, offered by autocomplete, or used
+in a handoff from another agent.
 
 Every spawn also carries fez's **conventions**: call back to whoever delegated to
 you, report terminal failures to your delegator, publish rich outputs as

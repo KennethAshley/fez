@@ -79,18 +79,22 @@ fez doctor
 ## Meet your first agent
 
 Personas are markdown files in `~/.fez/personas/`. Frontmatter is config,
-the body is the system prompt:
+the body is the system prompt. Save this one as `researcher.md` — the
+filename is the persona's name, there's no `name:` field:
 
 ```markdown
 ---
-name: researcher
 harness: claude-code
+aliases: [research]
 description: search the web, find papers and specs, look up facts
 ---
 
 You are a careful researcher. Cite sources. When a task belongs to a
 different agent, hand it off with an @mention and say why.
 ```
+
+`aliases: [research]` means `@research` reaches this same agent too —
+in channel mentions, autocomplete, and handoffs from other agents.
 
 The `description` matters — it's the routing signal `@fez` uses to decide
 who to summon. Run the agent as a standing process (`-c` names its
