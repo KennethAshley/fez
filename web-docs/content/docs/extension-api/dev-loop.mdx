@@ -1,0 +1,75 @@
+---
+title: The dev loop
+description: Scaffold, link, iterate, publish.
+---
+
+## Scaffold
+
+```sh
+fez create my-extension            # default: headless + gui
+fez create my-extension --relay --workspace
+cd my-extension
+npm install && npm run build
+```
+
+`fez create` writes a typed skeleton against `@fezchat/extension-api` — a
+`src/` file per surface, the esbuild invocations that produce correct
+bundles (ESM for node surfaces, IIFE with `--global-name=__fezExt` and the
+`h` JSX factory for gui), `tsc --noEmit` as `check`, and a starter
+permission list. The generated permissions are a floor, not a ceiling —
+trim what you don't use.
+
+## Link
+
+```sh
+fez link .
+```
+
+In order: it reads your manifest, prints the **permission grants** your
+package asks for (before copying anything), builds, then places every part.
+The headless bundle is staged and **smoke-imported** first — a build that
+fails to import is deleted, not installed, so a broken build can never
+clobber a working extension. `--no-build` skips the build step.
+
+*(0.2.0)* `fez link . --watch` stays resident: it rebuilds on save (300 ms
+debounce) and re-copies parts, keeping the smoke-import guarantee.
+
+**There is no hot reload for headless parts.** The TUI and sentinel load
+extensions once at startup — the loop is *save → restart the surface*. Gui
+parts are the exception: the desktop reloads them live on install/update
+from its own gallery.
+
+One naming rule worth knowing: `fez link` installs under your package
+**directory's** basename, while `fez install` uses the de-scoped npm name
+(`@fezchat/polls` → `polls`). Keep the directory named like the de-scoped
+package and the two paths agree.
+
+## Test
+
+The repo's conformance evals are the pattern to copy: if you mirror API
+types instead of importing `@fezchat/extension-api`, a type-check against
+the host keeps the mirror honest (it may omit, never disagree). For logic,
+keep it in plain modules your parts share — `fez-polls` keeps vote tallying
+in one `format.ts` imported by the TUI command, the desktop card, and the
+agent tool, so all three hosts count votes identically.
+
+## Publish
+
+```sh
+npm publish --access public
+```
+
+Extensions are ordinary npm packages. Users install with
+`fez install @you/my-extension` (bare names resolve to the `@fezchat` scope,
+so third-party packages should be installed by full name), or from the
+desktop gallery — which downloads the tarball itself, no node or npm on the
+user's machine required.
+
+Ship `dist/` only (`files: ["dist"]`), bundle each part fully, and remember
+the desktop installer requires an **https** tarball URL and reads the same
+manifest.
+
+Tools have their own decentralized listing flow — `fez tool publish` signs
+an advertisement to the relay, `fez tool market` browses with install
+counts, and installing always prints the exact command that will run before
+writing anything. See [Tools](/docs/concepts/tools).

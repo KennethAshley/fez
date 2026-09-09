@@ -1,0 +1,86 @@
+---
+title: Relay & workspace surfaces
+description: Code inside the relay process, and checkouts for repo personas.
+---
+
+## Relay parts
+
+A relay part runs **inside the store process** — but only on a relay started
+with `--extensions`. Installing an extension and letting it into the event
+store are deliberately two acts, decided by the operator.
+
+```ts
+import type { RelayExtensionAPI } from "@fezchat/extension-api/relay";
+
+export default function activate(api: RelayExtensionAPI) {
+  api.registerHttpHandler({
+    handle(req, res) {
+      // return true = mine, I answered; false = fall through to NIP-11
+      return false;
+    },
+  });
+  api.advertise("fez_myext", { endpoint: "/myext" });
+}
+```
+
+The API:
+
+- `registerHttpHandler(handler)` — first handler to claim a request owns it;
+  unclaimed requests fall through to NIP-11.
+- `query(filter)` — **synchronous** reads of the store. This is how a relay
+  part authorizes against facts the workspace already signed — the roster
+  (kind 47102) and ban list (30047) — instead of inventing a second, weaker
+  permission model.
+- `advertise(key, value)` — add a field to the relay's NIP-11 document.
+  Namespace the key by package (`fez_git`, not `git`). The relay's own
+  fields always win, so this can never restate who owns the workspace. If
+  you serve something over HTTP you *must* advertise where it is — clients
+  deriving URLs from the websocket address break the moment a proxy moves
+  the surface.
+- `dataDir(name)` — a scratch directory under the relay's data root.
+- `origins` — the public origins the operator declared (`--origin`); needed
+  to verify NIP-98-signed requests behind a proxy.
+- `owner` — the workspace owner's pubkey, or `undefined` on an unclaimed
+  relay. Unclaimed means no roster can be valid: gate on membership and
+  **allow nobody**.
+- `log(line)` — prefixed with your extension's name.
+
+A relay part **holds no signing key** — it can record and serve, never speak
+on the network. Anything that must be *said* on the relay is said by a
+key-holding process (the sentinel) reading what the relay served. One broken
+relay extension is skipped with a log line rather than taking the relay down.
+
+`@fezchat/git` is the worked example: git-over-HTTP handlers, a NIP-11
+advertisement for the clone base, roster-checked pushes.
+
+## Workspace providers
+
+A workspace provider gives a `repo:` persona its checkout. The contract is a
+single default export — a function, not an API object:
+
+```ts
+import type { WorkspaceProvider } from "@fezchat/extension-api/workspace";
+
+const provide: WorkspaceProvider = async (req) => {
+  if (!isMine(req.repo)) return undefined;   // not mine — try the next provider
+  const dir = await cloneAndCheckout(req);   // throw = mine, and it FAILED
+  return { dir, branch: req.branch, empty: false };
+};
+export default provide;
+```
+
+The three outcomes are load-bearing:
+
+- **`undefined`** — "not mine"; the next provider (sorted by filename in
+  `~/.fez/workspace-providers/`) is asked.
+- **throw** — "mine, and it failed" — and it must propagate. An agent that
+  silently fell back to an empty scratch dir would run a whole turn, touch
+  nothing that matters, and report success.
+- **a value** — the checkout the agent runs in.
+
+The request carries `repo`, `base`, `branch` (one branch per agent, so
+pushes never race), `dir`, optional sparse-checkout `scope`, `relayUrl`
+(read its NIP-11 for anything advertised), and `secretKeyHex` — the
+**agent's own key**, because the agent works as itself. If no provider
+claims, the agent gets an ordinary scratch dir, which is right for a persona
+that named no repo.

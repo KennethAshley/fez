@@ -1,0 +1,4 @@
+{
+  "title": "Extension API",
+  "pages": ["index", "headless", "gui", "relay-workspace", "manifest", "dev-loop"]
+}

@@ -1,0 +1,106 @@
+---
+title: Trust & approval
+description: Who authorized what — approval gates, mechanical risk classification, and extension permissions.
+---
+
+Every actor in fez has a true name — a keypair no one issued and no one can
+revoke — and every event it emits is signed with it. So the question an agent
+raises, *who said it could do that?*, always has an answer written in
+cryptography, not trust. fez asks it in three places, and none of them rely on
+the agent's own good intentions.
+
+## Approval gates
+
+An agent about to do something irreversible calls `fez_request_approval`. That
+posts a message in the channel and **blocks** until you react ✅ or ❌.
+
+```
+⛔ approval needed: Run `rm -rf /tmp/scratch` — verified: 3 empty files
+(react ✅ to approve, ❌ to deny)
+```
+
+Your reaction is a signed event, so the approval is attributable forever. In the
+desktop app it renders as a card with buttons; from the TUI you react manually.
+A decision, once made, stands — clicking approve on an already-approved request
+does nothing rather than toggling it off.
+
+**Quorum.** A persona can carry `approvalQuorum: 2`, letting two channel members
+approve without you. That number comes from the persona file *you* wrote — an
+agent can never pick its own electorate, and its own key never counts toward its
+own gate.
+
+## Mechanical risk classification
+
+Asking nicely isn't a control. An agent that forgets the convention — or decides
+otherwise — used to just run the command, because the harness layer
+auto-approved every tool call.
+
+Now every tool call is **classified before it runs**. Dangerous ones stop and ask
+you, whatever the agent intended:
+
+```
+⛔ approval needed: rm -rf /tmp/scratch-dir
+(flagged automatically: recursive delete of a root, home, or wildcard path
+ — react ✅ to approve, ❌ to deny)
+```
+
+| level | examples | what happens |
+| --- | --- | --- |
+| `safe` | `ls`, `git status`, `rg`, reading files | runs |
+| `caution` | `git commit`, `git push`, `npm install`, editing files | runs |
+| `dangerous` | `rm -rf`, `git push --force`, `git reset --hard`, `DROP TABLE`, `sudo`, `terraform apply`, `npm publish`, `curl \| sh`, reading `~/.ssh` | blocks for approval |
+
+It **fails closed**: no owner, no channel to ask in, or no answer within five
+minutes all mean deny. A compound command is as dangerous as its worst part —
+`cd /tmp && rm -rf build` is one string to the shell.
+
+<Callout type="warn">
+Pattern-matching a shell string is a heuristic, not a sandbox. `eval`, base64,
+an aliased binary, or a script file all evade it. This buys accident-resistance
+and an audit trail, not containment — anything that truly must not happen needs
+OS-level isolation.
+</Callout>
+
+## Extension permissions
+
+An extension is code from a stranger. It declares what it needs; you see that
+list before anything runs; the host narrows the API to it.
+
+```json
+"fez": {
+  "permissions": ["read:channels", "publish", "commands", "ui", "background"]
+}
+```
+
+`fez install` (or `fez link`) shows the consent block, flagging the ones worth
+thinking about:
+
+```
+@fezchat/live-blocks asks for:
+  · Read messages in your channels (read:channels)
+  ⚠ Post messages, reactions, and docs AS YOU (publish)
+  · Add slash commands (commands)
+  ⚠ Run on a schedule while you're away (background)
+```
+
+| permission | grants |
+| --- | --- |
+| `read:channels` | read messages and channel state |
+| `read:dms` | read your private direct messages |
+| `read:agents` | see your agent roster and activity |
+| `publish` | post messages, reactions and docs **as you** |
+| `commands` | add slash commands |
+| `ui` | panels, themes, message cards, doc blocks |
+| `background` | run on a schedule while you're away |
+| `network:<host>` | connect to that host (`network:*` means anywhere) |
+
+Each extension gets its own narrowed API object. Withheld capabilities are
+absent, not merely discouraged — a call to one logs why it was ignored. In the
+desktop app, `fetch`, `WebSocket` and `XMLHttpRequest` are replaced inside the
+extension's scope, so network access is refused unless a matching `network:`
+grant exists. Packages that declare nothing get a legacy read-only grant.
+
+<Callout>
+A headless extension is still a Node module and can `require()` its way around
+this. Permissions are informed consent and an audit trail, not a jail.
+</Callout>

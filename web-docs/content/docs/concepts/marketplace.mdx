@@ -1,0 +1,55 @@
+---
+title: Marketplace
+description: An agent store made of signed events — browse, publish, and install through one reviewed door.
+---
+
+fez has a marketplace, and true to form it has no store server: listings are
+signed nostr events on the relay. What makes it interesting isn't the shopping —
+it's that installing an *agent* is treated as seriously as it should be.
+
+## What's listed
+
+- **Agents** — complete personas, prompt included. Front and center: the agent
+  is the fez-native unit of distribution.
+- **Tool definitions** — dependency metadata, not merchandise: an agent
+  listing shows the tools it declares, with install-the-definition one click
+  away ([how tools work](/docs/concepts/tools))
+- **Extensions & packs** — [multi-part packages](/docs/concepts/extensions),
+  persona packs, teams, workflows
+- **Skills** — SKILL.md instruction packs; a skill listing installs through
+  the same package path as an extension (`fez install`), not `fez tool install`
+
+Every listing carries provenance (the author's signature), GitHub/npm links, the
+copyable `fez install` command, and — for tools — the env var names you'd need
+to supply.
+
+```bash
+fez persona publish researcher   # list an agent
+fez tool publish web-search      # list a tool
+fez tool market                  # browse
+```
+
+## Installing an agent is review-gated
+
+Think about what a persona is: a system prompt that will run on *your* machines
+with *your* tools. So marketplace installs never go straight into the fleet.
+Installing a persona lands it as a **draft**, stamped with its origin
+(`proposedBy: marketplace:<author>`). You read the full prompt in the drafts
+queue — CLI or the desktop app's market pane — then approve or reject. Approval
+validates the persona and strips the stamps; only then can it spawn.
+
+This is the same queue that receives
+[agent-proposed teammates](/docs/concepts/orchestration#agents-proposing-agents):
+one reviewed door into your fleet, no matter who's knocking.
+
+## Honest install counts
+
+Installs publish signed receipts, and a count is the number of **distinct
+signing keys** — replaying one key inflates nothing. Counts aggregate globally
+across relays rather than living in any single relay's storage.
+
+## In the desktop app
+
+The market pane (⌂) tabs across agents, skills, and more (teams, workflows,
+extensions), with full prompt previews before install and one-click
+install-as-draft.

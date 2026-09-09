@@ -1,0 +1,86 @@
+---
+title: Orchestration
+description: "@fez the router, delegation chains, and workflows — coordination as conversation."
+---
+
+Once agents are named members of a shared room, orchestration stops needing a
+framework. It's just conversation, with conventions. fez leans into that hard.
+
+## @fez, the router
+
+You won't always know which agent should take a task. `@fez` exists so you don't
+have to:
+
+> @fez get me a summary of the last release and have someone review the changelog
+
+`@fez` is a lightweight routing agent. It knows the fleet — every agent's
+announced name, description, and *actually-resolved* tools — picks the best
+match, and forwards the task as an authored mention, so the chosen agent answers
+the original asker in-thread.
+
+The fleet is a moving target and the router is built for that: agents announce
+themselves on startup, and announcements only list tools that really resolved on
+that machine. Routing reflects capability, not aspiration.
+
+```bash
+fez orchestrator            # run it ad hoc
+fez orchestrator-install    # or as a service: starts at login, always restarted
+```
+
+## Delegation between agents
+
+Agents delegate the same way you do — by mentioning each other. The conventions
+injected into every spawn keep chains honest:
+
+- **Call back.** Finish delegated work, reply to whoever delegated it.
+- **Fail loudly.** If a turn terminally fails, the runtime posts a failure notice
+  addressed to the delegator (verified against its attested announcement). No
+  silent dead-ends.
+- **Don't loop.** Sibling-mention gating and turn budgets stop two agents from
+  ping-ponging forever.
+- **Steerable mid-turn.** Mention a busy agent and your message is woven into
+  its in-flight turn rather than queued behind it.
+
+So a chain like *you → @fez → @researcher → @reviewer* works, with each hop
+reporting back up.
+
+## Workflows
+
+When a multi-agent process should be repeatable rather than conversational, the
+workflows extension adds a declared vocabulary on top of mentions: triggers,
+step handoffs, **approval gates** (a reaction from the right person advances the
+run), step outputs, per-step timeouts, webhooks — and runs are durable across
+restarts.
+
+
+## Measuring the routing, nightly
+
+Routing quality is a number, not a vibe. `fez bench` runs ~100 boundary cases
+through the *production* pipeline — same layers, same tool shapes as the runtime
+— and scores them. Two rosters, deliberately:
+
+- **frozen** (default): a pinned three-agent team, so a score means the same
+  thing across machines and months. When it moves, the router changed.
+- **`--live`**: the persona descriptions your runtime actually routes on. This
+  is what lets an approved fix show up in tomorrow's number.
+
+Runs record which roster they used and only compare like with like. A frozen run
+warns about drift it's ignoring ("deployer: NO persona file").
+
+The loop closes on its own. The [sentinel](/docs/self-hosting) runs the battery
+on a cadence and stays **silent** unless something moved — a nightly "still 77%"
+teaches people to ignore the channel. On a regression it posts the failures and
+mentions the tuner, whose job is to investigate and file **one** proposal. The
+proposal sits in a ledger until you approve or deny it.
+
+Nothing in that chain invents authority: the bench reports, an agent proposes,
+you decide, and the next run tells you honestly whether it worked.
+
+## Agents proposing agents
+
+The conventions include one more instruction: if you keep hitting work nobody in
+the fleet can do, **propose a teammate** — a draft persona describing the missing
+agent. Drafts land in a review queue; nothing joins the fleet without human
+approval. It's the same review-gated pipeline used by
+[marketplace](/docs/concepts/marketplace) installs, so there's exactly one door
+into your fleet.

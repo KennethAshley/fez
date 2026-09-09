@@ -1,0 +1,99 @@
+---
+title: The manifest
+description: The fez key in package.json, and the permission vocabulary.
+---
+
+Everything fez needs to know about your package lives under the `fez` key in
+`package.json`, next to npm's own fields:
+
+```jsonc
+{
+  "name": "@you/fez-something",
+  "version": "0.1.0",
+  "type": "module",
+  "files": ["dist"],
+  "bin": { "my-tool": "dist/tool.js" },      // npm's own bin map → ~/.fez/bin
+
+  "fez": {
+    "type": "extension",                      // extension | integration | agent | persona-pack
+    "requires": ["gh"],                       // external binaries — reported, never installed
+    "permissions": ["commands", "ui", "read:channels"],
+    "parts": {
+      "headless":   "dist/headless.js",
+      "gui":        "dist/gui.js",
+      "relay":      "dist/relay-part.js",
+      "workspace":  "dist/workspace-part.js",
+      "skill":      { "command": "node", "args": ["dist/mcp.js"], "env": { "API_KEY": "" } },
+      "background": true
+    },
+    "personas": { "dir": "personas", "defaults": { "harness": "pi" } }
+  }
+}
+```
+
+Field notes:
+
+- **`fez.requires`** — declared rather than discovered, so "needs `gh`" is
+  data checkable at install, at startup, and on a second machine. fez never
+  installs these; it reports them. The failure it prevents is the quiet one:
+  an extension that loads, registers, runs, and silently does nothing.
+- **`parts.background: true`** is an *allowlist entry*, not a default —
+  without it the sentinel never loads your headless part at all. It's
+  distinct from the `background` *permission*: you need the part flag to be
+  loaded by the sentinel and the permission for `registerScheduledTask` to
+  work.
+- **`parts.skill`** merges into the user's `settings.json` `mcpServers`. Env
+  *names* come from you; *values* the user filled in are always preserved,
+  and secret values live in the OS keychain, never in listings.
+- **`fez.personas`** ships a persona pack: every `.md` in the directory is
+  validated before anything installs (one bad file rejects the pack), pack
+  `defaults` merge *under* each persona's own frontmatter, and existing
+  personas are never overwritten — hand-written files outrank pack contents.
+- **`minFezVersion`** *(0.2.0)* — the oldest fez your package promises to
+  work on. A package built against a newer API fails **at install**, naming
+  both versions — not three layers into someone's afternoon. `fez create`
+  stamps the scaffolding fez's own version.
+
+## Permissions
+
+Declare what you use. Installing shows the list to the user; the host then
+**narrows the API to the grant** — an undeclared capability is replaced by a
+no-op that logs why, once.
+
+| Permission | Grants | Sensitive |
+| --- | --- | --- |
+| `read:channels` | read messages; the `client` object | |
+| `read:dms` | unwrap the user's DMs | ⚠ |
+| `read:agents` | agent roster and activity | |
+| `publish` | post messages, reactions, docs **as the user** | ⚠ |
+| `sign` | sign, encrypt, and decrypt with the user's key, without publishing | ⚠ |
+| `commands` | slash commands, input handlers | |
+| `ui` | panels, cards, themes, navigation | |
+| `background` | scheduled tasks while the user is away | ⚠ |
+| `system-prompt` | standing instructions to all the user's agents | ⚠ |
+| `personas` | read and edit agent personas | ⚠ |
+| `processes` | run its own programs on the user's machine | ⚠ |
+| `notifications` | send native notifications | |
+| `network:relay` | HTTP to the workspace's own relay | |
+| `network:<host>` | that host (leading dot covers subdomains) | |
+| `network:*` | any server on the internet | ⚠ |
+
+Unrecognized ids grant nothing and are flagged at install. A package with
+parts but no `permissions` declaration gets the legacy read-only grant
+(`read:channels`, `read:agents`, `commands`, `ui`) — everything except the
+sensitive ones.
+
+The honest framing, straight from the source: this is **not a sandbox**. A
+headless extension is a Node module and can work around anything here; the
+GUI half is tighter (the host controls its scope, network, and sockets) but
+not airtight. The value is informed consent and accident-resistance — at
+install time the claim is "this is what it says it needs", not "this is all
+it can do".
+
+## Tools a persona declares
+
+The consumer side of tools lives in persona frontmatter: `mcpServers:
+[name]` or `[name=npm:@scope/pkg]`. Sources are restricted to `npm:`,
+`uvx:`, `pipx:`, and `http(s)://` — a spec can never name an arbitrary
+command, because a persona file arrives over the wire from whoever wrote it.
+Declaring is a request; installing is the approval.
