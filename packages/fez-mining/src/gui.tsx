@@ -1034,10 +1034,14 @@ export default function activate(api: GuiExtensionApi): void {
                       {m.uid !== undefined ? `uid ${m.uid}` : "unregistered"}
                       {m.machine?.kind === "lium" && m.machine.podId
                         ? ` · pod ${m.machine.podId}${m.machine.hourlyRate ? ` · $${m.machine.hourlyRate}/hr` : ""}`
-                        : " · local"}
+                        : m.machine?.kind === "ssh"
+                          ? ` · ssh ${m.machine.user}@${m.machine.host}${m.machine.port ? `:${m.machine.port}` : ""}`
+                          : " · local"}
                       {m.machine?.kind === "lium" && m.machine.externalIp && m.machine.externalPort
                         ? ` · ${m.machine.externalIp}:${m.machine.externalPort}`
-                        : ""}
+                        : m.machine?.kind === "ssh" && m.machine.servePort
+                          ? ` · serving :${m.machine.servePort}`
+                          : ""}
                       {m.alive && m.startedAt ? ` · up since ${new Date(m.startedAt).toLocaleString()}` : ""}
                     </div>
                     {m.attention ? (
@@ -1049,8 +1053,9 @@ export default function activate(api: GuiExtensionApi): void {
                       metricStrip(metagraphByKey[k])
                     ) : (
                       <div className="skill-desc" style={{ color: "var(--red, #fb4934)", marginTop: 4 }}>
-                        {requirementsByNetuid[m.netuid]?.publicEndpoint && m.machine?.kind !== "lium"
-                          ? `Not running — ${subnetName(m.netuid)} needs a reachable endpoint a local Mac can't provide. Restart on a Lium pod, or open the thread for logs.`
+                        {/* absent machine = local (v1 shape) — remote kinds all have a reachable endpoint */}
+                        {requirementsByNetuid[m.netuid]?.publicEndpoint && !m.machine
+                          ? `Not running — ${subnetName(m.netuid)} needs a reachable endpoint a local Mac can't provide. Restart on a Lium pod or your own server, or open the thread for logs.`
                           : `Not running${m.lastExit ? ` — ${m.lastExit}` : ""}. Restart, or open the thread for logs.`}
                       </div>
                     )}
@@ -1368,10 +1373,14 @@ export default function activate(api: GuiExtensionApi): void {
           {status?.uid !== undefined ? ` · uid ${status.uid}` : " · unregistered"}
           {status?.machine?.kind === "lium" && status.machine.podId
             ? ` · pod ${status.machine.podId}${status.machine.hourlyRate ? ` · $${status.machine.hourlyRate}/hr` : ""}`
-            : ""}
+            : status?.machine?.kind === "ssh"
+              ? ` · ssh ${status.machine.user}@${status.machine.host}${status.machine.port ? `:${status.machine.port}` : ""}`
+              : ""}
           {status?.machine?.kind === "lium" && status.machine.externalIp && status.machine.externalPort
             ? ` · ${status.machine.externalIp}:${status.machine.externalPort}`
-            : ""}
+            : status?.machine?.kind === "ssh" && status.machine.servePort
+              ? ` · serving :${status.machine.servePort}`
+              : ""}
           {status?.startedAt ? ` · started ${new Date(status.startedAt).toLocaleString()}` : ""}
           {status?.lastExit ? ` · ${status.lastExit}` : ""}
         </div>
