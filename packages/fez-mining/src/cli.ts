@@ -6,8 +6,10 @@ import path from "node:path";
 import type { MinerEntry, MinerMachineState } from "./state.js";
 import { fezHome, readState, writeState, upsertMiner } from "./state.js";
 import { loadDescriptors } from "./descriptors.js";
+import { containerLogs, stopContainerMiner } from "./container-runner.js";
 import { teardownPod } from "./machine-lium.js";
 import { parseSshTarget } from "./machine-ssh.js";
+import { resolveMachine } from "./run.js";
 import { alive, kill, spawnDetached } from "./procs.js";
 import { lium, parseJson, priceOf } from "@fezchat/lium/cli";
 import { deleteSecret, getSecret, setSecret } from "./secrets.js";
@@ -231,6 +233,25 @@ async function cmdStop(netuid: number, persona: string, json: boolean): Promise<
         freshEntry.machine?.kind === "lium" ? { ...freshEntry.machine, podId: undefined } : freshEntry.machine;
       await writeState(home, upsertMiner(fresh, { ...freshEntry, desired: "stopped", pid: undefined, machine }));
     }
+    // A container miner's remote process is reachable by name even when
+    // the local runner is long gone — kill it too, best-effort. Lium is
+    // excluded on purpose: teardownPod above already destroyed the whole
+    // pod, and resolveMachine's lium branch has no "reattach-only" mode —
+    // a cleared/missing podId falls through to a FRESH provisionPod, which
+    // would rent a brand-new pod just to stop it. ssh (owned) hosts have
+    // no such teardown step, so their container can outlive this call.
+    if (freshEntry?.machine?.kind === "ssh") {
+      const descriptor = (await loadDescriptors(home)).find((x) => x.netuid === netuid);
+      if (descriptor?.container) {
+        try {
+          const { machine } = await resolveMachine(freshEntry, persona, {});
+          await stopContainerMiner(machine, netuid, persona);
+          console.error(`stopped container fez-${netuid}-${persona}`);
+        } catch {
+          console.error(`container fez-${netuid}-${persona} may still be running on the machine`);
+        }
+      }
+    }
   }
   if (json) console.log(JSON.stringify({ netuid, persona, stopped: true }));
   else console.log(`stopped ${persona} on netuid ${netuid}`);
@@ -362,12 +383,29 @@ export function tailLines(text: string, n: number): string {
 // `miner.log` (the runner's own bookkeeping — see run.ts's localDir); most
 // descriptors only ever write the latter. Prints nothing (not an error) when
 // neither file exists yet — a miner that hasn't logged anything, not a bug.
-function cmdLogs(netuid: number, persona: string, lines: number): void {
+async function cmdLogs(netuid: number, persona: string, lines: number): Promise<void> {
   const dir = path.join(fezHome(), "mining", `${netuid}-${persona}`);
   const childLog = path.join(dir, "miner-child.log");
   const file = existsSync(childLog) ? childLog : path.join(dir, "miner.log");
-  if (!existsSync(file)) return;
-  console.log(tailLines(readFileSync(file, "utf8"), lines));
+  if (existsSync(file)) console.log(tailLines(readFileSync(file, "utf8"), lines));
+  // Container descriptors also run on the machine itself — append the
+  // container's own stdout after the local tail. ssh (owned) hosts only:
+  // a lium entry with no live pod would otherwise make resolveMachine
+  // PROVISION A FRESH POD just to read logs (its lium branch has no
+  // reattach-only mode) — the same billing trap `stop` avoids above.
+  const home = fezHome();
+  const entry = await findMiner(home, netuid, persona);
+  if (entry?.machine?.kind !== "ssh") return;
+  const descriptor = (await loadDescriptors(home)).find((d) => d.netuid === netuid);
+  if (!descriptor?.container) return;
+  try {
+    const { machine } = await resolveMachine(entry, persona, {});
+    const remote = await containerLogs(machine, netuid, persona, lines);
+    console.log("--- container ---");
+    console.log(remote);
+  } catch {
+    // Best-effort — local tail already printed above.
+  }
 }
 
 // GUI calls this right after posting the #mining root message; the headless
@@ -510,7 +548,7 @@ async function main(): Promise<void> {
       break;
     case "logs":
       if (netuidValue === undefined || !personaValue) usage();
-      cmdLogs(netuidValue, personaValue, linesValue);
+      await cmdLogs(netuidValue, personaValue, linesValue);
       break;
     default:
       usage();

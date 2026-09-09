@@ -13,6 +13,7 @@ function homeWithFixture(): string {
   mkdirSync(path.join(home, "miners"), { recursive: true });
   cpSync(path.join(here, "fixtures", "machine-miner.js"), path.join(home, "miners", "machine-miner.js"));
   cpSync(path.join(here, "fixtures", "workdir-miner.js"), path.join(home, "miners", "workdir-miner.js"));
+  cpSync(path.join(here, "fixtures", "container-fixture.js"), path.join(home, "miners", "container-fixture.js"));
   return home;
 }
 
@@ -435,5 +436,31 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
       else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
     }
+  });
+});
+
+describe("container descriptor routing", () => {
+  it("a container descriptor runs through docker verbs, not script hooks", async () => {
+    const home = homeWithFixture();
+    let s = await readState(home);
+    s = upsertMiner(s, { netuid: 9996, persona: "p", hotkey: "5FAKE", desired: "running" });
+    await writeState(home, s);
+    const execs: string[] = [];
+    const machine = {
+      kind: "ssh" as const,
+      ports: [],
+      exec: async (cmd: string) => {
+        execs.push(cmd);
+        if (cmd.includes("docker wait")) return { code: 0, stdout: "0\n", stderr: "" };
+        return { code: 0, stdout: cmd.includes("docker -v") ? "Docker version 27" : "", stderr: "" };
+      },
+      copy: async () => {},
+    };
+    const code = await runMiner(9996, "p", home, { hotkey: "5FAKE", machineFactory: async () => machine });
+    expect(code).toBe(0);
+    const joined = execs.join(" || ");
+    expect(joined).toContain("docker pull");
+    expect(joined).toContain("docker run -d");
+    expect(joined).toContain("docker wait 'fez-9996-p'");
   });
 });

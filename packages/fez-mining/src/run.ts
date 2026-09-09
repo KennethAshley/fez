@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import type { MinerMachine } from "@fezchat/extension-api";
 import { DEFAULT_MAX_USD_HOUR } from "@fezchat/lium/cli";
+import { ensureDocker, runContainerMiner } from "./container-runner.js";
 import { loadDescriptors } from "./descriptors.js";
 import { describePod, escapeShellValue, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
 import type { LiumExec, Recorder } from "./machine-lium.js";
@@ -376,16 +377,27 @@ export async function runMiner(
       await record({ pid: process.pid, startedAt: Date.now(), ...(machineState ? { machine: machineState } : {}) });
     }
 
-    if (d.install) await d.install(ctx);
     // The registered flag is host-side bookkeeping (localDir), not
     // ctx.workDir — it tracks whether THIS runner has already driven
     // register() once, independent of whatever machine mined that time.
     const flag = path.join(localDir, "registered");
-    if (d.register && !(await fs.access(flag).then(() => true, () => false))) {
-      await d.register(ctx);
-      await fs.writeFile(flag, "1");
+    if (d.container) {
+      await ensureDocker(machine, log);
+      const registered = await fs.access(flag).then(() => true, () => false);
+      const exit = await runContainerMiner({
+        machine, container: d.container, netuid, persona,
+        workDir, config: ctx.config, registered, log,
+      });
+      if (d.container.register && !registered) await fs.writeFile(flag, "1");
+      if (exit !== 0) throw new Error(`container miner exited ${exit}`);
+    } else {
+      if (d.install) await d.install(ctx);
+      if (d.register && !(await fs.access(flag).then(() => true, () => false))) {
+        await d.register(ctx);
+        await fs.writeFile(flag, "1");
+      }
+      await d.start(ctx);
     }
-    await d.start(ctx);
   } catch (e) {
     log(`miner error: ${(e as Error).message}`);
     code = 1;
