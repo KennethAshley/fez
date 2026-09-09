@@ -87,3 +87,13 @@ describe("stackFor — subnet stacking components", () => {
     expect(stackFor(7, undefined)).toEqual([]);
   });
 });
+
+describe("release freeze", () => {
+  it("a frozen curated subnet is marked and never mineable-ranked", () => {
+    const rows = subnetRows([{ netuid: 56, name: "gradients" }], [56], [], [56]);
+    expect(rows[0]).toMatchObject({ curated: true, frozen: true });
+  });
+  it("unlisted netuids stay unfrozen", () => {
+    expect(subnetRows([{ netuid: 553, name: "bazaar" }], [553], [], [56])[0].frozen).toBe(false);
+  });
+});

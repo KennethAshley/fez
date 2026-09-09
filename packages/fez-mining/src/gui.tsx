@@ -1,7 +1,7 @@
 import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
 import type { ConfigField } from "@fezchat/extension-api";
 import type { MinerEntry, Subnet } from "./state.js";
-import { subnetRows, machineChoices, initialFormValues, stackFor, HARDWARE_GATED, type MachineChoice, type ConfigFormValues } from "./gui-rows.js";
+import { subnetRows, machineChoices, initialFormValues, stackFor, HARDWARE_GATED, RELEASE_FROZEN, type MachineChoice, type ConfigFormValues } from "./gui-rows.js";
 import { validateConfig } from "./config.js";
 import { MINING_SOURCE, MINING_CHANNEL_NAME, minerRootLine, parseMinerRoot } from "./thread.js";
 import { ensureMiningSkill, removeMiningSkill } from "./persona-skill.js";
@@ -971,9 +971,9 @@ export default function activate(api: GuiExtensionApi): void {
     // (mineable → needs-hardware → not-yet-supported) and the long tail of
     // agent-run subnets stays collapsed until you ask for it or search —
     // otherwise 100+ dim rows bury everything above them.
-    const catalogRows = subnetRows(subnets, covered, HARDWARE_GATED);
-    const readyRows = catalogRows.filter((r) => r.curated && !r.gated);
-    const statusRank = (r: (typeof catalogRows)[number]): number => (r.curated && !r.gated ? 0 : r.gated ? 1 : 2);
+    const catalogRows = subnetRows(subnets, covered, HARDWARE_GATED, RELEASE_FROZEN);
+    const readyRows = catalogRows.filter((r) => r.curated && !r.gated && !r.frozen);
+    const statusRank = (r: (typeof catalogRows)[number]): number => (r.curated && !r.gated && !r.frozen ? 0 : r.gated || r.frozen ? 1 : 2);
     const sortedRows = [...catalogRows].sort((a, b) => statusRank(a) - statusRank(b) || a.netuid - b.netuid);
     const q = subnetFilter.trim().toLowerCase();
     const searching = q.length > 0;
@@ -1164,7 +1164,7 @@ export default function activate(api: GuiExtensionApi): void {
                 <p style={dim}>{searching ? `No subnets match “${subnetFilter}”.` : "No subnets yet — Refresh to load the catalog."}</p>
               ) : (
                 tableRows.map((r) => {
-                  const mineable = r.curated && !r.gated;
+                  const mineable = r.curated && !r.gated && !r.frozen;
                   return (
                     <div
                       key={r.netuid}
@@ -1181,6 +1181,8 @@ export default function activate(api: GuiExtensionApi): void {
                       </div>
                       {mineable ? (
                         <span style={{ color: "var(--green, #b8bb26)", flex: "none" }}>● Mineable</span>
+                      ) : r.frozen ? (
+                        <span style={{ color: "var(--yellow, #fabd2f)", flex: "none" }}>◐ Coming soon</span>
                       ) : r.gated ? (
                         <span style={{ color: "var(--yellow, #fabd2f)", flex: "none" }}>◐ Needs hardware</span>
                       ) : (
@@ -1202,7 +1204,7 @@ export default function activate(api: GuiExtensionApi): void {
     );
   }
 
-  api.registerNavView("mining", { glyph: "⛏", label: "Mining" }, () => <MiningPage />);
+  api.registerNavView("mining", { glyph: "⛏", label: "Mining (beta)" }, () => <MiningPage />);
 
   // The thread-view card: one root per (netuid, persona), rendered above
   // its replies in #mining. Status + a log tail poll every 10s; config is

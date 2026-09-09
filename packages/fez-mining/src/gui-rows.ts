@@ -7,6 +7,16 @@ export type ConfigFormValues = Record<string, string | number | boolean>;
 // replace this hardcoded list later.
 export const HARDWARE_GATED: number[] = [4];
 
+/**
+ * Release freeze (2026-09-09, ship-week call): descriptors that exist but
+ * are not offered yet. Gradients waits on its published image — the
+ * placeholder digest would fail at pull, and an erroring tile is not a
+ * release look. Distinct from HARDWARE_GATED, which states a hardware
+ * truth; this states a readiness truth. Unfreeze = delete the netuid here
+ * (and paste the real image digest in fez-gradients).
+ */
+export const RELEASE_FROZEN: number[] = [56];
+
 export type MachineChoice = "local" | "lium" | "ssh" | "do";
 
 /**
@@ -75,9 +85,14 @@ export function stackFor(netuid: number, req?: { gpu?: string; publicEndpoint?: 
   return [...curated, ...machine];
 }
 
-export function subnetRows(subnets: Subnet[], covered: number[], gated: number[] = []) {
+export function subnetRows(subnets: Subnet[], covered: number[], gated: number[] = [], frozen: number[] = []) {
   return subnets
-    .map((s) => ({ ...s, curated: covered.includes(s.netuid), gated: gated.includes(s.netuid) }))
+    .map((s) => ({
+      ...s,
+      curated: covered.includes(s.netuid),
+      gated: gated.includes(s.netuid),
+      frozen: frozen.includes(s.netuid),
+    }))
     .sort((a, b) => Number(b.curated) - Number(a.curated) || a.netuid - b.netuid);
 }
 
