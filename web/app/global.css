@@ -2,6 +2,137 @@
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
+/* ── fez docs skin ─────────────────────────────────────────────────────
+   The docs wear the same clothes as the rest of the site: true black,
+   ember (#FF6A00), hairlines, and the sprite palette's own neutrals
+   (BONE #e8e2d9, DUST #6d645a — see components/qud/sprites.ts). Chrome
+   and headings speak IBM Plex Mono (the terminal voice); article prose
+   reads in IBM Plex Sans. Dark-only, like the home pages. */
+:root {
+  --fez-bg: #000000;
+  --fez-fg: #a3a3a3;
+  --fez-bone: #e8e2d9;
+  --fez-ember: #ff6a00;
+  --fez-dust: #6d645a;
+  --fez-hairline: #262626;
+  --fez-panel: #0b0b0b;
+
+  --color-fd-background: var(--fez-bg);
+  --color-fd-foreground: var(--fez-fg);
+  --color-fd-muted: var(--fez-panel);
+  --color-fd-muted-foreground: var(--fez-dust);
+  --color-fd-popover: var(--fez-panel);
+  --color-fd-popover-foreground: var(--fez-fg);
+  --color-fd-card: var(--fez-bg);
+  --color-fd-card-foreground: var(--fez-fg);
+  --color-fd-border: var(--fez-hairline);
+  --color-fd-primary: var(--fez-ember);
+  --color-fd-primary-foreground: #000000;
+  --color-fd-secondary: var(--fez-panel);
+  --color-fd-secondary-foreground: var(--fez-bone);
+  --color-fd-accent: #161616;
+  --color-fd-accent-foreground: var(--fez-bone);
+  --color-fd-ring: var(--fez-ember);
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+/* Square corners — the whole site draws hairline boxes, never pills. */
+#nd-docs-layout *,
+#nd-nav * {
+  border-radius: 0 !important;
+}
+
+::selection {
+  background: var(--fez-ember);
+  color: #000;
+}
+
+/* Chrome speaks mono: nav, sidebar, page tree, TOC, breadcrumbs. */
+#nd-nav,
+#nd-sidebar,
+#nd-tocnav,
+#nd-toc {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+/* Headings are terminal artifacts: mono, BONE, tight. */
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  font-family: var(--font-mono);
+  color: var(--fez-bone);
+  letter-spacing: -0.01em;
+}
+.prose h1 { font-size: 1.75rem; font-weight: 600; }
+.prose h2 { font-size: 1.25rem; font-weight: 600; }
+.prose h3 { font-size: 1.05rem; font-weight: 500; }
+
+.prose {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--fez-fg);
+}
+.prose strong { color: var(--fez-bone); }
+
+/* Links are ember, quiet until touched. */
+.prose a {
+  color: var(--fez-ember);
+  text-decoration: none;
+}
+.prose a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Code: mono on a barely-lifted panel, delineated by the hairline. */
+.prose code {
+  font-family: var(--font-mono);
+  color: var(--fez-bone);
+}
+.prose :not(pre) > code {
+  background: var(--fez-panel);
+  border: 1px solid var(--fez-hairline);
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+}
+.prose pre {
+  background: var(--fez-panel) !important;
+  border: 1px solid var(--fez-hairline);
+}
+
+/* Sidebar: the active page gets an ember rule, not a filled pill. */
+#nd-sidebar a[data-active='true'] {
+  color: var(--fez-ember);
+  background: transparent;
+  border-left: 2px solid var(--fez-ember);
+  margin-left: -2px;
+}
+#nd-sidebar a:hover {
+  color: var(--fez-bone);
+}
+
+/* Callouts as hairline left-rules, never tinted cards. */
+.prose [data-callout],
+.nd-callout {
+  background: transparent;
+  border: 1px solid var(--fez-hairline);
+  border-left: 2px solid var(--fez-dust);
+}
+.prose [data-callout='warn'],
+.prose [data-callout='warning'] {
+  border-left-color: var(--fez-ember);
+}
+
+:focus-visible {
+  outline: 2px solid var(--fez-ember);
+  outline-offset: 2px;
+}
+
 html {
   scrollbar-gutter: stable;
 }

@@ -1,16 +1,32 @@
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import './global.css';
-import { Inter } from 'next/font/google';
+import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 
-const inter = Inter({
+// The site's voice is terminal-native (the home pages are all-mono on
+// black). Docs read long, so prose gets a sans — but the same Plex
+// superfamily, so chrome and body are siblings, not strangers.
+const plexSans = IBM_Plex_Sans({
   subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-plex-sans',
+});
+const plexMono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-plex-mono',
 });
 
 export default function Layout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="en" className={inter.className} suppressHydrationWarning>
+    // Dark-only on purpose: the whole site commits to the black/ember
+    // look; a theme toggle here would fork the brand in half.
+    <html
+      lang="en"
+      className={`${plexSans.variable} ${plexMono.variable} dark`}
+      suppressHydrationWarning
+    >
       <body className="flex flex-col min-h-screen">
-        <RootProvider>{children}</RootProvider>
+        <RootProvider theme={{ enabled: false, forcedTheme: 'dark' }}>{children}</RootProvider>
       </body>
     </html>
   );
