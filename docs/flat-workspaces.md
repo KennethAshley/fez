@@ -1,6 +1,11 @@
 # Flat workspaces: the relay is the community
 
-**Status:** scoped, not started. Supersedes the open half of #103.
+**Status:** relay + protocol + client core shipped 2026-08-19 (commit
+`26ac00d`: NIP-11 `owner`, `--owner`/`--name`/`--description` on
+`fez-relay`, `claimWorkspace()`, the unclaimed-workspace refusal, `Scope`
+down to `channelId` in `@fezchat/client`). The GUI phase (workspace rail,
+per-relay profile, onboarding-that-adds) and the extension API bump have
+not landed. Supersedes the open half of #103.
 
 ## The shape we want
 
@@ -10,9 +15,9 @@ workspace; you switch channels inside it. Two levels, not three.
 
 That is the model this document moves fez to.
 
-## What is true today
+## What was true before this shipped
 
-fez has three levels — relay → communities → channels — because a community is
+fez had three levels — relay → communities → channels — because a community is
 its own signed event (kind 47100) that lives *on* a relay. One relay can hold
 many. Measured on the actual relays:
 
@@ -91,7 +96,7 @@ author gate exist to keep away from it.
 
 ## Wire changes
 
-| kind | today | after |
+| kind | before | shipped |
 |---|---|---|
 | 47100 community | creator-signed, `["d", communityId]` | **retired** |
 | 47101 channel | `["d", channelId]`, `["c", communityId]` | owner-signed, drop `c` |
@@ -164,17 +169,18 @@ already carry `h` and need nothing), but it is not built.
 
 ## Phases
 
-1. **Relay + protocol.** NIP-11 `owner`, owner-signature verification in
-   fez-relay's ingest policy, kinds registry updated. Evals for "an event
-   signed by a non-owner claiming to create a channel is rejected".
-2. **Client core.** `@fezchat/client` drops `Community`; `Scope` becomes
-   `channelId`. This is where most of the 530 live.
-3. **Migration script** with a dry run, then run it on both relays.
-4. **GUI.** Workspace rail in settings, per-relay profile, onboarding that adds
-   instead of creates.
-5. **Extensions.** Bump the API, update the six that carry `communityId`.
-
-Phases 1–3 are the protocol change and must land together. 4 and 5 can follow.
+1. **Relay + protocol.** Shipped 2026-08-19 (`26ac00d`). NIP-11 `owner`,
+   owner-signature verification in fez-relay's ingest policy, kinds
+   registry updated.
+2. **Client core.** Shipped alongside it. `@fezchat/client` drops
+   `Community` (`community-state.ts` → `workspace-state.ts`); `Scope` is
+   `channelId`.
+3. ~~Migration script~~ — decided against; see *Migration — not needed*
+   above.
+4. **GUI.** Not started. Workspace rail in settings, per-relay profile,
+   onboarding that adds instead of creates.
+5. **Extensions.** Not started. Bump the API, update the six that carry
+   `communityId`.
 
 ## Open questions
 

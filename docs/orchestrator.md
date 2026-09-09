@@ -96,31 +96,6 @@ You: @ditto store this huge file (500MB)
     - Use direct Hippius upload
 ```
 
-## Orchestrator States
-
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Minimal    │────►│  Assisted    │────►│  Delegated   │
-│  (tiny/local)│     │  (local LLM) │     │  (cloud LLM) │
-└──────────────┘     └──────────────┘     └──────────────┘
-
-Minimal:     Basic chat, simple routing, suggests installs
-Assisted:    Better intent parsing, multi-step planning, context memory
-Delegated:   Full reasoning, complex orchestration, agent composition
-```
-
-| Mode | Model | Use Case |
-|------|-------|----------|
-| **Minimal** | a tiny local router | No internet, no API keys, just chat and route |
-| **Assisted** | ollama (local 7B) | Better understanding, can plan multi-agent workflows |
-| **Delegated** | Claude/GPT (cloud) | Complex reasoning, best routing decisions, rich context |
-
-The user upgrades the Orchestrator as needed:
-```bash
-fez --model llama3.1    # switch to local ollama
-fez --model claude      # switch to Anthropic API
-```
-
 ## The Orchestrator is Also a Nostr Agent
 
 Wait — the Orchestrator itself is just another agent. It:
@@ -129,29 +104,35 @@ Wait — the Orchestrator itself is just another agent. It:
 - Subscribes to your messages (as events)
 - Publishes responses (as events)
 
-The difference: it runs **locally** inside the Fez TUI process, not on a remote server.
+The difference from `@ditto`, `@review`, and the rest: nothing — `@fez`
+is a standalone standing agent process, started the same way
+(`fez run packages/fez-orchestrator/dist/orchestrator.js -r ws://...`),
+not code embedded inside the TUI. It defaults to a **hosted** endpoint
+(a fez-run router serving Qwen3-0.6B) so `@fez` works with nothing
+installed; pointing `FEZ_ORCHESTRATOR_URL` at a local ollama or
+llama.cpp server is equally first-class and changes nothing else. See
+`packages/fez-orchestrator/README.md` for the full seam.
 
 ```
-┌─────────────────────────────────────────┐
-│              fez TUI                     │
-│                                          │
-│  ┌─────────────────────────────────────┐ │
-│  │  Orchestrator Agent (local)        │ │
-│  │  • pubkey: <local-key>             │ │
-│  │  • model: any OpenAI-compatible   │ │
-│  │  • role: router + helper            │ │
-│  └─────────────────────────────────────┘ │
-│                    │                     │
-│                    ▼                     │
-│           Nostr Event Bus                │
-│           (relay or p2p)                │
-│                    │                     │
-│         ┌────────┼────────┐             │
-│         ▼        ▼        ▼             │
-│     ┌───────┐ ┌───────┐ ┌───────┐       │
-│     │@ditto │ │@review│ │@chutes │       │
-│     └───────┘ └───────┘ └───────┘       │
-└─────────────────────────────────────────┘
+┌───────────────────────────┐
+│   @fez orchestrator        │        (standalone process,
+│   • pubkey: <service-key>  │         `fez run orchestrator.js`)
+│   • model: any OpenAI-     │
+│     compatible endpoint    │
+│     (hosted by default)    │
+│   • role: router only      │
+└─────────────┬───────────────┘
+              │
+              ▼
+       Nostr Event Bus
+       (relay or p2p)
+              │
+      ┌───────┼────────┐
+      ▼       ▼        ▼
+  ┌───────┐┌───────┐┌────────┐   ┌──────────────┐
+  │@ditto ││@review││@chutes │   │  fez TUI /   │
+  └───────┘└───────┘└────────┘   │  Buzz client │
+                                  └──────────────┘
 ```
 
 ## Why This Is Powerful
@@ -184,15 +165,6 @@ Terminal App (fez)
 
 The **protocol is the constant**. The **interface is the variable**.
 
-## Implementation Priority
-
-1. **Minimal Orchestrator** (a tiny router) — Basic chat, parse @mentions, suggest agents
-2. **Agent SDK** — So people can build @ditto, @hindsight
-3. **TUI** — Terminal chat interface
-4. **Assisted Orchestrator** (ollama) — Better routing, multi-step planning
-5. **Buzz Interface** — Web/desktop app with channels and threads
-6. **Delegated Orchestrator** (cloud) — Advanced reasoning, agent composition
-
 ## The One-Sentence Vision
 
-> **Fez is a chat interface where a local orchestrator understands your intent, routes to specialized agents over Nostr, and progressively becomes smarter as you install more capabilities.**
+> **Fez is a chat interface where an orchestrator understands your intent, routes to specialized agents over Nostr, and progressively becomes smarter as you install more capabilities.**
