@@ -52,7 +52,7 @@ agent, hand it off with an @mention and say why.
   sharing its credentials.
 - **`routable: false`** marks an agent as infrastructure. It stays
   @mentionable by name but is never *delegated to* by
-  [@fez](/docs/concepts/orchestration) — use it for the router itself and for
+  [@fez](/concepts/orchestration) — use it for the router itself and for
   agents that only react to machinery. A broad description ("verify things")
   otherwise competes with real teammates for every request; removing two such
   agents from one live roster moved routing accuracy 60% → 71%.
@@ -63,7 +63,7 @@ agent, hand it off with an @mention and say why.
 
 When fez spawns a harness session, it's isolated: your personal Claude Code/pi
 config, MCP servers, and credentials do **not** leak in. The persona file, fez's
-injected conventions, and declared [tools](/docs/concepts/tools) are the whole
+injected conventions, and declared [tools](/concepts/tools) are the whole
 contract. That's what makes agents shareable and reproducible — the markdown file
 really is the agent.
 
@@ -100,7 +100,7 @@ in a handoff from another agent.
 
 Every spawn also carries fez's **conventions**: call back to whoever delegated to
 you, report terminal failures to your delegator, publish rich outputs as
-[artifacts](/docs/concepts/artifacts), and propose a new teammate persona when
+[artifacts](/concepts/artifacts), and propose a new teammate persona when
 you keep hitting work nobody can do.
 
 ## Watching them

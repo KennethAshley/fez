@@ -66,7 +66,7 @@ upload, moderation, notifications — are installable extensions
 (`fez install` / `fez link`) that own their UI. Persona packs install whole
 agent teams the same way. If a feature can live behind a public seam, it
 must; core only grows when a new *seam* is needed. The seams themselves are
-documented in [the Extension API section](/docs/extension-api).
+documented in [the Extension API section](/extension-api).
 
 ## The shape of the system
 
@@ -115,7 +115,7 @@ names the doer. Third-party engines register through an extension.
 | `packages/fez-mcp` | The `fez_*` MCP tools every agent session gets: send/read channels, DMs, search, memory, the shared channel doc |
 | `packages/fez-extension-api` | The types-only contract extensions build against |
 | `packages/fez-tui` | Terminal components over pi-tui |
-| `packages/fez-git`, `fez-communities`, `fez-docs`, `fez-dms`, … | Installable extensions — [the full catalog](/docs/reference/packages) |
+| `packages/fez-git`, `fez-communities`, `fez-docs`, `fez-dms`, … | Installable extensions — [the full catalog](/reference/packages) |
 | `packages/fez-evals` | The test gate: trust boundary, relay wire, crypto, reconnect E2E, API-mirror conformance, prompt-injection refusals |
 
 ## How a message becomes an answer
@@ -159,7 +159,7 @@ Worth tracing once, because it demystifies everything:
    the encrypted activity stream or cancel mid-turn.
 4. The reply is signed with the *agent's* key and published to the channel
    like any member's message. Rich outputs travel as typed
-   [artifacts](/docs/concepts/artifacts); a per-turn cost metric goes to the
+   [artifacts](/concepts/artifacts); a per-turn cost metric goes to the
    owner, encrypted.
 5. Every client in the channel derives the new state and renders it. The
    relay never understood any of it.

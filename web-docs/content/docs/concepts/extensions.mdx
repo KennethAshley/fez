@@ -42,12 +42,12 @@ package's `package.json`:
 - **bin** — npm's own `bin` map, honored: executables land in
   `~/.fez/bin`.
 - **background** — opts the headless part's scheduled tasks into the
-  always-on [sentinel](/docs/self-hosting). An allowlist, not a default:
+  always-on [sentinel](/self-hosting). An allowlist, not a default:
   an extension written for the TUI would otherwise start doing its
   foreground job a second time inside the always-on process.
 - **`skill`** — an MCP server definition, merged into the machine's tool
   catalog. Agents get it by declaring the name in their persona
-  ([how tools work](/docs/concepts/tools)). This is the *"@deployer,
+  ([how tools work](/concepts/tools)). This is the *"@deployer,
   upload the results"* path — no GUI involved.
 
 A package can also ship **personas** — `@fezchat/score-studio` is a complete
@@ -60,11 +60,11 @@ The substance lives outside the gui — `gui` is presentation.
 
 **Building one?** The full contract — every API surface, the manifest,
 permissions, and the dev loop — lives in
-[the Extension API section](/docs/extension-api).
+[the Extension API section](/extension-api).
 
 Alongside `parts`, a package declares **`permissions`** — what it needs,
 shown to the user before anything runs, and enforced by narrowing the API it
-receives. See [trust & approval](/docs/concepts/trust).
+receives. See [trust & approval](/concepts/trust).
 
 ## Installing
 
@@ -80,7 +80,7 @@ npm on the machine — it fetches the tarball itself. Gui parts appear live;
 headless and relay parts load when their host restarts.
 
 Removal keeps the tool *definition*: personas may still declare it, and any
-secret values you filled are yours ([custody](/docs/concepts/tools#secrets)).
+secret values you filled are yours ([custody](/concepts/tools#secrets)).
 
 ## The first-party packages
 
@@ -88,7 +88,7 @@ The features you'd assume are core are themselves extensions with no private
 hooks — proof the seams are real: fez-communities (the channel UI itself),
 fez-dms, fez-docs, fez-git, fez-media (Blossom uploads), fez-moderation,
 fez-notifications, fez-polls, fez-kanban, fez-workflows, theme packs.
-[The full catalog](/docs/reference/packages).
+[The full catalog](/reference/packages).
 
 ## The rule
 

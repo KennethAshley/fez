@@ -26,7 +26,7 @@ default export with an injected API.
 | `background: true` | `settings.json` allowlist | opts your headless part into the always-on sentinel |
 
 Plus npm's own `bin` map (→ `~/.fez/bin/`) and `fez.personas` for shipping
-persona packs — [`@fezchat/score-studio`](/docs/reference/packages) is a
+persona packs — [`@fezchat/score-studio`](/reference/packages) is a
 complete extension that ships *only* a persona.
 
 One `fez install` places every part; each host picks up its own. Note that
@@ -58,16 +58,16 @@ noted on each surface's page.
 
 ## Which surface do I need?
 
-- A slash command or a scheduled job → **[headless](/docs/extension-api/headless)**
-- A card under messages, a panel, a view over a doc → **[gui](/docs/extension-api/gui)**
-- Serving HTTP from the relay (git, media) → **[relay](/docs/extension-api/relay-workspace)**
-- Giving a `repo:` persona its checkout → **[workspace](/docs/extension-api/relay-workspace)**
+- A slash command or a scheduled job → **[headless](/extension-api/headless)**
+- A card under messages, a panel, a view over a doc → **[gui](/extension-api/gui)**
+- Serving HTTP from the relay (git, media) → **[relay](/extension-api/relay-workspace)**
+- Giving a `repo:` persona its checkout → **[workspace](/extension-api/relay-workspace)**
 - A tool agents call → the **`skill`** part (an MCP server your package ships
-  — see [the manifest](/docs/extension-api/manifest))
+  — see [the manifest](/extension-api/manifest))
 
 Worked examples in the repo: `packages/fez-polls` (headless + gui + skill
 sharing one vote-logic module), `packages/fez-git` (all four surfaces plus
 two binaries), `packages/fez-score-studio` (personas only, no code).
 
-Start with [the dev loop](/docs/extension-api/dev-loop): `fez create`,
+Start with [the dev loop](/extension-api/dev-loop): `fez create`,
 `fez link`, publish.

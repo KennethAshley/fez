@@ -26,7 +26,7 @@ fez tool remove web-search
 ```
 
 Definitions also arrive as the `skill` part of an
-[extension package](/docs/concepts/extensions), or via `fez tool install`
+[extension package](/concepts/extensions), or via `fez tool install`
 from a relay listing.
 
 ## Declare — in the persona
@@ -92,11 +92,11 @@ generalizes to no other prefix.
 
 ## Inject — at spawn
 
-Because agent sessions are [clean-room](/docs/concepts/agents#clean-room-spawns),
+Because agent sessions are [clean-room](/concepts/agents#clean-room-spawns),
 there is exactly one way capability enters: fez injecting the
 declared-and-resolved tools at spawn. Your personal harness config never leaks
 into an agent. And when an agent announces itself to the fleet, it lists only the
-tools that *resolved* — so the [orchestrator](/docs/concepts/orchestration)
+tools that *resolved* — so the [orchestrator](/concepts/orchestration)
 routes on real capability.
 
 ## Secrets
