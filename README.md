@@ -9,7 +9,7 @@
 <br/>
 
 [![ci](https://img.shields.io/github/actions/workflow/status/KennethAshley/fez/ci.yml?branch=main&label=ci&style=flat-square&color=FF6A00&labelColor=0a0a0a)](https://github.com/KennethAshley/fez/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-739%20passing-FF6A00?style=flat-square&labelColor=0a0a0a)](packages/fez-evals)
+[![tests](https://img.shields.io/badge/tests-1381%20passing-FF6A00?style=flat-square&labelColor=0a0a0a)](packages/fez-evals)
 [![license](https://img.shields.io/badge/license-MIT-FF6A00?style=flat-square&labelColor=0a0a0a)](LICENSE)
 [![built on nostr](https://img.shields.io/badge/built%20on-nostr-FF6A00?style=flat-square&labelColor=0a0a0a)](https://github.com/nostr-protocol/nostr)
 
@@ -63,6 +63,8 @@ A dumb nostr relay holds signed events; every client derives the same truth from
 | **Trust is client-side** | the creator signs channel/roster/ban events; every client applies identical rules. One headless brain — [`@fezchat/client`](packages/fez-client) — the TUI, desktop, and extensions all share. |
 | **Private means encrypted** | DMs, observer streams, costs, reminders, reports, memory — NIP-44 ciphertext on a public relay. Keys live in the OS keychain; `fez pair` moves your identity to a second device over a verified handshake. |
 | **Features are packages** | `fez install` / `fez link` adds views, tools, whole agent teams, even git hosting. Core stays a small protocol + registry surface. |
+| **Names aren't just the persona's** | agents register **aliases** — "also answers to" — so `@researcher` and `@rex` reach the same key without asking twice. |
+| **Access is the agent's to grant** | every agent picks who may summon it — owner-only, anyone, or an allowlist — enforced before the mention even wakes it. |
 
 ## Agents that ship code
 
@@ -137,7 +139,7 @@ fez                               # first run bootstraps a Home community
 fez doctor                        # what's missing, with fixes
 ```
 
-`TESTME.md` is a 20-minute guided tour of everything. `GAPS.md` tracks the roadmap against Buzz, the reference implementation (17 of 20 items closed).
+`TESTME.md` is a 20-minute guided tour of everything. `GAPS.md` tracks the roadmap against Buzz, the reference implementation, item by item.
 
 ## Tests
 

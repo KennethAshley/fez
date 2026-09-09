@@ -3,6 +3,9 @@
 Findings from a fresh-user-machine audit of `packages/fez-desktop` (2026-08-24).
 Ordered by where a new user hits each one. Check items off as they're fixed.
 
+This is an engineering bug-tracker for fez-desktop's first-run UX, not a
+user-facing getting-started guide — see README.md's "Start here" for that.
+
 ## Tier 1 — blocks onboarding outright
 
 - [x] **Sign + notarize the app.** DONE (2026-08-25): v0.2.0 released signed + notarized +
@@ -20,11 +23,17 @@ Ordered by where a new user hits each one. Check items off as they're fixed.
   also means the sentinel can never spawn a half-copied executable and a running `pi` is
   swapped by directory entry, not written into.
 - [x] **One canonical relay default.** DONE: `src/relay.ts` is now the single home of
-  `DEFAULT_RELAY` (hosted relay) + `relaySet()`/`relayRaw()`; all four former literal sites
-  (`App.tsx`, `Onboarding.tsx`, `SettingsPane.tsx`, `ManagePane.tsx`) import it. The localhost
-  fallback is gone — devs use `VITE_FEZ_RELAY=ws://localhost:7777`. Still open (split out):
+  `DEFAULT_RELAY` + `relaySet()`/`relayRaw()`; all four former literal sites (`App.tsx`,
+  `Onboarding.tsx`, `SettingsPane.tsx`, `ManagePane.tsx`) import it. The design moved on from
+  the original fix, though: `DEFAULT_RELAY` is `ws://127.0.0.1:7777`, a LOCAL per-workspace
+  relay the app spawns and claims for a fresh identity (`ensure_local_relay`, Rust side) — a
+  cold downloader lands in a workspace they own, not on someone's hosted box where they aren't
+  on the roster and @fez ignores them. `PAIRING_RELAY` (`wss://relay.fez.chat`) is kept
+  separate and used only for device pairing, which needs a relay both machines can reach — a
+  loopback default can't rendezvous. Existing installs are unaffected (onboarding always wrote
+  `localStorage["fez-relay"]`, which outranks the default); devs override with
+  `VITE_FEZ_RELAY`. Still open (split out):
   - [ ] A real "can't reach relay" state (splash dismisses regardless; offline looks empty-but-working).
-  - [ ] Default relay is a single DO droplet by IP — needs a stable domain.
 - [x] **Keychain failure is a dead end.** DONE: `get_identity` now distinguishes
   errSecItemNotFound (exit 44 / "could not be found" → "no fez identity…" → onboarding) from
   access failures (denied prompt, locked keychain → "keychain access failed…"), so a denied
