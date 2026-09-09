@@ -130,8 +130,9 @@ export interface SubnetMiner {
    * the harness records completion in a flag file.
    */
   register?(ctx: MinerContext): Promise<void>;
-  /** Run the miner. Resolves only when mining stops; the harness supervises the process around it. */
-  start(ctx: MinerContext): Promise<void>;
+  /** Run the miner. Resolves only when mining stops; the harness supervises
+   *  the process around it. Required unless `container` is set. */
+  start?(ctx: MinerContext): Promise<void>;
   /** Graceful stop; the harness kills the process if this is absent or hangs. */
   stop?(ctx: MinerContext): Promise<void>;
   /** Descriptor v2: run as a container. Present ⇒ install/start unused. */

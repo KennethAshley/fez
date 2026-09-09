@@ -391,6 +391,7 @@ export async function runMiner(
       });
       if (exit !== 0) throw new Error(`container miner exited ${exit}`);
     } else {
+      if (!d.start) throw new Error(`${d.name}: descriptor has neither container nor start()`);
       if (d.install) await d.install(ctx);
       if (d.register && !(await fs.access(flag).then(() => true, () => false))) {
         await d.register(ctx);

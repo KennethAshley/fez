@@ -10,14 +10,18 @@ export function containerName(netuid: number, persona: string): string {
   return `fez-${netuid}-${persona}`;
 }
 
-/** "{key}" templates resolve from ctx.config; anything else is literal. */
+/** "{key}" templates resolve from config; anything else is literal. */
+export function resolveTemplate(s: string, config: Record<string, string | number | boolean>): string {
+  return s.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, key) => String(config[key] ?? ""));
+}
+
 export function resolveEnv(
   tpl: Record<string, string> | undefined,
   config: Record<string, string | number | boolean>
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(tpl ?? {})) {
-    out[k] = v.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, key) => String(config[key] ?? ""));
+    out[k] = resolveTemplate(v, config);
   }
   return out;
 }
@@ -102,8 +106,19 @@ export async function runContainerMiner(opts: {
   const pull = await mustExec(machine, `docker pull ${escapeShellValue(c.image)}`, "pull", { timeoutMs: 600_000 });
   if (pull.code !== 0) throw new Error(`docker pull failed: ${pull.stderr || pull.stdout}`);
 
+  // Beyond user config, descriptors can template three harness-supplied
+  // values: {persona} and the machine's own serve address — the latter
+  // isn't known until the machine is provisioned, so it can't live in
+  // user config at all.
+  const enriched: Record<string, string | number | boolean> = {
+    ...config,
+    persona,
+    serveIp: machine.ports[0]?.externalIp ?? "",
+    servePort: String(machine.ports[0]?.externalPort ?? c.ports?.[0]?.internal ?? ""),
+  };
+
   // Secrets ride an env-file (mode 600), never argv — ps-safe.
-  const env = resolveEnv(c.env, config);
+  const env = resolveEnv(c.env, enriched);
   const write = await mustExec(
     machine,
     `printf %s ${escapeShellValue(envFileContent(env))} > ${escapeShellValue(envFile)} && chmod 600 ${escapeShellValue(envFile)}`,
@@ -131,10 +146,12 @@ export async function runContainerMiner(opts: {
   }
 
   if (c.register && !registered) {
-    log(`container: one-shot register (${c.register.command.join(" ")})`);
+    const templatedCommand = c.register.command.map((a) => resolveTemplate(a, enriched));
+    const templatedC: MinerContainer = { ...c, register: { command: templatedCommand } };
+    log(`container: one-shot register (${templatedCommand.join(" ")})`);
     const reg = await mustExec(
       machine,
-      `docker ${dockerRegisterArgs(c, envFile).map(quoteArg).join(" ")}`,
+      `docker ${dockerRegisterArgs(templatedC, envFile).map(quoteArg).join(" ")}`,
       "register",
       { timeoutMs: 300_000 }
     );

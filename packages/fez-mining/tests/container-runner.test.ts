@@ -197,6 +197,61 @@ describe("container-runner orchestration", () => {
     ).rejects.toThrow(/unreachable/);
   });
 
+  it("enriches config with persona/serveIp/servePort before resolving env templates", async () => {
+    const { machine, cmds } = machineOf({
+      "docker pull": { code: 0 },
+      "docker run -d": { code: 0 },
+      "docker wait": { code: 0, stdout: "0\n" },
+    });
+    await runContainerMiner({
+      machine,
+      container: { image: "img@sha256:x", env: { HOTKEY: "{persona}", IP: "{serveIp}", PORT: "{servePort}" } },
+      netuid: 56, persona: "gauss", workDir: "/w", config: {}, registered: true, log: () => {},
+    });
+    const printf = cmds.find((c) => c.includes("printf %s"))!;
+    expect(printf).toContain("HOTKEY=gauss");
+    expect(printf).toContain("IP=1.2.3.4");
+    expect(printf).toContain("PORT=7999");
+  });
+
+  it("falls back to the descriptor's declared internal port when the machine has no port mapping", async () => {
+    const { machine, cmds } = machineOf({
+      "docker pull": { code: 0 },
+      "docker run -d": { code: 0 },
+      "docker wait": { code: 0, stdout: "0\n" },
+    });
+    (machine as MinerMachine).ports = [];
+    await runContainerMiner({
+      machine,
+      container: { image: "img@sha256:x", env: { PORT: "{servePort}" }, ports: [{ internal: 9000 }] },
+      netuid: 56, persona: "gauss", workDir: "/w", config: {}, registered: true, log: () => {},
+    });
+    const printf = cmds.find((c) => c.includes("printf %s"))!;
+    expect(printf).toContain("PORT=9000");
+  });
+
+  it("templates {persona}/{serveIp}/{servePort} into register.command argv elements", async () => {
+    const { machine, cmds } = machineOf({
+      "docker pull": { code: 0 },
+      "docker run --rm": { code: 0 },
+      "docker run -d": { code: 0 },
+      "docker wait": { code: 0, stdout: "0\n" },
+    });
+    await runContainerMiner({
+      machine,
+      container: {
+        image: "img@sha256:x",
+        register: { command: ["fiber-post-ip", "--external_ip", "{serveIp}", "--external_port", "{servePort}", "--wallet.hotkey", "{persona}"] },
+      },
+      netuid: 56, persona: "gauss", workDir: "/w", config: {}, registered: false, log: () => {},
+    });
+    const reg = cmds.find((c) => c.includes("docker run --rm"))!;
+    expect(reg).toContain("1.2.3.4");
+    expect(reg).toContain("7999");
+    expect(reg).toContain("gauss");
+    expect(reg).not.toContain("{serveIp}");
+  });
+
   it("compose descriptor drives compose verbs, project-named like the container", async () => {
     const { machine, cmds } = machineOf({
       "compose": { code: 0, stdout: "0\n" },
