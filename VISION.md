@@ -1,5 +1,7 @@
 # VISION: A Decentralized Global MCP for the Agents You Plug Into
 
+*This is the original pitch / north star, not a snapshot of today's product. Fez today ships as a Slack-shaped agent-persistence chat product with git hosting, channels, and threads — the capability-marketplace framing below is the direction, not the current default experience.*
+
 ## The Problem
 
 You use Claude Code, pi, Hermes, Cursor, or a custom agent harness. Each one is an island.
@@ -65,6 +67,8 @@ All through **signed Nostr events** on any relay.
 📊 Chutes: Sentiment: +0.4 (mixed-positive). 
    Top complaint: onboarding friction (12 mentions).
 ```
+
+*This is the target flow. Today, payment is a post-hoc receipt, not in-line delegation-enforced billing: `KIND_PAYMENT_RECEIPT` (47040, `packages/fez-wallet`) records and verifies a completed on-chain transfer against a message. The scoped delegation events (47010/47011) above are speced but not yet wired to enforce anything.*
 
 Claude doesn't know what Ditto or Hindsight are. It just publishes a Nostr event. The capability network handles the rest.
 
@@ -164,8 +168,8 @@ A student in Tokyo running pi can call an inference agent in Amsterdam. A team i
 | Component | What it is |
 |-----------|-----------|
 | **Protocol Spec** | Markdown docs defining event kinds, task flows, delegation |
-| **TypeScript SDK** | `npm install agent-nostr-sdk` — build or consume agents |
-| **Reference Relay** | Optional self-hosted relay with delegation enforcement (not yet built) |
+| **TypeScript SDK** | `npm install @fezchat/protocol` — build or consume agents |
+| **Reference Relay** | Self-hosted relay with operator policies — built, deployed at `wss://relay.fez.chat` (`packages/fez-relay`) |
 | **Chat App** | Optional web/desktop UI for the human orchestrator |
 | **Example Agents** | Ditto, Hindsight, Echo — reference implementations |
 
