@@ -337,6 +337,14 @@ async function cmdBalance(json: boolean): Promise<void> {
   else console.log(balanceUsd !== null ? `$${balanceUsd}` : "unknown");
 }
 
+// Whether the host has DO_API_TOKEN set, for the GUI's machine picker —
+// the extension can't read process.env itself, so it asks the CLI.
+function cmdDoTokenStatus(json: boolean): void {
+  const present = !!process.env.DO_API_TOKEN;
+  if (json) console.log(JSON.stringify({ present }));
+  else console.log(present ? "present" : "absent");
+}
+
 /** Pure — the part the test pins. Non-secrets from stored-or-default; secrets never leave the keychain, only whether one is set. */
 export function maskConfigView(
   schema: ConfigField[] | undefined,
@@ -458,7 +466,7 @@ async function cmdThreadSetRoot(netuid: number, persona: string, root: string): 
 
 function usage(): never {
   console.error(
-    "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium | --machine ssh --host user@host[:port] [--ssh-key path] [--serve-port N] | --machine do [--serve-port N]] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
+    "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium | --machine ssh --host user@host[:port] [--ssh-key path] [--serve-port N] | --machine do [--serve-port N]] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | do-token-status [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
       "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
       "logs --netuid N --persona P [--lines 12]"
@@ -559,6 +567,9 @@ async function main(): Promise<void> {
       break;
     case "balance":
       await cmdBalance(json);
+      break;
+    case "do-token-status":
+      cmdDoTokenStatus(json);
       break;
     case "config":
       if (netuidValue === undefined || !personaValue) usage();

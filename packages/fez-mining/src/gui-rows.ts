@@ -7,7 +7,7 @@ export type ConfigFormValues = Record<string, string | number | boolean>;
 // replace this hardcoded list later.
 export const HARDWARE_GATED: number[] = [4];
 
-export type MachineChoice = "local" | "lium" | "ssh";
+export type MachineChoice = "local" | "lium" | "ssh" | "do";
 
 /**
  * Which machine kinds a descriptor's requirements permit, pure. No
@@ -21,7 +21,8 @@ export type MachineChoice = "local" | "lium" | "ssh";
  * the informed pick is the user's.
  */
 export function machineChoices(
-  req: { gpu?: string; publicEndpoint?: boolean } | undefined
+  req: { gpu?: string; publicEndpoint?: boolean } | undefined,
+  hasDoToken: boolean
 ): { choice: MachineChoice; enabled: boolean; reason?: string }[] {
   if (!req?.gpu && !req?.publicEndpoint) return [{ choice: "local", enabled: true }];
   const reason = req.gpu
@@ -37,6 +38,13 @@ export function machineChoices(
         : "a public host you already run",
     },
     { choice: "lium", enabled: true },
+    {
+      choice: "do" as const,
+      enabled: hasDoToken,
+      reason: hasDoToken
+        ? "fez makes a DigitalOcean droplet (~$0.018/hr, billed to your DO account until stop)"
+        : "add DO_API_TOKEN in SKILLS & SECRETS to let fez make the machine for you",
+    },
   ];
 }
 
