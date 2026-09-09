@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { MachinePort, MinerContext } from "@fezchat/extension-api";
 import miners from "../src/miner-part.js";
 
 describe("gradients descriptor", () => {
@@ -11,7 +10,6 @@ describe("gradients descriptor", () => {
       requirements: { alwaysOn: true, publicEndpoint: true },
     });
     expect(miners[0].requirements?.gpu).toBeUndefined();
-    expect(typeof miners[0].start).toBe("function");
   });
 
   it("declares its config schema — wallet/network/stake/refresh, no LLM provider or secret", () => {
@@ -19,62 +17,43 @@ describe("gradients descriptor", () => {
     expect(keys).toEqual(["walletName", "subtensorNetwork", "minStakeThreshold", "refreshNodes"]);
     expect(miners[0].config?.some((f) => f.type === "secret")).toBe(false);
   });
-});
 
-function fakeCtx(ports: MachinePort[], execCalls: string[], config: Record<string, string | number | boolean> = {}): MinerContext {
-  return {
-    workDir: "/tmp/gradients-test",
-    persona: "p",
-    hotkey: "5F",
-    netuid: 56,
-    env: {},
-    config,
-    log: () => {},
-    machine: {
-      kind: "lium",
-      ports,
-      exec: async (cmd: string) => {
-        execCalls.push(cmd);
-        return { code: 0, stdout: "", stderr: "" };
-      },
-      copy: async () => {},
-    },
-  };
-}
-
-// I2: register() must fail loudly, never fall back to ports[0] — posting
-// the wrong port (e.g. SSH) to the metagraph is worse than refusing.
-describe("gradients register() port selection", () => {
-  it("throws when no port maps to internal 7999, even with an unrelated ports[0]", async () => {
-    const execCalls: string[] = [];
-    const ctx = fakeCtx([{ externalIp: "1.2.3.4", externalPort: 20001, internalPort: 22 }], execCalls);
-    await expect(miners[0].register!(ctx)).rejects.toThrow(/7999/);
-    expect(execCalls).toHaveLength(0);
+  it("ships a container descriptor — the image, not install/register/start hooks", () => {
+    expect(miners[0].install).toBeUndefined();
+    expect(miners[0].register).toBeUndefined();
+    expect(miners[0].start).toBeUndefined();
+    expect(miners[0].container).toBeDefined();
   });
 
-  it("posts the internal:7999 mapping specifically, not ports[0]", async () => {
-    const execCalls: string[] = [];
-    const ctx = fakeCtx(
-      [
-        { externalIp: "1.2.3.4", externalPort: 20001, internalPort: 22 }, // ssh, ports[0]
-        { externalIp: "1.2.3.4", externalPort: 20002, internalPort: 7999 },
-      ],
-      execCalls
-    );
-    await miners[0].register!(ctx);
-    expect(execCalls[0]).toContain("--external_port 20002");
-    expect(execCalls[0]).toContain("--external_ip 1.2.3.4");
+  it("image is ghcr with a digest placeholder, not a floating tag", () => {
+    expect(miners[0].container?.image).toBe("ghcr.io/fezchat/gradients-miner@sha256:REPLACED_AT_PUBLISH");
   });
 
-  it("maps ctx.config.walletName/subtensorNetwork into fiber-post-ip instead of the old hardcoded default/finney", async () => {
-    const execCalls: string[] = [];
-    const ctx = fakeCtx(
-      [{ externalIp: "1.2.3.4", externalPort: 20002, internalPort: 7999 }],
-      execCalls,
-      { walletName: "quill", subtensorNetwork: "test" }
-    );
-    await miners[0].register!(ctx);
-    expect(execCalls[0]).toContain("--wallet.name quill");
-    expect(execCalls[0]).toContain("--subtensor.network test");
+  it("mounts the bittensor keys read-only", () => {
+    expect(miners[0].container?.mountKeys).toBe(true);
+  });
+
+  it("publishes the miner's port 7999", () => {
+    expect(miners[0].container?.ports).toEqual([{ internal: 7999 }]);
+  });
+
+  it("env templates the per-persona config keys, NETUID hardcoded to 56", () => {
+    expect(miners[0].container?.env).toEqual({
+      WALLET_NAME: "{walletName}",
+      HOTKEY_NAME: "{persona}",
+      SUBTENSOR_NETWORK: "{subtensorNetwork}",
+      NETUID: "56",
+      REFRESH_NODES: "{refreshNodes}",
+      MIN_STAKE_THRESHOLD: "{minStakeThreshold}",
+    });
+  });
+
+  it("register runs fiber-post-ip templated with the harness-supplied serve address and persona", () => {
+    expect(miners[0].container?.register?.command).toEqual([
+      "fiber-post-ip", "--netuid", "56",
+      "--subtensor.network", "{subtensorNetwork}",
+      "--external_port", "{servePort}", "--external_ip", "{serveIp}",
+      "--wallet.name", "{walletName}", "--wallet.hotkey", "{persona}",
+    ]);
   });
 });
