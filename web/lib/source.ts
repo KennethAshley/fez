@@ -1,6 +1,6 @@
 import { loader } from 'fumadocs-core/source';
 import { lucideIconsPlugin } from 'fumadocs-core/source/lucide-icons';
-import { docsContentRoute, docsImageRoute, docsRoute } from './shared';
+import { docsContentRoute, docsImageRoute } from './shared';
 import { defineDocs } from 'fumadocs-mdx/macro';
 import { metaSchema, pageSchema } from 'fumadocs-core/source/schema';
 
@@ -19,7 +19,11 @@ const docs = defineDocs({
 
 // See https://fumadocs.dev/docs/headless/source-api for more info
 export const source = loader({
-  baseUrl: docsRoute,
+  // Links generate prefix-free ('/getting-started'), because the docs
+  // live on their own hostname where the root IS the manual. The proxy
+  // maps those paths onto the internal `docsRoute` before Next routes
+  // them, so the filesystem route is unchanged.
+  baseUrl: '/',
   source: docs.toFumadocsSource(),
   plugins: [lucideIconsPlugin()],
 });

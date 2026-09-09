@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { docsUrl } from '@/lib/shared';
 
 /**
  * The one header every page wears — same links in the same order, so no
@@ -11,7 +12,8 @@ const LINKS = [
   { href: '/judge', label: 'judge' },
   { href: '/mine', label: 'mine' },
   { href: '/roadmap', label: 'roadmap' },
-  { href: '/docs', label: 'docs' },
+  // The manual lives on its own hostname — an absolute link, not a path.
+  { href: docsUrl, label: 'docs' },
 ] as const;
 
 export function SiteHeader({ current }: { current?: string }) {
