@@ -13,6 +13,7 @@ function homeWithFixture(): string {
   mkdirSync(path.join(home, "miners"), { recursive: true });
   cpSync(path.join(here, "fixtures", "machine-miner.js"), path.join(home, "miners", "machine-miner.js"));
   cpSync(path.join(here, "fixtures", "workdir-miner.js"), path.join(home, "miners", "workdir-miner.js"));
+  cpSync(path.join(here, "fixtures", "container-fixture.js"), path.join(home, "miners", "container-fixture.js"));
   return home;
 }
 
@@ -110,6 +111,152 @@ describe("resolveMachine ssh (owned host: no provisioning, probe → workDir →
       else process.env.FEZ_MINE_RETRY_DELAY_MS = prev;
       if (prevInitial === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
       else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitial;
+    }
+  });
+});
+
+describe("resolveMachine do (provision → ssh, reattach when alive)", () => {
+  const doEntry: MinerEntry = {
+    netuid: 56, persona: "gauss", hotkey: "5F", desired: "running",
+    machine: { kind: "do", servePort: 7999 },
+  };
+
+  it("provisions when no droplet recorded, persists BEFORE hotkey deploy, hands back an ssh machine", async () => {
+    const prevTok = process.env.DO_API_TOKEN; process.env.DO_API_TOKEN = "tok";
+    const prevBin = process.env.FEZ_WALLET_BIN; process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS; process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    const prevInit = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS; process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    try {
+      const doFetch = async (url: string, init?: { method?: string }) => ({
+        status: init?.method === "POST" ? 202 : 200,
+        json: async () =>
+          init?.method === "POST"
+            ? { droplet: { id: 7 } }
+            : { droplet: { id: 7, status: "active", networks: { v4: [{ type: "public", ip_address: "9.9.9.9" }] } } },
+      });
+      const sshCalls: string[][] = [];
+      const sshRun = async (argv: string[]) => { sshCalls.push(argv); return { code: 0, stdout: "", stderr: "" }; };
+      let persisted: unknown;
+      const { machine, machineState, provisioned } = await resolveMachine(
+        doEntry, "gauss", { sshRun, doFetch }, undefined, undefined, () => {},
+        async (ms) => { persisted = ms; }
+      );
+      expect(machine.kind).toBe("ssh");
+      expect(machine.ports).toEqual([{ externalIp: "9.9.9.9", externalPort: 7999, internalPort: 7999 }]);
+      expect(provisioned).toBe(true);
+      expect(machineState).toMatchObject({ kind: "do", dropletId: 7, host: "9.9.9.9" });
+      expect(persisted).toMatchObject({ kind: "do", dropletId: 7 }); // findable even if deploy fails after
+      expect(sshCalls.some((c) => c[0] === "scp")).toBe(true); // hotkey deployed
+    } finally {
+      if (prevTok === undefined) delete process.env.DO_API_TOKEN; else process.env.DO_API_TOKEN = prevTok;
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN; else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS; else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInit === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS; else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInit;
+    }
+  });
+
+  it("no DO_API_TOKEN fails with the SKILLS & SECRETS instruction, before any API call", async () => {
+    const prev = process.env.DO_API_TOKEN; delete process.env.DO_API_TOKEN;
+    try {
+      await expect(resolveMachine(doEntry, "gauss", {})).rejects.toThrow(/DO_API_TOKEN/);
+    } finally {
+      if (prev !== undefined) process.env.DO_API_TOKEN = prev;
+    }
+  });
+
+  // Billing-safety guard (review finding #3): an unbounded destroy→recreate
+  // loop against a droplet that never comes back up must not run forever
+  // unattended. Mirrors reconcile.ts's planRemote cap for lium, but enforced
+  // inline here since resolveMachine (not the sentinel) is what re-provisions
+  // a "do" machine. A FIRST-ever provision (no prior dropletId) is exempt —
+  // only checked below via the ssh-branch/first-provision test already
+  // covering that path.
+  it("re-provision cap: 3 recent provisions + a dead droplet throws before any create POST", async () => {
+    const prevTok = process.env.DO_API_TOKEN; process.env.DO_API_TOKEN = "tok";
+    try {
+      const capEntry: MinerEntry = {
+        netuid: 56, persona: "gauss", hotkey: "5F", desired: "running",
+        machine: { kind: "do", dropletId: 7, host: "9.9.9.9", user: "root", servePort: 7999 },
+        provisions: [Date.now(), Date.now() - 1_000, Date.now() - 2_000], // 3 within the last 24h
+      };
+      const posts: string[] = [];
+      const doFetch = async (url: string, init?: { method?: string }) => {
+        if (init?.method === "POST") posts.push(url);
+        return { status: 404, json: async () => ({}) }; // droplet gone — doAlive() -> false
+      };
+      await expect(resolveMachine(capEntry, "gauss", { doFetch })).rejects.toThrow(
+        /daily droplet-reprovision cap \(3\/24h\)/
+      );
+      expect(posts.length).toBe(0); // never got to doProvision's create call
+    } finally {
+      if (prevTok === undefined) delete process.env.DO_API_TOKEN; else process.env.DO_API_TOKEN = prevTok;
+    }
+  });
+
+  // Review finding #2 (IMPORTANT): a dead recorded droplet must be
+  // destroyed BEFORE its id is overwritten by a fresh provision, or it's
+  // leaked (still billing, nothing left pointing at it).
+  it("reprovision destroys the old dead droplet before the create POST", async () => {
+    const prevTok = process.env.DO_API_TOKEN; process.env.DO_API_TOKEN = "tok";
+    const prevBin = process.env.FEZ_WALLET_BIN; process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS; process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    const prevInit = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS; process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    try {
+      const deadEntry: MinerEntry = {
+        netuid: 56, persona: "gauss", hotkey: "5F", desired: "running",
+        machine: { kind: "do", dropletId: 7, host: "9.9.9.9", user: "root", servePort: 7999 },
+      };
+      const calls: { url: string; method: string }[] = [];
+      const doFetch = async (url: string, init?: { method?: string }) => {
+        const method = init?.method ?? "GET";
+        calls.push({ url, method });
+        if (method === "GET") return { status: 404, json: async () => ({}) }; // old droplet gone — doAlive() -> false
+        if (method === "DELETE") return { status: 204, json: async () => ({}) };
+        // POST create
+        return { status: 202, json: async () => ({ droplet: { id: 9 } }) };
+      };
+      // Poll-to-active for the NEW droplet id (9) after create.
+      let getCount = 0;
+      const doFetchFull = async (url: string, init?: { method?: string }) => {
+        const method = init?.method ?? "GET";
+        if (method === "GET") {
+          getCount++;
+          calls.push({ url, method });
+          if (getCount === 1) return { status: 404, json: async () => ({}) }; // doAlive(7) -> false
+          return {
+            status: 200,
+            json: async () => ({ droplet: { id: 9, status: "active", networks: { v4: [{ type: "public", ip_address: "5.5.5.5" }] } } }),
+          };
+        }
+        return doFetch(url, init);
+      };
+      const sshRun = async () => ({ code: 0, stdout: "", stderr: "" });
+      const r = await resolveMachine(deadEntry, "gauss", { doFetch: doFetchFull, sshRun });
+      expect(r.machineState).toMatchObject({ kind: "do", dropletId: 9 });
+      const deleteIdx = calls.findIndex((c) => c.method === "DELETE");
+      const postIdx = calls.findIndex((c) => c.method === "POST");
+      expect(deleteIdx).toBeGreaterThanOrEqual(0);
+      expect(postIdx).toBeGreaterThan(deleteIdx); // old droplet destroyed BEFORE the fresh create
+      expect(calls.find((c) => c.method === "DELETE")!.url).toContain("/7");
+    } finally {
+      if (prevTok === undefined) delete process.env.DO_API_TOKEN; else process.env.DO_API_TOKEN = prevTok;
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN; else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS; else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInit === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS; else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInit;
+    }
+  });
+
+  it("doAlive throwing (e.g. a 429 rate-limit) propagates instead of triggering a reprovision", async () => {
+    const prevTok = process.env.DO_API_TOKEN; process.env.DO_API_TOKEN = "tok";
+    try {
+      const rateLimitedEntry: MinerEntry = {
+        netuid: 56, persona: "gauss", hotkey: "5F", desired: "running",
+        machine: { kind: "do", dropletId: 7, host: "9.9.9.9", user: "root", servePort: 7999 },
+      };
+      const doFetch = async () => ({ status: 429, json: async () => ({}) });
+      await expect(resolveMachine(rateLimitedEntry, "gauss", { doFetch })).rejects.toThrow(/429/);
+    } finally {
+      if (prevTok === undefined) delete process.env.DO_API_TOKEN; else process.env.DO_API_TOKEN = prevTok;
     }
   });
 });
@@ -364,6 +511,100 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
     }
   });
 
+  // Billing-safety guard (review finding #2): a "do" droplet provisioned
+  // THIS run that then fails deploy must not keep billing unattended — same
+  // lesson as the lium arm just above, mirrored for DigitalOcean's
+  // destroy-not-idle-teardown shape.
+  it("a fresh 'do' provision that fails deploy destroys the droplet and clears state (no orphan billing)", async () => {
+    const home = homeWithFixture();
+    let s = await readState(home);
+    s = upsertMiner(s, { netuid: 9998, persona: "doP", hotkey: "5FAKE", desired: "running", machine: { kind: "do", servePort: 8080 } });
+    await writeState(home, s);
+    const prevTok = process.env.DO_API_TOKEN; process.env.DO_API_TOKEN = "tok";
+    const prevBin = process.env.FEZ_WALLET_BIN; process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS; process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS; process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    const prevCopyDelay = process.env.FEZ_MINE_COPY_RETRY_DELAY_MS; process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = "1";
+    try {
+      const fetchCalls: { url: string; method: string }[] = [];
+      const doFetch = async (url: string, init?: { method?: string }) => {
+        const method = init?.method ?? "GET";
+        fetchCalls.push({ url, method });
+        return {
+          status: method === "POST" ? 202 : method === "DELETE" ? 204 : 200,
+          json: async () =>
+            method === "POST"
+              ? { droplet: { id: 7 } }
+              : { droplet: { id: 7, status: "active", networks: { v4: [{ type: "public", ip_address: "9.9.9.9" }] } } },
+        };
+      };
+      // Readiness probe ("true") and mkdir succeed; scp (hotkey deploy)
+      // fails permanently — exhausts copy()'s bounded inner retry.
+      const sshRun = async (argv: string[]) =>
+        argv[0] === "scp" ? { code: 1, stdout: "", stderr: "Failed to upload to: 7" } : { code: 0, stdout: "", stderr: "" };
+      const code = await runMiner(9998, "doP", home, { hotkey: "5FAKE", doFetch, sshRun });
+      expect(code).toBe(1);
+      expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true); // destroyed, billing stopped
+      const after = await readState(home);
+      const entry = after.miners.find((m) => m.netuid === 9998 && m.persona === "doP")!;
+      expect(entry.machine).toEqual({ kind: "do", servePort: 8080 }); // cleared back to "no droplet yet"
+      expect(entry.lastExit).toContain("exit 1");
+    } finally {
+      if (prevTok === undefined) delete process.env.DO_API_TOKEN; else process.env.DO_API_TOKEN = prevTok;
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN; else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS; else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
+      if (prevCopyDelay === undefined) delete process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = prevCopyDelay;
+    }
+  });
+
+  // Review finding #1 (CRITICAL): a destroy that FAILS must never be read
+  // as "billing stopped" — state must keep pointing at the droplet so it
+  // stays findable, or it's orphaned (still billing, nothing left to
+  // destroy it by name/id).
+  it("a fresh 'do' provision that fails deploy, then fails to destroy, leaves dropletId/host intact (no orphan)", async () => {
+    const home = homeWithFixture();
+    let s = await readState(home);
+    s = upsertMiner(s, { netuid: 9997, persona: "doQ", hotkey: "5FAKE", desired: "running", machine: { kind: "do", servePort: 8080 } });
+    await writeState(home, s);
+    const prevTok = process.env.DO_API_TOKEN; process.env.DO_API_TOKEN = "tok";
+    const prevBin = process.env.FEZ_WALLET_BIN; process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS; process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    const prevInitialWait = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS; process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    const prevCopyDelay = process.env.FEZ_MINE_COPY_RETRY_DELAY_MS; process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = "1";
+    try {
+      const doFetch = async (url: string, init?: { method?: string }) => {
+        const method = init?.method ?? "GET";
+        // DELETE fails (401/5xx-shaped) — the droplet is NOT actually gone.
+        return {
+          status: method === "POST" ? 202 : method === "DELETE" ? 500 : 200,
+          json: async () =>
+            method === "POST"
+              ? { droplet: { id: 7 } }
+              : { droplet: { id: 7, status: "active", networks: { v4: [{ type: "public", ip_address: "9.9.9.9" }] } } },
+        };
+      };
+      const sshRun = async (argv: string[]) =>
+        argv[0] === "scp" ? { code: 1, stdout: "", stderr: "Failed to upload to: 7" } : { code: 0, stdout: "", stderr: "" };
+      const code = await runMiner(9997, "doQ", home, { hotkey: "5FAKE", doFetch, sshRun });
+      expect(code).toBe(1);
+      const after = await readState(home);
+      const entry = after.miners.find((m) => m.netuid === 9997 && m.persona === "doQ")!;
+      // Still pointing at the (still-billing) droplet — not cleared.
+      expect(entry.machine).toMatchObject({ kind: "do", dropletId: 7, host: "9.9.9.9" });
+    } finally {
+      if (prevTok === undefined) delete process.env.DO_API_TOKEN; else process.env.DO_API_TOKEN = prevTok;
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN; else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS; else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
+      else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
+      if (prevCopyDelay === undefined) delete process.env.FEZ_MINE_COPY_RETRY_DELAY_MS;
+      else process.env.FEZ_MINE_COPY_RETRY_DELAY_MS = prevCopyDelay;
+    }
+  });
+
   it("curates ctx.env to the FEZ_MINE_FORWARD_ENV allowlist for a lium miner (no PATH/HOME from the Mac)", async () => {
     const home = homeWithFixture();
     let s = await readState(home);
@@ -435,5 +676,35 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       if (prevInitialWait === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS;
       else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInitialWait;
     }
+  });
+});
+
+describe("container descriptor routing", () => {
+  it("a container descriptor runs through docker verbs, not script hooks", async () => {
+    const home = homeWithFixture();
+    let s = await readState(home);
+    s = upsertMiner(s, { netuid: 9996, persona: "p", hotkey: "5FAKE", desired: "running" });
+    await writeState(home, s);
+    const execs: string[] = [];
+    const machine = {
+      kind: "ssh" as const,
+      ports: [],
+      exec: async (cmd: string) => {
+        execs.push(cmd);
+        if (cmd.includes("docker wait")) return { code: 0, stdout: "0\n", stderr: "" };
+        return { code: 0, stdout: cmd.includes("docker -v") ? "Docker version 27" : "", stderr: "" };
+      },
+      copy: async () => {},
+    };
+    const code = await runMiner(9996, "p", home, { hotkey: "5FAKE", machineFactory: async () => machine });
+    expect(code).toBe(0);
+    const joined = execs.join(" || ");
+    expect(joined).toContain("docker pull");
+    expect(joined).toContain("docker run -d");
+    expect(joined).toContain("docker wait 'fez-9996-p'");
+    // The fixture ALSO defines install/register/start (each execs a
+    // SCRIPT_HOOK_RAN sentinel) — proving container wins on precedence,
+    // not merely that a hookless descriptor happens to skip them.
+    expect(joined).not.toContain("SCRIPT_HOOK_RAN");
   });
 });

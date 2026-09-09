@@ -32,6 +32,14 @@ export type MinerMachineState =
       keyPath?: string;
       /** Declared serving port (identity-mapped) for axon-class miners. */
       servePort?: number;
+    }
+  | {
+      kind: "do";
+      /** Absent until the provisioner returns — start records intent first. */
+      dropletId?: number;
+      host?: string;
+      user?: string;
+      servePort?: number;
     };
 
 export interface MinerEntry {

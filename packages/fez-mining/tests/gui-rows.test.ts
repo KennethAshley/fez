@@ -14,7 +14,7 @@ describe("subnetRows", () => {
 
 describe("machineChoices", () => {
   it("gpu requirement disables local (needs GPU) and enables lium", () => {
-    const c = machineChoices({ gpu: "24GB" });
+    const c = machineChoices({ gpu: "24GB" }, false);
     expect(c.find((x) => x.choice === "local")).toMatchObject({
       enabled: false,
       reason: "needs a 24GB GPU",
@@ -23,7 +23,7 @@ describe("machineChoices", () => {
   });
 
   it("publicEndpoint requirement disables local (no public port) and enables lium", () => {
-    const c = machineChoices({ publicEndpoint: true });
+    const c = machineChoices({ publicEndpoint: true }, false);
     expect(c.find((x) => x.choice === "local")).toMatchObject({
       enabled: false,
       reason: "validators must reach this miner — your Mac has no public port",
@@ -32,20 +32,32 @@ describe("machineChoices", () => {
   });
 
   it("no requirement → local only, no picker", () => {
-    expect(machineChoices(undefined)).toEqual([{ choice: "local", enabled: true }]);
+    expect(machineChoices(undefined, false)).toEqual([{ choice: "local", enabled: true }]);
   });
 
   it("publicEndpoint offers ssh — a host you already run satisfies it", () => {
-    const c = machineChoices({ publicEndpoint: true });
-    expect(c.map((x) => x.choice)).toEqual(["local", "ssh", "lium"]);
+    const c = machineChoices({ publicEndpoint: true }, false);
+    expect(c.map((x) => x.choice)).toEqual(["local", "ssh", "lium", "do"]);
     expect(c.find((x) => x.choice === "ssh")).toMatchObject({ enabled: true });
   });
 
   it("gpu requirement offers ssh too — the user may own the hardware; the caveat lives in the label", () => {
-    const sshChoice = machineChoices({ gpu: "24GB" }).find((x) => x.choice === "ssh");
+    const sshChoice = machineChoices({ gpu: "24GB" }, false).find((x) => x.choice === "ssh");
     expect(sshChoice).toMatchObject({ enabled: true });
     expect(sshChoice?.reason).toMatch(/24GB GPU/);
     expect(sshChoice?.reason).toMatch(/can't check/);
+  });
+
+  it("remote-needing subnets offer DO when a token exists, disabled with the fix when not", () => {
+    const withTok = machineChoices({ publicEndpoint: true }, true);
+    expect(withTok.find((x) => x.choice === "do")).toMatchObject({ enabled: true });
+    const noTok = machineChoices({ publicEndpoint: true }, false);
+    expect(noTok.find((x) => x.choice === "do")).toMatchObject({ enabled: false });
+    expect(noTok.find((x) => x.choice === "do")?.reason).toMatch(/DO_API_TOKEN/);
+  });
+
+  it("no-requirement subnets still skip the picker entirely", () => {
+    expect(machineChoices(undefined, true)).toEqual([{ choice: "local", enabled: true }]);
   });
 });
 

@@ -7,10 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import type { MinerMachine } from "@fezchat/extension-api";
 import { DEFAULT_MAX_USD_HOUR } from "@fezchat/lium/cli";
+import { ensureDocker, runContainerMiner } from "./container-runner.js";
 import { loadDescriptors } from "./descriptors.js";
 import { describePod, escapeShellValue, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
 import type { LiumExec, Recorder } from "./machine-lium.js";
-import { sshMachine, type SshRun } from "./machine-ssh.js";
+import { sshMachine, type SshRun, type SshSpec } from "./machine-ssh.js";
+import { doProvision, doAlive, doDestroy, type DoFetch } from "./machine-do.js";
+import { ensureFezSshKey } from "./fez-ssh-key.js";
 import { localMachine } from "./machine-local.js";
 import { resolveConfig } from "./config.js";
 import { getSecret } from "./secrets.js";
@@ -147,7 +150,7 @@ async function deployHotkey(persona: string, machine: MinerMachine): Promise<voi
 export async function resolveMachine(
   entry: MinerEntry | undefined,
   persona: string,
-  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine>; sshRun?: SshRun },
+  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine>; sshRun?: SshRun; doFetch?: DoFetch },
   exec?: LiumExec,
   recorder?: Recorder,
   log: (line: string) => void = () => {},
@@ -227,6 +230,74 @@ export async function resolveMachine(
     await deployHotkey(persona, machine);
     return { machine, provisioned: true, machineState };
   }
+  if (entry?.machine?.kind === "do") {
+    const st = entry.machine;
+    const token = process.env.DO_API_TOKEN;
+    if (!token) {
+      throw new Error(
+        "DigitalOcean mining needs DO_API_TOKEN — add it in SKILLS & SECRETS (an API token from cloud.digitalocean.com/account/api)"
+      );
+    }
+    const identity = await ensureFezSshKey();
+    const servePorts = st.servePort ? [st.servePort] : [];
+    const ref = st.dropletId !== undefined ? String(st.dropletId) : undefined;
+    let ssh: SshSpec | undefined;
+    if (ref && st.host && (await doAlive(token, ref, opts.doFetch))) {
+      ssh = {
+        host: st.host,
+        user: st.user ?? "root",
+        keyPath: identity.keyPath,
+        ports: servePorts.map((p) => ({ externalIp: st.host!, externalPort: p, internalPort: p })),
+      };
+    }
+    let provisioned = false;
+    let machineState: MinerMachineState | undefined;
+    if (!ssh) {
+      // A re-provision (a dropletId was already recorded — this one's dead
+      // now) counts against the same daily cap reconcile.ts's planRemote
+      // enforces for lium: an unbounded destroy→recreate loop on a
+      // perpetually-dead droplet must not burn money unattended. A
+      // FIRST-ever provision (no prior dropletId) is never capped — start
+      // must always be able to provision the very first time.
+      if (st.dropletId !== undefined) {
+        const DAY_MS = 86_400_000;
+        const recent = (entry.provisions ?? []).filter((t) => t > Date.now() - DAY_MS);
+        if (recent.length >= 3) {
+          throw new Error("hit the daily droplet-reprovision cap (3/24h) — check your DO dashboard and start manually");
+        }
+        // doAlive above said this recorded droplet is dead — destroy it
+        // before provisioning its replacement, or its id gets silently
+        // overwritten by the fresh one below and it's never found again.
+        // Best-effort: a destroy failure here must not block the fresh
+        // provision (the cap above already bounds runaway spend); the old
+        // droplet then falls back to the DO dashboard as its backstop.
+        await doDestroy(token, String(st.dropletId), opts.doFetch).catch(() => {});
+      }
+      const r = await doProvision(
+        { token, netuid: entry.netuid, persona, servePorts, publicKey: identity.publicKey, keyPath: identity.keyPath },
+        opts.doFetch
+      );
+      ssh = r.ssh;
+      provisioned = true;
+      machineState = { kind: "do", dropletId: Number(r.ref), host: r.ssh.host, user: "root", servePort: st.servePort };
+      // Persist BEFORE deploy: a droplet that fails setup must still be
+      // findable and destroyable (the Lium lesson, verbatim).
+      if (persistProvision) await persistProvision(machineState);
+    }
+    const machine = sshMachine(ssh, opts.sshRun);
+    await retryFirstContact(
+      "droplet readiness",
+      async () => {
+        const r = await machine.exec("true");
+        if (r.code !== 0) throw new Error(r.stderr || `exec exited ${r.code}`);
+      },
+      log
+    );
+    const mk = await machine.exec(`mkdir -p ${escapeShellValue(remoteWorkDir(entry.netuid, persona))}`);
+    if (mk.code !== 0) throw new Error(mk.stderr || `mkdir workDir exited ${mk.code}`);
+    await deployHotkey(persona, machine);
+    return provisioned ? { machine, provisioned, machineState } : { machine };
+  }
   if (entry?.machine?.kind === "ssh") {
     const st = entry.machine;
     const machine = sshMachine(
@@ -271,6 +342,8 @@ export async function runMiner(
     machineFactory?: (entry: MinerEntry) => Promise<MinerMachine>;
     exec?: LiumExec;
     recorder?: Recorder;
+    sshRun?: SshRun;
+    doFetch?: DoFetch;
   } = {}
 ): Promise<number> {
   const d = (await loadDescriptors(home)).find((m) => m.netuid === netuid);
@@ -376,16 +449,28 @@ export async function runMiner(
       await record({ pid: process.pid, startedAt: Date.now(), ...(machineState ? { machine: machineState } : {}) });
     }
 
-    if (d.install) await d.install(ctx);
     // The registered flag is host-side bookkeeping (localDir), not
     // ctx.workDir — it tracks whether THIS runner has already driven
     // register() once, independent of whatever machine mined that time.
     const flag = path.join(localDir, "registered");
-    if (d.register && !(await fs.access(flag).then(() => true, () => false))) {
-      await d.register(ctx);
-      await fs.writeFile(flag, "1");
+    if (d.container) {
+      await ensureDocker(machine, log);
+      const registered = await fs.access(flag).then(() => true, () => false);
+      const exit = await runContainerMiner({
+        machine, container: d.container, netuid, persona,
+        workDir, config: ctx.config, registered, log,
+        onRegistered: () => fs.writeFile(flag, "1"),
+      });
+      if (exit !== 0) throw new Error(`container miner exited ${exit}`);
+    } else {
+      if (!d.start) throw new Error(`${d.name}: descriptor has neither container nor start()`);
+      if (d.install) await d.install(ctx);
+      if (d.register && !(await fs.access(flag).then(() => true, () => false))) {
+        await d.register(ctx);
+        await fs.writeFile(flag, "1");
+      }
+      await d.start(ctx);
     }
-    await d.start(ctx);
   } catch (e) {
     log(`miner error: ${(e as Error).message}`);
     code = 1;
@@ -398,6 +483,27 @@ export async function runMiner(
       // to a half-configured pod.
       await teardownPod(freshMachineState.podId, opts.exec, opts.recorder).catch(() => {});
       await record({ machine: { kind: "lium" } });
+    }
+    if (freshMachineState?.kind === "do" && freshMachineState.dropletId !== undefined) {
+      // Same lesson as the lium arm above: this run provisioned the droplet
+      // and then failed before mining anything — a droplet that never mines
+      // must never keep billing silently. Only destroy with a token in
+      // hand; with none, skip the API call but still leave state pointing
+      // at the (still-billing) droplet — that's the ONLY way it stays
+      // findable to destroy by hand, same discipline as cli.ts's stop.
+      const token = process.env.DO_API_TOKEN;
+      if (token) {
+        // Only clear state (dropletId/host) once the destroy actually
+        // succeeded — a failed DELETE (401/5xx/network) means the droplet
+        // may still be alive and billing, and state must keep pointing at
+        // it so it stays findable, same discipline as cli.ts's stop.
+        try {
+          await doDestroy(token, String(freshMachineState.dropletId), opts.doFetch);
+          await record({ machine: { kind: "do", servePort: freshMachineState.servePort } });
+        } catch (destroyErr) {
+          log(`droplet ${freshMachineState.dropletId} NOT destroyed (${(destroyErr as Error).message}) — delete it in your DO dashboard or it keeps billing`);
+        }
+      }
     }
   }
   await record({ pid: undefined, lastExit: `exit ${code} at ${new Date().toISOString()}` });

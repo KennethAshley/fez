@@ -287,6 +287,10 @@ export default function activate(api: GuiExtensionApi): void {
     const [sshTarget, setSshTarget] = useState("");
     const [sshKeyPath, setSshKeyPath] = useState("");
     const [sshServePort, setSshServePort] = useState("");
+    // Whether DO_API_TOKEN is set on the host — the extension can't read
+    // process.env itself, so it asks the CLI once on mount (same posture
+    // as the machines/balance calls above it).
+    const [hasDoToken, setHasDoToken] = useState(false);
     const [subnetFilter, setSubnetFilter] = useState("");
     const [showAllSubnets, setShowAllSubnets] = useState(false);
 
@@ -326,7 +330,17 @@ export default function activate(api: GuiExtensionApi): void {
     useEffect(() => {
       void loadCatalog();
       void loadMiners();
-    }, [loadCatalog, loadMiners]);
+      if (run) {
+        run("fez-mine", ["do-token-status", "--json"])
+          .then((out) => {
+            if (out.code !== 0) return;
+            setHasDoToken((JSON.parse(out.stdout) as { present: boolean }).present);
+          })
+          .catch(() => {
+            // best-effort — DO just stays off the picker
+          });
+      }
+    }, [loadCatalog, loadMiners, run]);
 
     // Point 4: poll while mounted; the hook's cleanup (fires on unmount,
     // i.e. when the nav view is left) is the dispose — no manual
@@ -454,6 +468,7 @@ export default function activate(api: GuiExtensionApi): void {
           if (m.machine?.kind === "lium") args.push("--machine", "lium");
           // Host/key/port are preserved by cmdStart from the recorded entry.
           if (m.machine?.kind === "ssh") args.push("--machine", "ssh");
+          if (m.machine?.kind === "do") args.push("--machine", "do");
           const out = await run("fez-mine", args);
           if (out.code !== 0) throw new Error(out.stderr.trim() || `start exited ${out.code}`);
           await loadMiners();
@@ -567,14 +582,14 @@ export default function activate(api: GuiExtensionApi): void {
         setError(undefined);
         const req = requirementsByNetuid[netuid];
         if (req) {
-          const choices = machineChoices(req);
+          const choices = machineChoices(req, hasDoToken);
           setMachineChoice(choices.find((c) => c.enabled)?.choice ?? "local");
           setPicker({ kind: "machine", netuid });
           return;
         }
         void enterConfigStep(netuid, undefined);
       },
-      [personasApi, personas, requirementsByNetuid, enterConfigStep]
+      [personasApi, personas, requirementsByNetuid, enterConfigStep, hasDoToken]
     );
 
     const confirmMachine = useCallback(
@@ -656,9 +671,13 @@ export default function activate(api: GuiExtensionApi): void {
           // for prompt(), and confirm() is the same family), which would
           // silently abort every start. So the burn confirmation is an
           // in-view step, same as the persona picker replaced prompt().
+          const doLine =
+            machine === "do"
+              ? "\n\nDigitalOcean: fez will create a ~$0.018/hr droplet on your account; stopping the miner destroys it."
+              : "";
           setPicker({
             kind: "confirm", netuid, persona, machine, schema, values,
-            message: `Register ${persona} on netuid ${netuid}? Burns ~${cost.tao} tTAO — skipped (free) if ${persona} is already registered there.${liumLine}`,
+            message: `Register ${persona} on netuid ${netuid}? Burns ~${cost.tao} tTAO — skipped (free) if ${persona} is already registered there.${liumLine}${doLine}`,
           });
         } catch (err) {
           setError(err instanceof Error ? err.message : String(err));
@@ -699,6 +718,10 @@ export default function activate(api: GuiExtensionApi): void {
           if (machine === "ssh") {
             startArgs.push("--machine", "ssh", "--host", sshTarget.trim());
             if (sshKeyPath.trim()) startArgs.push("--ssh-key", sshKeyPath.trim());
+            if (sshServePort.trim()) startArgs.push("--serve-port", sshServePort.trim());
+          }
+          if (machine === "do") {
+            startArgs.push("--machine", "do");
             if (sshServePort.trim()) startArgs.push("--serve-port", sshServePort.trim());
           }
           const startOut = await run("fez-mine", startArgs);
@@ -793,7 +816,7 @@ export default function activate(api: GuiExtensionApi): void {
         return (
           <div style={card}>
             {Label(`machine — ${subnetName(picker.netuid)}`)}
-            {machineChoices(req).map((c) => (
+            {machineChoices(req, hasDoToken).map((c) => (
               <label
                 key={c.choice}
                 title={c.reason}
@@ -811,22 +834,26 @@ export default function activate(api: GuiExtensionApi): void {
                 {c.reason ? ` — ${c.reason}` : ""}
               </label>
             ))}
-            {machineChoice === "ssh" && (
+            {(machineChoice === "ssh" || machineChoice === "do") && (
               <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-                <input
-                  className="manage-input"
-                  value={sshTarget}
-                  spellCheck={false}
-                  placeholder="root@165.1.2.3 or user@host:2222"
-                  onChange={(e) => setSshTarget(e.target.value)}
-                />
-                <input
-                  className="manage-input"
-                  value={sshKeyPath}
-                  spellCheck={false}
-                  placeholder="identity file (optional — ssh-agent otherwise)"
-                  onChange={(e) => setSshKeyPath(e.target.value)}
-                />
+                {machineChoice === "ssh" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <input
+                      className="manage-input"
+                      value={sshTarget}
+                      spellCheck={false}
+                      placeholder="root@165.1.2.3 or user@host:2222"
+                      onChange={(e) => setSshTarget(e.target.value)}
+                    />
+                    <input
+                      className="manage-input"
+                      value={sshKeyPath}
+                      spellCheck={false}
+                      placeholder="identity file (optional — ssh-agent otherwise)"
+                      onChange={(e) => setSshKeyPath(e.target.value)}
+                    />
+                  </div>
+                )}
                 <input
                   className="manage-input"
                   value={sshServePort}
@@ -1036,7 +1063,9 @@ export default function activate(api: GuiExtensionApi): void {
                         ? ` · pod ${m.machine.podId}${m.machine.hourlyRate ? ` · $${m.machine.hourlyRate}/hr` : ""}`
                         : m.machine?.kind === "ssh"
                           ? ` · ssh ${m.machine.user}@${m.machine.host}${m.machine.port ? `:${m.machine.port}` : ""}`
-                          : " · local"}
+                          : m.machine?.kind === "do"
+                            ? ` · DO droplet${m.machine.dropletId ? ` ${m.machine.dropletId}` : ""} · ~$0.018/hr${m.machine.host ? ` · ${m.machine.host}` : ""}`
+                            : " · local"}
                       {m.machine?.kind === "lium" && m.machine.externalIp && m.machine.externalPort
                         ? ` · ${m.machine.externalIp}:${m.machine.externalPort}`
                         : m.machine?.kind === "ssh" && m.machine.servePort
@@ -1352,6 +1381,7 @@ export default function activate(api: GuiExtensionApi): void {
           const startArgs = ["start", "--netuid", String(netuid), "--persona", persona, "--json"];
           if (status?.machine?.kind === "lium") startArgs.push("--machine", "lium");
           if (status?.machine?.kind === "ssh") startArgs.push("--machine", "ssh");
+          if (status?.machine?.kind === "do") startArgs.push("--machine", "do");
           const startOut = await run("fez-mine", startArgs);
           if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
         }
@@ -1375,7 +1405,9 @@ export default function activate(api: GuiExtensionApi): void {
             ? ` · pod ${status.machine.podId}${status.machine.hourlyRate ? ` · $${status.machine.hourlyRate}/hr` : ""}`
             : status?.machine?.kind === "ssh"
               ? ` · ssh ${status.machine.user}@${status.machine.host}${status.machine.port ? `:${status.machine.port}` : ""}`
-              : ""}
+              : status?.machine?.kind === "do"
+                ? ` · DO droplet${status.machine.dropletId ? ` ${status.machine.dropletId}` : ""} · ~$0.018/hr${status.machine.host ? ` · ${status.machine.host}` : ""}`
+                : ""}
           {status?.machine?.kind === "lium" && status.machine.externalIp && status.machine.externalPort
             ? ` · ${status.machine.externalIp}:${status.machine.externalPort}`
             : status?.machine?.kind === "ssh" && status.machine.servePort

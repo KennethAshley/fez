@@ -63,6 +63,14 @@ export function sshMachine(spec: SshSpec, run: SshRun = defaultRun): MinerMachin
   const common = (portFlag: string): string[] => [
     "-o",
     "BatchMode=yes",
+    // TOFU: a fez-provisioned droplet is ALWAYS an unknown host on first
+    // contact, and BatchMode turns the interactive host-key prompt into a
+    // hard failure — the DO live smoke burned 300s of ssh polls on exactly
+    // that before this flag existed. accept-new trusts an unknown host
+    // once and still refuses a CHANGED key, which is the attack that
+    // matters.
+    "-o",
+    "StrictHostKeyChecking=accept-new",
     ...(spec.port !== undefined ? [portFlag, String(spec.port)] : []),
     ...(spec.keyPath ? ["-i", spec.keyPath] : []),
   ];
