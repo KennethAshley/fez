@@ -336,15 +336,18 @@ export async function runMiner(
     if (provisioned && machineState?.kind === "lium") {
       log(`provisioned pod ${machineState.podId} at $${machineState.hourlyRate ?? "?"}/hr (ttl ${process.env.FEZ_MINE_POD_TTL || "24h"})`);
     }
-    // Local machines keep v1's full-environment forward. A REMOTE (lium)
-    // pod's env is now built primarily from ctx.config (resolved below from
+    // Local machines keep v1's full-environment forward. Any REMOTE
+    // machine's env is built primarily from ctx.config (resolved below from
     // the descriptor's schema, merged with state + keychain secrets). For raw
     // env passthrough (an escape hatch for future descriptors), FEZ_MINE_FORWARD_ENV
     // (comma-separated names, default empty) names additional vars from this
-    // process's own env to forward — the Mac's PATH/HOME/etc. have no business
-    // on a rented pod by default; deliberately chosen via the allowlist only.
+    // process's own env to forward — the Mac's env has no business on a
+    // machine it doesn't run; deliberately chosen via the allowlist only.
+    // Was keyed on kind === "lium" — the first live ssh miner exported the
+    // Mac's ENTIRE environment (local session tokens included) onto a
+    // droplet, visible in ps. Same bug class as workDir; same fix shape.
     const env: Record<string, string> =
-      machine.kind === "lium"
+      machine.kind !== "local"
         ? Object.fromEntries(
             (process.env.FEZ_MINE_FORWARD_ENV ?? "")
               .split(",")
