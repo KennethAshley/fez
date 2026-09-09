@@ -24,11 +24,18 @@ const headers = (token: string) => ({ Authorization: `Bearer ${token}`, "Content
 function userData(publicKey: string): string {
   return [
     "#cloud-config",
+    // Top-level ssh_authorized_keys targets the image's DEFAULT cloud-init
+    // user, which is not reliably root on DO images — the first live smoke
+    // burned its whole ssh-poll budget on publickey-denied because of it.
+    // fez connects as root, so root's authorized_keys is written EXPLICITLY
+    // in runcmd; the top-level entry stays as a harmless belt-and-braces.
     "ssh_authorized_keys:",
     `  - ${publicKey}`,
     "packages:",
     "  - docker.io",
     "runcmd:",
+    "  - mkdir -p /root/.ssh && chmod 700 /root/.ssh",
+    `  - echo '${publicKey}' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys`,
     "  - systemctl enable --now docker",
     "  - sed -i 's/^#\\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config",
     "  - systemctl reload ssh || systemctl reload sshd",
