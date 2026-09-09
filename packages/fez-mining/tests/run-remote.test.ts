@@ -462,5 +462,9 @@ describe("container descriptor routing", () => {
     expect(joined).toContain("docker pull");
     expect(joined).toContain("docker run -d");
     expect(joined).toContain("docker wait 'fez-9996-p'");
+    // The fixture ALSO defines install/register/start (each execs a
+    // SCRIPT_HOOK_RAN sentinel) — proving container wins on precedence,
+    // not merely that a hookless descriptor happens to skip them.
+    expect(joined).not.toContain("SCRIPT_HOOK_RAN");
   });
 });

@@ -90,8 +90,12 @@ export async function runContainerMiner(opts: {
   config: Record<string, string | number | boolean>;
   registered: boolean;
   log: (l: string) => void;
+  /** Fires immediately after a successful one-shot register — same moment
+   *  the script path persists its "registered" flag, so a later failure
+   *  (docker run/wait) never re-drives register on the next start. */
+  onRegistered?: () => Promise<void>;
 }): Promise<number> {
-  const { machine, container: c, netuid, persona, workDir, config, registered, log } = opts;
+  const { machine, container: c, netuid, persona, workDir, config, registered, log, onRegistered } = opts;
   const name = containerName(netuid, persona);
   const envFile = `${workDir}/.env`;
 
@@ -135,6 +139,7 @@ export async function runContainerMiner(opts: {
       { timeoutMs: 300_000 }
     );
     if (reg.code !== 0) throw new Error(`container register exited ${reg.code}: ${reg.stderr || reg.stdout}`);
+    if (onRegistered) await onRegistered();
   }
 
   // A stale same-name container (crashed runner, prior run) blocks -d.

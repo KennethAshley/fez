@@ -387,8 +387,8 @@ export async function runMiner(
       const exit = await runContainerMiner({
         machine, container: d.container, netuid, persona,
         workDir, config: ctx.config, registered, log,
+        onRegistered: () => fs.writeFile(flag, "1"),
       });
-      if (d.container.register && !registered) await fs.writeFile(flag, "1");
       if (exit !== 0) throw new Error(`container miner exited ${exit}`);
     } else {
       if (d.install) await d.install(ctx);

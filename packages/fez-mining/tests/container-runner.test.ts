@@ -118,6 +118,53 @@ describe("container-runner orchestration", () => {
     expect(cmds.some((c) => c.includes("docker run --rm"))).toBe(false);
   });
 
+  it("onRegistered fires right after a successful register — a later run/wait failure must never undo it", async () => {
+    const { machine } = machineOf({
+      "docker pull": { code: 0 },
+      "docker run --rm": { code: 0 },
+      "docker run -d": { code: 1, stderr: "boom" },
+    });
+    let fired = false;
+    await expect(
+      runContainerMiner({
+        machine, container: { image: "i@sha256:x", register: { command: ["post-ip"] } },
+        netuid: 1, persona: "p", workDir: "/w", config: {}, registered: false, log: () => {},
+        onRegistered: async () => { fired = true; },
+      })
+    ).rejects.toThrow(/docker run exited/);
+    expect(fired).toBe(true);
+  });
+
+  it("onRegistered does not fire when registered: true", async () => {
+    const { machine } = machineOf({
+      "docker pull": { code: 0 },
+      "docker run -d": { code: 0 },
+      "docker wait": { code: 0, stdout: "0\n" },
+    });
+    let fired = false;
+    await runContainerMiner({
+      machine, container: { image: "i@sha256:x", register: { command: ["x"] } },
+      netuid: 1, persona: "p", workDir: "/w", config: {}, registered: true, log: () => {},
+      onRegistered: async () => { fired = true; },
+    });
+    expect(fired).toBe(false);
+  });
+
+  it("onRegistered does not fire when the descriptor has no register command", async () => {
+    const { machine } = machineOf({
+      "docker pull": { code: 0 },
+      "docker run -d": { code: 0 },
+      "docker wait": { code: 0, stdout: "0\n" },
+    });
+    let fired = false;
+    await runContainerMiner({
+      machine, container: { image: "i@sha256:x" },
+      netuid: 1, persona: "p", workDir: "/w", config: {}, registered: false, log: () => {},
+      onRegistered: async () => { fired = true; },
+    });
+    expect(fired).toBe(false);
+  });
+
   it("stale container is removed before a fresh run (restart-safe)", async () => {
     const { machine, cmds } = machineOf({
       "docker pull": { code: 0 },
