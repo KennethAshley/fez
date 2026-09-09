@@ -170,20 +170,73 @@ node -e "const W=require('ws');const w=new W('ws://localhost:7878');w.on('open',
       auto-answer the NIP-42 challenge (your key signs it) and read normally.
       This was the one enforcement clients could never do for each other.
 
-## 12 · The safety net
+## 12 · Agent aliases — "also answers to" (1 min)
+
+Add one line to any persona file's frontmatter, e.g. `~/.fez/personas/researcher.md`:
+
+```
+aliases: [research]
+```
+
+Restart that agent, then in the TUI:
+
+```
+@research one line: you there?
+```
+
+- [ ] `@research` reaches `@researcher` — the alias resolves everywhere a
+      name would: channel mentions, autocomplete, and agent-to-agent
+      handoffs, not just the exact persona filename (edit the same field
+      from the desktop persona editor's "also answers to" box)
+- [ ] Automated: `packages/fez-evals/tests/addressing.test.ts`,
+      `packages/fez-evals/tests/alias-mentions.test.ts`,
+      `packages/fez-desktop/tests/mention-alias.test.ts`
+
+## 13 · Per-agent access control (2 min)
+
+Add to the same persona's frontmatter:
+
+```
+respondTo: allowlist:<some-pubkey-you-don't-control>
+```
+
+- [ ] Restart the agent, then @mention it yourself (your owner key isn't on
+      that allowlist) — it stays silent. The gate lives in the agent and
+      checks the message author before anything else runs, so it's not
+      bypassable via a DM (no `h` tag to gate on) or a relay with no
+      policies loaded
+- [ ] Set it back to `respondTo: owner` (or delete the line — that's the
+      default) and it answers you again
+- [ ] Automated: `packages/fez-evals/tests/author-gate.test.ts` (the gate
+      itself); `packages/fez-desktop/tests/access-rows.test.ts` (the
+      owner/anyone/allowlist picker rows in the desktop persona editor)
+
+## 14 · Waking-state feedback — desktop app (1 min)
+
+Open fez-desktop, start a new agent from the persona picker.
+
+- [ ] Its roster row / profile pane shows "waking — announcing to the
+      relay…" instead of going blank between process launch and its
+      kind-47000 announcement landing; past ~30s with no announcement it
+      honestly flips to "still waking — no announcement yet; check the
+      relays"
+- [ ] Automated: `packages/fez-desktop/tests/waking.test.ts`
+
+## 15 · The safety net
 
 ```
 cd packages/fez-evals && npx vitest --run
 ```
 
-- [ ] **143 tests green** — including the trust-boundary suite (squatting,
-      forged rosters, bans, deletions), relay hygiene, reconnect E2E,
-      read-gating, moderation policy, group-DM crypto, Blossom auth, and the
-      kind-registry drift gate. All of it runs in CI (`.github/workflows/ci.yml`)
-      the day this repo gets a remote.
+- [ ] **1381 tests green** across 138 files — including the trust-boundary
+      suite (squatting, forged rosters, bans, deletions), relay hygiene,
+      reconnect E2E, read-gating, moderation policy, group-DM crypto,
+      Blossom auth, the author-gate access policy, alias/addressing
+      resolution, and the kind-registry drift gate. All of it runs in CI
+      (`.github/workflows/ci.yml`) the day this repo gets a remote.
 
 ---
 
-*Everything above maps to GAPS.md — 12 of 20 roadmap items closed; the file
-tracks what's left (workflow vocabulary, fez MCP server, remote bodies,
-persona packs, pairing, activity feed).*
+*Everything above maps to GAPS.md, whose own roadmap table (§6) is the
+source of truth for what's left — currently just remote agent bodies (#17)
+and the activity feed taxonomy (#20).*

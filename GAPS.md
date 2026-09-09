@@ -6,8 +6,9 @@ roadmap-against-reference: update it as gaps close.
 
 - Audited: Buzz `8b8445f5e` (2026-08-14) against fez `701cb3f` (2026-08-15).
 - **Update 2026-08-17 (late)**: items 18 (persona packs, `eb48d5f`) and 19
-  (device pairing, `bb310b4`) closed — 17 of 20 done. Remaining: 17 (remote
-  bodies), 20 (activity feed), and the §2.7 runtime leftovers.
+  (device pairing, `bb310b4`) closed — 18 of 20 done (see §6's own tally).
+  Remaining: 17 (remote bodies), 20 (activity feed), and the §2.7 runtime
+  leftovers.
 - **Update 2026-08-17 (night)**: items 15 (fez-mcp, `6e019ff`) and 14
   (workflow vocabulary + durable gates, see log) closed — 14 of 20 done.
 - **Update 2026-08-17 (later)**: items 11 (turn metrics 47030 + observer
@@ -72,6 +73,14 @@ Credit where due — these are verified, not assumed:
   channel; Buzz dead-letters to logs.
 - **Engram (NIP-AE) implementation**: spec test vectors pass; arguably
   cleaner than Buzz's own.
+- **Agent aliases** ("also answers to", `packages/fez-acp/src/addressing.ts`,
+  persona `aliases:` frontmatter): a persona answers to extra @names
+  everywhere a name would — mentions, autocomplete, agent-to-agent
+  handoffs. No Buzz equivalent.
+- **Per-agent access control** (`src/identity/author-gate.ts`, persona
+  `respondTo: owner|anyone|allowlist:<pubkeys>`): a gate the agent itself
+  enforces, independent of relay membership policy — the one that actually
+  holds for NIP-17 DMs (no `h` tag) and relays with no policies loaded.
 
 ---
 
@@ -196,7 +205,7 @@ extension-store model unless noted.
 | **Media / attachments** | buzz-media: Blossom (kind 24242 auth), magic-byte MIME validation, thumbnails + blurhash, streaming video | `fez-media` extension against any public Blossom server; pure client-side, zero relay changes. Biggest UX gap. |
 | **Profiles (kind 0)** | Every surface; names/avatars/NIP-05 | Currently only agents have names (47000); a second human is a hex string. Also unlocks standard-nostr-client interop (kinds 0/1/3 are all absent). |
 | **Search** | buzz-search: Postgres FTS, NIP-50; "index is the write" | SQLite FTS5 in fez-relay's SqliteEventStore + NIP-50, or client-side index. Key ported decision: hits are candidates, client trust rules re-filter — exactly fez's model. (#43) |
-| **Moderation** | Reports (1984, kept private), bans/timeouts (9040-44), admin console, guard rails | Report intake NIP-44-encrypted to the creator (public relay makes plaintext 1984 impossible); creator-signed ban lists consumed by clients *and* a `moderationPolicy` sibling of `membershipPolicy` — enforcement port needs zero new seams. Roles (`admin`/`member`/`bot`) are parsed today and checked by nothing. (#42) |
+| **Moderation** | Reports (1984, kept private), bans/timeouts (9040-44), admin console, guard rails | Report intake NIP-44-encrypted to the creator (public relay makes plaintext 1984 impossible); creator-signed ban lists consumed by clients *and* a `moderationPolicy` sibling of `membershipPolicy` — enforcement port needs zero new seams. Roles (`admin`/`member`/`bot`) now gate kick/promote/demote (`fez-client/src/index.ts:1896`, `:1927`; `workspace-state.ts:433`'s `canModerate`) — no admin console UI yet. (#42) |
 | **Group DMs** | Up to 9 members | fez NIP-17 is strictly 1:1; "you + researcher + reviewer, privately" doesn't exist. |
 | **Roster removal** | Member remove + NIP-43 lifecycle | The 47102 primitive supports it; no command/UI exposes it (invite adds only). Note: same-second 47102 tie-break is first-seen-wins (`<` in community-state) — Buzz explicitly bumps timestamps; fez's is undefined-by-luck. |
 | **Device pairing** | NIP-AB kind 24134, QR, SAS + transcript-hash MITM detection, hardened sidecar relay | `fez-pairing` extension over the ordinary relay; the sidecar's validation tightenings become an ingest policy. Today the only second-device path is manual ncryptsec copy-paste. |
