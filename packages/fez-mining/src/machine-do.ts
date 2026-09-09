@@ -88,10 +88,21 @@ export async function doProvision(
 export async function doAlive(token: string, ref: string, f: DoFetch = realFetch): Promise<boolean> {
   const r = await f(`${API}/droplets/${ref}`, { headers: headers(token) });
   if (r.status === 404) return false;
+  // Any other non-2xx (a 429 rate-limit, a 5xx hiccup) is UNKNOWN, not
+  // dead — a caller reading "false" here would reprovision (and destroy
+  // the still-live original) over what's really a transient API error.
+  if (r.status >= 300) throw new Error(`DO droplet status check failed (${r.status})`);
   const j = (await r.json()) as DropletJson;
   return j.droplet?.status === "active" || j.droplet?.status === "new";
 }
 
 export async function doDestroy(token: string, ref: string, f: DoFetch = realFetch): Promise<void> {
-  await f(`${API}/droplets/${ref}`, { method: "DELETE", headers: headers(token) }).catch(() => undefined);
+  // 404 = already gone, i.e. destroy already succeeded from the caller's
+  // point of view. Anything else non-2xx (401/5xx) — or the fetch itself
+  // rejecting (network) — must propagate: a caller that swallows this and
+  // clears its droplet-id state orphans a still-billing droplet.
+  const r = await f(`${API}/droplets/${ref}`, { method: "DELETE", headers: headers(token) });
+  if (r.status >= 300 && r.status !== 404) {
+    throw new Error(`DO droplet destroy failed (${r.status})`);
+  }
 }

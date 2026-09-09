@@ -269,22 +269,36 @@ export async function cmdStop(netuid: number, persona: string, json: boolean): P
       const dropletId = freshEntry.machine.dropletId;
       const token = process.env.DO_API_TOKEN;
       if (token) {
-        await doDestroy(token, String(dropletId));
-        console.error(`destroyed droplet ${dropletId} — billing stopped`);
-        // Clear dropletId/host ONLY on this branch — a real destroy just
-        // happened, so state forgetting the droplet is correct here. In the
-        // no-token branch below, the droplet is still alive and billing;
-        // clearing state there would orphan it (nothing left points at it).
-        const afterDestroy = await readState(home);
-        const afterEntry = afterDestroy.miners.find((e) => e.netuid === netuid && e.persona === persona);
-        if (afterEntry) {
-          await writeState(
-            home,
-            upsertMiner(afterDestroy, {
-              ...afterEntry,
-              machine: { kind: "do" as const, servePort: freshEntry.machine.servePort },
-            })
+        let destroyed = true;
+        try {
+          await doDestroy(token, String(dropletId));
+        } catch (e) {
+          destroyed = false;
+          // The DELETE call itself failed (401/5xx/network) — the droplet
+          // may well still be alive and billing. State must keep pointing
+          // at it (same discipline as the no-token branch below) so it
+          // stays findable; clearing dropletId/host here would orphan it.
+          console.error(
+            `droplet ${dropletId} NOT destroyed (${(e as Error).message}) — delete it in your DO dashboard or it keeps billing`
           );
+        }
+        if (destroyed) {
+          console.error(`destroyed droplet ${dropletId} — billing stopped`);
+          // Clear dropletId/host ONLY on this branch — a real destroy just
+          // happened, so state forgetting the droplet is correct here. In the
+          // no-token branch below, the droplet is still alive and billing;
+          // clearing state there would orphan it (nothing left points at it).
+          const afterDestroy = await readState(home);
+          const afterEntry = afterDestroy.miners.find((e) => e.netuid === netuid && e.persona === persona);
+          if (afterEntry) {
+            await writeState(
+              home,
+              upsertMiner(afterDestroy, {
+                ...afterEntry,
+                machine: { kind: "do" as const, servePort: freshEntry.machine.servePort },
+              })
+            );
+          }
         }
       } else {
         console.error(`droplet ${dropletId} NOT destroyed (no DO_API_TOKEN) — delete it in your DO dashboard or it keeps billing`);

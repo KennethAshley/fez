@@ -252,6 +252,42 @@ describe("container-runner orchestration", () => {
     expect(reg).not.toContain("{serveIp}");
   });
 
+  // Review finding #3 (IMPORTANT): a lium pod's machine.ports is typically
+  // multi-entry (an SSH mapping ahead of the declared serve port) —
+  // machine.ports[0] is NOT the serve port there. Match the container's
+  // own declared internal port instead.
+  it("a lium-shaped ports array (ssh mapping first, serve mapping second) resolves the serve mapping, not [0]", async () => {
+    const { machine, cmds } = machineOf({
+      "docker pull": { code: 0 },
+      "docker run -d": { code: 0 },
+      "docker wait": { code: 0, stdout: "0\n" },
+    });
+    (machine as MinerMachine).ports = [
+      { externalIp: "9.9.9.9", externalPort: 40001, internalPort: 22 }, // ssh mapping — NOT the serve port
+      { externalIp: "9.9.9.9", externalPort: 40002, internalPort: 7999 },
+    ];
+    await runContainerMiner({
+      machine,
+      container: { image: "img@sha256:x", env: { IP: "{serveIp}", PORT: "{servePort}" }, ports: [{ internal: 7999 }] },
+      netuid: 56, persona: "gauss", workDir: "/w", config: {}, registered: true, log: () => {},
+    });
+    const printf = cmds.find((c) => c.includes("printf %s"))!;
+    expect(printf).toContain("IP=9.9.9.9");
+    expect(printf).toContain("PORT=40002");
+  });
+
+  it("non-empty machine.ports with no mapping for the declared internal port throws loudly", async () => {
+    const { machine } = machineOf({ "docker pull": { code: 0 } });
+    (machine as MinerMachine).ports = [{ externalIp: "9.9.9.9", externalPort: 40001, internalPort: 22 }];
+    await expect(
+      runContainerMiner({
+        machine,
+        container: { image: "img@sha256:x", ports: [{ internal: 7999 }] },
+        netuid: 56, persona: "gauss", workDir: "/w", config: {}, registered: true, log: () => {},
+      })
+    ).rejects.toThrow(/no machine port mapping for internal port 7999/);
+  });
+
   it("compose descriptor drives compose verbs, project-named like the container", async () => {
     const { machine, cmds } = machineOf({
       "compose": { code: 0, stdout: "0\n" },

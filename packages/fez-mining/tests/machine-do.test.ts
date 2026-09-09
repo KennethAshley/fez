@@ -49,11 +49,32 @@ describe("DoMachine provisioner", () => {
     expect(await doAlive("tok", "42", gone.f)).toBe(false);
   });
 
-  it("destroy issues DELETE and tolerates 404", async () => {
+  it("destroy issues DELETE, resolves on 204, and tolerates 404 (already gone = success)", async () => {
     const { f, calls } = fakeFetch({ "DELETE https://api.digitalocean.com/v2/droplets/N": [{ status: 204 }] });
     await doDestroy("tok", "42", f);
     expect(calls[0].method).toBe("DELETE");
     await doDestroy("tok", "42", fakeFetch({}).f); // 404 — resolves anyway
+  });
+
+  // Review finding #1 (CRITICAL): a swallowed destroy failure reads as
+  // "billing stopped" to every caller — must throw instead so callers can
+  // keep state pointing at the still-billing droplet.
+  it("destroy throws on a non-2xx/404 status (401/5xx)", async () => {
+    const { f } = fakeFetch({ "DELETE https://api.digitalocean.com/v2/droplets/N": [{ status: 500 }] });
+    await expect(doDestroy("tok", "42", f)).rejects.toThrow(/500/);
+  });
+
+  it("destroy throws when the fetch itself rejects (network failure)", async () => {
+    const rejecting = async () => { throw new Error("network unreachable"); };
+    await expect(doDestroy("tok", "42", rejecting)).rejects.toThrow(/network unreachable/);
+  });
+
+  // Review finding #2 (IMPORTANT): a rate-limited (or otherwise erroring)
+  // status check is UNKNOWN, not "dead" — treating it as dead triggers an
+  // unwarranted destroy→recreate of a droplet that's actually fine.
+  it("alive throws on a non-2xx/404 status (429 rate-limit) instead of reading it as dead", async () => {
+    const { f } = fakeFetch({ "GET https://api.digitalocean.com/v2/droplets/N": [{ status: 429 }] });
+    await expect(doAlive("tok", "42", f)).rejects.toThrow(/429/);
   });
 
   it("a failed create throws with DO's message", async () => {

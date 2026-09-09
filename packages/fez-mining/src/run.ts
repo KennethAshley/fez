@@ -265,6 +265,13 @@ export async function resolveMachine(
         if (recent.length >= 3) {
           throw new Error("hit the daily droplet-reprovision cap (3/24h) — check your DO dashboard and start manually");
         }
+        // doAlive above said this recorded droplet is dead — destroy it
+        // before provisioning its replacement, or its id gets silently
+        // overwritten by the fresh one below and it's never found again.
+        // Best-effort: a destroy failure here must not block the fresh
+        // provision (the cap above already bounds runaway spend); the old
+        // droplet then falls back to the DO dashboard as its backstop.
+        await doDestroy(token, String(st.dropletId), opts.doFetch).catch(() => {});
       }
       const r = await doProvision(
         { token, netuid: entry.netuid, persona, servePorts, publicKey: identity.publicKey, keyPath: identity.keyPath },
@@ -486,8 +493,16 @@ export async function runMiner(
       // findable to destroy by hand, same discipline as cli.ts's stop.
       const token = process.env.DO_API_TOKEN;
       if (token) {
-        await doDestroy(token, String(freshMachineState.dropletId), opts.doFetch).catch(() => {});
-        await record({ machine: { kind: "do", servePort: freshMachineState.servePort } });
+        // Only clear state (dropletId/host) once the destroy actually
+        // succeeded — a failed DELETE (401/5xx/network) means the droplet
+        // may still be alive and billing, and state must keep pointing at
+        // it so it stays findable, same discipline as cli.ts's stop.
+        try {
+          await doDestroy(token, String(freshMachineState.dropletId), opts.doFetch);
+          await record({ machine: { kind: "do", servePort: freshMachineState.servePort } });
+        } catch (destroyErr) {
+          log(`droplet ${freshMachineState.dropletId} NOT destroyed (${(destroyErr as Error).message}) — delete it in your DO dashboard or it keeps billing`);
+        }
       }
     }
   }

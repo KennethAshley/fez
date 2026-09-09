@@ -109,12 +109,38 @@ export async function runContainerMiner(opts: {
   // Beyond user config, descriptors can template three harness-supplied
   // values: {persona} and the machine's own serve address — the latter
   // isn't known until the machine is provisioned, so it can't live in
-  // user config at all.
+  // user config at all. A lium pod's machine.ports is typically
+  // multi-entry (an SSH mapping ahead of the declared serve port), so
+  // machine.ports[0] is NOT safe to assume is the serve port — match the
+  // container's OWN declared internal port instead.
+  const declaredInternal = c.ports?.[0]?.internal;
+  let serveIp: string;
+  let servePort: string;
+  if (declaredInternal === undefined) {
+    // Descriptor declares no ports at all — nothing to match against.
+    serveIp = machine.ports[0]?.externalIp ?? "";
+    servePort = String(machine.ports[0]?.externalPort ?? "");
+  } else {
+    const match = machine.ports.find((p) => p.internalPort === declaredInternal);
+    if (match) {
+      serveIp = match.externalIp;
+      servePort = String(match.externalPort);
+    } else if (machine.ports.length === 0) {
+      // No mapping to discover from at all (e.g. still-provisioning) —
+      // identity fallback: the container's own internal port.
+      serveIp = "";
+      servePort = String(declaredInternal);
+    } else {
+      throw new Error(
+        `no machine port mapping for internal port ${declaredInternal} — refusing to broadcast a wrong port`
+      );
+    }
+  }
   const enriched: Record<string, string | number | boolean> = {
     ...config,
     persona,
-    serveIp: machine.ports[0]?.externalIp ?? "",
-    servePort: String(machine.ports[0]?.externalPort ?? c.ports?.[0]?.internal ?? ""),
+    serveIp,
+    servePort,
   };
 
   // Secrets ride an env-file (mode 600), never argv — ps-safe.
