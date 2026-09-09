@@ -1,3 +1,9 @@
+> **ARCHIVED 2026-09-09.** This document describes the superseded v0
+> protocol/SDK design and no longer matches the shipped system. The kind
+> registry authority is `src/protocol/kinds.ts`; the production runtime is
+> the workspace model (channels, roster 47102, attestation 47006) documented
+> at [fez.chat/docs](https://fez.chat/docs). Kept for design history only.
+
 # Delegation Protocol
 
 How a human (or any higher-authority keypair) delegates authority to an agent.

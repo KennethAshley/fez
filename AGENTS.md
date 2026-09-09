@@ -31,7 +31,7 @@ We strip away from Buzz:
 | Headless client brain | **Working** | `packages/fez-client` |
 | Standing agent runtime + sentinel + orchestrator | **Working** | `packages/fez-acp`, `fez-sentinel`, `fez-orchestrator` |
 | Desktop app (signed, auto-updating, key custody in Rust) | **Working** | `packages/fez-desktop` |
-| Delegation events (47010/47011) | **Speced only** — zero call sites; the enforced model is the workspace roster (47102) + owner attestation (47006) | `docs/protocol/` |
+| Delegation events (47010/47011) | **Speced only** — zero call sites; the enforced model is the workspace roster (47102) + owner attestation (47006) | `docs/archive/protocol/` (archived spec) |
 
 ## Project Structure
 
@@ -63,11 +63,11 @@ Every action is a Nostr event kind, defined in `src/protocol/kinds.ts` — the r
 - `200xx` = ephemeral (never stored): presence, typing, streaming drafts (20003), observer stream (20004), owner cancel (20005)
 - Standard nostr reused: 0, 5, 7, 14/1059 (NIP-17 DMs), 30078, 30174 (engrams), 1984
 
-New feature? New kind number. No breaking changes. (`docs/protocol/kinds.md` covers only the 470xx family — the registry file is authoritative.)
+New feature? New kind number. No breaking changes. (The registry file `src/protocol/kinds.ts` is authoritative; the old `docs/archive/protocol/kinds.md` is archived design history.)
 
 ### The Roster Is the Permission Primitive
 
-The workspace owner — the key named in the relay's NIP-11 `pubkey` — signs one roster (47102, roles `owner|admin|member|bot`) and one ban list (30047). Membership is workspace-wide; a banned key is a non-member everywhere. Agents gate authors additionally by `respondTo` policy, and "my agents may summon each other, strangers may not" works via owner **attestation** (47006). Delegation events (47010/47011) are speced in `docs/protocol/delegation.md` but have zero call sites — treat as unimplemented.
+The workspace owner — the key named in the relay's NIP-11 `pubkey` — signs one roster (47102, roles `owner|admin|member|bot`) and one ban list (30047). Membership is workspace-wide; a banned key is a non-member everywhere. Agents gate authors additionally by `respondTo` policy, and "my agents may summon each other, strangers may not" works via owner **attestation** (47006). Delegation events (47010/47011) are speced in `docs/archive/protocol/delegation.md` but have zero call sites — treat as unimplemented.
 
 ### Relay Is Optional Enforcement
 
@@ -164,9 +164,9 @@ For quick manual loops the legacy SDK path still works (`npx tsx dev/local-relay
 
 ## When In Doubt
 
-- Read `docs/protocol/kinds.md` for event semantics
-- Read `docs/minimal-vs-application.md` for why the SDK is minimal and what an optional heavier layer would add
-- Read `docs/protocol/delegation.md` for the trust model (spec only — not enforced in code yet)
+- Read `src/protocol/kinds.ts` for event semantics (the registry is the doc)
+- Read `docs/archive/minimal-vs-application.md` for the historical minimal-SDK rationale (archived)
+- Read `docs/archive/protocol/delegation.md` for the old delegation spec (archived; the enforced trust model is roster + attestation, see src/identity/author-gate.ts)
 - Read `examples/echo-agent.ts` for the simplest working agent
 - Read `docs/architecture.md` for the current system diagram and trust model
 
