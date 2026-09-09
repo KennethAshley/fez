@@ -66,11 +66,14 @@ no-op that logs why, once.
 | `read:dms` | unwrap the user's DMs | ⚠ |
 | `read:agents` | agent roster and activity | |
 | `publish` | post messages, reactions, docs **as the user** | ⚠ |
+| `sign` | sign, encrypt, and decrypt with the user's key, without publishing | ⚠ |
 | `commands` | slash commands, input handlers | |
 | `ui` | panels, cards, themes, navigation | |
 | `background` | scheduled tasks while the user is away | ⚠ |
 | `system-prompt` | standing instructions to all the user's agents | ⚠ |
 | `personas` | read and edit agent personas | ⚠ |
+| `processes` | run its own programs on the user's machine | ⚠ |
+| `notifications` | send native notifications | |
 | `network:relay` | HTTP to the workspace's own relay | |
 | `network:<host>` | that host (leading dot covers subdomains) | |
 | `network:*` | any server on the internet | ⚠ |

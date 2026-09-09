@@ -48,12 +48,17 @@ publishing signs **as the user**:
 - `publish`, `sendDm` need `publish`
 - `query`, `subscribe` need `read:channels`
 - `unwrapDm` needs `read:dms`
-- `signEvent` (sign without publishing — NIP-98), `encrypt`, `decrypt`, and
-  `pubkey` are ungated
+- `signEvent` (sign without publishing — NIP-98) and `encrypt` need `sign`
+  — `publish` also satisfies this, since you can't publish an event without
+  signing it
+- `decrypt` needs `sign` or `read:dms`
+- `pubkey` is ungated — it's the public key, safe to hand out
 
-An ungranted call doesn't throw — it warns **once** per method and returns a
-hollow value (empty array, no-op unsubscribe). An extension that quietly does
-nothing is worse to debug than one that logs why.
+Every denial warns **once** per method. Most then return a hollow value
+(empty array, empty-signature event, no-op unsubscribe) — an extension that
+quietly does nothing is worse to debug than one that logs why. `signEvent`
+and `decrypt` are the exception: they throw instead, so a denied signature
+or decryption can't masquerade as valid empty output.
 
 ## Channels and workspace
 
