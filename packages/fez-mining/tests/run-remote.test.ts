@@ -254,7 +254,7 @@ describe("resolveMachine (production resolution path, no machineFactory)", () =>
       const firstScpIdx = calls.findIndex((c) => c[0] === "scp");
       expect(firstExecIdx).toBeGreaterThanOrEqual(0);
       expect(firstScpIdx).toBeGreaterThan(firstExecIdx); // scp (the hotkey deploy) happens after the readiness probe
-      expect(calls.filter((c) => c[0] === "exec").length).toBe(5); // 3 probe attempts + workDir mkdir + hotkey-dir mkdir
+      expect(calls.filter((c) => c[0] === "exec").length).toBe(6); // 3 probe attempts + workDir mkdir + hotkey-dir mkdir + hotkey chmod 600
     } finally {
       if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN;
       else process.env.FEZ_WALLET_BIN = prevBin;

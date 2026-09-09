@@ -44,6 +44,20 @@ describe("exportRemoteHotkey", () => {
     process.env.FEZ_WALLET_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "fez-wallet-remote-hotkey-"));
   });
 
+  it("includes the treasury coldkeypub (public half ONLY) when a root exists", async () => {
+    const { writeRootEntry } = await import("../src/store.js");
+    const { treasuryPair, generateWalletMnemonic: gen } = await import("../src/derive.js");
+    const root = gen();
+    writeRootEntry(root);
+    const r = await exportRemoteHotkey("gauss");
+    expect(r.coldkeypub).toBeDefined();
+    // Exactly the public fields — a secret leaking in here would ship the
+    // treasury to a rented box.
+    expect(Object.keys(r.coldkeypub!).sort()).toEqual(["accountId", "publicKey", "ss58Address"]);
+    expect(r.coldkeypub!.ss58Address).toBe(treasuryPair(root).address);
+    expect(JSON.stringify(r.coldkeypub)).not.toContain(root.split(" ")[0]);
+  });
+
   it("creates a fresh standalone key on first export", async () => {
     const r = await exportRemoteHotkey("quill");
     expect(r.persona).toBe("quill");

@@ -101,17 +101,30 @@ async function retryFirstContact(label: string, attempt: () => Promise<void>, lo
 async function deployHotkey(persona: string, machine: MinerMachine): Promise<void> {
   const exported = JSON.parse(
     execFileSync(walletBin(), ["export-hotkey", persona, "--json"], { encoding: "utf8" })
-  ) as { keyfile: unknown };
+  ) as { keyfile: unknown; coldkeypub?: unknown };
   const tmpFile = path.join(os.tmpdir(), `fez-hotkey-${crypto.randomUUID()}.json`);
+  const tmpCold = path.join(os.tmpdir(), `fez-coldkeypub-${crypto.randomUUID()}.json`);
   // lium scp does not expand ~ — pinned live 2026-09-08
-  const hotkeyDir = "/root/.bittensor/wallets/default/hotkeys";
+  const walletDir = "/root/.bittensor/wallets/default";
+  const hotkeyDir = `${walletDir}/hotkeys`;
   try {
     await fs.writeFile(tmpFile, JSON.stringify(exported.keyfile), { mode: 0o600 });
     const r = await machine.exec(`mkdir -p ${escapeShellValue(hotkeyDir)}`);
     if (r.code !== 0) throw new Error(r.stderr || `mkdir exited ${r.code}`);
     await machine.copy(tmpFile, `${hotkeyDir}/${persona}`);
+    // fiber's tooling loads coldkeypub.txt beside the hotkey (public half
+    // only — no secret rides along; found live when fiber-post-ip died on
+    // its absence). Older wallets that predate the export field skip it.
+    if (exported.coldkeypub) {
+      await fs.writeFile(tmpCold, JSON.stringify(exported.coldkeypub), { mode: 0o600 });
+      await machine.copy(tmpCold, `${walletDir}/coldkeypub.txt`);
+    }
+    // scp lands files with umask permissions (0644) — the hotkey is a
+    // secret and gets 600; best-effort, /root itself is already 0700.
+    await machine.exec(`chmod 600 ${escapeShellValue(`${hotkeyDir}/${persona}`)}`).catch(() => {});
   } finally {
     await fs.rm(tmpFile, { force: true });
+    await fs.rm(tmpCold, { force: true });
   }
 }
 

@@ -270,13 +270,32 @@ export async function registerPersona(
  */
 export async function exportRemoteHotkey(
   persona: string
-): Promise<{ persona: string; ss58Address: string; keyfile: ReturnType<typeof keyfileFor>; created: boolean }> {
+): Promise<{
+  persona: string;
+  ss58Address: string;
+  keyfile: ReturnType<typeof keyfileFor>;
+  /** The treasury coldkey's PUBLIC half, bittensor coldkeypub.txt shape —
+   *  fiber's tooling loads it beside the hotkey to know which coldkey the
+   *  hotkey serves under (found live: fiber-post-ip dies without it). No
+   *  secret material: the same address every registration already puts
+   *  on-chain. Absent when no wallet root exists yet. */
+  coldkeypub?: { accountId: string; publicKey: string; ss58Address: string };
+  created: boolean;
+}> {
   requireUsablePersonaName(persona);
   const existing = readRemoteHotkeyEntry(persona);
   const mnemonic = existing ?? generateWalletMnemonic();
   if (!existing) writeRemoteHotkeyEntry(persona, mnemonic);
   const keyfile = keyfileFor(mnemonic);
-  return { persona, ss58Address: keyfile.ss58Address, keyfile, created: !existing };
+  const root = readRootEntry();
+  const coldkeypub = root
+    ? (() => {
+        const t = treasuryPair(root);
+        const pk = `0x${t.publicKeyHex}`;
+        return { accountId: pk, publicKey: pk, ss58Address: t.address };
+      })()
+    : undefined;
+  return { persona, ss58Address: keyfile.ss58Address, keyfile, ...(coldkeypub ? { coldkeypub } : {}), created: !existing };
 }
 
 /**
