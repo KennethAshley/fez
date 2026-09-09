@@ -12,7 +12,7 @@ import { loadDescriptors } from "./descriptors.js";
 import { describePod, escapeShellValue, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
 import type { LiumExec, Recorder } from "./machine-lium.js";
 import { sshMachine, type SshRun, type SshSpec } from "./machine-ssh.js";
-import { doProvision, doAlive, type DoFetch } from "./machine-do.js";
+import { doProvision, doAlive, doDestroy, type DoFetch } from "./machine-do.js";
 import { ensureFezSshKey } from "./fez-ssh-key.js";
 import { localMachine } from "./machine-local.js";
 import { resolveConfig } from "./config.js";
@@ -253,6 +253,19 @@ export async function resolveMachine(
     let provisioned = false;
     let machineState: MinerMachineState | undefined;
     if (!ssh) {
+      // A re-provision (a dropletId was already recorded — this one's dead
+      // now) counts against the same daily cap reconcile.ts's planRemote
+      // enforces for lium: an unbounded destroy→recreate loop on a
+      // perpetually-dead droplet must not burn money unattended. A
+      // FIRST-ever provision (no prior dropletId) is never capped — start
+      // must always be able to provision the very first time.
+      if (st.dropletId !== undefined) {
+        const DAY_MS = 86_400_000;
+        const recent = (entry.provisions ?? []).filter((t) => t > Date.now() - DAY_MS);
+        if (recent.length >= 3) {
+          throw new Error("hit the daily droplet-reprovision cap (3/24h) — check your DO dashboard and start manually");
+        }
+      }
       const r = await doProvision(
         { token, netuid: entry.netuid, persona, servePorts, publicKey: identity.publicKey, keyPath: identity.keyPath },
         opts.doFetch
@@ -322,6 +335,8 @@ export async function runMiner(
     machineFactory?: (entry: MinerEntry) => Promise<MinerMachine>;
     exec?: LiumExec;
     recorder?: Recorder;
+    sshRun?: SshRun;
+    doFetch?: DoFetch;
   } = {}
 ): Promise<number> {
   const d = (await loadDescriptors(home)).find((m) => m.netuid === netuid);
@@ -461,6 +476,19 @@ export async function runMiner(
       // to a half-configured pod.
       await teardownPod(freshMachineState.podId, opts.exec, opts.recorder).catch(() => {});
       await record({ machine: { kind: "lium" } });
+    }
+    if (freshMachineState?.kind === "do" && freshMachineState.dropletId !== undefined) {
+      // Same lesson as the lium arm above: this run provisioned the droplet
+      // and then failed before mining anything — a droplet that never mines
+      // must never keep billing silently. Only destroy with a token in
+      // hand; with none, skip the API call but still leave state pointing
+      // at the (still-billing) droplet — that's the ONLY way it stays
+      // findable to destroy by hand, same discipline as cli.ts's stop.
+      const token = process.env.DO_API_TOKEN;
+      if (token) {
+        await doDestroy(token, String(freshMachineState.dropletId), opts.doFetch).catch(() => {});
+        await record({ machine: { kind: "do", servePort: freshMachineState.servePort } });
+      }
     }
   }
   await record({ pid: undefined, lastExit: `exit ${code} at ${new Date().toISOString()}` });
