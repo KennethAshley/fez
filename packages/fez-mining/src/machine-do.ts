@@ -31,9 +31,17 @@ function userData(publicKey: string): string {
     // in runcmd; the top-level entry stays as a harmless belt-and-braces.
     "ssh_authorized_keys:",
     `  - ${publicKey}`,
+    // A droplet created WITHOUT the API's ssh_keys param gets a root
+    // password DO marks EXPIRED — pubkey auth then succeeds but every
+    // session dies at "password change required but no TTY" (found live:
+    // smoke #3's whole ssh budget). expire:false is cloud-init's switch
+    // for exactly this; the chage backstop clears an already-set flag.
+    "chpasswd:",
+    "  expire: false",
     "packages:",
     "  - docker.io",
     "runcmd:",
+    '  - chage -d "$(date +%Y-%m-%d)" root || true',
     "  - mkdir -p /root/.ssh && chmod 700 /root/.ssh",
     `  - echo '${publicKey}' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys`,
     "  - systemctl enable --now docker",
