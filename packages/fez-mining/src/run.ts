@@ -11,7 +11,9 @@ import { ensureDocker, runContainerMiner } from "./container-runner.js";
 import { loadDescriptors } from "./descriptors.js";
 import { describePod, escapeShellValue, liumMachine, podAlive, provisionPod, teardownPod } from "./machine-lium.js";
 import type { LiumExec, Recorder } from "./machine-lium.js";
-import { sshMachine, type SshRun } from "./machine-ssh.js";
+import { sshMachine, type SshRun, type SshSpec } from "./machine-ssh.js";
+import { doProvision, doAlive, type DoFetch } from "./machine-do.js";
+import { ensureFezSshKey } from "./fez-ssh-key.js";
 import { localMachine } from "./machine-local.js";
 import { resolveConfig } from "./config.js";
 import { getSecret } from "./secrets.js";
@@ -148,7 +150,7 @@ async function deployHotkey(persona: string, machine: MinerMachine): Promise<voi
 export async function resolveMachine(
   entry: MinerEntry | undefined,
   persona: string,
-  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine>; sshRun?: SshRun },
+  opts: { machineFactory?: (entry: MinerEntry) => Promise<MinerMachine>; sshRun?: SshRun; doFetch?: DoFetch },
   exec?: LiumExec,
   recorder?: Recorder,
   log: (line: string) => void = () => {},
@@ -227,6 +229,54 @@ export async function resolveMachine(
     if (workDirMk.code !== 0) throw new Error(workDirMk.stderr || `mkdir workDir exited ${workDirMk.code}`);
     await deployHotkey(persona, machine);
     return { machine, provisioned: true, machineState };
+  }
+  if (entry?.machine?.kind === "do") {
+    const st = entry.machine;
+    const token = process.env.DO_API_TOKEN;
+    if (!token) {
+      throw new Error(
+        "DigitalOcean mining needs DO_API_TOKEN — add it in SKILLS & SECRETS (an API token from cloud.digitalocean.com/account/api)"
+      );
+    }
+    const identity = await ensureFezSshKey();
+    const servePorts = st.servePort ? [st.servePort] : [];
+    const ref = st.dropletId !== undefined ? String(st.dropletId) : undefined;
+    let ssh: SshSpec | undefined;
+    if (ref && st.host && (await doAlive(token, ref, opts.doFetch))) {
+      ssh = {
+        host: st.host,
+        user: st.user ?? "root",
+        keyPath: identity.keyPath,
+        ports: servePorts.map((p) => ({ externalIp: st.host!, externalPort: p, internalPort: p })),
+      };
+    }
+    let provisioned = false;
+    let machineState: MinerMachineState | undefined;
+    if (!ssh) {
+      const r = await doProvision(
+        { token, netuid: entry.netuid, persona, servePorts, publicKey: identity.publicKey, keyPath: identity.keyPath },
+        opts.doFetch
+      );
+      ssh = r.ssh;
+      provisioned = true;
+      machineState = { kind: "do", dropletId: Number(r.ref), host: r.ssh.host, user: "root", servePort: st.servePort };
+      // Persist BEFORE deploy: a droplet that fails setup must still be
+      // findable and destroyable (the Lium lesson, verbatim).
+      if (persistProvision) await persistProvision(machineState);
+    }
+    const machine = sshMachine(ssh, opts.sshRun);
+    await retryFirstContact(
+      "droplet readiness",
+      async () => {
+        const r = await machine.exec("true");
+        if (r.code !== 0) throw new Error(r.stderr || `exec exited ${r.code}`);
+      },
+      log
+    );
+    const mk = await machine.exec(`mkdir -p ${escapeShellValue(remoteWorkDir(entry.netuid, persona))}`);
+    if (mk.code !== 0) throw new Error(mk.stderr || `mkdir workDir exited ${mk.code}`);
+    await deployHotkey(persona, machine);
+    return provisioned ? { machine, provisioned, machineState } : { machine };
   }
   if (entry?.machine?.kind === "ssh") {
     const st = entry.machine;

@@ -8,6 +8,7 @@ import { fezHome, readState, writeState, upsertMiner } from "./state.js";
 import { loadDescriptors } from "./descriptors.js";
 import { containerLogs, stopContainerMiner } from "./container-runner.js";
 import { teardownPod } from "./machine-lium.js";
+import { doDestroy } from "./machine-do.js";
 import { parseSshTarget } from "./machine-ssh.js";
 import { resolveMachine } from "./run.js";
 import { alive, kill, spawnDetached } from "./procs.js";
@@ -106,8 +107,8 @@ async function cmdStart(
   netuid: number,
   persona: string,
   json: boolean,
-  machine?: "lium" | "ssh",
-  ssh?: { target: string; keyPath?: string; servePort?: number }
+  machine?: "lium" | "ssh" | "do",
+  ssh?: { target?: string; keyPath?: string; servePort?: number }
 ): Promise<void> {
   const home = fezHome();
   // Validate the ssh target BEFORE the register call below — that call is
@@ -138,7 +139,7 @@ async function cmdStart(
   // the machine, not this keychain — export the standalone remote hotkey
   // first and register ITS address, not a locally-derived pair's.
   const registerArgs = ["register", persona, "--netuid", String(netuid), "--json"];
-  if (machine === "lium" || machine === "ssh") {
+  if (machine === "lium" || machine === "ssh" || machine === "do") {
     const exported = JSON.parse(
       execFileSync(WALLET_BIN, ["export-hotkey", persona, "--json"], { encoding: "utf8" })
     ) as { ss58Address: string };
@@ -195,7 +196,14 @@ async function cmdStart(
               : // guarded at the top of cmdStart: no target ⇒ a prior ssh entry exists
                 (existing!.machine as Extract<MinerMachineState, { kind: "ssh" }>),
           }
-        : {}),
+        : machine === "do"
+          ? {
+              machine:
+                existing?.machine?.kind === "do"
+                  ? existing.machine
+                  : { kind: "do" as const, ...(ssh?.servePort ? { servePort: ssh.servePort } : {}) },
+            }
+          : {}),
   });
   await writeState(home, s);
   const pid = spawnDetached(MINE_RUN_BIN, [String(netuid), persona]);
@@ -250,6 +258,32 @@ async function cmdStop(netuid: number, persona: string, json: boolean): Promise<
         } catch {
           console.error(`container fez-${netuid}-${persona} may still be running on the machine`);
         }
+      }
+    }
+    // A droplet takes its containers with it on destroy — no separate
+    // container-reach step for "do" (unlike "ssh", an owned host that
+    // outlives this call). Runs AFTER the container-stop block above, and
+    // clears dropletId/host afterward so a later start provisions fresh
+    // rather than reattaching to a machine that no longer exists.
+    if (freshEntry?.machine?.kind === "do" && freshEntry.machine.dropletId !== undefined) {
+      const dropletId = freshEntry.machine.dropletId;
+      const token = process.env.DO_API_TOKEN;
+      if (token) {
+        await doDestroy(token, String(dropletId));
+        console.error(`destroyed droplet ${dropletId} — billing stopped`);
+      } else {
+        console.error(`droplet ${dropletId} NOT destroyed (no DO_API_TOKEN) — delete it in your DO dashboard or it keeps billing`);
+      }
+      const afterDestroy = await readState(home);
+      const afterEntry = afterDestroy.miners.find((e) => e.netuid === netuid && e.persona === persona);
+      if (afterEntry) {
+        await writeState(
+          home,
+          upsertMiner(afterDestroy, {
+            ...afterEntry,
+            machine: { kind: "do" as const, servePort: freshEntry.machine.servePort },
+          })
+        );
       }
     }
   }
@@ -420,7 +454,7 @@ async function cmdThreadSetRoot(netuid: number, persona: string, root: string): 
 
 function usage(): never {
   console.error(
-    "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium | --machine ssh --host user@host[:port] [--ssh-key path] [--serve-port N]] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
+    "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium | --machine ssh --host user@host[:port] [--ssh-key path] [--serve-port N] | --machine do [--serve-port N]] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
       "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
       "logs --netuid N --persona P [--lines 12]"
@@ -438,7 +472,7 @@ async function main(): Promise<void> {
   const personaValue = personaFlag >= 0 ? argv[personaFlag + 1] : undefined;
   const machineFlag = argv.indexOf("--machine");
   const machineValue = machineFlag >= 0 ? argv[machineFlag + 1] : undefined;
-  if (machineValue !== undefined && machineValue !== "lium" && machineValue !== "ssh") usage();
+  if (machineValue !== undefined && machineValue !== "lium" && machineValue !== "ssh" && machineValue !== "do") usage();
   const hostFlag = argv.indexOf("--host");
   const hostValue = hostFlag >= 0 ? argv[hostFlag + 1] : undefined;
   const sshKeyFlag = argv.indexOf("--ssh-key");
@@ -501,10 +535,12 @@ async function main(): Promise<void> {
         netuidValue,
         personaValue,
         json,
-        machineValue as "lium" | "ssh" | undefined,
+        machineValue as "lium" | "ssh" | "do" | undefined,
         machineValue === "ssh" && hostValue
           ? { target: hostValue, keyPath: sshKeyValue, servePort: servePortValue }
-          : undefined
+          : machineValue === "do"
+            ? { servePort: servePortValue }
+            : undefined
       );
       break;
     case "stop":

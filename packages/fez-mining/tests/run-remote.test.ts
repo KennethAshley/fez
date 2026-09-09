@@ -115,6 +115,56 @@ describe("resolveMachine ssh (owned host: no provisioning, probe → workDir →
   });
 });
 
+describe("resolveMachine do (provision → ssh, reattach when alive)", () => {
+  const doEntry: MinerEntry = {
+    netuid: 56, persona: "gauss", hotkey: "5F", desired: "running",
+    machine: { kind: "do", servePort: 7999 },
+  };
+
+  it("provisions when no droplet recorded, persists BEFORE hotkey deploy, hands back an ssh machine", async () => {
+    const prevTok = process.env.DO_API_TOKEN; process.env.DO_API_TOKEN = "tok";
+    const prevBin = process.env.FEZ_WALLET_BIN; process.env.FEZ_WALLET_BIN = fakeWalletBin;
+    const prevDelay = process.env.FEZ_MINE_RETRY_DELAY_MS; process.env.FEZ_MINE_RETRY_DELAY_MS = "1";
+    const prevInit = process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS; process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = "1";
+    try {
+      const doFetch = async (url: string, init?: { method?: string }) => ({
+        status: init?.method === "POST" ? 202 : 200,
+        json: async () =>
+          init?.method === "POST"
+            ? { droplet: { id: 7 } }
+            : { droplet: { id: 7, status: "active", networks: { v4: [{ type: "public", ip_address: "9.9.9.9" }] } } },
+      });
+      const sshCalls: string[][] = [];
+      const sshRun = async (argv: string[]) => { sshCalls.push(argv); return { code: 0, stdout: "", stderr: "" }; };
+      let persisted: unknown;
+      const { machine, machineState, provisioned } = await resolveMachine(
+        doEntry, "gauss", { sshRun, doFetch }, undefined, undefined, () => {},
+        async (ms) => { persisted = ms; }
+      );
+      expect(machine.kind).toBe("ssh");
+      expect(machine.ports).toEqual([{ externalIp: "9.9.9.9", externalPort: 7999, internalPort: 7999 }]);
+      expect(provisioned).toBe(true);
+      expect(machineState).toMatchObject({ kind: "do", dropletId: 7, host: "9.9.9.9" });
+      expect(persisted).toMatchObject({ kind: "do", dropletId: 7 }); // findable even if deploy fails after
+      expect(sshCalls.some((c) => c[0] === "scp")).toBe(true); // hotkey deployed
+    } finally {
+      if (prevTok === undefined) delete process.env.DO_API_TOKEN; else process.env.DO_API_TOKEN = prevTok;
+      if (prevBin === undefined) delete process.env.FEZ_WALLET_BIN; else process.env.FEZ_WALLET_BIN = prevBin;
+      if (prevDelay === undefined) delete process.env.FEZ_MINE_RETRY_DELAY_MS; else process.env.FEZ_MINE_RETRY_DELAY_MS = prevDelay;
+      if (prevInit === undefined) delete process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS; else process.env.FEZ_MINE_RETRY_INITIAL_WAIT_MS = prevInit;
+    }
+  });
+
+  it("no DO_API_TOKEN fails with the SKILLS & SECRETS instruction, before any API call", async () => {
+    const prev = process.env.DO_API_TOKEN; delete process.env.DO_API_TOKEN;
+    try {
+      await expect(resolveMachine(doEntry, "gauss", {})).rejects.toThrow(/DO_API_TOKEN/);
+    } finally {
+      if (prev !== undefined) process.env.DO_API_TOKEN = prev;
+    }
+  });
+});
+
 describe("resolveMachine (production resolution path, no machineFactory)", () => {
   const entry: MinerEntry = {
     netuid: 1, persona: "p", hotkey: "5F", desired: "running",
