@@ -49,6 +49,15 @@ export function treasuryPair(mnemonic: string): WalletPair {
   return toPair(p.publicKey, p.secretKey);
 }
 
+/** The bare mnemonic's mini secret, hex — the `secretSeed` a bittensor
+ *  keyfile carries. Only meaningful for UNDERIVED keys (treasuryPair /
+ *  remote hotkeys): sr25519PairFromSeed(this) IS that pair, so a Python
+ *  loader's Keypair.create_from_seed reconstructs the same address. */
+export function miniSecretHex(mnemonic: string): string {
+  if (!mnemonicValidate(mnemonic)) throw new Error("invalid mnemonic");
+  return u8aToHex(mnemonicToMiniSecret(mnemonic));
+}
+
 export function deriveAgentPair(mnemonic: string, persona: string): WalletPair {
   const { path } = keyExtractPath(`//${persona}`);
   const d = keyFromPath(basePair(mnemonic), path, "sr25519");

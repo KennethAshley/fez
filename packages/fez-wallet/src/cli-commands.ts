@@ -1,4 +1,4 @@
-import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored, deriveAgentEvm } from "./derive.js";
+import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored, deriveAgentEvm, miniSecretHex } from "./derive.js";
 import { readEntry, writeEntry, readRootEntry, writeRootEntry, readRemoteHotkeyEntry, writeRemoteHotkeyEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, x402Settings, type Network } from "./config.js";
@@ -293,16 +293,25 @@ export async function exportRemoteHotkey(
  * kept identical here for the same reason (some readers key off one name,
  * some the other; only `secretPhrase`'s presence actually reconstructs
  * the signing keypair, the rest is display/matching).
+ *
+ * `secretSeed` added 2026-09-08: fiber's Python loader
+ * (fiber/chain/chain_utils.py load_hotkey_keypair) reads ONLY
+ * `secretSeed` — no secretPhrase fallback — so the first fiber-consuming
+ * miner (Gradients' fiber-post-ip, live on a droplet) died with
+ * KeyError: 'secretSeed' on a keyfile the Rust loader accepts fine.
+ * The remote hotkey is a bare mnemonic, so its mini secret IS the seed
+ * and both loaders now reconstruct the same key.
  */
 export function keyfileFor(mnemonic: string): {
   accountId: string;
   publicKey: string;
   secretPhrase: string;
+  secretSeed: string;
   ss58Address: string;
 } {
   const pair = treasuryPair(mnemonic); // bare pair: sr25519 from the mnemonic directly, no //path
   const publicKey = `0x${pair.publicKeyHex}`;
-  return { accountId: publicKey, publicKey, secretPhrase: mnemonic, ss58Address: pair.address };
+  return { accountId: publicKey, publicKey, secretPhrase: mnemonic, secretSeed: miniSecretHex(mnemonic), ss58Address: pair.address };
 }
 
 export async function cmdRegister(

@@ -23,6 +23,19 @@ describe("remote hotkey keyfile", () => {
     const m = generateWalletMnemonic();
     expect(keyfileFor(m)).toEqual(keyfileFor(m));
   });
+
+  it("carries a secretSeed that reconstructs the SAME key (fiber's only load path)", async () => {
+    const { mnemonicToMiniSecret, sr25519PairFromSeed, encodeAddress } = await import("@polkadot/util-crypto");
+    const { hexToU8a } = await import("@polkadot/util");
+    const m = generateWalletMnemonic();
+    const k = keyfileFor(m);
+    expect(k.secretSeed).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(k.secretSeed).toBe(`0x${Buffer.from(mnemonicToMiniSecret(m)).toString("hex")}`);
+    // The seed round-trips to the advertised address — what fiber's
+    // Keypair.create_from_seed will produce on the miner's machine.
+    const rebuilt = sr25519PairFromSeed(hexToU8a(k.secretSeed));
+    expect(encodeAddress(rebuilt.publicKey, 42)).toBe(k.ss58Address);
+  });
 });
 
 describe("exportRemoteHotkey", () => {
