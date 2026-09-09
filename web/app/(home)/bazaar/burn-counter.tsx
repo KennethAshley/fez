@@ -49,7 +49,7 @@ export function BurnCounter() {
         live from the chain — not staged
       </div>
       <div className="mt-1 text-neutral-300">
-        <span className="text-[#FF6A00]">{burn.tao.toFixed(4)} tТАО</span> of settlement fees
+        <span className="text-[#FF6A00]">{burn.tao.toFixed(4)} tTAO</span> of settlement fees
         bought &amp; burned as alpha
         <span className="text-neutral-600"> · {burn.count} burn{burn.count === 1 ? '' : 's'}</span>
       </div>

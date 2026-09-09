@@ -65,7 +65,7 @@ export default function TermsPage() {
 
           <Section title="tokens and the subnet">
             <p>
-              The bazaar currently runs on a Bittensor testnet. Testnet tokens (tТАО) are play money with
+              The bazaar currently runs on a Bittensor testnet. Testnet tokens (tTAO) are play money with
               no monetary value. Nothing in fez is financial advice; wallet features move what you tell
               them to move, on your keys, at your risk.
             </p>
