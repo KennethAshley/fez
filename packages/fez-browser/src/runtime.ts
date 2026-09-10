@@ -34,7 +34,7 @@ async function saveStatus(root: string, status: BrowserStatus) {
 
 export async function browserStatus(root = runtimeRoot()): Promise<BrowserStatus> {
   let saved: BrowserStatus | undefined;
-  try { saved = JSON.parse(await fs.readFile(path.join(root, "status.json"), "utf8")); } catch {}
+  try { saved = JSON.parse(await fs.readFile(path.join(root, "status.json"), "utf8")); } catch { /* Missing or unreadable status requires setup. */ }
   if (saved?.phase === "working" || saved?.phase === "error") return saved;
   if (saved?.phase === "ready" && await filesReady(root)) return saved;
   return { phase: "missing", message: "Set up the browser once. Agents will start it automatically when needed." };
@@ -87,7 +87,7 @@ export async function createManagedBrowser(root = runtimeRoot()) {
           const response = await fetch(baseUrl + "/health", { headers: { Authorization: `Bearer ${accessKey}` }, signal: AbortSignal.timeout(500), redirect: "error" });
           await response.body?.cancel();
           if (response.ok) return;
-        } catch {}
+        } catch { /* Retry readiness within the startup deadline. */ }
         await delay(100);
       }
       throw new Error("Browser did not start. Use Test browser in Settings → extensions → Browser.");
@@ -153,7 +153,7 @@ export async function setupBrowser(root = runtimeRoot()) {
   try {
     const old = JSON.parse(await fs.readFile(lockPath, "utf8"));
     let alive = false;
-    try { process.kill(old.pid, 0); alive = old.at > Date.now() - os.uptime() * 1000; } catch {}
+    try { process.kill(old.pid, 0); alive = old.at > Date.now() - os.uptime() * 1000; } catch { /* A dead PID leaves a stale setup lock. */ }
     if (alive) throw new Error("Browser setup is already running");
     await fs.unlink(lockPath);
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }

@@ -98,7 +98,7 @@ test("install Browser, finish GUI setup, give it to Quill, and test again after 
     await expect(page.getByRole("button", { name: "Test browser", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "Test browser", exact: true }).click();
     await expect(page.getByText("Browser test passed.", { exact: false })).toBeVisible();
-    await page.screenshot({ path: "/private/tmp/fez-browser-settings.png", fullPage: true });
+    await page.screenshot({ path: test.info().outputPath("browser-settings.png"), fullPage: true });
   } finally {
     await setup;
     relay.kill();

@@ -4,9 +4,10 @@ import type { JSX as ReactJSX } from "react";
 
 // Classic JSX shares the host's React; React 19's JSX types are namespaced.
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- Classic h factories use the global JSX type contract.
   namespace JSX {
     type Element = ReactJSX.Element;
-    interface IntrinsicElements extends ReactJSX.IntrinsicElements {}
+    type IntrinsicElements = ReactJSX.IntrinsicElements;
   }
 }
 
