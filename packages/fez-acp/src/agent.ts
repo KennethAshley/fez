@@ -70,6 +70,7 @@ import { execSync, execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
+import { runMeteredHire } from "./hire-usage.js";
 import { deliverHire } from "./hire-delivery.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
@@ -171,6 +172,10 @@ function withNotice(
 }
 
 async function main() {
+  if (process.argv[2] === "--hire-protocol") {
+    console.log("FEZ_HIRE_PROTOCOL=1");
+    return;
+  }
   // `fez-agent connect <key>` — the OAuth sign-in flow, runnable from the
   // compiled binary so the DESKTOP can trigger it (the webview can't hold
   // the loopback callback port; this process can). Exits when connected.
@@ -589,7 +594,12 @@ async function main() {
       `Do NOT commit or push — that is handled for you once you finish.`;
     let summary = "";
     try {
-      summary = await invokeWithRetry(harness!, prompt, hireDir, (soFar) => emit(soFar.slice(-140)));
+      console.log("FEZ_HIRE_STARTED=1");
+      summary = await runMeteredHire({ harness: harness!, prompt, cwd: hireDir,
+        maxCostUsd: Number(process.env.FEZ_HIRE_MAX_COST_USD),
+        onProgress: soFar => emit(soFar.slice(-140)),
+        onUsage: usage => console.log(`FEZ_HIRE_USAGE=${JSON.stringify(usage)}`),
+      });
     } catch (err) {
       console.error(`FEZ_HIRE_ERROR=${(err as Error).message.slice(0, 200)}`);
       process.exit(4);
@@ -1885,11 +1895,11 @@ async function main() {
         publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, reply.length, event.id);
         consecutiveFailures = 0;
         console.log(`✅ Replied (${reply.length} chars)`);
-      } catch (err) {
+      } catch (caughtError) {
         turnAcceptsSteering = false;
         // Opening/replaying a session may fail without observing cancellation.
         // Steering still owns that exit; retrying first would discard its follow-ups.
-        if (turnController?.signal.aborted) err = turnController.signal.reason;
+        const err = turnController?.signal.aborted ? turnController.signal.reason : caughtError;
         if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
           // Owner cancel — the turn just STOPS. No steer re-dispatch, and
           // an honest threaded notice instead of silence.
