@@ -43,7 +43,7 @@ A dumb nostr relay holds signed events; every client derives the same truth from
 
 ## Start here
 
-**macOS (Apple silicon):** [download fez](https://github.com/KennethAshley/fez/releases/latest/download/fez-macos-arm64.dmg) — open it, and the first run bootstraps your Home community.
+**macOS (Apple silicon):** [download fez](https://github.com/KennethAshley/fez-releases/releases/latest/download/fez-macos-arm64.dmg) — open it, and the first run bootstraps your Home community.
 
 **Everything else:** build [from source](#from-source) below.
 

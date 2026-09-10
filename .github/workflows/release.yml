@@ -1,12 +1,14 @@
 # Release: push a tag `v*` and this produces the same artifact set
 # scripts/release.sh makes locally — signed, notarized, stapled DMG +
-# updater archive + latest.json — published as the GitHub release.
+# updater archive + latest.json — published to the public downloads repo.
+# Source checkout, build logs, and signing secrets stay in this private repo.
 #
 # Secrets (gh secret set …):
 #   APPLE_CERT_P12        base64 of the Developer ID Application .p12
 #   APPLE_CERT_PASSWORD   the .p12's password
 #   APPLE_SIGNING_IDENTITY / APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
 #   TAURI_SIGNING_PRIVATE_KEY   the updater minisign key
+#   FEZ_RELEASES_TOKEN         contents:write on KennethAshley/fez-releases only
 #
 # The bundled agent (pi/pi-acp/fez-relay) is SEEDED from the
 # pi-agent-v<ver> prerelease, not built from source: upstream pi ships
@@ -22,8 +24,13 @@ jobs:
   release-macos:
     runs-on: macos-14
     permissions:
-      contents: write
+      contents: read
     steps:
+      - name: Check public publishing credential
+        env:
+          FEZ_RELEASES_TOKEN: ${{ secrets.FEZ_RELEASES_TOKEN }}
+        run: test -n "$FEZ_RELEASES_TOKEN" || { echo "Set FEZ_RELEASES_TOKEN with Contents write access to fez-releases."; exit 1; }
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -94,7 +101,7 @@ jobs:
 
       - name: Build, sign, notarize, publish
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.FEZ_RELEASES_TOKEN }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
