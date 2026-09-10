@@ -850,6 +850,7 @@ function Shell({
       else if (t.kind === "dm") openDm(t.convoKey);
       else if (t.kind === "agent") setView({ kind: "agents" });
       else if (t.kind === "proposals") setView({ kind: "pulse" });
+      else if (t.kind === "questions") window.dispatchEvent(new Event("fez-show-questions"));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1037,7 +1038,6 @@ function Shell({
     <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
       <BootSplash loading={false} />
       <Toaster />
-      <AgentInput client={client} />
       {!connected && (
         <div className="conn-bar">
           {relayHealth.length > 1 ? `all ${relayHealth.length} relays unreachable` : "relay disconnected"} — reconnecting…
@@ -1073,6 +1073,7 @@ function Shell({
         </button>
         {!client.state.workspace.owner && <div className="workspace-unclaimed">unclaimed</div>}
         <div className="rail-scroll">
+        <AgentInput client={client} />
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           <span className="nav-glyph">▤</span> inbox
           {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}

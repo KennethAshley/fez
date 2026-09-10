@@ -37,6 +37,20 @@ body {
   background: var(--bg1); box-shadow: 0 8px 32px #0006;
 }
 .input-card { padding: 20px; }
+.input-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--hairline); }
+.input-panel-header button { border: 0; background: transparent; color: var(--fg); font-size: 22px; cursor: pointer; }
+.input-empty { padding: 20px; color: var(--fg-dim); }
+.input-tabs { display: flex; gap: 8px; padding: 12px 20px; }
+.input-tabs button { border: 1px solid var(--hairline); border-radius: 6px; padding: 6px 12px; color: var(--fg); background: var(--bg2); cursor: pointer; }
+.input-tabs button[aria-pressed="true"] { border-color: var(--accent); }
+.input-history { padding: 0 20px 20px; }
+.input-history-note, .input-history-card time { color: var(--fg-dim); font-size: 12px; }
+.input-history-card { padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+.input-history-card summary { display: grid; gap: 4px; cursor: pointer; }
+.input-history-card p, .input-history-card dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.input-history-card p, .input-history-card dl { margin-top: 12px; }
+.input-history-card dt { font-weight: 600; }
+.input-history-card dd { margin: 4px 0 12px; }
 .input-card + .input-card { border-top: 1px solid var(--hairline); }
 .input-card header { display: grid; gap: 4px; margin-bottom: 16px; }
 .input-card header span, .input-question p, .input-choice small { color: var(--fg-dim); font-size: 12px; }

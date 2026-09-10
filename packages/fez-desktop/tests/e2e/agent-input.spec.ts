@@ -20,6 +20,7 @@ test("answers several agent questions privately and restores a waiting form afte
   const agent = new CapabilityClient({ relay: relay.url, privateKey: Buffer.from(agentSecret).toString("hex") });
   const human = new CapabilityClient({ relay: relay.url, privateKey: Buffer.from(ownerSecret).toString("hex") });
   const abort = new AbortController();
+  const notifications: { title: string; body: string }[] = [];
   try {
     await connection.connect();
     await connection.publish(human.signEvent({ kind: 47102, tags: [["d", "roster"], ["p", owner, "owner"], ["p", agentPk, "bot"]], content: "" }));
@@ -34,8 +35,16 @@ test("answers several agent questions privately and restores a waiting form afte
       const key = nip44.getConversationKey(ownerSecret, args.peer);
       return cmd === "nip44_encrypt" ? nip44.encrypt(args.plaintext, key) : nip44.decrypt(args.ciphertext, key);
     });
+    await page.exposeFunction("recordInputNotification", (title: string, body: string) => notifications.push({ title, body }));
     await page.addInitScript(({ relayUrl }) => {
       localStorage.setItem("fez-relay", relayUrl);
+      localStorage.setItem("fez-notify", JSON.stringify({ enabled: true, whileFocused: true, sound: false }));
+      Object.defineProperty(window, "Notification", { value: class {
+        static permission = "granted";
+        constructor(title: string, options: { body: string }) {
+          void (window as unknown as { recordInputNotification: (title: string, body: string) => Promise<void> }).recordInputNotification(title, options.body);
+        }
+      } });
       const w = window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }; inputCrypto: (cmd: string, args: unknown) => Promise<unknown> };
       const original = w.__TAURI_INTERNALS__.invoke;
       w.__TAURI_INTERNALS__.invoke = (cmd, args) => cmd === "nip44_encrypt" || cmd === "nip44_decrypt" ? w.inputCrypto(cmd, args) : original(cmd, args);
@@ -54,6 +63,9 @@ test("answers several agent questions privately and restores a waiting form afte
       encrypt: (peer, text) => agent.encryptTo(peer, text), decrypt: (peer, text) => agent.decryptFrom(peer, text),
     }, owner, form, { signal: abort.signal, timeoutMs: 45_000 });
     await expect(page.getByText("@quill needs your input")).toBeVisible();
+    await expect(page.getByLabel("1 pending question request")).toHaveText("1");
+    await expect.poll(() => notifications.length).toBe(1);
+    expect(notifications[0]).toEqual({ title: "quill needs your input", body: "Open Fez to answer privately." });
     await page.reload();
     await expect(page.getByText("@quill needs your input")).toBeVisible();
     await page.getByRole("radio", { name: /Grid/ }).check();
@@ -63,10 +75,21 @@ test("answers several agent questions privately and restores a waiting form afte
     await page.screenshot({ path: "/tmp/fez-agent-input-desktop.png" });
     await page.getByRole("button", { name: "Submit answers" }).click();
     await expect(pending).resolves.toEqual({ action: "accept", content: { layout: "grid", features: ["search", "filters"], custom: "Compact spacing" } });
-    await expect(page.locator(".agent-input")).toHaveCount(0);
+    await expect(page.locator(".input-card")).toHaveCount(0);
+    await expect(page.getByLabel("1 pending question request")).toHaveCount(0);
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    await expect(page.getByText("Received by agent")).toBeVisible();
     await page.reload();
     await expect(page.locator(".shell")).toBeVisible();
-    await expect(page.locator(".agent-input")).toHaveCount(0);
+    await expect(page.locator(".input-card")).toHaveCount(0);
+    await page.getByRole("button", { name: "Questions", exact: true }).click();
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    await expect(page.getByText("Received by agent")).toBeVisible();
+    await page.locator(".input-history-card summary").click();
+    await expect(page.getByText("Compact spacing", { exact: true })).toBeVisible();
+    expect(notifications).toHaveLength(1);
+    await expect(page.locator(".boot-splash")).toHaveCount(0);
+    await page.screenshot({ path: "/tmp/fez-agent-history-desktop.png" });
   } finally {
     abort.abort();
     connection.disconnect();

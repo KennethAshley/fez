@@ -10,7 +10,7 @@ export {
   type ReminderStatus,
 } from "./reminders.js";
 import type { Query } from "./query-lang.js";
-import { inputForm, validateInputResponse, INPUT_WAIT_MS, type PendingInput, type InputResponse } from "./agent-input.js";
+import { inputForm, validateInputResponse, INPUT_WAIT_MS, type PendingInput, type InputResponse, type InputHistoryEntry } from "./agent-input.js";
 export * from "./agent-input.js";
 import { nextCreatedAt, STALE_AFTER_S, type ReminderBody, type ReminderRecord } from "./reminders.js";
 
@@ -613,8 +613,10 @@ export class FezClient {
   private jobsMap = new Map<string, Job>();
   private observerFeedsMap = new Map<string, ObserverEntry[]>();
   private inputRequests = new Map<string, PendingInput>();
-  private closedInputs = new Map<string, number>();
+  private closedInputs = new Map<string, { expiresAt: number; closedAt?: number; responseId?: string }>();
   private inputTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private inputRecords = new Map<string, PendingInput & { requestedAt: number; closedAt?: number; responseId?: string }>();
+  private inputAnswers = new Map<string, { requestKey: string; response: unknown; at: number }>();
   private workingAgentsMap = new Map<string, { activity: string; ts: number; root?: string }>();
   private workflowRunsMap = new Map<string, WorkflowRunInfo>();
 
@@ -923,12 +925,60 @@ export class FezClient {
   pendingInputs(): PendingInput[] {
     return [...this.inputRequests.values()].filter(r => r.expiresAt > Date.now() && this.state.isMember(r.agentPk));
   }
+  /** Recent private requests; only a receipt naming our signed answer confirms delivery. */
+  inputHistory(): InputHistoryEntry[] {
+    return [...this.inputRecords.values()].filter(record => record.requestedAt >= Date.now() - 30 * 86400_000).sort((a, b) => b.requestedAt - a.requestedAt).slice(0, 100).map(record => {
+      const candidates = [...this.inputAnswers].filter(([, answer]) => answer.requestKey === record.id)
+        .sort((a, b) => b[1].at - a[1].at || b[0].localeCompare(a[0]));
+      const accepted = candidates.find(([id]) => id === record.responseId);
+      let response: InputResponse | undefined;
+      let answeredAt: number | undefined;
+      for (const [, answer] of accepted ? [accepted] : candidates) {
+        try { response = validateInputResponse(record.form, answer.response); answeredAt = answer.at; break; } catch { /* invalid signed reply */ }
+      }
+      const status = record.closedAt !== undefined ? accepted && response ? "received"
+        : record.closedAt >= record.expiresAt ? "expired" : "closed"
+        : record.expiresAt <= Date.now() ? "expired" : response ? "sent" : "pending";
+      return { ...record, status, response, answeredAt };
+    });
+  }
+  /** Query on demand; answers remain encrypted at rest on the relay. */
+  async loadInputHistory(): Promise<void> {
+    const since = Math.floor(Date.now() / 1000) - 30 * 86400;
+    const events = await this.wire.query([
+      { kinds: [K.INPUT_REQUEST], "#p": [this.pubkey], since, limit: 300 },
+      { kinds: [K.INPUT_RESPONSE], authors: [this.pubkey], since, limit: 500 },
+    ]);
+    for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
+      if (event.kind === K.INPUT_RESPONSE) await this.handleInputResponse(event).catch(() => {});
+      else await this.handleInputRequest(event).catch(() => {});
+    }
+    const missing = [...this.inputRecords.values()].flatMap(record => record.responseId && !this.inputAnswers.has(record.responseId) ? [record.responseId] : []);
+    if (missing.length) {
+      for (const event of await this.wire.query([{ kinds: [K.INPUT_RESPONSE], authors: [this.pubkey], ids: missing, limit: missing.length }])) {
+        await this.handleInputResponse(event).catch(() => {});
+      }
+    }
+    this.emit("inputsChanged");
+  }
+  private async handleInputResponse(event: WireEvent): Promise<void> {
+    if (event.kind !== K.INPUT_RESPONSE || event.pubkey !== this.pubkey || this.inputAnswers.has(event.id)) return;
+    const peer = event.tags.find(t => t[0] === "p")?.[1];
+    const requestId = event.tags.find(t => t[0] === "d")?.[1];
+    if (!peer || !this.state.isMember(peer) || !requestId || requestId.length > 200) return;
+    const raw = await this.wire.decrypt(peer, event.content);
+    if (new TextEncoder().encode(raw).length > 24_000) return;
+    this.inputAnswers.set(event.id, { requestKey: `${peer}:${requestId}`, response: JSON.parse(raw), at: event.created_at * 1000 });
+    if (this.inputAnswers.size > 500) this.inputAnswers.delete(this.inputAnswers.keys().next().value!);
+    this.emit("inputsChanged");
+  }
   async answerInput(id: string, answer: InputResponse): Promise<void> {
     const request = this.pendingInputs().find(r => r.id === id);
     if (!request) throw new Error("This question has expired or was already answered");
     const response = validateInputResponse(request.form, answer);
-    await this.wire.publish({ kind: K.INPUT_RESPONSE, tags: [["p", request.agentPk], ["d", request.requestId]],
+    const event = await this.wire.publish({ kind: K.INPUT_RESPONSE, tags: [["p", request.agentPk], ["d", request.requestId]],
       content: await this.wire.encrypt(request.agentPk, JSON.stringify(response)) });
+    await this.handleInputResponse(event);
     // The agent's closed event is the acknowledgement. Keep the card until
     // it arrives, so a relay accepting but not forwarding an answer is visible.
   }
@@ -937,19 +987,40 @@ export class FezClient {
     const requestId = event.tags.find(t => t[0] === "d")?.[1];
     if (!requestId || requestId.length > 200) return;
     const raw = JSON.parse(await this.wire.decrypt(event.pubkey, event.content));
-    if (!raw || !Number.isFinite(raw.expiresAt) || raw.expiresAt > Date.now() + INPUT_WAIT_MS + 60_000) return;
+    if (!raw || (raw.status !== "pending" && raw.status !== "closed") || !Number.isFinite(raw.expiresAt) || raw.expiresAt <= 0 || raw.expiresAt > Date.now() + INPUT_WAIT_MS + 60_000) return;
     const id = `${event.pubkey}:${requestId}`;
-    for (const [key, expiresAt] of this.closedInputs) if (expiresAt <= Date.now()) this.closedInputs.delete(key);
+    const previous = this.inputRecords.get(id);
+    const form = previous?.form ?? (raw.form ? inputForm(raw.form) : undefined);
+    const earliest = raw.expiresAt - INPUT_WAIT_MS;
+    const requestedAt = typeof raw.requestedAt === "number" && Number.isFinite(raw.requestedAt) && raw.requestedAt >= earliest && raw.requestedAt <= raw.expiresAt
+      ? raw.requestedAt : previous?.requestedAt ?? Math.min(raw.expiresAt, Math.max(earliest, event.created_at * 1000));
+    const closedAt = typeof raw.closedAt === "number" && Number.isFinite(raw.closedAt) && raw.closedAt >= requestedAt && raw.closedAt <= event.created_at * 1000 + 1000
+      ? raw.closedAt : event.created_at * 1000;
+    const closure = this.closedInputs.get(id)?.closedAt !== undefined ? this.closedInputs.get(id)
+      : raw.status === "closed" ? { expiresAt: raw.expiresAt, closedAt,
+        responseId: typeof raw.responseId === "string" && /^[a-f0-9]{64}$/.test(raw.responseId) ? raw.responseId : undefined } : undefined;
+    if (form && previous?.closedAt === undefined) {
+      this.inputRecords.set(id, { ...previous, id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form, requestedAt, ...closure });
+      if (this.inputRecords.size > 200) {
+        const oldest = [...this.inputRecords.values()].filter(record => !this.inputRequests.has(record.id)).sort((a, b) => a.requestedAt - b.requestedAt)[0];
+        if (oldest) this.inputRecords.delete(oldest.id);
+      }
+    }
+    for (const [key, closed] of this.closedInputs) if (closed.expiresAt <= Date.now() - 30 * 86400_000) this.closedInputs.delete(key);
     const close = () => {
       this.inputRequests.delete(id);
-      if (raw.expiresAt > Date.now()) this.closedInputs.set(id, raw.expiresAt);
+      if (closure || raw.expiresAt > Date.now()) this.closedInputs.set(id, closure ?? { expiresAt: raw.expiresAt });
+      if (this.closedInputs.size > 500) {
+        const oldest = [...this.closedInputs].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
+        this.closedInputs.delete(oldest[0]);
+      }
       clearTimeout(this.inputTimers.get(id));
       this.inputTimers.delete(id);
       this.emit("inputsChanged");
     };
     if (raw.status === "closed" || raw.expiresAt <= Date.now()) { close(); return; }
     if (raw.status !== "pending" || this.closedInputs.has(id) || this.inputRequests.has(id) || this.inputRequests.size >= 64) return;
-    const form = inputForm(raw.form);
+    if (!form) return;
     this.inputRequests.set(id, { id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form });
     this.inputTimers.set(id, setTimeout(close, raw.expiresAt - Date.now()));
     this.emit("inputsChanged");
@@ -2458,12 +2529,17 @@ export class FezClient {
 
     await this.syncWorkspace();
 
-    const inputFilters = [{ kinds: [K.INPUT_REQUEST], "#p": [this.pubkey], since: Math.floor((Date.now() - INPUT_WAIT_MS) / 1000) }];
+    const inputSince = Math.floor((Date.now() - INPUT_WAIT_MS) / 1000);
+    const inputFilters = [
+      { kinds: [K.INPUT_REQUEST], "#p": [this.pubkey], since: inputSince },
+      { kinds: [K.INPUT_RESPONSE], authors: [this.pubkey], since: inputSince },
+    ];
     this.wire.subscribe(inputFilters, event => {
-      this.cryptoIngest = this.cryptoIngest.then(() => this.handleInputRequest(event)).catch(() => {});
+      this.cryptoIngest = this.cryptoIngest.then(() => event.kind === K.INPUT_RESPONSE ? this.handleInputResponse(event) : this.handleInputRequest(event)).catch(() => {});
     });
     for (const event of await this.wire.query(inputFilters).catch(() => [])) {
-      await this.handleInputRequest(event).catch(() => {});
+      if (event.kind === K.INPUT_RESPONSE) await this.handleInputResponse(event).catch(() => {});
+      else await this.handleInputRequest(event).catch(() => {});
     }
 
     // Nothing is created on first run. There is no workspace event to

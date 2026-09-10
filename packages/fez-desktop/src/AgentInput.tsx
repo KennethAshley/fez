@@ -1,5 +1,6 @@
-import React, { useEffect, useReducer, useState } from "react";
-import { validateInputResponse, type FezClient, type InputAnswers, type InputResponse, type PendingInput } from "@fezchat/client";
+import React, { useEffect, useReducer, useRef, useState } from "react";
+import { validateInputResponse, type FezClient, type InputAnswers, type InputResponse, type PendingInput, type InputHistoryEntry } from "@fezchat/client";
+import { notifyEvent } from "./notify";
 
 export function InputCard({ request, name, onAnswer }: {
   request: PendingInput;
@@ -61,14 +62,73 @@ export function InputCard({ request, name, onAnswer }: {
 
 export default function AgentInput({ client }: { client: FezClient }) {
   const [, render] = useReducer(n => n + 1, 0);
+  const [open, setOpen] = useState(() => client.pendingInputs().length > 0);
+  const [tab, setTab] = useState<"waiting" | "history">("waiting");
+  const [loading, setLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const panel = useRef<HTMLElement>(null);
+  const loadHistory = async () => {
+    setTab("history"); setLoading(true); setHistoryError("");
+    try { await client.loadInputHistory(); }
+    catch { setHistoryError("History could not load. Try again."); }
+    finally { setLoading(false); }
+  };
   useEffect(() => {
-    const offInputs = client.on("inputsChanged", render);
+    let known = new Set(client.pendingInputs().map(request => request.id));
+    const offInputs = client.on("inputsChanged", () => {
+      const requests = client.pendingInputs();
+      for (const request of requests) {
+        if (known.has(request.id)) continue;
+        setOpen(true);
+        notifyEvent({ key: `question:${request.id}`, kind: "needs_action", title: `${client.displayName(request.agentPk)} needs your input`,
+          body: "Open Fez to answer privately.", label: "Questions", target: { kind: "questions" } });
+      }
+      known = new Set(requests.map(request => request.id));
+      render();
+    });
     const offChannels = client.on("channelsChanged", render);
-    return () => { offInputs(); offChannels(); };
+    const show = () => { setOpen(true); setTab("waiting"); setTimeout(() => panel.current?.focus(), 0); };
+    window.addEventListener("fez-show-questions", show);
+    return () => { offInputs(); offChannels(); window.removeEventListener("fez-show-questions", show); };
   }, [client]);
   const requests = client.pendingInputs();
-  if (!requests.length) return null;
-  return <aside className="agent-input" aria-label="Agent questions">
-    {requests.map(request => <InputCard key={request.id} request={request} name={client.displayName(request.agentPk)} onAnswer={response => client.answerInput(request.id, response)} />)}
-  </aside>;
+  const history = tab === "history" ? client.inputHistory() : [];
+  return <>
+    <button className="channel home-link" aria-label="Questions" aria-expanded={open} aria-controls="agent-questions-panel" onClick={() => setOpen(value => !value)}>
+      <span className="nav-glyph">?</span> questions
+      {requests.length > 0 && <span className="badge" aria-label={`${requests.length} pending question request${requests.length === 1 ? "" : "s"}`}>{requests.length}</span>}
+    </button>
+    <aside ref={panel} id="agent-questions-panel" className="agent-input" aria-label="Agent questions" tabIndex={-1} hidden={!open} onKeyDown={event => { if (event.key === "Escape") setOpen(false); }}>
+      <header className="input-panel-header"><strong>Questions</strong><button aria-label="Close questions" onClick={() => setOpen(false)}>×</button></header>
+      <nav className="input-tabs" aria-label="Question views">
+        <button aria-pressed={tab === "waiting"} onClick={() => setTab("waiting")}>Waiting{requests.length ? ` (${requests.length})` : ""}</button>
+        <button aria-pressed={tab === "history"} onClick={() => void loadHistory()}>History</button>
+      </nav>
+      <div hidden={tab !== "waiting"}>
+        {requests.length === 0 && <p className="input-empty">No questions waiting.</p>}
+        {requests.map(request => <InputCard key={request.id} request={request} name={client.displayName(request.agentPk)} onAnswer={response => client.answerInput(request.id, response)} />)}
+      </div>
+      {tab === "history" && <div className="input-history">
+        <p className="input-history-note">Private · latest 100 requests from the past 30 days</p>
+        {loading && <p role="status">Loading history…</p>}
+        {historyError && <p role="alert">{historyError} <button onClick={() => void loadHistory()}>Retry</button></p>}
+        {history.map(entry => <InputHistoryCard key={entry.id} entry={entry} name={client.displayName(entry.agentPk)} />)}
+        {!loading && !historyError && history.length === 0 && <p>No question history yet.</p>}
+      </div>}
+    </aside>
+  </>;
+}
+
+function InputHistoryCard({ entry, name }: { entry: InputHistoryEntry; name: string }) {
+  const status = { pending: "Waiting for your answer", sent: "Sent · awaiting receipt", received: "Received by agent",
+    closed: "Closed · no delivery receipt", expired: "Expired · no delivery receipt" }[entry.status];
+  return <details className="input-history-card">
+    <summary><strong>@{name}</strong><span>{status}</span><time dateTime={new Date(entry.requestedAt).toISOString()}>{new Date(entry.requestedAt).toLocaleString()}</time></summary>
+    <p>{entry.form.message}</p>
+    {entry.response?.action === "accept" ? <dl>{entry.form.fields.map(field => {
+      const value = entry.response?.action === "accept" ? entry.response.content[field.id] : undefined;
+      const label = (item: string | boolean | number) => field.options?.find(option => option.value === item)?.label ?? (typeof item === "boolean" ? item ? "Yes" : "No" : String(item));
+      return <React.Fragment key={field.id}><dt>{field.title}</dt><dd>{value === undefined ? "No answer" : Array.isArray(value) ? value.map(label).join(", ") : label(value)}</dd></React.Fragment>;
+    })}</dl> : <p>{entry.response?.action === "decline" ? "Skipped" : entry.response?.action === "cancel" ? "Cancelled" : "No answer recorded"}</p>}
+  </details>;
 }

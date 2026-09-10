@@ -92,7 +92,7 @@ export function readPrefs(raw: string | null | undefined): NotifyPrefs {
 export const NOTIFY_LABELS: Record<NotifyKind, { label: string; desc: string }> = {
   dm: { label: "direct messages", desc: "When someone messages you directly." },
   mention: { label: "mentions", desc: "When someone tags you by name in a channel you have not muted." },
-  needs_action: { label: "needs action", desc: "When a reminder comes due, or a proposal is waiting on your approval." },
+  needs_action: { label: "needs action", desc: "When an agent asks a question, a reminder comes due, or a proposal needs approval." },
   agent_error: { label: "agent errors", desc: "When one of your agents fails mid-turn." },
   thread_reply: { label: "thread replies", desc: "When someone replies in a thread you posted in." },
 };

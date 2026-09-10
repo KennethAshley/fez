@@ -29,7 +29,7 @@ const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+svc12`; // svc12: private multi-question forms and answers over ACP
+const BUNDLE_VERSION = `${PI_VERSION}+svc13`; // svc13: agents refresh at idle boundaries; private question receipts
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
@@ -159,7 +159,7 @@ console.log(`\n▶ compiling fez-agent…`);
 if (!reuse("fez-agent")) {
   const acpRuntimePkg = path.resolve(HERE, "..", "..", "fez-acp");
   run(
-    `bun build --compile ${JSON.stringify(path.join(acpRuntimePkg, "src", "agent.ts"))} --outfile ${JSON.stringify(path.join(WORK, `fez-agent${EXE}`))}`,
+    `bun build --compile ${JSON.stringify(path.join(acpRuntimePkg, "src", "agent.ts"))} --define 'process.env.FEZ_AGENT_BUILD_VERSION=${JSON.stringify(BUNDLE_VERSION)}' --outfile ${JSON.stringify(path.join(WORK, `fez-agent${EXE}`))}`,
     acpRuntimePkg
   );
 } else {

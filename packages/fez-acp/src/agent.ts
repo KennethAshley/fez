@@ -73,6 +73,7 @@ import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
+import { RuntimeRefresh } from "./runtime-refresh.js";
 import { decide, claimOwnership, takeOverActive, shutdownGraced, type OwnershipIO, type PresenceBeat } from "./ownership.js";
 
 export { piThinkingLevel };
@@ -648,9 +649,10 @@ async function main() {
   const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
+  const runtimeRefresh = new RuntimeRefresh();
   const onInput: HarnessInputHandler | undefined = owner ? (form, signal) => requestInput({
     pubkey: myPubkey,
-    publish: async template => { const event = client.signEvent(template); await relay.publish(event); return event; },
+    publish: template => runtimeRefresh.run(async () => { const event = client.signEvent(template); await relay.publish(event); return event; }),
     subscribe: (filters, receive) => relay.subscribe(filters, receive),
     encrypt: (peer, text) => client.encryptTo(peer, text),
     decrypt: (peer, text) => client.decryptFrom(peer, text),
@@ -1338,7 +1340,15 @@ async function main() {
   // startup backfill can overlap the live subscription); without this a
   // duplicate delivery runs a second full turn and double-posts the reply
   // — observed live as an agent "re-posting the same result".
+  const restartState = path.join(path.dirname(pidfilePath), `${personaId}.restart.json`);
   const seenEventIds = new Set<string>();
+  try {
+    const saved = JSON.parse(fs.readFileSync(restartState, "utf8"));
+    if (saved.pid === process.pid && Array.isArray(saved.seen)) {
+      for (const id of saved.seen.slice(-2000)) if (typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) seenEventIds.add(id);
+    }
+    fs.unlinkSync(restartState);
+  } catch { /* normal startup, or an incomplete restart checkpoint */ }
   let busy = false;
 
   // ── Per-scope queues with batching (Buzz's queue.rs decisions): one
@@ -1419,7 +1429,7 @@ async function main() {
         steerMessages.push(`${who(item.chEvent!.pubkey)}: ${item.chEvent!.content}`);
       }
       if (items.length > 1) console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
-      setTimeout(() => void handleChannelMessage(last.chEvent!, true, attempts), 100);
+      void runtimeRefresh.run(() => handleChannelMessage(last.chEvent!, true, attempts), 100);
     } else {
       const last = items[items.length - 1];
       const merged: DmRumor =
@@ -1428,7 +1438,7 @@ async function main() {
           : last.dm!;
       if (items.length > 1) console.log(`📦 batching ${items.length} queued DMs for ${scope} into one turn`);
       seenEventIds.delete(merged.id);
-      setTimeout(() => void handleDm(merged, false, attempts), 100);
+      void runtimeRefresh.run(() => handleDm(merged, false, attempts), 100);
     }
   }
 
@@ -1905,7 +1915,7 @@ async function main() {
         if (steerMessages.length > 0) {
           // Steered: re-dispatch the SAME trigger — the unconsumed steer
           // messages get woven into the merged prompt.
-          setTimeout(() => void handleChannelMessage(event, true), 250);
+          void runtimeRefresh.run(() => handleChannelMessage(event, true), 250);
         } else {
           // Drain: the next scope with ready work gets a (batched) turn.
           setTimeout(drainNext, 250);
@@ -2122,7 +2132,7 @@ async function main() {
   setTimeout(() => {
     dmLive = true;
     dmBacklog.sort((a, b) => a.ts - b.ts);
-    for (const dm of dmBacklog.splice(0)) void handleDm(dm, true);
+    for (const dm of dmBacklog.splice(0)) void runtimeRefresh.run(() => handleDm(dm, true));
   }, 2500);
 
   relay.subscribe(
@@ -2145,17 +2155,17 @@ async function main() {
         return;
       }
       if (event.kind === KIND_DOC_COMMENT) {
-        void handleDocComment(event);
+        void runtimeRefresh.run(() => handleDocComment(event));
         return;
       }
       if (event.kind === KIND_GIFT_WRAP) {
         const dm = client.unwrapDm(event);
         if (!dm) return;
-        if (dmLive) void handleDm(dm);
+        if (dmLive) void runtimeRefresh.run(() => handleDm(dm));
         else dmBacklog.push(dm);
         return;
       }
-      void handleChannelMessage(event);
+      void runtimeRefresh.run(() => handleChannelMessage(event));
     }
   );
 
@@ -2189,7 +2199,7 @@ async function main() {
     .at(-1);
   if (pendingComment) {
     console.log(`⏪ Backfilling doc comment from ${pendingComment.pubkey.slice(0, 8)}…`);
-    setTimeout(() => void handleDocComment(pendingComment), 3000);
+    void runtimeRefresh.run(() => handleDocComment(pendingComment), 3000);
   }
 
   if (pending) {
@@ -2199,7 +2209,23 @@ async function main() {
     // dropped by clients.
     // Backfill deliberately KEEPS the dedupe: if the live subscription
     // already delivered this event, a second turn is exactly the bug.
-    setTimeout(() => void handleChannelMessage(pending), 3000);
+    void runtimeRefresh.run(() => handleChannelMessage(pending), 3000);
+  }
+
+  // Only bundled agents self-refresh. Source/CLI runs keep their own lifecycle.
+  // The compiler embeds this value; reading the marker at startup races installation.
+  const runningVersion = process.env.FEZ_AGENT_BUILD_VERSION;
+  if (runningVersion && process.execve) {
+    runtimeRefresh.watch(path.join(os.homedir(), ".fez", "bin", ".pi-agent-version"), runningVersion,
+      () => !busy && !steerMessages.length && dmLive && !dmBacklog.length &&
+        [...pendingByScope.values()].every(items => !items.length) && [...sessionPool.values()].every(session => !session.busy),
+      () => {
+        // Preserve dedupe across execve so startup backfill cannot repeat a completed turn.
+        fs.writeFileSync(restartState, JSON.stringify({ pid: process.pid, seen: [...seenEventIds] }), { mode: 0o600 });
+        closeAllSessions();
+        console.log("Updating agent runtime — pending work finished.");
+        process.execve!(process.execPath, [process.execPath], process.env);
+      });
   }
 
   process.on("SIGINT", () => {

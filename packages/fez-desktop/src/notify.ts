@@ -32,6 +32,7 @@ export type NotifTarget =
   | { kind: "channel"; id: string }
   | { kind: "dm"; convoKey: string }
   | { kind: "agent"; name: string }
+  | { kind: "questions" }
   | { kind: "proposals" };
 
 let lastTarget: NotifTarget | undefined;

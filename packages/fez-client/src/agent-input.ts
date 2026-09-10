@@ -23,6 +23,12 @@ export interface PendingInput {
   expiresAt: number;
   form: InputForm;
 }
+export interface InputHistoryEntry extends PendingInput {
+  requestedAt: number;
+  status: "pending" | "sent" | "received" | "closed" | "expired";
+  response?: InputResponse;
+  answeredAt?: number;
+}
 export const INPUT_WAIT_MS = 30 * 60_000;
 const MAX_BYTES = 24_000;
 
@@ -133,10 +139,18 @@ export async function requestInput(wire: InputWire, recipient: string, form: Inp
   if (!Number.isFinite(timeoutMs)) throw new Error("Invalid question timeout");
   if (signal?.aborted) return { action: "cancel" };
   const requestId = crypto.randomUUID();
-  const expiresAt = Date.now() + Math.min(INPUT_WAIT_MS, Math.max(1, timeoutMs));
+  const requestedAt = Date.now();
+  const expiresAt = requestedAt + Math.min(INPUT_WAIT_MS, Math.max(1, timeoutMs));
   const tags = [["p", recipient], ["d", requestId]];
-  let settle!: (response: InputResponse) => void;
-  const answer = new Promise<InputResponse>(resolve => { settle = resolve; });
+  let responseId: string | undefined;
+  let settled = false;
+  let settle!: (response: InputResponse, id?: string) => void;
+  const answer = new Promise<InputResponse>(resolve => { settle = (response, id) => {
+    if (settled) return;
+    settled = true;
+    responseId = id;
+    resolve(response);
+  }; });
   const cancel = () => settle({ action: "cancel" });
   const timer = setTimeout(cancel, expiresAt - Date.now());
   signal?.addEventListener("abort", cancel, { once: true });
@@ -147,11 +161,11 @@ export async function requestInput(wire: InputWire, recipient: string, form: Inp
       // Filters are an optimization; verify routing and author even on a lying relay.
       if (event.kind !== K.INPUT_RESPONSE || event.pubkey !== recipient || !event.tags.some(t => t[0] === "d" && t[1] === requestId) || !event.tags.some(t => t[0] === "p" && t[1] === wire.pubkey)) return;
       receiving = receiving.then(() => wire.decrypt(recipient, event.content)).then(raw => {
-        if (!signal?.aborted && Date.now() < expiresAt) settle(validateInputResponse(form, JSON.parse(raw)));
+        if (!signal?.aborted && Date.now() < expiresAt) settle(validateInputResponse(form, JSON.parse(raw)), event.id);
       }).catch(() => {});
     });
     const publishing = Promise.resolve().then(async () => {
-      const content = await wire.encrypt(recipient, JSON.stringify({ status: "pending", expiresAt, form }));
+      const content = await wire.encrypt(recipient, JSON.stringify({ status: "pending", requestedAt, expiresAt, form }));
       if (!signal?.aborted && Date.now() < expiresAt) await wire.publish({ kind: K.INPUT_REQUEST, tags, content });
     });
     // Cancellation/expiry also wins over a relay that never acknowledges publish.
@@ -164,7 +178,7 @@ export async function requestInput(wire: InputWire, recipient: string, form: Inp
     unsubscribe();
     // Expiry remains the fallback if the relay goes away during cleanup.
     void Promise.resolve().then(async () => {
-      await wire.publish({ kind: K.INPUT_REQUEST, tags, content: await wire.encrypt(recipient, JSON.stringify({ status: "closed", expiresAt })) });
+      await wire.publish({ kind: K.INPUT_REQUEST, tags, content: await wire.encrypt(recipient, JSON.stringify({ status: "closed", requestedAt, closedAt: Date.now(), expiresAt, form, responseId })) });
     }).catch(() => {});
   }
 }

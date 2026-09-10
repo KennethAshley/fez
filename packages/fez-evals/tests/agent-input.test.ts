@@ -77,10 +77,48 @@ describe("agent input", () => {
     await expect(pending).resolves.toEqual({ action: "accept", content });
     await vi.advanceTimersByTimeAsync(0);
     expect(client.pendingInputs()).toEqual([]);
+    expect(client.inputHistory()).toMatchObject([{ status: "received", response: { action: "accept", content } }]);
     // A second device/backfill must not resurrect a closed request.
     const second = new FezClient(owner);
     await second.start();
     expect(second.pendingInputs()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    const later = new FezClient(owner);
+    await later.start();
+    await later.loadInputHistory();
+    expect(later.inputHistory()).toMatchObject([{ status: "received", response: { action: "accept", content }, form: { message: request.message } }]);
+  });
+
+  it("keeps sent answers unconfirmed until a receipt names that exact signed response", async () => {
+    vi.useFakeTimers();
+    setStatePersistence({ load: () => undefined, save: () => {} });
+    const net = network(), agent = net.wire(AGENT), owner = net.wire(OWNER);
+    await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
+    const expiresAt = Date.now() + 60_000;
+    const form = inputForm(request);
+    const tags = [["p", OWNER], ["d", "delivery"]];
+    await agent.publish({ kind: K.INPUT_REQUEST, tags, content: await agent.encrypt(OWNER, JSON.stringify({ status: "pending", expiresAt, form })) });
+    const client = new FezClient(owner); await client.start();
+    await client.answerInput(client.pendingInputs()[0].id, { action: "accept", content: { layout: "grid" } });
+    expect(client.inputHistory()).toMatchObject([{ status: "sent", response: { content: { layout: "grid" } } }]);
+    await agent.publish({ kind: K.INPUT_REQUEST, tags, content: await agent.encrypt(OWNER, JSON.stringify({ status: "closed", expiresAt, form, responseId: "wrong" })) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.inputHistory()[0].status).toBe("closed");
+    // A closed form is not proof that our answer arrived.
+    expect(client.pendingInputs()).toEqual([]);
+  });
+
+  it("restores legacy closed questions when the relay sends closure before the form", async () => {
+    vi.useFakeTimers();
+    setStatePersistence({ load: () => undefined, save: () => {} });
+    const net = network(), agent = net.wire(AGENT), owner = net.wire(OWNER);
+    await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
+    const expiresAt = Date.now() + 60_000, tags = [["p", OWNER], ["d", "legacy"]];
+    await agent.publish({ kind: K.INPUT_REQUEST, tags, content: await agent.encrypt(OWNER, JSON.stringify({ status: "closed", expiresAt })) });
+    await agent.publish({ kind: K.INPUT_REQUEST, tags, content: await agent.encrypt(OWNER, JSON.stringify({ status: "pending", expiresAt, form: inputForm(request) })) });
+    const client = new FezClient(owner); await client.start();
+    expect(client.pendingInputs()).toEqual([]);
+    expect(client.inputHistory()).toMatchObject([{ status: "closed", response: undefined }]);
   });
 
   it("ignores other signers, wrong request ids and invalid answers; abort clears the wait", async () => {
@@ -106,10 +144,14 @@ describe("agent input", () => {
   it("expires unattended requests and never invents an answer", async () => {
     vi.useFakeTimers();
     const net = network();
+    const owner = net.wire(OWNER);
+    await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
+    const client = new FezClient(owner); await client.start();
     const pending = requestInput(net.wire(AGENT), OWNER, inputForm(request), { timeoutMs: 100 });
     await vi.advanceTimersByTimeAsync(101);
     await expect(pending).resolves.toEqual({ action: "cancel" });
-    expect(net.subs.size).toBe(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.inputHistory()).toMatchObject([{ status: "expired", response: undefined }]);
   });
 
   it("expiry releases the tool even when the relay never acknowledges publish", async () => {
