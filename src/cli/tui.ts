@@ -92,6 +92,7 @@ class LinePrefix implements Component {
 import { CapabilityClient } from "../protocol/client.js";
 import { MAX_CHAIN_DEPTH } from "../protocol/limits.js";
 import { FezClient } from "../../packages/fez-client/dist/index.js";
+import { TerminalInputs } from "./agent-input.js";
 import { installNodeStatePersistence } from "../../packages/fez-client/dist/state-node.js";
 import { RelayConnection } from "../protocol/relay.js";
 import { KIND_AGENT_RESULT, KIND_AGENT_PROGRESS, KIND_AGENT_METADATA } from "../protocol/kinds.js";
@@ -141,6 +142,8 @@ export class FezTUI {
   private messages: Message[] = [];
   private myPubkey: string;
   private fezClient!: FezClient;
+  private questions = new TerminalInputs(text => this.systemLine(text));
+  private remoteQuestions = new Set<string>();
   private agentNameMap: Map<string, string> = new Map(); // pubkey -> name
 
   // Owned-terminal rendering (pi-tui engine via fez-tui). The screen owns
@@ -265,6 +268,14 @@ export class FezTUI {
     };
     setNostrBackend(wire);
     this.fezClient = new FezClient(wire);
+    this.fezClient.on("inputsChanged", () => {
+      const requests = this.fezClient.pendingInputs();
+      for (const id of this.remoteQuestions) if (!requests.some(r => r.id === id)) { this.questions.remove(id); this.remoteQuestions.delete(id); }
+      for (const request of requests) {
+        this.questions.add(request.id, this.fezClient.displayName(request.agentPk), request.form, response => this.fezClient.answerInput(request.id, response));
+        this.remoteQuestions.add(request.id);
+      }
+    });
     setClientBackend(this.fezClient);
     // What extensions may reach the relay by. The owner comes from the
     // client's own NIP-11 read, so it is filled in when buildApi runs at
@@ -445,6 +456,7 @@ export class FezTUI {
 
   private async handleInput(input: string): Promise<void> {
     if (!input) return;
+    if (await this.questions.handle(input)) return;
 
     // Slash commands
     if (input.startsWith("/")) {
@@ -573,7 +585,20 @@ export class FezTUI {
               streamBubble.setContent(textSoFar);
             }
           },
-          mcpServers
+          mcpServers,
+          undefined,
+          undefined,
+          (form, signal) => new Promise(resolve => {
+            const id = crypto.randomUUID();
+            const cancel = () => { this.questions.remove(id); resolve({ action: "cancel" }); };
+            if (signal.aborted) { cancel(); return; }
+            signal.addEventListener("abort", cancel, { once: true });
+            this.questions.add(id, label, form, async response => {
+              signal.removeEventListener("abort", cancel);
+              this.questions.remove(id);
+              resolve(response);
+            });
+          })
         );
         if (streamBubble) {
           streamBubble.setContent(result);

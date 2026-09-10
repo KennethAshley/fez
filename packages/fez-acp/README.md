@@ -18,6 +18,21 @@ defaults to your fez identity, so the encrypted observer stream
 (`/watch <persona>`) and sibling gating work with zero configuration.
 (The raw form still works: `FEZ_AGENT_PERSONA=… fez run dist/agent.js`.)
 
+## Questions from tools
+
+ACP form requests (including Claude's `AskUserQuestion`) appear as a private
+card in the owner's desktop app. Answer the choices, multi-select fields or
+custom text, then submit all answers together. The waiting tool resumes in
+the same conversation. In the TUI, `/questions` lists requests; `/answer N`
+walks through one, and `/submit` sends the completed answers.
+
+Questions and answers are signed and encrypted between the agent and its
+owner (kinds 47013/47014). Pending forms survive a desktop reload. A form
+expires after 30 minutes; cancelling its turn clears it. Human input pauses
+the idle timeout, while the overall turn deadline still applies. Agents
+without an owner do not advertise a form UI. URL-mode and nested-object
+forms, and arbitrary regex constraints, are currently unsupported.
+
 ## Persona frontmatter the runtime honors
 
 ```markdown

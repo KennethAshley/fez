@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
-import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
+import { client, ndJsonStream, methods, PROTOCOL_VERSION, type ClientContext, type McpServer } from "@agentclientprotocol/sdk";
+import { inputForm, validateInputResponse, type InputForm, type InputResponse } from "../../packages/fez-client/dist/agent-input.js";
 import { withFreshOAuth } from "../extensions/connections.js";
 import type { SystemPromptMode } from "./system-prompt.js";
 import { notice } from "../cli/notices.js";
@@ -36,6 +37,44 @@ export interface HarnessUpdate {
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+}
+
+/** Host-provided question UI. The signal closes the form when its tool or turn ends. */
+export type InputHandler = (form: InputForm, signal: AbortSignal) => Promise<InputResponse>;
+interface HarnessInputState { controller?: AbortController; pending: number; answeredAt?: number }
+
+/** One ACP negotiation/handler for both persistent and one-shot harnesses. */
+export function createHarnessClient(onInput?: InputHandler) {
+  const input: HarnessInputState = { pending: 0 };
+  const app = client({ name: "fez" });
+  app.onRequest("session/request_permission", async ({ params }) => decidePermission({ options: params.options,
+    toolCall: { title: params.toolCall.title ?? undefined, kind: params.toolCall.kind ?? undefined, rawInput: params.toolCall.rawInput } }));
+  app.onRequest(methods.client.elicitation.create, async ({ params, signal }) => {
+    if (!onInput || !input.controller || input.controller.signal.aborted) return { action: "cancel" };
+    const abort = AbortSignal.any([signal, input.controller.signal]);
+    let cancel!: () => void;
+    const cancelled = new Promise<InputResponse>(resolve => { cancel = () => resolve({ action: "cancel" }); });
+    abort.addEventListener("abort", cancel, { once: true });
+    if (abort.aborted) cancel();
+    input.pending++;
+    try {
+      const form = inputForm(params);
+      const response = await Promise.race([onInput(form, abort), cancelled]);
+      return validateInputResponse(form, response);
+    } catch (error) {
+      console.warn(`Question could not be presented: ${error instanceof Error ? error.message : error}`);
+      return { action: "decline" };
+    } finally {
+      input.pending--;
+      input.answeredAt = Date.now();
+      abort.removeEventListener("abort", cancel);
+    }
+  });
+  return { app, input, initialize: (ctx: ClientContext) => ctx.request("initialize", {
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: onInput ? { elicitation: { form: {} } } : {},
+    clientInfo: { name: "fez", version: "0.2.1" },
+  }) };
 }
 
 /**
@@ -72,7 +111,8 @@ export interface HarnessAdapter {
     onProgress?: (textSoFar: string) => void,
     mcpServers?: McpServer[],
     onUpdate?: (update: HarnessUpdate) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onInput?: InputHandler
   ): Promise<string>;
   /**
    * Open a PERSISTENT session: one live harness process whose
@@ -88,7 +128,8 @@ export interface HarnessAdapter {
     mcpServers?: McpServer[],
     timeouts?: TimeoutOptions,
     /** Standing instructions, delivered by this adapter's declared mode. */
-    systemPrompt?: string
+    systemPrompt?: string,
+    onInput?: InputHandler
   ): Promise<HarnessSession>;
 }
 
@@ -345,6 +386,31 @@ const DRAIN_BUDGET_MS = 30_000;
 /** Exported for tests — the turn loop's assembled text is the thing
  *  published to a channel, so it is worth asserting directly. */
 export async function drivePrompt(
+  session: Parameters<typeof drivePromptLoop>[0],
+  command: string,
+  instruction: string,
+  onProgress?: (text: string) => void,
+  onUpdate?: (update: HarnessUpdate) => void,
+  signal?: AbortSignal,
+  timeouts: TimeoutOptions = ONE_SHOT_TIMEOUTS,
+  images?: PromptImage[],
+  input?: HarnessInputState
+): Promise<string> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  if (input) input.controller = controller;
+  try {
+    return await drivePromptLoop(session, command, instruction, onProgress, onUpdate, controller.signal, timeouts, images, input);
+  } finally {
+    controller.abort();
+    if (input) input.controller = undefined;
+    signal?.removeEventListener("abort", abort);
+  }
+}
+
+async function drivePromptLoop(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ACP session updates are whatever the adapter sent; narrowing happens below.
   session: { prompt(input: unknown): Promise<unknown>; nextUpdate(): Promise<any> },
   command: string,
@@ -353,7 +419,8 @@ export async function drivePrompt(
   onUpdate?: (update: HarnessUpdate) => void,
   signal?: AbortSignal,
   timeouts: TimeoutOptions = ONE_SHOT_TIMEOUTS,
-  images?: PromptImage[]
+  images?: PromptImage[],
+  input?: HarnessInputState
 ): Promise<string> {
   // With images, send an ACP content-block array (text first, then each
   // image block); the SDK passes it straight through. Without, a bare
@@ -408,10 +475,15 @@ export async function drivePrompt(
 
     let idleHandle: ReturnType<typeof setTimeout>;
     const idleTimeout = new Promise<never>((_, reject) => {
-      idleHandle = setTimeout(
-        () => reject(new HarnessTimeoutError(`${command} went silent for ${idleMs}ms mid-turn`)),
-        Math.min(idleMs, remaining)
-      );
+      const check = () => {
+        const left = hardDeadline - Date.now();
+        const afterAnswer = input?.answeredAt === undefined ? 0 : input.answeredAt + idleMs - Date.now();
+        // A person filling a form is not a stalled tool. Keep the hard
+        // deadline, and keep the SAME nextUpdate promise while waiting.
+        if ((input?.pending || afterAnswer > 0) && left > 0) idleHandle = setTimeout(check, Math.min(input?.pending ? idleMs : afterAnswer, left));
+        else reject(new HarnessTimeoutError(`${command} went silent for ${idleMs}ms mid-turn`));
+      };
+      idleHandle = setTimeout(check, Math.min(idleMs, remaining));
     });
 
     let message;
@@ -578,7 +650,8 @@ function openAcpSession(
   cwd: string,
   mcpServers?: McpServer[],
   timeouts: TimeoutOptions = SESSION_TIMEOUTS,
-  systemPrompt?: string
+  systemPrompt?: string,
+  onInput?: InputHandler
 ): Promise<HarnessSession> {
   const { command } = descriptor;
   const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
@@ -600,8 +673,8 @@ function openAcpSession(
       Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
     );
-    const app = client({ name: "fez" });
-    app.onRequest("session/request_permission", async ({ params }) => decidePermission(params as never));
+    const bridge = createHarnessClient(onInput);
+    const { app } = bridge;
 
     child.on("exit", () => {
       alive = false;
@@ -610,6 +683,7 @@ function openAcpSession(
 
     const run = app
       .connectWith(stream, async (ctx) => {
+        await bridge.initialize(ctx);
         // ACP's NewSessionRequest has no system-prompt field — cwd,
         // additionalDirectories, mcpServers, _meta, and nothing else. So
         // the standing prompt goes in _meta for any agent that reads it
@@ -658,7 +732,7 @@ function openAcpSession(
                 await drainAbandonedTurn(session);
               }
               try {
-                return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts, images);
+                return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts, images, bridge.input);
               } catch (err) {
                 // Steer, timeout, deadline: the prompt is still running.
                 dirty = true;
@@ -722,10 +796,10 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
     // "meta": we put it where the spec allows and prefix it too, but
     // no agent is obliged to treat it as outranking the conversation.
     systemPromptMode: "meta" as const,
-    openSession: (cwd, mcpServers, timeouts, systemPrompt) =>
-      openAcpSession(descriptor, cwd, mcpServers, timeouts, systemPrompt),
+    openSession: (cwd, mcpServers, timeouts, systemPrompt, onInput) =>
+      openAcpSession(descriptor, cwd, mcpServers, timeouts, systemPrompt, onInput),
 
-    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal) {
+    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal, onInput) {
       const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
 
       // Without these, a write to a pipe whose reader already exited (e.g.
@@ -754,20 +828,20 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
           Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
         );
 
-        const app = client({ name: "fez" });
+        const bridge = createHarnessClient(onInput);
+        const { app } = bridge;
 
         // Classified, then gated by the host's risk policy (see
         // decidePermission) — an unattended agent no longer auto-approves
         // a destructive command just because the harness asked nicely.
-        app.onRequest("session/request_permission", async ({ params }) => decidePermission(params as never));
-
         return await app.connectWith(stream, async (ctx) => {
+          await bridge.initialize(ctx);
           let builder = ctx.buildSession(cwd);
           for (const server of await withFreshOAuth(mcpServers ?? [])) {
             builder = builder.withMcpServer(server);
           }
           const session = await builder.start();
-          return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal);
+          return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal, undefined, undefined, bridge.input);
         });
       } finally {
         child.kill();
@@ -839,12 +913,13 @@ export async function invokeWithRetry(
   mcpServers?: McpServer[],
   onUpdate?: (update: HarnessUpdate) => void,
   signal?: AbortSignal,
-  attempts = 3
+  attempts = 3,
+  onInput?: InputHandler
 ): Promise<string> {
   let delayMs = 2_000;
   for (let attempt = 1; ; attempt++) {
     try {
-      return await harness.invoke(instruction, cwd, onProgress, mcpServers, onUpdate, signal);
+      return await harness.invoke(instruction, cwd, onProgress, mcpServers, onUpdate, signal, onInput);
     } catch (err) {
       if (classifyTurnError(err) !== "transient" || attempt >= attempts) throw err;
       console.warn(

@@ -13,6 +13,7 @@ import { bindMention, describeMentionProblems, splitMentions, type MentionBindin
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
+import AgentInput from "./AgentInput";
 import AgentsPage from "./AgentsPage";
 import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
@@ -1036,6 +1037,7 @@ function Shell({
     <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
       <BootSplash loading={false} />
       <Toaster />
+      <AgentInput client={client} />
       {!connected && (
         <div className="conn-bar">
           {relayHealth.length > 1 ? `all ${relayHealth.length} relays unreachable` : "relay disconnected"} — reconnecting…

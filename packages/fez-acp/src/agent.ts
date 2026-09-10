@@ -17,6 +17,8 @@ import {
   registerBuiltinHarnesses,
   SESSION_TIMEOUTS,
   setRiskPolicy,
+  requestInput,
+  type HarnessInputHandler,
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
@@ -646,6 +648,13 @@ async function main() {
   const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
+  const onInput: HarnessInputHandler | undefined = owner ? (form, signal) => requestInput({
+    pubkey: myPubkey,
+    publish: async template => { const event = client.signEvent(template); await relay.publish(event); return event; },
+    subscribe: (filters, receive) => relay.subscribe(filters, receive),
+    encrypt: (peer, text) => client.encryptTo(peer, text),
+    decrypt: (peer, text) => client.decryptFrom(peer, text),
+  }, owner, form, { signal }) : undefined;
 
   // ── NIP-AE memory: the agent's `core` engram feeds every turn's
   // standing context. How it lands in prompts lives in memory-prompt.ts
@@ -1155,6 +1164,7 @@ async function main() {
     session: HarnessSession;
     turns: number;
     lastUsed: number;
+    busy?: boolean;
     /** Whether the priming prompt (persona + memory + conventions) has been sent. */
     primed: boolean;
   }
@@ -1177,7 +1187,7 @@ async function main() {
   setInterval(() => {
     const now = Date.now();
     for (const [key, pooled] of sessionPool) {
-      if (now - pooled.lastUsed > SESSION_IDLE_MS) {
+      if (!pooled.busy && now - pooled.lastUsed > SESSION_IDLE_MS) {
         console.log(`🧠 reaping idle session ${key}`);
         dropSession(key);
       }
@@ -1227,10 +1237,12 @@ async function main() {
     const existing = sessionPool.get(scope);
     if (existing && existing.session.alive && existing.turns < SESSION_TURN_CAP) {
       existing.lastUsed = Date.now();
+      existing.busy = true;
       return existing;
     }
     if (existing) {
       if (existing.session.alive && existing.turns >= SESSION_TURN_CAP) {
+        existing.busy = true;
         await captureHandoff(scope, existing);
       }
       dropSession(scope);
@@ -1239,12 +1251,12 @@ async function main() {
       let oldestKey: string | undefined;
       let oldest = Infinity;
       for (const [key, pooled] of sessionPool) {
-        if (pooled.lastUsed < oldest) {
+        if (!pooled.busy && pooled.lastUsed < oldest) {
           oldest = pooled.lastUsed;
           oldestKey = key;
         }
       }
-      if (!oldestKey) break;
+      if (!oldestKey) throw new Error("All harness sessions are in use");
       dropSession(oldestKey);
     }
     // Standing instructions at session open, not per turn: the session
@@ -1252,8 +1264,8 @@ async function main() {
     // turn inherits it. composeSystemPrompt gathers the persona, core's
     // trust boundary, and anything an extension registered.
     const standing = composeSystemPrompt(activePersona.systemPrompt);
-    const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts, standing || undefined);
-    const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false };
+    const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts, standing || undefined, onInput);
+    const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false, busy: true };
     sessionPool.set(scope, pooled);
     console.log(`🧠 opened harness session for ${scope} (${sessionPool.size} live)`);
     return pooled;
@@ -1280,7 +1292,7 @@ async function main() {
     // images (PromptInput, and the retry that drops them when a model
     // refuses); fez-acp simply no longer sends any.
     if (!harness!.openSession) {
-      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal);
+      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal, 3, onInput);
     }
     let pooled = await getSession(scope);
     try {
@@ -1315,6 +1327,9 @@ async function main() {
       pooled.turns++;
       pooled.lastUsed = Date.now();
       return reply;
+    } finally {
+      pooled.busy = false;
+      pooled.lastUsed = Date.now();
     }
   }
 
