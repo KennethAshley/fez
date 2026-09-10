@@ -47,9 +47,8 @@ user and the provider: no hub, no broker, no third party on the redirect.
 
 ## Architecture: fez owns the flow, the harness sees a header
 
-fez never connects to MCP servers — it hands ACP `McpServerHttp`
-configs (`{name, url, headers}`) to the harness. That type has no OAuth
-affordance, so the design is forced and clean:
+At session startup, fez hands ACP `McpServerHttp` configs
+(`{name, url, headers}`) to the harness. That type has no OAuth affordance:
 
 **fez runs OAuth itself and injects `Authorization: Bearer <token>` as a
 header at spawn time** — exactly where `resolveHeaders()` already fills
@@ -57,13 +56,19 @@ static keychain values. OAuth tokens become headers whose lifecycle fez
 owns. No harness cooperation needed; works identically for claude-code
 and pi agents.
 
+As of 2026-09-10, connections approved during a turn are also available
+through `fez_service_tools` and `fez_service_call` in the existing Fez MCP
+session. This proxy obtains fresh tokens before requests and checks the
+persona's attachment on every call. The persisted attachment supplies the
+normal direct MCP configuration on future sessions.
+
 ## Parts
 
 **1. `src/extensions/connections.ts` (core, new)** — an
 `OAuthClientProvider` (the MCP SDK interface) over the keychain:
 
 - Storage: one keychain item per connection — service `fez-skill-env`,
-  account `<skill>.OAUTH`, value a JSON blob `{client, tokens, verifier}`
+  account `<skill>.OAUTH`, value a JSON blob `{client, tokens, url, savedAt}`
   (same custody, listing, and rotation story as every secret; the
   secrets page shows it as one entry).
 - `connect(name)`: loopback listener on an ephemeral `127.0.0.1` port →
@@ -92,9 +97,13 @@ instead of a paste field; connected state shows the 🔒 chip like any
 stored secret, plus "reconnect". The keycard redesign already carries
 the frame; this is a new card body variant, not a new page.
 
-**5. In-chat**: "@fez connect linear" → fez replies with the authorize
-link (clickable) and confirms when the callback lands. Same code path
-as the button.
+**5. In-chat (implemented 2026-09-10)**: "@fez connect linear" →
+`fez_connect_service` privately sends the authorize link to the configured
+owner. After consent, the shared connection flow stores credentials and
+attaches the service before reporting success in the browser. Short
+`action: "wait"` calls keep the original agent turn alive; the service
+proxy lets it continue the original task without a restart. An unattached
+agent must obtain fresh consent even when machine credentials exist.
 
 ## Deliberately parked (named so they're chosen later)
 
@@ -115,9 +124,13 @@ as the button.
 
 ## Security notes
 
-- PKCE S256 always; `state` from the SDK; loopback binds `127.0.0.1`
-  only and one-shots (server closes after the callback).
+- PKCE S256 from the SDK; fez generates and validates per-attempt `state`.
+  The callback checks method, host, exact path, state and code shape.
+  Loopback binds `127.0.0.1` only; cancellation and timeout close it.
+  PKCE verifiers stay in memory, and failed attempts never overwrite an
+  existing account. Stored tokens are bound to their MCP URL.
 - Tokens never in settings.json, never in chat — keychain only; the
-  authorize URL shown in chat contains no secret (that's its design).
+  authorize URL carries sign-in parameters, not an access or refresh
+  token, and is delivered in an owner-private DM.
 - A revoked/expired refresh token degrades to the honest-gap path, never
   a silent broken tool.

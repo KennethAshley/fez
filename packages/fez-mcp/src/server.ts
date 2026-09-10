@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
+import { registerConnectionTools } from "./connections.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import {
   RelayConnection,
@@ -138,6 +139,15 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 // ── Server + tools ───────────────────────────────────────────────────────
 
 const server = new McpServer({ name: "fez", version: "0.1.0" });
+registerConnectionTools(server, {
+  persona, owner,
+  sendOwner: async (message) => {
+    if (!owner) throw new Error("No owner configured");
+    const { toPeer, toSelf } = buildDmWraps(secret, owner, message, 1);
+    await relay.publish(toPeer);
+    await relay.publish(toSelf);
+  },
+});
 
 /**
  * Look at an image someone attached.

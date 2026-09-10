@@ -1685,6 +1685,7 @@ async function main() {
             `- Proposing teammates: if a task keeps needing a specialist that doesn't exist, you may propose one: run the shell command fez persona draft <name> --description "<what it's for>" --prompt "<system prompt>". The owner reviews and approves; NEVER claim the new agent exists until it answers a mention.`,
             `- Choices: when a decision is your OWNER's to make (approach A vs B, which target), use the fez_ask_owner tool with 2-4 options (mark ONE recommended if you have a lean) and act on the answer — never guess on their behalf.`,
             `- Approval: before any RISKY or IRREVERSIBLE action (deploys, deletions, publishing, spending), call the fez_request_approval tool and proceed only on APPROVED — never on denial, timeout, or a mere plan to ask.`,
+            `- Connections: when a task needs a service you cannot access, call fez_connect_service. It sends your owner a private browser sign-in link. While pending, call it with action=wait until connected, failed, or cancelled. Once connected, discover tools with fez_service_tools and use fez_service_call to resume the ORIGINAL task in this session. Never ask anyone to paste tokens or restart the agent.`,
             `- Wiki: the community keeps shared markdown pages (fez_wiki_read / fez_wiki_write). Durable knowledge worth outliving this conversation belongs in a page, linked to related pages with [[Their Name]] — read before you rewrite; owners see every edit signed by you.`,
             `- Boards: if the fez_board_* tools are available, some pages are kanban boards and work you're given may be a CARD on one. Move your own card: fez_board_move to the in-progress column when you start and to the done column when you finish, so the board shows the truth without anyone asking you for a status. fez_board_add files work you found but aren't doing now. Never rewrite a board page with fez_wiki_write — use the board tools, which leave the rest of the document untouched.`,
             `- Doc comments: when a message says someone commented on a doc line, use fez_doc_comments to read the thread, do the work, then fez_comment_reply to answer IN that thread (resolve only when it is actually done) — the comment is the request, so answering in chat alone leaves it open.`,
@@ -1712,7 +1713,7 @@ async function main() {
               : []),
             ...(missingSkills.length > 0
               ? [
-                  `- Capability honesty: your persona declares tools that are NOT available in this session: ${missingSkills.join(", ")}. If the task needs one of them, say so plainly and stop — do not improvise the result.`,
+                  `- Capability honesty: your persona declares tools that are NOT available in this session: ${missingSkills.join(", ")}. If the task needs one, use fez_connect_service when supported; otherwise report the missing capability — do not improvise the result.`,
                 ]
               : [
                   `- Capability honesty: if the task needs a tool or data source you don't have access to, say so plainly instead of improvising the result.`,
