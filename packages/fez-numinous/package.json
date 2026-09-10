@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/numinous",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Numinous SIGNAL submission adapter for Fez, fixed to testnet 155.",
   "type": "module",
   "files": [

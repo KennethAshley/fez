@@ -90,7 +90,7 @@ Wallet now advertises its existing-key and testnet guards via a read-only
 `capabilities --json` command. Numinous verifies those capabilities before key
 export, so old wallets cannot silently ignore the new safety flags.
 
-Desktop 0.4.32 adds miner-only packages to install, remove and legacy migration.
+Desktop 0.4.33 adds miner-only packages to install, remove and legacy migration.
 Both host compatibility constants are 0.2.1; Mining and Numinous require that
 contract. The old published Protocol 0.2.1 CLI advertises host contract 0.2.0
 and cannot install miner parts. Public setup therefore uses the desktop
@@ -107,3 +107,7 @@ passed descriptor discovery, Wallet capabilities, rejection of process controls,
 old-wallet refusal before export, MCP status, and headless bundle import.
 No live keys, registration, upload, paid compute or channel posts were used in
 release checks. Pending activation remains distinct from execution or rewards.
+
+A concurrent release claimed desktop 0.4.32 before the Numinous PR merged.
+Numinous ships in 0.4.33. Mining and Numinous 0.1.1 correct their public setup
+instructions; the host-contract gate already refuses the unsupported 0.4.32.
