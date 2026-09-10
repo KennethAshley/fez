@@ -74,7 +74,10 @@ export class MiniRelay {
             const subId = rest[0] as string;
             const filters = rest.slice(1) as Filter[];
             this.subs.set(`${connId}:${subId}`, { subId, filters, ws });
-            for (const e of this.events.filter((e) => filters.some((f) => matchFilter(f, e)))) {
+            const history = new Map(filters.flatMap(filter => this.events.filter(event => matchFilter(filter, event))
+              .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+              .slice(0, filter.limit)).map(event => [event.id, event]));
+            for (const e of history.values()) {
               ws.send(JSON.stringify(["EVENT", subId, e]));
             }
             ws.send(JSON.stringify(["EOSE", subId]));

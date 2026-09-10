@@ -27,9 +27,9 @@ interface ClientLike {
     channelId: string,
     text: string,
     opts?: { anchor?: string; slug?: string; parentId?: string; mentionPks?: string[]; resolve?: boolean }
-  ): Promise<void>;
+  ): Promise<unknown>;
   docsByChannel(): ReadonlyMap<string, { latestContent: string; latestId: string }>;
-  publishDoc(channelId: string, content: string, baseId?: string): Promise<void>;
+  publishDoc(channelId: string, content: string, baseId?: string): Promise<unknown>;
 }
 
 interface BlockProps {

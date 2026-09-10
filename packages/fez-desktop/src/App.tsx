@@ -22,7 +22,6 @@ import SkillsView from "./SkillsView";
 import { ExtensionPanel } from "./SkillsView";
 import ProfilePane from "./ProfilePane";
 import RemindersPane from "./RemindersPane";
-import DocsPane from "./DocsPane";
 import WikiView from "./WikiView";
 import ChannelInfo from "./ChannelInfo";
 import SettingsPane from "./SettingsPane";
@@ -100,7 +99,7 @@ type MainView =
   | { kind: "guest"; pk: string }
   | { kind: "home" }
   | { kind: "pulse" }
-  | { kind: "wiki" }
+  | { kind: "wiki"; channelId?: string }
   | { kind: "ext"; name: string }
   | { kind: "extensions" }
   | { kind: "agents" }
@@ -114,7 +113,6 @@ type SidePane =
   | { kind: "manage" }
   | { kind: "profile"; pk: string }
   | { kind: "reminders" }
-  | { kind: "docs"; channelId: string }
   | { kind: "tool"; artifact: Artifact }
   | undefined;
 
@@ -891,7 +889,7 @@ function Shell({
         openSearch: (query) => setSearchOpen({ query }),
         watch: (agent) => setPane({ kind: "watch", agent }),
         openDocs: () => {
-          if (scope) setPane({ kind: "docs", channelId: scope.channelId });
+          if (scope) { setPane(undefined); setView({ kind: "wiki", channelId: scope.channelId }); }
         },
         openAgents: () => setView({ kind: "agents" }),
         openDm,
@@ -1104,7 +1102,7 @@ function Shell({
           <span className="nav-glyph">▤</span> inbox
           {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
         </button>
-        <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "wiki" })}>
+        <button className={view.kind === "wiki" ? "channel active home-link" : "channel home-link"} onClick={() => { setPane(undefined); setView({ kind: "wiki" }); }}>
           <span className="nav-glyph">≡</span> docs
         </button>
         {/* Moderators only — where flagged messages come to you. */}
@@ -1511,13 +1509,7 @@ function Shell({
           onSearch={() => setSearchOpen({ query: "" })}
           onNotice={(text) => { setBanner(text); setTimeout(() => setBanner(undefined), 6000); }}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
-          onDocs={() =>
-            setPane(
-              pane?.kind === "docs" && pane.channelId === scope.channelId
-                ? undefined
-                : { kind: "docs", channelId: scope.channelId }
-            )
-          }
+          onDocs={() => { setPane(undefined); setView({ kind: "wiki", channelId: scope.channelId }); }}
           onCommand={runSlash}
           onOpenTool={(artifact) => setPane({ kind: "tool", artifact })}
           localAgents={localAgents}
@@ -1563,7 +1555,7 @@ function Shell({
           onCreate={() => setPane({ kind: "agents", create: true })}
         />
       )}
-      {view.kind === "wiki" && <WikiView client={client} />}
+      {view.kind === "wiki" && <WikiView key={view.channelId ?? "wiki"} client={client} initialSelection={view.channelId ? { kind: "channel", channelId: view.channelId } : undefined} />}
       {view.kind === "modqueue" && (
         <main className="main">
           <ModerationQueue client={client} onOpenChannel={(channelId, msgId) => void openChannel(channelId, msgId)} />
@@ -1758,14 +1750,6 @@ function Shell({
               }
             }
           }}
-          onClose={() => setPane(undefined)}
-        />
-      )}
-      {pane?.kind === "docs" && (
-        <DocsPane
-          client={client}
-          channelId={pane.channelId}
-          renderMd={(text) => <MdBody text={text} />}
           onClose={() => setPane(undefined)}
         />
       )}

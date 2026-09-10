@@ -5,17 +5,16 @@ import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
-  bindMention,
-  parseQuery,
+  createDocAnchor,
+  locateDocAnchor,
   taskKey,
   wikiSlug,
   type DocCommentThread,
   type FezClient,
-  type MentionBindings,
-  type MentionCandidate,
   type WireEvent,
 } from "@fezchat/client";
-import MentionBox from "./MentionBox";
+import DocConversation, { type DocFocus } from "./DocConversation";
+import { docBlocks, documentChange, docSelectionRange } from "./doc-workspace";
 import { FormatBar, markdownFormatOps } from "./format-bar";
 import { blockRenderer, docMarkdownPlugins, pageViewsFor } from "./gui-extensions";
 import { MountPoint } from "./MountPoint";
@@ -35,8 +34,8 @@ import type { BlockMenuItem } from "./gui-extensions";
  * nobody has written yet opens a fresh editor — writing IS creating.
  */
 
-type Sel =
-  | { kind: "wiki"; slug: string }
+export type WikiSelection =
+  | { kind: "wiki"; slug: string; title?: string }
   | { kind: "channel"; channelId: string };
 
 /**
@@ -51,119 +50,6 @@ function linkifyWiki(text: string): string {
     const target = `wiki:${wikiSlug(page)}${section ? `#${wikiSlug(section)}` : ""}`;
     return `[${label}](${target})`;
   });
-}
-
-/**
- * Split a doc into commentable blocks — paragraphs, list items,
- * headings, fenced code. Each block renders as markdown on its own so a
- * comment can anchor to it by TEXT (surviving edits elsewhere).
- */
-function blocksOf(markdown: string): string[] {
-  const blocks: string[] = [];
-  let paragraph: string[] = [];
-  let fence: string[] | undefined;
-  const flush = () => {
-    if (paragraph.length) blocks.push(paragraph.join("\n"));
-    paragraph = [];
-  };
-  for (const line of markdown.split("\n")) {
-    if (line.trim().startsWith("```")) {
-      if (fence) {
-        fence.push(line);
-        blocks.push(fence.join("\n"));
-        fence = undefined;
-      } else {
-        flush();
-        fence = [line];
-      }
-      continue;
-    }
-    if (fence) {
-      fence.push(line);
-      continue;
-    }
-    if (!line.trim()) {
-      flush();
-      continue;
-    }
-    // headings and list items stand alone so each is separately commentable
-    if (/^(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)/.test(line.trim())) {
-      flush();
-      blocks.push(line);
-      continue;
-    }
-    paragraph.push(line);
-  }
-  flush();
-  if (fence) blocks.push(fence.join("\n"));
-  return blocks;
-}
-
-/** One anchored thread: the note, its replies, resolve, and a reply box. */
-function CommentThread({
-  client,
-  roster,
-  thread,
-  onReply,
-}: {
-  client: FezClient;
-  /** Who this doc's channel actually contains — the mention namespace. */
-  roster: MentionCandidate[];
-  thread: DocCommentThread;
-  onReply: (text: string, resolve?: boolean, bindings?: MentionBindings) => void;
-}) {
-  const [draft, setDraft] = useState("");
-  const [replying, setReplying] = useState(false);
-  // Who each picked @name means, settled at the moment of picking.
-  const [bindings, setBindings] = useState<MentionBindings>(new Map());
-  const when = (ts: number) =>
-    new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  return (
-    <div className={thread.resolved ? "comment-thread resolved" : "comment-thread"}>
-      <div className="comment-head">
-        <span className="comment-author">{client.displayName(thread.authorPk)}</span>
-        <span className="time">{when(thread.ts)}</span>
-        {thread.resolved && <span className="role-tag installed-tag">resolved</span>}
-      </div>
-      <div className="comment-text">{renderMentions(client, thread.text, thread.mentionPks)}</div>
-      {thread.replies.map((reply) => (
-        <div key={reply.id} className="comment-reply">
-          <span className="comment-author">{client.displayName(reply.authorPk)}</span>
-          <span className="time">{when(reply.ts)}</span>
-          <div className="comment-text">{renderMentions(client, reply.text, reply.mentionPks)}</div>
-        </div>
-      ))}
-      {replying ? (
-        <div className="comment-compose">
-          <MentionBox
-            client={client}
-            format
-            roster={roster}
-            value={draft}
-            autoFocus
-            placeholder="reply… @agent to hand it over"
-            onChange={setDraft}
-            onMentionPick={(name, pubkey) => setBindings((prev) => bindMention(prev, name, pubkey))}
-            onSubmit={() => {
-              if (!draft.trim()) return;
-              onReply(draft, undefined, bindings);
-              setDraft("");
-              setBindings(new Map());
-              setReplying(false);
-            }}
-            onEscape={() => setReplying(false)}
-          />
-        </div>
-      ) : (
-        <div className="comment-actions">
-          <button className="mini" onClick={() => setReplying(true)}>reply</button>
-          {!thread.resolved && (
-            <button className="mini" onClick={() => onReply("", true)}>resolve</button>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /** Flatten a list item's children to plain text — the task's identity. */
@@ -193,49 +79,43 @@ function stripCheckbox(children: React.ReactNode): React.ReactNode {
   ) as React.ReactNode;
 }
 
-/**
- * Style an @name only if the comment actually tagged someone by that
- * name. Highlighting every @word made a mention that reached nobody
- * look identical to one that worked — the same silence the send path
- * stopped producing, reappearing on the way back out.
- */
-function renderMentions(client: FezClient, text: string, mentionPks: readonly string[]) {
-  const tagged = new Set(mentionPks.map((pk) => client.displayName(pk).toLowerCase()));
-  return text.split(/(@[\w-]+)/g).map((part, index) =>
-    part.startsWith("@") && tagged.has(part.slice(1).toLowerCase()) ? (
-      <span key={index} className="mention">{part}</span>
-    ) : (
-      <span key={index}>{part}</span>
-    )
-  );
-}
-
-export default function WikiView({ client }: { client: FezClient }) {
-  const [sel, setSel] = useState<Sel>();
-  const [versions, setVersions] = useState<WireEvent[]>();
+export default function WikiView({ client, initialSelection }: { client: FezClient; initialSelection?: WikiSelection }) {
+  const [sel, setSel] = useState<WikiSelection | undefined>(initialSelection);
+  const [versionState, setVersions] = useState<WireEvent[]>();
+  const [loadedPage, setLoadedPage] = useState("");
   const [viewing, setViewing] = useState<string>();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [newTitle, setNewTitle] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [, bump] = useState(0);
-  const [threads, setThreads] = useState<DocCommentThread[]>([]);
+  const [threadState, setThreads] = useState<DocCommentThread[]>([]);
   const [tasks, setTasks] = useState<Map<string, { done: boolean; byPk: string; ts: number }>>(new Map());
-  const [commenting, setCommenting] = useState<string>(); // the block being commented on
-  const [askDraft, setAskDraft] = useState("");
-  const [ask, setAsk] = useState<string>();
-  const [commentDraft, setCommentDraft] = useState("");
-  const [commentBindings, setCommentBindings] = useState<MentionBindings>(new Map());
+  const [focusByPage, setFocusByPage] = useState<Record<string, DocFocus>>({});
+  const [activityTab, setActivityTab] = useState<"conversation" | "changes">("conversation");
+  const [loadError, setLoadError] = useState<string>();
+  const [writeError, setWriteError] = useState<string>();
+  const selectionKey = sel ? JSON.stringify([client.state.workspace.relay, sel.kind, sel.kind === "wiki" ? sel.slug : sel.channelId]) : "";
+  const versions = loadedPage === selectionKey ? versionState : undefined;
+  const threads = loadedPage === selectionKey ? threadState : [];
+  const currentSelection = React.useRef(selectionKey);
+  currentSelection.current = selectionKey;
+  const loadSequence = React.useRef(0);
+  const editBase = React.useRef<string | undefined>(undefined);
+  const editSelection = React.useRef(selectionKey);
+  const editDrafts = React.useRef(new Map<string, { text: string; baseId: string | undefined }>());
+  if (editing) editDrafts.current.set(editSelection.current, { text: draft, baseId: editBase.current });
+  const focus = focusByPage[selectionKey] ?? {};
+  const setFocus = (next: DocFocus) => {
+    setFocusByPage(all => ({ ...all, [selectionKey]: next }));
+    if (currentSelection.current === selectionKey) setActivityTab("conversation");
+  };
   /**
    * Which lens the open page is under. `undefined` means "nobody has
    * chosen" — so a board-shaped document may open as a board, while a
    * click on ▤ markdown sticks for as long as the page is open.
    */
   const [pageView, setPageView] = useState<string>();
-  /** An outstanding request to an agent: which comment we're waiting on. */
-  const [asking, setAsking] = useState<{ agent: string; commentId: string; since: number }>();
-  const [proposal, setProposal] = useState<{ agent: string; markdown: string }>();
-  const [composerError, setComposerError] = useState<string>();
   const [slash, setSlash] = useState<SlashState>();
   const editorRef = React.useRef<HTMLTextAreaElement>(null);
   // The document body gets the same markdown toolbar the channel
@@ -243,72 +123,44 @@ export default function WikiView({ client }: { client: FezClient }) {
   // places you write prose here (format-bar.tsx).
   const docFormat = markdownFormatOps(editorRef, draft, setDraft);
 
-  // live: agent/other-client versions repaint the list and the open page
-  useEffect(() => {
-    return client.on("docChanged", () => {
-      bump((n) => n + 1);
-      void load();
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, sel]);
-
   const load = useCallback(async () => {
     if (!sel) return;
-    const [nextVersions, nextThreads, nextTasks] = await Promise.all([
-      sel.kind === "wiki"
-        ? client.wikiVersions(sel.slug)
-        : client.docVersions(sel.channelId),
-      client.docComments(sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
-      client.docTasks(sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }),
-    ]);
-    setVersions(nextVersions);
-    setThreads(nextThreads);
-    setTasks(nextTasks);
-  }, [client, sel]);
-
-  /**
-   * Post a comment anchored to a block. @mentions become p tags — the
-   * same summon path chat uses, so "@researcher fix this line" reaches
-   * the agent with the line as its anchor.
-   */
-  const comment = async (
-    text: string,
-    anchor: string,
-    parentId?: string,
-    resolve?: boolean,
-    bindings?: MentionBindings
-  ) => {
-    if (!sel) return;
-    const body = text.trim();
-    if (!body && !resolve) return;
-    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
-    if (!channelId) return;
-    // Roster-scoped, like the channel composer: a doc comment that
-    // @mentions a name nobody here has must not look like it worked.
-    // Names picked from the autocomplete come with their pubkey already.
-    const mentionPks = client.resolveMentionsIn(body, channelId, bindings).pubkeys;
-    await client.publishDocComment(channelId, body, {
-      anchor,
-      slug: sel.kind === "wiki" ? sel.slug : undefined,
-      parentId,
-      mentionPks,
-      resolve,
-    });
-    // No channel message: agents subscribe to 40101 directly, so a doc
-    // comment stays in the document — the agent answers in this thread.
-    setCommenting(undefined);
-    setCommentDraft("");
-    setCommentBindings(new Map());
-    await load();
-  };
+    const sequence = ++loadSequence.current;
+    const scope = sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId };
+    try {
+      const [nextVersions, nextThreads, nextTasks] = await Promise.all([
+        sel.kind === "wiki" ? client.wikiVersions(sel.slug) : client.docVersions(sel.channelId),
+        client.docComments(scope), client.docTasks(scope),
+      ]);
+      if (currentSelection.current !== selectionKey || sequence !== loadSequence.current) return;
+      setVersions(nextVersions); setThreads(nextThreads); setTasks(nextTasks); setLoadedPage(selectionKey); setLoadError(undefined);
+    } catch (err) {
+      if (currentSelection.current === selectionKey && sequence === loadSequence.current)
+        setLoadError(err instanceof Error ? err.message : String(err));
+    }
+  }, [client, sel, selectionKey]);
 
   useEffect(() => {
-    setVersions(undefined);
-    setViewing(undefined);
-    setEditing(false);
-    setPageView(undefined);
+    setVersions(undefined); setThreads([]); setViewing(undefined); setPageView(undefined);
+    setLoadError(undefined); setWriteError(undefined); setActivityTab("conversation");
+    const saved = editDrafts.current.get(selectionKey);
+    editSelection.current = selectionKey;
+    setDraft(saved?.text ?? ""); editBase.current = saved?.baseId;
+    setEditing(!!saved);
     void load();
-  }, [load]);
+    const refresh = () => { bump(n => n + 1); void load(); };
+    const offDoc = client.on("docChanged", refresh);
+    const offComments = client.on("docCommentsChanged", refresh);
+    return () => { offDoc(); offComments(); loadSequence.current++; };
+  }, [client, load, selectionKey]);
+
+  useEffect(() => {
+    if (sel && versions?.length === 0 && !editDrafts.current.has(selectionKey)) {
+      editBase.current = undefined;
+      setDraft(`# ${sel.kind === "wiki" ? sel.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "Document"}\n\n`);
+      setEditing(true);
+    }
+  }, [versions, sel, selectionKey, client]);
 
   const pages = [...client.wikiDocs().values()];
   const channelDocs = [...client.docsByChannel().entries()]
@@ -323,7 +175,6 @@ export default function WikiView({ client }: { client: FezClient }) {
     sel?.kind === "wiki"
       ? [...client.wikiDocs().values()].filter(
           (page) =>
-            client.state.workspace.relay === client.state.workspace.relay &&
             page.slug !== sel.slug &&
             [...page.latestContent.matchAll(/\[\[([^\]|]+)\]\]/g)].some((m) => wikiSlug(m[1]) === sel.slug)
         )
@@ -331,7 +182,7 @@ export default function WikiView({ client }: { client: FezClient }) {
 
   const latest = versions?.at(-1);
   const shown = viewing ? versions?.find((v) => v.id === viewing) : latest;
-  const selPage = sel?.kind === "wiki" ? client.wikiDocs().get(`${client.state.workspace.relay}:${sel.slug}`) : undefined;
+  const selPage = sel?.kind === "wiki" ? client.wikiDocs().get(sel.slug) : undefined;
 
   // Which lenses recognize what's on screen. `pageView === ""` is an
   // explicit "show me the markdown"; undefined means nobody has chosen,
@@ -356,46 +207,39 @@ export default function WikiView({ client }: { client: FezClient }) {
       ? selPage?.channelId ?? homeChannel()
       : sel.channelId
     : undefined;
-  const commentRoster: MentionCandidate[] = commentChannelId ? client.mentionCandidates(commentChannelId) : [];
+  const openWiki = (slug: string, title?: string) => setSel({ kind: "wiki", slug, title });
 
-  const openWiki = (slug: string, title?: string) => {
-    setSel({ kind: "wiki", slug });
-    const exists = client.wikiDocs().has(slug);
-    if (!exists) {
-      // an unwritten page opens as a fresh editor — obsidian's move
-      setDraft(`# ${title ?? slug}\n\n`);
-      setEditing(true);
-    }
-  };
-
-  /**
-   * The one write path for this document. Everything that produces new
-   * markdown — the editor, "keep in page", a board dragging a card —
-   * goes through here, so none of them has to know whether this is a
-   * wiki page or a channel doc, or what the base version was.
-   */
-  const publish = async (next: string) => {
-    if (!sel) return;
+  const publish = async (next: string, baseId: string | undefined) => {
+    if (!sel || !commentChannelId) throw new Error("Create a channel before writing a document.");
     if (sel.kind === "wiki") {
-      const channelId = selPage?.channelId ?? homeChannel();
-      if (!channelId) return;
-      await client.publishWikiDoc(channelId, selPage?.title ?? sel.slug, next, latest?.id);
+      await client.publishWikiDoc(commentChannelId, selPage?.title ?? sel.title ?? sel.slug, next, baseId, sel.slug);
     } else {
-      await client.publishDoc(sel.channelId, next, latest?.id);
+      await client.publishDoc(sel.channelId, next, baseId);
     }
-    setViewing(undefined);
-    await load();
+    if (currentSelection.current === selectionKey) { setViewing(undefined); await load(); }
   };
 
   const save = async () => {
-    if (!sel || !draft.trim()) return;
-    setBusy(true);
+    if (!sel || !draft.trim() || busy) return;
+    setBusy(true); setWriteError(undefined);
     try {
-      await publish(draft);
-      setEditing(false);
-    } finally {
-      setBusy(false);
-    }
+      await publish(draft, editBase.current);
+      editDrafts.current.delete(selectionKey);
+      if (currentSelection.current === selectionKey) setEditing(false);
+    } catch (err) {
+      if (currentSelection.current === selectionKey) setWriteError(err instanceof Error ? err.message : String(err));
+    } finally { setBusy(false); }
+  };
+
+  const undo = async (version: WireEvent) => {
+    if (busy) throw new Error("A document change is still being saved.");
+    const baseId = version.tags.find(t => t[0] === "base")?.[1];
+    const base = versions?.find(v => v.id === baseId);
+    if (!base) throw new Error("The original version is not available. Reload the document history.");
+    if (version.id !== latest?.id) throw new Error("Newer edits exist. Review the latest version first.");
+    setBusy(true);
+    try { await publish(base.content, version.id); }
+    finally { setBusy(false); }
   };
 
   /** Tick/untick: one small signed event, then re-read. */
@@ -407,164 +251,6 @@ export default function WikiView({ client }: { client: FezClient }) {
     setTasks(
       await client.docTasks(sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId })
     );
-  };
-
-  /** The open page's community, or every joined one when nothing is open. */
-
-  /** Promote a scratch query into the open page as a real block. */
-  const keepAsk = async () => {
-    if (!sel || !ask || !latest) return;
-    const block = ["```fez:query", ask, "```"].join("\n");
-    await publish(`${latest.content.trimEnd()}\n\n${block}\n`);
-    setAsk(undefined);
-    setAskDraft("");
-  };
-
-  /**
-   * Which agent to hand a request to: whoever you @mentioned, else the
-   * first agent in this community. Named explicitly in the UI either
-   * way — "an agent did something" is not a thing anyone should have to
-   * accept on faith.
-   */
-  const pickAgent = (text: string): string | undefined => {
-    const mentioned = /@([\w-]+)/.exec(text)?.[1];
-    if (mentioned && client.pkByName(mentioned)) return mentioned;
-    // agents(): pubkey → persona name
-    for (const [, name] of client.agents()) {
-      if (name && client.pkByName(name)) return name;
-    }
-    return undefined;
-  };
-
-  /**
-   * Send. A sentence the query vocabulary fully understands is answered
-   * on the spot; anything it does not is a request for an agent.
-   *
-   * The split is on `unknown`, not on a mode switch, because the person
-   * typing does not know which kind of thing they are typing — and
-   * should not have to. The cost of guessing wrong is a query that
-   * quietly ignores half your words, which is exactly what the parser
-   * reports instead of hiding.
-   */
-  const submitComposer = async () => {
-    const text = askDraft.trim();
-    if (!text || asking) return;
-    setComposerError(undefined);
-    setProposal(undefined);
-
-    const parsed = parseQuery(text);
-    if (parsed.unknown.length === 0) {
-      setAsk(text);
-      return;
-    }
-
-    // …otherwise it is a request. Agents already treat a doc comment as
-    // work, so this is that, with the reply rendered here instead of
-    // buried in a thread.
-    setAsk(undefined);
-    if (!sel) {
-      setComposerError(`open a page first — "${parsed.unknown.join(", ")}" isn't query vocabulary, so this needs an agent, and an agent needs a page to work on.`);
-      return;
-    }
-    const agent = pickAgent(text);
-    if (!agent) {
-      setComposerError("no agents here yet — invite one, or phrase it in query vocabulary (open tasks, by page).");
-      return;
-    }
-    const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
-    if (!channelId) return;
-
-    const request = [
-      `@${agent} ${text}`,
-      "",
-      "Reply with the markdown to insert into this page, wrapped in a four-backtick fence so any three-backtick blocks inside it survive:",
-      "",
-      "````markdown",
-      "...your markdown...",
-      "````",
-      "",
-      `Live blocks are available: \`\`\`fez:query\`\`\` (an English sentence from the query vocabulary), \`\`\`fez:board\`\`\`, \`\`\`fez:live\`\`\`. Plain GFM (tables, task lists) is fine too. Do NOT edit the page yourself — the person asking will decide whether to add this.`,
-    ].join("\n");
-
-    const pk = client.pkByName(agent);
-    const since = Math.floor(Date.now() / 1000) - 5;
-    try {
-      await client.publishDocComment(channelId, request, {
-        anchor: selPage?.title ?? (sel.kind === "wiki" ? sel.slug : client.channelRef(sel.channelId)?.name ?? "page"),
-        slug: sel.kind === "wiki" ? sel.slug : undefined,
-        mentionPks: pk ? [pk] : [],
-      });
-    } catch (err) {
-      setComposerError(err instanceof Error ? err.message : String(err));
-      return;
-    }
-    setAskDraft("");
-    setAsking({ agent, commentId: "", since });
-  };
-
-  /** Pull the proposed markdown out of the agent's reply. */
-  const extractMarkdown = (reply: string): string | undefined => {
-    const fenced = /````[a-z]*\s*\n([\s\S]*?)````/i.exec(reply);
-    if (fenced) return fenced[1].trimEnd();
-    // No fence: only treat the reply as a block if it actually looks
-    // like markup rather than an agent explaining why it can't help.
-    const trimmed = reply.trim();
-    return /^(#|\||-\s|\*\s|```)/m.test(trimmed) ? trimmed : undefined;
-  };
-
-  // Watch for the agent's answer and bring it back to the composer.
-  useEffect(() => {
-    if (!asking || !sel) return;
-    let live = true;
-    const poll = async () => {
-      const threads = await client.docComments(
-        sel.kind === "wiki" ? { slug: sel.slug } : { channelId: sel.channelId }
-      );
-      const agentPk = client.pkByName(asking.agent);
-      for (const thread of threads) {
-        for (const reply of [...(thread.replies ?? []), thread]) {
-          const event = reply as { pubkey?: string; created_at?: number; content?: string };
-          if (!event.pubkey || event.pubkey !== agentPk) continue;
-          if ((event.created_at ?? 0) < asking.since) continue;
-          const markdown = extractMarkdown(event.content ?? "");
-          if (!live) return;
-          if (markdown) {
-            setProposal({ agent: asking.agent, markdown });
-          } else {
-            setComposerError(`@${asking.agent} replied without markdown to insert — see the comment thread on this page.`);
-          }
-          setAsking(undefined);
-          return;
-        }
-      }
-    };
-    void poll();
-    const timer = setInterval(() => void poll(), 3000);
-    // Agents can take a while, but a spinner with no end is a lie.
-    const giveUp = setTimeout(() => {
-      if (!live) return;
-      setAsking(undefined);
-      setComposerError(`@${asking.agent} hasn't answered in 3 minutes — the request is still in this page's comments.`);
-    }, 180_000);
-    return () => {
-      live = false;
-      clearInterval(timer);
-      clearTimeout(giveUp);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asking?.since, asking?.agent, sel]);
-
-  const acceptProposal = async () => {
-    if (!proposal || !sel || !latest) return;
-    setBusy(true);
-    try {
-      await publish(`${latest.content.trimEnd()}\n\n${proposal.markdown}\n`);
-      setProposal(undefined);
-    } catch (err) {
-      setComposerError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
   };
 
   /** Track whether the caret is sitting in a `/command`. */
@@ -803,7 +489,7 @@ export default function WikiView({ client }: { client: FezClient }) {
       return activeViewImpl.render(
         {
           content: shown.content,
-          save: publish,
+          save: (next) => publish(next, shown.id),
           comment: async (text, anchor, mentions) => {
             if (!sel) return;
             const channelId = sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() : sel.channelId;
@@ -815,7 +501,7 @@ export default function WikiView({ client }: { client: FezClient }) {
             });
             await load();
           },
-          title: sel.kind === "wiki" ? selPage?.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
+          title: sel.kind === "wiki" ? selPage?.title ?? sel.title ?? sel.slug : client.channelRef(sel.channelId)?.name ?? "",
           channelId: sel.kind === "wiki" ? selPage?.channelId ?? homeChannel() ?? "" : sel.channelId,
           slug: sel.kind === "wiki" ? sel.slug : undefined,
           editable: shown.id === latest?.id,
@@ -826,6 +512,47 @@ export default function WikiView({ client }: { client: FezClient }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately doc-identity, not every closed-over value: see comment above
     [activeViewImpl?.name, sel?.kind, sel?.kind === "wiki" ? sel.slug : sel?.channelId, selPage?.channelId, shown?.id]
   );
+
+  const currentBase = versions?.find(v => v.id === shown?.tags.find(t => t[0] === "base")?.[1]);
+  const change = shown && currentBase ? documentChange(currentBase.content, shown.content) : undefined;
+  const selectedThread = threads.find(t => t.id === focus.threadId);
+  const selectedAnchor = selectedThread?.anchorContext ?? focus.anchor;
+  const selectedRange = shown && selectedAnchor ? locateDocAnchor(shown.content, selectedAnchor) : undefined;
+
+  const discuss = (start: number, end: number, openContained = false) => {
+    if (!shown) return;
+    const anchor = createDocAnchor(shown.content, start, end);
+    const existing = threads.find(thread => {
+      const range = locateDocAnchor(shown.content, thread.anchorContext ?? { text: thread.anchor, prefix: "", suffix: "" });
+      return range && (openContained ? range.start >= start && range.end <= end : range.start === start && range.end === end);
+    });
+    setFocus({ anchor, threadId: existing?.id });
+  };
+
+  const selectPassage = (event: React.MouseEvent<HTMLDivElement>) => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !shown || !event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return;
+    const range = selection.getRangeAt(0);
+    const blockFor = (node: Node) => (node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement)?.closest<HTMLElement>("[data-doc-start]");
+    const first = blockFor(range.startContainer), last = blockFor(range.endContainer);
+    if (!first || !last || !selection.toString().trim()) return;
+    const source = (element: HTMLElement) => {
+      const start = Number(element.dataset.docStart), end = Number(element.dataset.docEnd);
+      return { start, end, text: shown.content.slice(start, end) };
+    };
+    let leading = selection.toString(), trailing = leading;
+    if (first !== last) {
+      const firstBody = first.querySelector(".doc-line-body")!, lastBody = last.querySelector(".doc-line-body")!;
+      const head = range.cloneRange(), tail = range.cloneRange();
+      head.setEnd(firstBody, firstBody.childNodes.length);
+      tail.setStart(lastBody, 0);
+      leading = head.toString(); trailing = tail.toString();
+    }
+    const selected = docSelectionRange(source(first), source(last), leading, trailing);
+    discuss(selected.start, selected.end);
+  };
+
+  const blockOccurrences = new Map<string, number>();
 
   return (
     <main className="main wiki-main">
@@ -883,7 +610,7 @@ export default function WikiView({ client }: { client: FezClient }) {
             <div className="topbar-row wiki-page-head">
               <span className="wiki-title">
                 {sel.kind === "wiki"
-                  ? `▤ ${selPage?.title ?? sel.slug}`
+                  ? `▤ ${selPage?.title ?? sel.title ?? sel.slug}`
                   : `# ${client.channelRef(sel.channelId)?.name ?? ""} doc`}
               </span>
               {/**
@@ -917,7 +644,9 @@ export default function WikiView({ client }: { client: FezClient }) {
                 <button
                   className="agent-action"
                   onClick={() => {
+                    editBase.current = latest?.id;
                     setDraft(latest?.content ?? "");
+                    setWriteError(undefined);
                     setEditing(true);
                   }}
                 >
@@ -927,7 +656,12 @@ export default function WikiView({ client }: { client: FezClient }) {
             </div>
           </header>
         )}
+        <div className="wiki-document-layout">
+        <div className="wiki-document">
         <div className="wiki-scroll">
+        {loadError && <div className="doc-load-error" role="alert">Couldn’t load this document. {loadError} <button className="mini" onClick={() => void load()}>Retry</button></div>}
+        {writeError && <div className="doc-load-error" role="alert">{writeError}{editing ? " Your draft is kept." : ""}</div>}
+        {sel && !versions && !loadError && <div className="pane-empty" role="status">Loading document…</div>}
         {!sel && (
           <div className="channel-intro doc-intro">
             {/* An empty page is an invitation, not a notice: quill (the
@@ -940,7 +674,7 @@ export default function WikiView({ client }: { client: FezClient }) {
             <p>
               Living pages your whole community — agents included — can read, edit, and version. Write [[page name]]
               anywhere in a doc to link pages together; a link to an unwritten page starts it. Channel docs live here
-              too. Agents use fez_wiki_read / fez_wiki_write on the same pages.
+              too. Select a passage to discuss it, or ask an agent to help write the page.
             </p>
             <button className="agent-action" onClick={() => setNewTitle(newTitle === undefined ? "" : undefined)}>
               + new page
@@ -950,7 +684,7 @@ export default function WikiView({ client }: { client: FezClient }) {
         {sel && (
           <>
             {editing ? (
-              <div className="doc-editor wiki-editor">
+              <fieldset disabled={busy} className="doc-editor wiki-editor">
                 <div className="doc-textarea-wrap">
                   {/* Persistent here, unlike the comment box: this is a
                       full-page editor, so a bar that appears only on
@@ -977,9 +711,9 @@ export default function WikiView({ client }: { client: FezClient }) {
                   <button className="agent-action" disabled={busy || !draft.trim()} onClick={() => void save()}>
                     {busy ? "publishing…" : latest ? "publish new version" : "publish"}
                   </button>
-                  <button className="agent-action" onClick={() => setEditing(false)}>cancel</button>
+                  <button className="agent-action" onClick={() => { editDrafts.current.delete(selectionKey); setEditing(false); setWriteError(undefined); }}>cancel</button>
                 </div>
-              </div>
+              </fieldset>
             ) : (
               shown && (
                 <>
@@ -995,96 +729,25 @@ export default function WikiView({ client }: { client: FezClient }) {
                       <MountPoint render={pageViewRender} />
                     </div>
                   ) : (
-                  <div className="md doc-body wiki-body">
-                    {blocksOf(shown.content).map((block, index) => {
-                      const anchored = threads.filter((t) => t.anchor && block.includes(t.anchor));
-                      const open = anchored.filter((t) => !t.resolved);
-                      return (
-                        <div key={index} className={commenting === block ? "doc-line commenting" : "doc-line"}>
-                          <div className="doc-line-body">{md(block)}</div>
-                          <button
-                            className={open.length ? "line-comment has" : "line-comment"}
-                            title={
-                              open.length
-                                ? `${open.length} comment${open.length === 1 ? "" : "s"} — click to ${commenting === block ? "hide" : "show"}`
-                                : "comment on this line — @mention an agent to give it work here"
-                            }
-                            onClick={() => {
-                              setCommenting(commenting === block ? undefined : block);
-                              setCommentDraft("");
-                            }}
-                          >
-                            ✎{open.length > 0 && <span className="line-comment-count">{open.length}</span>}
-                          </button>
-                          {/* One toggle for the whole panel. This used to
-                              also render whenever the line HAD a thread
-                              (`|| anchored.length > 0`), which meant an
-                              answered comment sat open over the document
-                              forever with nothing to close it — the ✎
-                              toggled only the compose box underneath.
-                              The badge is the affordance: ✎1 says a
-                              thread is there, clicking shows it. */}
-                          {commenting === block && (
-                            <div className="line-threads">
-                              {anchored.map((thread) => (
-                                <CommentThread
-                                  key={thread.id}
-                                  client={client}
-                                  thread={thread}
-                                  roster={commentRoster}
-                                  onReply={(text, resolve, bindings) =>
-                                    void comment(text, block, thread.id, resolve, bindings)
-                                  }
-                                />
-                              ))}
-                              {commenting === block && (
-                                <div className="comment-compose">
-                                  <MentionBox
-                                    client={client}
-                                    format
-                                    roster={commentRoster}
-                                    value={commentDraft}
-                                    autoFocus
-                                    placeholder="comment… @agent to give them this line as work"
-                                    onChange={setCommentDraft}
-                                    onMentionPick={(name, pubkey) =>
-                                      setCommentBindings((prev) => bindMention(prev, name, pubkey))
-                                    }
-                                    onSubmit={() => void comment(commentDraft, block, undefined, undefined, commentBindings)}
-                                    onEscape={() => setCommenting(undefined)}
-                                  />
-                                  {/* The way out. There wasn't one: the
-                                      only exits were Escape (needs focus
-                                      in the textarea, and the mention
-                                      popup eats the first press) and
-                                      re-clicking the ✎, which is
-                                      opacity:0 unless you happen to be
-                                      hovering that exact line. A box you
-                                      can open and not close is a trap. */}
-                                  <div className="comment-compose-actions">
-                                    <button
-                                      className="agent-action"
-                                      disabled={!commentDraft.trim()}
-                                      onClick={() => void comment(commentDraft, block, undefined, undefined, commentBindings)}
-                                    >
-                                      comment
-                                    </button>
-                                    <button
-                                      className="mini"
-                                      onClick={() => {
-                                        setCommenting(undefined);
-                                        setCommentDraft("");
-                                      }}
-                                    >
-                                      cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
+                  <div className="md doc-body wiki-body" onMouseUp={selectPassage}>
+                    {docBlocks(shown.content).map((block) => {
+                      // Identical blocks use occurrence order; unrelated text edits preserve extension state.
+                      const occurrence = blockOccurrences.get(block.text) ?? 0;
+                      blockOccurrences.set(block.text, occurrence + 1);
+                      const anchored = threads.filter(t => {
+                        if (!t.anchor) return false;
+                        const range = locateDocAnchor(shown.content, t.anchorContext ?? { text: t.anchor, prefix: "", suffix: "" });
+                        return range && range.start >= block.start && range.start < block.end;
+                      });
+                      const open = anchored.filter(t => !t.resolved);
+                      const selected = selectedRange && selectedRange.start < block.end && selectedRange.end > block.start;
+                      const changed = change && (change.start === change.end
+                        ? change.start >= block.start && change.start <= block.end
+                        : change.start < block.end && change.end > block.start);
+                      return <div key={`${occurrence}:${block.text}`} data-doc-start={block.start} data-doc-end={block.end} className={`doc-line${selected ? " commenting" : ""}${changed ? " doc-line-changed" : ""}`}>
+                        <div className="doc-line-body">{changed && <div className="doc-edit-receipt"><span>{client.displayName(shown.pubkey)} edited this passage</span><button onClick={() => setActivityTab("changes")}>Review</button>{shown.id === latest?.id && <button disabled={busy} onClick={() => void undo(shown).catch(err => setWriteError(err instanceof Error ? err.message : String(err)))}>Undo</button>}</div>}{md(block.text)}</div>
+                        <button className={open.length ? "line-comment has" : "line-comment"} aria-label={`Discuss passage${open.length ? ` · ${open.length} open discussions` : ""}`} onClick={() => discuss(block.start, block.end, true)}>☷{open.length > 0 && <span className="line-comment-count">{open.length}</span>}</button>
+                      </div>;
                     })}
                   </div>
                   )}
@@ -1101,115 +764,13 @@ export default function WikiView({ client }: { client: FezClient }) {
                 ))}
               </div>
             )}
-            {!editing && (versions?.length ?? 0) > 1 && (
-              <div className="wiki-versions">
-                {[...versions!].reverse().map((version) => (
-                  <button
-                    key={version.id}
-                    className={version.id === (shown?.id ?? "") ? "version-row active" : "version-row"}
-                    onClick={() => setViewing(version.id === latest?.id ? undefined : version.id)}
-                  >
-                    {client.displayName(version.pubkey)} ·{" "}
-                    {new Date(version.created_at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </button>
-                ))}
-              </div>
-            )}
+
           </>
         )}
         </div>
 
-        {/**
-         * The composer. It sits at the bottom because that is where a
-         * composer sits everywhere else in this app, and because the
-         * previous version — a bar floating above the document — was a
-         * control nobody could place: not part of the page, not part of
-         * chat, just hovering.
-         *
-         * Two speeds, and which one you get depends on what you typed
-         * rather than on which control you picked. A sentence the query
-         * vocabulary fully understands answers instantly, from the relay,
-         * with no agent and no cost. Anything else is a request, and goes
-         * to an agent as a doc comment — the same summons a comment on any
-         * line already is, so nothing new was invented to carry it.
-         */}
-        <div className="doc-composer">
-          {ask && (
-            <div className="doc-composer-result">
-              <QueryBlock client={client} source={ask} />
-              <div className="doc-composer-actions">
-                {sel && latest && (
-                  <button className="mini" title="append this query to the open page" onClick={() => void keepAsk()}>
-                    keep in page
-                  </button>
-                )}
-                <button className="mini" onClick={() => { setAsk(undefined); setAskDraft(""); }}>dismiss</button>
-              </div>
-            </div>
-          )}
-
-          {asking && (
-            <div className="doc-composer-pending">
-              <span className="doc-composer-spin">⟳</span> @{asking.agent} is working on it…
-              <button className="mini" onClick={() => setAsking(undefined)}>stop waiting</button>
-            </div>
-          )}
-
-          {/**
-           * A proposal is shown AS MARKDOWN and lands in the page only
-           * when you say so. An agent editing the document you are
-           * reading, without showing you first, is the wrong feeling
-           * entirely — and it is the one thing that would make people
-           * stop trusting this surface.
-           */}
-          {proposal && (
-            <div className="doc-composer-proposal">
-              <div className="doc-composer-from">@{proposal.agent} suggests</div>
-              <pre className="doc-composer-md">{proposal.markdown}</pre>
-              <div className="doc-composer-actions">
-                <button className="agent-action" disabled={busy} onClick={() => void acceptProposal()}>
-                  add to page
-                </button>
-                <button className="mini" onClick={() => setProposal(undefined)}>discard</button>
-              </div>
-            </div>
-          )}
-
-          {composerError && <div className="doc-composer-error">{composerError}</div>}
-
-          <div className="doc-composer-row">
-            <textarea
-              className="doc-composer-input"
-              value={askDraft}
-              rows={1}
-              placeholder={
-                sel
-                  ? "ask about this page, or describe a block to add — open tasks by page · a table of last week's spend"
-                  : "ask across your docs — unfinished tasks by page · approvals waiting on me"
-              }
-              onChange={(e) => setAskDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void submitComposer();
-                }
-                if (e.key === "Escape") {
-                  setAsk(undefined);
-                  setProposal(undefined);
-                  setComposerError(undefined);
-                  setAskDraft("");
-                }
-              }}
-            />
-            <button
-              className="composer-send"
-              disabled={!askDraft.trim() || !!asking}
-              title="enter to send"
-              onClick={() => void submitComposer()}
-            >
-              ↵
-            </button>
-          </div>
+        </div>
+        {sel && commentChannelId && <DocConversation client={client} pageKey={selectionKey} channelId={commentChannelId} slug={sel.kind === "wiki" ? sel.slug : undefined} versions={versions ?? []} threads={threads} focus={focus} onFocus={setFocus} onRefresh={load} onUndo={undo} tab={activityTab} onTab={setActivityTab} onViewVersion={setViewing} />}
         </div>
       </section>
     </main>

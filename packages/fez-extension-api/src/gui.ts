@@ -292,7 +292,7 @@ export interface GuiClient {
   /** Channel docs the client has absorbed, by channel id. */
   docsByChannel(): ReadonlyMap<string, { latestContent?: string }>;
   /** Publish a new doc version into a channel. */
-  publishDoc(channelId: string, content: string): Promise<void>;
+  publishDoc(channelId: string, content: string, baseId?: string): Promise<unknown>;
   /** NIP-98 header for one request — the key stays behind the seam.
    * Async since key custody moved into the host process (the desktop
    * signs in Rust); always await it. */

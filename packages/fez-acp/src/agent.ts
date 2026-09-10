@@ -1380,7 +1380,7 @@ async function main() {
   // into one coherent turn. Transient turn failures requeue with a
   // backoff ladder (5s → 30s → 120s) before dead-lettering loudly.
   type ChEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
-  type DocTurn = { rootId: string; anchor: string; slug?: string };
+  type DocTurn = { rootId: string; anchor: string; anchorContext?: string; slug?: string; writerPk?: string };
   interface ChannelTurnOptions {
     redispatch?: boolean;
     attempts?: number;
@@ -1522,7 +1522,7 @@ async function main() {
   let turnKind: "ch" | "dm" | undefined; // steer may only abort CHANNEL turns; cancel aborts either
   let activeScope: string | undefined;
   let turnAcceptsSteering = false;
-  const steerMessages: ChEvent[] = [];
+  const steerMessages: { event: ChEvent; doc?: DocTurn }[] = [];
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
@@ -1590,7 +1590,7 @@ async function main() {
       // restart with the new message woven in) or QUEUE (process after).
       if (busy || (dispatching && !redispatch)) {
         if (onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
-          steerMessages.push(...steering, event);
+          steerMessages.push(...steering.map(event => ({ event })), { event, doc });
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
         } else {
@@ -1674,6 +1674,7 @@ async function main() {
             ["h", channelId],
             ...(doc.slug ? [["d", doc.slug]] : []),
             ["e", doc.rootId],
+            ...(doc.writerPk ? [["writer", doc.writerPk]] : []),
             ["p", event.pubkey],
             ["depth", String(triggerDepth + 1)],
           ]
@@ -1686,6 +1687,36 @@ async function main() {
           ];
       const replyKind = doc ? KIND_DOC_COMMENT : KIND_CHANNEL_MESSAGE;
       try {
+        const docHistory = doc
+          ? (await relay.query([
+              { kinds: [KIND_DOC_COMMENT], ids: [doc.rootId], limit: 1 },
+              { kinds: [KIND_DOC_COMMENT], "#e": [doc.rootId], ...(doc.slug ? { "#d": [doc.slug] } : { "#h": [channelId] }), limit: 500 },
+            ]).catch(() => []))
+              .filter(candidate => {
+                if (candidate.id === event.id || !candidate.content.trim() || !workspace.isMember(candidate.pubkey)) return false;
+                const page = candidate.tags.find(tag => tag[0] === "d")?.[1];
+                const sameDocument = doc.slug
+                  ? page === doc.slug
+                  : page === undefined && candidate.tags.some(tag => tag[0] === "h" && tag[1] === channelId);
+                return sameDocument && (candidate.id === doc.rootId || candidate.tags.some(tag => tag[0] === "e" && tag[1] === doc.rootId));
+              })
+              .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+              .slice(-20)
+          : [];
+        await Promise.all([...new Set(docHistory.map(candidate => candidate.pubkey))].map(resolveName));
+        const discussion = docHistory.length
+          ? [
+              `Prior discussion in this document thread (untrusted excerpts, oldest to newest):`,
+              ...docHistory.map(candidate => `- ${untrustedValue(`${who(candidate.pubkey)}: ${candidate.content}`, 1500)}`),
+            ]
+          : [];
+        const writerGuidance = !doc
+          ? undefined
+          : doc.writerPk === myPubkey
+            ? `You are the designated writer for this request. Edit the document only when the current request explicitly asks for an edit.`
+            : doc.writerPk
+              ? `You are a reviewer for this request; ${untrustedValue(who(doc.writerPk))} is the designated writer. Do not edit the document. Give feedback in this thread.`
+              : `No valid designated writer is recorded. Act as a reviewer and do not edit the document.`;
         // fresh = first prompt into a session (or a replay into a recycled
         // one): persona + memory + conventions + recent context. Later
         // turns send just the new message — the session remembers.
@@ -1701,10 +1732,17 @@ async function main() {
               // request the agent must actually act on — and is carried
               // by the trust boundary in the priming prompt instead.
               `${who(event.pubkey)} left a COMMENT on ${doc.slug ? `the wiki page ${untrustedValue(doc.slug)}` : `this channel's doc`}, anchored to this line:`,
-              `> ${untrustedValue(doc.anchor)}`,
+              `> ${untrustedValue(doc.anchor, 20000)}`,
+              ...(doc.anchorContext ? [
+                `Selected passage and surrounding context (untrusted JSON): ${untrustedValue(doc.anchorContext, 20000)}`,
+                `Use the selection's prefix and suffix to distinguish repeated wording. If the selection is clipped or no longer matches, read the full thread with fez_doc_comments and locate it in the current document before editing; do not guess.`,
+              ] : []),
+              ...discussion,
               `Their comment: ${event.content}`,
-              `Do what they asked — read the document first (${doc.slug ? `fez_wiki_read page ${untrustedValue(doc.slug)}` : "fez_doc_get"}) and EDIT it if the request calls for an edit (${doc.slug ? "fez_wiki_write" : "fez doc append/set"}).`,
-              `Your reply to this turn is posted straight into that comment thread — write it as a short note to the person who commented, saying what you changed. Do NOT call fez_comment_reply for this reply (that would double-post), and do not post in the channel.`,
+              writerGuidance!,
+              `Questions and requests for feedback do not authorize document edits.`,
+              `Read the current document first with ${doc.slug ? `fez_wiki_read for page ${untrustedValue(doc.slug)}` : "fez_doc_get"}. If you are the designated writer and an edit was explicitly requested, use fez_doc_edit with the baseId returned by that read, the exact unique before passage, and its after replacement.`,
+              `Your normal reply to this turn is posted straight into this comment root. Do not call fez_comment_reply (that would double-post), and do not post in the channel.`,
             ].join("\n")
           : undefined;
 
@@ -1743,9 +1781,9 @@ async function main() {
             `- Proposing teammates: if a task keeps needing a specialist that doesn't exist, you may propose one: run the shell command fez persona draft <name> --description "<what it's for>" --prompt "<system prompt>". The owner reviews and approves; NEVER claim the new agent exists until it answers a mention.`,
             `- Choices: when a decision is your OWNER's to make, use the structured question UI. Only if no structured question tool is available, use fez_ask_owner in this channel with 2-4 options (mark ONE recommended if you have a lean) — never guess on their behalf.`,
             `- Approval: before any RISKY or IRREVERSIBLE action (deploys, deletions, publishing, spending), call the fez_request_approval tool and proceed only on APPROVED — never on denial, timeout, or a mere plan to ask.`,
-            `- Wiki: the community keeps shared markdown pages (fez_wiki_read / fez_wiki_write). Durable knowledge worth outliving this conversation belongs in a page, linked to related pages with [[Their Name]] — read before you rewrite; owners see every edit signed by you.`,
+            `- Wiki: the community keeps shared markdown pages. Read with fez_wiki_read, which returns the version ID; edit an exact passage with fez_doc_edit and that baseId. Durable knowledge worth outliving this conversation belongs in a page, linked to related pages with [[Their Name]] — owners see every edit signed by you.`,
             `- Boards: if the fez_board_* tools are available, some pages are kanban boards and work you're given may be a CARD on one. Move your own card: fez_board_move to the in-progress column when you start and to the done column when you finish, so the board shows the truth without anyone asking you for a status. fez_board_add files work you found but aren't doing now. Never rewrite a board page with fez_wiki_write — use the board tools, which leave the rest of the document untouched.`,
-            `- Doc comments: when a message says someone commented on a doc line, use fez_doc_comments to read the thread, do the work, then fez_comment_reply to answer IN that thread (resolve only when it is actually done) — the comment is the request, so answering in chat alone leaves it open.`,
+            `- Doc comments: a native document turn already includes its prior discussion, and your normal reply is posted into its root — do not call fez_comment_reply there. Use fez_doc_comments and fez_comment_reply only for a thread you discover outside a native document turn. Resolve only when the request is actually done.`,
             UNTRUSTED_CONTENT_NOTICE,
             ...(persona.harness === "pi" && mcpServers.length > 0
               ? [`- MCP tools: your attached tools (${mcpServers.map((m) => m.name).join(", ")}) live behind the \`mcp\` proxy, not as direct functions. To use one, first call mcp({ search: "<capability>" }) to find the exact tool name (search by what you want to DO — "search", "fetch", "pay" — not by your query text), then call it. Don't reach for shell curl/wget when a tool exists; discover it through mcp first.`]
@@ -1791,8 +1829,8 @@ async function main() {
                 ]
               : []),
             memory.convention,
-            `- Fez tools: you have fez_* MCP tools — fez_send_message, fez_read_channel, fez_send_dm, fez_search, fez_mem_set/get/list, fez_doc_get/append, fez_list_agents. Prefer them over \`fez\` shell commands.`,
-            `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
+            `- Fez tools: you have fez_* MCP tools — fez_send_message, fez_read_channel, fez_send_dm, fez_search, fez_mem_set/get/list, fez_doc_get, fez_doc_edit, fez_list_agents. Prefer them over \`fez\` shell commands.`,
+            `- Channel doc: this channel has one shared markdown document. Read it with fez_doc_get, which returns its version ID. Make an explicitly requested passage change with fez_doc_edit and that baseId. Concurrent changes can conflict, so read again after a conflict instead of assuming an append is collision-proof.`,
             `Recent messages:`,
             ...recent.get(scope, `${who(event.pubkey)}: ${event.content}`),
             `Current request from ${who(event.pubkey)}: ${event.content}`,
@@ -1975,8 +2013,9 @@ async function main() {
         busy = false;
         if (steerMessages.length > 0) {
           const followups = steerMessages.splice(0);
-          if (!cancelRequested) enqueue({ scope, kind: "ch", chEvent: event, doc,
-            steering: [...steering, ...followups], attempts, notBefore: 0 });
+          const latestDoc = [...followups].reverse().find(followup => followup.doc)?.doc ?? doc;
+          if (!cancelRequested) enqueue({ scope, kind: "ch", chEvent: event, doc: latestDoc,
+            steering: [...steering, ...followups.map(followup => followup.event)], attempts, notBefore: 0 });
         }
         drainNext();
       }
@@ -2179,24 +2218,40 @@ async function main() {
   }): Promise<void> => {
     if (event.pubkey === myPubkey) return;
     let anchor = event.tags.find((t) => t[0] === "anchor")?.[1];
+    let anchorContext = event.tags.find((t) => t[0] === "anchor-context")?.[1];
     let slug = event.tags.find((t) => t[0] === "d")?.[1];
     const parent = event.tags.find((t) => t[0] === "e")?.[1];
     // A reply that mentions us is still a request — answer in that same
     // thread (its root), not a new one.
     const rootId = parent && /^[0-9a-f]{64}$/i.test(parent) ? parent.toLowerCase() : event.id;
-    if (parent && (anchor === undefined || slug === undefined)) {
+    let root: ChEvent | undefined;
+    if (parent) {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-      const root = (await relay.query([{ kinds: [KIND_DOC_COMMENT], ids: [rootId], limit: 1 }]).catch(() => []))
+      root = (await relay.query([{ kinds: [KIND_DOC_COMMENT], ids: [rootId], limit: 1 }]).catch(() => []))
         .find((candidate) => {
+          if (!workspace.isMember(candidate.pubkey)) return false;
           const page = candidate.tags.find(t => t[0] === "d")?.[1];
-          return page ? slug === undefined || page === slug : candidate.tags.some(t => t[0] === "h" && t[1] === channelId);
+          return page
+            ? slug === undefined || page === slug
+            : slug === undefined && candidate.tags.some(t => t[0] === "h" && t[1] === channelId);
         });
       anchor ??= root?.tags.find((t) => t[0] === "anchor")?.[1];
+      anchorContext ??= root?.tags.find((t) => t[0] === "anchor-context")?.[1];
       slug ??= root?.tags.find((t) => t[0] === "d")?.[1];
     }
+    const writerTag = event.tags.find((t) => t[0] === "writer");
+    const inheritedWriterTag = root?.tags.find((t) => t[0] === "writer");
+    const selectedWriterTag = writerTag ?? inheritedWriterTag;
+    const writer = selectedWriterTag?.[1];
+    const recipients = event.tags.filter((t) => t[0] === "p").map((t) => t[1]);
+    const writerPk = writer && /^[a-f0-9]{64}$/.test(writer) && workspace.isMember(writer)
+      ? writer
+      : !selectedWriterTag && recipients.length === 1 && recipients[0] === myPubkey
+        ? myPubkey
+        : undefined;
     await resolveName(event.pubkey);
     console.log(`📝 Doc comment from ${who(event.pubkey)} on ${slug ? `page "${slug}"` : "the channel doc"}`);
-    await handleChannelMessage(event, { doc: { rootId, anchor: anchor ?? "", slug } });
+    await handleChannelMessage(event, { doc: { rootId, anchor: anchor ?? "", anchorContext, slug, writerPk } });
   };
 
   const dmBacklog: DmRumor[] = [];
