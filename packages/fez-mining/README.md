@@ -6,11 +6,11 @@ supported workflow; a subnet appearing in the catalog does not mean it is suppor
 
 ## Install
 
-Requires **Fez desktop 0.4.33 or newer** on macOS. In **Settings → Extensions**,
+Requires **Fez desktop 0.4.34 or newer** on macOS. In **Settings → Extensions**,
 install these packages in order (use their exact names in the install field):
 
 1. `@fezchat/wallet` — version 0.1.14 or newer.
-2. `@fezchat/mining` — version 0.1.1 or newer.
+2. `@fezchat/mining` — version 0.1.2 or newer.
 3. `@fezchat/numinous` — version 0.1.1 or newer.
 
 Older desktop versions and the npm Protocol 0.2.1 CLI cannot install miner

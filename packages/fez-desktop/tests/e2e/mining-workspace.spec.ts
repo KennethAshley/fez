@@ -68,7 +68,7 @@ test("Mining links native chat, retains fleet history, and manages through one p
     const miningNav=page.locator(".rail").getByRole("button",{name:"⛏ Mining",exact:true});
     await miningNav.click();
     await expect(page.getByRole("button",{name:"Use this channel",exact:true})).toBeVisible();
-    await page.screenshot({animations:"disabled",path:"/private/tmp/mining-workspace-setup.png"});
+    await page.screenshot({animations:"disabled",path:test.info().outputPath("mining-workspace-setup.png")});
     await page.getByRole("button",{name:"Use this channel",exact:true}).click();
     await expect(page.getByRole("tab",{name:"Activity",exact:true})).toBeVisible();
     await expect(page.locator("main .timeline")).toContainText(root.content);
@@ -78,7 +78,7 @@ test("Mining links native chat, retains fleet history, and manages through one p
     await expect(page.getByText("Stopped. History and settings are retained.")).toBeVisible();
     await page.getByRole("button",{name:"Manage",exact:true}).click();
     await expect(page.locator(".extension-pane")).toContainText("Stopped cleanly");
-    await page.screenshot({animations:"disabled",path:"/private/tmp/mining-workspace-fleet.png"});
+    await page.screenshot({animations:"disabled",path:test.info().outputPath("mining-workspace-fleet.png")});
     await page.getByRole("button",{name:"History",exact:true}).click();
     await expect(page.getByRole("tab",{name:"Activity",exact:true})).toHaveAttribute("aria-selected","true");
     await expect(page.locator("main .timeline")).toContainText("Miner stopped. Your history is retained.");
@@ -88,7 +88,7 @@ test("Mining links native chat, retains fleet history, and manages through one p
     await page.getByRole("button",{name:"New miner",exact:true}).click();
     await expect(page.getByRole("tab",{name:"Subnets",exact:true})).toHaveAttribute("aria-selected","true");
     await expect(page.getByRole("button",{name:"Launch",exact:true}).last()).toBeVisible();
-    await page.screenshot({animations:"disabled",path:"/private/tmp/mining-workspace-subnets.png"});
+    await page.screenshot({animations:"disabled",path:test.info().outputPath("mining-workspace-subnets.png")});
     await page.getByRole("button",{name:"Launch",exact:true}).last().click();
     await expect(page.getByText("Choose an agent · SN777")).toBeVisible();
     await page.getByLabel("Use an existing agent").check();
