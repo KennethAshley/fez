@@ -1,10 +1,12 @@
+import { miningChannel } from "./workspace.js";
+import { ensureMinerThread } from "./thread-store.js";
 import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
-import { readState, writeState, upsertMiner, updateState, minerKey, fezHome, type MinerEntry } from "./state.js";
+import { readState, writeState, upsertMiner, minerKey, fezHome, type MinerEntry } from "./state.js";
 import { alive, spawnDetached } from "./procs.js";
 import { planRemote } from "./reconcile.js";
 import { podAlive } from "./machine-lium.js";
 import { lifecycleMessage } from "./lifecycle.js";
-import { MINING_CHANNEL_NAME, MINING_SOURCE, minerRootLine } from "./thread.js";
+import { minerRootLine } from "./thread.js";
 import { postAsPersona, dmOwnerAsPersona } from "./persona-post.js";
 import { attentionDmText, shouldDmAttention } from "./attention-dm.js";
 import { submissionCommand } from "./submission.js";
@@ -128,45 +130,29 @@ export default function activate(api: FezExtensionAPI): void {
       }
     }
 
-    // Lifecycle replies — best-effort, and never the reconcile's problem.
-    // Every RUNNING miner gets a thread: the GUI posts a root on start, but
-    // if that post flaked (the relay hadn't absorbed it inside the GUI's
-    // retry window) the miner would otherwise have no thread and no
-    // history. So here we BACKFILL a root for any running miner missing
-    // one — `say` returns the event id, which we record as threadRootId so
-    // the GUI reuses it (its recordedRootId fast path) and we never double
-    // post. A stopped miner with no thread stays threadless (its history
-    // is nothing to show); the GUI-vs-headless race is bounded by the 120s
-    // tick against the GUI's seconds-long set-root, so a duplicate root is
-    // vanishingly rare and at worst a stray line.
+    // Publishing follows the explicit owner binding, never a channel name.
     if (!api.channels) return; // no key/relay on this host at all
     try {
-      const channelId = await ctx.channels.ensure({ name: MINING_CHANNEL_NAME, source: MINING_SOURCE });
+      const channelId = miningChannel(await ctx.channels.list())?.id;
       if (!channelId) return; // unclaimed relay, or we're not the owner — nothing to post into
 
-      let final = await readState(home);
+      const final = await readState(home);
       for (const miner of final.miners) {
-        if (!miner.threadRootId) {
-          if (miner.mode !== "submission" && miner.desired !== "running") continue;
-          try {
-            const rootId = await postAsPersona(miner.persona, channelId, rootBackfillText(miner.netuid, miner.persona));
-            await updateState(home,st => {
-              const e = st.miners.find((x) => x.netuid === miner.netuid && x.persona === miner.persona);
-              return e ? upsertMiner(st, { ...e, threadRootId: rootId }) : undefined;
-            });
-            miner.threadRootId = rootId; // use it for this tick's lifecycle reply too
-            final = await readState(home);
-          } catch (err) {
-            console.error(`mining-reconcile: failed to backfill a root for ${miner.netuid}:${miner.persona}`, err);
-            continue;
-          }
+        if (!miner.threadRootId && miner.mode !== "submission" && miner.desired !== "running") continue;
+        try {
+          miner.threadRootId = await ensureMinerThread(home,miner.netuid,miner.persona,channelId,undefined,api.workspace?.relayUrl);
+          miner.threadChannelId = channelId;
+          miner.threadRelay = api.workspace?.relayUrl;
+        } catch (err) {
+          console.error(`mining-reconcile: failed to open thread for ${miner.netuid}:${miner.persona}`,err);
+          continue;
         }
-        const snapKey = `lifecycle:${minerKey(miner.netuid, miner.persona)}`;
+        const snapKey = `lifecycle:${api.workspace?.relayUrl ?? ""}:${channelId}:${minerKey(miner.netuid, miner.persona)}`;
         const prev = await api.storage.get<MinerEntry>(snapKey);
         const text = lifecycleMessage(prev, miner);
         if (text) {
           try {
-            await postAsPersona(miner.persona, channelId, text, { threadRoot: miner.threadRootId });
+            await postAsPersona(miner.persona, channelId, text, { threadRoot: miner.threadRootId, relays: api.workspace?.relayUrl ? [api.workspace.relayUrl] : undefined });
           } catch (err) {
             console.error(`mining-reconcile: failed to post lifecycle reply for ${miner.netuid}:${miner.persona}`, err);
             continue; // don't advance the snapshot — retry this transition next tick

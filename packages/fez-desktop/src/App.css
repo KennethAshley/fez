@@ -261,6 +261,20 @@ body {
 
 /* ── main column ───────────────────────────────────────────── */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.channel-activity { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.channel-activity[hidden] { display: none; }
+.channel-workspace-summary { padding: 12px 20px; border-bottom: 1px solid var(--hairline); }
+.channel-workspace-tabs { display: flex; gap: 20px; padding: 0 20px; border-bottom: 1px solid var(--hairline); }
+.channel-workspace-tabs [role="tab"] {
+  padding: 10px 0; border: 0; border-bottom: 2px solid transparent;
+  background: none; color: var(--fg-dim); font: inherit; font-size: 13px; cursor: pointer;
+}
+.channel-workspace-tabs [aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.channel-workspace-tabs [role="tab"]:focus-visible,
+.channel-workspace-content:focus-visible,
+.extension-pane .pane-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.channel-workspace-content { flex: 1; min-height: 0; overflow: auto; padding: 20px; }
+.extension-pane > .pane-body { padding: 16px; }
 /* Two rows in one block: the channel's name, and the channel's doc
    under it. The border belongs to the block, not to either row. */
 .topbar {

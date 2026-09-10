@@ -26,7 +26,7 @@ export interface QueryRow {
   ts: number;
   meta?: string;
 }
-import { WorkspaceState, cleanSource, setStatePersistence, type Role, type StatePersistence } from "./workspace-state.js";
+import { WorkspaceState, cleanSource, setStatePersistence, type Channel, type Role, type StatePersistence } from "./workspace-state.js";
 export * from "./workspace-state.js";
 
 /**
@@ -591,6 +591,7 @@ export class FezClient {
   private unsubscribeLive?: () => void;
   private subscribedChannelIds = "";
   private sessionStartS = Math.floor(Date.now() / 1000);
+  private pendingChannels = new Map<string, Promise<string>>();
 
   // messages + threads
   private names = new Map<string, string>();
@@ -1708,22 +1709,11 @@ export class FezClient {
     return { channelId };
   }
 
-  /** Owner adds a channel to the workspace; scope moves there. */
+  /** Owner adds or reuses a channel by name; scope moves there. */
   async createChannel(name: string): Promise<string> {
     if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can add channels");
-    const channelId = crypto.randomUUID();
-    const channelEvent = await this.wire.publish({
-      kind: K.CHANNEL,
-      tags: [["d", channelId]],
-      content: JSON.stringify({ name, visibility: "open" }),
-    });
-    this.state.absorb(channelEvent);
-    // No roster event: membership is workspace-wide, so a new channel is
-    // visible to everyone already in — which is the whole point of flat.
-    this.state.scope = { channelId };
-    this.state.save();
-    this.resubscribe();
-    this.emit("channelsChanged");
+    const channelId = (await this.ensureChannel({ name }))!;
+    this.setScope(channelId);
     return channelId;
   }
 
@@ -1742,6 +1732,7 @@ export class FezClient {
     // Republish the whole channel: latest-wins REPLACES it, so name,
     // source and meta must ride along or they'd be dropped.
     const content: Record<string, unknown> = { name: channel.name };
+    if (channel.visibility) content.visibility = channel.visibility;
     if (channel.source) content.source = channel.source;
     if (channel.meta) content.meta = channel.meta;
     if (archived) content.archived = true;
@@ -1762,8 +1753,8 @@ export class FezClient {
   /**
    * The channel for a thing, opening it if it isn't open.
    *
-   * The same contract as `makeChannels().ensure` in the CLI's
-   * src/channels.ts — matched on NAME, meta compared in full, only the
+   * Like `makeChannels().ensure` in the CLI's src/protocol/channels.ts,
+   * matches by name unless an explicit ID is supplied. Only the
    * owner may sign one into being. It lives here as well because the
    * desktop bundle deliberately does not depend on the CLI package, and
    * the alternative was a second copy inside the GUI extension loader.
@@ -1780,7 +1771,8 @@ export class FezClient {
     meta?: Record<string, string>;
     visibility?: "open" | "closed";
     /**
-     * Fixed channel id. For bootstrap-created channels: two racing
+     * Authoritative channel ID: updates resolve it without a name fallback.
+     * For bootstrap-created channels: two racing
      * creates with the same id CONVERGE (latest event with one d-tag
      * wins) instead of minting two channels — the only duplicate-proof
      * shape, because no query-first guard survives a cold relay
@@ -1788,12 +1780,21 @@ export class FezClient {
      */
     id?: string;
   }): Promise<string | undefined> {
-    const existing = this.state.findChannelByName(spec.name);
+    const name = spec.name.trim();
+    if (!name) throw new Error("channel name cannot be empty");
+    const existing = spec.id === undefined
+      ? this.state.findChannelByName(name)
+      : this.state.workspace.channels.get(spec.id);
+    const channelName = spec.id === undefined ? existing?.name ?? name : name;
+    const source = cleanSource(spec.source ?? existing?.source);
+    const meta = spec.meta ?? existing?.meta;
+    const visibility = spec.visibility ?? existing?.visibility ?? "open";
     const content = JSON.stringify({
-      name: spec.name,
-      visibility: spec.visibility ?? "open",
-      ...(cleanSource(spec.source) ? { source: cleanSource(spec.source) } : {}),
-      ...(spec.meta && Object.keys(spec.meta).length > 0 ? { meta: spec.meta } : {}),
+      name: channelName,
+      visibility,
+      ...(source ? { source } : {}),
+      ...(meta && Object.keys(meta).length > 0 ? { meta } : {}),
+      ...(existing?.archived ? { archived: true } : {}),
     });
 
     if (existing) {
@@ -1801,12 +1802,16 @@ export class FezClient {
       // learning what it protects must be able to say so even though its
       // source already matched, which is the bug the CLI copy already
       // paid for.
-      const wantSource = cleanSource(spec.source);
       const changed =
-        (wantSource !== undefined && existing.source !== wantSource) ||
-        JSON.stringify(spec.meta ?? {}) !== JSON.stringify(existing.meta ?? {});
+        channelName !== existing.name ||
+        source !== existing.source ||
+        visibility !== (existing.visibility ?? "open") ||
+        JSON.stringify(meta ?? {}) !== JSON.stringify(existing.meta ?? {});
       if (changed && this.state.isOwner(this.pubkey)) {
-        this.state.absorb(await this.wire.publish({ kind: K.CHANNEL, tags: [["d", existing.id]], content }));
+        this.state.absorb(await this.wire.publish({
+          kind: K.CHANNEL, tags: [["d", existing.id]], content,
+          created_at: Math.max(Math.floor(Date.now() / 1000), existing.createdAt + 1),
+        }));
         this.state.save();
         this.emit("channelsChanged");
       }
@@ -1821,12 +1826,28 @@ export class FezClient {
     // Saying so here saves every caller from discovering it as a silent
     // no-op that looks like success.
     if (!this.state.isOwner(this.pubkey)) return undefined;
+    // Share in-flight creates within this client. Cross-client bootstrap
+    // races still need a fixed ID, as documented on spec.id.
+    const key = JSON.stringify([this.state.workspace.relay, spec.id === undefined ? "name" : "id", spec.id ?? name.toLowerCase()]);
+    const pending = this.pendingChannels.get(key);
+    if (pending) {
+      await pending;
+      return this.ensureChannel(spec);
+    }
     const channelId = spec.id ?? crypto.randomUUID();
-    this.state.absorb(await this.wire.publish({ kind: K.CHANNEL, tags: [["d", channelId]], content }));
-    this.state.save();
-    this.resubscribe();
-    this.emit("channelsChanged");
-    return channelId;
+    const creation = (async () => {
+      this.state.absorb(await this.wire.publish({ kind: K.CHANNEL, tags: [["d", channelId]], content }));
+      this.state.save();
+      this.resubscribe();
+      this.emit("channelsChanged");
+      return channelId;
+    })();
+    this.pendingChannels.set(key, creation);
+    try {
+      return await creation;
+    } finally {
+      this.pendingChannels.delete(key);
+    }
   }
 
   /**
@@ -1847,11 +1868,11 @@ export class FezClient {
     return this.wire.httpAuth?.(url, method);
   }
 
-  /** Every channel a given maker opened — the rail's grouping, as data. */
-  channelsFrom(source: string): { id: string; name: string; meta?: Record<string, string> }[] {
+  /** All channels, including archived ones; optionally filtered by maker. */
+  channelsFrom(source?: string): Omit<Channel, "createdAt">[] {
     return [...this.state.workspace.channels.values()]
-      .filter((c) => c.source === source)
-      .map((c) => ({ id: c.id, name: c.name, meta: c.meta }));
+      .filter((c) => source === undefined || c.source === source)
+      .map((c) => ({ id: c.id, name: c.name, source: c.source, meta: c.meta, archived: c.archived, visibility: c.visibility }));
   }
 
   /**

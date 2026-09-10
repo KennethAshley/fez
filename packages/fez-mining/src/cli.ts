@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ensureMinerThread } from "./thread-store.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
@@ -190,6 +191,10 @@ async function cmdStart(
     // flow) would otherwise vanish right here, the moment `start` gives
     // the stub its real hotkey/uid.
     ...(existing?.config ? { config: existing.config } : {}),
+    threadRootId: existing?.threadRootId,
+    threadChannelId: existing?.threadChannelId,
+    threadRelay: existing?.threadRelay,
+    threadRoots: existing?.threadRoots,
     // The preserve is scoped to a lium→lium restart ONLY — carrying
     // `existing.machine` forward unconditionally (any kind, whenever
     // present) meant a later PLAIN `start` (no --machine) on a
@@ -490,12 +495,12 @@ async function cmdLogs(netuid: number, persona: string, lines: number): Promise<
 
 // GUI calls this right after posting the #mining root message; the headless
 // side reads it back to know where to reply. One-liner upsert.
-async function cmdThreadSetRoot(netuid: number, persona: string, root: string): Promise<void> {
+async function cmdThreadSetRoot(netuid: number, persona: string, root: string, channelId?: string): Promise<void> {
   const home = fezHome();
   await updateState(home,s => {
     const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
     if (!entry) throw new Error(`no recorded miner ${netuid}:${persona}`);
-    return upsertMiner(s, { ...entry, threadRootId: root });
+    return upsertMiner(s, { ...entry, threadRootId: root, threadChannelId: channelId });
   });
 }
 
@@ -503,7 +508,7 @@ function usage(): never {
   console.error(
     "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium | --machine ssh --host user@host[:port] [--ssh-key path] [--serve-port N] | --machine do [--serve-port N]] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | do-token-status [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
-      "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
+      "thread ensure --netuid N --persona P --channel <channelId> | thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
       "logs --netuid N --persona P [--lines 12] | submission status|register|test|submit --netuid N --persona P [--file path.py] [--sha256 tested-hash] [--json]"
   );
   process.exit(2);
@@ -641,10 +646,19 @@ async function main(): Promise<void> {
           usage();
       }
       break;
-    case "thread":
-      if (sub !== "set-root" || netuidValue === undefined || !personaValue || !rootValue) usage();
-      await cmdThreadSetRoot(netuidValue, personaValue, rootValue);
+    case "thread": {
+      if (netuidValue === undefined || !personaValue) usage();
+      const i = argv.indexOf("--channel");
+      const channelId = i >= 0 ? argv[i+1] : undefined;
+      if (sub === "ensure" && channelId) {
+        const relayAt=argv.indexOf("--relay");
+        const relay=relayAt>=0 ? argv[relayAt+1] : undefined;
+        console.log(JSON.stringify({rootId:await ensureMinerThread(fezHome(),netuidValue,personaValue,channelId,undefined,relay)}));
+      } else if (sub === "set-root" && rootValue) {
+        await cmdThreadSetRoot(netuidValue,personaValue,rootValue,channelId);
+      } else usage();
       break;
+    }
     case "describe":
       if (netuidValue === undefined) usage();
       await cmdDescribe(netuidValue);

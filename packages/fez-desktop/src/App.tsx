@@ -1,4 +1,4 @@
-import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,7 +39,8 @@ import { listen } from "@tauri-apps/api/event";
 // module-level wiring as updater.ts).
 void listen<string>("agent-install-failed", (e) => toast.error(e.payload));
 import { startSummoner } from "./summoner";
-import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, setGuestDmOpener, extensionNavViews, extensionArtifactActions, type ArtifactAction } from "./gui-extensions";
+import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setChannelOpener, setPanelOpener, setToolOpener, setGuestDmOpener, extensionNavViews, navChannelId, extensionArtifactActions, type ArtifactAction, type NavView } from "./gui-extensions";
+import type { MountRender } from "./mount-result";
 import { GuestThreadView, addGuest, listGuests, removeGuest, useGuestUnreads } from "./guest-threads";
 import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
@@ -95,7 +96,7 @@ type Boot =
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
 type MainView =
-  | { kind: "channel"; focus?: string; threadRoot?: string; questionId?: string; questionJump?: number }
+  | { kind: "channel"; focus?: string; threadRoot?: string; channelJump?: number; questionId?: string; questionJump?: number }
   | { kind: "dm"; convoKey: string; questionId?: string; questionJump?: number }
   | { kind: "guest"; pk: string }
   | { kind: "home" }
@@ -116,6 +117,7 @@ type SidePane =
   | { kind: "reminders" }
   | { kind: "docs"; channelId: string }
   | { kind: "tool"; artifact: Artifact }
+  | { kind: "extension"; title: string; name: string; render: MountRender }
   | undefined;
 
 function useForceRender(): () => void {
@@ -450,6 +452,12 @@ function Shell({
   useEffect(() => {
     setWatchOpener((agent) => setPane({ kind: "watch", agent }));
     setToolOpener((artifact) => setPane({ kind: "tool", artifact }));
+    let panelId = 0;
+    setPanelOpener((title, render) => {
+      const next: SidePane = { kind: "extension", title, name: `extension-panel-${++panelId}`, render };
+      setPane(next);
+      return () => setPane((current) => current === next ? undefined : current);
+    });
     // Guest threads (spec 2026-09-03): an extension hands over a market
     // npub; the ledger entry and the conversation surface are ours.
     setGuestDmOpener((guest) => {
@@ -463,6 +471,7 @@ function Shell({
     return () => {
       setWatchOpener(undefined);
       setToolOpener(undefined);
+      setPanelOpener(undefined);
       setGuestDmOpener(undefined);
     };
   }, []);
@@ -790,7 +799,8 @@ function Shell({
     benchPending;
   const working = client.workingAgents();
 
-  const openChannel = async (channelId: string, focus?: string) => {
+  const channelJump = useRef(0);
+  const openChannel = useCallback(async (channelId: string, focus?: string, threadRoot?: string) => {
     // Refuse an id that names no channel rather than opening a room
     // that cannot exist. The inbox used to hand this the MESSAGE id, and
     // because nothing checked, the header rendered the first 8 hex
@@ -805,10 +815,19 @@ function Shell({
       return;
     }
     client.setScope(channelId);
-    setView({ kind: "channel", focus });
-    await client.loadChannelHistory(channelId);
+    setView({ kind: "channel", focus, threadRoot, channelJump: ++channelJump.current });
+    await client.loadChannelHistory(channelId, threadRoot);
     render();
-  };
+  }, [client, render]);
+
+  useEffect(() => {
+    setChannelOpener((id) => { void openChannel(id); });
+    setThreadOpener((id, rootId) => { void openChannel(id, undefined, rootId); });
+    return () => {
+      setChannelOpener(undefined);
+      setThreadOpener(undefined);
+    };
+  }, [openChannel]);
 
   // Point the global key handler at the latest closures every render, so a
   // shortcut always acts on current unreads/scope without re-subscribing.
@@ -1137,8 +1156,12 @@ function Shell({
             {extensionNavViews().map((nav) => (
               <button
                 key={nav.name}
-                className={view.kind === "ext" && view.name === nav.name ? "channel active home-link" : "channel home-link"}
-                onClick={() => setView({ kind: "ext", name: nav.name })}
+                className={(view.kind === "ext" && view.name === nav.name) || (view.kind === "channel" && scope && navChannelId(nav) === scope.channelId) ? "channel active home-link" : "channel home-link"}
+                onClick={() => {
+                  const id = navChannelId(nav);
+                  if (id) void openChannel(id);
+                  else setView({ kind: "ext", name: nav.name });
+                }}
               >
                 {/* An extension may hand us an inline SVG glyph (currentColor,
                     1em) instead of a unicode char — render it as markup so a
@@ -1498,6 +1521,8 @@ function Shell({
           key={scope.channelId + (view.focus ?? "") + (view.questionJump ?? "")}
           focusId={view.focus}
           initialThreadRoot={view.threadRoot}
+          channelJump={view.channelJump}
+          workspaceNav={extensionNavViews().find((nav) => navChannelId(nav) === scope.channelId)}
           questionId={view.questionId}
           onQuestion={openQuestion}
           client={client}
@@ -1630,6 +1655,17 @@ function Shell({
       )}
 
       {pane && <div className="rz" onMouseDown={() => startDrag("pane")} />}
+      {pane?.kind === "extension" && (
+        <aside className="pane extension-pane" aria-label={pane.title}>
+          <header className="pane-head">
+            <span>{pane.title}</span>
+            <button className="pane-close" aria-label="Close panel" onClick={() => setPane(undefined)}>✕</button>
+          </header>
+          <div className="pane-body">
+            <ExtensionPanel panel={pane} />
+          </div>
+        </aside>
+      )}
       {pane?.kind === "watch" && (
         <WatchPane
           agent={pane.agent}
@@ -1922,6 +1958,8 @@ function ChannelView({
   localAgents,
   focusId,
   initialThreadRoot,
+  channelJump,
+  workspaceNav,
   questionId,
   onQuestion,
 }: {
@@ -1930,6 +1968,8 @@ function ChannelView({
   channelId: string;
   focusId?: string;
   initialThreadRoot?: string;
+  channelJump?: number;
+  workspaceNav?: NavView;
   questionId?: string;
   onQuestion: (request: PendingInput) => void;
   drafts?: Map<string, { content: string; rootId?: string; ts: number }>;
@@ -1994,14 +2034,33 @@ function ChannelView({
   const [editing, setEditing] = useState<{ id: string; original: string } | undefined>();
   const bottomRef = useRef<HTMLDivElement>(null);
   const messages = client.messages(channelId);
-  // Extensions navigate threads through this (gui-extensions.openThreadAt):
-  // parked per channel, id-guarded — see the seam's comment.
+  const workspace = workspaceNav?.channelWorkspace;
+  const [activeTab, setActiveTab] = useState<string>();
+  const [visitedTabs, setVisitedTabs] = useState<string[]>([]);
+  const tabPrefix = useId();
+  const customTab = workspace?.tabs.find((tab) => tab.id === activeTab);
+  const tabIndex = customTab ? workspace!.tabs.indexOf(customTab) + 1 : 0;
+  const tabList = useRef<HTMLDivElement>(null);
+  const selectTab = useCallback((id?: string) => {
+    setActiveTab(id);
+    if (id !== undefined) setVisitedTabs((visited) => visited.includes(id) ? visited : [...visited, id]);
+  }, []);
+  const openTab = useCallback((id: string) => {
+    const index = workspace?.tabs.findIndex((tab) => tab.id === id) ?? -1;
+    if (index < 0) return;
+    selectTab(id);
+    tabList.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[index + 1]?.focus();
+  }, [workspace, selectTab]);
+  const summaryRender = useMemo(() => workspace?.summary
+    ? (host?: HTMLElement) => workspace.summary!({ openTab }, host)
+    : undefined, [workspace, openTab]);
+  // App navigation is a request, even when the channel/root is unchanged.
+  // Keep the composer mounted: attachments, edits, and mention bindings survive.
   useEffect(() => {
-    setThreadOpener((forChannel, rootId) => {
-      if (forChannel === channelId) setThreadRoot(rootId);
-    });
-    return () => setThreadOpener(undefined);
-  }, [channelId]);
+    setThreadRoot(initialThreadRoot ?? (focusId ? client.messages(channelId).find((m) => m.id === focusId)?.rootId : undefined));
+    setActiveTab(undefined);
+  }, [client, channelId, channelJump, initialThreadRoot, focusId]);
+  useEffect(() => { setActiveTab(undefined); setVisitedTabs([]); }, [workspace]);
 
   const shown = threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages.filter((m) => !m.parentId);
   // Typed artifacts interleave by time. In the channel view, all of them;
@@ -2096,6 +2155,7 @@ function ChannelView({
   const timelineRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   useEffect(() => {
+    if (customTab) return;
     if (questionId && threadRoot === initialThreadRoot) return;
     if (focusId) {
       document.getElementById(`msg-${focusId}`)?.scrollIntoView({ behavior: "auto", block: "center" });
@@ -2270,7 +2330,7 @@ function ChannelView({
       onDrop={(e) => {
         e.preventDefault();
         const files = [...e.dataTransfer.files];
-        if (files.length) void handleFiles(files);
+        if (!customTab && files.length) void handleFiles(files);
       }}
     >
       <header className="topbar">
@@ -2282,7 +2342,7 @@ function ChannelView({
             {channelBranch}
           </span>
         )}
-        {threadRoot && (
+        {threadRoot && !customTab && (
           <button className="thread-exit" onClick={() => setThreadRoot(undefined)}>← back to channel</button>
         )}
         {!threadRoot && (
@@ -2396,6 +2456,40 @@ function ChannelView({
           />
         )}
       </header>
+      {workspace && (
+        <>
+          {summaryRender && (
+            <div className="channel-workspace-summary">
+              <ExtensionPanel panel={{ name: `${workspaceNav!.name}:${channelId}:summary`, render: summaryRender }} />
+            </div>
+          )}
+          <div className="channel-workspace-tabs" role="tablist" aria-label="Channel views" ref={tabList}>
+            {[{ label: "Activity", id: undefined }, ...workspace.tabs].map((tab, index) => (
+              <button
+                key={index}
+                id={`${tabPrefix}-tab-${index}`}
+                role="tab"
+                aria-selected={tabIndex === index}
+                aria-controls={`${tabPrefix}-panel-${index}`}
+                tabIndex={tabIndex === index ? 0 : -1}
+                onClick={() => selectTab(tab.id)}
+                onKeyDown={(e) => {
+                  const buttons = tabList.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+                  if (!buttons) return;
+                  const next = e.key === "ArrowRight" ? (index + 1) % buttons.length
+                    : e.key === "ArrowLeft" ? (index + buttons.length - 1) % buttons.length
+                    : e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : undefined;
+                  if (next === undefined) return;
+                  e.preventDefault();
+                  buttons[next].focus();
+                  buttons[next].click();
+                }}
+              >{tab.label}</button>
+            ))}
+          </div>
+        </>
+      )}
+      <div className="channel-activity" hidden={!!customTab} role={workspace ? "tabpanel" : undefined} id={`${tabPrefix}-panel-0`} aria-labelledby={workspace ? `${tabPrefix}-tab-0` : undefined}>
       <HistoryStatus state={history} onRetry={() => {
         if (history.operation === "older") void client.loadOlderPage(channelId);
         else void client.loadChannelHistory(channelId, threadRoot);
@@ -2569,6 +2663,12 @@ function ChannelView({
         }
         onFiles={(files) => void handleFiles(files)}
       />
+      </div>
+      {workspace?.tabs.map((tab, index) => visitedTabs.includes(tab.id) && (
+        <div key={tab.id} className="channel-workspace-content" hidden={tab.id !== customTab?.id} role="tabpanel" tabIndex={0} id={`${tabPrefix}-panel-${index + 1}`} aria-labelledby={`${tabPrefix}-tab-${index + 1}`}>
+          <ExtensionPanel panel={{ name: `${workspaceNav!.name}:${channelId}:${tab.id}`, render: tab.render }} />
+        </div>
+      ))}
     </main>
   );
 }
