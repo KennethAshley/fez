@@ -60,7 +60,7 @@ vi.mock("@fezchat/protocol", async importOriginal => {
   };
 });
 
-type Turn = { session: HarnessSession; text: string; aborted: boolean; finish(text?: string): void; fail(): void };
+type Turn = { session: HarnessSession; text: string; aborted: boolean; finish(text?: string): void; fail(error?: Error): void };
 let turns: Turn[];
 let sessions: HarnessSession[];
 let priorExit: NodeJS.ExitListener[], priorSigint: NodeJS.SignalsListener[];
@@ -100,7 +100,7 @@ beforeEach(async () => {
           return new Promise((resolve, reject) => {
             const turn: Turn = { session, text, aborted: false,
               finish: (reply = "Completed.") => { signal?.removeEventListener("abort", abort); resolve(reply); },
-              fail: () => { signal?.removeEventListener("abort", abort); reject(new Error("network unavailable")); },
+              fail: (error = new Error("network unavailable")) => { signal?.removeEventListener("abort", abort); reject(error); },
             };
             const abort = () => {
               turn.aborted = true;
@@ -149,6 +149,44 @@ async function finish(turn: Turn, reply = "Completed.") {
   turn.finish(reply);
   await vi.advanceTimersByTimeAsync(1_000);
 }
+
+describe("standing-agent model recovery", () => {
+  it.each(["channel", "document", "dm"])("posts recovery guidance in the originating %s without retrying a missing model", async surface => {
+    const { CapabilityClient } = await import("@fezchat/protocol");
+    const owner = new CapabilityClient({ relay: "ws://controlled.invalid", privateKey: Buffer.from(ownerKey).toString("hex") });
+    let trigger: Event | undefined;
+    if (surface === "dm") {
+      await vi.advanceTimersByTimeAsync(2_500);
+      await wire.publish(owner.wrapDm(agentPk, "MODEL_REQUEST").toPeer);
+      await vi.advanceTimersByTimeAsync(0);
+    } else {
+      trigger = await send("MODEL_REQUEST", channelA, undefined,
+        surface === "document" ? { page: "spec", anchor: "model line" } : undefined);
+    }
+    turns[0].fail(new Error('pi-acp exited before reply: llm model not found: (missing-model) 404 Not Found'));
+    await vi.advanceTimersByTimeAsync(160_000);
+    expect(turns).toHaveLength(1);
+    const dmReplies = wire.events.flatMap(event => {
+      const dm = owner.unwrapDm(event);
+      return dm?.senderPk === agentPk ? [dm] : [];
+    });
+    const notices = surface === "dm" ? dmReplies.map(dm => dm.text) : replies().map(event => event.content);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatch(/model.*not found/i);
+    expect(notices[0]).toMatch(/Agents.*edit.*model.*save.*restart.*resend/is);
+    if (trigger) {
+      expect(replies()[0].kind).toBe(surface === "document" ? 40101 : 47103);
+      expect(replies()[0].tags).toContainEqual(surface === "document" ? ["e", trigger.id] : ["e", trigger.id, "", "reply"]);
+    } else expect(replies()).toHaveLength(0);
+  });
+
+  it.each(["persona file is malformed", "model configuration file not found", "404 endpoint not found"])("keeps unrelated failures free of model-setting advice: %s", async message => {
+    await send("BAD_REQUEST");
+    turns[0].fail(new Error(message));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(replies()[0].content).not.toMatch(/choose.*model|Agents/i);
+  });
+});
 
 describe("standing-agent conversation isolation", () => {
   it.each([channelA, channelB])("queues unrelated work in %s without steering the active request", async channel => {

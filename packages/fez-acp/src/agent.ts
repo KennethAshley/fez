@@ -3,6 +3,7 @@ import {
   RelayConnection,
   CapabilityClient,
   classifyTurnError,
+  modelRecoveryHint,
   conversationKey,
   engramHeads,
   findHarness,
@@ -1923,7 +1924,7 @@ async function main() {
           // from a broken agent. Auth failures name their fix.
           const hint = classifyTurnError(err) === "auth"
             ? " — my harness isn't logged in: run `claude /login`, then mention me again (fez doctor has the details)"
-            : "";
+            : modelRecoveryHint(err);
           // Failure CALLBACK (mirror of the completed-work callback): if a
           // fellow agent delegated this turn, the notice @mentions them so
           // the chain can adapt instead of hanging on a hop that died.
@@ -2148,7 +2149,7 @@ async function main() {
         closeAllSessions();
       }
       // Failure notice goes back over the same private pipe.
-      void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
+      void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}${modelRecoveryHint(err)}`, dm.depth + 1).catch(() => {});
     } finally {
       inputOrigin = undefined;
       busy = false;

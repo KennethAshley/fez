@@ -76,6 +76,22 @@ flows pass, and native desktop tests pass (**80 passed, one ignored**). The two
 additional review cases for revoked triggers and moved wiki replies also pass
 in the 21-case conversation regression suite. No release version was changed.
 
+**Priority 5 implementation update — September 10:** Explicit model lookup
+failures now include shared recovery guidance in channel, document-comment, and
+private-message failure notices: open Agents, edit the persona, choose an
+available model, save, restart if still running, and resend. Fez's persona editor
+already stops a running agent when its model changes; the next mention restarts
+it with the saved configuration.
+
+Missing-model errors remain fatal even inside process-exit wording or an
+`Error.cause` wrapper. Matching is limited to explicit lookup failures; temporary
+provider outages, network failures, unrelated 404s, missing configuration files,
+authentication, and cancellation keep their existing behavior. Regression tests
+exercise the real agent runtime, signed thread/document replies, and encrypted
+DM recovery. Validation: **63 focused tests passed**, **1,595 full evals passed
+(three skipped)**, root typechecking passed, and core plus all 45 packages built.
+This implementation is local on top of `4ef664e`; no release was produced.
+
 ## Ranked shortlist
 
 | Priority | Adopt | Fez benefit | Rough effort |
