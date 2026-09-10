@@ -59,6 +59,8 @@ import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
 import FirstRun from "./FirstRun";
+import ResearchStarter from "./ResearchStarter";
+import { WELCOME_CHANNEL_ID } from "./welcome-core";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
 import { EMOJI, searchEmoji } from "./emoji";
@@ -2015,7 +2017,7 @@ function ChannelView({
   // thread AND "working" at channel root). Frames without a root (older
   // agents, DMs) keep today's behavior.
   const workingNow = [...working.entries()].filter(
-    ([, w]) => now - w.ts < 30_000 && (threadRoot ? w.root === threadRoot || !w.root : !w.root)
+    ([, w]) => now - w.ts < 30_000 && (threadRoot ? w.root === threadRoot : !w.root)
   );
 
   // One turn per working agent, at whichever phase it has reached:
@@ -2023,7 +2025,8 @@ function ChannelView({
   // nothing. Drafts carry a pk; the working map carries a name, so the
   // roster answers for the face.
   const pkOfAgent = new Map([...client.agents().entries()].map(([pk, name]) => [name.toLowerCase(), pk]));
-  const draftByName = new Map(liveDrafts.filter(([, d]) => !d.rootId).map(([pk, d]) => [client.displayName(pk).toLowerCase(), { pk, d }]));
+  const visibleDrafts = liveDrafts.filter(([, d]) => threadRoot ? d.rootId === threadRoot : !d.rootId);
+  const draftByName = new Map(visibleDrafts.map(([pk, d]) => [client.displayName(pk).toLowerCase(), { pk, d }]));
   const liveTurns = workingNow.map(([agent, w]) => {
     const writing = draftByName.get(agent.toLowerCase());
     return {
@@ -2035,8 +2038,7 @@ function ChannelView({
     };
   });
   // An agent streaming without a working frame still gets its turn.
-  for (const [pk, d] of liveDrafts) {
-    if (d.rootId) continue;
+  for (const [pk, d] of visibleDrafts) {
     const name = client.displayName(pk);
     if (liveTurns.some((t) => t.agent.toLowerCase() === name.toLowerCase())) continue;
     liveTurns.push({ agent: name, pk, phase: "writing", line: d.content, since: turnStart(name, d.ts) });
@@ -2434,14 +2436,9 @@ function ChannelView({
           </div>
           );
         })}
-        {threadRoot &&
-          draftsForRoot(threadRoot).map(([pk, d]) => (
-            <LiveTurn key={pk} pk={pk} name={client.displayName(pk)} phase="writing" line={d.content} />
-          ))}
         {/* The turns live INSIDE the timeline, in the row their message
             will occupy — that adjacency is the whole point. */}
-        {!threadRoot &&
-          liveTurns.map((t) => (
+        {liveTurns.map((t) => (
             <LiveTurn
               key={t.agent}
               pk={t.pk}
@@ -2452,6 +2449,9 @@ function ChannelView({
               onWatch={() => onWatch(t.agent)}
             />
           ))}
+        {!threadRoot && channelId === WELCOME_CHANNEL_ID && client.state.isOwner(client.pubkey) && (
+          <ResearchStarter client={client} channelId={channelId} onStarted={setThreadRoot} onOpenAgents={onAgents} />
+        )}
         <div ref={bottomRef} />
       </div>
       {/* A person typing is a different fact from an agent working:

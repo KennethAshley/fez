@@ -14,6 +14,7 @@ import { BrowserWire } from "./wire";
 import { relaySet } from "./relay";
 import { toast } from "./toast";
 import { detectHarnesses } from "./harnesses";
+import { PROVIDERS } from "./providers";
 import {
   WELCOME_CHANNEL_ID,
   HELLO_MARKER,
@@ -67,8 +68,6 @@ async function agentKeyHex(): Promise<string> {
   }
 }
 
-const PROVIDER_IDS = ["chutes", "anthropic", "openai", "openrouter"];
-
 export async function readiness(): Promise<Readiness> {
   const harnesses = await detectHarnesses();
   // Claude counts only when all three claims hold: CLI installed, its
@@ -89,8 +88,8 @@ export async function readiness(): Promise<Readiness> {
   // Any configured provider counts — the Chutes-only gate was the bug
   // that kept the team from ever spawning.
   let piKeyed = false;
-  for (const p of PROVIDER_IDS) {
-    if (await invoke<boolean>("provider_key_present", { provider: p }).catch(() => false)) {
+  for (const p of PROVIDERS) {
+    if (await invoke<boolean>("provider_key_present", { provider: p.id }).catch(() => false)) {
       piKeyed = true;
       break;
     }
@@ -116,20 +115,8 @@ function markerWire(hex: string): MarkerWire & { close(): void } {
   };
 }
 
-/**
- * The welcome becomes a team (Buzz's kickoff, fez-cast): create the
- * starter personas with the brain @fez was given, have @fez summon them
- * by mention — REAL turns, woken by the sentinel — then, once they've
- * introduced themselves (or the backstop passes), ask the question the
- * whole room exists for. Idempotent at every step: personas are never
- * overwritten, both messages are relay-marked.
- */
-async function ensureStarterTeam(
-  client: FezClient,
-  w: MarkerWire,
-  channelId: string,
-  guidePk: string
-): Promise<void> {
+/** Create and start the welcome teammates without overwriting existing personas. */
+export async function prepareStarterTeam(client: FezClient, channelId: string): Promise<void> {
   const fezMd = await invoke<string>("read_persona", { name: "fez" }).catch(() => "");
   const brain = parsePersonaBrain(fezMd);
   for (const p of STARTER_TEAM) {
@@ -177,7 +164,10 @@ async function ensureStarterTeam(
       toast.error(`@${p.id} couldn't start: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
+}
 
+async function ensureStarterTeam(client: FezClient, w: MarkerWire, channelId: string, guidePk: string): Promise<void> {
+  await prepareStarterTeam(client, channelId);
   const teamPosted = await ensureMarkedMessage(
     w,
     channelId,

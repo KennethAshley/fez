@@ -1011,7 +1011,7 @@ export async function setSkillPackOnAgent(
  * Give a skill to an agent, or take it back. The write is the same one
  * the persona editor performs — one line, everything else verbatim.
  */
-async function setSkillOnAgent(agent: string, skill: string, source: string | undefined, on: boolean): Promise<SkillWriteResult> {
+export async function setSkillOnAgent(agent: string, skill: string, source: string | undefined, on: boolean): Promise<SkillWriteResult> {
   try {
     const content = await invoke<string>("read_persona", { name: agent });
     const has = declaredSkills(content).some((d) => d.name === skill);
