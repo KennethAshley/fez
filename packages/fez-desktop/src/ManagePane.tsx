@@ -130,8 +130,9 @@ export default function ManagePane({
           <CreateRow
             label="new channel"
             placeholder="channel name"
+            exists={(name) => !!client.state.findChannelByName(name)}
             onCreate={(name) =>
-              void run(`created #${name}`, async () => {
+              void run(`${client.state.findChannelByName(name) ? "opened" : "created"} #${name}`, async () => {
                 const channelId = await client.createChannel(name);
                 onOpenChannel(channelId);
               })
@@ -318,10 +319,12 @@ function CreateRow({
   label,
   placeholder,
   onCreate,
+  exists,
 }: {
   label: string;
   placeholder: string;
   onCreate: (name: string) => void;
+  exists?: (name: string) => boolean;
 }) {
   const [name, setName] = useState("");
   const submit = () => {
@@ -344,7 +347,7 @@ function CreateRow({
             if (e.key === "Enter") submit();
           }}
         />
-        <button className="agent-action" onClick={submit}>create</button>
+        <button className="agent-action" onClick={submit}>{exists?.(name.trim()) ? "Open existing channel" : "create"}</button>
       </div>
     </>
   );

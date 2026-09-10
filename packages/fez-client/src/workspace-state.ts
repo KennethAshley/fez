@@ -41,6 +41,8 @@ export interface Channel {
   name: string;
   /** created_at of the winning 47101 — later owner edits rename in place. */
   createdAt: number;
+  /** Retained when re-signing channel metadata so a closed channel stays closed. */
+  visibility?: "open" | "closed";
   /**
    * What made this channel, when something other than a person did.
    *
@@ -306,10 +308,12 @@ export class WorkspaceState {
       let source: string | undefined;
       let meta: Record<string, string> | undefined;
       let archived: boolean | undefined;
+      let visibility: "open" | "closed" = "open";
       try {
-        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown; meta?: unknown; archived?: unknown };
+        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown; meta?: unknown; archived?: unknown; visibility?: unknown };
         if (typeof content.name === "string" && content.name) name = content.name;
         if (content.archived === true) archived = true;
+        if (content.visibility === "closed") visibility = "closed";
         // Constrained before it reaches a UI: this becomes a section
         // heading in the rail, and a "source" of a thousand newlines
         // would be a channel deciding how the sidebar looks.
@@ -328,7 +332,7 @@ export class WorkspaceState {
       const existing = ws.channels.get(channelId);
       // A later owner event renames; an older one replayed must not undo it.
       if (existing && event.created_at < existing.createdAt) return false;
-      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source, meta, archived });
+      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source, meta, archived, visibility });
       return true;
     }
 

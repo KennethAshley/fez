@@ -1,0 +1,96 @@
+---
+title: Extensions
+description: One package, up to six attachment points — relay, headless, workspace, GUI, executables, background.
+---
+
+Think about what "the git extension" means in fez. Five different things,
+actually: the *relay* serving repositories over HTTP, a */repo command*
+you run yourself, a *provider* that turns a persona's `repo:` into a
+checkout, a *panel and lane board* in the desktop, and a credential
+helper on your `PATH`. fez's extension model embraces that: **one
+package, several optional attachment points**, declared in the
+package's `package.json`:
+
+```json
+{
+  "bin": { "my-tool": "dist/tool.js" },
+  "fez": {
+    "permissions": ["read:channels", "publish", "commands", "ui", "background", "personas"],
+    "parts": {
+      "skill":      { "command": "npx", "args": ["-y", "some-mcp"], "env": { "API_KEY": "" } },
+      "relay":      "dist/relay-part.js",
+      "headless":   "dist/headless.js",
+      "workspace":  "dist/workspace-part.js",
+      "gui":        "dist/gui.js",
+      "background": true
+    }
+  }
+}
+```
+
+- **relay** — HTTP handlers, ingest policies, and NIP-11 advertisements,
+  loaded only by a relay started with `--extensions`. The relay holds no
+  signing key, so a relay part can *record and serve* but never speak.
+- **headless** — commands and scheduled tasks that run beside the
+  owner's key, loaded by the **TUI and the sentinel** — the half that CAN
+  speak on the relay. This is the */obsidian* path — and why the system
+  works with no GUI at all.
+- **workspace** — gives a `repo:` persona a working checkout.
+- **gui** — panels, cards, thread and page views only the desktop renders,
+  each behind a permission the install dialog names (`personas` is the
+  sensitive one: it is the power to reprogram agents).
+- **bin** — npm's own `bin` map, honored: executables land in
+  `~/.fez/bin`.
+- **background** — opts the headless part's scheduled tasks into the
+  always-on [sentinel](/self-hosting). An allowlist, not a default:
+  an extension written for the TUI would otherwise start doing its
+  foreground job a second time inside the always-on process.
+- **`skill`** — an MCP server definition, merged into the machine's tool
+  catalog. Agents get it by declaring the name in their persona
+  ([how tools work](/concepts/tools)). This is the *"@deployer,
+  upload the results"* path — no GUI involved.
+
+A package can also ship **personas** — `@fezchat/score-studio` is a complete
+extension that is nothing but one persona file.
+
+`@fezchat/git` exercises every seam and is the worked example. A package
+ships only the parts that make sense: `@fezchat/polls` is `headless` +
+`gui` + `skill` sharing one vote-logic module; a theme pack is `gui` only.
+The substance lives outside the gui — `gui` is presentation.
+
+**Building one?** The full contract — every API surface, the manifest,
+permissions, and the dev loop — lives in
+[the Extension API section](/extension-api).
+
+Alongside `parts`, a package declares **`permissions`** — what it needs,
+shown to the user before anything runs, and enforced by narrowing the API it
+receives. See [trust & approval](/concepts/trust).
+
+## Installing
+
+```bash
+fez install <source>    # bare name = @fezchat scope; @scope/name, npm:, git: also work
+fez list                # what's installed
+fez remove <name>       # uninstall (tool definitions are kept — see below)
+fez link <dir>          # dev-install a local package: build, register parts, smoke-import
+```
+
+The desktop's extension gallery installs the same packages with no node or
+npm on the machine — it fetches the tarball itself. Gui parts appear live;
+headless and relay parts load when their host restarts.
+
+Removal keeps the tool *definition*: personas may still declare it, and any
+secret values you filled are yours ([custody](/concepts/tools#secrets)).
+
+## The first-party packages
+
+The features you'd assume are core are themselves extensions with no private
+hooks — proof the seams are real: fez-communities (the channel UI itself),
+fez-dms, fez-docs, fez-git, fez-media (Blossom uploads), fez-moderation,
+fez-notifications, fez-polls, fez-kanban, fez-workflows, theme packs.
+[The full catalog](/reference/packages).
+
+## The rule
+
+If a feature can live behind a seam, it must. Core grows only when a new
+*seam* is needed — never a new feature.

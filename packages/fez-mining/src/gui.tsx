@@ -4,35 +4,51 @@ import type { MinerEntry, Subnet } from "./state.js";
 import { subnetRows, machineChoices, initialFormValues, stackFor, HARDWARE_GATED, RELEASE_FROZEN, type MachineChoice, type ConfigFormValues } from "./gui-rows.js";
 import { validateConfig } from "./config.js";
 import { MINING_SOURCE, MINING_CHANNEL_NAME, minerRootLine, parseMinerRoot } from "./thread.js";
-import { ensureMiningSkill, removeMiningSkill } from "./persona-skill.js";
+import { ensureMiningSkill } from "./persona-skill.js";
 import { SUBNET_LOGOS } from "./subnet-logos.js";
 import { createSubmissionGui } from "./submission-gui.js";
+import { miningChannel, MINING_WORKSPACE_META, MINING_WORKSPACE_ID, type MiningChannel } from "./workspace.js";
 
 /**
- * fez-mining, GUI part — the "Mining" nav view: active miners up top (each
- * row opens its chat thread in #mining), a "New miner" button below that
- * runs the picker (subnet → machine → config form → persona → confirm).
+ * The Mining rail entry opens its linked native channel. The host owns
+ * Activity; this extension supplies fleet/catalog tabs and one management pane.
+ * Older hosts retain the standalone page and inline thread card.
  *
- * Legacy element-returning mount form (`--jsx-factory=h`, shared host
- * React via `api.React` — same shape as fez-wallet's gui.tsx, not
- * fez-loom's bundled-react-dom `createRoot` form; this package's build
- * line matches wallet's exactly, so its pattern is the proven one here).
- *
- * Every act is a CLI verb over `api.processes!.run("fez-mine", …)` — the
- * GUI never touches state files or the chain directly. `fez-mine` itself
- * shells to fez-wallet for cost/register, which the seam does not
- * restrict (own-package bins only, and fez-wallet isn't this package's).
- *
- * The #mining channel is the one exception to "CLI verb only": `client`
- * (read:channels + publish) is what ensures the channel, posts a miner's
- * root line, and opens its thread. Guarded throughout — an older host or
- * an ungranted permission degrades to "no thread" rather than a crash.
+ * Shared host React (`--jsx-factory=h`) keeps the bundle self-contained.
+ * Mining actions run through fez-mine; only explicit workspace setup edits
+ * channel metadata. Thread creation stays in Node, signed as the persona.
  */
 export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
   const { useState, useEffect, useCallback, useRef } = api.React;
   const { client } = api;
   const hasChannels = !!client && typeof client.ensureChannel === "function";
+  const hasWorkspace = hasChannels && typeof client.channelsFrom === "function" && typeof api.openChannel === "function";
+  const boundChannel = () => hasWorkspace ? miningChannel(client.channelsFrom()) : undefined;
+  const openManagedMiner = (netuid: number, persona: string) => {
+    api.openPanel?.(`${persona} · SN${netuid}`, () => <MinerCard channelId={boundChannel()?.id ?? ""} rootId={minerKey(netuid,persona)} rootContent={minerRootLine(netuid,persona)} />);
+  };
+  async function openThreadFor(netuid: number, persona: string): Promise<void> {
+    const channelId = boundChannel()?.id;
+    if (!channelId || !api.processes) throw Error("Link a channel from Mining before opening miner history.");
+    const relay = client.workspaces().find(w=>w.active)?.relay;
+    if (!relay) throw Error("The active workspace relay is unavailable. Reconnect before opening history.");
+    const result = await api.processes.run("fez-mine",["thread","ensure","--netuid",String(netuid),"--persona",persona,"--channel",channelId,"--relay",relay,"--json"]);
+    if (result.code !== 0) throw Error(result.stderr.trim() || "Could not open miner history");
+    const rootId = (JSON.parse(result.stdout) as {rootId?:string}).rootId;
+    if (!rootId) throw Error("No miner thread was returned");
+    api.openThread(channelId,rootId);
+  }
+  async function enablePersona(persona: string): Promise<void> {
+    if (!api.personas) throw Error("Grant the personas permission to enable mining.");
+    const md = await api.personas.read(persona);
+    const next = ensureMiningSkill(md);
+    if (next === md && !/mcpServers:.*mining/.test(md)) throw Error("This agent needs valid frontmatter before mining can be enabled.");
+    if (next !== md) await api.personas.update(persona,next);
+    const result = await api.personas.invite?.(persona,"bot");
+    if (result === "no-key") api.toast?.(`Mining enabled. Mention @${persona} in the channel to bring the agent online.`,"info");
+    else if (result && result !== "invited") throw Error(`Could not invite ${persona}: ${result}`);
+  }
 
   const minerKey = (netuid: number, persona: string) => `${netuid}:${persona}`;
 
@@ -259,7 +275,78 @@ export default function activate(api: GuiExtensionApi): void {
     | { kind: "persona"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues; persona: string }
     | { kind: "confirm"; netuid: number; machine?: MachineChoice; schema: ConfigField[]; values: ConfigFormValues; persona: string; message: string };
 
-  function MiningPage(): JSX.Element {
+  function WorkspaceSetup(): JSX.Element {
+    const [channels,setChannels] = useState<MiningChannel[]>(()=>client.channelsFrom());
+    const [name,setName] = useState(MINING_CHANNEL_NAME);
+    const [busy,setBusy] = useState(false);
+    const [error,setError] = useState("");
+    useEffect(()=>client.on("channelsChanged",()=>setChannels(client.channelsFrom())),[]);
+    const linked = miningChannel(channels);
+    const existing = channels.find(c=>c.name.trim().toLowerCase() === name.trim().toLowerCase());
+    const bind = async () => {
+      if (!name.trim()) return;
+      setBusy(true); setError("");
+      try {
+        const current = client.channelsFrom();
+        const already = miningChannel(current);
+        if (already) { api.openChannel?.(already.id); return; }
+        const match = current.find(c=>c.name.trim().toLowerCase() === name.trim().toLowerCase());
+        if (match?.archived) throw Error("This channel is archived. Restore it in channel management or choose another name.");
+        if (match?.source && match.source !== MINING_SOURCE) throw Error("This channel belongs to another extension. Choose an ordinary channel.");
+        // Retire the old binding before creating a replacement. Restoring an
+        // archived channel must not silently move the workspace back to it.
+        for (const previous of current.filter(c=>c.meta?.[MINING_WORKSPACE_META]==="true")) {
+          await client.ensureChannel({id:previous.id,name:previous.name,source:previous.source,
+            visibility:previous.visibility,meta:{...previous.meta,[MINING_WORKSPACE_META]:"false"}});
+          if (client.channelsFrom().find(c=>c.id===previous.id)?.meta?.[MINING_WORKSPACE_META]==="true") {
+            throw Error("Could not unlink the previous mining channel. Only the workspace owner can change this binding.");
+          }
+        }
+        const id = await client.ensureChannel({
+          id:match?.id ?? (current.some(c=>c.id===MINING_WORKSPACE_ID) ? undefined : MINING_WORKSPACE_ID),name:match?.name ?? name.trim(),source:MINING_SOURCE,
+          visibility:match?.visibility ?? "open",meta:{...match?.meta,[MINING_WORKSPACE_META]:"true"},
+        });
+        if (!id || miningChannel(client.channelsFrom())?.id !== id) throw Error("Only the workspace owner can link a mining channel.");
+        setChannels(client.channelsFrom());
+        api.openChannel?.(id);
+      } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+      finally { setBusy(false); }
+    };
+    return <div style={{padding:24,maxWidth:620,boxSizing:"border-box"}}>
+      <h2 style={{margin:"0 0 8px"}}>Mining</h2>
+      {linked ? <div><p>Activity, miners and subnets live in #{linked.name}.</p><button className="agent-action" onClick={()=>api.openChannel?.(linked.id)}>Open #{linked.name}</button></div> : <div>
+        <p style={{color:"var(--fg-dim)",marginBottom:24}}>Give your mining agents a shared channel. Their updates, conversations and miner history stay together.</p>
+        <label style={{display:"block",marginBottom:6}} htmlFor="mining-channel-name">Channel name</label>
+        <input id="mining-channel-name" className="manage-input" value={name} onChange={(e:{target:{value:string}})=>setName(e.target.value)} list="mining-channel-options" />
+        <datalist id="mining-channel-options">{channels.filter(c=>!c.archived && (!c.source || c.source===MINING_SOURCE)).map(c=><option key={c.id} value={c.name}/>)}</datalist>
+        <p className="settings-hint">{existing ? `#${existing.name} already exists. Linking keeps its members and history.` : "Creates one channel. You can rename it later."}</p>
+        <button className="agent-action" disabled={busy || !name.trim()} onClick={()=>void bind()}>{busy ? "Linking…" : existing ? "Use this channel" : "Create mining channel"}</button>
+      </div>}
+      {error ? <p className="ob-error" role="alert">{error}</p> : null}
+    </div>;
+  }
+
+  function FleetSummary({openTab}:{openTab:(id:string)=>void}): JSX.Element {
+    const [rows,setRows] = useState<StatusRow[]>([]);
+    useEffect(()=>{
+      let cancelled=false;
+      const refresh=async()=>{ try {
+        const out=await api.processes?.run("fez-mine",["status","--json"]);
+        if (!cancelled && out?.code===0) setRows(JSON.parse(out.stdout));
+      } catch { /* the fleet tab surfaces detailed failures */ } };
+      void refresh(); const timer=setInterval(()=>void refresh(),10000);
+      return ()=>{cancelled=true;clearInterval(timer);};
+    },[]);
+    const active=rows.filter(m=>m.mode==="submission" || m.alive || m.desired==="running").length;
+    const attention=rows.filter(m=>m.attention || m.submissionError || (m.desired==="running" && !m.alive && m.mode!=="submission")).length;
+    return <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:12}}>
+      <button className="skill-link" onClick={()=>openTab("miners")}>{active} active · {rows.length} total miners{attention ? ` · ${attention} need attention` : ""}</button>
+      <span style={{flex:1}}/>
+      <button className="agent-action" onClick={()=>openTab("subnets")}>New miner</button>
+    </div>;
+  }
+
+  function MiningPage({section="all"}:{section?:"all"|"miners"|"subnets"}): JSX.Element {
     const run = api.processes?.run;
     const personasApi = api.personas;
 
@@ -285,6 +372,8 @@ export default function activate(api: GuiExtensionApi): void {
     // The picker, and the machine-step's in-progress radio choice (kept
     // separate since it's mutated per-keystroke, unlike the step object).
     const [picker, setPicker] = useState<PickerStep | undefined>(undefined);
+    const [agentPick,setAgentPick] = useState<{netuid:number;submission:boolean;create:boolean;name:string;enabled?:boolean} | undefined>(undefined);
+    const launchPersona = useRef("");
     const [machineChoice, setMachineChoice] = useState<MachineChoice>("local");
     // The ssh machine's identity — typed once at the machine step, carried
     // to `start --machine ssh` as flags. Target is user@host[:port].
@@ -426,29 +515,7 @@ export default function activate(api: GuiExtensionApi): void {
           const out = await run("fez-mine", ["stop", "--netuid", String(netuid), "--persona", persona, "--json"]);
           if (out.code !== 0) throw new Error(out.stderr.trim() || `stop exited ${out.code}`);
 
-          // Revert the mining-skill opt-in once this was P's last miner.
-          // Re-reads status rather than trusting the (not-yet-reloaded)
-          // `miners` state, so a persona with another still-running miner
-          // keeps the skill. Best-effort — the stop itself already
-          // succeeded either way.
-          if (personasApi) {
-            try {
-              const statusOut = await run("fez-mine", ["status", "--json"]);
-              const rows = statusOut.code === 0 ? (JSON.parse(statusOut.stdout) as StatusRow[]) : [];
-              const stillMining = rows.some((r) => r.persona === persona && (r.mode === "submission" || r.alive || r.desired === "running"));
-              if (!stillMining) {
-                const md = await personasApi.read(persona);
-                const next = removeMiningSkill(md);
-                if (next !== md) await personasApi.update(persona, next);
-              }
-            } catch (err) {
-              api.toast?.(
-                `${persona} stopped mining but chat-skill revert failed: ${err instanceof Error ? err.message : String(err)}`,
-                "error"
-              );
-            }
-          }
-
+          // Capability remains attached so the agent can discuss history and restart later.
           await loadMiners();
         } catch (err) {
           setError(err instanceof Error ? err.message : String(err));
@@ -459,83 +526,22 @@ export default function activate(api: GuiExtensionApi): void {
       [run, loadMiners, personasApi]
     );
 
-    // Restart a crashed miner — re-issue start on the same machine kind it
-    // was on (so a lium miner re-provisions a pod rather than falling back
-    // to local). No teardown: a dead runner has nothing to stop first.
-    const restart = useCallback(
-      async (m: MinerRow) => {
-        if (!run || m.mode === "submission") return;
-        const k = minerKey(m.netuid, m.persona);
-        setBusy(k);
-        setError(undefined);
-        try {
-          const args = ["start", "--netuid", String(m.netuid), "--persona", m.persona, "--json"];
-          if (m.machine?.kind === "lium") args.push("--machine", "lium");
-          // Host/key/port are preserved by cmdStart from the recorded entry.
-          if (m.machine?.kind === "ssh") args.push("--machine", "ssh");
-          if (m.machine?.kind === "do") args.push("--machine", "do");
-          const out = await run("fez-mine", args);
-          if (out.code !== 0) throw new Error(out.stderr.trim() || `start exited ${out.code}`);
-          await loadMiners();
-        } catch (err) {
-          setError(err instanceof Error ? err.message : String(err));
-        } finally {
-          setBusy(undefined);
-        }
-      },
-      [run, loadMiners]
-    );
+    // Reuse the launch confirmation before any stopped operation can rent again.
+    const restart = async (m: MinerRow) => {
+      if (m.mode === "submission") return;
+      if (m.machine?.kind === "ssh") {
+        setSshTarget(`${m.machine.user}@${m.machine.host}${m.machine.port ? `:${m.machine.port}` : ""}`);
+        setSshKeyPath(m.machine.keyPath ?? "");
+        setSshServePort(m.machine.servePort ? String(m.machine.servePort) : "");
+      }
+      await startFlow(m.netuid,m.persona,m.machine?.kind ?? "local",[],{});
+    };
 
-    // Find a miner's chat-thread root: `threadRootId` when it's already
-    // recorded (the fast path — set by whichever side, GUI or headless,
-    // posted first), else scan the channel's messages for the matching
-    // root line. `attempts` > 1 is only used right after THIS gui posts a
-    // fresh root — the client may not have absorbed its own publish yet.
-    const findRoot = useCallback(
-      async (channelId: string, netuid: number, persona: string, attempts = 1): Promise<{ id: string } | undefined> => {
-        if (!client) return undefined;
-        for (let i = 0; i < attempts; i++) {
-          const found = client.messages(channelId).find((m) => {
-            const p = parseMinerRoot(m.content);
-            return p !== null && p.netuid === netuid && p.persona === persona;
-          });
-          if (found) return found;
-          if (i < attempts - 1) await new Promise((r) => setTimeout(r, 250));
-        }
-        return undefined;
-      },
-      [client]
-    );
-
-    // Active-miner row click → open its thread. `threadRootId` is the
-    // fast path; otherwise scan #mining for the matching root (a miner
-    // that has never posted one — e.g. started from a bare CLI, never
-    // through this picker — has no thread to open).
-    const openMinerThread = useCallback(
-      async (m: MinerRow) => {
-        if (!hasChannels || !client) {
-          setError("Mining chat needs the `read:channels` permission — reinstall the extension to grant it.");
-          return;
-        }
-        setError(undefined);
-        const channelId = await client.ensureChannel({ name: MINING_CHANNEL_NAME, source: MINING_SOURCE });
-        if (!channelId) {
-          setError("could not open the #mining channel");
-          return;
-        }
-        if (m.threadRootId) {
-          api.openThread(channelId, m.threadRootId);
-          return;
-        }
-        const root = await findRoot(channelId, m.netuid, m.persona);
-        if (root) {
-          api.openThread(channelId, root.id);
-          return;
-        }
-        setError(`no chat thread yet for ${m.persona} · netuid ${m.netuid} — it may have started outside the GUI`);
-      },
-      [client, findRoot]
-    );
+    const openMinerThread = useCallback(async (m: MinerRow) => {
+      setError(undefined);
+      try { await openThreadFor(m.netuid,m.persona); }
+      catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    },[]);
 
     // netuid → its config schema, via the new `fez-mine describe` verb.
     // Best-effort: a descriptor with no config (or a describe failure)
@@ -563,7 +569,7 @@ export default function activate(api: GuiExtensionApi): void {
         const schema = await describeSubnet(netuid);
         const values = initialFormValues(schema);
         if (schema.length === 0) {
-          setPicker({ kind: "persona", netuid, machine, schema, values, persona: personas[0] ?? "" });
+          setPicker({ kind: "persona", netuid, machine, schema, values, persona: launchPersona.current || personas[0] || "" });
           return;
         }
         setPicker({ kind: "config", netuid, machine, schema, values });
@@ -580,7 +586,7 @@ export default function activate(api: GuiExtensionApi): void {
           setError("Mining needs the `personas` permission — reinstall the extension to grant it.");
           return;
         }
-        if (personas.length === 0) {
+        if (personas.length === 0 && !personasApi.create) {
           setError("no personas yet — create one before mining");
           return;
         }
@@ -596,6 +602,11 @@ export default function activate(api: GuiExtensionApi): void {
             setError(err instanceof Error ? err.message : String(err));
             return;
           }
+        }
+        if (hasWorkspace) {
+          const base = (subnets.find(s=>s.netuid===netuid)?.name ?? `sn${netuid}`).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+          setAgentPick({netuid,submission,create:true,name:`${base || "mining"}-miner`});
+          return;
         }
         if (submission) {
           setPicker(undefined);
@@ -614,6 +625,38 @@ export default function activate(api: GuiExtensionApi): void {
       },
       [personasApi, personas, requirementsByNetuid, enterConfigStep, hasDoToken, submissionNetuids, run]
     );
+
+    const chooseAgent = async () => {
+      if (!agentPick || !personasApi) return;
+      const persona=agentPick.name.trim();
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(persona)) {setError("Use letters, numbers, hyphens or underscores for the agent name.");return;}
+      setBusy("agent");setError(undefined);
+      try {
+        if (agentPick.create) {
+          if ((await personasApi.list()).some(p=>p.toLowerCase()===persona.toLowerCase())) throw Error("That agent already exists. Select Use an existing agent.");
+          await personasApi.create(persona,ensureMiningSkill(`---\nharness: pi\nrespondTo: owner\n---\nYou are ${persona}, a specialist managing mining on subnet ${agentPick.netuid}. Use the mining tools to inspect status and explain results. Keep all mining actions on testnet. Ask before spending, registering, uploading or restarting. Never request or print private keys or API secrets. Keep operational updates in the miner thread and respond to mentions or DMs.\n`));
+          setPersonas(await personasApi.list());
+        }
+        if (!agentPick.enabled) {
+          await enablePersona(persona);
+          if (!agentPick.create) {
+            setAgentPick({...agentPick,enabled:true});
+            return;
+          }
+        }
+        launchPersona.current=persona;
+        const {netuid,submission}=agentPick;
+        setAgentPick(undefined);
+        if (submission) {setPicker(undefined);setSubmissionPick({netuid,persona});return;}
+        setSubmissionPick(undefined);
+        const req=requirementsByNetuid[netuid];
+        if (req) {
+          setMachineChoice(machineChoices(req,hasDoToken).find(c=>c.enabled)?.choice ?? "local");
+          setPicker({kind:"machine",netuid});
+        } else await enterConfigStep(netuid,undefined);
+      } catch (err) {setError(err instanceof Error ? err.message : String(err));}
+      finally {setBusy(undefined);}
+    };
 
     const confirmMachine = useCallback(
       (netuid: number, machine: MachineChoice) => {
@@ -635,7 +678,7 @@ export default function activate(api: GuiExtensionApi): void {
         return;
       }
       setError(undefined);
-      setPicker({ kind: "persona", netuid: picker.netuid, machine: picker.machine, schema: picker.schema, values: picker.values, persona: personas[0] ?? "" });
+      setPicker({ kind: "persona", netuid: picker.netuid, machine: picker.machine, schema: picker.schema, values: picker.values, persona: launchPersona.current || personas[0] || "" });
     }, [picker, personas]);
 
     // cost → confirm the exact burn → apply any config → start (once) →
@@ -750,57 +793,12 @@ export default function activate(api: GuiExtensionApi): void {
           const startOut = await run("fez-mine", startArgs);
           if (startOut.code !== 0) throw new Error(startOut.stderr.trim() || `start exited ${startOut.code}`);
 
-          // Roster P into #mining and grant it the mining skill so it can
-          // answer mining questions there. Best-effort — mining itself
-          // already succeeded above; a missing `personas` permission or a
-          // hiccup here shouldn't fail the whole start.
-          if (personasApi) {
-            try {
-              await personasApi.invite?.(persona, "bot");
-              const md = await personasApi.read(persona);
-              const next = ensureMiningSkill(md);
-              if (next !== md) await personasApi.update(persona, next);
-            } catch (err) {
-              api.toast?.(
-                `${persona} started mining but chat wiring failed: ${err instanceof Error ? err.message : String(err)}`,
-                "error"
-              );
-            }
-          }
-
-          // Ensure #mining, then ensure a root — idempotently. This is the
-          // GUI's only restart path for a previously-stopped miner (stopped
-          // miners drop off the active list, so re-running the picker is
-          // how they come back); posting unconditionally here would give a
-          // second root line, and `findRoot`/`thread set-root` would then
-          // have two matches to pick between. Recorded state
-          // (`threadRootId`, the fast path) wins; failing that, scan
-          // #mining for an already-posted root (e.g. one that got posted
-          // but never made it into state); only when neither turns one up
-          // is a fresh root posted. Best-effort throughout: a missing
-          // `read:channels` grant, or the client not yet absorbing its own
-          // publish, leaves the miner running with no thread rather than
-          // failing the whole flow.
-          if (hasChannels && client) {
-            const channelId = await client.ensureChannel({ name: MINING_CHANNEL_NAME, source: MINING_SOURCE });
-            if (channelId) {
-              const statusOut = await run("fez-mine", ["status", "--json"]);
-              const rows = statusOut.code === 0 ? (JSON.parse(statusOut.stdout) as StatusRow[]) : [];
-              const recordedRootId = rows.find((r) => r.netuid === netuid && r.persona === persona)?.threadRootId;
-              if (recordedRootId) {
-                api.openThread(channelId, recordedRootId);
-              } else {
-                let root = await findRoot(channelId, netuid, persona);
-                if (!root) {
-                  await client.sendChannelMessage(minerRootLine(netuid, persona), { channelId });
-                  root = await findRoot(channelId, netuid, persona, 6);
-                }
-                if (root) {
-                  await run("fez-mine", ["thread", "set-root", "--netuid", String(netuid), "--persona", persona, "--root", root.id]);
-                  api.openThread(channelId, root.id);
-                }
-              }
-            }
+          // Agent setup is explicit and precedes launch on current hosts.
+          // Older hosts still attach here after their legacy picker completes.
+          if (!hasWorkspace && personasApi) await enablePersona(persona);
+          if (hasWorkspace) {
+            try { await openThreadFor(netuid,persona); }
+            catch (err) { api.toast?.(`Miner started; history could not open: ${err instanceof Error ? err.message : String(err)}`,"error"); }
           }
 
           setPicker(undefined);
@@ -811,7 +809,7 @@ export default function activate(api: GuiExtensionApi): void {
           setBusy(undefined);
         }
       },
-      [run, loadMiners, findRoot, personasApi, sshTarget, sshKeyPath, sshServePort]
+      [run, loadMiners, personasApi, sshTarget, sshKeyPath, sshServePort]
     );
 
     if (!run) {
@@ -824,7 +822,7 @@ export default function activate(api: GuiExtensionApi): void {
 
     const subnetName = (netuid: number) => subnets.find((s) => s.netuid === netuid)?.name ?? `netuid ${netuid}`;
     // Submissions belong in the fleet without a process or running intent.
-    const activeMiners = miners.filter((m) => m.mode === "submission" || m.alive || m.desired === "running");
+    const activeMiners = miners; // Stopped operations retain their management and history.
 
     // Renders whichever picker step is open, or nothing when it's closed.
     const renderPicker = (): JSX.Element | null => {
@@ -953,7 +951,7 @@ export default function activate(api: GuiExtensionApi): void {
       return (
         <div style={card}>
           {Label(`persona — ${subnetName(picker.netuid)}`)}
-          {personas.length > 1 ? (
+          {!hasWorkspace && personas.length > 1 ? (
             <select className="manage-input" value={picker.persona} onChange={(e: { target: { value: string } }) => setPersona(e.target.value)}>
               {personas.map((p) => (
                 <option key={p} value={p}>
@@ -1056,13 +1054,13 @@ export default function activate(api: GuiExtensionApi): void {
     };
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, padding: "4px 24px 0" }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, padding: section === "all" ? "4px 24px 0" : 0 }}>
         {error ? <p className="ob-error">{error}</p> : null}
 
         <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", paddingTop: 8, paddingBottom: 28 }}>
-          {Label("your miners")}
+          {section !== "subnets" ? <div>{Label("your miners")}
           {activeMiners.length === 0 ? (
-            <p style={dim}>No miners running. Launch one below.</p>
+            <p style={dim}>No miners yet. Open Subnets to launch your first miner.</p>
           ) : (
             activeMiners.map((m) => {
               const k = minerKey(m.netuid, m.persona);
@@ -1074,7 +1072,8 @@ export default function activate(api: GuiExtensionApi): void {
                     <SubmissionSummary status={m.submission} error={m.submissionError} />
                   </div>
                   <div className="skill-actions">
-                    <button className="agent-action" onClick={() => { setPicker(undefined); setSubmissionPick({ netuid: m.netuid, persona: m.persona }); }}>Manage</button>
+                    {hasWorkspace ? <button className="skill-link" onClick={()=>void openMinerThread(m)}>History</button> : null}
+                    <button className="agent-action" onClick={() => { if (api.openPanel) openManagedMiner(m.netuid,m.persona); else {setPicker(undefined);setSubmissionPick({netuid:m.netuid,persona:m.persona});} }}>Manage</button>
                   </div>
                 </div>
               );
@@ -1083,7 +1082,6 @@ export default function activate(api: GuiExtensionApi): void {
                   key={k}
                   className="skill-row"
                   style={{ cursor: hasChannels ? "pointer" : undefined, alignItems: "center" }}
-                  onClick={() => void openMinerThread(m)}
                 >
                   {stackCluster(m.netuid, subnetName(m.netuid))}
                   <div className="skill-main">
@@ -1114,15 +1112,17 @@ export default function activate(api: GuiExtensionApi): void {
                     {m.alive ? (
                       metricStrip(metagraphByKey[k])
                     ) : (
-                      <div className="skill-desc" style={{ color: "var(--red, #fb4934)", marginTop: 4 }}>
+                      <div className="skill-desc" style={{ color: m.desired === "stopped" ? "var(--fg-dim)" : "var(--red, #fb4934)", marginTop: 4 }}>
                         {/* absent machine = local (v1 shape) — remote kinds all have a reachable endpoint */}
-                        {requirementsByNetuid[m.netuid]?.publicEndpoint && !m.machine
+                        {m.desired === "stopped" ? `Stopped${m.lastExit ? ` — ${m.lastExit}` : ""}. History and settings are retained.` : requirementsByNetuid[m.netuid]?.publicEndpoint && !m.machine
                           ? `Not running — ${subnetName(m.netuid)} needs a reachable endpoint a local Mac can't provide. Restart on a Lium pod or your own server, or open the thread for logs.`
                           : `Not running${m.lastExit ? ` — ${m.lastExit}` : ""}. Restart, or open the thread for logs.`}
                       </div>
                     )}
                   </div>
                   <div className="skill-actions">
+                    {hasWorkspace ? <button className="skill-link" onClick={()=>void openMinerThread(m)}>History</button> : null}
+                    {api.openPanel ? <button className="agent-action" onClick={()=>openManagedMiner(m.netuid,m.persona)}>Manage</button> : null}
                     {!m.alive ? (
                       <button
                         className="agent-action"
@@ -1132,12 +1132,12 @@ export default function activate(api: GuiExtensionApi): void {
                           void restart(m);
                         }}
                       >
-                        {busy === k ? "working…" : "Restart"}
+                        {busy === k ? "working…" : m.desired === "stopped" ? "Start" : "Restart"}
                       </button>
                     ) : null}
                     <button
                       className="agent-action"
-                      disabled={busy === k}
+                      disabled={busy === k || (!m.alive && m.desired === "stopped")}
                       onClick={(e: { stopPropagation: () => void }) => {
                         e.stopPropagation();
                         void stop(m.netuid, m.persona);
@@ -1151,7 +1151,25 @@ export default function activate(api: GuiExtensionApi): void {
             })
           )}
 
-          {submissionPick ? (
+          {section === "miners" && picker ? renderPicker() : null}
+          </div> : null}
+
+          {section !== "miners" ? <div>{agentPick ? <div style={{...card,padding:20}}>
+            <h3 style={{marginTop:0}}>Choose an agent · SN{agentPick.netuid}</h3>
+            {agentPick.enabled ? <div role="status">
+              <p>Mining tools saved for @{agentPick.name}.</p>
+              <p>If this agent is already running, open its profile and select <strong>restart</strong> to load the tools. Wait for its current conversation to finish first. Restarting the chat agent leaves its miners running.</p>
+              <p style={dim}>An agent that is asleep will load the tools when you next mention it.</p>
+            </div> : <div>
+            <p style={dim}>A dedicated specialist keeps this operation, strategy and wallet identity separate. You can also use an existing agent.</p>
+            <label style={{display:"block",marginBottom:8}}><input type="radio" name="mining-agent-kind" checked={agentPick.create} onChange={()=>setAgentPick({...agentPick,create:true,name:`sn${agentPick.netuid}-miner`})}/> Create a specialist</label>
+            <label style={{display:"block",marginBottom:12}}><input type="radio" name="mining-agent-kind" checked={!agentPick.create} onChange={()=>setAgentPick({...agentPick,create:false,name:personas[0] ?? ""})}/> Use an existing agent</label>
+            {agentPick.create ? <input aria-label="Specialist name" className="manage-input" value={agentPick.name} onChange={(e:{target:{value:string}})=>setAgentPick({...agentPick,name:e.target.value})}/> :
+              <select aria-label="Mining agent" className="manage-input" value={agentPick.name} onChange={(e:{target:{value:string}})=>setAgentPick({...agentPick,name:e.target.value})}>{personas.map(p=><option key={p} value={p}>{p}</option>)}</select>}
+            <p style={dim}>{agentPick.create ? "Uses Fez's default Pi brain. Configure its provider in the agent profile if needed." : "Enables mining tools so this agent can help with setup and retained history."}</p>
+            </div>}
+            <div style={{display:"flex",gap:12,marginTop:16}}><button className="agent-action" disabled={busy==="agent" || !agentPick.name} onClick={()=>void chooseAgent()}>{busy==="agent" ? "Enabling…" : agentPick.enabled ? "Continue to miner setup" : "Enable mining & continue"}</button><button className="skill-link" onClick={()=>setAgentPick(undefined)}>Cancel</button></div>
+          </div> : submissionPick ? (
             <SubmissionPanel key={minerKey(submissionPick.netuid, submissionPick.persona)} {...submissionPick} personas={personas}
               entry={miners.find(m => m.netuid === submissionPick.netuid && m.persona === submissionPick.persona)}
               onPersonaChange={persona => setSubmissionPick({ netuid: submissionPick.netuid, persona })}
@@ -1236,13 +1254,17 @@ export default function activate(api: GuiExtensionApi): void {
                 </button>
               ) : null}
             </div>
-          )}
+          )}</div> : null}
         </div>
       </div>
     );
   }
 
-  api.registerNavView("mining", { glyph: "⛏", label: "Mining (beta)" }, () => <MiningPage />);
+  api.registerNavView("mining", { glyph: "⛏", label: "Mining", ...(hasWorkspace ? {channelWorkspace:{
+    getChannelId:()=>boundChannel()?.id,
+    tabs:[{id:"miners",label:"Miners",render:()=> <MiningPage section="miners"/>},{id:"subnets",label:"Subnets",render:()=> <MiningPage section="subnets"/>}],
+    summary:({openTab}:{openTab:(id:string)=>void})=> <FleetSummary openTab={openTab}/>,
+  }} : {}) }, () => hasWorkspace ? <WorkspaceSetup/> : <MiningPage />);
 
   // The thread-view card: one root per (netuid, persona), rendered above
   // its replies in #mining. Status + a log tail poll every 10s; config is
@@ -1553,7 +1575,10 @@ export default function activate(api: GuiExtensionApi): void {
     api.registerThreadView(
       "mining-miner",
       (rootContent) => parseMinerRoot(rootContent) !== null,
-      (props) => <MinerCard key={props.rootId} {...props} />
+      (props) => api.openPanel ? <div style={{...card,display:"flex",alignItems:"center",gap:12,padding:16}}>
+        <span style={{flex:1}}>Miner settings, logs and status</span>
+        <button className="agent-action" onClick={()=>{ const p=parseMinerRoot(props.rootContent);if(p) openManagedMiner(p.netuid,p.persona);}}>Manage miner</button>
+      </div> : <MinerCard key={props.rootId} {...props} />
     );
   }
 }

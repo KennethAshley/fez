@@ -6,11 +6,11 @@ supported workflow; a subnet appearing in the catalog does not mean it is suppor
 
 ## Install
 
-Requires **Fez desktop 0.4.33 or newer** on macOS. In **Settings → Extensions**,
+Requires **Fez desktop 0.4.34 or newer** on macOS. In **Settings → Extensions**,
 install these packages in order (use their exact names in the install field):
 
 1. `@fezchat/wallet` — version 0.1.14 or newer.
-2. `@fezchat/mining` — version 0.1.1 or newer.
+2. `@fezchat/mining` — version 0.1.2 or newer.
 3. `@fezchat/numinous` — version 0.1.1 or newer.
 
 Older desktop versions and the npm Protocol 0.2.1 CLI cannot install miner
@@ -26,6 +26,22 @@ reported activation status; your Mac does not need to run a persistent miner
 process for an accepted upload. Docker is needed only for the local code check.
 See [the Numinous package](https://www.npmjs.com/package/@fezchat/numinous) for
 that check's setup and limits.
+
+## Channel workspace
+
+Desktop builds with channel workspace support first ask you to link Mining to
+an existing channel or create one. Linking requires the workspace owner; it
+preserves the channel's history. Mining and that channel open the same Activity
+conversation, with **Miners** and **Subnets** tabs beside it. Renaming the channel
+keeps the connection. Archiving it returns Mining to setup; removing the
+extension keeps the channel and its messages.
+
+Use **New miner → Subnets → Launch** to choose a dedicated specialist or an
+existing agent and enable its mining tools before setup. **Miners** retains
+stopped operations: **History** opens the persona-authored thread, and **Manage**
+opens the same controls available from the thread. Stopping the last miner keeps
+the agent's mining capability attached so you can discuss history or start again.
+Older desktop builds retain the previous Mining page.
 
 ## Agent tools
 
@@ -52,3 +68,5 @@ The management pane also works inside a miner's thread. Runner-based adapters
 use their own machine requirements and start/stop controls; submission adapters
 use version and upload controls. Numinous mainnet mining is not enabled by this
 release.
+
+When enabling Mining for an existing agent, the setup shows a restart notice. If the chat agent is running, finish its current turn and restart it from its profile to load newly attached tools. Sleeping agents load them on their next mention. Restarting the chat agent does not restart its miners.

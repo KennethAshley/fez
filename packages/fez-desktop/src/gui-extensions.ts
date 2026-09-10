@@ -182,8 +182,12 @@ export interface GuiExtensionApi {
   /** Open a guest thread — a PUBLIC conversation with a foreign market
    * npub, rendered in the host's DM rail (guest-threads spec). */
   openGuestDm: (guest: { pk: string; relay: string; name?: string; picture?: string; rateTaoHr?: number; draft?: string }) => void;
-  /** Open a thread in the current channel view (no-op for other channels). */
+  /** Navigate to a native channel thread, including from another view. */
   openThread: (channelId: string, rootId: string) => void;
+  /** Open the native channel Activity. Absent without `ui`. */
+  openChannel?: (id: string) => void;
+  /** Replace the side pane; the host owns close, replacement, and unload disposal. */
+  openPanel?: (title: string, render: MountRender) => void;
   /** A palette, or a { light, dark } pair that follows the OS. */
   registerTheme: (name: string, vars: ThemePack) => void;
   /** Decorate chat messages: when match(content) is true, render() is
@@ -260,7 +264,7 @@ export interface GuiExtensionApi {
    */
   registerNavView: (
     name: string,
-    opts: { glyph: string; label: string },
+    opts: { glyph: string; label: string; channelWorkspace?: ChannelWorkspace },
     render: MountRender
   ) => void;
   /**
@@ -499,10 +503,8 @@ export function openGuestDm(guest: { pk: string; relay: string; name?: string; p
 
 /**
  * Thread navigation, as a capability: extensions say "open this thread"
- * (a lane from the board, a line from its channel chip) and the host's
- * channel view — where the thread state lives — decides how. The opener
- * is parked per open channel and checks the channelId, so a stale
- * registration from a previous channel can never hijack navigation.
+ * (a lane from the board, a line from its channel chip). App owns the
+ * opener so navigation also works while no channel view is mounted.
  */
 let threadOpener: ((channelId: string, rootId: string) => void) | undefined;
 export function setThreadOpener(open: ((channelId: string, rootId: string) => void) | undefined): void {
@@ -512,21 +514,39 @@ export function openThreadAt(channelId: string, rootId: string): void {
   threadOpener?.(channelId, rootId);
 }
 
+let channelOpener: ((id: string) => void) | undefined;
+export function setChannelOpener(open: typeof channelOpener): void {
+  channelOpener = open;
+}
+
+// The returned disposer closes only this opening, never a replacement pane.
+let panelOpener: ((title: string, render: MountRender) => Dispose) | undefined;
+export function setPanelOpener(open: typeof panelOpener): void {
+  panelOpener = open;
+}
+
 const pageViews: PageView[] = [];
 export function registerPageView(name: string, match: PageView["match"], render: PageView["render"]): void {
   pageViews.push({ name, match, render });
 }
 
 /** A rail entry owned by an extension — see GuiExtensionApi.registerNavView. */
+export interface ChannelWorkspace {
+  getChannelId: () => string | undefined;
+  tabs: Array<{ id: string; label: string; render: MountRender }>;
+  summary?: (props: { openTab: (id: string) => void }, host?: HTMLElement) => React.ReactNode | Dispose | void;
+}
+
 export interface NavView {
   name: string;
   glyph: string;
   label: string;
   render: MountRender;
+  channelWorkspace?: ChannelWorkspace;
 }
 const navViews: NavView[] = [];
-export function registerNavView(name: string, opts: { glyph: string; label: string }, render: NavView["render"]): void {
-  const view: NavView = { name, glyph: opts.glyph, label: opts.label, render };
+export function registerNavView(name: string, opts: { glyph: string; label: string; channelWorkspace?: ChannelWorkspace }, render: NavView["render"]): void {
+  const view: NavView = { name, ...opts, render };
   // Re-registering replaces — the settings-panel rule, so a reload
   // cannot stack two rail buttons for the same view.
   const at = navViews.findIndex((v) => v.name === name);
@@ -535,6 +555,16 @@ export function registerNavView(name: string, opts: { glyph: string; label: stri
 }
 export function extensionNavViews(): readonly NavView[] {
   return navViews;
+}
+
+/** An extension's binding callback must not be able to break the host rail. */
+export function navChannelId(view: NavView): string | undefined {
+  try {
+    return view.channelWorkspace?.getChannelId();
+  } catch (err) {
+    console.warn(`channel workspace "${view.name}" failed to resolve:`, err);
+    return undefined;
+  }
 }
 
 /** Header actions on an open artifact pane — see registerArtifactAction. */
@@ -838,6 +868,7 @@ let baseline: Dispose | undefined;
 // unlike the registries above this needs no baseline snapshot: a reload
 // can simply dispose everything and let the fresh load re-inject.
 const styleDisposers = new Map<string, Dispose>();
+const uiDisposers = new Map<string, Dispose>();
 
 function snapshotArray<T>(registry: T[]): Dispose {
   const snapshot = [...registry];
@@ -872,8 +903,11 @@ function snapshotRegistrations(): Dispose {
 
 function restoreBaseline(): void {
   baseline?.();
+  for (const dispose of uiDisposers.values()) dispose();
+  uiDisposers.clear();
   for (const dispose of styleDisposers.values()) dispose();
   styleDisposers.clear();
+  window.dispatchEvent(new CustomEvent("fez-gui-extensions-changed"));
 }
 
 /**
@@ -933,6 +967,9 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
     const hosts = granted.filter((g) => g.startsWith("network:")).map((g) => g.slice("network:".length));
     const refuse = (permission: string, what: string) => () =>
       console.warn(`⚠️  extension "${name}" tried to ${what} without "${permission}" — ignored`);
+    let active = true;
+    let closePanel: Dispose | undefined;
+    const disposeUi = () => { active = false; closePanel?.(); };
     const api: GuiExtensionApi = {
       React,
       // Parse a natural-language query into the shape client.runQuery wants
@@ -1067,7 +1104,13 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
         ? (files: { slug: string; guiJs: string; pkgJson: string; readme: string }) =>
             invoke<string>("export_tool", files)
         : (refuse("ui", "export a tool package") as never),
-      openThread: may("ui") ? openThreadAt : (refuse("ui", "navigate threads") as never),
+      openThread: may("ui") ? (id, rootId) => { if (active) openThreadAt(id, rootId); } : (refuse("ui", "navigate threads") as never),
+      openChannel: may("ui") ? (id) => { if (active) channelOpener?.(id); } : undefined,
+      openPanel: may("ui") ? (title, render) => {
+        if (!active) return;
+        closePanel?.();
+        closePanel = panelOpener?.(title, render);
+      } : undefined,
       watchAgent: may("read:agents") ? openWatch : (refuse("read:agents", "open the watch pane") as never),
       // Forward surface (guest-threads spec): typed loosely so extensions
       // built against an older api still load; the host validates the pk.
@@ -1094,10 +1137,12 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
       if (typeof activate !== "function") throw new Error("no default export / activate()");
       await activate(api);
       if (styles) styleDisposers.set(name, injectExtensionStyles(name, styles));
+      uiDisposers.set(name, disposeUi);
       loaded.push(name);
       status.push({ name, ok: true });
       console.log(`🧩 gui extension loaded: ${name}`);
     } catch (err) {
+      disposeUi();
       rollback();
       status.push({ name, ok: false, error: err instanceof Error ? err.message : String(err) });
       console.error(`🧩 gui extension "${name}" failed to load:`, err);

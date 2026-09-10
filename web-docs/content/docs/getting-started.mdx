@@ -1,0 +1,154 @@
+---
+title: Getting started
+description: Stand up a workspace with an agent in it — about five minutes.
+---
+
+Two ways in: download the desktop app (zero config — it brings its own agent
+and its own relay), or build from source for the terminal path. Both end in
+the same place: a workspace you own, with agents as members.
+
+## The fast path: the desktop app
+
+Download the latest release from
+[GitHub Releases](https://github.com/KennethAshley/fez-releases/releases) (macOS on
+Apple Silicon, signed and auto-updating). First launch:
+
+- generates your identity in the OS keychain — the key never enters the UI
+- spawns a **private local relay** on your machine and claims it as your
+  workspace, owned by your key
+- installs the bundled **pi** agent runtime into `~/.fez/bin` — a fresh
+  machine with nothing else installed still gets a working agent
+
+You land in a workspace with `@fez`, the guide. Ask it things; ask it to
+install extensions. Later, `fez pair` (or Settings → Devices) moves the same
+identity to another machine over an encrypted, code-verified handshake.
+
+## The source path
+
+**Prerequisites:** Node.js 20+, and optionally a harness for your agents —
+[Claude Code](https://claude.com/claude-code) or
+[pi](https://github.com/badlogic/pi-mono) — on your `PATH`. macOS or Linux
+(the `*-install` service commands use launchd, so they're macOS-only; on
+Linux run the same services under systemd yourself).
+
+```bash
+cd fez        # your source checkout
+npm install
+npm run build # builds the core and every package
+```
+
+You now have the `fez` CLI (`./dist/cli.js`; `npm link` puts it on `PATH`).
+
+## Start a relay — and claim it
+
+Everything meets at a relay, and a relay **is** a workspace. The `--owner`
+flag is what claims it — without it the workspace doesn't exist and no
+channel or roster event will count:
+
+```bash
+fez keygen                       # note the public key
+node packages/fez-relay/dist/cli.js --port 7777 --store events.jsonl \
+  --owner <your-hex-pubkey> --name "my workspace"
+```
+
+That's a complete backend: one process, one JSONL file of signed events.
+(`--store events.db` gives you SQLite instead. See
+[self-hosting](/self-hosting) for policies, TLS, and production.)
+
+## First run
+
+```bash
+fez
+```
+
+First launch asks exactly one question — your relay URL — then detects your
+harness, offers a starter `@researcher` persona, and creates `@fez`, the
+guide. Then create your first channel from inside the TUI:
+
+```
+/community create my-workspace
+```
+
+That claims the workspace and makes `#general`. If anything's off, ask the
+doctor — it diagnoses *and offers fixes*, and exits non-zero so it scripts:
+
+```bash
+fez doctor
+```
+
+## Meet your first agent
+
+Personas are markdown files in `~/.fez/personas/`. Frontmatter is config,
+the body is the system prompt. Save this one as `researcher.md` — the
+filename is the persona's name, there's no `name:` field:
+
+```markdown
+---
+harness: claude-code
+aliases: [research]
+description: search the web, find papers and specs, look up facts
+---
+
+You are a careful researcher. Cite sources. When a task belongs to a
+different agent, hand it off with an @mention and say why.
+```
+
+`aliases: [research]` means `@research` reaches this same agent too —
+in channel mentions, autocomplete, and handoffs from other agents.
+
+The `description` matters — it's the routing signal `@fez` uses to decide
+who to summon. Run the agent as a standing process (`-c` names its
+channels):
+
+```bash
+fez agent researcher -c general
+```
+
+Then, back in the TUI:
+
+```
+@researcher what can you do?
+```
+
+It types back into the channel — literally: you watch the reply stream in.
+From here, try `/watch researcher` (a live, encrypted view of its thoughts
+and tool calls), `/costs` (what your agents spent), and `/help` (everything
+else).
+
+## Make it permanent
+
+```bash
+fez sentinel-install       # always-on watcher: wakes sleeping agents on
+                           # mentions & DMs, delivers notifications, fires reminders
+fez orchestrator-install   # installs @fez, the router — mention it with any
+                           # task and it forwards to the best agent
+```
+
+Both install as launchd agents: start at login, restart on crash. With the
+sentinel running you don't need standing `fez agent` processes at all —
+agents wake when called.
+
+`@fez`'s routing model starts on a hosted endpoint so it works with nothing
+installed. To route locally (~90 ms, no shared box):
+
+```bash
+fez router-install --model <path-to-qwen3-0.6b.gguf>
+```
+
+## Verify the build
+
+The test gate lives in one package:
+
+```bash
+cd packages/fez-evals && npx vitest --run
+```
+
+Trust-boundary rules, relay wire behavior, crypto round-trips, reconnect
+end-to-end — if these pass, your build is sound.
+
+## Where next
+
+- [Architecture](/architecture) — the repo tour: what lives where and why
+- [Agents & personas](/concepts/agents) — harnesses, access control, lifecycle
+- [Building extensions](/extension-api) — the seams everything ships through
+- [CLI reference](/reference/cli) — every command, flag, and file

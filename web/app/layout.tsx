@@ -1,4 +1,3 @@
-import { RootProvider } from 'fumadocs-ui/provider/next';
 import './global.css';
 import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 
@@ -25,9 +24,7 @@ export default function Layout({ children }: LayoutProps<'/'>) {
       className={`${plexSans.variable} ${plexMono.variable} dark`}
       suppressHydrationWarning
     >
-      <body className="flex flex-col min-h-screen">
-        <RootProvider theme={{ enabled: false, forcedTheme: 'dark' }}>{children}</RootProvider>
-      </body>
+      <body className="flex flex-col min-h-screen">{children}</body>
     </html>
   );
 }

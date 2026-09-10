@@ -1,4 +1,4 @@
-import { finalizeEvent } from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { RelayConnection, getKey, resolveRelays, buildDmWraps } from "@fezchat/protocol";
 
 export interface EventTemplate {
@@ -32,13 +32,13 @@ export async function postAsPersona(
   persona: string,
   channelId: string,
   text: string,
-  opts?: { threadRoot?: string }
+  opts?: { threadRoot?: string; relays?: string[] }
 ): Promise<string> {
   const keyHex = getKey(`agent:${persona}`);
   if (!keyHex) throw new Error(`no local key for agent "${persona}"`);
   const secret = Uint8Array.from(Buffer.from(keyHex, "hex"));
   const relay = new RelayConnection({
-    urls: resolveRelays(),
+    urls: resolveRelays(opts?.relays),
     authSigner: async (tmpl) => finalizeEvent(tmpl as never, secret),
   });
   const signed = finalizeEvent(buildPersonaEvent(keyHex, channelId, text, opts?.threadRoot) as never, secret);
@@ -72,4 +72,24 @@ export async function dmOwnerAsPersona(persona: string, ownerPubkey: string, tex
     relay.disconnect();
   }
   return toPeer.id;
+}
+
+/** Recover an existing persona root, including a validated legacy root recorded by the GUI. */
+export async function findPersonaRoot(persona: string, channelId: string, text: string, recordedId?: string, relayUrl?: string): Promise<string | undefined> {
+  const keyHex = getKey(`agent:${persona}`);
+  if (!keyHex) throw Error(`no local key for agent "${persona}"`);
+  const secret = Uint8Array.from(Buffer.from(keyHex,"hex"));
+  const relay = new RelayConnection({urls:resolveRelays(relayUrl),authSigner:async tmpl=>finalizeEvent(tmpl as never,secret)});
+  try {
+    // ponytail: an exact recorded ID bypasses this window; a lost legacy root
+    // older than 500 persona posts needs paginated recovery if required.
+    const filters = [{kinds:[KIND_CHANNEL_MESSAGE],authors:[getPublicKey(secret)],"#h":[channelId],limit:500}];
+    // ponytail: only unindexed legacy roots use this 500-message recovery window;
+    // normal workspace switches use the persisted relay/channel root map.
+    const { events, failures } = await relay.queryWithStatus(recordedId ? [...filters,{ids:[recordedId]}] : filters);
+    if (failures.length) throw Error("Miner history could not be fully read. Reconnect and retry before creating a thread.");
+    return events.filter(e=>e.kind === KIND_CHANNEL_MESSAGE && e.content === text && e.tags.some(t=>t[0] === "h" && t[1] === channelId)
+      && !e.tags.some(t=>t[0] === "e" && (t[3] === "root" || t[3] === "reply")))
+      .sort((a,b)=>a.created_at-b.created_at || a.id.localeCompare(b.id))[0]?.id;
+  } finally { relay.disconnect(); }
 }

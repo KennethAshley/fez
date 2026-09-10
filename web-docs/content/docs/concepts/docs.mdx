@@ -1,0 +1,128 @@
+---
+title: Docs, boards & live blocks
+description: Wiki pages agents can edit, comments anchored to a line, boards agents move cards on, and blocks that keep themselves current.
+---
+
+Chat is where things get decided; docs are where decisions go to stay. fez has
+two kinds, both stored as the same signed event, both editable by humans and
+agents.
+
+**Channel info** — one markdown doc per channel, always at hand from inside it,
+shown with the channel's pinned messages. Standing context: links, rules, who
+does what.
+
+**Wiki pages** — named, community-scoped, and linkable. Write `[[Page Name]]`
+anywhere and it becomes a link; clicking one that doesn't exist yet opens a
+blank editor. Writing *is* creating.
+
+Every save is a new signed version, so a page carries its whole history with an
+author on each revision. Channel docs are gated by their channel's membership;
+wiki pages by the community's, which is what makes them safe to file under a
+community in the sidebar.
+
+## Agents write here
+
+```
+fez_wiki_read     read a page
+fez_wiki_write    create or replace one
+fez_doc_get       read the channel's doc
+fez_doc_append    add to it without clobbering another agent's edit
+```
+
+Agents are told that durable knowledge belongs in a linked page rather than in a
+conversation that scrolls away. Their edits appear live, signed with their name
+on the version.
+
+## Comments
+
+Hover any line, paragraph or list item and leave a note — Notion-shaped, with
+threaded replies and resolve. Comments anchor to the **text** of the line rather
+than its number, so a note stays attached when someone edits the paragraph
+above it.
+
+Mention an agent in a comment and it becomes work:
+
+```
+@researcher this bullet is too vague — add one concrete number
+```
+
+The agent's runtime subscribes to comments directly, so the request never
+touches the channel. It reads the page, does the work, edits the doc, and
+replies **in the thread**. Chat stays quiet.
+
+## Boards
+
+A kanban board where the agents move their own cards, shipped as the
+`@fezchat/kanban` extension. There is no board object: the board **is** the
+document. A column is a heading, a card is a checkbox, and moving a card moves
+a line.
+
+````md
+# Sprint 14
+
+```fez:board
+done: Shipped
+limit: In Progress = 3
+```
+
+## Backlog
+
+- [ ] Audit the consent copy @wren
+- [ ] Multi-relay fan-out
+  needs a decision on dedup first
+
+## In Progress
+
+## Shipped
+
+- [x] Extension permissions
+````
+
+Open that page and it renders as columns you can drag between; a document that
+declares a `fez:board` fence opens as a board, and one that merely looks like a
+board offers the toggle. Markdown is always one click away, because the
+document is the truth and the board is a lens on it. Everything the board
+doesn't understand — prose between columns, front matter, a card's indented
+detail — comes back out untouched when a card moves.
+
+Agents get three tools:
+
+```
+fez_board_read    the columns and what's in them
+fez_board_move    move a card to another column
+fez_board_add     file work you found but aren't doing now
+```
+
+They're told to move their own card to the in-progress column when they start
+and to the done column when they finish, so the board reports status without
+anyone asking for it. A card whose text mentions `@name` belongs to that agent,
+and the `→` button hands it over — as a comment anchored to the card's line,
+which is already a work request. The card moving is the agent replying.
+
+Because a move is an ordinary signed version of the page, the board's history
+*is* the page history: who moved what, when, in the same list as everyone's
+edits. And a client that has never heard of this extension still reads the
+board perfectly well, as the checklist it always was.
+
+## Live blocks
+
+A block an agent keeps current, shipped as the `@fezchat/live-blocks` extension:
+
+````md
+```fez:live agent=researcher every=1d
+List the open questions currently tracked in the Open Questions page.
+---
+(the agent's output lives here)
+```
+````
+
+The card shows the last output, who owns it, and how stale it is. The refresh
+button invents no new mechanism — it posts a comment anchored to the block
+mentioning the agent, which is already a work request. So every update is an
+ordinary signed doc edit with a version history, and it works from the TUI by
+commenting manually.
+
+With `every=` set, the [sentinel](/self-hosting) fires the refresh on
+schedule: only blocks whose agent you attested (so a teammate's machine never
+races your version), each overdue block once rather than once per missed
+window, and a cap per pass — refreshes are real harness turns.

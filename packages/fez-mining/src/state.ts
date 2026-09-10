@@ -65,8 +65,13 @@ export interface MinerEntry {
   attention?: string;
   /** Non-secret resolved config values (schema defaults + stored overrides); secrets live in the keychain, not here. */
   config?: Record<string, string | number | boolean>;
-  /** The #mining channel event id of this miner's root message; set once by whichever side (GUI/headless) posts it first, so the other never double-posts. */
+  /** Root message for the current workspace/channel; retained for older consumers. */
   threadRootId?: string;
+  /** Stable channel ID for the recorded root; names may change. */
+  threadChannelId?: string;
+  threadRelay?: string;
+  /** Root IDs by JSON.stringify([relay ?? null, channelId]); switching scope retains history. */
+  threadRoots?: Record<string, string>;
 }
 export interface MiningState {
   miners: MinerEntry[];

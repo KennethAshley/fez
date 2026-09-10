@@ -41,6 +41,8 @@ export interface ChannelRef {
   name: string;
   source?: string;
   meta?: Record<string, string>;
+  archived?: boolean;
+  visibility?: "open" | "closed";
 }
 
 /**

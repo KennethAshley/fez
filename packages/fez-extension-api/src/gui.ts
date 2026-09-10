@@ -28,7 +28,17 @@ export type MountRender = (host?: HTMLElement) => El | Dispose | void;
 export interface RepoChannelLike {
   id: string;
   name: string;
+  source?: string;
+  archived?: boolean;
+  visibility?: "open" | "closed";
   meta?: Record<string, string>;
+}
+
+/** Adds extension views to a native channel; an unbound nav keeps its own render. */
+export interface ChannelWorkspace {
+  getChannelId: () => string | undefined;
+  tabs: Array<{ id: string; label: string; render: MountRender }>;
+  summary?: (props: { openTab: (id: string) => void }, host?: HTMLElement) => El | Dispose | void;
 }
 
 /** A fez artifact, as the gui seams pass it around. */
@@ -171,14 +181,18 @@ export interface GuiExtensionApi {
    * host's. Optional — hosts predating the spec don't offer it.
    */
   openGuestDm?(guest: { pk: string; relay: string; name?: string; picture?: string }): void;
-  /** Open a thread in the current channel view. */
+  /** Navigate to a native channel thread, including from another view. */
   openThread(channelId: string, rootId: string): void;
+  /** Open the native channel Activity. Absent on older hosts or without `ui`. */
+  openChannel?(id: string): void;
+  /** Replace the side pane; the host disposes it on close, replacement, or unload. */
+  openPanel?(title: string, render: MountRender): void;
   /**
    * A top-level view in the rail, beside inbox and docs — for a feature
    * that is a PLACE (loom's ▣ tools gallery, a board). The host owns the
    * button and the main-column shell; you own everything inside.
    */
-  registerNavView(name: string, opts: { glyph: string; label: string }, render: MountRender): void;
+  registerNavView(name: string, opts: { glyph: string; label: string; channelWorkspace?: ChannelWorkspace }, render: MountRender): void;
   /**
    * An action mounted in an open artifact pane's header, next to ✕. Your
    * component receives the artifact and owns its own state. `render` may
@@ -285,8 +299,9 @@ export interface GuiExtensionApi {
 export interface GuiClient {
   pubkey: string;
   relayInfo(): (Record<string, unknown> & { pubkey?: string }) | undefined;
-  channelsFrom(source: string): RepoChannelLike[];
-  ensureChannel(spec: { name: string; source?: string; meta?: Record<string, string> }): Promise<string | undefined>;
+  channelsFrom(source?: string): RepoChannelLike[];
+  workspaces(): { relay: string; name: string; active: boolean }[];
+  ensureChannel(spec: { id?: string; name: string; source?: string; visibility?: "open" | "closed"; meta?: Record<string, string> }): Promise<string | undefined>;
   on(event: "channelsChanged", handler: () => void): () => void;
   sendChannelMessage(text: string, opts?: { channelId?: string }): Promise<unknown>;
   /** Channel docs the client has absorbed, by channel id. */
