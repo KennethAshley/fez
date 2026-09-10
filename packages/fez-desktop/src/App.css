@@ -710,6 +710,9 @@ select.ob-input:hover { border-color: var(--accent); }
 .emoji-picker button:hover { background: var(--bg2); }
 .pill.mine-pill { border-color: var(--accent); background: var(--bg-mine); }
 .edit-banner { padding: 0 18px 4px; color: var(--yellow); font-size: 12px; }
+.history-status { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 12px 18px; color: var(--fg-dim); font-size: 13px; }
+.history-status[role="alert"] { color: var(--yellow); }
+.history-status button { flex-shrink: 0; }
 .composer textarea.editing { border-color: var(--yellow); }
 
 /* markdown inside bubbles */
@@ -1225,6 +1228,9 @@ button.author:hover { text-decoration: underline; }
   font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
   background: var(--bg2); color: var(--accent); border-radius: 8px; padding: 1px 7px;
 }
+.npub-copy { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.npub-copy:disabled { cursor: default; }
+.npub-copy.pk-code { width: 100%; }
 .pk-code {
   display: block; word-break: break-all; background: var(--bg0); border: 1px solid var(--hairline);
   border-radius: 6px; padding: 8px 10px; font-family: var(--font-mono); font-size: 11px; cursor: pointer;

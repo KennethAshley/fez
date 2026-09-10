@@ -1,4 +1,5 @@
 use nostr::JsonUtil as _;
+mod bounded_command;
 mod git_install;
 mod managed_agents;
 mod managed_node;
@@ -660,44 +661,16 @@ fn harness_search_dirs() -> Vec<String> {
 /// separate — "installed" (the CLI exists) and "signed in" (its auth
 /// probe says so) — plus whether fez's managed adapter is runnable.
 /// READY may only be claimed when all three hold.
-/// Run `claude auth status` with a REAL 10s kill deadline (Buzz's
-/// number). The old version documented the deadline and never had one —
-/// a bare .output() waits forever on a hung CLI. Small output only:
-/// reading the pipes after exit is safe because auth-status JSON is far
-/// below the pipe buffer.
+/// Auth probes share the bounded runner: noisy output and inherited pipes
+/// must not stall onboarding or make a truncated result look authoritative.
 fn probe_claude_auth(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    use std::process::Stdio;
-    let child = Command::new(path)
-        .args(["auth", "status"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let Ok(mut child) = child else { return false };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-            Err(_) => return false,
-        }
-    }
-    let mut out = String::new();
-    if let Some(mut so) = child.stdout.take() {
-        let _ = so.read_to_string(&mut out);
-    }
-    let mut err = String::new();
-    if let Some(mut se) = child.stderr.take() {
-        let _ = se.read_to_string(&mut err);
-    }
-    managed_node::parse_claude_auth(&out)
-        .or_else(|| managed_node::parse_claude_auth(&err))
+    let Ok(output) = bounded_command::run(
+        Command::new(path).args(["auth", "status"]),
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    ) else { return false };
+    std::str::from_utf8(&output.stdout).ok().and_then(managed_node::parse_claude_auth)
+        .or_else(|| std::str::from_utf8(&output.stderr).ok().and_then(managed_node::parse_claude_auth))
         .unwrap_or(false)
 }
 
@@ -2297,7 +2270,8 @@ async fn spawn_extension_agent(
 /// difference is shape — this runs to completion and hands back stdout,
 /// where spawn starts a standing process and hands back a pid. Args are
 /// plain strings passed verbatim to the extension's OWN binary; a 120s
-/// deadline kills a hang rather than parking a webview promise forever.
+/// deadline covers the process and pipe capture. Combined output over 8 MiB
+/// fails explicitly so consumers never parse silently truncated output.
 #[tauri::command]
 async fn run_extension_bin(
     extension: String,
@@ -2310,38 +2284,14 @@ async fn run_extension_bin(
         extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
         let program = home.join("bin").join(&bin);
         managed_node::ensure_for_program(&program)?;
-        use std::io::Read;
-        use std::process::Stdio;
-        let mut child = Command::new(&program)
-            .args(&args)
-            .env("PATH", subprocess_path_env())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("{bin}: {e}"))?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if std::time::Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("{bin} ran past the 120s deadline and was stopped"));
-                }
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                Err(e) => return Err(format!("{bin}: {e}")),
-            }
-        }
-        let mut stdout = String::new();
-        if let Some(mut so) = child.stdout.take() {
-            let _ = so.read_to_string(&mut stdout);
-        }
-        let mut stderr = String::new();
-        if let Some(mut se) = child.stderr.take() {
-            let _ = se.read_to_string(&mut stderr);
-        }
-        let code = child.wait().ok().and_then(|st| st.code()).unwrap_or(-1);
+        let output = bounded_command::run(
+            Command::new(&program).args(&args).env("PATH", subprocess_path_env()),
+            std::time::Duration::from_secs(120),
+            8 * 1024 * 1024,
+        ).map_err(|e| format!("{bin}: {e}"))?;
+        let code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8(output.stdout).map_err(|_| format!("{bin}: stdout was not valid UTF-8"))?;
+        let stderr = String::from_utf8(output.stderr).map_err(|_| format!("{bin}: stderr was not valid UTF-8"))?;
         Ok(serde_json::json!({ "code": code, "stdout": stdout, "stderr": stderr }))
     })
     .await
@@ -2886,6 +2836,21 @@ mod harness_detect_tests {
         assert!(binary_in_dirs("claude", &dirs));
         assert!(!binary_in_dirs("codex", &dirs));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod auth_probe_tests {
+    use super::probe_claude_auth;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn auth_probe_drains_noisy_stderr_before_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("claude");
+        std::fs::write(&program, "#!/bin/sh\nhead -c 262144 /dev/zero >&2\nprintf '{\"loggedIn\":true}'\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(probe_claude_auth(&program));
     }
 }
 

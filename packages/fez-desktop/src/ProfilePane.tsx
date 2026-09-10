@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import PersonaEditor from "./PersonaEditor";
 import type { FezClient } from "@fezchat/client";
 import Avatar from "./Avatar";
+import CopyNpub from "./CopyNpub";
 
 /**
  * Profile card — click any name, get the person (or agent) behind it.
@@ -30,7 +31,6 @@ export default function ProfilePane({
   onSettings: () => void;
   onClose: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [localPersona, setLocalPersona] = useState<string>();
   const agentNameForFiles = client.agents().get(pk);
@@ -52,12 +52,6 @@ export default function ProfilePane({
   const role = client.state.roleOf(pk);
   const canInvite = client.state.isOwner(client.pubkey) && !client.state.workspace.members.has(pk) && !self;
   const [inviteState, setInviteState] = useState<"idle" | "sending" | "done" | "error">("idle");
-
-  const copyPk = () => {
-    void navigator.clipboard.writeText(pk);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   const invite = async () => {
     setInviteState("sending");
@@ -109,10 +103,8 @@ export default function ProfilePane({
           {!live && !status && <div className="portrait-line dim">{online ? "online" : "offline"}</div>}
         </div>
 
-        <div className="manage-section">pubkey</div>
-        <code className="pk-code" onClick={copyPk} title="click to copy">
-          {copied ? "✓ copied" : pk}
-        </code>
+        <div className="manage-section">npub</div>
+        <CopyNpub pk={pk} className="pk-code" />
         <div className="settings-hint">This key IS the identity — names are just labels people publish for it.</div>
 
         <div className="agent-actions profile-actions">

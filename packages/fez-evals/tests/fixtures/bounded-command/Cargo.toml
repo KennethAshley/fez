@@ -1,0 +1,15 @@
+[package]
+name = "fez-bounded-command-evals"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Compile the production runner directly, without Tauri's desktop libraries.
+[lib]
+path = "../../../../fez-desktop/src-tauri/src/bounded_command.rs"
+
+[dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
