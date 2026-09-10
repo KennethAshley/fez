@@ -2892,10 +2892,10 @@ button.author:hover { text-decoration: underline; }
 .bt-repo { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── docs view: wiki pages + channel docs (notion+obsidian) ── */
-.wiki-main { display: flex; flex-direction: row; padding: 0; }
+.wiki-main { display: flex; flex-direction: row; padding: 0; container-type: inline-size; container-name: docs; }
 .wiki-list {
-  width: 230px; flex: none; border-right: 1px solid var(--hairline);
-  overflow-y: auto; padding: 10px 8px;
+  width: 180px; flex: none; border-right: 1px solid var(--hairline);
+  overflow-y: auto; padding: 14px 8px; background: var(--bg0);
 }
 .wiki-list-head { font-family: var(--font-mono); color: var(--fg-dim); font-size: 12px; padding: 2px 8px 8px;
   display: flex; align-items: center; justify-content: space-between; }
@@ -2912,15 +2912,99 @@ button.author:hover { text-decoration: underline; }
 /* The page scrolls; the composer does not. Same shape as a channel:
    what you're reading moves, what you type into stays put. */
 .wiki-page { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.wiki-scroll { flex: 1; overflow-y: auto; padding: 18px 26px; min-height: 0; }
+.wiki-document-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.wiki-document { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.wiki-scroll { flex: 1; overflow-y: auto; padding: 24px 32px; min-height: 0; }
 /* It IS a .topbar-row now — same height, same rule, same everything as
    the channel header. Only the horizontal inset differs, matching
    .wiki-scroll's 26px so the title sits over the text it names. */
 .wiki-page-head { gap: 10px; padding-left: 26px; padding-right: 26px; }
-.wiki-title { font-family: var(--font-mono); font-size: 15px; font-weight: 600; }
-.wiki-body { max-width: 760px; }
-.wiki-editor { height: calc(100% - 60px); display: flex; flex-direction: column; gap: 8px; }
-.wiki-editor .doc-textarea { flex: 1; min-height: 320px; }
+.wiki-title { font-size: 14px; font-weight: 500; }
+.wiki-body { max-width: 72ch; margin: 20px auto 0; font-size: 16px; line-height: 1.8; }
+.wiki-body h1 { letter-spacing: -0.6px; font-size: 28px; line-height: 1.3; }
+.wiki-body h2 { letter-spacing: -0.3px; font-size: 20px; line-height: 1.4; }
+.wiki-body .doc-line { padding: 6px 10px; margin: 0 -10px 8px; border-left: 2px solid transparent; }
+.wiki-body .doc-line.commenting { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, var(--bg0)); }
+.wiki-body .doc-line-changed { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--bg0)); }
+.wiki-body .doc-line-body > :first-child { margin-top: 0; }
+.wiki-body .doc-line-body > :last-child { margin-bottom: 0; }
+.wiki-body .line-comment { opacity: .6; font-size: 16px; min-width: 28px; min-height: 28px; }
+.wiki-body .line-comment:focus-visible, .wiki-body .line-comment.has { opacity: 1; }
+.doc-edit-receipt { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--accent); font-size: 11px; padding: 0 0 6px; }
+.doc-edit-receipt button { color: inherit; font: inherit; background: none; border: 0; padding: 2px; cursor: pointer; text-decoration: underline; }
+.doc-load-error { color: var(--red); font-size: 13px; padding: 10px 0; }
+.doc-conversation { display: flex; flex-direction: column; width: 320px; flex: none; min-height: 0; border-left: 1px solid var(--hairline); background: var(--bg0); }
+.doc-activity-tabs { display: flex; align-items: center; gap: 20px; padding: 0 18px; border-bottom: 1px solid var(--hairline); flex: none; }
+.doc-activity-tabs button { padding: 14px 0 12px; color: var(--fg-dim); background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.doc-activity-tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.doc-activity-tabs button span { margin-left: 5px; font-size: 11px; color: var(--fg-dim); }
+.doc-discussion-scroll { flex: 1; overflow: auto; min-height: 0; padding: 16px 18px; }
+.doc-conversation [hidden] { display: none; }
+.doc-discussion-scope { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+.doc-discussion-scope .mini { font-size: 11px; }
+.doc-selected-quote { border-left: 2px solid var(--accent); border-radius: 0 5px 5px 0; margin: 0 0 22px; padding: 9px 12px; background: color-mix(in srgb, var(--yellow) 7%, var(--bg0)); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow-y: auto; }
+.doc-selected-quote small { display: block; color: var(--fg-dim); font-size: 11px; margin-top: 8px; }
+.doc-discussion-intro h3 { font-size: 16px; font-weight: 500; margin: 12px 0 6px; }
+.doc-discussion-intro p { font-size: 13px; color: var(--fg-dim); line-height: 1.7; margin: 0 0 22px; }
+.doc-discussion-message { margin-bottom: 22px; }
+.doc-discussion-author { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; font-size: 12px; }
+.doc-discussion-author strong { font-weight: 500; }
+.doc-discussion-author time { margin-left: auto; color: var(--fg-dim); font-size: 10px; }
+.doc-person { display: inline-grid; place-items: center; width: 25px; height: 25px; flex: none; border: 1px solid var(--hairline); border-radius: 50%; color: var(--fg); font-size: 11px; }
+.doc-person.agent { border-radius: 7px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg0)); }
+.doc-message-markdown { margin: 7px 0 0 32px; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.doc-message-markdown > :first-child { margin-top: 0; }
+.doc-message-markdown > :last-child { margin-bottom: 0; }
+.doc-message-markdown pre { overflow-x: auto; font-size: 12px; }
+.doc-message-markdown img { max-width: 100%; }
+.doc-discussion-notice { color: var(--fg-dim); font-size: 12px; line-height: 1.6; margin: 10px 0 16px; }
+.doc-rewrite { display: block; width: 100%; padding: 9px 8px; border: 1px solid var(--hairline); border-radius: 6px; color: var(--accent); background: var(--bg1); font: inherit; font-size: 12px; cursor: pointer; }
+.doc-rewrite:hover { border-color: var(--accent); }
+.doc-discussion-compose { flex: none; padding: 10px 12px 12px; }
+.doc-discussion-compose-box { border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg1); }
+.doc-discussion-compose .mention-box { border: 0; background: transparent; box-shadow: none; }
+.doc-discussion-compose .comment-input { background: transparent; border: 0; box-shadow: none; padding: 12px; margin: 0; font-family: inherit; font-size: 13px; min-height: 88px; max-height: 220px; }
+.doc-discussion-compose .comment-input:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.doc-discussion-compose-actions { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 4px 8px 8px; }
+.doc-discussion-compose-actions label { display: flex; min-width: 0; align-items: center; gap: 5px; color: var(--fg-dim); font-size: 11px; }
+.doc-discussion-compose-actions select { max-width: 160px; min-width: 0; font: inherit; color: var(--accent); border: 0; background: var(--bg1); padding: 5px 0; }
+.doc-discussion-compose-actions .agent-action { color: var(--bg0); background: var(--accent); border-color: var(--accent); }
+.doc-discussion-hint { color: var(--fg-dim); font-size: 11px; line-height: 1.5; text-align: center; margin-top: 8px; }
+.doc-discussion-error { color: var(--red); font-size: 12px; padding: 8px 16px; overflow-wrap: anywhere; }
+.doc-thread-list { display: flex; flex-direction: column; }
+.doc-thread-link { display: flex; flex-direction: column; align-items: stretch; gap: 5px; text-align: left; border: 0; border-top: 1px solid var(--hairline); background: none; color: var(--fg); padding: 12px 0; cursor: pointer; font: inherit; }
+.doc-thread-link > span { color: var(--accent); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.doc-thread-link strong { font-size: 12px; font-weight: 400; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.doc-thread-link small { font-size: 11px; color: var(--fg-dim); }
+.doc-change-heading { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.doc-change-heading span { color: var(--fg-dim); font-size: 11px; }
+.doc-change-label { font-size: 11px; color: var(--fg-dim); margin: 18px 0 7px; }
+.doc-change-before, .doc-change-after { font-family: inherit; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: 10px; border-radius: 5px; }
+.doc-change-before { background: color-mix(in srgb, var(--red) 9%, var(--bg0)); }
+.doc-change-after { background: color-mix(in srgb, var(--accent) 14%, var(--bg0)); }
+.doc-change-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.doc-version-list { border-top: 1px solid var(--hairline); margin-top: 24px; padding-top: 12px; }
+.doc-version-list h3 { font-size: 12px; font-weight: 500; margin: 0 0 10px; }
+.doc-version-list .version-row { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; }
+.doc-version-list time { color: var(--fg-dim); font-size: 11px; }
+
+@container docs (max-width: 900px) {
+  .wiki-list { width: 145px; }
+  .doc-conversation { width: 290px; }
+  .wiki-scroll { padding: 20px; }
+}
+
+@container docs (max-width: 730px) {
+  .wiki-document-layout { flex-direction: column; }
+  .wiki-document { min-height: 130px; }
+  .doc-conversation { width: 100%; height: 50%; min-height: 270px; border-left: 0; border-top: 1px solid var(--hairline); }
+  .doc-discussion-compose .comment-input { min-height: 58px; max-height: 120px; }
+  .doc-discussion-hint { margin-top: 4px; }
+  .wiki-title { font-size: 12px; }
+  .wiki-page-head { padding-left: 18px; padding-right: 18px; }
+}
+.wiki-editor { height: 100%; min-height: 240px; display: flex; flex-direction: column; gap: 8px; min-width: 0; border: 0; padding: 0; margin: 0; }
+.wiki-editor .doc-textarea { flex: 1; min-height: 0; }
 .wiki-versions { margin-top: 16px; border-top: 1px solid var(--hairline); padding-top: 8px; max-width: 760px; }
 .wiki-link { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); }
 .wiki-link.missing { color: var(--fg-dim); border-bottom-color: var(--fg-dim); }

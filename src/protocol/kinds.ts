@@ -383,7 +383,8 @@ export const KIND_REMINDER_V2 = 30176;
 /**
  * Channel doc — the living document per channel (Buzz's canvas 40100,
  * fez-shaped as versioned markdown). Regular kind = free history; tags
- * ["h", channelId], ["c", communityId], ["base", parentVersionId]? for
+ * ["h", channelId], ["d", pageSlug]?, ["title", pageTitle]?,
+ * ["base", parentVersionId]? for
  * conflict detection; content = full markdown. Member-gated like
  * messages.
  */
@@ -392,12 +393,18 @@ export const KIND_DOC = 40100;
 /**
  * Doc comment — a Notion-style margin note anchored to a line of a doc
  * or wiki page, and the way you hand an agent work inside a document.
- * Tags: ["h", channelId], ["c", communityId] (member gating, same as
- * the doc), ["d", slug]? for wiki pages, ["anchor", lineText] — the
+ * Tags: ["h", channelId] (workspace member gating, same as the doc),
+ * ["d", slug]? for wiki pages, ["anchor", lineText] — the
  * TEXT of the commented line, not its number, so a comment survives
  * edits above it; ["e", parentCommentId] for replies; ["p", pk] per
- * @mention (an @agent mention summons it, same as in chat);
- * ["resolved", "1"] on a resolving event. Content = markdown.
+ * @mention (an @agent mention summons it, same as in chat).
+ * ["anchor-context", JSON.stringify({text, prefix, suffix})]? preserves
+ * an exact selection with nearby context to disambiguate repeated quotes;
+ * ambiguous/deleted selections remain accessible as unattached comments.
+ * ["writer", pubkey]? records the requested editing agent, not a grant
+ * of permissions; membership and ordinary author/summon gates still apply.
+ * ["resolved", "1"] resolves, ["resolved", "0"] reopens the root
+ * named by e; the newest marker wins. Content = markdown.
  */
 export const KIND_DOC_COMMENT = 40101;
 

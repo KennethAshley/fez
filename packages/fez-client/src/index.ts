@@ -1,3 +1,5 @@
+import { wikiSlug, orderVersions, assertDocBase, docCommentThreads, type DocAnchor } from "./docs.js";
+export * from "./docs.js";
 export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
 export {
   latestPerAddress,
@@ -455,6 +457,8 @@ export interface DocCommentReply {
 /** A comment thread anchored to a line of a doc (Notion's margin note). */
 export interface DocCommentThread extends DocCommentReply {
   anchor: string;
+  anchorContext?: DocAnchor;
+  writerPk?: string;
   resolved: boolean;
   replies: DocCommentReply[];
 }
@@ -485,43 +489,6 @@ export interface TaskState {
   done: boolean;
   byPk: string;
   ts: number;
-}
-
-/** [[Page Name]] → "page-name" — one slug rule everywhere (GUI, mcp, TUI). */
-export function wikiSlug(name: string): string {
-  return name.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
-}
-
-/**
- * Put a document's versions in order, oldest first — with the guarantee
- * that the LAST one is genuinely current.
- *
- * Sorting by timestamp is not enough. Every version carries a `base`
- * tag naming the version it was written on top of, and edits made in
- * quick succession — an agent moving two cards, a fast pair of drags on
- * a board — land in the same second. Two versions then tie, and which
- * one a reader calls "latest" comes down to the order a relay happened
- * to return them. The next edit bases itself on that answer, so the
- * loser's change silently disappears.
- *
- * The base chain says what came after what without consulting a clock:
- * the current version is the one nothing else was written on top of.
- * Timestamps only break ties between genuinely concurrent branches —
- * two people who edited the same base, where somebody's edit has to
- * lose and the version list is there to show them it happened.
- */
-export function orderVersions<T extends { id: string; created_at: number; tags: string[][] }>(events: T[]): T[] {
-  const sorted = [...events].sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1));
-  if (sorted.length < 2) return sorted;
-  const superseded = new Set(
-    events.map((event) => event.tags.find((t) => t[0] === "base")?.[1]).filter((id): id is string => !!id)
-  );
-  const tips = sorted.filter((event) => !superseded.has(event.id));
-  const tip = tips[tips.length - 1];
-  // No tip means the base tags form a cycle — corrupt, but not worth
-  // throwing over; the timestamp order is still something to show.
-  if (!tip || sorted[sorted.length - 1].id === tip.id) return sorted;
-  return [...sorted.filter((event) => event.id !== tip.id), tip];
 }
 
 export interface PinInfo {
@@ -558,6 +525,7 @@ export interface ClientEvents {
   channelsChanged: () => void;
   dmMessage: (dm: DmMessage & { peerPk: string }, ctx: { live: boolean }) => void;
   docChanged: (channelId: string) => void;
+  docCommentsChanged: (channelId: string) => void;
   jobsChanged: () => void;
   observerFrame: (agent: string, frame: ObserverEntry) => void;
   inputsChanged: () => void;
@@ -650,7 +618,8 @@ export class FezClient {
   private wikiMap = new Map<string, WikiDoc>();
   private artifactsByChannel = new Map<string, Artifact[]>();
   private seenArtifactIds = new Set<string>();
-  private seenDocIds = new Set<string>();
+  private docEvents = new Map<string, WireEvent>();
+  private docCommentEvents = new Map<string, WireEvent>();
 
   // payment receipts (47040), keyed by the message they e-tag
   private receiptsByTarget = new Map<string, WireEvent[]>();
@@ -1504,7 +1473,7 @@ export class FezClient {
   }
 
   async docVersions(channelId: string): Promise<WireEvent[]> {
-    const events = await this.wire.query([{ kinds: [K.DOC], "#h": [channelId], limit: 200 }]);
+    const events = await this.queryDocVersions({ kinds: [K.DOC], "#h": [channelId], limit: 200 });
     return orderVersions(
       events
         .filter((e) => this.state.isMember(e.pubkey))
@@ -1512,12 +1481,27 @@ export class FezClient {
     );
   }
 
-  async publishDoc(channelId: string, content: string, baseId?: string): Promise<void> {
-    await this.wire.publish({
+  private async queryDocVersions(filter: WireFilter): Promise<WireEvent[]> {
+    const { events, failures } = await this.queryHistory([filter]);
+    if (failures.length) throw new Error("Could not read the current document version; retry before saving.");
+    const merged = new Map([...this.docEvents.values(), ...events].map(event => [event.id, event]));
+    return [...merged.values()].filter(event =>
+      (!filter["#h"] || event.tags.some(t => t[0] === "h" && filter["#h"]!.includes(t[1]))) &&
+      (!filter["#d"] || event.tags.some(t => t[0] === "d" && filter["#d"]!.includes(t[1])))
+    );
+  }
+
+  async publishDoc(channelId: string, content: string, baseId?: string): Promise<WireEvent> {
+    const latest = (await this.docVersions(channelId)).at(-1);
+    assertDocBase(latest, baseId);
+    const event = await this.wire.publish({
       kind: K.DOC,
+      created_at: Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1),
       tags: [["h", channelId], ...(baseId ? [["base", baseId]] : [])],
       content,
     });
+    this.handleDocEvent(event);
+    return event;
   }
 
   /** Checkbox state for a doc — latest event per item wins. */
@@ -1579,7 +1563,7 @@ export class FezClient {
   }
 
   async wikiVersions(slug: string): Promise<WireEvent[]> {
-    const events = await this.wire.query([{ kinds: [K.DOC], "#d": [slug], limit: 200 }]);
+    const events = await this.queryDocVersions({ kinds: [K.DOC], "#d": [slug], limit: 200 });
     return orderVersions(
       // Workspace-scoped: a page belongs to the workspace, not to the
       // channel it happened to be written from. The relay IS that scope,
@@ -1597,83 +1581,65 @@ export class FezClient {
     const filter = opts.slug
       ? { kinds: [K.DOC_COMMENT], "#d": [opts.slug], limit: 500 }
       : { kinds: [K.DOC_COMMENT], "#h": [opts.channelId ?? ""], limit: 500 };
-    const events = (await this.wire.query([filter])).filter(
-      (e) => this.state.isMember(e.pubkey)
-    );
-    const roots = new Map<string, DocCommentThread>();
-    const replies: WireEvent[] = [];
-    const resolvedRoots = new Set<string>();
-    for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
-      const parent = event.tags.find((t) => t[0] === "e")?.[1];
-      if (event.tags.some((t) => t[0] === "resolved" && t[1] === "1")) {
-        if (parent) resolvedRoots.add(parent);
-        if (!event.content.trim()) continue; // pure resolve marker
-      }
-      if (parent) replies.push(event);
-      else {
-        roots.set(event.id, {
-          id: event.id,
-          anchor: event.tags.find((t) => t[0] === "anchor")?.[1] ?? "",
-          authorPk: event.pubkey,
-          text: event.content,
-          ts: event.created_at,
-          mentionPks: event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
-          resolved: false,
-          replies: [],
-        });
-      }
-    }
-    for (const reply of replies) {
-      const root = roots.get(reply.tags.find((t) => t[0] === "e")![1]);
-      if (root)
-        root.replies.push({
-          id: reply.id,
-          authorPk: reply.pubkey,
-          text: reply.content,
-          ts: reply.created_at,
-          mentionPks: reply.tags.filter((t) => t[0] === "p").map((t) => t[1]),
-        });
-    }
-    for (const id of resolvedRoots) {
-      const root = roots.get(id);
-      if (root) root.resolved = true;
-    }
-    return [...roots.values()].sort((a, b) => a.ts - b.ts);
+    const events = new Map([...this.docCommentEvents.values(), ...await this.wire.query([filter])].map(event => [event.id, event]));
+    for (const event of events.values()) if (this.state.isMember(event.pubkey)) this.docCommentEvents.set(event.id, event);
+    return docCommentThreads([...events.values()].filter(event => this.state.isMember(event.pubkey)), opts);
+  }
+
+  private handleDocComment(event: WireEvent): void {
+    if (this.docCommentEvents.has(event.id) || !this.state.isMember(event.pubkey)) return;
+    const channelId = event.tags.find(t => t[0] === "h")?.[1];
+    if (!channelId) return;
+    this.docCommentEvents.set(event.id, event);
+    this.emit("docCommentsChanged", channelId);
   }
 
   /** Leave a comment (or reply). Mentions are p-tagged so agents get summoned. */
   async publishDocComment(
     channelId: string,
     text: string,
-    opts: { anchor?: string; slug?: string; parentId?: string; mentionPks?: string[]; resolve?: boolean } = {}
-  ): Promise<void> {
-    await this.wire.publish({
+    opts: { anchor?: string; anchorContext?: DocAnchor; writerPk?: string; slug?: string; parentId?: string; mentionPks?: string[]; resolve?: boolean } = {}
+  ): Promise<WireEvent> {
+    if (opts.writerPk && !/^[a-f0-9]{64}$/.test(opts.writerPk)) throw new Error("Invalid writer pubkey");
+    if (opts.parentId) await this.docComments({ channelId, slug: opts.slug });
+    const related = [...this.docCommentEvents.values()].filter(event => event.id === opts.parentId || event.tags.some(t => t[0] === "e" && t[1] === opts.parentId));
+    const event = await this.wire.publish({
       kind: K.DOC_COMMENT,
+      created_at: Math.max(Math.floor(Date.now() / 1000), ...related.map(event => event.created_at + 1)),
       tags: [
         ["h", channelId],
-                ...(opts.slug ? [["d", opts.slug]] : []),
+        ...(opts.slug ? [["d", opts.slug]] : []),
         ...(opts.anchor ? [["anchor", opts.anchor.slice(0, 300)]] : []),
+        ...(opts.anchorContext ? [["anchor-context", JSON.stringify(opts.anchorContext)]] : []),
+        ...(opts.writerPk ? [["writer", opts.writerPk]] : []),
         ...(opts.parentId ? [["e", opts.parentId]] : []),
-        ...(opts.resolve ? [["resolved", "1"]] : []),
+        ...(opts.resolve !== undefined ? [["resolved", opts.resolve ? "1" : "0"]] : []),
         ...(opts.mentionPks ?? []).map((pk) => ["p", pk]),
       ],
       content: text,
     });
+    this.handleDocComment(event);
+    return event;
   }
 
-  async publishWikiDoc(channelId: string, name: string, content: string, baseId?: string): Promise<void> {
-    const slug = wikiSlug(name);
-    if (!slug) throw new Error(`"${name}" makes an empty page name`);
-    await this.wire.publish({
+  /** An existing page's address stays stable even when its displayed title changes. */
+  async publishWikiDoc(channelId: string, name: string, content: string, baseId?: string, slug = wikiSlug(name)): Promise<WireEvent> {
+    if (!slug || wikiSlug(slug) !== slug) throw new Error("Invalid document address.");
+    const latest = (await this.wikiVersions(slug)).at(-1);
+    assertDocBase(latest, baseId);
+    const event = await this.wire.publish({
       kind: K.DOC,
+      created_at: Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1),
       tags: [
         ["h", channelId],
-                ["d", slug],
+        ["d", slug],
         ["title", name.trim()],
         ...(baseId ? [["base", baseId]] : []),
       ],
       content,
     });
+    this.handleDocEvent(event);
+    return event;
   }
 
   /**
@@ -2871,7 +2837,7 @@ export class FezClient {
     if (channelIds.length > 0) {
       filters.push(
         {
-          kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK, K.ARTIFACT, K.PAYMENT_RECEIPT],
+          kinds: [K.MESSAGE, K.TYPING, K.REACTION, K.DELETION, K.DRAFT, K.WORKFLOW_RUN, K.DOC, K.DOC_COMMENT, K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK, K.ARTIFACT, K.PAYMENT_RECEIPT],
           "#h": channelIds,
           since: Math.floor(Date.now() / 1000),
         },
@@ -2900,6 +2866,7 @@ export class FezClient {
       case K.MSG_PIN: return this.handleMsgPin(event);
       case K.MSG_BOOKMARK: return this.handleMsgBookmark(event);
       case K.DOC: return this.handleDocEvent(event);
+      case K.DOC_COMMENT: return this.handleDocComment(event);
       case K.ARTIFACT: return this.absorbArtifact(event);
       case K.PAYMENT_RECEIPT: return this.handleReceipt(event);
       case K.AGENT_METADATA: return this.absorbName(event);
@@ -3302,7 +3269,7 @@ export class FezClient {
   }
 
   private absorbDocEvent(event: WireEvent): string | undefined {
-    if (this.seenDocIds.has(event.id)) return undefined;
+    if (this.docEvents.has(event.id)) return undefined;
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     if (!channelId) return undefined;
     // A d tag makes it a named wiki page, not the channel's doc — pages
@@ -3312,7 +3279,12 @@ export class FezClient {
       ? this.state.isMember(event.pubkey)
       : this.state.isMember(event.pubkey); // workspace-wide either way
     if (!allowed) return undefined;
-    this.seenDocIds.add(event.id);
+    this.docEvents.set(event.id, event);
+    // ponytail: scan cached versions on arrival; index by document if large histories make this costly.
+    const latest = orderVersions([...this.docEvents.values()].filter(version => slug
+      ? version.tags.some(t => t[0] === "d" && t[1] === slug)
+      : !version.tags.some(t => t[0] === "d") && version.tags.some(t => t[0] === "h" && t[1] === channelId)
+    ).filter(version => this.state.isMember(version.pubkey))).at(-1)!;
     if (slug) {
       // Wiki pages are workspace-scoped, and the workspace is the relay
       // — the slug alone addresses a page now.
@@ -3322,12 +3294,12 @@ export class FezClient {
         this.wikiMap.set(key, (page = { slug, title: slug, channelId, count: 0, latestId: "", latestTs: 0, latestAuthor: "", latestContent: "" }));
       }
       page.count++;
-      if (event.created_at > page.latestTs || (event.created_at === page.latestTs && event.id < page.latestId)) {
-        page.latestTs = event.created_at;
-        page.latestId = event.id;
-        page.latestAuthor = event.pubkey;
-        page.latestContent = event.content;
-        page.channelId = channelId;
+      if (page.latestId !== latest.id) {
+        page.latestTs = latest.created_at;
+        page.latestId = latest.id;
+        page.latestAuthor = latest.pubkey;
+        page.latestContent = latest.content;
+        page.channelId = latest.tags.find(t => t[0] === "h")?.[1] ?? channelId;
         // Title precedence: the explicit tag, else the page's own first
         // heading, else the slug. Agents writing via fez_wiki_write don't
         // always set the tag, and "open-questions" is a worse label than
@@ -3337,8 +3309,8 @@ export class FezClient {
         // ("open-questions") carries nothing — agents pass the slug as
         // the page name when that's how they were asked for it — so the
         // heading in the content wins over it.
-        const tagged = event.tags.find((t) => t[0] === "title")?.[1]?.trim();
-        const heading = /^#{1,6}\s+(.+)$/m.exec(event.content)?.[1]?.trim();
+        const tagged = latest.tags.find((t) => t[0] === "title")?.[1]?.trim();
+        const heading = /^#{1,6}\s+(.+)$/m.exec(latest.content)?.[1]?.trim();
         page.title = (tagged && tagged !== slug ? tagged : undefined) ?? heading ?? tagged ?? slug;
       }
       return channelId;
@@ -3346,11 +3318,11 @@ export class FezClient {
     let info = this.docsByChannelMap.get(channelId);
     if (!info) this.docsByChannelMap.set(channelId, (info = { count: 0, latestId: "", latestTs: 0, latestAuthor: "", latestContent: "" }));
     info.count++;
-    if (event.created_at > info.latestTs || (event.created_at === info.latestTs && event.id < info.latestId)) {
-      info.latestTs = event.created_at;
-      info.latestId = event.id;
-      info.latestAuthor = event.pubkey;
-      info.latestContent = event.content;
+    if (info.latestId !== latest.id) {
+      info.latestTs = latest.created_at;
+      info.latestId = latest.id;
+      info.latestAuthor = latest.pubkey;
+      info.latestContent = latest.content;
     }
     return channelId;
   }

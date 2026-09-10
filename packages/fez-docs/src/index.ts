@@ -139,16 +139,16 @@ export default function docs(api: FezExtensionAPI): void {
     if (sub === "set" || sub === "append") {
       const text = args.trim().slice(sub.length).trim().replace(/\\n/g, "\n");
       if (!text) return ctx.reply(`Usage: /doc ${sub} <markdown — \\n for newlines>`);
-      const versions = await client.docVersions(current.channel.id, current.community.id);
+      const versions = await client.docVersions(current.channel.id);
       const latest = versions.at(-1);
       const content = sub === "append" && latest ? `${latest.content}\n\n${text}` : text;
-      await client.publishDoc(current.channel.id, current.community.id, content, latest?.id);
+      await client.publishDoc(current.channel.id, content, latest?.id);
       ctx.reply(`📄 doc ${sub === "append" ? "appended" : "updated"} (v${versions.length + 1}). /doc to read.`);
       return;
     }
 
     if (sub === "history") {
-      const versions = await client.docVersions(current.channel.id, current.community.id);
+      const versions = await client.docVersions(current.channel.id);
       if (versions.length === 0) return ctx.reply("No doc yet — /doc set <text> starts one.");
       const baseOf = (v: { tags: string[][] }) => v.tags.find((t) => t[0] === "base")?.[1];
       const childrenByBase = new Map<string, number>();
@@ -171,11 +171,11 @@ export default function docs(api: FezExtensionAPI): void {
     if (sub === "show") {
       const no = Number(rest[0]);
       if (!no) return ctx.reply("Usage: /doc show <version from /doc history>");
-      await openDocView(current.channel.id, current.community.id, current.channel.name, no);
+      await openDocView(current.channel.id, current.channel.name, no);
       return;
     }
 
-    await openDocView(current.channel.id, current.community.id, current.channel.name);
+    await openDocView(current.channel.id, current.channel.name);
   });
 
   // Startup panel fill happens as docChanged/channelsChanged fire during

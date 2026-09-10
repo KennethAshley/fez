@@ -10,7 +10,7 @@ import { formatLiveBlock, isDue, parseLiveBlock, parseLiveCommand, LIVE_LANG } f
 interface ClientLike {
   state: { scope?: { channelId: string } };
   docsByChannel(): ReadonlyMap<string, { latestContent: string; latestId: string }>;
-  publishDoc(channelId: string, content: string, baseId?: string): Promise<void>;
+  publishDoc(channelId: string, content: string, baseId?: string): Promise<unknown>;
 }
 
 export default function liveBlocks(api: FezExtensionAPI): void {

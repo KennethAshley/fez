@@ -2,6 +2,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import type { Filter } from "nostr-tools";
+import { wikiSlug, orderVersions, assertDocBase, docCommentThreads } from "../../fez-client/src/docs.js";
+import { WorkspaceState } from "../../fez-client/src/workspace-state.js";
+import type { WireEvent } from "../../fez-client/src/index.js";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
@@ -18,6 +22,7 @@ import {
   KIND_AGENT_ENGRAM,
   allowedMediaHosts,
   fetchAttachment,
+  fetchRelayInfo,
   loadSettings,
 } from "@fezchat/protocol";
 
@@ -404,114 +409,131 @@ server.registerTool(
   }
 );
 
-// ── Channel doc ──────────────────────────────────────────────────────────
+// ── Versioned documents ──────────────────────────────────────────────────
 
-async function latestDoc(channelId: string) {
-  const versions = await relay.query([{ kinds: [40100], "#h": [channelId], limit: 200 }]);
-  return versions
-    .filter((v) => !v.tags.some((t) => t[0] === "d")) // named wiki pages aren't the channel doc
-    .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1))
-    .at(-1);
+const docReadVersions = new Map<string, string | undefined>();
+const publishedDocs = new Map<string, WireEvent>();
+const docKey = (channelId: string, slug?: string) => slug ? `page:${slug}` : `channel:${channelId}`;
+
+async function trustedDocEvents(filter: Filter): Promise<WireEvent[]> {
+  const [info, result] = await Promise.all([
+    fetchRelayInfo(relayUrls[0]),
+    relay.queryWithStatus([filter, { kinds: [47102], "#d": ["roster"] }, { kinds: [30047], "#d": ["bans"] }]),
+  ]);
+  if (result.failures.length) throw new Error("Could not read the current document version and membership. Retry before writing.");
+  const state = new WorkspaceState();
+  state.describe({ owner: info?.pubkey });
+  for (const kind of [47102, 30047]) for (const event of result.events.filter(e => e.kind === kind)) state.absorb(event);
+  if (!state.isMember(myPubkey)) throw new Error("Document tools require workspace membership.");
+  return result.events.filter(event => filter.kinds?.includes(event.kind) && state.isMember(event.pubkey));
+}
+
+async function latestDocument(channelId: string, slug?: string) {
+  const filter = slug ? { kinds: [40100], "#d": [slug], limit: 200 } : { kinds: [40100], "#h": [channelId], limit: 200 };
+  const events = (await trustedDocEvents(filter)).filter(event => slug || !event.tags.some(t => t[0] === "d"));
+  const own = publishedDocs.get(docKey(channelId, slug));
+  return orderVersions([...new Map([...events, ...(own ? [own] : [])].map(event => [event.id, event])).values()]).at(-1);
+}
+
+async function writeDocument(channelId: string, page: string | undefined, markdown: string, baseId?: string) {
+  const slug = page === undefined ? undefined : wikiSlug(page);
+  if (page !== undefined && !slug) throw new Error(`"${page}" makes an empty page name.`);
+  const latest = await latestDocument(channelId, slug);
+  const key = docKey(channelId, slug);
+  assertDocBase(latest, baseId ?? docReadVersions.get(key));
+  const event = sign({
+    kind: 40100,
+    created_at: Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1),
+    tags: [
+      ["h", channelId],
+      ...(slug ? [["d", slug], ["title", latest?.tags.find(t => t[0] === "title")?.[1] ?? page!.trim()]] : []),
+      ...(latest ? [["base", latest.id]] : []),
+    ],
+    content: markdown,
+  });
+  await relay.publish(event);
+  publishedDocs.set(key, event);
+  docReadVersions.set(key, event.id);
+  return event;
 }
 
 server.registerTool(
   "fez_doc_get",
-  { description: "Read a channel's shared markdown doc.", inputSchema: { channel: z.string() } },
+  { description: "Read a channel's shared markdown doc and its exact version ID. Read before editing.", inputSchema: { channel: z.string() } },
   async ({ channel }) => {
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
-    const latest = await latestDoc(ref.channelId);
-    return text(latest?.content ?? `#${ref.name} has no doc yet.`);
+    const latest = await latestDocument(ref.channelId);
+    docReadVersions.set(docKey(ref.channelId), latest?.id);
+    return text(latest ? `Version: ${latest.id}\n\n${latest.content}` : `#${ref.name} has no doc yet. Version: none`);
   }
 );
 
 server.registerTool(
   "fez_doc_append",
   {
-    description: "Append markdown to a channel's shared doc (appends never clobber another agent's edit).",
-    inputSchema: { channel: z.string(), markdown: z.string() },
+    description: "Append markdown to a channel doc, checking the version before publishing. Concurrent relay writes can still conflict; read the result before further changes.",
+    inputSchema: { channel: z.string(), markdown: z.string(), baseId: z.string().optional() },
   },
-  async ({ channel, markdown }) => {
+  async ({ channel, markdown, baseId }) => {
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
-    const latest = await latestDoc(ref.channelId);
-    const createdAt = Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1);
-    await relay.publish(
-      sign({
-        kind: 40100,
-        created_at: createdAt,
-        tags: [["h", ref.channelId], ...(latest ? [["base", latest.id]] : [])],
-        content: latest ? `${latest.content}\n\n${markdown}` : markdown,
-      })
-    );
-    return text(`Appended to #${ref.name}'s doc.`);
+    const latest = await latestDocument(ref.channelId);
+    if (baseId !== undefined) assertDocBase(latest, baseId);
+    const event = await writeDocument(ref.channelId, undefined, latest ? `${latest.content}\n\n${markdown}` : markdown, latest?.id);
+    return text(`Appended to #${ref.name}'s doc. Version: ${event.id}`);
   }
 );
-
-// ── Wiki pages ───────────────────────────────────────────────────────────
-// Named 40100 docs (["d", slug]) — the community's notion+obsidian layer.
-// Pages [[link]] to each other by name; the GUI docs view renders the
-// same events, so an agent's edit appears there live.
-
-/** Same slug rule as @fezchat/client wikiSlug — the two must agree or links break. */
-const wikiSlug = (name: string) =>
-  name.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
-
-async function latestWikiPage(slug: string) {
-  const versions = await relay.query([{ kinds: [40100], "#d": [slug], limit: 200 }]);
-  return versions
-    .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? 1 : -1))
-    .at(-1);
-}
 
 server.registerTool(
   "fez_wiki_read",
   {
-    description:
-      "Read a named wiki page from the community a channel belongs to. Pages are shared markdown, versioned and editable by everyone (agents and humans); [[Page Name]] inside a page links to another page.",
-    inputSchema: { channel: z.string().describe("any channel in the community"), page: z.string().describe("page name, e.g. 'release checklist'") },
+    description: "Read a named workspace wiki page and its exact version ID. [[Page Name]] links to another page. Read before editing.",
+    inputSchema: { channel: z.string().describe("any workspace channel"), page: z.string().describe("page name") },
   },
   async ({ channel, page }) => {
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
-    const latest = await latestWikiPage(wikiSlug(page));
-    if (!latest) return text(`No page named "${page}" in this community yet — fez_wiki_write creates it.`);
-    return text(latest.content);
+    const slug = wikiSlug(page);
+    if (!slug) throw new Error(`"${page}" makes an empty page name.`);
+    const latest = await latestDocument(ref.channelId, slug);
+    docReadVersions.set(docKey(ref.channelId, slug), latest?.id);
+    return text(latest ? `Version: ${latest.id}\n\n${latest.content}` : `No page named "${page}" yet. Version: none; fez_wiki_write creates it.`);
   }
 );
 
 server.registerTool(
   "fez_wiki_write",
   {
-    description:
-      "Create or update a named wiki page (full replacement — read it first if you're editing). Link related pages with [[Their Name]]. Owners see your edit live in the docs view with your signature on the version.",
-    inputSchema: {
-      channel: z.string().describe("any channel in the community"),
-      page: z.string().describe("page name"),
-      markdown: z.string().describe("the full new page content"),
-    },
+    description: "Create or replace a wiki page. Existing pages require the exact baseId or a prior fez_wiki_read in this session. Stale writes are refused; read again and reconcile your changes.",
+    inputSchema: { channel: z.string(), page: z.string(), markdown: z.string(), baseId: z.string().optional() },
   },
-  async ({ channel, page, markdown }) => {
+  async ({ channel, page, markdown, baseId }) => {
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
-    const slug = wikiSlug(page);
-    if (!slug) return text(`"${page}" makes an empty page name.`);
-    const latest = await latestWikiPage(slug);
-    const createdAt = Math.max(Math.floor(Date.now() / 1000), (latest?.created_at ?? 0) + 1);
-    await relay.publish(
-      sign({
-        kind: 40100,
-        created_at: createdAt,
-        tags: [
-          ["h", ref.channelId],
-          ["d", slug],
-          ["title", page.trim()],
-          ...(latest ? [["base", latest.id]] : []),
-        ],
-        content: markdown,
-      })
-    );
-    return text(`${latest ? "Updated" : "Created"} wiki page "${page}".`);
+    const event = await writeDocument(ref.channelId, page, markdown, baseId);
+    return text(`Saved wiki page "${page}". Version: ${event.id}`);
+  }
+);
+
+server.registerTool(
+  "fez_doc_edit",
+  {
+    description: "Replace one exact, unique passage in a channel doc or wiki page, preserving all other text. Requires the version ID you read. Missing, ambiguous, and stale edits are refused.",
+    inputSchema: { channel: z.string(), page: z.string().optional(), baseId: z.string(), before: z.string().min(1), after: z.string() },
+  },
+  async ({ channel, page, baseId, before, after }) => {
+    const ref = await resolveChannel(channel);
+    if ("error" in ref) return text(ref.error);
+    const slug = page === undefined ? undefined : wikiSlug(page);
+    if (page !== undefined && !slug) throw new Error(`"${page}" makes an empty page name.`);
+    const latest = await latestDocument(ref.channelId, slug);
+    assertDocBase(latest, baseId);
+    const start = latest?.content.indexOf(before) ?? -1;
+    if (!before || start < 0 || latest!.content.indexOf(before, start + 1) !== -1) throw new Error("The passage must have one exact, unique match. Read the document and include more context.");
+    const next = latest!.content.slice(0, start) + after + latest!.content.slice(start + before.length);
+    const event = await writeDocument(ref.channelId, page, next, baseId);
+    return text(`Edited document. Version: ${event.id}`);
   }
 );
 
@@ -537,24 +559,16 @@ server.registerTool(
     const filter = page
       ? { kinds: [40101], "#d": [wikiSlug(page)], limit: 500 }
       : { kinds: [40101], "#h": [ref.channelId], limit: 500 };
-    const events = (await relay.query([filter]))
-      .sort((a, b) => a.created_at - b.created_at);
-    const roots = events.filter((e) => !e.tags.some((t) => t[0] === "e"));
-    const resolved = new Set(
-      events.filter((e) => e.tags.some((t) => t[0] === "resolved" && t[1] === "1")).map((e) => e.tags.find((t) => t[0] === "e")?.[1])
-    );
-    const shown = roots.filter((r) => includeResolved || !resolved.has(r.id));
+    const threads = docCommentThreads(await trustedDocEvents(filter), { channelId: ref.channelId, slug: page ? wikiSlug(page) : undefined });
+    const shown = threads.filter(thread => includeResolved || !thread.resolved);
     if (!shown.length) return text(page ? `No open comments on "${page}".` : `No open comments on #${ref.name}'s doc.`);
-    const lines = shown.map((root) => {
-      const replies = events.filter((e) => e.tags.find((t) => t[0] === "e")?.[1] === root.id && e.content.trim());
-      const anchor = root.tags.find((t) => t[0] === "anchor")?.[1] ?? "(whole doc)";
-      const body = [
-        `— comment ${root.id.slice(0, 12)} ${resolved.has(root.id) ? "(resolved) " : ""}on line: "${anchor}"`,
-        `  ${root.content}`,
-        ...replies.map((r) => `  ↳ ${r.content}`),
-      ];
-      return body.join("\n");
-    });
+    const lines = await Promise.all(shown.map(async root => [
+      `— comment ${root.id} ${root.resolved ? "(resolved) " : ""}on: "${root.anchor || "(whole doc)"}"`,
+      ...(root.anchorContext ? [`  Selection: ${JSON.stringify(root.anchorContext)}`] : []),
+      ...(root.writerPk ? [`  Writer: ${await displayName(root.writerPk)} (${root.writerPk})`] : []),
+      `  ${await displayName(root.authorPk)} (${root.authorPk}): ${root.text}`,
+      ...await Promise.all(root.replies.map(async reply => `  ↳ ${await displayName(reply.authorPk)} (${reply.authorPk}): ${reply.text}`)),
+    ].join("\n")));
     return text(lines.join("\n\n"));
   }
 );
@@ -574,10 +588,15 @@ server.registerTool(
   async ({ channel, commentId, reply, resolve }) => {
     const ref = await resolveChannel(channel);
     if ("error" in ref) return text(ref.error);
-    const candidates = await relay.query([{ kinds: [40101], limit: 500 }]);
-    const root = candidates.find((e) => e.id.startsWith(commentId) || e.id === commentId);
+    if (!/^[0-9a-f]{12,64}$/.test(commentId)) throw new Error("Use the comment ID returned by fez_doc_comments.");
+    const candidates = await trustedDocEvents({ kinds: [40101], ...(commentId.length === 64 ? { ids: [commentId] } : {}), limit: 500 });
+    const matches = candidates.filter(event => !event.tags.some(t => t[0] === "e") && commentId.length >= 12 && event.id.startsWith(commentId)
+      && (event.tags.some(t => t[0] === "d" && t[1]) || event.tags.some(t => t[0] === "h" && t[1] === ref.channelId)));
+    if (matches.length > 1) throw new Error("Ambiguous comment ID; use its full ID.");
+    const root = matches[0];
     if (!root) return text(`No comment "${commentId}" found — list them with fez_doc_comments first.`);
     const slug = root.tags.find((t) => t[0] === "d")?.[1];
+    const replies = await trustedDocEvents({ kinds: [40101], "#e": [root.id], ...(slug ? { "#d": [slug] } : { "#h": [ref.channelId] }), limit: 500 });
     // p tags, which this reply carried none of.
     //
     // Agents subscribe to doc comments by {"#p": [self]} — a tag is the
@@ -589,14 +608,14 @@ server.registerTool(
     await relay.publish(
       sign({
         kind: 40101,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: Math.max(Math.floor(Date.now() / 1000), root.created_at + 1, ...replies.filter(event => slug || !event.tags.some(t => t[0] === "d" && t[1])).map(event => event.created_at + 1)),
         tags: [
           ["h", root.tags.find((t) => t[0] === "h")?.[1] ?? ref.channelId],
           ...(slug ? [["d", slug]] : []),
           ["e", root.id],
           ["p", root.pubkey],
           ...mentioned,
-          ...(resolve ? [["resolved", "1"]] : []),
+          ...(resolve !== undefined ? [["resolved", resolve ? "1" : "0"]] : []),
         ],
         content: reply,
       })
