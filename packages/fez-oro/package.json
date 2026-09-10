@@ -1,0 +1,43 @@
+{
+  "name": "@fezchat/oro",
+  "version": "0.1.0",
+  "description": "ORO SN15 shopping-agent development and submission for Fez.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "esbuild src/miner.ts --bundle --format=esm --platform=node --outfile=dist/miner.js",
+    "check": "tsc --noEmit"
+  },
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "miner": "dist/miner.js"
+    },
+    "permissions": [
+      "network:api.oroagents.com",
+      "processes"
+    ],
+    "minFezVersion": "0.2.1",
+    "requires": [
+      "fez-wallet",
+      "fez-mine"
+    ]
+  },
+  "dependencies": {
+    "zod": "^3.23.0",
+    "@polkadot/util-crypto": "14.0.3"
+  },
+  "devDependencies": {
+    "@fezchat/extension-api": "file:../fez-extension-api",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0"
+  }
+}

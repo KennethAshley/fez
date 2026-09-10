@@ -74,6 +74,7 @@ const EXTENSIONS = [
   "packages/fez-mining",
   "packages/fez-numinous",
   "packages/fez-ridges",
+  "packages/fez-oro",
 ];
 
 function run(cmd, args, cwd) {
