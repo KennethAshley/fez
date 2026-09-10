@@ -1895,11 +1895,11 @@ async function main() {
         publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, reply.length, event.id);
         consecutiveFailures = 0;
         console.log(`✅ Replied (${reply.length} chars)`);
-      } catch (err) {
+      } catch (caughtError) {
         turnAcceptsSteering = false;
         // Opening/replaying a session may fail without observing cancellation.
         // Steering still owns that exit; retrying first would discard its follow-ups.
-        if (turnController?.signal.aborted) err = turnController.signal.reason;
+        const err = turnController?.signal.aborted ? turnController.signal.reason : caughtError;
         if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
           // Owner cancel — the turn just STOPS. No steer re-dispatch, and
           // an honest threaded notice instead of silence.
