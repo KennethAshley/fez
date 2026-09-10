@@ -10,7 +10,7 @@ export {
   type ReminderStatus,
 } from "./reminders.js";
 import type { Query } from "./query-lang.js";
-import { inputForm, validateInputResponse, INPUT_WAIT_MS, type PendingInput, type InputResponse, type InputHistoryEntry } from "./agent-input.js";
+import { inputForm, inputOrigin, validateInputResponse, INPUT_WAIT_MS, type PendingInput, type InputResponse, type InputHistoryEntry } from "./agent-input.js";
 export * from "./agent-input.js";
 import { nextCreatedAt, STALE_AFTER_S, type ReminderBody, type ReminderRecord } from "./reminders.js";
 
@@ -591,6 +591,8 @@ export class FezClient {
   private nextThreadNo = 1;
   private summaryByRoot = new Map<string, { replyCount: number; lastAuthorTs: number; summaryTs: number }>();
   private exhaustedChannels = new Set<string>();
+  /** Sparse thread jumps must not skip the gap in ordinary channel pagination. */
+  private channelHistoryBefore = new Map<string, number>();
 
   // reactions
   private reactionsByTarget = new Map<string, Map<string, Set<string>>>();
@@ -925,6 +927,16 @@ export class FezClient {
   pendingInputs(): PendingInput[] {
     return [...this.inputRequests.values()].filter(r => r.expiresAt > Date.now() && this.state.isMember(r.agentPk));
   }
+  /** A sent answer is awaiting delivery, not waiting on the human. */
+  waitingInputs(): PendingInput[] {
+    const answered = new Set<string>();
+    for (const answer of this.inputAnswers.values()) {
+      const request = this.inputRequests.get(answer.requestKey);
+      if (!request) continue;
+      try { validateInputResponse(request.form, answer.response); answered.add(request.id); } catch { /* invalid signed reply */ }
+    }
+    return this.pendingInputs().filter(request => !answered.has(request.id));
+  }
   /** Recent private requests; only a receipt naming our signed answer confirms delivery. */
   inputHistory(): InputHistoryEntry[] {
     return [...this.inputRecords.values()].filter(record => record.requestedAt >= Date.now() - 30 * 86400_000).sort((a, b) => b.requestedAt - a.requestedAt).slice(0, 100).map(record => {
@@ -991,6 +1003,7 @@ export class FezClient {
     const id = `${event.pubkey}:${requestId}`;
     const previous = this.inputRecords.get(id);
     const form = previous?.form ?? (raw.form ? inputForm(raw.form) : undefined);
+    const origin = previous ? previous.origin : inputOrigin(raw.origin, event.pubkey, this.pubkey);
     const earliest = raw.expiresAt - INPUT_WAIT_MS;
     const requestedAt = typeof raw.requestedAt === "number" && Number.isFinite(raw.requestedAt) && raw.requestedAt >= earliest && raw.requestedAt <= raw.expiresAt
       ? raw.requestedAt : previous?.requestedAt ?? Math.min(raw.expiresAt, Math.max(earliest, event.created_at * 1000));
@@ -1000,7 +1013,7 @@ export class FezClient {
       : raw.status === "closed" ? { expiresAt: raw.expiresAt, closedAt,
         responseId: typeof raw.responseId === "string" && /^[a-f0-9]{64}$/.test(raw.responseId) ? raw.responseId : undefined } : undefined;
     if (form && previous?.closedAt === undefined) {
-      this.inputRecords.set(id, { ...previous, id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form, requestedAt, ...closure });
+      this.inputRecords.set(id, { ...previous, id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form, origin, requestedAt, ...closure });
       if (this.inputRecords.size > 200) {
         const oldest = [...this.inputRecords.values()].filter(record => !this.inputRequests.has(record.id)).sort((a, b) => a.requestedAt - b.requestedAt)[0];
         if (oldest) this.inputRecords.delete(oldest.id);
@@ -1021,14 +1034,18 @@ export class FezClient {
     if (raw.status === "closed" || raw.expiresAt <= Date.now()) { close(); return; }
     if (raw.status !== "pending" || this.closedInputs.has(id) || this.inputRequests.has(id) || this.inputRequests.size >= 64) return;
     if (!form) return;
-    this.inputRequests.set(id, { id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form });
+    this.inputRequests.set(id, { id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form, origin });
     this.inputTimers.set(id, setTimeout(close, raw.expiresAt - Date.now()));
     this.emit("inputsChanged");
   }
   workingAgents(): ReadonlyMap<string, { activity: string; ts: number; root?: string }> {
     const now = Date.now();
     for (const [name, w] of this.workingAgentsMap) if (now - w.ts > 180_000) this.workingAgentsMap.delete(name);
-    return this.workingAgentsMap;
+    const working = new Map(this.workingAgentsMap);
+    for (const request of this.waitingInputs()) working.set(this.displayName(request.agentPk), {
+      activity: "Waiting for your answer", ts: now, root: request.origin?.kind === "channel" ? request.origin.rootId : undefined,
+    });
+    return working;
   }
   dmConversations(): ReadonlyMap<string, { msgs: readonly DmMessage[]; unread: number }> {
     return this.dmConvos;
@@ -2313,7 +2330,7 @@ export class FezClient {
 
   // ── History windows (Buzz's channel window, dumb-relay-shaped) ─────────
 
-  async loadChannelHistory(channelId: string): Promise<void> {
+  async loadChannelHistory(channelId: string, threadRoot?: string): Promise<void> {
     // Artifacts backfill rides alongside — failures never block messages.
     void this.wire
       .query([{ kinds: [K.ARTIFACT], "#h": [channelId], limit: 50 }])
@@ -2321,23 +2338,29 @@ export class FezClient {
         for (const event of events) this.absorbArtifact(event);
       })
       .catch(() => {});
-    const [msgs, reactions, deletions, ops, receipts] = await Promise.all([
+    const [msgs, reactions, deletions, ops, receipts, thread] = await Promise.all([
       this.wire.query([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
       this.wire.query([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
       this.wire.query([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
       this.wire.query([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
       this.wire.query([{ kinds: [K.PAYMENT_RECEIPT], "#h": [channelId], limit: 300 }]),
+      threadRoot ? this.wire.query([
+        { kinds: [K.MESSAGE], "#h": [channelId], ids: [threadRoot], limit: 1 },
+        { kinds: [K.MESSAGE], "#h": [channelId], "#e": [threadRoot], limit: 200 },
+      ]) : Promise.resolve([]),
     ]);
     const ordered = msgs
       .filter((e) => this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at)
       .slice(-HISTORY_LIMIT);
-    for (const event of ordered) {
+    if (ordered.length) this.channelHistoryBefore.set(channelId, Math.min(this.channelHistoryBefore.get(channelId) ?? Infinity, ordered[0].created_at));
+    for (const event of [...ordered, ...thread.filter(e => e.kind === K.MESSAGE && this.state.isMember(e.pubkey) && e.tags.some(t => t[0] === "h" && t[1] === channelId))]) {
       if (this.seenMessages.has(event.id)) continue;
       this.seenMessages.add(event.id);
       const msg = this.cacheMessage(channelId, event);
       this.emit("message", channelId, msg, { live: false, prepend: false });
     }
+    if (threadRoot) this.messagesByChannel.get(channelId)?.sort((a, b) => a.ts - b.ts);
     for (const event of ops.filter((e) => e.kind === K.MSG_EDIT).sort((a, b) => a.created_at - b.created_at)) {
       this.handleMsgEdit(event);
     }
@@ -2358,7 +2381,7 @@ export class FezClient {
   /** Scroll-up paging: until-filter keyset with limit+1 has_more probe. Returns the fresh page, oldest first. */
   async loadOlderPage(channelId: string): Promise<Msg[]> {
     const list = this.messagesByChannel.get(channelId) ?? [];
-    const oldest = list[0]?.ts;
+    const oldest = this.channelHistoryBefore.get(channelId) ?? list[0]?.ts;
     if (!oldest || this.exhaustedChannels.has(channelId)) return [];
     const events = await this.wire.query([
       { kinds: [K.MESSAGE], "#h": [channelId], until: oldest, limit: PAGE_SIZE + 1 },
@@ -2367,7 +2390,7 @@ export class FezClient {
     const fresh = events
       .filter((e) => !this.seenMessages.has(e.id) && this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at);
-    if (fresh.length === 0) this.exhaustedChannels.add(channelId);
+    if (events.length) this.channelHistoryBefore.set(channelId, Math.min(...events.map(e => e.created_at)));
     const freshMsgs: Msg[] = [];
     for (const event of fresh) {
       this.seenMessages.add(event.id);
@@ -2376,7 +2399,7 @@ export class FezClient {
       this.msgByIdMap.set(msg.id, msg);
       if (msg.rootId) this.threadNo(msg.rootId);
     }
-    this.messagesByChannel.set(channelId, [...freshMsgs, ...list].slice(-MSG_CACHE_CAP));
+    this.messagesByChannel.set(channelId, [...freshMsgs, ...list].sort((a, b) => a.ts - b.ts).slice(-MSG_CACHE_CAP));
     return freshMsgs;
   }
 

@@ -4612,3 +4612,8 @@ a.page-fact:hover { color: var(--fg); }
 .hire-proposal .hp-decided { display: block; margin-top: 6px; color: var(--fg-dim); }
 .turn-quiet { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .turn-quiet.stale { color: var(--yellow); }
+
+.conversation-question { margin: 14px 20px; max-width: 720px; outline-offset: 4px; }
+.input-thread-link { display: flex; gap: 8px; align-items: center; padding: 10px 12px; text-align: left; color: var(--accent); }
+.input-thread-link span { font-size: 12px; }
+.input-waiting { color: var(--accent); font-size: 12px; }

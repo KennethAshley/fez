@@ -1,5 +1,6 @@
 import { isPermissionGranted, requestPermission, sendNotification, onAction } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { notifyAllows, readPrefs, soundFor, type NotifyKind, type NotifyPrefs } from "./notify-prefs";
 import { SOUND_NAMES, playSound } from "./sounds";
 
@@ -32,7 +33,7 @@ export type NotifTarget =
   | { kind: "channel"; id: string }
   | { kind: "dm"; convoKey: string }
   | { kind: "agent"; name: string }
-  | { kind: "questions" }
+  | { kind: "questions"; id?: string }
   | { kind: "proposals" };
 
 let lastTarget: NotifTarget | undefined;
@@ -75,10 +76,28 @@ async function ensureGranted(): Promise<boolean> {
 
 async function fire(title: string, body: string, target?: NotifTarget): Promise<void> {
   if (!(await ensureGranted())) return;
+  body = body.replace(/\s+/g, " ").trim().slice(0, 180);
+  if (target?.kind === "questions") {
+    // The desktop plugin drops click callbacks on macOS. Keep this request's
+    // destination in its own closure, so older banners never open newer forms.
+    try {
+      const clicked = await invoke<boolean>("notify_with_click", { title, body });
+      if (typeof clicked !== "boolean") throw new Error("Native notification clicks unavailable");
+      if (clicked) {
+        lastTarget = undefined;
+        navigate?.(target);
+        void getCurrentWindow().setFocus().catch(() => {});
+      }
+      return;
+    } catch { /* Browser development and platforms without the native bridge. */ }
+  }
   lastTarget = target;
   lastFiredAt = Date.now();
   try {
-    sendNotification({ title, body: body.replace(/\s+/g, " ").trim().slice(0, 180) });
+    if (target?.kind === "questions") {
+      const notification = new window.Notification(title, { body });
+      notification.onclick = () => { lastTarget = undefined; navigate?.(target); };
+    } else sendNotification({ title, body });
   } catch {
     /* dev server / permission denied — silent */
   }

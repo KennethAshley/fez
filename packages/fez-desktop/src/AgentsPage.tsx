@@ -143,6 +143,7 @@ export default function AgentsPage({
               skills={row.skills}
               online={row.online}
               waking={wakingSince(row.name) !== undefined}
+              waiting={client.waitingInputs().some(request => request.agentPk === row.pk)}
               record={(() => {
                 const top = row.pk && records ? bestRow(records.get(row.pk) ?? []) : undefined;
                 return top

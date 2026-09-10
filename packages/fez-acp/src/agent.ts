@@ -19,6 +19,7 @@ import {
   setRiskPolicy,
   requestInput,
   type HarnessInputHandler,
+  type InputOrigin,
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
@@ -650,13 +651,15 @@ async function main() {
   await relay.connect();
   const myPubkey = client.getPubkey();
   const runtimeRefresh = new RuntimeRefresh();
+  // The existing busy gate serializes turns, including pooled-session reuse.
+  let inputOrigin: InputOrigin | undefined;
   const onInput: HarnessInputHandler | undefined = owner ? (form, signal) => requestInput({
     pubkey: myPubkey,
     publish: template => runtimeRefresh.run(async () => { const event = client.signEvent(template); await relay.publish(event); return event; }),
     subscribe: (filters, receive) => relay.subscribe(filters, receive),
     encrypt: (peer, text) => client.encryptTo(peer, text),
     decrypt: (peer, text) => client.decryptFrom(peer, text),
-  }, owner, form, { signal }) : undefined;
+  }, owner, form, { signal, origin: inputOrigin }) : undefined;
 
   // ── NIP-AE memory: the agent's `core` engram feeds every turn's
   // standing context. How it lands in prompts lives in memory-prompt.ts
@@ -1787,6 +1790,7 @@ async function main() {
         // top-level and showed both at once (steph's double indicator).
         publishObserver({ type: "turn", status: "started", ...(triggerRoot ? { root: triggerRoot } : {}) });
         const onUpdate = makeOnUpdate();
+        inputOrigin = doc ? undefined : { kind: "channel", channelId, rootId: triggerRoot ?? event.id, messageId: event.id };
         const rawReply = await promptSession(
           `ch:${channelId}`,
           withNotice(buildPrompt, attachmentPrompt(event)),
@@ -1911,6 +1915,7 @@ async function main() {
         clearInterval(typing);
         turnController = undefined;
         turnKind = undefined;
+        inputOrigin = undefined;
         busy = false;
         if (steerMessages.length > 0) {
           // Steered: re-dispatch the SAME trigger — the unconsumed steer
@@ -2043,6 +2048,7 @@ async function main() {
       const onUpdate = makeOnUpdate();
       // A DM rumor carries no tags, so only URLs in the body are visible
       // here — there is no imeta to describe them with.
+      inputOrigin = { kind: "dm", participants, messageId: dm.id };
       const reply = await promptSession(
         `dm:${convoKey}`,
         withNotice(buildPrompt, attachmentPrompt({ content: dm.text, tags: [] })),
@@ -2090,6 +2096,7 @@ async function main() {
       // Failure notice goes back over the same private pipe.
       void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
     } finally {
+      inputOrigin = undefined;
       busy = false;
       turnController = undefined;
       turnKind = undefined;

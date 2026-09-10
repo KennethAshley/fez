@@ -18,7 +18,8 @@ function network() {
   const subs = new Set<{ filters: WireFilter[]; receive: (e: WireEvent) => void }>();
   const matches = (e: WireEvent, fs: WireFilter[]) => fs.some(f =>
     (!f.kinds || f.kinds.includes(e.kind)) && (!f.authors || f.authors.includes(e.pubkey)) &&
-    (!f.since || e.created_at >= f.since) && Object.entries(f).every(([k, values]) =>
+    (!f.ids || f.ids.includes(e.id)) &&
+    (!f.since || e.created_at >= f.since) && (!f.until || e.created_at <= f.until) && Object.entries(f).every(([k, values]) =>
       !k.startsWith("#") || e.tags.some(t => t[0] === k.slice(1) && (values as string[]).includes(t[1]))));
   function wire(pubkey: string): Wire {
     return {
@@ -66,17 +67,24 @@ describe("agent input", () => {
     await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
     const client = new FezClient(owner);
     await client.start();
-    const pending = requestInput(agent, OWNER, inputForm(request), { timeoutMs: 60_000 });
+    const origin = { kind: "channel" as const, channelId: "general", rootId: "d".repeat(64), messageId: "e".repeat(64) };
+    const pending = requestInput(agent, OWNER, inputForm(request), { timeoutMs: 60_000, origin });
     await vi.advanceTimersByTimeAsync(0);
     const [question] = client.pendingInputs();
     expect(question.form.fields).toHaveLength(3);
+    expect(question.origin).toEqual(origin);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(client.workingAgents().get(client.displayName(AGENT))).toMatchObject({ activity: "Waiting for your answer", root: origin.rootId });
     const req = net.events.find(e => e.kind === K.INPUT_REQUEST)!;
     expect(req.content).not.toBe(JSON.stringify(question.form));
+    expect(req.tags.flat()).not.toContain(origin.channelId);
+    expect(req.tags.flat()).not.toContain(origin.rootId);
     const content = { layout: "grid", features: ["search", "filters"], custom: "compact" };
     await client.answerInput(question.id, { action: "accept", content });
     await expect(pending).resolves.toEqual({ action: "accept", content });
     await vi.advanceTimersByTimeAsync(0);
     expect(client.pendingInputs()).toEqual([]);
+    expect(client.workingAgents().has(client.displayName(AGENT))).toBe(false);
     expect(client.inputHistory()).toMatchObject([{ status: "received", response: { action: "accept", content } }]);
     // A second device/backfill must not resurrect a closed request.
     const second = new FezClient(owner);
@@ -86,7 +94,28 @@ describe("agent input", () => {
     const later = new FezClient(owner);
     await later.start();
     await later.loadInputHistory();
-    expect(later.inputHistory()).toMatchObject([{ status: "received", response: { action: "accept", content }, form: { message: request.message } }]);
+    expect(later.inputHistory()).toMatchObject([{ origin, status: "received", response: { action: "accept", content }, form: { message: request.message } }]);
+  });
+
+  it("routes group DMs only when both the agent and recipient belong to the conversation", async () => {
+    vi.useFakeTimers();
+    setStatePersistence({ load: () => undefined, save: () => {} });
+    const net = network(), agent = net.wire(AGENT), owner = net.wire(OWNER);
+    await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER], ["p", AGENT]], content: "" });
+    const client = new FezClient(owner); await client.start();
+    const origin = { kind: "dm" as const, participants: [AGENT, OWNER, STRANGER], messageId: "d".repeat(64) };
+    const abort = new AbortController();
+    const pending = requestInput(agent, OWNER, inputForm(request), { origin, signal: abort.signal });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.pendingInputs()[0].origin).toEqual({ ...origin, participants: [...origin.participants].sort() });
+    // Invalid private routing must not hide an otherwise valid question.
+    await agent.publish({ kind: K.INPUT_REQUEST, tags: [["p", OWNER], ["d", "bad-origin"]], content: await agent.encrypt(OWNER,
+      JSON.stringify({ status: "pending", expiresAt: Date.now() + 60_000, form: inputForm(request), origin: { ...origin, participants: [AGENT, STRANGER] } })) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.pendingInputs().find(r => r.requestId === "bad-origin")?.origin).toBeUndefined();
+    abort.abort(); await pending;
+    await vi.advanceTimersByTimeAsync(60_001);
+    expect(client.workingAgents().has(client.displayName(AGENT))).toBe(false);
   });
 
   it("keeps sent answers unconfirmed until a receipt names that exact signed response", async () => {
@@ -100,12 +129,33 @@ describe("agent input", () => {
     await agent.publish({ kind: K.INPUT_REQUEST, tags, content: await agent.encrypt(OWNER, JSON.stringify({ status: "pending", expiresAt, form })) });
     const client = new FezClient(owner); await client.start();
     await client.answerInput(client.pendingInputs()[0].id, { action: "accept", content: { layout: "grid" } });
+    expect(client.waitingInputs()).toEqual([]);
     expect(client.inputHistory()).toMatchObject([{ status: "sent", response: { content: { layout: "grid" } } }]);
     await agent.publish({ kind: K.INPUT_REQUEST, tags, content: await agent.encrypt(OWNER, JSON.stringify({ status: "closed", expiresAt, form, responseId: "wrong" })) });
     await vi.advanceTimersByTimeAsync(0);
     expect(client.inputHistory()[0].status).toBe("closed");
     // A closed form is not proof that our answer arrived.
     expect(client.pendingInputs()).toEqual([]);
+  });
+
+  it("loads a question's original thread outside the recent channel window in time order", async () => {
+    vi.useFakeTimers();
+    setStatePersistence({ load: () => undefined, save: () => {} });
+    const net = network(), owner = net.wire(OWNER);
+    await owner.publish({ kind: K.MEMBERSHIP, tags: [["d", "roster"], ["p", OWNER]], content: "" });
+    const root = await owner.publish({ kind: K.MESSAGE, tags: [["h", "general"]], content: "Original question context" });
+    for (let i = 0; i < 60; i++) {
+      vi.setSystemTime(Date.now() + 1000);
+      await owner.publish({ kind: K.MESSAGE, tags: [["h", "general"]], content: `Other topic ${i}` });
+    }
+    const client = new FezClient(owner); await client.start();
+    await client.loadChannelHistory("general");
+    expect(client.messages("general").some(m => m.id === root.id)).toBe(false);
+    await client.loadChannelHistory("general", root.id);
+    expect(client.messages("general")[0]).toMatchObject({ id: root.id, content: "Original question context" });
+    expect(client.messages("general").at(-1)?.content).toBe("Other topic 59");
+    await client.loadOlderPage("general");
+    expect(client.messages("general").some(m => m.content === "Other topic 0")).toBe(true);
   });
 
   it("restores legacy closed questions when the relay sends closure before the form", async () => {

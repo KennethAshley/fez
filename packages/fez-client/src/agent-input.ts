@@ -15,6 +15,9 @@ export interface InputField {
 export interface InputForm { message: string; fields: InputField[] }
 export type InputAnswers = Record<string, string | string[] | number | boolean>;
 export type InputResponse = { action: "accept"; content: InputAnswers } | { action: "decline" | "cancel" };
+export type InputOrigin =
+  | { kind: "channel"; channelId: string; rootId: string; messageId: string }
+  | { kind: "dm"; participants: string[]; messageId: string };
 export interface PendingInput {
   /** Agent pubkey + request nonce: two agents cannot close each other's form. */
   id: string;
@@ -22,6 +25,7 @@ export interface PendingInput {
   agentPk: string;
   expiresAt: number;
   form: InputForm;
+  origin?: InputOrigin;
 }
 export interface InputHistoryEntry extends PendingInput {
   requestedAt: number;
@@ -45,6 +49,22 @@ function bound(value: unknown): number | undefined {
   if (value == null) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("Invalid field limit");
   return value;
+}
+
+/** Routing stays inside the ciphertext; invalid/legacy origins use the question inbox. */
+export function inputOrigin(value: unknown, agentPk: string, recipient: string): InputOrigin | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const v = value as Record<string, unknown>;
+  const eventId = (id: unknown): id is string => typeof id === "string" && /^[a-f0-9]{64}$/.test(id);
+  if (!eventId(v.messageId)) return;
+  // eslint-disable-next-line no-control-regex -- Routing identifiers must not contain control characters.
+  if (v.kind === "channel" && typeof v.channelId === "string" && v.channelId.length > 0 && v.channelId.length <= 256 && !/\s|[\u0000-\u001f]/.test(v.channelId) && eventId(v.rootId)) {
+    return { kind: "channel", channelId: v.channelId, rootId: v.rootId, messageId: v.messageId };
+  }
+  if (v.kind === "dm" && Array.isArray(v.participants) && v.participants.length >= 2 && v.participants.length <= 64 && v.participants.every(eventId)
+    && v.participants.includes(agentPk) && v.participants.includes(recipient)) {
+    return { kind: "dm", participants: [...new Set(v.participants)].sort(), messageId: v.messageId };
+  }
 }
 
 /** Normalize ACP forms and our wire representation at the same trust boundary. */
@@ -133,8 +153,9 @@ type InputWire = Pick<Wire, "pubkey" | "publish" | "subscribe" | "encrypt" | "de
 
 /** Wait for this recipient's signed response; subscribe BEFORE publishing to avoid fast-answer loss. */
 export async function requestInput(wire: InputWire, recipient: string, form: InputForm,
-  { signal, timeoutMs = INPUT_WAIT_MS }: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<InputResponse> {
+  { signal, timeoutMs = INPUT_WAIT_MS, origin }: { signal?: AbortSignal; timeoutMs?: number; origin?: InputOrigin } = {}): Promise<InputResponse> {
   form = inputForm(form);
+  origin = inputOrigin(origin, wire.pubkey, recipient);
   if (!/^[a-f0-9]{64}$/.test(recipient)) throw new Error("Invalid question recipient");
   if (!Number.isFinite(timeoutMs)) throw new Error("Invalid question timeout");
   if (signal?.aborted) return { action: "cancel" };
@@ -165,7 +186,7 @@ export async function requestInput(wire: InputWire, recipient: string, form: Inp
       }).catch(() => {});
     });
     const publishing = Promise.resolve().then(async () => {
-      const content = await wire.encrypt(recipient, JSON.stringify({ status: "pending", requestedAt, expiresAt, form }));
+      const content = await wire.encrypt(recipient, JSON.stringify({ status: "pending", requestedAt, expiresAt, form, origin }));
       if (!signal?.aborted && Date.now() < expiresAt) await wire.publish({ kind: K.INPUT_REQUEST, tags, content });
     });
     // Cancellation/expiry also wins over a relay that never acknowledges publish.
@@ -178,7 +199,7 @@ export async function requestInput(wire: InputWire, recipient: string, form: Inp
     unsubscribe();
     // Expiry remains the fallback if the relay goes away during cleanup.
     void Promise.resolve().then(async () => {
-      await wire.publish({ kind: K.INPUT_REQUEST, tags, content: await wire.encrypt(recipient, JSON.stringify({ status: "closed", requestedAt, closedAt: Date.now(), expiresAt, form, responseId })) });
+      await wire.publish({ kind: K.INPUT_REQUEST, tags, content: await wire.encrypt(recipient, JSON.stringify({ status: "closed", requestedAt, closedAt: Date.now(), expiresAt, form, origin, responseId })) });
     }).catch(() => {});
   }
 }

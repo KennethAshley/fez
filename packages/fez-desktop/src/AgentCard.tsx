@@ -36,6 +36,7 @@ export default function AgentCard({
   skills,
   online,
   waking,
+  waiting,
   selected,
   record,
   onOpen,
@@ -48,6 +49,7 @@ export default function AgentCard({
   online?: boolean;
   /** Started on this machine, not yet announced — the window between the button and the face. */
   waking?: boolean;
+  waiting?: boolean;
   selected?: boolean;
   /** Judged bazaar record, e.g. "research · 91st · 240 tasks". */
   record?: string;
@@ -83,6 +85,7 @@ export default function AgentCard({
         )}
       </span>
       <span className="agent-card-name">@{name}</span>
+      {waiting && <span className="input-waiting">Waiting for your answer</span>}
       {waking && !online && <span className="agent-card-desc">waking — announcing to the relay…</span>}
       {description ? (
         <span className="agent-card-desc">{description}</span>

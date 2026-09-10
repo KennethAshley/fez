@@ -49,6 +49,8 @@ export const KIND_AGENT_CANCEL = 47012;
  * {status:"closed",requestedAt,closedAt,expiresAt,form,responseId?}. A responseId is the
  * signed INPUT_RESPONSE the agent accepted; closing alone does not prove delivery.
  * Closed events repeat the form so private history survives bounded relay queries.
+ * Both may include encrypted origin: {kind:"channel",channelId,rootId,messageId}
+ * or {kind:"dm",participants,messageId}, for inline forms and private navigation.
  * Closed wins over pending regardless of arrival order; expiry clears a crashed agent's form.
  * Persisted so an owner's other device can recover questions while the agent waits. */
 export const KIND_INPUT_REQUEST = 47013;

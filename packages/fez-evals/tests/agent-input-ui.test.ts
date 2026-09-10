@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { JSDOM } from "jsdom";
 import React, { act } from "../../fez-desktop/node_modules/react/index.js";
 import { createRoot } from "../../fez-desktop/node_modules/react-dom/client.js";
-import AgentInput, { InputCard } from "../../fez-desktop/src/AgentInput.js";
+import AgentInput, { InputCard, QuestionRow, conversationQuestions } from "../../fez-desktop/src/AgentInput.js";
 import { notifyEvent } from "../../fez-desktop/src/notify.js";
 import type { FezClient, PendingInput } from "../../fez-client/src/index.js";
 import { inputForm } from "../../fez-client/src/agent-input.js";
@@ -96,5 +96,49 @@ it("shows readable private answers and distinguishes a receipt from an unconfirm
     await act(async () => { for (const listener of listeners) listener(); });
     expect(document.body.textContent).toContain("Received by agent");
     expect(document.body.textContent).not.toContain("Sent · awaiting receipt");
+  } finally { await act(async () => root.unmount()); dom.window.close(); }
+});
+
+it("keeps scoped forms in their conversation and makes the sidebar a link to the exact question", async () => {
+  const dom = new JSDOM("<div id='root'></div>");
+  for (const key of ["window", "document", "FormData", "HTMLElement"] as const) vi.stubGlobal(key, dom.window[key]);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.getElementById("root")!);
+  const listeners = new Set<() => void>();
+  const requests: PendingInput[] = [];
+  const client = { pubkey: "owner", pendingInputs: () => requests, inputHistory: () => [], loadInputHistory: async () => {}, displayName: () => "quill",
+    on: (_event: string, listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+  } as unknown as FezClient;
+  const onOpen = vi.fn();
+  vi.mocked(notifyEvent).mockClear();
+  try {
+    await act(async () => root.render(React.createElement(AgentInput, { client, onOpen })));
+    requests.push({ id: "agent:scoped", requestId: "scoped", agentPk: "agent", expiresAt: Date.now() + 60000,
+      origin: { kind: "channel", channelId: "general", rootId: "root", messageId: "trigger" },
+      form: inputForm({ mode: "form", message: "Private choices", requestedSchema: { properties: { pick: { type: "string", enum: ["A", "B"] } } } }) });
+    await act(async () => { for (const listener of listeners) listener(); });
+    expect(document.querySelector(".agent-input")?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector("form")).toBeNull();
+    expect(notifyEvent).toHaveBeenCalledWith(expect.objectContaining({ target: { kind: "questions", id: "agent:scoped" } }));
+    await act(async () => (document.querySelector('[aria-label="Questions"]') as HTMLButtonElement).click());
+    await act(async () => (document.querySelector('.input-thread-link') as HTMLButtonElement).click());
+    expect(onOpen).toHaveBeenCalledWith(requests[0]);
+    const scope = { kind: "channel" as const, channelId: "general", rootId: "root" };
+    const [entry] = conversationQuestions(client, scope);
+    expect(entry.id).toBe("agent:scoped");
+    expect(conversationQuestions(client, { ...scope, rootId: "other" })).toEqual([]);
+    expect(conversationQuestions(client, { ...scope, channelId: "other" })).toEqual([]);
+    await act(async () => root.render(React.createElement(QuestionRow, { client, entry })));
+    expect(document.querySelector("form")).not.toBeNull();
+    expect(document.body.textContent).toContain("Waiting for your answer");
+    await act(async () => root.render(React.createElement(QuestionRow, { client, entry: {
+      ...entry, status: "sent", answeredAt: Date.now(), response: { action: "accept", content: { pick: "B" } },
+    } })));
+    expect(document.body.textContent).not.toContain("Waiting for your answer");
+    expect(document.body.textContent).toContain("Waiting for agent to acknowledge");
+    expect((document.querySelector('input[value="B"]') as HTMLInputElement).checked).toBe(true);
+    requests[0].origin = { kind: "dm", participants: ["owner", "agent", "peer"], messageId: "trigger" };
+    expect(conversationQuestions(client, { kind: "dm", convoKey: "agent+peer" })).toHaveLength(1);
+    expect(conversationQuestions(client, { kind: "dm", convoKey: "agent" })).toHaveLength(0);
   } finally { await act(async () => root.unmount()); dom.window.close(); }
 });

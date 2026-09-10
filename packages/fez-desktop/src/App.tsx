@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
-import { FezClient, setStatePersistence, type Artifact, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
+import { FezClient, dmConvoKey, setStatePersistence, type Artifact, type InputHistoryEntry, type PendingInput, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { embedUrls, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
@@ -13,7 +13,7 @@ import { bindMention, describeMentionProblems, splitMentions, type MentionBindin
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
-import AgentInput from "./AgentInput";
+import AgentInput, { conversationQuestions, QuestionRow } from "./AgentInput";
 import AgentsPage from "./AgentsPage";
 import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
@@ -93,8 +93,8 @@ type Boot =
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
 type MainView =
-  | { kind: "channel"; focus?: string }
-  | { kind: "dm"; convoKey: string }
+  | { kind: "channel"; focus?: string; threadRoot?: string; questionId?: string; questionJump?: number }
+  | { kind: "dm"; convoKey: string; questionId?: string; questionJump?: number }
   | { kind: "guest"; pk: string }
   | { kind: "home" }
   | { kind: "pulse" }
@@ -556,7 +556,7 @@ function Shell({
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
       "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
-      "dmMessage", "jobsChanged", "artifact",
+      "dmMessage", "jobsChanged", "artifact", "inputsChanged",
     ] as const;
     for (const name of events) client.on(name, render as never);
     // Notices carry the relay's own words — "claim this workspace", "ask
@@ -844,6 +844,24 @@ function Shell({
     render();
   };
 
+  const questionJump = useRef(0);
+  const openQuestion = async (request: PendingInput) => {
+    const origin = request.origin;
+    setPane(undefined);
+    if (origin?.kind === "channel" && client.state.workspace.channels.has(origin.channelId)) {
+      client.setScope(origin.channelId);
+      setView({ kind: "channel", threadRoot: origin.rootId, questionId: request.id, questionJump: ++questionJump.current });
+      try { await client.loadChannelHistory(origin.channelId, origin.rootId); }
+      catch { toast.error("Thread history could not load. Your question is still available."); }
+    } else if (origin?.kind === "dm") {
+      const convoKey = dmConvoKey(origin.participants, client.pubkey);
+      client.markDmRead(convoKey);
+      setView({ kind: "dm", convoKey, questionId: request.id, questionJump: ++questionJump.current });
+    } else {
+      window.dispatchEvent(new CustomEvent("fez-show-questions", { detail: request.id }));
+    }
+  };
+
   // Clicking a native notification focuses the app and jumps to its source.
   useEffect(() => {
     installNotificationClick((t) => {
@@ -852,7 +870,11 @@ function Shell({
       else if (t.kind === "dm") openDm(t.convoKey);
       else if (t.kind === "agent") setView({ kind: "agents" });
       else if (t.kind === "proposals") setView({ kind: "pulse" });
-      else if (t.kind === "questions") window.dispatchEvent(new Event("fez-show-questions"));
+      else if (t.kind === "questions") {
+        const request = [...client.pendingInputs(), ...client.inputHistory()].find(r => r.id === t.id);
+        if (request) void openQuestion(request);
+        else window.dispatchEvent(new Event("fez-show-questions"));
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1075,7 +1097,7 @@ function Shell({
         </button>
         {!client.state.workspace.owner && <div className="workspace-unclaimed">unclaimed</div>}
         <div className="rail-scroll">
-        <AgentInput client={client} />
+        <AgentInput client={client} onOpen={request => void openQuestion(request)} />
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           <span className="nav-glyph">▤</span> inbox
           {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
@@ -1471,8 +1493,11 @@ function Shell({
 
       {view.kind === "channel" && scope && (
         <ChannelView
-          key={scope.channelId + (view.focus ?? "")}
+          key={scope.channelId + (view.focus ?? "") + (view.questionJump ?? "")}
           focusId={view.focus}
+          initialThreadRoot={view.threadRoot}
+          questionId={view.questionId}
+          onQuestion={openQuestion}
           client={client}
           wire={wire}
           channelId={scope.channelId}
@@ -1498,10 +1523,11 @@ function Shell({
       )}
       {view.kind === "dm" && (
         <DmView
-          key={view.convoKey}
+          key={view.convoKey + (view.questionJump ?? "")}
           client={client}
           wire={wire}
           convoKey={view.convoKey}
+          questionId={view.questionId}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
         />
       )}
@@ -1889,11 +1915,17 @@ function ChannelView({
   onOpenTool,
   localAgents,
   focusId,
+  initialThreadRoot,
+  questionId,
+  onQuestion,
 }: {
   client: FezClient;
   wire: BrowserWire;
   channelId: string;
   focusId?: string;
+  initialThreadRoot?: string;
+  questionId?: string;
+  onQuestion: (request: PendingInput) => void;
   drafts?: Map<string, { content: string; rootId?: string; ts: number }>;
   working: ReadonlyMap<string, { activity: string; ts: number; root?: string }>;
   onWatch: (agent: string) => void;
@@ -1948,6 +1980,7 @@ function ChannelView({
   // only shows roots); the component remounts per focus so lazy init is enough.
   const [membersOpen, setMembersOpen] = useState(false);
   const [threadRoot, setThreadRoot] = useState<string | undefined>(() => {
+    if (initialThreadRoot) return initialThreadRoot;
     if (!focusId) return undefined;
     return client.messages(channelId).find((m) => m.id === focusId)?.rootId;
   });
@@ -1968,7 +2001,7 @@ function ChannelView({
   // in a thread, only LIVE tools — their handles are small and worth
   // having beside the conversation that built them, without dragging every
   // html/table artifact into the thread.
-  type TimelineRow = { ts: number; msg?: Msg; artifact?: Artifact };
+  type TimelineRow = { ts: number; msg?: Msg; artifact?: Artifact; question?: InputHistoryEntry };
   const allArtifacts = client.artifacts(channelId);
   // A refined tool is ONE tool, not a stack. Every rebuild republishes a
   // fresh `live` artifact tagged with its thread root, so collapse them to
@@ -1998,6 +2031,7 @@ function ChannelView({
   const artifactRows = [...scopedNonLive, ...liveTools];
   const rows: TimelineRow[] = [
     ...shown.map((m) => ({ ts: m.ts, msg: m })),
+    ...conversationQuestions(client, { kind: "channel", channelId, rootId: threadRoot }).map(question => ({ ts: question.requestedAt / 1000, question })),
     ...artifactRows.map((a) => ({ ts: a.ts, artifact: a })),
   ].sort((a, b) => a.ts - b.ts);
   const now = Date.now();
@@ -2010,14 +2044,18 @@ function ChannelView({
     turnStarts.current.set(agent, ts);
     return ts;
   };
-  const liveDrafts = [...(drafts?.entries() ?? [])].filter(([, d]) => now - d.ts < 15_000);
+  const waiting = client.waitingInputs();
+  const waitingNames = new Set(waiting.map(request => client.displayName(request.agentPk).toLowerCase()));
+  const liveDrafts = [...(drafts?.entries() ?? [])].filter(([pk, d]) => now - d.ts < 15_000 && !waiting.some(request => request.agentPk === pk));
   const draftsForRoot = (rootId: string) => liveDrafts.filter(([, d]) => d.rootId === rootId);
   // Threaded turns belong to their thread's own preview — showing them
   // here too doubled the indicator (steph appeared "thinking" in the
   // thread AND "working" at channel root). Frames without a root (older
   // agents, DMs) keep today's behavior.
   const workingNow = [...working.entries()].filter(
-    ([, w]) => now - w.ts < 30_000 && (threadRoot ? w.root === threadRoot : !w.root)
+    ([agent, w]) => now - w.ts < 30_000 && (threadRoot ? w.root === threadRoot : !w.root)
+      // Scoped questions show their waiting status beside the form.
+      && !waiting.some(request => request.origin && client.displayName(request.agentPk) === agent)
   );
 
   // One turn per working agent, at whichever phase it has reached:
@@ -2051,6 +2089,7 @@ function ChannelView({
   const timelineRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   useEffect(() => {
+    if (questionId && threadRoot === initialThreadRoot) return;
     if (focusId) {
       document.getElementById(`msg-${focusId}`)?.scrollIntoView({ behavior: "auto", block: "center" });
       return;
@@ -2401,6 +2440,7 @@ function ChannelView({
           );
         })()}
         {rows.map((row, index) => {
+          if (row.question) return <QuestionRow key={row.question.id} client={client} entry={row.question} focused={row.question.id === questionId} />;
           if (row.artifact) {
             return (
               <div key={row.artifact.id}>
@@ -2432,7 +2472,7 @@ function ChannelView({
               onAuthor={() => onProfile(msg.authorPk)}
               onProfile={onProfile}
             />
-            {!threadRoot && <RootLiveArea client={client} rootId={msg.id} drafts={draftsForRoot(msg.id)} />}
+            {!threadRoot && <RootLiveArea client={client} rootId={msg.id} drafts={draftsForRoot(msg.id)} onQuestion={onQuestion} />}
           </div>
           );
         })}
@@ -2456,8 +2496,8 @@ function ChannelView({
       </div>
       {/* A person typing is a different fact from an agent working:
           theirs isn't observable, so it keeps the quiet line. */}
-      {typing.filter((who) => !workingNames.has(who.toLowerCase())).length > 0 && (
-        <div className="typing">{typing.filter((who) => !workingNames.has(who.toLowerCase())).join(", ")} typing…</div>
+      {typing.filter((who) => !workingNames.has(who.toLowerCase()) && !waitingNames.has(who.toLowerCase())).length > 0 && (
+        <div className="typing">{typing.filter((who) => !workingNames.has(who.toLowerCase()) && !waitingNames.has(who.toLowerCase())).join(", ")} typing…</div>
       )}
       {editing && (
         <div className="edit-banner">
@@ -2533,18 +2573,24 @@ function RootLiveArea({
   client,
   rootId,
   drafts,
+  onQuestion,
 }: {
   client: FezClient;
   rootId: string;
+  onQuestion: (request: PendingInput) => void;
   drafts: [string, { content: string; rootId?: string; ts: number }][];
 }) {
   // Slack's decision: the channel shows a COUNT, not a preview — the
   // bubble foot's "N replies →" carries it. This area only renders the
   // live parts: streaming drafts and per-root typing.
-  const typing = client.typingWho(rootId).filter((name) => name !== "You");
-  if (drafts.length === 0 && typing.length === 0) return null;
+  const waiting = client.waitingInputs().filter(request => request.origin?.kind === "channel" && request.origin.rootId === rootId);
+  const typing = client.typingWho(rootId).filter(name => name !== "You" && !waiting.some(request => client.displayName(request.agentPk) === name));
+  if (drafts.length === 0 && typing.length === 0 && waiting.length === 0) return null;
   return (
     <div className="root-live">
+      {waiting.map(request => <button key={request.id} className="input-thread-link" onClick={() => onQuestion(request)}>
+        @{client.displayName(request.agentPk)} · Waiting for your answer →
+      </button>)}
       {/* Under a root message the turn runs compact — same object, one
           line, so a thread preview never grows a second vocabulary. */}
       {drafts.map(([pk, d]) => (
@@ -2635,11 +2681,13 @@ function DmView({
   client,
   wire,
   convoKey,
+  questionId,
   onProfile,
 }: {
   client: FezClient;
   wire: BrowserWire;
   convoKey: string;
+  questionId?: string;
   onProfile: (pk: string) => void;
 }) {
   const [draft, setDraftState] = useState(() => localStorage.getItem(`fez-draft-dm-${convoKey}`) ?? "");
@@ -2656,6 +2704,11 @@ function DmView({
   const timelineRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   const convo = client.dmConversations().get(convoKey);
+  const questions = conversationQuestions(client, { kind: "dm", convoKey });
+  const rows = [
+    ...(convo?.msgs ?? []).map(msg => ({ ts: msg.ts, msg, question: undefined })),
+    ...questions.map(question => ({ ts: question.requestedAt / 1000, msg: undefined, question })),
+  ].sort((a, b) => a.ts - b.ts);
   const group = convoKey.includes("+");
   const peers = client.dmPeers(convoKey);
   // The conversation's metadata channel — reactions/edits/unsends ride it,
@@ -2664,7 +2717,7 @@ function DmView({
 
   useEffect(() => {
     client.markDmRead(convoKey);
-    if (nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    if (!questionId && nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "auto" });
   });
 
   // Same double-send latch as the channel composer — see its comment.
@@ -2762,7 +2815,10 @@ function DmView({
           if (el) nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
       >
-        {(convo?.msgs ?? []).map((msg, index, all) => (
+        {rows.map((row, index, all) => {
+          if (row.question) return <QuestionRow key={row.question.id} client={client} entry={row.question} focused={row.question.id === questionId} />;
+          const msg = row.msg!;
+          return (
           <div key={msg.id}>
             {(index === 0 || !sameDay(all[index - 1].ts, msg.ts)) && (
               <div className="day-divider"><span>{dayLabel(msg.ts)}</span></div>
@@ -2804,7 +2860,7 @@ function DmView({
               <GitInstallOffer key={url} url={url} authorName={client.displayName(msg.senderPk)} client={client} />
             ))}
           </div>
-        ))}
+        ); })}
         <div ref={bottomRef} />
       </div>
       {editing && (

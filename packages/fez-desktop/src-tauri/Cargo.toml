@@ -38,6 +38,9 @@ hex = "0.4.3"
 # to a live sentinel instead of double-spawning.
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Already used by tauri-plugin-notification; retain its per-banner click result.
+mac-notification-sys = "0.6.15"
+
 [dev-dependencies]
 tempfile = "3"
-
