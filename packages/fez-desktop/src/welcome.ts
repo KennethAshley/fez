@@ -116,7 +116,7 @@ function markerWire(hex: string): MarkerWire & { close(): void } {
 }
 
 /** Create and start the welcome teammates without overwriting existing personas. */
-export async function prepareStarterTeam(client: FezClient, channelId: string): Promise<void> {
+async function prepareStarterTeam(client: FezClient, channelId: string): Promise<void> {
   const fezMd = await invoke<string>("read_persona", { name: "fez" }).catch(() => "");
   const brain = parsePersonaBrain(fezMd);
   for (const p of STARTER_TEAM) {

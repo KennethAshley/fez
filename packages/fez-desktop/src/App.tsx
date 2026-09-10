@@ -59,8 +59,6 @@ import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
 import FirstRun from "./FirstRun";
-import ResearchStarter from "./ResearchStarter";
-import { WELCOME_CHANNEL_ID } from "./welcome-core";
 import HistoryStatus from "./HistoryStatus";
 import { isNostrKeyInput, pubkeyFromInput, resolvePubkeyInput } from "./public-key";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
@@ -2578,9 +2576,6 @@ function ChannelView({
               onWatch={() => onWatch(t.agent)}
             />
           ))}
-        {!threadRoot && channelId === WELCOME_CHANNEL_ID && client.state.isOwner(client.pubkey) && (
-          <ResearchStarter client={client} channelId={channelId} onStarted={setThreadRoot} onOpenAgents={onAgents} />
-        )}
         <div ref={bottomRef} />
       </div>
       {/* A person typing is a different fact from an agent working:
