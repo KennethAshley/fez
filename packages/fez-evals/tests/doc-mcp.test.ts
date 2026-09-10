@@ -11,7 +11,9 @@ const sign = (content: string, tags: string[][], kind = 40100, created_at = 100,
   finalizeEvent({ kind, content, tags, created_at }, secret);
 
 vi.mock("../../fez-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js", () => ({ McpServer: class {
+  server = {};
   registerTool(name: string, _spec: unknown, handler: Handler) { harness.tools.set(name, handler); }
+  tool(name: string, _description: string, spec: unknown, handler: Handler) { this.registerTool(name, spec, handler); }
   async connect() {}
 } }));
 vi.mock("../../fez-mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js", () => ({ StdioServerTransport: class {} }));
