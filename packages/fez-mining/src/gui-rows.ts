@@ -1,5 +1,13 @@
 import type { Subnet } from "@fezchat/bittensor/subnets";
-import type { ConfigField } from "@fezchat/extension-api";
+import type { ConfigField, SubmissionStatus } from "@fezchat/extension-api";
+
+export function submissionVersions(status?: SubmissionStatus) {
+  const versions = status?.versions ?? [];
+  return {
+    latest: versions.reduce<(typeof versions)[number] | undefined>((latest, v) => !latest || v.version > latest.version ? v : latest, undefined),
+    active: versions.find(v => v.id === status?.activeVersionId),
+  };
+}
 
 export type ConfigFormValues = Record<string, string | number | boolean>;
 

@@ -4,17 +4,20 @@ import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { MinerEntry, MinerMachineState } from "./state.js";
-import { fezHome, readState, writeState, upsertMiner } from "./state.js";
+import { fezHome, readState, writeState, upsertMiner, updateState } from "./state.js";
 import { loadDescriptors } from "./descriptors.js";
 import { containerLogs, stopContainerMiner } from "./container-runner.js";
 import { teardownPod } from "./machine-lium.js";
 import { doDestroy } from "./machine-do.js";
 import { parseSshTarget } from "./machine-ssh.js";
 import { resolveMachine } from "./run.js";
+import { resolveConfig } from "./config.js";
+import { preflightMiner, walletChain } from "./preflight.js";
 import { alive, kill, spawnDetached } from "./procs.js";
 import { lium, parseJson, priceOf } from "@fezchat/lium/cli";
 import { deleteSecret, getSecret, setSecret } from "./secrets.js";
 import type { ConfigField } from "@fezchat/extension-api";
+import { submissionCommand, type SubmissionAction } from "./submission.js";
 
 type ConfigVal = string | number | boolean;
 
@@ -45,7 +48,7 @@ interface RegisterResult {
 
 /** Pure — the part the test pins. */
 export function statusRows(miners: MinerEntry[], isAlive: (pid?: number) => boolean) {
-  return miners.map((m) => ({ ...m, alive: isAlive(m.pid) }));
+  return miners.map((m) => ({ ...m, alive: m.mode === "submission" ? false : isAlive(m.pid) }));
 }
 
 async function cmdSubnets(json: boolean, refresh: boolean): Promise<void> {
@@ -53,11 +56,19 @@ async function cmdSubnets(json: boolean, refresh: boolean): Promise<void> {
   let s = await readState(home);
   if (refresh) {
     const { allSubnets } = await import("@fezchat/bittensor/subnets");
-    const subnets = await allSubnets();
+    const chain = walletChain(WALLET_BIN);
+    const subnets = await allSubnets(chain.endpoint, chain.network === "finney");
     const descriptors = await loadDescriptors(home);
-    const covered = descriptors.map((d) => d.netuid);
+    const matching = descriptors.filter(d => !d.network || d.network === chain.network);
+    // Local descriptor names identify our testnet deployments even when the
+    // chain has not published a name. Never overlay a different network.
+    for (const d of matching) {
+      const sn = subnets.find(sn => sn.netuid === d.netuid);
+      if (sn) sn.name = d.name;
+    }
+    const covered = matching.filter(d => !d.container?.image.includes("REPLACED_AT_PUBLISH")).map(d => d.netuid);
     const requirementsByNetuid: Record<number, { gpu?: string; publicEndpoint?: boolean }> = {};
-    for (const d of descriptors) {
+    for (const d of matching) {
       if (d.requirements?.gpu || d.requirements?.publicEndpoint) {
         requirementsByNetuid[d.netuid] = {
           ...(d.requirements.gpu ? { gpu: d.requirements.gpu } : {}),
@@ -69,11 +80,11 @@ async function cmdSubnets(json: boolean, refresh: boolean): Promise<void> {
     // than writing the whole (possibly stale) state we read before it, so
     // a stop/runner-exit/sentinel write racing the fetch isn't clobbered
     // (worst case: resurrecting a stopped miner).
-    const fresh = await readState(home);
-    s = { ...fresh, subnets, covered, requirementsByNetuid };
-    await writeState(home, s);
+    await updateState(home,fresh => ({...fresh, subnets, covered, requirementsByNetuid,
+      submissionNetuids:matching.filter(d => d.submission).map(d => d.netuid)}));
+    s = await readState(home);
   }
-  if (json) console.log(JSON.stringify({ subnets: s.subnets, covered: s.covered, requirementsByNetuid: s.requirementsByNetuid ?? {} }));
+  if (json) console.log(JSON.stringify({ subnets: s.subnets, covered: s.covered, submissionNetuids: s.submissionNetuids ?? [], requirementsByNetuid: s.requirementsByNetuid ?? {} }));
   else for (const sn of s.subnets) console.log(`${sn.netuid}\t${sn.name}${s.covered.includes(sn.netuid) ? "\t[covered]" : ""}`);
 }
 
@@ -111,6 +122,11 @@ async function cmdStart(
   ssh?: { target?: string; keyPath?: string; servePort?: number }
 ): Promise<void> {
   const home = fezHome();
+  const descriptor = (await loadDescriptors(home)).find(d => d.netuid === netuid);
+  if (!descriptor) throw new Error(`no miner descriptor for netuid ${netuid}`);
+  if (descriptor.submission) throw new Error(`This miner runs submitted code on validators. Use fez-mine submission status|register|test|submit --netuid ${netuid} --persona ${persona}`);
+  const before = (await readState(home)).miners.find(m => m.netuid === netuid && m.persona === persona);
+  preflightMiner(descriptor, resolveConfig(descriptor.config, before?.config, k => getSecret(netuid, persona, k)), WALLET_BIN);
   // Validate the ssh target BEFORE the register call below — that call is
   // the burn on a real registration, and a config error must never land
   // after money moved.
@@ -218,6 +234,9 @@ export async function cmdStop(netuid: number, persona: string, json: boolean): P
   const home = fezHome();
   const s = await readState(home);
   const m = s.miners.find((e) => e.netuid === netuid && e.persona === persona);
+  if (m?.mode === "submission" || (await loadDescriptors(home)).find(d => d.netuid === netuid)?.submission) {
+    throw Error("This is a validator-hosted submission; stopping a local process cannot deactivate it. Use submission status to inspect its versions.");
+  }
   if (m?.pid && alive(m.pid)) kill(m.pid);
   if (m) {
     const podId = m.machine?.kind === "lium" ? m.machine.podId : undefined;
@@ -402,10 +421,11 @@ async function cmdConfigGet(netuid: number, persona: string, json: boolean): Pro
 export async function cmdConfigSet(netuid: number, persona: string, key: string, value: string, secret: boolean): Promise<void> {
   if (secret) { setSecret(netuid, persona, key, value); return; }
   const home = fezHome();
-  const s = await readState(home);
-  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
-  const base: MinerEntry = entry ?? { netuid, persona, hotkey: "", desired: "stopped" };
-  await writeState(home, upsertMiner(s, { ...base, config: { ...base.config, [key]: value } }));
+  await updateState(home,s => {
+    const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+    const base: MinerEntry = entry ?? { netuid, persona, hotkey: "", desired: "stopped" };
+    return upsertMiner(s, { ...base, config: { ...base.config, [key]: value } });
+  });
 }
 
 // No --secret flag here — a caller may not know where a key landed, so this
@@ -414,12 +434,12 @@ export async function cmdConfigSet(netuid: number, persona: string, key: string,
 async function cmdConfigUnset(netuid: number, persona: string, key: string): Promise<void> {
   deleteSecret(netuid, persona, key);
   const home = fezHome();
-  const s = await readState(home);
-  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
-  if (entry?.config && key in entry.config) {
+  await updateState(home,s => {
+    const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+    if (!entry?.config || !(key in entry.config)) return;
     const { [key]: _omit, ...rest } = entry.config;
-    await writeState(home, upsertMiner(s, { ...entry, config: rest }));
-  }
+    return upsertMiner(s, { ...entry, config: rest });
+  });
 }
 
 // The GUI's New-miner picker needs a subnet's config schema before it can
@@ -428,7 +448,7 @@ async function cmdConfigUnset(netuid: number, persona: string, key: string): Pro
 async function cmdDescribe(netuid: number): Promise<void> {
   const d = (await loadDescriptors(fezHome())).find((x) => x.netuid === netuid);
   if (!d) throw new Error(`no descriptor for netuid ${netuid}`);
-  console.log(JSON.stringify({ netuid: d.netuid, name: d.name, requirements: d.requirements, config: d.config }));
+  console.log(JSON.stringify({ netuid: d.netuid, name: d.name, network:d.network, mode:d.submission ? "submission" : "process", requirements: d.requirements, config: d.config }));
 }
 
 /** Pure — the part the test pins. Last `n` lines of `text`, in order. */
@@ -472,10 +492,11 @@ async function cmdLogs(netuid: number, persona: string, lines: number): Promise<
 // side reads it back to know where to reply. One-liner upsert.
 async function cmdThreadSetRoot(netuid: number, persona: string, root: string): Promise<void> {
   const home = fezHome();
-  const s = await readState(home);
-  const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
-  if (!entry) throw new Error(`no recorded miner ${netuid}:${persona} — start it once with: fez-mine start`);
-  await writeState(home, upsertMiner(s, { ...entry, threadRootId: root }));
+  await updateState(home,s => {
+    const entry = s.miners.find((m) => m.netuid === netuid && m.persona === persona);
+    if (!entry) throw new Error(`no recorded miner ${netuid}:${persona}`);
+    return upsertMiner(s, { ...entry, threadRootId: root });
+  });
 }
 
 function usage(): never {
@@ -483,7 +504,7 @@ function usage(): never {
     "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium | --machine ssh --host user@host[:port] [--ssh-key path] [--serve-port N] | --machine do [--serve-port N]] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | do-token-status [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
       "thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
-      "logs --netuid N --persona P [--lines 12]"
+      "logs --netuid N --persona P [--lines 12] | submission status|register|test|submit --netuid N --persona P [--file path.py] [--sha256 tested-hash] [--json]"
   );
   process.exit(2);
 }
@@ -516,11 +537,22 @@ async function main(): Promise<void> {
   const rootValue = rootFlag >= 0 ? argv[rootFlag + 1] : undefined;
   const linesFlag = argv.indexOf("--lines");
   const linesValue = linesFlag >= 0 ? Number(argv[linesFlag + 1]) || 12 : 12;
+  const optionValue = (flag: string): string | undefined => {
+    const i=argv.indexOf(flag);
+    if (i < 0) return undefined;
+    const value=argv[i+1];
+    if (!value || value.startsWith("--") || argv.lastIndexOf(flag) !== i) throw Error(`${flag} needs one value`);
+    return value;
+  };
+  const fileValue=optionValue("--file");
+  const shaValue=optionValue("--sha256");
   const [cmd, sub] = argv.filter(
     (a, i) =>
       a !== "--json" &&
       a !== "--refresh" &&
       a !== "--secret" &&
+      a !== "--file" && !(argv.indexOf("--file") >= 0 && i === argv.indexOf("--file")+1) &&
+      a !== "--sha256" && !(argv.indexOf("--sha256") >= 0 && i === argv.indexOf("--sha256")+1) &&
       a !== "--netuid" &&
       !(netuidFlag >= 0 && i === netuidFlag + 1) &&
       a !== "--persona" &&
@@ -544,6 +576,12 @@ async function main(): Promise<void> {
   );
 
   switch (cmd) {
+    case "submission": {
+      if (netuidValue === undefined || !personaValue || !["status","register","test","submit"].includes(sub ?? "")) usage();
+      const result = await submissionCommand(sub as SubmissionAction,netuidValue,personaValue,{file:fileValue,sha256:shaValue},fezHome(),WALLET_BIN);
+      console.log(JSON.stringify(result));
+      break;
+    }
     case "subnets":
       await cmdSubnets(json, refresh);
       break;

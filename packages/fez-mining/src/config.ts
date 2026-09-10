@@ -1,4 +1,4 @@
-import type { ConfigField } from "@fezchat/extension-api";
+import type { ConfigField, SubnetMiner } from "@fezchat/extension-api";
 type Val = string | number | boolean;
 
 // `cmdConfigSet` stores whatever argv string it was given — a descriptor
@@ -38,6 +38,24 @@ export function resolveConfig(
   return out;
 }
 export function validateConfig(schema: ConfigField[] | undefined, values: Record<string, Val>): string | null {
-  for (const f of schema ?? []) if (f.required && (values[f.key] === undefined || values[f.key] === "")) return f.label;
+  for (const f of schema ?? []) {
+    const v = values[f.key];
+    if (v === undefined || v === "") { if (f.required) return f.label; else continue; }
+    if (f.type === "select" && f.options && !f.options.includes(String(v))) return f.label;
+    if (f.type === "number" && !Number.isFinite(Number(v))) return f.label;
+    if (f.pattern && !new RegExp(`^(?:${f.pattern})$`).test(String(v))) return f.label;
+  }
   return null;
+}
+
+/** Shared by initial start and sentinel respawn, before either can spend. */
+export function assertMinerPreflight(d: SubnetMiner, values: Record<string, Val>, network?: string): void {
+  if (d.network && network !== d.network) {
+    throw new Error(`${d.name} requires wallet network ${d.network}; found ${network ?? "unknown"}. Run: fez-wallet network ${d.network}`);
+  }
+  if (d.container && /REPLACED_AT_PUBLISH|@sha256:(?![a-f0-9]{64}$)/.test(d.container.image)) {
+    throw new Error(`${d.name}: miner image is not published and digest-pinned yet`);
+  }
+  const invalid = validateConfig(d.config, values);
+  if (invalid) throw new Error(`Invalid or missing miner config: ${invalid}`);
 }
