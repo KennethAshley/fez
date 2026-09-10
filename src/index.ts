@@ -32,6 +32,7 @@ export { KIND_HTTP_AUTH, buildNip98Header, verifyNip98Header, type Nip98Result, 
 export { FezTUI } from "./cli/tui.js";
 export { PackageManager, skillEntryFor, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
 export * from "./protocol/kinds.js";
+export { requestInput, type InputForm, type InputResponse } from "../packages/fez-client/dist/agent-input.js";
 export { MAX_CHAIN_DEPTH } from "./protocol/limits.js";
 export {
   allowedMediaHosts,
@@ -56,7 +57,7 @@ export {
 } from "./extensions/extension-permissions.js";
 // Harness/persona/skill resolution — what a standing agent script (run via
 // `fez run`) needs to dispatch instructions the same way the TUI does.
-export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, registerHarness, invokeWithRetry, classifyTurnError, SESSION_TIMEOUTS, setRiskPolicy, type RiskPolicy, type HarnessAdapter, type HarnessSession, type HarnessUpdate, type PromptImage, type PromptInput, type TimeoutOptions, type TurnErrorKind } from "./agent/harness.js";
+export { findHarness, registerBuiltinHarnesses, listHarnesses, detectHarnesses, registerHarness, invokeWithRetry, classifyTurnError, SESSION_TIMEOUTS, setRiskPolicy, type RiskPolicy, type HarnessAdapter, type HarnessSession, type HarnessUpdate, type PromptImage, type PromptInput, type TimeoutOptions, type TurnErrorKind, type InputHandler as HarnessInputHandler } from "./agent/harness.js";
 export { SummonEngine, summonMentions, isSafeWork, type SummonEvent, type WorkContext, type RegistryEntry, type SummonHost } from "./agent/summon.js";
 export { findPersona, listPersonas, validatePersonaFile, mergeDefaults, parseSkillEntries, nearestKnownKey, KNOWN_EXTRA_KEYS, type Persona, type PersonaValidation } from "./identity/personas.js";
 /** Where a declared skill comes from — see skill-source.ts on why a bare name resolves to nothing. */

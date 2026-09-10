@@ -10,6 +10,8 @@ export {
   type ReminderStatus,
 } from "./reminders.js";
 import type { Query } from "./query-lang.js";
+import { inputForm, validateInputResponse, INPUT_WAIT_MS, type PendingInput, type InputResponse } from "./agent-input.js";
+export * from "./agent-input.js";
 import { nextCreatedAt, STALE_AFTER_S, type ReminderBody, type ReminderRecord } from "./reminders.js";
 
 /** One row of a `runQuery` result — a task, approval, page, mention or run,
@@ -219,6 +221,8 @@ export const K = {
   AGENT_METADATA: 47000,
   /** Owner-signed "this is my agent" — summon authority for siblings. */
   AGENT_ATTESTATION: 47006,
+  INPUT_REQUEST: 47013,
+  INPUT_RESPONSE: 47014,
   CHIT: 47007,
   SALT: 47008,
   /** Retired with the flat model — the number stays burned. */
@@ -541,6 +545,7 @@ export interface ClientEvents {
   docChanged: (channelId: string) => void;
   jobsChanged: () => void;
   observerFrame: (agent: string, frame: ObserverEntry) => void;
+  inputsChanged: () => void;
   workflowRunsChanged: () => void;
   /** A typed artifact landed in a channel. */
   artifact: (channelId: string, artifact: Artifact) => void;
@@ -607,6 +612,9 @@ export class FezClient {
   // jobs + observer + workflows
   private jobsMap = new Map<string, Job>();
   private observerFeedsMap = new Map<string, ObserverEntry[]>();
+  private inputRequests = new Map<string, PendingInput>();
+  private closedInputs = new Map<string, number>();
+  private inputTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private workingAgentsMap = new Map<string, { activity: string; ts: number; root?: string }>();
   private workflowRunsMap = new Map<string, WorkflowRunInfo>();
 
@@ -911,6 +919,40 @@ export class FezClient {
   }
   observerFeed(agent: string): readonly ObserverEntry[] {
     return this.observerFeedsMap.get(agent) ?? [];
+  }
+  pendingInputs(): PendingInput[] {
+    return [...this.inputRequests.values()].filter(r => r.expiresAt > Date.now() && this.state.isMember(r.agentPk));
+  }
+  async answerInput(id: string, answer: InputResponse): Promise<void> {
+    const request = this.pendingInputs().find(r => r.id === id);
+    if (!request) throw new Error("This question has expired or was already answered");
+    const response = validateInputResponse(request.form, answer);
+    await this.wire.publish({ kind: K.INPUT_RESPONSE, tags: [["p", request.agentPk], ["d", request.requestId]],
+      content: await this.wire.encrypt(request.agentPk, JSON.stringify(response)) });
+    // The agent's closed event is the acknowledgement. Keep the card until
+    // it arrives, so a relay accepting but not forwarding an answer is visible.
+  }
+  private async handleInputRequest(event: WireEvent): Promise<void> {
+    if (event.kind !== K.INPUT_REQUEST || !this.state.isMember(event.pubkey) || !event.tags.some(t => t[0] === "p" && t[1] === this.pubkey)) return;
+    const requestId = event.tags.find(t => t[0] === "d")?.[1];
+    if (!requestId || requestId.length > 200) return;
+    const raw = JSON.parse(await this.wire.decrypt(event.pubkey, event.content));
+    if (!raw || !Number.isFinite(raw.expiresAt) || raw.expiresAt > Date.now() + INPUT_WAIT_MS + 60_000) return;
+    const id = `${event.pubkey}:${requestId}`;
+    for (const [key, expiresAt] of this.closedInputs) if (expiresAt <= Date.now()) this.closedInputs.delete(key);
+    const close = () => {
+      this.inputRequests.delete(id);
+      if (raw.expiresAt > Date.now()) this.closedInputs.set(id, raw.expiresAt);
+      clearTimeout(this.inputTimers.get(id));
+      this.inputTimers.delete(id);
+      this.emit("inputsChanged");
+    };
+    if (raw.status === "closed" || raw.expiresAt <= Date.now()) { close(); return; }
+    if (raw.status !== "pending" || this.closedInputs.has(id) || this.inputRequests.has(id) || this.inputRequests.size >= 64) return;
+    const form = inputForm(raw.form);
+    this.inputRequests.set(id, { id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form });
+    this.inputTimers.set(id, setTimeout(close, raw.expiresAt - Date.now()));
+    this.emit("inputsChanged");
   }
   workingAgents(): ReadonlyMap<string, { activity: string; ts: number; root?: string }> {
     const now = Date.now();
@@ -2415,6 +2457,14 @@ export class FezClient {
     this.state.describe({ name: info?.name, owner: info?.pubkey });
 
     await this.syncWorkspace();
+
+    const inputFilters = [{ kinds: [K.INPUT_REQUEST], "#p": [this.pubkey], since: Math.floor((Date.now() - INPUT_WAIT_MS) / 1000) }];
+    this.wire.subscribe(inputFilters, event => {
+      this.cryptoIngest = this.cryptoIngest.then(() => this.handleInputRequest(event)).catch(() => {});
+    });
+    for (const event of await this.wire.query(inputFilters).catch(() => [])) {
+      await this.handleInputRequest(event).catch(() => {});
+    }
 
     // Nothing is created on first run. There is no workspace event to
     // mint, so the duplicate-"Home" bug has no way to happen: an
