@@ -110,7 +110,22 @@ else process.exit(1);
     expect(result.status, result.stderr).toBe(0);
     expect((await readState(home)).miners[0]).toMatchObject({ desired: "running", hotkey: "fixture-public", threadRoots, threadRootId: "root-B", threadChannelId: "B", threadRelay: "ws://127.0.0.1:7778" });
   });
-  it("serializes GUI and background root creation",async()=>{
+  it.each(["legacy file", "directory"])("recovers an abandoned %s thread lock and reuses relay history", async kind => {
+    const home = await fixture();
+    const dir = path.join(home, "mining", "155-scout");
+    await fs.mkdir(dir, { recursive: true });
+    const lock = path.join(dir, "thread.lock");
+    if (kind === "legacy file") await fs.writeFile(lock, "");
+    else await fs.mkdir(lock);
+    const old = new Date(Date.now() - 60_000);
+    await fs.utimes(lock, old, old);
+    const io = { find: vi.fn(async () => "existing-root"), post: vi.fn(async () => "duplicate") };
+    expect(await ensureMinerThread(home, 155, "scout", "channel", io)).toBe("existing-root");
+    expect(io.post).not.toHaveBeenCalled();
+    expect((await readState(home)).miners[0].threadRootId).toBe("existing-root");
+    await expect(fs.stat(lock)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("waits for overlapping GUI and background opens and returns one root to both",async()=>{
     const home=await fixture();
     let release!:()=>void;let began!:()=>void;
     const entered=new Promise<void>(r=>{began=r;});
@@ -118,8 +133,11 @@ else process.exit(1);
     const io={find:vi.fn(async()=>{began();await hold;return undefined;}),post:vi.fn(async()=>"only-root")};
     const first=ensureMinerThread(home,155,"scout","channel",io);
     await entered;
-    await expect(ensureMinerThread(home,155,"scout","channel",io)).rejects.toThrow("being opened");
-    release();await first;
+    const second=ensureMinerThread(home,155,"scout","channel",io).catch(error=>error);
+    await new Promise(r=>setTimeout(r,50));
+    release();
+    expect(await first).toBe("only-root");
+    expect(await second).toBe("only-root");
     expect(io.post).toHaveBeenCalledTimes(1);
     expect(await ensureMinerThread(home,155,"scout","channel",io)).toBe("only-root");
   });

@@ -1,4 +1,4 @@
-import { type Filter, type Event, verifyEvent } from "nostr-tools";
+import { type Filter, type Event, type EventTemplate, verifyEvent } from "nostr-tools";
 import type { Subscription } from "nostr-tools/abstract-relay";
 import { SimplePool } from "nostr-tools/pool";
 import { normalizeURL } from "nostr-tools/utils";
@@ -35,8 +35,8 @@ export interface RelayOptions {
   /** Connectivity-watchdog poll interval (ms). Mainly for tests. */
   watchdogMs?: number;
   /**
-   * NIP-42: when the relay sends an AUTH challenge, sign the kind-22242
-   * auth event with this and reply automatically. Optional — a relay that
+   * NIP-42: sign the kind-22242 challenge when connecting or when an
+   * operation requires authentication. Optional — a relay that
    * never challenges (fez-relay without read-side policies) costs
    * nothing; a challenge with no signer is simply ignored (the relay may
    * then withhold read-gated events).
@@ -145,18 +145,16 @@ export class RelayConnection {
   constructor(private options: RelayOptions) {
     this.urls = normalizeUrls([...(options.urls ?? []), ...(options.url ? [options.url] : [])]);
     if (this.urls.length === 0) throw new Error("RelayConnection: no relay URLs given");
-    const { authSigner } = options;
-    // nostr-tools auto-answers AUTH challenges when the relay instance
-    // has an onauth signer; automaticallyAuth supplies it per-URL. The
-    // option is real at runtime (AbstractSimplePool) but SimplePool's
-    // constructor Pick<> omits it — hence the cast.
-    const poolOptions = {
-      enablePing: true,
-      automaticallyAuth: authSigner
-        ? () => (evt: unknown) => authSigner(evt as never) as Promise<never>
-        : undefined,
-    };
-    this.pool = new SimplePool(poolOptions as ConstructorParameters<typeof SimplePool>[0]);
+    // Authenticate through the requesting operation, which owns its rejection.
+    // nostr-tools' automatic AUTH handler rethrows a rejected handshake into
+    // an unobserved promise, killing short-lived clients on disconnect.
+    this.pool = new SimplePool({ enablePing: true });
+  }
+
+  private async signAuth(template: EventTemplate) {
+    const event = await this.options.authSigner!(template);
+    if (!verifyEvent(event)) throw new Error("invalid auth signature");
+    return event;
   }
 
   /**
@@ -198,10 +196,9 @@ export class RelayConnection {
     const relay = await this.pool.ensureRelay(url, { connectionTimeout: CONNECT_TIMEOUT_MS });
     const signer = this.options.authSigner;
     if (!signer) return;
-    const authable = relay as unknown as { auth(s: (evt: never) => Promise<never>): Promise<string> };
     for (let attempt = 0; attempt < 20; attempt++) {
       try {
-        await authable.auth((evt) => signer(evt) as Promise<never>);
+        await relay.auth(evt => this.signAuth(evt));
         return;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -375,7 +372,7 @@ export class RelayConnection {
         },
         // Belt & braces for the auth race: a CLOSED "auth-required:" makes
         // nostr-tools auth with this signer and re-fire the subscription.
-        onauth: authSigner ? (evt) => authSigner(evt) as Promise<never> : undefined,
+        onauth: authSigner ? evt => this.signAuth(evt) : undefined,
       })
     );
     sub.close = () => closers.forEach((c) => c.close());
@@ -503,11 +500,7 @@ export class RelayConnection {
               if (done) return;
               if (reason.startsWith("auth-required:") && this.options.authSigner && !authRetried) {
                 authRetried = true;
-                void relay.auth(async template => {
-                  const event = await this.options.authSigner!(template);
-                  if (!verifyEvent(event)) throw new Error("invalid auth signature");
-                  return event;
-                }).then(open).catch(err => finish(errText(err)));
+                void relay.auth(template => this.signAuth(template)).then(open).catch(err => finish(errText(err)));
               } else finish(reason || "subscription closed before history completed");
             },
           });
@@ -550,7 +543,9 @@ export class RelayConnection {
       // host, all of which "succeeded" in single-digit milliseconds.
       // For a system whose entire promise is that a signed event was
       // recorded somewhere, that is the worst possible lie to tell.
-      const sends = this.pool.publish(this.urls, event);
+      const sends = this.pool.publish(this.urls, event, {
+        onauth: this.options.authSigner ? template => this.signAuth(template) : undefined,
+      });
       const settled = Promise.allSettled(sends);
       try {
         // First acceptance wins: the event exists the moment ONE relay
