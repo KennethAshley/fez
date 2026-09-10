@@ -29,14 +29,14 @@ const entry = (): MinerEntry => ({ netuid: 777, persona: "scout", mode: "submiss
 const disposers: (() => void)[] = [];
 afterEach(async () => { await act(async () => { for (const dispose of disposers.splice(0)) dispose(); }); vi.useRealTimers(); });
 
-async function mount(options: { fleet?: MinerEntry[]; liveFleet?: MinerEntry[]; thread?: boolean; cachedSubmission?: boolean; refreshedSubmission?: boolean } = {}) {
+async function mount(options: { coding?: boolean; fleet?: MinerEntry[]; liveFleet?: MinerEntry[]; thread?: boolean; cachedSubmission?: boolean; refreshedSubmission?: boolean } = {}) {
   const state = {
     miners: options.fleet ?? [entry()], subnets: [{ netuid: 777, name: "Submission fixture" }], covered: [777],
     submissionNetuids: options.cachedSubmission === false ? [] : [777], requirementsByNetuid: { 777: { gpu: "A100" } },
   };
   let snapshot = pending;
   let failure = "";
-  const receipt = { sha256: "a".repeat(64), prediction: 0.42, detail: "Isolated Docker test passed" };
+  const receipt = { sha256: "a".repeat(64), ...(options.coding ? {} : { prediction: 0.42 }), detail: "Isolated Docker test passed" };
   let deferTest: (() => Promise<typeof receipt>) | undefined;
   let deferStatus: (() => Promise<SubmissionStatus>) | undefined;
   const calls: string[][] = [];
@@ -50,7 +50,7 @@ async function mount(options: { fleet?: MinerEntry[]; liveFleet?: MinerEntry[]; 
     let result: unknown;
     if (args[0] === "status") result = (options.liveFleet ?? state.miners).map(m => ({ ...m, alive: false }));
     else if (args[0] === "subnets") result = { ...state, submissionNetuids: options.refreshedSubmission === false ? [] : [777] };
-    else if (args[0] === "describe") result = { netuid: 777, mode: "submission", network: "test", config: [] };
+    else if (args[0] === "describe") result = { netuid: 777, mode: "submission", network: options.coding ? "finney" : "test", submissionNotice: options.coding ? "Screening bills your OpenRouter account." : undefined, config: [] };
     else if (args[0] === "do-token-status") result = { present: false };
     else if (args[0] === "cost") result = { netuid: 777, rao: "123000000", tao: "0.123" };
     else if (args[0] === "submission") {
@@ -101,6 +101,18 @@ function noProcessCommands(calls: string[][]) {
 }
 
 describe("generic submission mining GUI", () => {
+  it("accepts coding checks without predictions and shows billing consequences before confirmation", async () => {
+    const p = await mount({ thread: true, coding: true });
+    await p.change("Source file", "/tmp/agent.py");
+    await p.click("Test");
+    expect(p.host.textContent).not.toContain("Prediction:");
+    expect(p.button("Register").disabled).toBe(true);
+    await p.click("Submit tested version");
+    expect(p.host.querySelector('[aria-label="Confirm mining action"]')?.textContent).toContain("Screening bills your OpenRouter account");
+    expect(p.calls.some(a => a[1] === "submit")).toBe(false);
+    await p.click("Confirm submission");
+    expect(p.calls.some(a => a[1] === "submit")).toBe(true);
+  });
   it("keeps stopped submissions in the fleet, shows pending/latest and the old active version, and manages without chat", async () => {
     const p = await mount();
     expect(p.host.textContent).toContain("pending");

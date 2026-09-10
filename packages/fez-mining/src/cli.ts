@@ -453,7 +453,7 @@ async function cmdConfigUnset(netuid: number, persona: string, key: string): Pro
 async function cmdDescribe(netuid: number): Promise<void> {
   const d = (await loadDescriptors(fezHome())).find((x) => x.netuid === netuid);
   if (!d) throw new Error(`no descriptor for netuid ${netuid}`);
-  console.log(JSON.stringify({ netuid: d.netuid, name: d.name, network:d.network, mode:d.submission ? "submission" : "process", requirements: d.requirements, config: d.config }));
+  console.log(JSON.stringify({ netuid: d.netuid, name: d.name, network:d.network, mode:d.submission ? "submission" : "process", submissionNotice:d.submission?.notice, requirements: d.requirements, config: d.config }));
 }
 
 /** Pure — the part the test pins. Last `n` lines of `text`, in order. */

@@ -158,7 +158,7 @@ export interface SubmissionVersion {
 export interface SubmissionStatus {
   hotkey: string;
   uid?: number;
-  phase: "not-submitted" | "pending" | "active";
+  phase: "not-submitted" | "pending" | "active" | "failed";
   versions: SubmissionVersion[];
   checkedAt: string;
   activeVersionId?: string;
@@ -177,11 +177,13 @@ export interface SubmissionContext {
 
 export interface SubmissionTest {
   sha256: string;
-  prediction: number;
+  prediction?: number;
   detail: string;
 }
 
 export interface MinerSubmission {
+  /** Subnet-specific consequences shown before the user confirms an upload. */
+  notice?: string;
   status(ctx: SubmissionContext): Promise<SubmissionStatus>;
   test(ctx: SubmissionContext, sourcePath: string): Promise<SubmissionTest>;
   /** Must refuse changed or untested bytes. This never registers a wallet. */

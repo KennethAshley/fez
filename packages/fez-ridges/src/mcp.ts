@@ -5,6 +5,8 @@ import { z } from "zod";
 import { makeX402Deps, x402FetchRaw, type X402ToolDeps } from "@fezchat/wallet";
 import { dispatchRidges, type X402Call, type X402Outcome } from "./dispatch.js";
 import { ridgesDir } from "./home.js";
+import { statusReport } from "./status.js";
+import { updatesChannel, setUpdatesChannel } from "./store.js";
 
 /**
  * fez-ridges, skill part — the `ridges_dispatch` agent tool.
@@ -27,6 +29,19 @@ if (!persona) {
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const server = new McpServer({ name: "fez-ridges", version: "0.1.0" });
+
+server.registerTool("ridges_status", {
+  description: "Read paid Ridges jobs: issue/PR links, titles, states, receipts, tracking problems and weekly totals. Defaults to THIS persona. Set allPersonas only when the user requests their full local history, including owner-dispatched jobs formerly shown in the desktop panel. Read-only; never dispatches or pays. Use offset to page through history.",
+  inputSchema: { allPersonas: z.boolean().optional(), offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(50).optional() },
+}, async ({ allPersonas, offset, limit }) => text(statusReport(ridgesDir(), { persona: allPersonas ? undefined : persona, offset, limit })));
+
+server.registerTool("ridges_updates", {
+  description: "Inspect or configure the local Ridges job announcement channel. Omitting channelId is read-only. Only set a channel or disable updates when explicitly requested by the user: announcements expose all local paid-job issue links and receipts to that channel. Never choose a channel automatically. The sentinel validates that it exists before posting; it must be running for delivery.",
+  inputSchema: { channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).nullable().optional().describe("Omit to inspect; null disables; a channel ID enables announcements.") },
+}, async ({ channelId }) => {
+  if (channelId !== undefined) setUpdatesChannel(ridgesDir(), channelId);
+  return text(`Ridges updates channel: ${updatesChannel(ridgesDir()) ?? "off"}. The sentinel verifies the channel before posting. History remains available through ridges_status.`);
+});
 
 function asX402Call(): X402Call {
   return (deps, args) => x402FetchRaw(deps as X402ToolDeps, args) as Promise<X402Outcome>;

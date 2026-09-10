@@ -1,5 +1,5 @@
 import { matchPr } from "./github.js";
-import { mirrorJobs, readJobs, upsertJob, type RidgesJob } from "./store.js";
+import { readJobs, upsertJob, type RidgesJob } from "./store.js";
 import type { FetchLike } from "./dispatch.js";
 
 /**
@@ -49,15 +49,23 @@ export async function pollOnce(deps: {
   // Reuses the same controllable clock as `now()` rather than a second
   // time source — epoch seconds, comparable to GitHub's rate-limit reset.
   const nowSec = () => Math.floor(Date.parse(now()) / 1000);
+  const waiting = (job: RidgesJob) => job.status === "working" && job.prNumber == null && Date.parse(now()) - Date.parse(job.ts) >= 3600000
+    ? "No matching PR after one hour. Check the issue or contact Ridges support; do not redispatch a paid job." : undefined;
   const state = deps.state ?? createPollerState();
 
   const openJobs = readJobs(deps.dir).filter((j) => OPEN_STATUSES.has(j.status) && j.repo);
   if (openJobs.length === 0) return;
 
   const repos = [...new Set(openJobs.map((j) => j.repo))];
-  let anyChanged = false;
 
   for (const repo of repos) {
+    const note = (message: string | undefined | ((job: RidgesJob) => string | undefined)) => {
+      for (const job of openJobs.filter(j => j.repo === repo)) {
+        const text = typeof message === "function" ? message(job) : message;
+        if (job.pollingNote === text) continue;
+        upsertJob(deps.dir, { ...job, pollingNote: text, pendingUpdate: true, updatedAt: now() });
+      }
+    };
     if (state.deadRepos.has(repo)) continue;
     const until = state.backoffUntil.get(repo);
     if (until != null && nowSec() < until) continue;
@@ -73,24 +81,27 @@ export async function pollOnce(deps: {
         { headers }
       );
     } catch {
+      note("GitHub unavailable; tracking will retry.");
       continue; // transient — skip silently this tick
     }
 
-    if (res.status === 304) continue; // nothing new; jobs untouched this tick
+    if (res.status === 304) { note(waiting); continue; }
 
     if (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0") {
       const reset = Number(res.headers.get("x-ratelimit-reset"));
       if (Number.isFinite(reset)) state.backoffUntil.set(repo, reset);
+      note("GitHub rate limit reached; tracking is delayed.");
       continue;
     }
 
     if (res.status === 404) {
       console.warn(`ridges: repo ${repo} unreadable — private? token support later`);
       state.deadRepos.add(repo); // dead for this state's lifetime
+      note("Repository unreadable (HTTP 404); tracking stopped until the sentinel restarts. Check repository access; do not redispatch.");
       continue;
     }
 
-    if (res.status !== 200) continue; // transient — skip silently this tick
+    if (res.status !== 200) { note(`GitHub HTTP ${res.status}; tracking will retry.`); continue; }
 
     const newEtag = res.headers.get("etag");
     if (newEtag) state.etags.set(repo, newEtag);
@@ -98,14 +109,15 @@ export async function pollOnce(deps: {
     let prs: GhPr[];
     try {
       const body = JSON.parse(await res.text());
-      if (!Array.isArray(body)) continue;
+      if (!Array.isArray(body)) { note("Invalid GitHub response; tracking will retry."); continue; }
       prs = body;
     } catch {
+      note("Invalid GitHub response; tracking will retry.");
       continue;
     }
 
     for (const job of openJobs.filter((j) => j.repo === repo)) {
-      let updated = job;
+      let updated = job.pollingNote ? { ...job, pollingNote: undefined } : job;
 
       // First-match permanence: a job with a prNumber is never re-matched,
       // even if a newer PR in this same list also matches.
@@ -131,12 +143,12 @@ export async function pollOnce(deps: {
         }
       }
 
-      if (updated !== job) {
-        upsertJob(deps.dir, { ...updated, updatedAt: now() });
-        anyChanged = true;
+      updated = { ...updated, pollingNote: waiting(updated) };
+
+      if (updated.status !== job.status || updated.prNumber !== job.prNumber || updated.prUrl !== job.prUrl || updated.pollingNote !== job.pollingNote) {
+        upsertJob(deps.dir, { ...updated, updatedAt: now(), pendingUpdate: true });
       }
     }
   }
 
-  if (anyChanged) await mirrorJobs(deps.dir);
 }

@@ -46,6 +46,8 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
     const [statusError, setStatusError] = useState(initial?.submissionError);
     const [error, setError] = useState<string | undefined>(undefined);
     const [network, setNetwork] = useState<string | undefined>(undefined);
+    const [notice, setNotice] = useState("");
+    const [descriptorReady, setDescriptorReady] = useState(false);
     const [file, setFile] = useState("");
     const [receipt, setReceipt] = useState<SubmissionTest | undefined>(undefined);
     const [busy, setBusy] = useState<string | undefined>(undefined);
@@ -73,7 +75,7 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
     async function execute(action: "status" | "register" | "test" | "submit" | "cost"): Promise<void> {
       if (!run || !persona || inFlight.current) return;
       if ((action === "test" || action === "submit") && !file.startsWith("/")) return;
-      if (action === "submit" && !receipt) return;
+      if (action === "submit" && (!receipt || !descriptorReady)) return;
       inFlight.current = true;
       const revision = fileRevision.current;
       setBusy(action);
@@ -95,11 +97,11 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
         if (!alive.current) return;
         if (action === "test") {
           const tested = result as SubmissionTest;
-          if (!tested || !/^[a-f0-9]{64}$/.test(tested.sha256) || !Number.isFinite(tested.prediction) || typeof tested.detail !== "string") throw Error("Invalid test receipt");
+          if (!tested || !/^[a-f0-9]{64}$/.test(tested.sha256) || (tested.prediction !== undefined && !Number.isFinite(tested.prediction)) || typeof tested.detail !== "string") throw Error("Invalid test receipt");
           if (revision === fileRevision.current) setReceipt(tested);
         } else {
           const snapshot = result as SubmissionStatus;
-          if (!snapshot || !["not-submitted", "pending", "active"].includes(snapshot.phase) || !Array.isArray(snapshot.versions)
+          if (!snapshot || !["not-submitted", "pending", "active", "failed"].includes(snapshot.phase) || !Array.isArray(snapshot.versions)
             || typeof snapshot.hotkey !== "string" || typeof snapshot.detail !== "string" || !Number.isFinite(Date.parse(snapshot.checkedAt))
             || snapshot.versions.some(v => !v || typeof v.id !== "string" || typeof v.name !== "string" || !Number.isFinite(v.version))) throw Error("Invalid submission status response");
           setStatus(snapshot);
@@ -124,9 +126,11 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
     useEffect(() => {
       alive.current = true;
       void json(["describe", "--netuid", String(netuid), "--json"]).then(value => {
-        const descriptor = value as { mode?: string; network?: string };
+        const descriptor = value as { mode?: string; network?: string; submissionNotice?: string };
         if (descriptor.mode !== "submission") throw Error("This subnet has no submission adapter");
         if (alive.current) setNetwork(descriptor.network);
+        if (alive.current && typeof descriptor.submissionNotice === "string") setNotice(descriptor.submissionNotice);
+        if (alive.current) setDescriptorReady(true);
       }).catch(err => { if (alive.current) report(String(err)); });
       void execute("status");
       // Single-flight, status only. Candidate testing and upload are explicit.
@@ -154,17 +158,18 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
         <input className="manage-input" style={{ width: "100%", boxSizing: "border-box" }} aria-label="Source file" value={file} placeholder="/absolute/path/miner.py"
           onChange={(e: { target: { value: string } }) => { fileRevision.current++; setFile(e.target.value); setReceipt(undefined); cancel(); }} />
       </label>
-      <p style={styles.dim}>Testing requires local Docker installed and running. Code runs in an isolated, networkless container without wallet keys.</p>
+      <p style={styles.dim}>Checks require local Docker and run in an isolated, networkless container without wallet keys. The result describes what was checked.</p>
+      {notice ? <p className="skill-desc">{notice}</p> : null}
       <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
         <button className="agent-action" disabled={!run || !!busy || !!confirm || !file.startsWith("/")} onClick={() => void execute("test")}>Test</button>
-        <button className="agent-action" disabled={!run || !!busy || !!confirm || !receipt} onClick={() => {
+        <button className="agent-action" disabled={!run || !!busy || !!confirm || !receipt || !descriptorReady} onClick={() => {
           confirming.current = true;
-          setConfirm({ action: "submit", message: `Submit the tested version for ${persona}? This schedules or replaces validator code. Next upload allowed: ${status?.nextUploadAt ?? "not reported; the adapter enforces its cooldown"}. Only bytes matching the tested SHA256 will be accepted.` });
+          setConfirm({ action: "submit", message: `${notice ? notice + " " : ""}Submit the tested version for ${persona}? This schedules or replaces validator code. Next upload allowed: ${status?.nextUploadAt ?? "not reported; the adapter enforces its cooldown"}. Only bytes matching the tested SHA256 will be accepted.` });
         }}>Submit tested version</button>
       </div>
       {busy ? <p role="status" style={styles.dim}>{busy}…</p> : null}
       {receipt ? <div style={{ ...styles.dim, marginTop: 8, overflowWrap: "anywhere" }}>
-        <div>Tested SHA256: {receipt.sha256}</div><div>Prediction: {receipt.prediction}</div><div>{receipt.detail}</div>
+        <div>Tested SHA256: {receipt.sha256}</div>{receipt.prediction !== undefined ? <div>Prediction: {receipt.prediction}</div> : null}<div>{receipt.detail}</div>
       </div> : null}
       {confirm ? <div role="group" aria-label="Confirm mining action" style={{ marginTop: 10 }}>
         <p className="skill-desc">{confirm.message}</p>

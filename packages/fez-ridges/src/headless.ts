@@ -3,6 +3,8 @@ import { makeX402Deps, x402FetchRaw, type X402ToolDeps } from "@fezchat/wallet";
 import { dispatchRidges, type FetchLike, type X402Call, type X402Outcome } from "./dispatch.js";
 import { ridgesDir } from "./home.js";
 import { createPollerState, pollOnce } from "./poller.js";
+import { formatJob, statusReport } from "./status.js";
+import { readJobs, upsertJob, updatesChannel, setUpdatesChannel } from "./store.js";
 
 const POLL_INTERVAL_MS = 90_000;
 
@@ -23,8 +25,21 @@ const POLL_INTERVAL_MS = 90_000;
 export default function fezRidges(api: FezExtensionAPI): void {
   api.registerCommand("ridges", async (args: string, ctx: CommandContext) => {
     const issueUrl = args.trim();
+    if (/^status(?:\s|$)/.test(issueUrl)) {
+      const offset = issueUrl.split(/\s+/)[1] ?? "0";
+      if (!/^\d+$/.test(offset)) return ctx.reply("Use /ridges status [offset]");
+      return ctx.reply(statusReport(ridgesDir(), { offset: Number(offset) }));
+    }
+    if (/^watch(?:\s|$)/.test(issueUrl)) {
+      const target = issueUrl.split(/\s+/)[1];
+      if (target === "off") { setUpdatesChannel(ridgesDir(), null); return ctx.reply("Ridges channel updates disabled. History remains available with /ridges status."); }
+      if (!target) return ctx.reply(`Updates channel: ${updatesChannel(ridgesDir()) ?? "off"}. Use /ridges watch <channel-id> to publish local Ridges job updates there.`);
+      if (!api.channels || !(await api.channels.list()).some(c => c.id === target)) return ctx.reply("Choose a channel ID from this workspace; no updates channel was changed.");
+      setUpdatesChannel(ridgesDir(), target);
+      return ctx.reply(`Ridges updates for local paid jobs will be posted in channel ${target} by the sentinel. /ridges watch off disables them.`);
+    }
     if (!issueUrl) {
-      return ctx.reply("ridges: /ridges <github-issue-url> — e.g. /ridges https://github.com/acme/widgets/issues/42");
+      return ctx.reply("ridges: /ridges <github-issue-url> · /ridges status [offset] · /ridges watch <channel-id|off>");
     }
     // A command typed by the workspace owner has no FEZ_AGENT_PERSONA of
     // its own — "owner" is the established fallback identity elsewhere
@@ -50,9 +65,23 @@ export default function fezRidges(api: FezExtensionAPI): void {
   // in ctx, because poller.ts's etags/backoff are this task's own cursor,
   // not something another surface needs to see.
   const pollerState = createPollerState();
-  api.registerScheduledTask("ridges-pr-poll", POLL_INTERVAL_MS, async () => {
+  api.registerScheduledTask("ridges-pr-poll", POLL_INTERVAL_MS, async (ctx) => {
     await pollOnce({ dir: ridgesDir(), fetchImpl: fetch as unknown as FetchLike, state: pollerState });
+    const channel = updatesChannel(ridgesDir());
+    if (!channel) return;
+    if (!(await ctx.channels.list()).some(c => c.id === channel)) throw Error("Ridges updates channel is unavailable; pending updates retained");
+    await announceUpdates(ridgesDir(), text => ctx.channels.say(channel, text), () => updatesChannel(ridgesDir()) === channel);
   });
+}
+
+export async function announceUpdates(dir: string, deliver: (text: string) => Promise<unknown>, allowed: () => boolean = () => true): Promise<void> {
+  for (const job of readJobs(dir).filter(j => j.pendingUpdate)) {
+    if (!allowed()) break;
+    await deliver(`Ridges update\n${formatJob(job)}`);
+    const current = readJobs(dir).find(j => j.id === job.id);
+    if (current && current.updatedAt === job.updatedAt && current.status === job.status && current.pollingNote === job.pollingNote)
+      upsertJob(dir, { ...current, pendingUpdate: false });
+  }
 }
 
 /**

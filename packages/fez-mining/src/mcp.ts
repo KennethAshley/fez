@@ -116,7 +116,7 @@ server.registerTool(
 );
 
 server.registerTool("mining_submission", {
-  description: "Manage THIS agent's validator-hosted submission (Numinous testnet155). status adopts/refreshes existing uploaded versions without uploading; register explicitly enrolls and may burn test tokens. test runs a local Python source file in a keyless networkless Docker sandbox and returns its SHA256. submit uploads only those tested bytes and requires that SHA256. Ask the user before registration or replacing a submission; never automatically retry an uncertain upload. Activation is not proof of execution or rewards. No container start/stop or provider linking.",
+  description: "Manage THIS agent's validator-hosted submission. status adopts/refreshes existing uploaded versions without uploading; register explicitly enrolls and may burn test tokens. test checks local Python source in keyless networkless Docker and returns its SHA256; read detail for check coverage (Ridges checks syntax only). submit uploads only those checked bytes and requires that SHA256. Ask the user before registration or any submission: Ridges consumes a funded ticket, shares configured OpenRouter runtime/management keys with Ridges, and bills screening inference. Never automatically retry an uncertain upload. Activation is not proof of execution or rewards. No container start/stop or provider linking.",
   inputSchema: {
     netuid:z.number().int().nonnegative(),
     action:z.enum(["status","register","test","submit"]),

@@ -6,12 +6,9 @@ import { pollOnce, createPollerState } from "../src/poller.js";
 import { upsertJob, readJobs, type RidgesJob } from "../src/store.js";
 
 let dir: string;
-let extensionDataDir: string;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-ridges-poller-"));
-  extensionDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-ridges-extdata-"));
-  process.env.FEZ_EXTENSION_DATA_DIR = extensionDataDir;
 });
 
 function job(over: Partial<RidgesJob> = {}): RidgesJob {
@@ -104,8 +101,6 @@ describe("pollOnce", () => {
     expect(rows[0]).toMatchObject({ status: "pr-open", prNumber: 5, prUrl: "https://github.com/acme/widgets/pull/5" });
     expect(rows[0].updatedAt).toBe("2026-08-30T00:01:00.000Z");
 
-    const mirror = JSON.parse(fs.readFileSync(path.join(extensionDataDir, "fez-ridges.json"), "utf8"));
-    expect(mirror.jobs).toHaveLength(1);
 
     const fetchImpl2 = vi.fn(async () => okResponse([pr({ state: "closed", merged_at: "2026-08-30T00:02:00.000Z" })]));
     await pollOnce({ dir, fetchImpl: fetchImpl2, state, now: () => "2026-08-30T00:02:00.000Z" });
@@ -129,13 +124,12 @@ describe("pollOnce", () => {
     expect(readJobs(dir)[0].prNumber).toBe(5);
   });
 
-  it("sends If-None-Match once an etag is held, and a 304 changes nothing and does not mirror", async () => {
+  it("sends If-None-Match once an etag is held, and a 304 changes nothing and does not rewrite history", async () => {
     upsertJob(dir, job());
     const state = createPollerState();
 
     await pollOnce({ dir, fetchImpl: vi.fn(async () => okResponse([pr()], { etag: '"abc123"' })), state });
     const beforeUpdatedAt = readJobs(dir)[0].updatedAt;
-    fs.rmSync(path.join(extensionDataDir, "fez-ridges.json"));
 
     const fetchImpl2 = vi.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
       expect(init?.headers?.["If-None-Match"]).toBe('"abc123"');
@@ -145,7 +139,6 @@ describe("pollOnce", () => {
 
     expect(fetchImpl2).toHaveBeenCalledTimes(1);
     expect(readJobs(dir)[0].updatedAt).toBe(beforeUpdatedAt);
-    expect(fs.existsSync(path.join(extensionDataDir, "fez-ridges.json"))).toBe(false);
   });
 
   it("backs off a rate-limited repo until the reset time passes, without fetching", async () => {
