@@ -45,6 +45,23 @@ fn node_ready() -> bool {
     node_bin_dir().join("node").exists()
 }
 
+fn is_node_script(header: &[u8]) -> bool {
+    header.starts_with(b"#!/usr/bin/env node\n") || header.starts_with(b"#!/usr/bin/env node\r\n")
+}
+
+/// Extension bins use the same managed Node as agent adapters; a fresh
+/// desktop must not depend on a Node executable in the user's shell PATH.
+pub(crate) fn ensure_for_program(program: &std::path::Path) -> Result<(), String> {
+    use std::io::Read;
+    let mut header = [0u8; 64];
+    let mut file = std::fs::File::open(program).map_err(|e| format!("open extension program: {e}"))?;
+    let size = file.read(&mut header).map_err(|e| e.to_string())?;
+    if is_node_script(&header[..size]) {
+        ensure_node_runtime()?;
+    }
+    Ok(())
+}
+
 pub fn adapter_ready() -> bool {
     // The npm bin shim plus the actual package — a shim pointing at a
     // half-removed install must not count.
@@ -60,6 +77,9 @@ pub fn adapter_ready() -> bool {
 }
 
 fn ensure_node_runtime() -> Result<(), String> {
+    // Status checks and setup clicks can arrive together on a fresh Mac.
+    static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = INSTALL_LOCK.lock().map_err(|_| "node install lock poisoned".to_string())?;
     if node_ready() {
         return Ok(());
     }
@@ -178,6 +198,14 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extension_node_scripts_request_a_runtime_but_native_bins_do_not() {
+        assert!(super::is_node_script(b"#!/usr/bin/env node\nconsole.log('setup')"));
+        assert!(super::is_node_script(b"#!/usr/bin/env node\r\n"));
+        assert!(!super::is_node_script(b"#!/bin/sh\necho ready"));
+        assert!(!super::is_node_script(b"\x7fELF\x00\x00"));
+        assert!(!super::is_node_script(b"#!/usr/bin/env nodejs\n"));
+    }
     use super::parse_claude_auth;
 
     #[test]
