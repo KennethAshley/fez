@@ -1,7 +1,9 @@
 use nostr::JsonUtil as _;
+mod bounded_command;
 mod git_install;
 mod managed_agents;
 mod managed_node;
+mod notifications;
 mod package_install;
 mod package_migrate;
 use std::process::Command;
@@ -659,44 +661,16 @@ fn harness_search_dirs() -> Vec<String> {
 /// separate — "installed" (the CLI exists) and "signed in" (its auth
 /// probe says so) — plus whether fez's managed adapter is runnable.
 /// READY may only be claimed when all three hold.
-/// Run `claude auth status` with a REAL 10s kill deadline (Buzz's
-/// number). The old version documented the deadline and never had one —
-/// a bare .output() waits forever on a hung CLI. Small output only:
-/// reading the pipes after exit is safe because auth-status JSON is far
-/// below the pipe buffer.
+/// Auth probes share the bounded runner: noisy output and inherited pipes
+/// must not stall onboarding or make a truncated result look authoritative.
 fn probe_claude_auth(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    use std::process::Stdio;
-    let child = Command::new(path)
-        .args(["auth", "status"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let Ok(mut child) = child else { return false };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-            Err(_) => return false,
-        }
-    }
-    let mut out = String::new();
-    if let Some(mut so) = child.stdout.take() {
-        let _ = so.read_to_string(&mut out);
-    }
-    let mut err = String::new();
-    if let Some(mut se) = child.stderr.take() {
-        let _ = se.read_to_string(&mut err);
-    }
-    managed_node::parse_claude_auth(&out)
-        .or_else(|| managed_node::parse_claude_auth(&err))
+    let Ok(output) = bounded_command::run(
+        Command::new(path).args(["auth", "status"]),
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    ) else { return false };
+    std::str::from_utf8(&output.stdout).ok().and_then(managed_node::parse_claude_auth)
+        .or_else(|| std::str::from_utf8(&output.stderr).ok().and_then(managed_node::parse_claude_auth))
         .unwrap_or(false)
 }
 
@@ -1336,7 +1310,7 @@ fn remove_extension(name: String) -> Result<String, String> {
     if let Some(list) = modern {
         removed.extend(list);
     } else {
-        for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers"] {
+        for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers", "miners"] {
             for cand in &candidates {
                 let file = home.join(dir).join(format!("{cand}.js"));
                 if file.exists() && std::fs::remove_file(&file).is_ok() {
@@ -2266,20 +2240,26 @@ pub(crate) fn spawn_agent_process(
 /// summoning; running a package's own daemon is not summoning, and one that
 /// inherited that gate would silently do nothing and report success.
 #[tauri::command]
-fn spawn_extension_agent(
+async fn spawn_extension_agent(
     extension: String,
     bin: String,
     name: String,
     env: Vec<(String, String)>,
 ) -> Result<u32, String> {
-    // Scoped to THIS bin: "drift" the chat agent must not block sending
-    // "drift" the miner — one name, two domains, two processes.
-    if agent_is_alive_bin(&name, Some(&bin)) {
-        return Err(format!("{name} is already running — recall it first"));
-    }
-    let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
-    extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
-    spawn_tracked_process(name, &bin, checked_env(env)?, vec![], None, None)
+    tauri::async_runtime::spawn_blocking(move || {
+        // Scoped to THIS bin: "drift" the chat agent must not block sending
+        // "drift" the miner — one name, two domains, two processes.
+        if agent_is_alive_bin(&name, Some(&bin)) {
+            return Err(format!("{name} is already running — recall it first"));
+        }
+        let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
+        extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
+        let env = checked_env(env)?;
+        managed_node::ensure_for_program(&fez_home()?.join("bin").join(&bin))?;
+        spawn_tracked_process(name, &bin, env, vec![], None, None)
+    })
+    .await
+    .map_err(|e| format!("extension startup task panicked: {e}"))?
 }
 
 /// One-shot: run a bin THIS extension's package ships and return what it
@@ -2290,7 +2270,8 @@ fn spawn_extension_agent(
 /// difference is shape — this runs to completion and hands back stdout,
 /// where spawn starts a standing process and hands back a pid. Args are
 /// plain strings passed verbatim to the extension's OWN binary; a 120s
-/// deadline kills a hang rather than parking a webview promise forever.
+/// deadline covers the process and pipe capture. Combined output over 8 MiB
+/// fails explicitly so consumers never parse silently truncated output.
 #[tauri::command]
 async fn run_extension_bin(
     extension: String,
@@ -2302,38 +2283,15 @@ async fn run_extension_bin(
         let manifest = package_install::installed_manifest(&extension, &home);
         extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
         let program = home.join("bin").join(&bin);
-        use std::io::Read;
-        use std::process::Stdio;
-        let mut child = Command::new(&program)
-            .args(&args)
-            .env("PATH", subprocess_path_env())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("{bin}: {e}"))?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if std::time::Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("{bin} ran past the 120s deadline and was stopped"));
-                }
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                Err(e) => return Err(format!("{bin}: {e}")),
-            }
-        }
-        let mut stdout = String::new();
-        if let Some(mut so) = child.stdout.take() {
-            let _ = so.read_to_string(&mut stdout);
-        }
-        let mut stderr = String::new();
-        if let Some(mut se) = child.stderr.take() {
-            let _ = se.read_to_string(&mut stderr);
-        }
-        let code = child.wait().ok().and_then(|st| st.code()).unwrap_or(-1);
+        managed_node::ensure_for_program(&program)?;
+        let output = bounded_command::run(
+            Command::new(&program).args(&args).env("PATH", subprocess_path_env()),
+            std::time::Duration::from_secs(120),
+            8 * 1024 * 1024,
+        ).map_err(|e| format!("{bin}: {e}"))?;
+        let code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8(output.stdout).map_err(|_| format!("{bin}: stdout was not valid UTF-8"))?;
+        let stderr = String::from_utf8(output.stderr).map_err(|_| format!("{bin}: stderr was not valid UTF-8"))?;
         Ok(serde_json::json!({ "code": code, "stdout": stdout, "stderr": stderr }))
     })
     .await
@@ -2819,7 +2777,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
+        .invoke_handler(tauri::generate_handler![notifications::notify_with_click, stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {
@@ -2832,7 +2790,7 @@ pub fn run() {
 /// The fez host version `fez.minFezVersion` is enforced against — a
 /// mirror of FEZ_VERSION in src/extensions/host-compat.ts. The
 /// host-compat eval in fez-evals keeps the two equal; bump them together.
-const FEZ_VERSION: &str = "0.2.0";
+const FEZ_VERSION: &str = "0.2.1";
 
 /// Mirrors minFezVersionError in host-compat.ts: None = allow. Absent
 /// field means no claim; an unparseable requirement refuses too — a
@@ -2878,6 +2836,21 @@ mod harness_detect_tests {
         assert!(binary_in_dirs("claude", &dirs));
         assert!(!binary_in_dirs("codex", &dirs));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod auth_probe_tests {
+    use super::probe_claude_auth;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn auth_probe_drains_noisy_stderr_before_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("claude");
+        std::fs::write(&program, "#!/bin/sh\nhead -c 262144 /dev/zero >&2\nprintf '{\"loggedIn\":true}'\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(probe_claude_auth(&program));
     }
 }
 

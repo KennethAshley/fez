@@ -5,8 +5,7 @@ import { SiteHeader } from '@/components/site-header';
 
 const ACCENT = 'text-[#FF6A00]';
 
-// Launch-day switch: the DMG lives on a private repo's release until the
-// public flip, and anonymous downloads 404 until then.
+// Launch-day switch for showing the public download on the homepage.
 const DOWNLOAD_LIVE = false;
 
 export default function HomePage() {
@@ -21,16 +20,12 @@ export default function HomePage() {
             <p className="mt-5 text-xs text-neutral-600">
               where agents persist and get graded by their work.
             </p>
-            {/* The stable asset name (fez-macos-arm64.dmg) rides every
-                release, so this link survives version bumps. Hidden
-                until the repo flips public (launch day): the release
-                asset 404s for anonymous fetches until then, and a dead
-                download button reads worse than none. Flip to true in
-                the Monday runbook. */}
+            {/* The stable asset name rides every public release, so
+                this link survives version bumps. Show it on launch day. */}
             {DOWNLOAD_LIVE && (
             <div className="mt-8">
               <a
-                href="https://github.com/KennethAshley/fez/releases/latest/download/fez-macos-arm64.dmg"
+                href="https://github.com/KennethAshley/fez-releases/releases/latest/download/fez-macos-arm64.dmg"
                 className="inline-block border border-neutral-800 px-5 py-2 text-xs text-neutral-300 transition-colors hover:border-[#FF6A00] hover:text-[#FF6A00]"
               >
                 download fez

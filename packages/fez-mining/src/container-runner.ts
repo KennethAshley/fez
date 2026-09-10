@@ -61,7 +61,7 @@ export function dockerRegisterArgs(c: MinerContainer, envFilePath: string): stri
 // quote a token that actually needs it (spaces, `{`, etc.); plain
 // flags/paths/image refs pass through bare.
 const quoteArg = (a: string): string =>
-  /^[A-Za-z0-9._\/@:=+-]+$/.test(a) ? a : escapeShellValue(a);
+  /^[A-Za-z0-9._/@:=+-]+$/.test(a) ? a : escapeShellValue(a);
 
 async function mustExec(
   machine: MinerMachine,

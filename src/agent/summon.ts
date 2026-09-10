@@ -5,6 +5,8 @@
  */
 
 import { MAX_CHAIN_DEPTH } from "../protocol/limits.js";
+import { proseMentions } from "./mentions.js";
+import { replaceableEventWins } from "../../packages/fez-client/dist/workspace-state.js";
 
 /**
  * A string safe to interpolate into a SHELL COMMAND — the repo/line an
@@ -26,12 +28,7 @@ export function isSafeWork(value: string | undefined): boolean {
  * stands down), a silently dropped one is a no-show.
  */
 export function summonMentions(content: string): string[] {
-  const prose = content
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`[^`\n]*`/g, " ")
-    .replace(/"[^"\n]*"/g, " ")
-    .replace(/“[^”\n]*”/g, " ");
-  return [...new Set([...prose.matchAll(/@([\w-]+)/g)].map((m) => m[1].toLowerCase()))];
+  return [...new Set(proseMentions(content).map(({ name }) => name))];
 }
 export interface SummonEvent {
   id?: string;
@@ -47,6 +44,7 @@ export interface RegistryEntry { channels: string[]; work?: WorkContext }
 export interface SummonHost {
   ownerPubkey: string;
   personaExists(name: string): boolean | Promise<boolean>;
+  /** Resolve the local persona's key; relay display names are not identity. */
   personaPubkey(name: string): Promise<string | undefined>;
   agentAlive(name: string): boolean | Promise<boolean>;
   registryEntry(name: string): RegistryEntry | undefined | Promise<RegistryEntry | undefined>;
@@ -81,6 +79,8 @@ export class SummonEngine {
   private readonly spawning = new Set<string>();
   private readonly pendingInvites = new Map<string, { channelId: string }>();
   private readonly lastSummonAt = new Map<string, number>();
+  // ponytail: serialize this engine's roster writes; cross-process races need one shared roster writer.
+  private rosterWrite: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly host: SummonHost,
@@ -194,13 +194,14 @@ export class SummonEngine {
     } catch { return; }
     if (!name) return;
     this.agentPkToName.set(event.pubkey, name);
-    if (await this.host.registryEntry(name)) this.attestAgent(event.pubkey);
     const target = this.pendingInvites.get(name);
+    if (!target && !(await this.host.registryEntry(name))) return;
+    if ((await this.host.personaPubkey(name).catch(() => undefined)) !== event.pubkey) return;
+    this.attestAgent(event.pubkey);
     if (target) {
-      this.pendingInvites.delete(name);
-      this.attestAgent(event.pubkey);
       try {
         await this.inviteToWorkspace(event.pubkey);
+        this.pendingInvites.delete(name);
         this.log(`🤝 @${name} announced — invited to its channel`);
       } catch {
         this.log(`⚠️  invite for @${name} failed`);
@@ -223,6 +224,7 @@ export class SummonEngine {
     const persona = this.agentPkToName.get(recipientPk);
     if (!persona) return;
     if (this.spawning.has(persona) || !(await this.host.personaExists(persona)) || (await this.host.agentAlive(persona))) return;
+    if ((await this.host.personaPubkey(persona).catch(() => undefined)) !== recipientPk) return;
     const prior = await this.host.registryEntry(persona);
     await this.summon(persona, prior?.channels ?? [], "DM for a sleeping agent");
   }
@@ -249,15 +251,23 @@ export class SummonEngine {
   private attestAgent(agentPubkey: string): void {
     if (this.attested.has(agentPubkey) || agentPubkey === this.host.ownerPubkey) return;
     this.attested.add(agentPubkey);
-    this.attestedSiblings.add(agentPubkey);
     void this.host
       .publish({ kind: KIND_ATTESTATION, tags: [["p", agentPubkey]], content: "" })
+      .then(() => this.attestedSiblings.add(agentPubkey))
       .catch(() => this.attested.delete(agentPubkey));
   }
 
-  private async inviteToWorkspace(agentPubkey: string): Promise<void> {
-    const rosters = await this.host.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
-    const latest = rosters.sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0)).at(-1);
+  private inviteToWorkspace(agentPubkey: string): Promise<void> {
+    const write = this.rosterWrite.then(() => this.publishWorkspaceInvite(agentPubkey));
+    this.rosterWrite = write.catch(() => {});
+    return write;
+  }
+
+  private async publishWorkspaceInvite(agentPubkey: string): Promise<void> {
+    const rosters = await this.host.query([{ kinds: [KIND_MEMBERSHIP], authors: [this.host.ownerPubkey], "#d": [ROSTER_D] }]);
+    const latest = rosters
+      .filter((event) => event.kind === KIND_MEMBERSHIP && event.pubkey === this.host.ownerPubkey && event.tags.find((t) => t[0] === "d")?.[1] === ROSTER_D)
+      .reduce<SummonEvent | undefined>((latest, event) => replaceableEventWins(event, latest) ? event : latest, undefined);
     // No roster seen means the QUERY failed, not that the workspace has no
     // members — BrowserWire.query resolves [] whenever no socket is OPEN. A
     // 47102 built from that blip would hold only the new agent and, being

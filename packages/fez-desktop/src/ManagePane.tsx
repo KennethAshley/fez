@@ -5,6 +5,7 @@ import { flash } from "./toast";
 import { relaySet } from "./relay";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
+import { resolvePubkeyInput } from "./public-key";
 
 /**
  * Channel/workspace management — Buzz's ChannelManagementSheet as a fez
@@ -129,8 +130,9 @@ export default function ManagePane({
           <CreateRow
             label="new channel"
             placeholder="channel name"
+            exists={(name) => !!client.state.findChannelByName(name)}
             onCreate={(name) =>
-              void run(`created #${name}`, async () => {
+              void run(`${client.state.findChannelByName(name) ? "opened" : "created"} #${name}`, async () => {
                 const channelId = await client.createChannel(name);
                 onOpenChannel(channelId);
               })
@@ -274,12 +276,12 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
   const invite = async () => {
     const raw = who.trim().replace(/^@/, "");
     if (!raw) return;
-    const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw);
-    if (!pk) {
-      onResult(`✗ nobody named "${raw}" — use a known @name or a 64-hex pubkey`);
-      return;
-    }
     try {
+      const pk = resolvePubkeyInput(raw, name => client.pkByName(name));
+      if (!pk) {
+        onResult(`✗ nobody named "${raw}" — use a known @name, npub, or hex key`);
+        return;
+      }
       const name = await client.invite(pk, role);
       setWho("");
       onResult(`✓ invited ${name} as ${role}`);
@@ -295,7 +297,7 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
         <input
           className="manage-input"
           value={who}
-          placeholder="@name or pubkey hex"
+          placeholder="@name, npub, or hex key"
           spellCheck={false}
           onChange={(e) => setWho(e.target.value)}
           onKeyDown={(e) => {
@@ -317,10 +319,12 @@ function CreateRow({
   label,
   placeholder,
   onCreate,
+  exists,
 }: {
   label: string;
   placeholder: string;
   onCreate: (name: string) => void;
+  exists?: (name: string) => boolean;
 }) {
   const [name, setName] = useState("");
   const submit = () => {
@@ -343,7 +347,7 @@ function CreateRow({
             if (e.key === "Enter") submit();
           }}
         />
-        <button className="agent-action" onClick={submit}>create</button>
+        <button className="agent-action" onClick={submit}>{exists?.(name.trim()) ? "Open existing channel" : "create"}</button>
       </div>
     </>
   );

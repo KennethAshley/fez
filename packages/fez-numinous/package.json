@@ -1,0 +1,46 @@
+{
+  "name": "@fezchat/numinous",
+  "version": "0.1.1",
+  "description": "Numinous SIGNAL submission adapter for Fez, fixed to testnet 155.",
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "examples"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "esbuild src/miner.ts --bundle --format=esm --platform=node --outfile=dist/miner.js",
+    "check": "tsc --noEmit",
+    "test": "vitest --run && npm run build && node scripts/check-bundle.mjs"
+  },
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "miner": "dist/miner.js"
+    },
+    "permissions": [
+      "network:stg.numinous.earth",
+      "processes"
+    ],
+    "minFezVersion": "0.2.1",
+    "requires": [
+      "fez-wallet",
+      "fez-mine"
+    ]
+  },
+  "dependencies": {
+    "@polkadot/keyring": "14.0.3",
+    "@polkadot/util-crypto": "14.0.3"
+  },
+  "devDependencies": {
+    "@fezchat/extension-api": "file:../fez-extension-api",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

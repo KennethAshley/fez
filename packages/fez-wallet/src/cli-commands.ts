@@ -2,7 +2,7 @@ import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored, 
 import { readEntry, writeEntry, readRootEntry, writeRootEntry, readRemoteHotkeyEntry, writeRemoteHotkeyEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, x402Settings, type Network } from "./config.js";
-import { NETWORKS } from "./networks.js";
+import { NETWORKS, endpointFor } from "./networks.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs, mirrorEvmAddress, mirrorX402Meta, mirrorSubnet } from "./storage-mirror.js";
 import { migrateLog } from "./log.js";
@@ -267,9 +267,11 @@ export async function registerPersona(
  * (remote-hotkey/<persona>, via store.ts's sibling helpers) — the root
  * entry is never touched by this path. Create-or-load: idempotent, so
  * re-running `export-hotkey` after the first time re-exports the same key.
+ * `existing` makes read-only consumers fail before generating a missing key.
  */
 export async function exportRemoteHotkey(
-  persona: string
+  persona: string,
+  opts?: { existing?: boolean }
 ): Promise<{
   persona: string;
   ss58Address: string;
@@ -284,6 +286,7 @@ export async function exportRemoteHotkey(
 }> {
   requireUsablePersonaName(persona);
   const existing = readRemoteHotkeyEntry(persona);
+  if (opts?.existing && !existing) throw new Error("No existing remote hotkey for this persona");
   const mnemonic = existing ?? generateWalletMnemonic();
   if (!existing) writeRemoteHotkeyEntry(persona, mnemonic);
   const keyfile = keyfileFor(mnemonic);
@@ -371,13 +374,15 @@ export async function cmdCost(io: CliIo, netuid = DEFAULT_NETUID): Promise<void>
 
 /** Read-only: a hotkey's live on-chain miner performance. `undefined`
  * (not an error) when the hotkey isn't registered on this netuid. */
-export async function metagraphInfo(netuid: number, hotkey: string): Promise<MetagraphInfo | undefined> {
-  const api = await subtensorFor(loadConfig().endpoints.tao);
+export async function metagraphInfo(netuid: number, hotkey: string, requireTestnet = false): Promise<MetagraphInfo | undefined> {
+  const config = loadConfig();
+  if (requireTestnet && (config.network !== "test" || config.endpoints.tao !== endpointFor("test"))) throw Error("This metagraph read requires the exact testnet endpoint");
+  const api = await subtensorFor(config.endpoints.tao);
   return metagraph(api, netuid, hotkey);
 }
 
-export async function cmdMetagraph(io: CliIo, netuid: number, hotkey: string): Promise<void> {
-  const m = await metagraphInfo(netuid, hotkey);
+export async function cmdMetagraph(io: CliIo, netuid: number, hotkey: string, requireTestnet = false): Promise<void> {
+  const m = await metagraphInfo(netuid, hotkey, requireTestnet);
   if (!m) { io.print(`${hotkey} is not registered on netuid ${netuid}`); return; }
   io.print(
     `uid ${m.uid}  incentive ${m.incentive.toFixed(4)}  emission ${m.emission}  trust ${m.trust.toFixed(4)}  ` +

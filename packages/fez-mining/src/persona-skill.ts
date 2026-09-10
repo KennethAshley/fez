@@ -5,6 +5,9 @@
  * field; a YAML lib would be overkill (see personas.ts's own note).
  */
 const SKILL = "mining";
+// The installed catalog key differs between `fez link` and npm install.
+// A package source lets the host resolve either approved installation.
+const DECLARATION = "mining=npm:@fezchat/mining";
 
 function editMcpServers(md: string, transform: (names: string[]) => string[]): string {
   const fm = md.match(/^---\n([\s\S]*?)\n---\n?/);
@@ -28,9 +31,12 @@ function editMcpServers(md: string, transform: (names: string[]) => string[]): s
 }
 
 export function ensureMiningSkill(md: string): string {
-  return editMcpServers(md, (names) => (names.includes(SKILL) ? names : [...names, SKILL]));
+  return editMcpServers(md, names => {
+    if (names.some(n => n.startsWith(`${SKILL}=`))) return names;
+    return names.includes(SKILL) ? names.map(n => n === SKILL ? DECLARATION : n) : [...names, DECLARATION];
+  });
 }
 
 export function removeMiningSkill(md: string): string {
-  return editMcpServers(md, (names) => names.filter((n) => n !== SKILL));
+  return editMcpServers(md, (names) => names.filter((n) => n !== SKILL && !n.startsWith(`${SKILL}=`)));
 }

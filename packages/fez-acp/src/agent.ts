@@ -3,6 +3,7 @@ import {
   RelayConnection,
   CapabilityClient,
   classifyTurnError,
+  modelRecoveryHint,
   conversationKey,
   engramHeads,
   findHarness,
@@ -17,6 +18,9 @@ import {
   registerBuiltinHarnesses,
   SESSION_TIMEOUTS,
   setRiskPolicy,
+  requestInput,
+  type HarnessInputHandler,
+  type InputOrigin,
   KIND_AGENT_ATTESTATION,
   KIND_AGENT_METADATA,
   KIND_CHANNEL_MESSAGE,
@@ -26,6 +30,10 @@ import {
   KIND_DRAFT,
   KIND_MEMBERSHIP,
   ROSTER_D,
+  KIND_BAN_LIST,
+  BANS_D,
+  WorkspaceState,
+  fetchRelayInfo,
   KIND_ARTIFACT,
   KIND_OBSERVER,
   KIND_OBSERVER_CONTROL,
@@ -62,15 +70,19 @@ import { execSync, execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
+import { runMeteredHire } from "./hire-usage.js";
+import { deliverHire } from "./hire-delivery.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { loadServiceKey, resolveChannels } from "./service-common.js";
+import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
+import { RuntimeRefresh } from "./runtime-refresh.js";
+import { RecentContexts } from "./recent-context.js";
 import { decide, claimOwnership, takeOverActive, shutdownGraced, type OwnershipIO, type PresenceBeat } from "./ownership.js";
 
 export { piThinkingLevel };
@@ -160,6 +172,10 @@ function withNotice(
 }
 
 async function main() {
+  if (process.argv[2] === "--hire-protocol") {
+    console.log("FEZ_HIRE_PROTOCOL=1");
+    return;
+  }
   // `fez-agent connect <key>` — the OAuth sign-in flow, runnable from the
   // compiled binary so the DESKTOP can trigger it (the webview can't hold
   // the loopback callback port; this process can). Exits when connected.
@@ -578,26 +594,23 @@ async function main() {
       `Do NOT commit or push — that is handled for you once you finish.`;
     let summary = "";
     try {
-      summary = await invokeWithRetry(harness!, prompt, hireDir, (soFar) => emit(soFar.slice(-140)));
+      console.log("FEZ_HIRE_STARTED=1");
+      summary = await runMeteredHire({ harness: harness!, prompt, cwd: hireDir,
+        maxCostUsd: Number(process.env.FEZ_HIRE_MAX_COST_USD),
+        onProgress: soFar => emit(soFar.slice(-140)),
+        onUsage: usage => console.log(`FEZ_HIRE_USAGE=${JSON.stringify(usage)}`),
+      });
     } catch (err) {
       console.error(`FEZ_HIRE_ERROR=${(err as Error).message.slice(0, 200)}`);
       process.exit(4);
     }
     try {
-      git(["add", "-A"]);
-      if (!git(["status", "--porcelain"]).toString().trim()) {
-        console.error("FEZ_HIRE_ERROR=the engine finished but changed no files");
-        process.exit(5);
-      }
       emit("committing and pushing the branch");
       const msg = (summary.split("\n").find((l) => l.trim())?.trim() || hireTask).slice(0, 72);
-      git(["-c", `user.name=${personaId}`, "-c", `user.email=${personaId}@fez`, "commit", "-m", msg]);
-      execFileSync("git", ["-c", `http.extraHeader=${nip98()}`, "push", "origin", branchName], { cwd: hireDir, stdio: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+      deliverHire({ dir: hireDir, branch: branchName, personaId, message: msg, authHeader: nip98 });
     } catch (err) {
-      console.error(`FEZ_HIRE_ERROR=commit/push failed: ${(err as Error).message.slice(0, 200)}`);
+      console.error(`FEZ_HIRE_ERROR=${(err as Error).message.replace(/\s+/g, " ")}`);
       process.exit(6);
-    } finally {
-      fs.rmSync(hireDir, { recursive: true, force: true });
     }
     console.log(`FEZ_HIRE_BRANCH=${branchName}`);
     console.log(`FEZ_HIRE_SUMMARY=${(summary.split("\n").find((l) => l.trim())?.trim() || "done").slice(0, 200)}`);
@@ -646,6 +659,16 @@ async function main() {
   const relay = new RelayConnection({ urls: relayUrls, authSigner: client.authSigner });
   await relay.connect();
   const myPubkey = client.getPubkey();
+  const runtimeRefresh = new RuntimeRefresh();
+  // The existing busy gate serializes turns, including pooled-session reuse.
+  let inputOrigin: InputOrigin | undefined;
+  const onInput: HarnessInputHandler | undefined = owner ? (form, signal) => requestInput({
+    pubkey: myPubkey,
+    publish: template => runtimeRefresh.run(async () => { const event = client.signEvent(template); await relay.publish(event); return event; }),
+    subscribe: (filters, receive) => relay.subscribe(filters, receive),
+    encrypt: (peer, text) => client.encryptTo(peer, text),
+    decrypt: (peer, text) => client.decryptFrom(peer, text),
+  }, owner, form, { signal, origin: inputOrigin }) : undefined;
 
   // ── NIP-AE memory: the agent's `core` engram feeds every turn's
   // standing context. How it lands in prompts lives in memory-prompt.ts
@@ -734,7 +757,8 @@ async function main() {
    */
   async function pubkeyForName(name: string): Promise<string | undefined> {
     const wanted = name.toLowerCase();
-    for (const pubkey of roster.members) {
+    for (const pubkey of workspace.workspace.members.keys()) {
+      if (!workspace.isMember(pubkey)) continue;
       const known = await resolveName(pubkey);
       if (known && known.toLowerCase() === wanted) return pubkey;
       // resolveName just filled the alias cache for this pubkey (if it announced any).
@@ -906,21 +930,34 @@ async function main() {
     }, 60_000).unref?.();
   }
 
-  // Workspace roster (the owner's latest 47102, d = "roster"). A relay
-  // is a workspace, so there is one roster for every channel the agent
-  // sits in — being invited means being in all of them, which is why
-  // this is a single set rather than a map per channel.
-  const roster = { createdAt: 0, members: new Set<string>() };
-  function absorbMembership(event: { created_at: number; tags: string[][] }): void {
-    if (event.tags.find((t) => t[0] === "d")?.[1] !== ROSTER_D) return;
-    if (event.created_at < roster.createdAt) return;
-    roster.createdAt = event.created_at;
-    roster.members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
+  // Workspace authority comes from NIP-11, not the persona's owner.
+  // Reuse the client model for signer checks, timestamp ties and bans.
+  const workspace = new WorkspaceState();
+  async function refreshWorkspaceAuthority(): Promise<boolean> {
+    const info = await fetchRelayInfo(relayUrls[0]);
+    if (!info?.pubkey) return false;
+    const membershipEvents = await relay.query([
+      { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] },
+      { kinds: [KIND_BAN_LIST], "#d": [BANS_D] },
+    ]);
+    workspace.describe({ owner: info.pubkey });
+    // Load the roster before bans so current admins can sign moderation.
+    for (const kind of [KIND_MEMBERSHIP, KIND_BAN_LIST]) {
+      for (const event of membershipEvents.filter(event => event.kind === kind)) workspace.absorb(event);
+    }
+    return true;
   }
-
-  const membershipEvents = await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
-  for (const event of membershipEvents) absorbMembership(event);
-  if (!roster.members.has(myPubkey)) {
+  if (!(await refreshWorkspaceAuthority().catch(() => false))) {
+    console.warn("⚠️  Workspace owner unavailable — channel and document requests are blocked while relay info recovers.");
+    // Retry after each completed attempt; an HTTP outage must not require
+    // restarting a connected agent, or allow guessed workspace authority.
+    const retry = () => setTimeout(async () => {
+      if (await refreshWorkspaceAuthority().catch(() => false)) console.log("Workspace authority recovered — channel and document requests enabled.");
+      else retry();
+    }, 10_000).unref();
+    retry();
+  }
+  if (!workspace.isMember(myPubkey)) {
     console.warn(`⚠️  Not on this workspace's roster — replies will be dropped by other clients until the owner runs /invite ${myPubkey} bot`);
   }
 
@@ -1144,8 +1181,8 @@ async function main() {
     });
   }
 
-  // ── Session pool — Buzz's per-channel sessions, fez-shaped. One LIVE
-  // harness conversation per scope (channel or DM peer): the persona,
+  // ── Session pool — one LIVE harness conversation per thread, doc
+  // comment thread, or DM peer: the persona,
   // memory, and conventions go in once at open; every later turn is
   // just the new message, and the mind remembers its own earlier turns —
   // including handoffs it issued. This replaces fresh-process-per-turn
@@ -1155,6 +1192,7 @@ async function main() {
     session: HarnessSession;
     turns: number;
     lastUsed: number;
+    busy?: boolean;
     /** Whether the priming prompt (persona + memory + conventions) has been sent. */
     primed: boolean;
   }
@@ -1177,7 +1215,7 @@ async function main() {
   setInterval(() => {
     const now = Date.now();
     for (const [key, pooled] of sessionPool) {
-      if (now - pooled.lastUsed > SESSION_IDLE_MS) {
+      if (!pooled.busy && now - pooled.lastUsed > SESSION_IDLE_MS) {
         console.log(`🧠 reaping idle session ${key}`);
         dropSession(key);
       }
@@ -1227,10 +1265,12 @@ async function main() {
     const existing = sessionPool.get(scope);
     if (existing && existing.session.alive && existing.turns < SESSION_TURN_CAP) {
       existing.lastUsed = Date.now();
+      existing.busy = true;
       return existing;
     }
     if (existing) {
       if (existing.session.alive && existing.turns >= SESSION_TURN_CAP) {
+        existing.busy = true;
         await captureHandoff(scope, existing);
       }
       dropSession(scope);
@@ -1239,12 +1279,12 @@ async function main() {
       let oldestKey: string | undefined;
       let oldest = Infinity;
       for (const [key, pooled] of sessionPool) {
-        if (pooled.lastUsed < oldest) {
+        if (!pooled.busy && pooled.lastUsed < oldest) {
           oldest = pooled.lastUsed;
           oldestKey = key;
         }
       }
-      if (!oldestKey) break;
+      if (!oldestKey) throw new Error("All harness sessions are in use");
       dropSession(oldestKey);
     }
     // Standing instructions at session open, not per turn: the session
@@ -1252,8 +1292,8 @@ async function main() {
     // turn inherits it. composeSystemPrompt gathers the persona, core's
     // trust boundary, and anything an extension registered.
     const standing = composeSystemPrompt(activePersona.systemPrompt);
-    const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts, standing || undefined);
-    const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false };
+    const session = await harness!.openSession!(workDir, mcpServers, turnTimeouts, standing || undefined, onInput);
+    const pooled: PooledSession = { session, turns: 0, lastUsed: Date.now(), primed: false, busy: true };
     sessionPool.set(scope, pooled);
     console.log(`🧠 opened harness session for ${scope} (${sessionPool.size} live)`);
     return pooled;
@@ -1280,12 +1320,15 @@ async function main() {
     // images (PromptInput, and the retry that drops them when a model
     // refuses); fez-acp simply no longer sends any.
     if (!harness!.openSession) {
-      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal);
+      return invokeWithRetry(harness!, await buildPrompt(true), workDir, onProgress, mcpServers, onUpdate, signal, 3, onInput);
     }
     let pooled = await getSession(scope);
     try {
+      signal?.throwIfAborted();
       const instruction = withHandoff(scope, await buildPrompt(!pooled.primed), !pooled.primed);
+      signal?.throwIfAborted();
       const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
+      signal?.throwIfAborted();
       // An empty reply is a FAILED turn, not a publishable one (seen
       // live: pi provider flaked, harness emitted only retry noise, the
       // scrubbed remainder was "" — and an empty message still breaks
@@ -1299,31 +1342,46 @@ async function main() {
     } catch (err) {
       const kind = classifyTurnError(err);
       dropSession(scope); // failed or aborted mid-prompt — never reuse
+      signal?.throwIfAborted();
       if (kind !== "transient") throw err;
       console.log(`↻ transient harness error — recycling session, replaying once: ${err instanceof Error ? err.message : err}`);
       pooled = await getSession(scope);
-      const reply = await pooled.session.prompt(
-        withHandoff(scope, await buildPrompt(true), true),
-        onProgress,
-        onUpdate,
-        signal
-      );
-      // The replay came back empty too — the harness/provider is down,
-      // not blinking. Fail the turn (outer ladder decides what's next).
-      if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down", { cause: err });
-      pooled.primed = true;
-      pooled.turns++;
+      try {
+        signal?.throwIfAborted();
+        const instruction = withHandoff(scope, await buildPrompt(true), true);
+        signal?.throwIfAborted();
+        const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
+        signal?.throwIfAborted();
+        // The replay came back empty too — let the outer retry ladder recover.
+        if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down", { cause: err });
+        pooled.primed = true;
+        pooled.turns++;
+        pooled.lastUsed = Date.now();
+        return reply;
+      } catch (replayError) {
+        dropSession(scope);
+        throw replayError;
+      }
+    } finally {
+      pooled.busy = false;
       pooled.lastUsed = Date.now();
-      return reply;
     }
   }
 
-  const recent = new Map<string, string[]>(); // channelId -> last few messages, as harness context
+  const recent = new RecentContexts();
   // Event-id dedupe: relays can deliver an event more than once (and the
   // startup backfill can overlap the live subscription); without this a
   // duplicate delivery runs a second full turn and double-posts the reply
   // — observed live as an agent "re-posting the same result".
+  const restartState = path.join(path.dirname(pidfilePath), `${personaId}.restart.json`);
   const seenEventIds = new Set<string>();
+  try {
+    const saved = JSON.parse(fs.readFileSync(restartState, "utf8"));
+    if (saved.pid === process.pid && Array.isArray(saved.seen)) {
+      for (const id of saved.seen.slice(-2000)) if (typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) seenEventIds.add(id);
+    }
+    fs.unlinkSync(restartState);
+  } catch { /* normal startup, or an incomplete restart checkpoint */ }
   let busy = false;
 
   // ── Per-scope queues with batching (Buzz's queue.rs decisions): one
@@ -1332,37 +1390,65 @@ async function main() {
   // into one coherent turn. Transient turn failures requeue with a
   // backoff ladder (5s → 30s → 120s) before dead-lettering loudly.
   type ChEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
+  type DocTurn = { rootId: string; anchor: string; slug?: string };
+  interface ChannelTurnOptions {
+    redispatch?: boolean;
+    attempts?: number;
+    doc?: DocTurn;
+    steering?: ChEvent[];
+    scope?: string;
+  }
   interface PendingItem {
     scope: string;
     kind: "ch" | "dm";
     chEvent?: ChEvent;
-    chChannelId?: string;
+    doc?: DocTurn;
+    steering?: ChEvent[];
     dm?: DmRumor;
     attempts: number;
     notBefore: number;
   }
-  const SCOPE_QUEUE_CAP = 20;
+  const QUEUE_CAP = 20; // per channel (across threads), or DM conversation
   const RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
-  const pendingByScope = new Map<string, PendingItem[]>();
+  const pendingByScope = new Map<string, (PendingItem & { order: number })[]>();
+  let enqueueOrder = 0;
   const scopeOrder: string[] = [];
 
   function enqueue(item: PendingItem): void {
+    const dedupeId = item.chEvent?.id ?? item.dm?.id;
+    if (pendingByScope.get(item.scope)?.some(existing => (existing.chEvent?.id ?? existing.dm?.id) === dedupeId)) return;
+    const channelId = item.chEvent?.tags.find(t => t[0] === "h")?.[1];
+    // ponytail: scan pending work; index by channel if queue volume makes this hot.
+    const queued = [...pendingByScope.values()].flat().filter(existing => item.kind === "ch"
+      ? existing.kind === "ch" && existing.chEvent?.tags.find(t => t[0] === "h")?.[1] === channelId
+      : existing.scope === item.scope);
+    if (queued.length >= QUEUE_CAP) {
+      const dropped = queued.reduce((oldest, next) => next.order < oldest.order ? next : oldest);
+      const list = pendingByScope.get(dropped.scope)!;
+      list.splice(list.indexOf(dropped), 1);
+      if (list.length === 0) {
+        pendingByScope.delete(dropped.scope);
+        scopeOrder.splice(scopeOrder.indexOf(dropped.scope), 1);
+      }
+      console.warn(`⚠️  queue for ${channelId ?? item.scope} full — dropped oldest (${(dropped.chEvent?.id ?? dropped.dm?.id ?? "?").slice(0, 8)})`);
+    }
     let list = pendingByScope.get(item.scope);
     if (!list) pendingByScope.set(item.scope, (list = []));
-    const dedupeId = item.chEvent?.id ?? item.dm?.id;
-    if (list.some((existing) => (existing.chEvent?.id ?? existing.dm?.id) === dedupeId)) return;
-    if (list.length >= SCOPE_QUEUE_CAP) {
-      const dropped = list.shift();
-      console.warn(`⚠️  queue for ${item.scope} full — dropped oldest (${(dropped?.chEvent?.id ?? dropped?.dm?.id ?? "?").slice(0, 8)})`);
-    }
-    list.push(item);
+    list.push({ ...item, order: enqueueOrder++ });
     if (!scopeOrder.includes(item.scope)) scopeOrder.push(item.scope);
     console.log(`⏳ queued for ${item.scope} (${list.length} pending${item.attempts ? `, attempt ${item.attempts + 1}` : ""})`);
   }
 
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  let dispatching = false;
+  function scheduleDrain(delay = 250): void {
+    clearTimeout(drainTimer);
+    drainTimer = setTimeout(() => { drainTimer = undefined; drainNext(); }, delay);
+    drainTimer.unref?.();
+  }
+
   function drainNext(): void {
-    if (busy) return;
+    if (busy || dispatching) return;
     const now = Date.now();
     for (let i = 0; i < scopeOrder.length; i++) {
       const scope = scopeOrder[i];
@@ -1379,7 +1465,7 @@ async function main() {
       pendingByScope.set(scope, list.filter((item) => item.notBefore > now));
       scopeOrder.splice(i, 1);
       scopeOrder.push(scope); // rotate: next drain favors other scopes
-      dispatchBatch(scope, ready);
+      void dispatchBatch(scope, ready);
       return;
     }
     // Nothing ready — wake when the earliest backoff expires.
@@ -1388,32 +1474,51 @@ async function main() {
       for (const item of list) earliest = Math.min(earliest, item.notBefore);
     }
     if (earliest < Infinity) {
-      clearTimeout(drainTimer);
-      drainTimer = setTimeout(drainNext, Math.max(50, earliest - now));
-      drainTimer.unref?.();
+      scheduleDrain(Math.max(50, earliest - now));
     }
   }
 
-  function dispatchBatch(scope: string, items: PendingItem[]): void {
-    const attempts = Math.max(...items.map((item) => item.attempts));
-    if (items[0].kind === "ch") {
-      // Batch: earlier messages ride the steering channel (the prompt
-      // already frames them as "these also arrived — weave them in").
-      const last = items[items.length - 1];
-      for (const item of items.slice(0, -1)) {
-        steerMessages.push(`${who(item.chEvent!.pubkey)}: ${item.chEvent!.content}`);
-      }
-      if (items.length > 1) console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
-      setTimeout(() => void handleChannelMessage(last.chEvent!, true, attempts), 100);
-    } else {
-      const last = items[items.length - 1];
-      const merged: DmRumor =
-        items.length > 1
-          ? { ...last.dm!, text: items.map((item) => `${item.dm!.senderPk.slice(0, 8)}: ${item.dm!.text}`).join("\n") }
-          : last.dm!;
-      if (items.length > 1) console.log(`📦 batching ${items.length} queued DMs for ${scope} into one turn`);
-      seenEventIds.delete(merged.id);
-      setTimeout(() => void handleDm(merged, false, attempts), 100);
+  async function dispatchBatch(scope: string, items: PendingItem[]): Promise<void> {
+    dispatching = true; // Reserve the delayed dispatch and its async admission, before busy is set.
+    try {
+      await runtimeRefresh.run(async () => {
+        for (const item of items) item.steering = item.steering?.filter(event => {
+          if (workspace.isMember(event.pubkey)) return true;
+          recent.remove(scope, event.id);
+          return false;
+        });
+        items = items.filter((item) => {
+          if (item.kind === "dm" || workspace.isMember(item.chEvent!.pubkey)) return true;
+          recent.remove(scope, item.chEvent!.id);
+          console.log(`🚫 Queued message from ${item.chEvent!.pubkey.slice(0, 8)}… dropped — not on the workspace roster`);
+          return false;
+        });
+        if (!items.length) return;
+        const attempts = Math.max(...items.map((item) => item.attempts));
+        if (items[0].kind === "ch") {
+          const last = items[items.length - 1];
+          const steering = [...new Map(items.flatMap(item => [
+            ...(item.steering ?? []), ...(item === last ? [] : [item.chEvent!]),
+          ]).filter(event => event.id !== last.chEvent!.id).map(event => [event.id, event])).values()];
+          if (items.length > 1) console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
+          const doc = last.doc ? { ...last.doc,
+            anchor: last.doc.anchor || items.find(item => item.doc?.anchor)?.doc?.anchor || "",
+          } : undefined;
+          await handleChannelMessage(last.chEvent!, { redispatch: true, attempts, doc, steering, scope });
+        } else {
+          const last = items[items.length - 1];
+          const merged: DmRumor =
+            items.length > 1
+              ? { ...last.dm!, text: items.map((item) => `${item.dm!.senderPk.slice(0, 8)}: ${item.dm!.text}`).join("\n") }
+              : last.dm!;
+          if (items.length > 1) console.log(`📦 batching ${items.length} queued DMs for ${scope} into one turn`);
+          seenEventIds.delete(merged.id);
+          await handleDm(merged, false, attempts, true);
+        }
+      });
+    } finally {
+      dispatching = false;
+      scheduleDrain(0); // Admission may reject before a turn reaches its own finally.
     }
   }
 
@@ -1425,7 +1530,9 @@ async function main() {
   const onBusy = process.env.FEZ_AGENT_ON_BUSY === "queue" ? "queue" : "steer";
   let turnController: AbortController | undefined;
   let turnKind: "ch" | "dm" | undefined; // steer may only abort CHANNEL turns; cancel aborts either
-  const steerMessages: string[] = [];
+  let activeScope: string | undefined;
+  let turnAcceptsSteering = false;
+  const steerMessages: ChEvent[] = [];
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
@@ -1438,23 +1545,8 @@ async function main() {
     isAddressedTo(event, personaId!, myPubkey, owner, persona.aliases ?? []);
 
   const handleChannelMessage = async (
-    event: {
-      id: string;
-      pubkey: string;
-      created_at: number;
-      content: string;
-      tags: string[][];
-    },
-    /** true for our own deliberate re-entries (steer re-dispatch, queue drain) — they reuse a seen event. */
-    redispatch = false,
-    attempts = 0,
-    /**
-     * Set when the trigger is a DOC COMMENT (40101) rather than a chat
-     * message: the whole turn then lives in the document — the reply is
-     * published back into the comment thread, and nothing (no draft, no
-     * typing, no message) touches the channel timeline.
-     */
-    doc?: { rootId: string; anchor: string; slug?: string }
+    event: ChEvent,
+    { redispatch = false, attempts = 0, doc, steering = [], scope: queuedScope }: ChannelTurnOptions = {}
   ): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       if (!channelId || event.pubkey === myPubkey) return;
@@ -1462,24 +1554,20 @@ async function main() {
       seenEventIds.add(event.id);
       if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
 
-      const context = recent.get(channelId) ?? [];
-      context.push(`${who(event.pubkey)}: ${event.content}`);
-      recent.set(channelId, context.slice(-10));
-
-      const mentioned = isMention(event);
-      // The owner is implicitly a member of their own workspace — the
-      // same rule every client applies (workspace-state isMember). An
-      // owner-less roster write once deafened every agent to the owner
-      // for a day, silently; the implicit check plus the log line below
-      // make that failure impossible-and-loud instead of silent.
-      const authorIsMember = roster.members.has(event.pubkey) || event.pubkey === owner;
-
-      if (!mentioned) return;
-      if (!(await authorAllowed(event.pubkey))) return;
-      if (!authorIsMember) {
+      if (!workspace.isMember(event.pubkey)) {
         console.log(`🚫 Mention from ${event.pubkey.slice(0, 8)}… dropped — not on the workspace roster`);
         return;
       }
+      const { rootId: triggerRoot } = parseThreadRef(event.tags);
+      // A top-level message starts a thread; its replies use that same root.
+      // This one scope drives context, session reuse, queueing and steering.
+      const scope = queuedScope ?? (doc
+        ? `doc:${JSON.stringify([doc.slug ? "wiki" : "channel", doc.slug || channelId, doc.rootId.toLowerCase()])}`
+        : `ch:${JSON.stringify([channelId, (triggerRoot ?? event.id).toLowerCase()])}`);
+      if (!redispatch) recent.add(scope, event.id, `${who(event.pubkey)}: ${event.content}`);
+
+      if (!isMention(event)) return;
+      if (!(await authorAllowed(event.pubkey))) return;
 
       // Agent-to-agent chain cap — the shared protocol limit, so the
       // TUI, orchestrator, workflows, and summoner all count with the
@@ -1510,18 +1598,23 @@ async function main() {
 
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
-      if (busy) {
-        if (onBusy === "steer" && turnController && turnKind === "ch") {
-          steerMessages.push(`${who(event.pubkey)}: ${event.content}`);
+      if (busy || (dispatching && !redispatch)) {
+        if (onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
+          steerMessages.push(...steering, event);
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
         } else {
-          enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: 0, notBefore: 0 });
+          enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts, notBefore: 0 });
         }
         return;
       }
 
       busy = true;
+      activeScope = scope;
+      turnController = new AbortController();
+      turnKind = "ch";
+      turnAcceptsSteering = true;
+      cancelRequested = false;
       lastAcceptedAt = Date.now();
       turnTimes.push(Date.now());
 
@@ -1563,9 +1656,7 @@ async function main() {
       // thread-scoped typing; a plain channel mention means channel-scoped
       // — the mentioning user is looking at the channel view, and a
       // thread-scoped indicator there would be invisible to them.
-      const typingThreadRoot =
-        event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ??
-        event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+      const typingThreadRoot = triggerRoot;
       const typing = setInterval(() => {
         if (doc) return; // a doc-comment turn never touches the channel timeline
         void relay
@@ -1581,19 +1672,11 @@ async function main() {
           )
           .catch(() => {});
       }, 3000);
-      turnController = new AbortController();
-      turnKind = "ch";
-      cancelRequested = false;
       turnUsage = undefined;
       const turnStartedAt = Date.now();
-      // Steering guidance consumed into this turn's prompt (Buzz frames
-      // steered messages as "arrived while you were working — weave in").
-      const steering = steerMessages.splice(0);
       // NIP-10 markers, Buzz's exact shape (threading.ts) — computed
       // BEFORE the try so drafts, the reply, and the failure notice all
       // carry the same thread tags.
-      const triggerParent = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
-      const triggerRoot = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? triggerParent;
       // A doc-comment turn answers INSIDE the document: a 40101 reply
       // e-tagged to the comment root. Chat threading tags don't apply.
       const replyTags = doc
@@ -1649,7 +1732,7 @@ async function main() {
               ...(steering.length > 0
                 ? [
                     `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response:`,
-                    ...steering,
+                    ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
                   ]
                 : []),
               docFraming
@@ -1668,7 +1751,7 @@ async function main() {
             `- Failure handling: if an agent you delegated to reports it couldn't finish, don't wait or re-ask identically — retry once with clearer instructions, do the piece yourself, or report the blocker up to whoever asked you. A dead hop must never silently end the chain.`,
             `- Callbacks: when you FINISH work that another agent or person handed you, @mention them in the message that reports the result, deliverable, or blocker — a completed handoff that never calls back stalls the whole chain. Completed work only: never @ to acknowledge, accept, or thank.`,
             `- Proposing teammates: if a task keeps needing a specialist that doesn't exist, you may propose one: run the shell command fez persona draft <name> --description "<what it's for>" --prompt "<system prompt>". The owner reviews and approves; NEVER claim the new agent exists until it answers a mention.`,
-            `- Choices: when a decision is your OWNER's to make (approach A vs B, which target), use the fez_ask_owner tool with 2-4 options (mark ONE recommended if you have a lean) and act on the answer — never guess on their behalf.`,
+            `- Choices: when a decision is your OWNER's to make, use the structured question UI. Only if no structured question tool is available, use fez_ask_owner in this channel with 2-4 options (mark ONE recommended if you have a lean) — never guess on their behalf.`,
             `- Approval: before any RISKY or IRREVERSIBLE action (deploys, deletions, publishing, spending), call the fez_request_approval tool and proceed only on APPROVED — never on denial, timeout, or a mere plan to ask.`,
             `- Wiki: the community keeps shared markdown pages (fez_wiki_read / fez_wiki_write). Durable knowledge worth outliving this conversation belongs in a page, linked to related pages with [[Their Name]] — read before you rewrite; owners see every edit signed by you.`,
             `- Boards: if the fez_board_* tools are available, some pages are kanban boards and work you're given may be a CARD on one. Move your own card: fez_board_move to the in-progress column when you start and to the done column when you finish, so the board shows the truth without anyone asking you for a status. fez_board_add files work you found but aren't doing now. Never rewrite a board page with fez_wiki_write — use the board tools, which leave the rest of the document untouched.`,
@@ -1721,11 +1804,12 @@ async function main() {
             `- Fez tools: you have fez_* MCP tools — fez_send_message, fez_read_channel, fez_send_dm, fez_search, fez_mem_set/get/list, fez_doc_get/append, fez_list_agents. Prefer them over \`fez\` shell commands.`,
             `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
             `Recent messages:`,
-            ...(recent.get(channelId) ?? []),
+            ...recent.get(scope, `${who(event.pubkey)}: ${event.content}`),
+            `Current request from ${who(event.pubkey)}: ${event.content}`,
             ...(steering.length > 0
               ? [
                   `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
-                  ...steering,
+                  ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
                 ]
               : []),
             // Next to the trigger, as work for THIS turn — the ambient
@@ -1762,13 +1846,16 @@ async function main() {
         // top-level and showed both at once (steph's double indicator).
         publishObserver({ type: "turn", status: "started", ...(triggerRoot ? { root: triggerRoot } : {}) });
         const onUpdate = makeOnUpdate();
+        inputOrigin = doc ? undefined : { kind: "channel", channelId, rootId: triggerRoot ?? event.id, messageId: event.id };
         const rawReply = await promptSession(
-          `ch:${channelId}`,
+          scope,
           withNotice(buildPrompt, attachmentPrompt(event)),
           publishDraft,
           onUpdate,
           turnController.signal
         );
+        turnAcceptsSteering = false;
+        if (turnController.signal.aborted) throw Object.assign(new Error("turn aborted"), { name: "AbortError" });
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
@@ -1786,6 +1873,7 @@ async function main() {
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
         await relay.publish(replyEvent);
+        recent.add(scope, replyEvent.id, `${who(replyEvent.pubkey)}: ${replyEvent.content}`);
         // Tag the artifact with the conversation's thread root, so a
         // client can scope it to the thread that built it (triggerRoot in
         // an existing thread; the message we're replying to when a
@@ -1807,10 +1895,15 @@ async function main() {
         publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, reply.length, event.id);
         consecutiveFailures = 0;
         console.log(`✅ Replied (${reply.length} chars)`);
-      } catch (err) {
+      } catch (caughtError) {
+        turnAcceptsSteering = false;
+        // Opening/replaying a session may fail without observing cancellation.
+        // Steering still owns that exit; retrying first would discard its follow-ups.
+        const err = turnController?.signal.aborted ? turnController.signal.reason : caughtError;
         if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
           // Owner cancel — the turn just STOPS. No steer re-dispatch, and
           // an honest threaded notice instead of silence.
+          steerMessages.length = 0;
           publishObserver({ type: "turn", status: "cancelled" });
           publishTurnMetric(`ch:${channelId}`, "cancelled", turnStartedAt, 0, event.id);
           console.log("⏹ Turn cancelled by owner");
@@ -1829,7 +1922,7 @@ async function main() {
           publishObserver({ type: "turn", status: "retrying" });
           const delay = RETRY_DELAYS_MS[attempts];
           console.warn(`↻ transient turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
-          enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: attempts + 1, notBefore: Date.now() + delay });
+          enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts: attempts + 1, notBefore: Date.now() + delay });
         } else {
           publishObserver({ type: "turn", status: "failed" });
           publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, 0, event.id);
@@ -1841,7 +1934,7 @@ async function main() {
           // from a broken agent. Auth failures name their fix.
           const hint = classifyTurnError(err) === "auth"
             ? " — my harness isn't logged in: run `claude /login`, then mention me again (fez doctor has the details)"
-            : "";
+            : modelRecoveryHint(err);
           // Failure CALLBACK (mirror of the completed-work callback): if a
           // fellow agent delegated this turn, the notice @mentions them so
           // the chain can adapt instead of hanging on a hop that died.
@@ -1886,15 +1979,16 @@ async function main() {
         clearInterval(typing);
         turnController = undefined;
         turnKind = undefined;
+        activeScope = undefined;
+        turnAcceptsSteering = false;
+        inputOrigin = undefined;
         busy = false;
         if (steerMessages.length > 0) {
-          // Steered: re-dispatch the SAME trigger — the unconsumed steer
-          // messages get woven into the merged prompt.
-          setTimeout(() => void handleChannelMessage(event, true), 250);
-        } else {
-          // Drain: the next scope with ready work gets a (batched) turn.
-          setTimeout(drainNext, 250);
+          const followups = steerMessages.splice(0);
+          if (!cancelRequested) enqueue({ scope, kind: "ch", chEvent: event, doc,
+            steering: [...steering, ...followups], attempts, notBefore: 0 });
         }
+        drainNext();
       }
   };
 
@@ -1924,7 +2018,7 @@ async function main() {
     await relay.publish(toSelf);
   };
 
-  const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0): Promise<void> => {
+  const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0, redispatch = false): Promise<void> => {
     if (seenEventIds.has(dm.id)) return;
     seenEventIds.add(dm.id);
     if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
@@ -1970,8 +2064,8 @@ async function main() {
     }
     if (Date.now() < breakerUntil) return;
 
-    if (busy) {
-      enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts: 0, notBefore: 0 });
+    if (busy || (dispatching && !redispatch)) {
+      enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts, notBefore: 0 });
       return;
     }
 
@@ -1980,6 +2074,7 @@ async function main() {
     turnTimes.push(Date.now());
     turnController = new AbortController();
     turnKind = "dm";
+    activeScope = `dm:${convoKey}`;
     cancelRequested = false;
     turnUsage = undefined;
     const turnStartedAt = Date.now();
@@ -2018,6 +2113,7 @@ async function main() {
       const onUpdate = makeOnUpdate();
       // A DM rumor carries no tags, so only URLs in the body are visible
       // here — there is no imeta to describe them with.
+      inputOrigin = { kind: "dm", participants, messageId: dm.id };
       const reply = await promptSession(
         `dm:${convoKey}`,
         withNotice(buildPrompt, attachmentPrompt({ content: dm.text, tags: [] })),
@@ -2063,12 +2159,14 @@ async function main() {
         closeAllSessions();
       }
       // Failure notice goes back over the same private pipe.
-      void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
+      void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}${modelRecoveryHint(err)}`, dm.depth + 1).catch(() => {});
     } finally {
+      inputOrigin = undefined;
       busy = false;
       turnController = undefined;
       turnKind = undefined;
-      setTimeout(drainNext, 250);
+      activeScope = undefined;
+      drainNext();
     }
   };
 
@@ -2078,9 +2176,7 @@ async function main() {
   // — otherwise every restart re-answers the last DM.
   let dmLive = false;
   /**
-   * A comment on a doc/page that addresses us. Replies (e-tagged to a
-   * root) are other people's thread traffic — only ROOT comments are
-   * requests, and only if they mention us. The turn runs through the
+   * A comment or follow-up on a doc/page that addresses us runs through the
    * same machinery as a chat mention, but tagged as a doc turn so the
    * answer goes back into the margin instead of the channel.
    */
@@ -2092,22 +2188,32 @@ async function main() {
     tags: string[][];
   }): Promise<void> => {
     if (event.pubkey === myPubkey) return;
-    const anchor = event.tags.find((t) => t[0] === "anchor")?.[1] ?? "";
-    const slug = event.tags.find((t) => t[0] === "d")?.[1];
+    let anchor = event.tags.find((t) => t[0] === "anchor")?.[1];
+    let slug = event.tags.find((t) => t[0] === "d")?.[1];
     const parent = event.tags.find((t) => t[0] === "e")?.[1];
     // A reply that mentions us is still a request — answer in that same
     // thread (its root), not a new one.
-    const rootId = parent ?? event.id;
+    const rootId = parent && /^[0-9a-f]{64}$/i.test(parent) ? parent.toLowerCase() : event.id;
+    if (parent && (anchor === undefined || slug === undefined)) {
+      const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+      const root = (await relay.query([{ kinds: [KIND_DOC_COMMENT], ids: [rootId], limit: 1 }]).catch(() => []))
+        .find((candidate) => {
+          const page = candidate.tags.find(t => t[0] === "d")?.[1];
+          return page ? slug === undefined || page === slug : candidate.tags.some(t => t[0] === "h" && t[1] === channelId);
+        });
+      anchor ??= root?.tags.find((t) => t[0] === "anchor")?.[1];
+      slug ??= root?.tags.find((t) => t[0] === "d")?.[1];
+    }
     await resolveName(event.pubkey);
     console.log(`📝 Doc comment from ${who(event.pubkey)} on ${slug ? `page "${slug}"` : "the channel doc"}`);
-    await handleChannelMessage(event, false, 0, { rootId, anchor, slug });
+    await handleChannelMessage(event, { doc: { rootId, anchor: anchor ?? "", slug } });
   };
 
   const dmBacklog: DmRumor[] = [];
   setTimeout(() => {
     dmLive = true;
     dmBacklog.sort((a, b) => a.ts - b.ts);
-    for (const dm of dmBacklog.splice(0)) void handleDm(dm, true);
+    for (const dm of dmBacklog.splice(0)) void runtimeRefresh.run(() => handleDm(dm, true));
   }, 2500);
 
   relay.subscribe(
@@ -2115,9 +2221,10 @@ async function main() {
       ...(channels.length > 0
         ? [
             { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
-            { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], since: Math.floor(Date.now() / 1000) },
           ]
         : []),
+      { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] },
+      { kinds: [KIND_BAN_LIST], "#d": [BANS_D] },
       // Doc comments addressed to us: work handed over INSIDE a document.
       // p-tag filtered (not #h) because a wiki page's comments can come
       // from any channel in the community.
@@ -2125,22 +2232,22 @@ async function main() {
       { kinds: [KIND_GIFT_WRAP], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) - DM_FUZZ_WINDOW_S },
     ],
     (event) => {
-      if (event.kind === KIND_MEMBERSHIP) {
-        absorbMembership(event);
+      if (event.kind === KIND_MEMBERSHIP || event.kind === KIND_BAN_LIST) {
+        workspace.absorb(event);
         return;
       }
       if (event.kind === KIND_DOC_COMMENT) {
-        void handleDocComment(event);
+        void runtimeRefresh.run(() => handleDocComment(event));
         return;
       }
       if (event.kind === KIND_GIFT_WRAP) {
         const dm = client.unwrapDm(event);
         if (!dm) return;
-        if (dmLive) void handleDm(dm);
+        if (dmLive) void runtimeRefresh.run(() => handleDm(dm));
         else dmBacklog.push(dm);
         return;
       }
-      void handleChannelMessage(event);
+      void runtimeRefresh.run(() => handleChannelMessage(event));
     }
   );
 
@@ -2156,7 +2263,7 @@ async function main() {
     ownReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e" && t[3] === "reply").map((t) => t[1]))
   );
   const pending = recentMessages
-    .filter((e) => e.pubkey !== myPubkey && isMention(e) && !answered.has(e.id))
+    .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && isMention(e) && !answered.has(e.id))
     .sort((a, b) => a.created_at - b.created_at)
     .at(-1);
   // Same race for doc comments: the comment that summoned us predates the
@@ -2169,12 +2276,12 @@ async function main() {
     .catch(() => []);
   const answeredComments = new Set(myCommentReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])));
   const pendingComment = recentComments
-    .filter((e) => e.pubkey !== myPubkey && !answeredComments.has(e.id))
+    .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && !answeredComments.has(e.id))
     .sort((a, b) => a.created_at - b.created_at)
     .at(-1);
   if (pendingComment) {
     console.log(`⏪ Backfilling doc comment from ${pendingComment.pubkey.slice(0, 8)}…`);
-    setTimeout(() => void handleDocComment(pendingComment), 3000);
+    void runtimeRefresh.run(() => handleDocComment(pendingComment), 3000);
   }
 
   if (pending) {
@@ -2184,7 +2291,23 @@ async function main() {
     // dropped by clients.
     // Backfill deliberately KEEPS the dedupe: if the live subscription
     // already delivered this event, a second turn is exactly the bug.
-    setTimeout(() => void handleChannelMessage(pending), 3000);
+    void runtimeRefresh.run(() => handleChannelMessage(pending), 3000);
+  }
+
+  // Only bundled agents self-refresh. Source/CLI runs keep their own lifecycle.
+  // The compiler embeds this value; reading the marker at startup races installation.
+  const runningVersion = process.env.FEZ_AGENT_BUILD_VERSION;
+  if (runningVersion && process.execve) {
+    runtimeRefresh.watch(path.join(os.homedir(), ".fez", "bin", ".pi-agent-version"), runningVersion,
+      () => !busy && !steerMessages.length && dmLive && !dmBacklog.length &&
+        [...pendingByScope.values()].every(items => !items.length) && [...sessionPool.values()].every(session => !session.busy),
+      () => {
+        // Preserve dedupe across execve so startup backfill cannot repeat a completed turn.
+        fs.writeFileSync(restartState, JSON.stringify({ pid: process.pid, seen: [...seenEventIds] }), { mode: 0o600 });
+        closeAllSessions();
+        console.log("Updating agent runtime — pending work finished.");
+        process.execve!(process.execPath, [process.execPath], process.env);
+      });
   }
 
   process.on("SIGINT", () => {

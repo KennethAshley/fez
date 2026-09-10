@@ -25,21 +25,27 @@ export class MiniRelay {
   workspace: { name?: string; owner?: string } = {};
   private http?: Server;
 
-  constructor(readonly port: number) {}
+  constructor(public port = 0) {}
 
   get url(): string {
     return `ws://127.0.0.1:${this.port}`;
   }
 
   start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.http = createServer((req, res) => {
         const body = JSON.stringify({ name: this.workspace.name, pubkey: this.workspace.owner });
         res.writeHead(200, { "content-type": "application/nostr+json", "access-control-allow-origin": "*" });
         res.end(req.method === "HEAD" ? undefined : body);
       });
       this.wss = new WebSocketServer({ server: this.http });
-      this.http.listen(this.port, () => resolve());
+      this.http.once("error", reject);
+      this.wss.once("error", reject);
+      this.http.listen(this.port, "127.0.0.1", () => {
+        const address = this.http!.address();
+        if (address && typeof address !== "string") this.port = address.port;
+        resolve();
+      });
       this.wss.on("connection", (ws) => {
         const connId = String(this.connCounter++);
         ws.on("message", (raw) => {

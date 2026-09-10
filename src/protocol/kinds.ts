@@ -43,6 +43,21 @@ export const KIND_SALT = 47008;
 export const KIND_AGENT_DELEGATION = 47010;
 export const KIND_AGENT_REVOKE = 47011;
 export const KIND_AGENT_CANCEL = 47012;
+/** Private agent question lifecycle, NIP-44 encrypted to ["p", recipient].
+ * ["d", random request nonce] scopes it to one waiting tool call. Content:
+ * {status:"pending", requestedAt, expiresAt (ms), form:{message,fields}} or
+ * {status:"closed",requestedAt,closedAt,expiresAt,form,responseId?}. A responseId is the
+ * signed INPUT_RESPONSE the agent accepted; closing alone does not prove delivery.
+ * Closed events repeat the form so private history survives bounded relay queries.
+ * Both may include encrypted origin: {kind:"channel",channelId,rootId,messageId}
+ * or {kind:"dm",participants,messageId}, for inline forms and private navigation.
+ * Closed wins over pending regardless of arrival order; expiry clears a crashed agent's form.
+ * Persisted so an owner's other device can recover questions while the agent waits. */
+export const KIND_INPUT_REQUEST = 47013;
+/** Recipient-signed answer, NIP-44 encrypted to ["p", agent], ["d", request nonce].
+ * Content is {action:"accept",content:{fieldId:value}} or {action:"decline"|"cancel"}.
+ * Only the pending request's named recipient may answer, once, before expiry. */
+export const KIND_INPUT_RESPONSE = 47014;
 export const KIND_AGENT_AUDIT = 47020;
 
 /**

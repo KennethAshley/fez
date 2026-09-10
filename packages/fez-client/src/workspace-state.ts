@@ -41,6 +41,8 @@ export interface Channel {
   name: string;
   /** created_at of the winning 47101 — later owner edits rename in place. */
   createdAt: number;
+  /** Retained when re-signing channel metadata so a closed channel stays closed. */
+  visibility?: "open" | "closed";
   /**
    * What made this channel, when something other than a person did.
    *
@@ -190,6 +192,18 @@ export function emptyWorkspace(relay: string, name?: string): Workspace {
   };
 }
 
+/** Newer timestamps win; equal timestamps choose the lowest event id so arrival order cannot change membership. */
+export function replaceableEventWins(
+  candidate: { created_at?: number; id?: string },
+  current?: { created_at?: number; id?: string }
+): boolean {
+  if (!current) return true;
+  const nextTs = candidate.created_at ?? 0;
+  const currentTs = current.created_at ?? 0;
+  return nextTs > currentTs || (nextTs === currentTs &&
+    (current.id === undefined || (candidate.id !== undefined && candidate.id < current.id)));
+}
+
 export class WorkspaceState {
   /** The workspace currently open. One at a time — switching reconnects. */
   workspace: Workspace = emptyWorkspace("");
@@ -294,10 +308,12 @@ export class WorkspaceState {
       let source: string | undefined;
       let meta: Record<string, string> | undefined;
       let archived: boolean | undefined;
+      let visibility: "open" | "closed" = "open";
       try {
-        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown; meta?: unknown; archived?: unknown };
+        const content = JSON.parse(event.content) as { name?: unknown; source?: unknown; meta?: unknown; archived?: unknown; visibility?: unknown };
         if (typeof content.name === "string" && content.name) name = content.name;
         if (content.archived === true) archived = true;
+        if (content.visibility === "closed") visibility = "closed";
         // Constrained before it reaches a UI: this becomes a section
         // heading in the rail, and a "source" of a thousand newlines
         // would be a channel deciding how the sidebar looks.
@@ -316,23 +332,13 @@ export class WorkspaceState {
       const existing = ws.channels.get(channelId);
       // A later owner event renames; an older one replayed must not undo it.
       if (existing && event.created_at < existing.createdAt) return false;
-      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source, meta, archived });
+      ws.channels.set(channelId, { id: channelId, name, createdAt: event.created_at, source, meta, archived, visibility });
       return true;
     }
 
     if (event.kind === KIND_MEMBERSHIP) {
       if (tag("d") !== ROSTER_D) return false; // per-channel rosters are the old model
-      if (event.created_at < ws.rosterCreatedAt) return false;
-      // Same-second tie: deterministic winner (lowest id), so every client
-      // converges regardless of arrival order. fez also bumps created_at on
-      // publish (see nextRosterCreatedAt) — belt and braces, as Buzz does.
-      if (
-        event.created_at === ws.rosterCreatedAt &&
-        ws.rosterEventId !== undefined &&
-        event.id >= ws.rosterEventId
-      ) {
-        return false;
-      }
+      if (!replaceableEventWins(event, { created_at: ws.rosterCreatedAt, id: ws.rosterEventId })) return false;
       const members = new Map<string, Role>();
       for (const t of event.tags) {
         if (t[0] === "p" && t[1]) members.set(t[1], (t[2] as Role) ?? "member");

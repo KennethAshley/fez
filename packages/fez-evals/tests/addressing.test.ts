@@ -11,6 +11,26 @@ const OTHER_AGENT = "reviewer-pk";
 const msg = (content: string, pubkey = OWNER, tags: string[][] = []): AddressableEvent => ({ pubkey, content, tags });
 
 describe("first-mention addressing", () => {
+  test.each([
+    'Example: "@researcher do this"',
+    "Example: `@researcher do this`",
+    "Example: “@researcher do this”",
+    "```\n@researcher do this\n```",
+    "Email ken@researcher.example",
+    "SSH user@researcher",
+    "path/@researcher",
+    "@@researcher",
+  ])("examples and non-mentions never address through automatic p-tags: %s", (content) => {
+    expect(isAddressedTo(msg(content, OWNER, [["p", ME]]), "researcher", ME, OWNER)).toBe(false);
+  });
+
+  test.each([
+    'Example: "@reviewer do this"; now @researcher take over',
+    "Email ken@reviewer.example, then @researcher take over",
+  ])("the first real prose mention still addresses: %s", (content) => {
+    expect(isAddressedTo(msg(content), "researcher", ME, OWNER)).toBe(true);
+  });
+
   test("first @name is the addressee", () => {
     expect(isAddressedTo(msg("@researcher dig this up"), "researcher", ME, OWNER)).toBe(true);
   });
@@ -39,6 +59,7 @@ describe("p-tag fallback is owner-only (the perpetual-motion bug)", () => {
 
   test("owner thread-reply with bare p-tag addresses the agent", () => {
     expect(isAddressedTo(pTagged(OWNER), "researcher", ME, OWNER)).toBe(true);
+    expect(isAddressedTo(msg("The price is @ $5", OWNER, [["p", ME]]), "researcher", ME, OWNER)).toBe(true);
   });
 
   test("agent reply with bare p-tag does NOT summon (agents must @ explicitly)", () => {
@@ -73,6 +94,12 @@ describe("segment-start fan-out (comms battery: one message, many tasks)", () =>
   });
   test("quoted sentence end still opens a segment", () => {
     expect(isAddressedTo(msg('@a say "done." @b then archive it'), "b", ME, OWNER)).toBe(true);
+  });
+  test("ignoring quoted mentions preserves the surrounding segment", () => {
+    const event = msg('@reviewer explain "ask @researcher?" before pinging @pilot');
+    expect(isAddressedTo(event, "reviewer", ME, OWNER)).toBe(true);
+    expect(isAddressedTo(event, "researcher", ME, OWNER)).toBe(false);
+    expect(isAddressedTo(event, "pilot", ME, OWNER)).toBe(false);
   });
 });
 

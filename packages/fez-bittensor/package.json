@@ -1,8 +1,8 @@
 {
   "name": "@fezchat/bittensor",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
-  "description": "Bittensor discovery for fez — agents find subnets (chain-direct via @polkadot/api, Taostats fallback), read their repos, and reason about capabilities. Discovery only; no spend.",
+  "description": "Bittensor discovery for fez \u2014 agents find subnets (chain-direct via @polkadot/api, Taostats fallback), read their repos, and reason about capabilities. Discovery only; no spend.",
   "type": "module",
   "fez": {
     "type": "extension",

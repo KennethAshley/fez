@@ -22,6 +22,24 @@
  */
 const MENTION = /(?:^|[^\w@/])@([\w-]+)/g;
 
+/**
+ * Agent calls exclude quoted examples and code. Keep original offsets so
+ * running agents can inspect sentence boundaries without losing punctuation.
+ * Unbalanced delimiters fail open, matching the summon policy.
+ */
+export function proseMentions(content: string): { name: string; index: number }[] {
+  const mask = (text: string) => " ".repeat(text.length);
+  const prose = content
+    .replace(/```[\s\S]*?```/g, mask)
+    .replace(/`[^`\n]*`/g, mask)
+    .replace(/"[^"\n]*"/g, mask)
+    .replace(/“[^”\n]*”/g, mask);
+  return [...prose.matchAll(MENTION)].map((match) => ({
+    name: match[1].toLowerCase(),
+    index: match.index + match[0].indexOf("@"),
+  }));
+}
+
 /** Every name a message @-mentions, lowercased, in first-seen order. */
 export function mentionedNames(content: string): string[] {
   const names: string[] = [];

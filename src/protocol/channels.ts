@@ -51,6 +51,8 @@ export interface ChannelRef {
   name: string;
   source?: string;
   meta?: Record<string, string>;
+  archived?: boolean;
+  visibility?: "open" | "closed";
 }
 
 export interface ChannelsAccess {
@@ -97,13 +99,15 @@ export function makeChannels(nostr: NostrAccess, ownerPubkey: string): ChannelsA
       const id = event.tags.find((t) => t[0] === "d")?.[1];
       if (!id) continue;
       try {
-        const parsed = JSON.parse(event.content) as { name?: string; source?: unknown; meta?: unknown };
+        const parsed = JSON.parse(event.content) as { name?: string; source?: unknown; meta?: unknown; archived?: unknown; visibility?: unknown };
         if (!parsed.name) continue;
         byId.set(id, {
           id,
           name: parsed.name,
           source: cleanSource(parsed.source),
           meta: parsed.meta && typeof parsed.meta === "object" ? (parsed.meta as Record<string, string>) : undefined,
+          archived: parsed.archived === true ? true : undefined,
+          visibility: parsed.visibility === "closed" ? "closed" : "open",
         });
       } catch { /* a malformed channel is not a channel */ }
     }

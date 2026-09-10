@@ -18,6 +18,37 @@ defaults to your fez identity, so the encrypted observer stream
 (`/watch <persona>`) and sibling gating work with zero configuration.
 (The raw form still works: `FEZ_AGENT_PERSONA=… fez run dist/agent.js`.)
 
+## Questions from tools
+
+ACP form requests (including Claude's `AskUserQuestion`) appear as a private
+card in the owner's desktop app. Answer the choices, multi-select fields or
+custom text, then submit all answers together. The waiting tool resumes in
+the same conversation. In the TUI, `/questions` lists requests; `/answer N`
+walks through one, and `/submit` sends the completed answers.
+
+Questions and answers are signed and encrypted between the agent and its
+owner (kinds 47013/47014). Pending forms survive a desktop reload. A form
+expires after 30 minutes; cancelling its turn clears it. Human input pauses
+the idle timeout, while the overall turn deadline still applies. Agents
+without an owner do not advertise a form UI. URL-mode and nested-object
+forms, and arbitrary regex constraints, are currently unsupported.
+
+The desktop's **Questions** button shows the waiting count. New requests use
+the existing **needs action** notification setting; their private text stays
+out of the notification. **History** restores the latest 100 requests from
+the past 30 days. **Received by agent** requires the agent's signed receipt
+to name the exact signed answer; **Sent** alone is not delivery confirmation.
+
+## Desktop runtime updates
+
+Bundled agents refresh themselves when a newer runtime finishes installing.
+Active turns, queued retries, scheduled messages and question receipts finish
+first. The refresh keeps the same process ID, launch settings and event
+deduplication state. Source/CLI runs keep their existing lifecycle.
+
+This applies to agents launched with runtime `0.84.2+svc13` or later. An
+already-running older agent needs one restart to acquire this behavior.
+
 ## Persona frontmatter the runtime honors
 
 ```markdown

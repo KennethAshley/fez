@@ -10,6 +10,8 @@ export {
   type ReminderStatus,
 } from "./reminders.js";
 import type { Query } from "./query-lang.js";
+import { inputForm, inputOrigin, validateInputResponse, INPUT_WAIT_MS, type PendingInput, type InputResponse, type InputHistoryEntry } from "./agent-input.js";
+export * from "./agent-input.js";
 import { nextCreatedAt, STALE_AFTER_S, type ReminderBody, type ReminderRecord } from "./reminders.js";
 
 /** One row of a `runQuery` result — a task, approval, page, mention or run,
@@ -24,7 +26,7 @@ export interface QueryRow {
   ts: number;
   meta?: string;
 }
-import { WorkspaceState, cleanSource, setStatePersistence, type Role, type StatePersistence } from "./workspace-state.js";
+import { WorkspaceState, cleanSource, setStatePersistence, type Channel, type Role, type StatePersistence } from "./workspace-state.js";
 export * from "./workspace-state.js";
 
 /**
@@ -70,6 +72,18 @@ export interface WireFilter {
   [key: `#${string}`]: string[] | undefined;
 }
 
+export interface WireQueryResult {
+  events: WireEvent[];
+  failures: { url: string; reason: string }[];
+}
+
+export interface HistoryLoadState {
+  status: "idle" | "loading" | "ready" | "error";
+  operation: "recent" | "older";
+  partial?: boolean;
+  error?: string;
+}
+
 export interface DmRumor {
   senderPk: string;
   peerPk: string;
@@ -108,6 +122,8 @@ export interface Wire {
   signEvent?(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): WireEvent | Promise<WireEvent>;
   subscribe(filters: WireFilter[], onEvent: (event: WireEvent) => void): () => void;
   query(filters: WireFilter[]): Promise<WireEvent[]>;
+  /** Complete EOSE versus partial/failing reads; older wires can still reject query(). */
+  queryWithStatus?(filters: WireFilter[]): Promise<WireQueryResult>;
   /**
    * Crypto may be SYNC OR ASYNC: a wire that holds the key in-process
    * returns plain values; a wire whose key lives behind a custody seam
@@ -219,6 +235,8 @@ export const K = {
   AGENT_METADATA: 47000,
   /** Owner-signed "this is my agent" — summon authority for siblings. */
   AGENT_ATTESTATION: 47006,
+  INPUT_REQUEST: 47013,
+  INPUT_RESPONSE: 47014,
   CHIT: 47007,
   SALT: 47008,
   /** Retired with the flat model — the number stays burned. */
@@ -520,6 +538,7 @@ export interface WorkflowRunInfo {
 }
 
 export interface ClientEvents {
+  historyChanged: (channelId: string) => void;
   /** A channel message entered the cache. live=false during history backfill/paging. */
   message: (channelId: string, msg: Msg, ctx: { live: boolean; prepend: boolean }) => void;
   /** Content of an existing message changed (40003 edit). */
@@ -541,6 +560,7 @@ export interface ClientEvents {
   docChanged: (channelId: string) => void;
   jobsChanged: () => void;
   observerFrame: (agent: string, frame: ObserverEntry) => void;
+  inputsChanged: () => void;
   workflowRunsChanged: () => void;
   /** A typed artifact landed in a channel. */
   artifact: (channelId: string, artifact: Artifact) => void;
@@ -571,6 +591,7 @@ export class FezClient {
   private unsubscribeLive?: () => void;
   private subscribedChannelIds = "";
   private sessionStartS = Math.floor(Date.now() / 1000);
+  private pendingChannels = new Map<string, Promise<string>>();
 
   // messages + threads
   private names = new Map<string, string>();
@@ -586,6 +607,8 @@ export class FezClient {
   private nextThreadNo = 1;
   private summaryByRoot = new Map<string, { replyCount: number; lastAuthorTs: number; summaryTs: number }>();
   private exhaustedChannels = new Set<string>();
+  private historyByChannel = new Map<string, HistoryLoadState>();
+  private olderUntil = new Map<string, number>();
 
   // reactions
   private reactionsByTarget = new Map<string, Map<string, Set<string>>>();
@@ -607,6 +630,11 @@ export class FezClient {
   // jobs + observer + workflows
   private jobsMap = new Map<string, Job>();
   private observerFeedsMap = new Map<string, ObserverEntry[]>();
+  private inputRequests = new Map<string, PendingInput>();
+  private closedInputs = new Map<string, { expiresAt: number; closedAt?: number; responseId?: string }>();
+  private inputTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private inputRecords = new Map<string, PendingInput & { requestedAt: number; closedAt?: number; responseId?: string }>();
+  private inputAnswers = new Map<string, { requestKey: string; response: unknown; at: number }>();
   private workingAgentsMap = new Map<string, { activity: string; ts: number; root?: string }>();
   private workflowRunsMap = new Map<string, WorkflowRunInfo>();
 
@@ -912,10 +940,128 @@ export class FezClient {
   observerFeed(agent: string): readonly ObserverEntry[] {
     return this.observerFeedsMap.get(agent) ?? [];
   }
+  pendingInputs(): PendingInput[] {
+    return [...this.inputRequests.values()].filter(r => r.expiresAt > Date.now() && this.state.isMember(r.agentPk));
+  }
+  /** A sent answer is awaiting delivery, not waiting on the human. */
+  waitingInputs(): PendingInput[] {
+    const answered = new Set<string>();
+    for (const answer of this.inputAnswers.values()) {
+      const request = this.inputRequests.get(answer.requestKey);
+      if (!request) continue;
+      try { validateInputResponse(request.form, answer.response); answered.add(request.id); } catch { /* invalid signed reply */ }
+    }
+    return this.pendingInputs().filter(request => !answered.has(request.id));
+  }
+  /** Recent private requests; only a receipt naming our signed answer confirms delivery. */
+  inputHistory(): InputHistoryEntry[] {
+    return [...this.inputRecords.values()].filter(record => record.requestedAt >= Date.now() - 30 * 86400_000).sort((a, b) => b.requestedAt - a.requestedAt).slice(0, 100).map(record => {
+      const candidates = [...this.inputAnswers].filter(([, answer]) => answer.requestKey === record.id)
+        .sort((a, b) => b[1].at - a[1].at || b[0].localeCompare(a[0]));
+      const accepted = candidates.find(([id]) => id === record.responseId);
+      let response: InputResponse | undefined;
+      let answeredAt: number | undefined;
+      for (const [, answer] of accepted ? [accepted] : candidates) {
+        try { response = validateInputResponse(record.form, answer.response); answeredAt = answer.at; break; } catch { /* invalid signed reply */ }
+      }
+      const status = record.closedAt !== undefined ? accepted && response ? "received"
+        : record.closedAt >= record.expiresAt ? "expired" : "closed"
+        : record.expiresAt <= Date.now() ? "expired" : response ? "sent" : "pending";
+      return { ...record, status, response, answeredAt };
+    });
+  }
+  /** Query on demand; answers remain encrypted at rest on the relay. */
+  async loadInputHistory(): Promise<void> {
+    const since = Math.floor(Date.now() / 1000) - 30 * 86400;
+    const events = await this.wire.query([
+      { kinds: [K.INPUT_REQUEST], "#p": [this.pubkey], since, limit: 300 },
+      { kinds: [K.INPUT_RESPONSE], authors: [this.pubkey], since, limit: 500 },
+    ]);
+    for (const event of events.sort((a, b) => a.created_at - b.created_at)) {
+      if (event.kind === K.INPUT_RESPONSE) await this.handleInputResponse(event).catch(() => {});
+      else await this.handleInputRequest(event).catch(() => {});
+    }
+    const missing = [...this.inputRecords.values()].flatMap(record => record.responseId && !this.inputAnswers.has(record.responseId) ? [record.responseId] : []);
+    if (missing.length) {
+      for (const event of await this.wire.query([{ kinds: [K.INPUT_RESPONSE], authors: [this.pubkey], ids: missing, limit: missing.length }])) {
+        await this.handleInputResponse(event).catch(() => {});
+      }
+    }
+    this.emit("inputsChanged");
+  }
+  private async handleInputResponse(event: WireEvent): Promise<void> {
+    if (event.kind !== K.INPUT_RESPONSE || event.pubkey !== this.pubkey || this.inputAnswers.has(event.id)) return;
+    const peer = event.tags.find(t => t[0] === "p")?.[1];
+    const requestId = event.tags.find(t => t[0] === "d")?.[1];
+    if (!peer || !this.state.isMember(peer) || !requestId || requestId.length > 200) return;
+    const raw = await this.wire.decrypt(peer, event.content);
+    if (new TextEncoder().encode(raw).length > 24_000) return;
+    this.inputAnswers.set(event.id, { requestKey: `${peer}:${requestId}`, response: JSON.parse(raw), at: event.created_at * 1000 });
+    if (this.inputAnswers.size > 500) this.inputAnswers.delete(this.inputAnswers.keys().next().value!);
+    this.emit("inputsChanged");
+  }
+  async answerInput(id: string, answer: InputResponse): Promise<void> {
+    const request = this.pendingInputs().find(r => r.id === id);
+    if (!request) throw new Error("This question has expired or was already answered");
+    const response = validateInputResponse(request.form, answer);
+    const event = await this.wire.publish({ kind: K.INPUT_RESPONSE, tags: [["p", request.agentPk], ["d", request.requestId]],
+      content: await this.wire.encrypt(request.agentPk, JSON.stringify(response)) });
+    await this.handleInputResponse(event);
+    // The agent's closed event is the acknowledgement. Keep the card until
+    // it arrives, so a relay accepting but not forwarding an answer is visible.
+  }
+  private async handleInputRequest(event: WireEvent): Promise<void> {
+    if (event.kind !== K.INPUT_REQUEST || !this.state.isMember(event.pubkey) || !event.tags.some(t => t[0] === "p" && t[1] === this.pubkey)) return;
+    const requestId = event.tags.find(t => t[0] === "d")?.[1];
+    if (!requestId || requestId.length > 200) return;
+    const raw = JSON.parse(await this.wire.decrypt(event.pubkey, event.content));
+    if (!raw || (raw.status !== "pending" && raw.status !== "closed") || !Number.isFinite(raw.expiresAt) || raw.expiresAt <= 0 || raw.expiresAt > Date.now() + INPUT_WAIT_MS + 60_000) return;
+    const id = `${event.pubkey}:${requestId}`;
+    const previous = this.inputRecords.get(id);
+    const form = previous?.form ?? (raw.form ? inputForm(raw.form) : undefined);
+    const origin = previous ? previous.origin : inputOrigin(raw.origin, event.pubkey, this.pubkey);
+    const earliest = raw.expiresAt - INPUT_WAIT_MS;
+    const requestedAt = typeof raw.requestedAt === "number" && Number.isFinite(raw.requestedAt) && raw.requestedAt >= earliest && raw.requestedAt <= raw.expiresAt
+      ? raw.requestedAt : previous?.requestedAt ?? Math.min(raw.expiresAt, Math.max(earliest, event.created_at * 1000));
+    const closedAt = typeof raw.closedAt === "number" && Number.isFinite(raw.closedAt) && raw.closedAt >= requestedAt && raw.closedAt <= event.created_at * 1000 + 1000
+      ? raw.closedAt : event.created_at * 1000;
+    const closure = this.closedInputs.get(id)?.closedAt !== undefined ? this.closedInputs.get(id)
+      : raw.status === "closed" ? { expiresAt: raw.expiresAt, closedAt,
+        responseId: typeof raw.responseId === "string" && /^[a-f0-9]{64}$/.test(raw.responseId) ? raw.responseId : undefined } : undefined;
+    if (form && previous?.closedAt === undefined) {
+      this.inputRecords.set(id, { ...previous, id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form, origin, requestedAt, ...closure });
+      if (this.inputRecords.size > 200) {
+        const oldest = [...this.inputRecords.values()].filter(record => !this.inputRequests.has(record.id)).sort((a, b) => a.requestedAt - b.requestedAt)[0];
+        if (oldest) this.inputRecords.delete(oldest.id);
+      }
+    }
+    for (const [key, closed] of this.closedInputs) if (closed.expiresAt <= Date.now() - 30 * 86400_000) this.closedInputs.delete(key);
+    const close = () => {
+      this.inputRequests.delete(id);
+      if (closure || raw.expiresAt > Date.now()) this.closedInputs.set(id, closure ?? { expiresAt: raw.expiresAt });
+      if (this.closedInputs.size > 500) {
+        const oldest = [...this.closedInputs].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
+        this.closedInputs.delete(oldest[0]);
+      }
+      clearTimeout(this.inputTimers.get(id));
+      this.inputTimers.delete(id);
+      this.emit("inputsChanged");
+    };
+    if (raw.status === "closed" || raw.expiresAt <= Date.now()) { close(); return; }
+    if (raw.status !== "pending" || this.closedInputs.has(id) || this.inputRequests.has(id) || this.inputRequests.size >= 64) return;
+    if (!form) return;
+    this.inputRequests.set(id, { id, requestId, agentPk: event.pubkey, expiresAt: raw.expiresAt, form, origin });
+    this.inputTimers.set(id, setTimeout(close, raw.expiresAt - Date.now()));
+    this.emit("inputsChanged");
+  }
   workingAgents(): ReadonlyMap<string, { activity: string; ts: number; root?: string }> {
     const now = Date.now();
     for (const [name, w] of this.workingAgentsMap) if (now - w.ts > 180_000) this.workingAgentsMap.delete(name);
-    return this.workingAgentsMap;
+    const working = new Map(this.workingAgentsMap);
+    for (const request of this.waitingInputs()) working.set(this.displayName(request.agentPk), {
+      activity: "Waiting for your answer", ts: now, root: request.origin?.kind === "channel" ? request.origin.rootId : undefined,
+    });
+    return working;
   }
   dmConversations(): ReadonlyMap<string, { msgs: readonly DmMessage[]; unread: number }> {
     return this.dmConvos;
@@ -1563,22 +1709,11 @@ export class FezClient {
     return { channelId };
   }
 
-  /** Owner adds a channel to the workspace; scope moves there. */
+  /** Owner adds or reuses a channel by name; scope moves there. */
   async createChannel(name: string): Promise<string> {
     if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can add channels");
-    const channelId = crypto.randomUUID();
-    const channelEvent = await this.wire.publish({
-      kind: K.CHANNEL,
-      tags: [["d", channelId]],
-      content: JSON.stringify({ name, visibility: "open" }),
-    });
-    this.state.absorb(channelEvent);
-    // No roster event: membership is workspace-wide, so a new channel is
-    // visible to everyone already in — which is the whole point of flat.
-    this.state.scope = { channelId };
-    this.state.save();
-    this.resubscribe();
-    this.emit("channelsChanged");
+    const channelId = (await this.ensureChannel({ name }))!;
+    this.setScope(channelId);
     return channelId;
   }
 
@@ -1597,6 +1732,7 @@ export class FezClient {
     // Republish the whole channel: latest-wins REPLACES it, so name,
     // source and meta must ride along or they'd be dropped.
     const content: Record<string, unknown> = { name: channel.name };
+    if (channel.visibility) content.visibility = channel.visibility;
     if (channel.source) content.source = channel.source;
     if (channel.meta) content.meta = channel.meta;
     if (archived) content.archived = true;
@@ -1617,8 +1753,8 @@ export class FezClient {
   /**
    * The channel for a thing, opening it if it isn't open.
    *
-   * The same contract as `makeChannels().ensure` in the CLI's
-   * src/channels.ts — matched on NAME, meta compared in full, only the
+   * Like `makeChannels().ensure` in the CLI's src/protocol/channels.ts,
+   * matches by name unless an explicit ID is supplied. Only the
    * owner may sign one into being. It lives here as well because the
    * desktop bundle deliberately does not depend on the CLI package, and
    * the alternative was a second copy inside the GUI extension loader.
@@ -1635,7 +1771,8 @@ export class FezClient {
     meta?: Record<string, string>;
     visibility?: "open" | "closed";
     /**
-     * Fixed channel id. For bootstrap-created channels: two racing
+     * Authoritative channel ID: updates resolve it without a name fallback.
+     * For bootstrap-created channels: two racing
      * creates with the same id CONVERGE (latest event with one d-tag
      * wins) instead of minting two channels — the only duplicate-proof
      * shape, because no query-first guard survives a cold relay
@@ -1643,12 +1780,21 @@ export class FezClient {
      */
     id?: string;
   }): Promise<string | undefined> {
-    const existing = this.state.findChannelByName(spec.name);
+    const name = spec.name.trim();
+    if (!name) throw new Error("channel name cannot be empty");
+    const existing = spec.id === undefined
+      ? this.state.findChannelByName(name)
+      : this.state.workspace.channels.get(spec.id);
+    const channelName = spec.id === undefined ? existing?.name ?? name : name;
+    const source = cleanSource(spec.source ?? existing?.source);
+    const meta = spec.meta ?? existing?.meta;
+    const visibility = spec.visibility ?? existing?.visibility ?? "open";
     const content = JSON.stringify({
-      name: spec.name,
-      visibility: spec.visibility ?? "open",
-      ...(cleanSource(spec.source) ? { source: cleanSource(spec.source) } : {}),
-      ...(spec.meta && Object.keys(spec.meta).length > 0 ? { meta: spec.meta } : {}),
+      name: channelName,
+      visibility,
+      ...(source ? { source } : {}),
+      ...(meta && Object.keys(meta).length > 0 ? { meta } : {}),
+      ...(existing?.archived ? { archived: true } : {}),
     });
 
     if (existing) {
@@ -1656,12 +1802,16 @@ export class FezClient {
       // learning what it protects must be able to say so even though its
       // source already matched, which is the bug the CLI copy already
       // paid for.
-      const wantSource = cleanSource(spec.source);
       const changed =
-        (wantSource !== undefined && existing.source !== wantSource) ||
-        JSON.stringify(spec.meta ?? {}) !== JSON.stringify(existing.meta ?? {});
+        channelName !== existing.name ||
+        source !== existing.source ||
+        visibility !== (existing.visibility ?? "open") ||
+        JSON.stringify(meta ?? {}) !== JSON.stringify(existing.meta ?? {});
       if (changed && this.state.isOwner(this.pubkey)) {
-        this.state.absorb(await this.wire.publish({ kind: K.CHANNEL, tags: [["d", existing.id]], content }));
+        this.state.absorb(await this.wire.publish({
+          kind: K.CHANNEL, tags: [["d", existing.id]], content,
+          created_at: Math.max(Math.floor(Date.now() / 1000), existing.createdAt + 1),
+        }));
         this.state.save();
         this.emit("channelsChanged");
       }
@@ -1676,12 +1826,28 @@ export class FezClient {
     // Saying so here saves every caller from discovering it as a silent
     // no-op that looks like success.
     if (!this.state.isOwner(this.pubkey)) return undefined;
+    // Share in-flight creates within this client. Cross-client bootstrap
+    // races still need a fixed ID, as documented on spec.id.
+    const key = JSON.stringify([this.state.workspace.relay, spec.id === undefined ? "name" : "id", spec.id ?? name.toLowerCase()]);
+    const pending = this.pendingChannels.get(key);
+    if (pending) {
+      await pending;
+      return this.ensureChannel(spec);
+    }
     const channelId = spec.id ?? crypto.randomUUID();
-    this.state.absorb(await this.wire.publish({ kind: K.CHANNEL, tags: [["d", channelId]], content }));
-    this.state.save();
-    this.resubscribe();
-    this.emit("channelsChanged");
-    return channelId;
+    const creation = (async () => {
+      this.state.absorb(await this.wire.publish({ kind: K.CHANNEL, tags: [["d", channelId]], content }));
+      this.state.save();
+      this.resubscribe();
+      this.emit("channelsChanged");
+      return channelId;
+    })();
+    this.pendingChannels.set(key, creation);
+    try {
+      return await creation;
+    } finally {
+      this.pendingChannels.delete(key);
+    }
   }
 
   /**
@@ -1702,11 +1868,11 @@ export class FezClient {
     return this.wire.httpAuth?.(url, method);
   }
 
-  /** Every channel a given maker opened — the rail's grouping, as data. */
-  channelsFrom(source: string): { id: string; name: string; meta?: Record<string, string> }[] {
+  /** All channels, including archived ones; optionally filtered by maker. */
+  channelsFrom(source?: string): Omit<Channel, "createdAt">[] {
     return [...this.state.workspace.channels.values()]
-      .filter((c) => c.source === source)
-      .map((c) => ({ id: c.id, name: c.name, meta: c.meta }));
+      .filter((c) => source === undefined || c.source === source)
+      .map((c) => ({ id: c.id, name: c.name, source: c.source, meta: c.meta, archived: c.archived, visibility: c.visibility }));
   }
 
   /**
@@ -2200,7 +2366,40 @@ export class FezClient {
 
   // ── History windows (Buzz's channel window, dumb-relay-shaped) ─────────
 
-  async loadChannelHistory(channelId: string): Promise<void> {
+  historyState(channelId: string): Readonly<HistoryLoadState> {
+    return this.historyByChannel.get(channelId) ?? { status: "idle", operation: "recent" };
+  }
+
+  private beginHistory(channelId: string, operation: HistoryLoadState["operation"]): HistoryLoadState {
+    const state: HistoryLoadState = { status: "loading", operation };
+    this.historyByChannel.set(channelId, state);
+    this.emit("historyChanged", channelId);
+    return state;
+  }
+
+  private finishHistory(channelId: string, loading: HistoryLoadState, failures: WireQueryResult["failures"]): void {
+    // A slower prior request must not replace the status of a newer retry.
+    if (this.historyByChannel.get(channelId) !== loading) return;
+    this.historyByChannel.set(channelId, { operation: loading.operation,
+      status: failures.length ? "error" : "ready",
+      partial: failures.length > 0 && this.messages(channelId).length > 0,
+      error: failures.length ? [...new Set(failures.map(f => `${f.url}: ${f.reason}`))].join("; ") : undefined,
+    });
+    this.emit("historyChanged", channelId);
+  }
+
+  private async queryHistory(filters: WireFilter[]): Promise<WireQueryResult> {
+    try {
+      return this.wire.queryWithStatus
+        ? await this.wire.queryWithStatus(filters)
+        : { events: await this.wire.query(filters), failures: [] };
+    } catch (err) {
+      return { events: [], failures: [{ url: this.wire.relays?.[0] ?? "relay", reason: err instanceof Error ? err.message : String(err) }] };
+    }
+  }
+
+  async loadChannelHistory(channelId: string, threadRoot?: string): Promise<void> {
+    const loading = this.beginHistory(channelId, "recent");
     // Artifacts backfill rides alongside — failures never block messages.
     void this.wire
       .query([{ kinds: [K.ARTIFACT], "#h": [channelId], limit: 50 }])
@@ -2208,23 +2407,33 @@ export class FezClient {
         for (const event of events) this.absorbArtifact(event);
       })
       .catch(() => {});
-    const [msgs, reactions, deletions, ops, receipts] = await Promise.all([
-      this.wire.query([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
-      this.wire.query([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.PAYMENT_RECEIPT], "#h": [channelId], limit: 300 }]),
+    const results = await Promise.all([
+      this.queryHistory([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
+      this.queryHistory([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.PAYMENT_RECEIPT], "#h": [channelId], limit: 300 }]),
+      threadRoot ? this.queryHistory([
+        { kinds: [K.MESSAGE], "#h": [channelId], ids: [threadRoot], limit: 1 },
+        { kinds: [K.MESSAGE], "#h": [channelId], "#e": [threadRoot], limit: 200 },
+      ]) : Promise.resolve({ events: [], failures: [] }),
     ]);
+    const [msgs, reactions, deletions, ops, receipts, thread] = results.map(result => result.events);
     const ordered = msgs
       .filter((e) => this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at)
       .slice(-HISTORY_LIMIT);
-    for (const event of ordered) {
+    // A sparse thread jump must not move ordinary channel paging past its gap.
+    if (ordered.length && !results[0].failures.length && !this.olderUntil.has(channelId)) {
+      this.olderUntil.set(channelId, ordered[0].created_at);
+    }
+    for (const event of [...ordered, ...thread.filter(e => e.kind === K.MESSAGE && this.state.isMember(e.pubkey) && e.tags.some(t => t[0] === "h" && t[1] === channelId))]) {
       if (this.seenMessages.has(event.id)) continue;
       this.seenMessages.add(event.id);
       const msg = this.cacheMessage(channelId, event);
       this.emit("message", channelId, msg, { live: false, prepend: false });
     }
+    if (threadRoot) this.messagesByChannel.get(channelId)?.sort((a, b) => a.ts - b.ts);
     for (const event of ops.filter((e) => e.kind === K.MSG_EDIT).sort((a, b) => a.created_at - b.created_at)) {
       this.handleMsgEdit(event);
     }
@@ -2240,21 +2449,39 @@ export class FezClient {
       if (newest) this.markRead(channelId, newest.ts);
     }
     this.emit("unreadsChanged");
+    this.finishHistory(channelId, loading, results.flatMap(result => result.failures));
   }
 
   /** Scroll-up paging: until-filter keyset with limit+1 has_more probe. Returns the fresh page, oldest first. */
   async loadOlderPage(channelId: string): Promise<Msg[]> {
-    const list = this.messagesByChannel.get(channelId) ?? [];
-    const oldest = list[0]?.ts;
+    // A failed initial read may leave only sparse thread rows in the cache.
+    // Finish/retry the recent window before using its ordinary paging cursor.
+    if (this.historyByChannel.has(channelId) && !this.olderUntil.has(channelId)) return [];
+    const oldest = this.olderUntil.get(channelId) ?? this.messagesByChannel.get(channelId)?.[0]?.ts;
     if (!oldest || this.exhaustedChannels.has(channelId)) return [];
-    const events = await this.wire.query([
+    // Partial rows may move the oldest message. Retry the original window
+    // until it completes, or messages between those timestamps get skipped.
+    this.olderUntil.set(channelId, oldest);
+    const loading = this.beginHistory(channelId, "older");
+    const { events, failures: queryFailures } = await this.queryHistory([
       { kinds: [K.MESSAGE], "#h": [channelId], until: oldest, limit: PAGE_SIZE + 1 },
     ]);
-    if (events.length <= PAGE_SIZE) this.exhaustedChannels.add(channelId);
-    const fresh = events
+    const failures = [...queryFailures];
+    // Page the newest limit+1 rows of the merged relay responses. An old
+    // cached partial row, or a sparse mirror, must not skip a dense page.
+    const page = [...events].sort((a, b) => b.created_at - a.created_at).slice(0, PAGE_SIZE + 1);
+    if (!failures.length && page.length > PAGE_SIZE && page[page.length - 1].created_at >= oldest) {
+      // ponytail: timestamp paging stops at a full tied-second window;
+      // expand the query window if paging dense imports is needed.
+      failures.push({ url: this.wire.relays?.[0] ?? "relay", reason: "History could not advance past messages with the same timestamp" });
+    }
+    if (!failures.length && this.olderUntil.get(channelId) === oldest) {
+      if (page.length) this.olderUntil.set(channelId, page[page.length - 1].created_at);
+      if (events.length <= PAGE_SIZE) this.exhaustedChannels.add(channelId);
+    }
+    const fresh = (failures.length ? events : page)
       .filter((e) => !this.seenMessages.has(e.id) && this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at);
-    if (fresh.length === 0) this.exhaustedChannels.add(channelId);
     const freshMsgs: Msg[] = [];
     for (const event of fresh) {
       this.seenMessages.add(event.id);
@@ -2263,7 +2490,9 @@ export class FezClient {
       this.msgByIdMap.set(msg.id, msg);
       if (msg.rootId) this.threadNo(msg.rootId);
     }
-    this.messagesByChannel.set(channelId, [...freshMsgs, ...list].slice(-MSG_CACHE_CAP));
+    const list = this.messagesByChannel.get(channelId) ?? [];
+    this.messagesByChannel.set(channelId, [...freshMsgs, ...list].sort((a, b) => a.ts - b.ts).slice(-MSG_CACHE_CAP));
+    this.finishHistory(channelId, loading, failures);
     return freshMsgs;
   }
 
@@ -2415,6 +2644,19 @@ export class FezClient {
     this.state.describe({ name: info?.name, owner: info?.pubkey });
 
     await this.syncWorkspace();
+
+    const inputSince = Math.floor((Date.now() - INPUT_WAIT_MS) / 1000);
+    const inputFilters = [
+      { kinds: [K.INPUT_REQUEST], "#p": [this.pubkey], since: inputSince },
+      { kinds: [K.INPUT_RESPONSE], authors: [this.pubkey], since: inputSince },
+    ];
+    this.wire.subscribe(inputFilters, event => {
+      this.cryptoIngest = this.cryptoIngest.then(() => event.kind === K.INPUT_RESPONSE ? this.handleInputResponse(event) : this.handleInputRequest(event)).catch(() => {});
+    });
+    for (const event of await this.wire.query(inputFilters).catch(() => [])) {
+      if (event.kind === K.INPUT_RESPONSE) await this.handleInputResponse(event).catch(() => {});
+      else await this.handleInputRequest(event).catch(() => {});
+    }
 
     // Nothing is created on first run. There is no workspace event to
     // mint, so the duplicate-"Home" bug has no way to happen: an

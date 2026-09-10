@@ -16,6 +16,7 @@ import { doProvision, doAlive, doDestroy, type DoFetch } from "./machine-do.js";
 import { ensureFezSshKey } from "./fez-ssh-key.js";
 import { localMachine } from "./machine-local.js";
 import { resolveConfig } from "./config.js";
+import { preflightMiner } from "./preflight.js";
 import { getSecret } from "./secrets.js";
 import type { MinerEntry, MinerMachineState } from "./state.js";
 import { fezHome, readState, upsertMiner, writeState } from "./state.js";
@@ -347,6 +348,7 @@ export async function runMiner(
   } = {}
 ): Promise<number> {
   const d = (await loadDescriptors(home)).find((m) => m.netuid === netuid);
+  if (d?.submission) throw new Error("Submission miners run on validators and cannot use fez-mine-run");
   if (!d) throw new Error(`no miner descriptor for netuid ${netuid} — is the subnet's extension installed?`);
   // The hotkey was recorded into state by `fez-mine start` (from
   // RegisterResult.hotkey); the runner never talks to fez-wallet itself,
@@ -390,6 +392,8 @@ export async function runMiner(
   // install/start failure there never touches a pod this run didn't rent.
   let freshMachineState: MinerMachineState | undefined;
   try {
+    const config = resolveConfig(d.config, known?.config, (k) => getSecret(netuid, persona, k));
+    preflightMiner(d, config, walletBin());
     const { machine, machineState, provisioned } = await resolveMachine(
       known,
       persona,
@@ -439,7 +443,6 @@ export async function runMiner(
     // Non-secrets from state (this same `known` entry read above), secrets
     // from the keychain, merged over the descriptor's schema defaults —
     // same resolver the CLI's `config get` uses to shape its own view.
-    const config = resolveConfig(d.config, known?.config, (k) => getSecret(netuid, persona, k));
     const ctx = { workDir, persona, hotkey, netuid, env, config, machine, log };
 
     // Reattach/local already got their pid/startedAt/machine recorded —
@@ -508,26 +511,4 @@ export async function runMiner(
   }
   await record({ pid: undefined, lastExit: `exit ${code} at ${new Date().toISOString()}` });
   return code;
-}
-
-// bin entry — run only when INVOKED, not when imported. installBins copies
-// dist/run.js to a canonical file renamed to the bin key (bin/fez-mine-run,
-// no extension) and symlinks it into ~/.fez/bin, so argv[1] never ends in
-// "run.js" in production; a naive endsWith("run.js") check is dead code
-// there. realpath BOTH sides — under the symlink, import.meta.url is the
-// real file while argv[1] is the link (same fix as fez-git/credential.ts,
-// review finding F9).
-import { pathToFileURL } from "node:url";
-import { realpathSync } from "node:fs";
-const invoked = (() => {
-  try {
-    return process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : undefined;
-  } catch {
-    return process.argv[1] ? pathToFileURL(process.argv[1]).href : undefined;
-  }
-})();
-if (invoked && import.meta.url === invoked) {
-  const [netuid, persona] = process.argv.slice(2);
-  if (!netuid || !persona) { console.error("usage: fez-mine-run <netuid> <persona>"); process.exit(2); }
-  runMiner(Number(netuid), persona).then((c) => process.exit(c), (e) => { console.error(e.message); process.exit(1); });
 }

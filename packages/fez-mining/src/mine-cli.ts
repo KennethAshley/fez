@@ -31,6 +31,9 @@ export function minersForPersona(statusJson: string, persona: string): unknown[]
 }
 
 export const mineArgs = {
+  submission: (persona: string, netuid: number, action: "status" | "register" | "test" | "submit", file?: string, sha256?: string) =>
+    ["submission",action,"--netuid",String(netuid),"--persona",persona,"--json",
+      ...(file ? ["--file",file] : []),...(sha256 ? ["--sha256",sha256] : [])],
   status: () => ["status", "--json"],
   metagraph: (persona: string, netuid: number) =>
     ["metagraph", "--netuid", String(netuid), "--persona", persona, "--json"],

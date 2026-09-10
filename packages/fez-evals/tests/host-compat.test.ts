@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { compareSemver, minFezVersionError, FEZ_VERSION } from "../../../src/extensions/host-compat.js";
 
@@ -36,4 +37,11 @@ describe("host compat", () => {
   it("exports the host version the CLI reports", () => {
     expect(FEZ_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
+});
+
+it("desktop and CLI advertise the same miner-capable host contract", () => {
+  const rust = readFileSync(new URL('../../fez-desktop/src-tauri/src/lib.rs', import.meta.url), 'utf8');
+  expect(rust.match(/const FEZ_VERSION: &str = "([^"]+)"/)?.[1]).toBe(FEZ_VERSION);
+  expect(minFezVersionError('0.2.1', '0.2.0')).not.toBeNull();
+  expect(minFezVersionError('0.2.1')).toBeNull();
 });

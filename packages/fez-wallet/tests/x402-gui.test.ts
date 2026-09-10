@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function mirrorState(): Record<string, unknown> {
-  return JSON.parse(readFileSync(join(dir, "fez-wallet.json"), "utf8"));
+  return JSON.parse(readFileSync(join(dir, "wallet.json"), "utf8"));
 }
 
 const ROW = {

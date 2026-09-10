@@ -14,9 +14,9 @@ import { MiniRelay, waitFor } from "./mini-relay.js";
  * because you'd have planned for that.
  */
 
-const A = new MiniRelay(7801);
-const B = new MiniRelay(7802);
-const C = new MiniRelay(7803);
+const A = new MiniRelay();
+const B = new MiniRelay();
+const C = new MiniRelay();
 const sk = generateSecretKey();
 let seq = 0;
 
@@ -124,7 +124,7 @@ describe("reading from a relay set", () => {
   });
 
   test("a live subscription keeps delivering when one relay dies under it", async () => {
-    const D = new MiniRelay(7804);
+    const D = new MiniRelay();
     await D.start();
     const conn = new RelayConnection({ urls: [A.url, D.url], watchdogMs: 50 });
     const seen: Event[] = [];
@@ -149,7 +149,7 @@ describe("keeping the set a set", () => {
    * reports full health the entire time.
    */
   test("a relay that comes back is reconnected and resubscribed, even though others stayed up", async () => {
-    const E = new MiniRelay(7805);
+    const E = new MiniRelay();
     await E.start();
     const conn = new RelayConnection({ urls: [A.url, E.url], watchdogMs: 50 });
     const seen: Event[] = [];
@@ -174,7 +174,7 @@ describe("keeping the set a set", () => {
   }, 25_000);
 
   test("relays can be added at runtime and start serving the live subscription", async () => {
-    const F = new MiniRelay(7806);
+    const F = new MiniRelay();
     await F.start();
     const conn = new RelayConnection({ urls: [A.url], watchdogMs: 50 });
     const seen: Event[] = [];

@@ -5,13 +5,15 @@
  * - The FIRST @name in a message is its addressee; later @names are
  *   context or downstream handoffs ("@reviewer check it, if good ping
  *   @coder" must NOT fire coder immediately).
- * - A message with NO text mentions falls back to the p-tag, but only
+ * - A message with NO @name-like tokens falls back to the p-tag, but only
  *   from the OWNER: replies auto-p-tag whoever they answer, so between
  *   agents the fallback is a perpetual-motion machine (A answers B,
  *   summoning B to answer A, straight into the depth cap).
  * - Name matching is the auto-spawn bootstrap: a mention of a
  *   not-yet-running agent can't carry its p-tag.
  */
+import { proseMentions } from "@fezchat/protocol";
+
 export interface AddressableEvent {
   pubkey: string;
   content: string;
@@ -27,18 +29,9 @@ export interface AddressableEvent {
  */
 export function addressees(content: string): string[] {
   const names: string[] = [];
-  const re = /@([\w-]+)/g;
-  let match: RegExpExecArray | null;
-  let first = true;
-  while ((match = re.exec(content)) !== null) {
-    if (first) {
-      names.push(match[1].toLowerCase());
-      first = false;
-      continue;
-    }
+  for (const { name, index } of proseMentions(content)) {
     // Look back: only whitespace/quotes/brackets since a sentence end or line start?
-    const before = content.slice(0, match.index);
-    if (/[.?!\n]["')\]]*\s*$/.test(before)) names.push(match[1].toLowerCase());
+    if (names.length === 0 || /[.?!\n]["')\]]*\s*$/.test(content.slice(0, index))) names.push(name);
   }
   return [...new Set(names)];
 }
@@ -56,5 +49,7 @@ export function isAddressedTo(
     const mine = new Set([personaId, ...aliases].map((n) => n.toLowerCase()));
     return named.some((n) => mine.has(n));
   }
+  // An ignored example/email must not turn its automatic p-tag into a call.
+  if (/@[\w-]+/.test(event.content)) return false;
   return event.pubkey === owner && event.tags.some((t) => t[0] === "p" && t[1] === myPubkey);
 }

@@ -1,10 +1,12 @@
 import { fezHome } from "../shared/fez-home.js";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
-import { client, ndJsonStream, type McpServer } from "@agentclientprotocol/sdk";
+import { client, ndJsonStream, methods, PROTOCOL_VERSION, type ClientContext, type McpServer } from "@agentclientprotocol/sdk";
+import { inputForm, validateInputResponse, type InputForm, type InputResponse } from "../../packages/fez-client/dist/agent-input.js";
 import { withFreshOAuth } from "../extensions/connections.js";
 import type { SystemPromptMode } from "./system-prompt.js";
 import { notice } from "../cli/notices.js";
@@ -32,10 +34,52 @@ export interface HarnessUpdate {
   path?: string;
   /** File modification for edit-class tools, truncated at the source (observer frames stay small). */
   diff?: { path: string; oldText?: string; newText: string };
-  /** Token/cost figures when the harness surfaces them (usage type). Never estimated. */
+  /** Token/cost figures when the harness surfaces them (usage type). Engine-reported (may be price estimates, not invoices). */
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  /** Per-prompt cost reporting handshake and final-total marker. */
+  metering?: "ready" | "unavailable" | "complete";
+}
+
+/** Host-provided question UI. The signal closes the form when its tool or turn ends. */
+export type InputHandler = (form: InputForm, signal: AbortSignal) => Promise<InputResponse>;
+interface HarnessInputState { enabled: boolean; controller?: AbortController; pending: number; answeredAt?: number }
+
+const QUESTION_GUIDANCE = "Fez question UI is supported. When collecting choices from your owner, including an explicit request for multiple-choice questions, call the structured question tool (AskUserQuestion in Claude) and group related questions in one call. A repeated request means open a NEW form. Earlier skipped or unanswered questions do NOT mean the tool or UI is unavailable: check your current tools, never infer availability from conversation history. Plain-text choices do not create a form; use them only if no question tool exists or the user explicitly requests plain text. Wait for the tool result. If skipped, cancelled, expired, or unanswered, the form is closed: acknowledge that and stop. Do not claim it is still waiting or repeat its questions in text. Ask again only on a new user request.";
+
+/** One ACP negotiation/handler for both persistent and one-shot harnesses. */
+export function createHarnessClient(onInput?: InputHandler) {
+  const input: HarnessInputState = { enabled: !!onInput, pending: 0 };
+  const app = client({ name: "fez" });
+  app.onRequest("session/request_permission", async ({ params }) => decidePermission({ options: params.options,
+    toolCall: { title: params.toolCall.title ?? undefined, kind: params.toolCall.kind ?? undefined, rawInput: params.toolCall.rawInput } }));
+  app.onRequest(methods.client.elicitation.create, async ({ params, signal }) => {
+    if (!onInput || !input.controller || input.controller.signal.aborted) return { action: "cancel" };
+    const abort = AbortSignal.any([signal, input.controller.signal]);
+    let cancel!: () => void;
+    const cancelled = new Promise<InputResponse>(resolve => { cancel = () => resolve({ action: "cancel" }); });
+    abort.addEventListener("abort", cancel, { once: true });
+    if (abort.aborted) cancel();
+    input.pending++;
+    try {
+      const form = inputForm(params);
+      const response = await Promise.race([onInput(form, abort), cancelled]);
+      return validateInputResponse(form, response);
+    } catch (error) {
+      console.warn(`Question could not be presented: ${error instanceof Error ? error.message : error}`);
+      return { action: "decline" };
+    } finally {
+      input.pending--;
+      input.answeredAt = Date.now();
+      abort.removeEventListener("abort", cancel);
+    }
+  });
+  return { app, input, initialize: (ctx: ClientContext) => ctx.request("initialize", {
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: onInput ? { elicitation: { form: {} } } : {},
+    clientInfo: { name: "fez", version: "0.2.1" },
+  }) };
 }
 
 /**
@@ -54,6 +98,8 @@ export interface HarnessAdapter {
    * agent can be talked out of its own rules.
    */
   systemPromptMode?: SystemPromptMode;
+  /** Guarantees a usage handshake before any provider call; the engine may still refuse it. */
+  supportsCostMetering?: boolean;
   detect(): Promise<boolean>;
   /**
    * onProgress fires (throttled) with the accumulated text so far, before the call resolves.
@@ -72,7 +118,8 @@ export interface HarnessAdapter {
     onProgress?: (textSoFar: string) => void,
     mcpServers?: McpServer[],
     onUpdate?: (update: HarnessUpdate) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onInput?: InputHandler
   ): Promise<string>;
   /**
    * Open a PERSISTENT session: one live harness process whose
@@ -88,7 +135,8 @@ export interface HarnessAdapter {
     mcpServers?: McpServer[],
     timeouts?: TimeoutOptions,
     /** Standing instructions, delivered by this adapter's declared mode. */
-    systemPrompt?: string
+    systemPrompt?: string,
+    onInput?: InputHandler
   ): Promise<HarnessSession>;
 }
 
@@ -345,6 +393,34 @@ const DRAIN_BUDGET_MS = 30_000;
 /** Exported for tests — the turn loop's assembled text is the thing
  *  published to a channel, so it is worth asserting directly. */
 export async function drivePrompt(
+  session: Parameters<typeof drivePromptLoop>[0],
+  command: string,
+  instruction: string,
+  onProgress?: (text: string) => void,
+  onUpdate?: (update: HarnessUpdate) => void,
+  signal?: AbortSignal,
+  timeouts: TimeoutOptions = ONE_SHOT_TIMEOUTS,
+  images?: PromptImage[],
+  input?: HarnessInputState
+): Promise<string> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  if (input) input.controller = controller;
+  try {
+    // Both session modes use this path. Repeat the capability notice so a
+    // reused/compacted conversation cannot learn to fall back to text lists.
+    const framed = input?.enabled ? `${QUESTION_GUIDANCE}\n\n${instruction}` : instruction;
+    return await drivePromptLoop(session, command, framed, onProgress, onUpdate, controller.signal, timeouts, images, input);
+  } finally {
+    controller.abort();
+    if (input) input.controller = undefined;
+    signal?.removeEventListener("abort", abort);
+  }
+}
+
+async function drivePromptLoop(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ACP session updates are whatever the adapter sent; narrowing happens below.
   session: { prompt(input: unknown): Promise<unknown>; nextUpdate(): Promise<any> },
   command: string,
@@ -353,7 +429,8 @@ export async function drivePrompt(
   onUpdate?: (update: HarnessUpdate) => void,
   signal?: AbortSignal,
   timeouts: TimeoutOptions = ONE_SHOT_TIMEOUTS,
-  images?: PromptImage[]
+  images?: PromptImage[],
+  input?: HarnessInputState
 ): Promise<string> {
   // With images, send an ACP content-block array (text first, then each
   // image block); the SDK passes it straight through. Without, a bare
@@ -408,10 +485,15 @@ export async function drivePrompt(
 
     let idleHandle: ReturnType<typeof setTimeout>;
     const idleTimeout = new Promise<never>((_, reject) => {
-      idleHandle = setTimeout(
-        () => reject(new HarnessTimeoutError(`${command} went silent for ${idleMs}ms mid-turn`)),
-        Math.min(idleMs, remaining)
-      );
+      const check = () => {
+        const left = hardDeadline - Date.now();
+        const afterAnswer = input?.answeredAt === undefined ? 0 : input.answeredAt + idleMs - Date.now();
+        // A person filling a form is not a stalled tool. Keep the hard
+        // deadline, and keep the SAME nextUpdate promise while waiting.
+        if ((input?.pending || afterAnswer > 0) && left > 0) idleHandle = setTimeout(check, Math.min(input?.pending ? idleMs : afterAnswer, left));
+        else reject(new HarnessTimeoutError(`${command} went silent for ${idleMs}ms mid-turn`));
+      };
+      idleHandle = setTimeout(check, Math.min(idleMs, remaining));
     });
 
     let message;
@@ -480,18 +562,22 @@ export async function drivePrompt(
     // adapters attach them to updates under obvious names. Forward what's
     // actually there — never estimate (Buzz's fail-closed usage rule).
     if (onUpdate) {
-      const raw = (update as Record<string, unknown>).usage ?? (update as Record<string, unknown>).tokenUsage;
+      const meta = update._meta?.fezUsage;
+      const raw = meta ?? (update as Record<string, unknown>).usage ?? (update as Record<string, unknown>).tokenUsage;
+      if (meta !== undefined && (!meta || typeof meta !== "object")) onUpdate({ type: "usage", metering: "unavailable" });
       if (raw && typeof raw === "object") {
         const u = raw as Record<string, unknown>;
         const num = (...keys: string[]) => {
-          for (const key of keys) if (typeof u[key] === "number") return u[key] as number;
+          for (const key of keys) if (typeof u[key] === "number" && Number.isFinite(u[key]) && (u[key] as number) >= 0) return u[key] as number;
           return undefined;
         };
         const inputTokens = num("inputTokens", "input_tokens", "promptTokens", "prompt_tokens");
         const outputTokens = num("outputTokens", "output_tokens", "completionTokens", "completion_tokens");
         const costUsd = num("costUsd", "cost_usd", "totalCostUsd", "total_cost_usd");
-        if (inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined) {
-          onUpdate({ type: "usage", inputTokens, outputTokens, costUsd });
+        if (meta !== undefined && (u.error === true || inputTokens === undefined || outputTokens === undefined || costUsd === undefined)) {
+          onUpdate({ type: "usage", metering: "unavailable" });
+        } else if (inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined) {
+          onUpdate({ type: "usage", inputTokens, outputTokens, costUsd, metering: u.complete === true ? "complete" : undefined });
         }
       }
     }
@@ -573,18 +659,27 @@ async function decidePermission(params: {
  * flow into the same conversation, so turn N remembers turns 1..N-1
  * (Buzz's per-channel session model; the cure for fresh-mind-per-turn).
  */
-function openAcpSession(
+async function spawnAcp(descriptor: AcpDescriptor) {
+  const child = spawn(descriptor.command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
+  child.stdin.on("error", () => {});
+  child.stdout.on("error", () => {});
+  child.stderr.on("error", () => {});
+  // ENOENT/EACCES must reject this turn, not emit an unhandled error
+  // that terminates the standing agent (and every queued conversation).
+  await once(child, "spawn");
+  return child;
+}
+
+async function openAcpSession(
   descriptor: AcpDescriptor,
   cwd: string,
   mcpServers?: McpServer[],
   timeouts: TimeoutOptions = SESSION_TIMEOUTS,
-  systemPrompt?: string
+  systemPrompt?: string,
+  onInput?: InputHandler
 ): Promise<HarnessSession> {
   const { command } = descriptor;
-  const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
-  child.stdin?.on("error", () => {});
-  child.stdout?.on("error", () => {});
-  child.stderr?.on("error", () => {});
+  const child = await spawnAcp(descriptor);
   let stderrTail = "";
   child.stderr?.on("data", (chunk: Buffer) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-2000);
@@ -600,8 +695,8 @@ function openAcpSession(
       Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
     );
-    const app = client({ name: "fez" });
-    app.onRequest("session/request_permission", async ({ params }) => decidePermission(params as never));
+    const bridge = createHarnessClient(onInput);
+    const { app } = bridge;
 
     child.on("exit", () => {
       alive = false;
@@ -610,6 +705,7 @@ function openAcpSession(
 
     const run = app
       .connectWith(stream, async (ctx) => {
+        await bridge.initialize(ctx);
         // ACP's NewSessionRequest has no system-prompt field — cwd,
         // additionalDirectories, mcpServers, _meta, and nothing else. So
         // the standing prompt goes in _meta for any agent that reads it
@@ -658,7 +754,7 @@ function openAcpSession(
                 await drainAbandonedTurn(session);
               }
               try {
-                return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts, images);
+                return await drivePrompt(session, command, framed, onProgress, onUpdate, signal, timeouts, images, bridge.input);
               } catch (err) {
                 // Steer, timeout, deadline: the prompt is still running.
                 dirty = true;
@@ -722,20 +818,12 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
     // "meta": we put it where the spec allows and prefix it too, but
     // no agent is obliged to treat it as outranking the conversation.
     systemPromptMode: "meta" as const,
-    openSession: (cwd, mcpServers, timeouts, systemPrompt) =>
-      openAcpSession(descriptor, cwd, mcpServers, timeouts, systemPrompt),
+    supportsCostMetering: true,
+    openSession: (cwd, mcpServers, timeouts, systemPrompt, onInput) =>
+      openAcpSession(descriptor, cwd, mcpServers, timeouts, systemPrompt, onInput),
 
-    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal) {
-      const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
-
-      // Without these, a write to a pipe whose reader already exited (e.g.
-      // the process quitting mid-chain, with a persona subprocess still
-      // running) emits an unhandled 'error' event and crashes the whole
-      // Node process, not just this one call — this is what invoke() should
-      // fail with, not what should take down the caller.
-      child.stdin?.on("error", () => {});
-      child.stdout?.on("error", () => {});
-      child.stderr?.on("error", () => {});
+    async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal, onInput) {
+      const child = await spawnAcp(descriptor);
 
       // Captured, not inherited: claude-agent-acp can print its own crash
       // trace to stderr when killed mid-write (e.g. we kill it on quit
@@ -754,20 +842,21 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
           Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
         );
 
-        const app = client({ name: "fez" });
+        const bridge = createHarnessClient(onInput);
+        const { app } = bridge;
 
         // Classified, then gated by the host's risk policy (see
         // decidePermission) — an unattended agent no longer auto-approves
         // a destructive command just because the harness asked nicely.
-        app.onRequest("session/request_permission", async ({ params }) => decidePermission(params as never));
-
         return await app.connectWith(stream, async (ctx) => {
+          const negotiated = await bridge.initialize(ctx);
+          onUpdate?.({ type: "usage", metering: negotiated._meta?.fezUsage === 1 ? "ready" : "unavailable" });
           let builder = ctx.buildSession(cwd);
           for (const server of await withFreshOAuth(mcpServers ?? [])) {
             builder = builder.withMcpServer(server);
           }
           const session = await builder.start();
-          return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal);
+          return await drivePrompt(session, command, instruction, onProgress, onUpdate, signal, undefined, undefined, bridge.input);
         });
       } finally {
         child.kill();
@@ -802,10 +891,32 @@ export function registerHarness(adapter: HarnessAdapter): void {
  */
 export type TurnErrorKind = "auth" | "aborted" | "transient" | "fatal";
 
+// Match explicit model lookup failures, not a temporarily unavailable model
+// endpoint, a missing local config file, or an unrelated HTTP 404.
+function isMissingModelError(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  while (!seen.has(err)) {
+    seen.add(err);
+    const message = err instanceof Error ? err.message : String(err);
+    if (/\bmodel[_ -]not[_ -]found\b|\bunknown model(?:\s*:|\s*$)|\bmodel\s+(?:(?:"[^"\r\n]+"|'[^'\r\n]+'|`[^`\r\n]+`)\s+)?(?:does not exist|(?:was |is )?not found)\b/i.test(message)) return true;
+    if (!(err instanceof Error)) break;
+    err = err.cause;
+  }
+  return false;
+}
+
+/** Shared recovery steps keep channel, document and private failure notices consistent. */
+export function modelRecoveryHint(err: unknown): string {
+  if (!isMissingModelError(err) || classifyTurnError(err) !== "fatal") return "";
+  return " — the configured model was not found. Open Agents, edit this agent, choose an available model, and save. Restart it if it is still running, then resend your request.";
+}
+
 export function classifyTurnError(err: unknown): TurnErrorKind {
   if (err instanceof Error && err.name === "AbortError") return "aborted";
   const message = err instanceof Error ? err.message : String(err);
   if (/Re-authenticate|API Error: 401|oauth|authenticat|logged in/i.test(message)) return "auth";
+  // A wrapper such as "exited before reply" must not retry a missing model.
+  if (isMissingModelError(err)) return "fatal";
   // 5xx is matched with CONTEXT (a status/error prefix or the named
   // phrase), never as a bare number — "processed 502 items" is not a
   // gateway error. 500/502/503 are server-side blips that self-healed
@@ -839,12 +950,13 @@ export async function invokeWithRetry(
   mcpServers?: McpServer[],
   onUpdate?: (update: HarnessUpdate) => void,
   signal?: AbortSignal,
-  attempts = 3
+  attempts = 3,
+  onInput?: InputHandler
 ): Promise<string> {
   let delayMs = 2_000;
   for (let attempt = 1; ; attempt++) {
     try {
-      return await harness.invoke(instruction, cwd, onProgress, mcpServers, onUpdate, signal);
+      return await harness.invoke(instruction, cwd, onProgress, mcpServers, onUpdate, signal, onInput);
     } catch (err) {
       if (classifyTurnError(err) !== "transient" || attempt >= attempts) throw err;
       console.warn(

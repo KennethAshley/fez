@@ -94,6 +94,119 @@ describe("SummonEngine — channel messages", () => {
 });
 
 describe("SummonEngine — completion paths", () => {
+  it("a matching display name cannot attest an unrelated key or let it summon local agents", async () => {
+    const { host, published, spawned } = makeHost({ registryEntry: () => ({ channels: ["chan1"] }) });
+    const engine = new SummonEngine(host);
+    await engine.handleEvent({ kind: 47000, pubkey: STRANGER, content: JSON.stringify({ name: "scout" }), tags: [] });
+    await engine.handleEvent(msg(STRANGER, "@scout run this"));
+    expect(published.some((event) => event.kind === 47006 && event.tags.some((tag) => tag[1] === STRANGER))).toBe(false);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("a pending summon cannot invite an unrelated key claiming the persona's name", async () => {
+    const { host, published } = makeHost({ query: rosterQuery([["p", OWNER, "owner"]]) });
+    const engine = new SummonEngine(host);
+    await engine.handleEvent(msg(OWNER, "@scout go"));
+    published.length = 0;
+    await engine.handleEvent({ kind: 47000, pubkey: STRANGER, content: JSON.stringify({ name: "scout" }), tags: [] });
+    expect(published.filter((event) => event.kind === 47102).flatMap((event) => event.tags)).not.toContainEqual(["p", STRANGER, "bot"]);
+    await engine.handleEvent({ kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] });
+    expect(published.filter((event) => event.kind === 47102).flatMap((event) => event.tags)).toContainEqual(["p", SCOUT_PK, "bot"]);
+  });
+
+  it("invites only build on the workspace owner's roster", async () => {
+    const { host, published } = makeHost({ query: async () => [
+      { kind: 47102, pubkey: OWNER, created_at: 100, content: "", tags: [["d", "roster"], ["p", OWNER, "owner"], ["p", SIBLING, "member"]] },
+      { kind: 47102, pubkey: STRANGER, created_at: 200, content: "", tags: [["d", "roster"], ["p", STRANGER, "admin"]] },
+    ] });
+    await new SummonEngine(host).handleEvent(msg(OWNER, "@scout go"));
+    const roster = published.find((event) => event.kind === 47102)!;
+    expect(roster.tags).toContainEqual(["p", SIBLING, "member"]);
+    expect(roster.tags).not.toContainEqual(["p", STRANGER, "admin"]);
+  });
+
+  it.each([false, true])("invites preserve the canonical roster on timestamp ties (reversed arrival: %s)", async (reversed) => {
+    const rosters: SummonEvent[] = [
+      { id: "00".repeat(32), kind: 47102, pubkey: OWNER, created_at: 100, content: "", tags: [["d", "roster"], ["p", OWNER, "owner"], ["p", SIBLING, "member"]] },
+      { id: "ff".repeat(32), kind: 47102, pubkey: OWNER, created_at: 100, content: "", tags: [["d", "roster"], ["p", OWNER, "owner"], ["p", STRANGER, "member"]] },
+    ];
+    const { host, published } = makeHost({ query: async () => reversed ? [...rosters].reverse() : rosters });
+    await new SummonEngine(host).handleEvent(msg(OWNER, "@scout go"));
+    expect(published.find((event) => event.kind === 47102)?.tags).toEqual([
+      ["d", "roster"], ["p", OWNER, "owner"], ["p", SIBLING, "member"], ["p", SCOUT_PK, "bot"],
+    ]);
+  });
+
+  it("an unrelated roster cannot supply the missing owner's roster", async () => {
+    const { host, published } = makeHost({ query: async () => [
+      { kind: 47102, pubkey: STRANGER, created_at: 200, content: "", tags: [["d", "roster"], ["p", STRANGER, "admin"]] },
+    ] });
+    await new SummonEngine(host).handleEvent(msg(OWNER, "@scout go"));
+    expect(published.filter((event) => event.kind === 47102)).toHaveLength(0);
+  });
+
+  it("a failed attestation grants no summon authority and a legitimate announcement retries it", async () => {
+    let fail = true;
+    const { host, spawned } = makeHost({
+      registryEntry: () => ({ channels: ["chan1"] }),
+      publish: async () => { if (fail) throw new Error("offline"); },
+    });
+    const engine = new SummonEngine(host);
+    const announcement = { kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] };
+    await engine.handleEvent(announcement);
+    await engine.handleEvent(msg(SCOUT_PK, "@vault go"));
+    expect(spawned).toHaveLength(0);
+    fail = false;
+    await engine.handleEvent(announcement);
+    await engine.handleEvent(msg(SCOUT_PK, "@vault go"));
+    expect(spawned).toEqual([{ persona: "vault", channels: ["chan1"], work: undefined }]);
+  });
+
+  it("a valid announcement can retry its pending invite after the roster query recovers", async () => {
+    let online = false;
+    const { host, published } = makeHost({ query: (filters) => online ? rosterQuery([["p", OWNER, "owner"]])(filters) : Promise.resolve([]) });
+    const engine = new SummonEngine(host);
+    const announcement = { kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] };
+    await engine.handleEvent(msg(OWNER, "@scout go"));
+    await engine.handleEvent(announcement);
+    expect(published.filter((event) => event.kind === 47102)).toHaveLength(0);
+    online = true;
+    await engine.handleEvent(announcement);
+    expect(published.filter((event) => event.kind === 47102).flatMap((event) => event.tags)).toContainEqual(["p", SCOUT_PK, "bot"]);
+  });
+
+  it.each([false, true])("concurrent persona invites preserve members and recover from failed writes (first fails: %s)", async (failFirst) => {
+    let roster: SummonEvent = { kind: 47102, pubkey: OWNER, created_at: 100, content: "", tags: [["d", "roster"], ["p", OWNER, "owner"]] };
+    let releaseFirst!: () => void;
+    const firstWrite = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let publishingFirst!: () => void;
+    const started = new Promise<void>((resolve) => { publishingFirst = resolve; });
+    let writes = 0;
+    const { host } = makeHost({
+      personaPubkey: async (name) => name === "scout" ? SCOUT_PK : SIBLING,
+      query: async (filters) => (filters[0] as { kinds?: number[] }).kinds?.includes(47102) ? [roster] : [],
+      publish: async (template) => {
+        if (template.kind !== 47102) return;
+        if (writes++ === 0) {
+          publishingFirst();
+          await firstWrite;
+          if (failFirst) throw new Error("first write failed");
+        }
+        roster = { ...template, pubkey: OWNER };
+      },
+    });
+    const engine = new SummonEngine(host);
+    const first = engine.handleEvent(msg(OWNER, "@scout go"));
+    await started;
+    const second = engine.handleEvent(msg(OWNER, "@vault go"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(roster.tags).toContainEqual(["p", OWNER, "owner"]);
+    expect(roster.tags).toContainEqual(["p", SIBLING, "bot"]);
+    if (!failFirst) expect(roster.tags).toContainEqual(["p", SCOUT_PK, "bot"]);
+  });
+
   it("announcement of a pending persona publishes attestation + roster invite", async () => {
     // The roster query must return a real roster for the invite to build on:
     // an empty result reads as a failed query and publishes nothing (see the
@@ -130,6 +243,14 @@ describe("SummonEngine — completion paths", () => {
   it("gift wrap for an unannounced pubkey does nothing", async () => {
     const { host, spawned } = makeHost();
     const engine = new SummonEngine(host);
+    await engine.handleGiftWrapRecipient(STRANGER);
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("gift wrap for a key claiming a local persona's name cannot wake that persona", async () => {
+    const { host, spawned } = makeHost();
+    const engine = new SummonEngine(host);
+    engine.noteAnnouncement(STRANGER, "scout");
     await engine.handleGiftWrapRecipient(STRANGER);
     expect(spawned).toHaveLength(0);
   });

@@ -1,11 +1,11 @@
-import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
-import { FezClient, setStatePersistence, type Artifact, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
+import { FezClient, dmConvoKey, setStatePersistence, type Artifact, type InputHistoryEntry, type PendingInput, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { embedUrls, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
@@ -13,6 +13,7 @@ import { bindMention, describeMentionProblems, splitMentions, type MentionBindin
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
 import AgentsPane from "./AgentsPane";
+import AgentInput, { conversationQuestions, QuestionRow } from "./AgentInput";
 import AgentsPage from "./AgentsPage";
 import ManagePane from "./ManagePane";
 import HomeView from "./HomeView";
@@ -38,7 +39,8 @@ import { listen } from "@tauri-apps/api/event";
 // module-level wiring as updater.ts).
 void listen<string>("agent-install-failed", (e) => toast.error(e.payload));
 import { startSummoner } from "./summoner";
-import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setToolOpener, setGuestDmOpener, extensionNavViews, extensionArtifactActions, type ArtifactAction } from "./gui-extensions";
+import {loadGuiExtensions, startAppearanceWatch, threadViewFor, setWatchOpener, setThreadOpener, setChannelOpener, setPanelOpener, setToolOpener, setGuestDmOpener, extensionNavViews, navChannelId, extensionArtifactActions, type ArtifactAction, type NavView } from "./gui-extensions";
+import type { MountRender } from "./mount-result";
 import { GuestThreadView, addGuest, listGuests, removeGuest, useGuestUnreads } from "./guest-threads";
 import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
@@ -58,6 +60,10 @@ import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
 import FirstRun from "./FirstRun";
+import ResearchStarter from "./ResearchStarter";
+import { WELCOME_CHANNEL_ID } from "./welcome-core";
+import HistoryStatus from "./HistoryStatus";
+import { isNostrKeyInput, pubkeyFromInput, resolvePubkeyInput } from "./public-key";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
 import { EMOJI, searchEmoji } from "./emoji";
@@ -90,8 +96,8 @@ type Boot =
   | { phase: "ready"; client: FezClient; wire: BrowserWire };
 
 type MainView =
-  | { kind: "channel"; focus?: string }
-  | { kind: "dm"; convoKey: string }
+  | { kind: "channel"; focus?: string; threadRoot?: string; channelJump?: number; questionId?: string; questionJump?: number }
+  | { kind: "dm"; convoKey: string; questionId?: string; questionJump?: number }
   | { kind: "guest"; pk: string }
   | { kind: "home" }
   | { kind: "pulse" }
@@ -111,6 +117,7 @@ type SidePane =
   | { kind: "reminders" }
   | { kind: "docs"; channelId: string }
   | { kind: "tool"; artifact: Artifact }
+  | { kind: "extension"; title: string; name: string; render: MountRender }
   | undefined;
 
 function useForceRender(): () => void {
@@ -445,6 +452,12 @@ function Shell({
   useEffect(() => {
     setWatchOpener((agent) => setPane({ kind: "watch", agent }));
     setToolOpener((artifact) => setPane({ kind: "tool", artifact }));
+    let panelId = 0;
+    setPanelOpener((title, render) => {
+      const next: SidePane = { kind: "extension", title, name: `extension-panel-${++panelId}`, render };
+      setPane(next);
+      return () => setPane((current) => current === next ? undefined : current);
+    });
     // Guest threads (spec 2026-09-03): an extension hands over a market
     // npub; the ledger entry and the conversation surface are ours.
     setGuestDmOpener((guest) => {
@@ -458,6 +471,7 @@ function Shell({
     return () => {
       setWatchOpener(undefined);
       setToolOpener(undefined);
+      setPanelOpener(undefined);
       setGuestDmOpener(undefined);
     };
   }, []);
@@ -552,8 +566,8 @@ function Shell({
   useEffect(() => {
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
-      "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
-      "dmMessage", "jobsChanged", "artifact",
+      "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged", "historyChanged",
+      "dmMessage", "jobsChanged", "artifact", "inputsChanged",
     ] as const;
     for (const name of events) client.on(name, render as never);
     // Notices carry the relay's own words — "claim this workspace", "ask
@@ -785,7 +799,8 @@ function Shell({
     benchPending;
   const working = client.workingAgents();
 
-  const openChannel = async (channelId: string, focus?: string) => {
+  const channelJump = useRef(0);
+  const openChannel = useCallback(async (channelId: string, focus?: string, threadRoot?: string) => {
     // Refuse an id that names no channel rather than opening a room
     // that cannot exist. The inbox used to hand this the MESSAGE id, and
     // because nothing checked, the header rendered the first 8 hex
@@ -800,10 +815,19 @@ function Shell({
       return;
     }
     client.setScope(channelId);
-    setView({ kind: "channel", focus });
-    await client.loadChannelHistory(channelId);
+    setView({ kind: "channel", focus, threadRoot, channelJump: ++channelJump.current });
+    await client.loadChannelHistory(channelId, threadRoot);
     render();
-  };
+  }, [client, render]);
+
+  useEffect(() => {
+    setChannelOpener((id) => { void openChannel(id); });
+    setThreadOpener((id, rootId) => { void openChannel(id, undefined, rootId); });
+    return () => {
+      setChannelOpener(undefined);
+      setThreadOpener(undefined);
+    };
+  }, [openChannel]);
 
   // Point the global key handler at the latest closures every render, so a
   // shortcut always acts on current unreads/scope without re-subscribing.
@@ -841,6 +865,24 @@ function Shell({
     render();
   };
 
+  const questionJump = useRef(0);
+  const openQuestion = async (request: PendingInput) => {
+    const origin = request.origin;
+    setPane(undefined);
+    if (origin?.kind === "channel" && client.state.workspace.channels.has(origin.channelId)) {
+      client.setScope(origin.channelId);
+      setView({ kind: "channel", threadRoot: origin.rootId, questionId: request.id, questionJump: ++questionJump.current });
+      try { await client.loadChannelHistory(origin.channelId, origin.rootId); }
+      catch { toast.error("Thread history could not load. Your question is still available."); }
+    } else if (origin?.kind === "dm") {
+      const convoKey = dmConvoKey(origin.participants, client.pubkey);
+      client.markDmRead(convoKey);
+      setView({ kind: "dm", convoKey, questionId: request.id, questionJump: ++questionJump.current });
+    } else {
+      window.dispatchEvent(new CustomEvent("fez-show-questions", { detail: request.id }));
+    }
+  };
+
   // Clicking a native notification focuses the app and jumps to its source.
   useEffect(() => {
     installNotificationClick((t) => {
@@ -849,6 +891,11 @@ function Shell({
       else if (t.kind === "dm") openDm(t.convoKey);
       else if (t.kind === "agent") setView({ kind: "agents" });
       else if (t.kind === "proposals") setView({ kind: "pulse" });
+      else if (t.kind === "questions") {
+        const request = [...client.pendingInputs(), ...client.inputHistory()].find(r => r.id === t.id);
+        if (request) void openQuestion(request);
+        else window.dispatchEvent(new Event("fez-show-questions"));
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1071,6 +1118,7 @@ function Shell({
         </button>
         {!client.state.workspace.owner && <div className="workspace-unclaimed">unclaimed</div>}
         <div className="rail-scroll">
+        <AgentInput client={client} onOpen={request => void openQuestion(request)} />
         <button className={view.kind === "home" ? "channel active home-link" : "channel home-link"} onClick={() => setView({ kind: "home" })}>
           <span className="nav-glyph">▤</span> inbox
           {openLoopCount > 0 && <span className="badge">{openLoopCount}</span>}
@@ -1108,8 +1156,12 @@ function Shell({
             {extensionNavViews().map((nav) => (
               <button
                 key={nav.name}
-                className={view.kind === "ext" && view.name === nav.name ? "channel active home-link" : "channel home-link"}
-                onClick={() => setView({ kind: "ext", name: nav.name })}
+                className={(view.kind === "ext" && view.name === nav.name) || (view.kind === "channel" && scope && navChannelId(nav) === scope.channelId) ? "channel active home-link" : "channel home-link"}
+                onClick={() => {
+                  const id = navChannelId(nav);
+                  if (id) void openChannel(id);
+                  else setView({ kind: "ext", name: nav.name });
+                }}
               >
                 {/* An extension may hand us an inline SVG glyph (currentColor,
                     1em) instead of a unicode char — render it as markup so a
@@ -1466,8 +1518,13 @@ function Shell({
 
       {view.kind === "channel" && scope && (
         <ChannelView
-          key={scope.channelId + (view.focus ?? "")}
+          key={scope.channelId + (view.focus ?? "") + (view.questionJump ?? "")}
           focusId={view.focus}
+          initialThreadRoot={view.threadRoot}
+          channelJump={view.channelJump}
+          workspaceNav={extensionNavViews().find((nav) => navChannelId(nav) === scope.channelId)}
+          questionId={view.questionId}
+          onQuestion={openQuestion}
           client={client}
           wire={wire}
           channelId={scope.channelId}
@@ -1493,10 +1550,11 @@ function Shell({
       )}
       {view.kind === "dm" && (
         <DmView
-          key={view.convoKey}
+          key={view.convoKey + (view.questionJump ?? "")}
           client={client}
           wire={wire}
           convoKey={view.convoKey}
+          questionId={view.questionId}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
         />
       )}
@@ -1597,6 +1655,17 @@ function Shell({
       )}
 
       {pane && <div className="rz" onMouseDown={() => startDrag("pane")} />}
+      {pane?.kind === "extension" && (
+        <aside className="pane extension-pane" aria-label={pane.title}>
+          <header className="pane-head">
+            <span>{pane.title}</span>
+            <button className="pane-close" aria-label="Close panel" onClick={() => setPane(undefined)}>✕</button>
+          </header>
+          <div className="pane-body">
+            <ExtensionPanel panel={pane} />
+          </div>
+        </aside>
+      )}
       {pane?.kind === "watch" && (
         <WatchPane
           agent={pane.agent}
@@ -1809,8 +1878,10 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
   // Type-to-find over everyone the workspace can name — an exact name
   // was the old contract, and "@dri" going nowhere while @drift sits on
   // the relay made the input feel broken. Enter takes the first match.
-  const q = who.trim().replace(/^@/, "").toLowerCase();
-  const matches = q && !/^[0-9a-f]{64}$/i.test(q)
+  const raw = who.trim().replace(/^@/, "");
+  const directPk = pubkeyFromInput(raw);
+  const q = raw.toLowerCase();
+  const matches = q && !directPk && !isNostrKeyInput(raw)
     ? [...client.knownNames().entries()]
         .filter(([, n]) => n.toLowerCase().includes(q))
         .sort(([, a], [, b]) => Number(b.toLowerCase().startsWith(q)) - Number(a.toLowerCase().startsWith(q)) || a.localeCompare(b))
@@ -1822,10 +1893,12 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
     onOpen(pk);
   };
   const start = () => {
-    const raw = who.trim().replace(/^@/, "");
-    const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw) ?? matches[0]?.[0];
-    if (!pk) return;
-    pick(pk);
+    try {
+      const pk = resolvePubkeyInput(raw, name => client.pkByName(name) ?? matches[0]?.[0]);
+      if (pk) pick(pk);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
   };
   if (!open) {
     return (
@@ -1839,7 +1912,7 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
         value={who}
         autoFocus
         spellCheck={false}
-        placeholder="@name or pubkey"
+        placeholder="@name, npub, or hex key"
         onChange={(e) => setWho(e.target.value)}
         onBlur={() => setOpen(false)}
         onKeyDown={(e) => {
@@ -1884,11 +1957,21 @@ function ChannelView({
   onOpenTool,
   localAgents,
   focusId,
+  initialThreadRoot,
+  channelJump,
+  workspaceNav,
+  questionId,
+  onQuestion,
 }: {
   client: FezClient;
   wire: BrowserWire;
   channelId: string;
   focusId?: string;
+  initialThreadRoot?: string;
+  channelJump?: number;
+  workspaceNav?: NavView;
+  questionId?: string;
+  onQuestion: (request: PendingInput) => void;
   drafts?: Map<string, { content: string; rootId?: string; ts: number }>;
   working: ReadonlyMap<string, { activity: string; ts: number; root?: string }>;
   onWatch: (agent: string) => void;
@@ -1906,6 +1989,7 @@ function ChannelView({
    * mention, so mentioning one is never "reached nobody". */
   localAgents: ReadonlySet<string>;
 }) {
+  const history = client.historyState(channelId);
   /** agent → when its current turn began, for the elapsed readout. */
   const turnStarts = useRef(new Map<string, number>());
   // Drafts persist per channel (Buzz's DraftsPanel decision, minimal
@@ -1943,27 +2027,47 @@ function ChannelView({
   // only shows roots); the component remounts per focus so lazy init is enough.
   const [membersOpen, setMembersOpen] = useState(false);
   const [threadRoot, setThreadRoot] = useState<string | undefined>(() => {
+    if (initialThreadRoot) return initialThreadRoot;
     if (!focusId) return undefined;
     return client.messages(channelId).find((m) => m.id === focusId)?.rootId;
   });
   const [editing, setEditing] = useState<{ id: string; original: string } | undefined>();
   const bottomRef = useRef<HTMLDivElement>(null);
   const messages = client.messages(channelId);
-  // Extensions navigate threads through this (gui-extensions.openThreadAt):
-  // parked per channel, id-guarded — see the seam's comment.
+  const workspace = workspaceNav?.channelWorkspace;
+  const [activeTab, setActiveTab] = useState<string>();
+  const [visitedTabs, setVisitedTabs] = useState<string[]>([]);
+  const tabPrefix = useId();
+  const customTab = workspace?.tabs.find((tab) => tab.id === activeTab);
+  const tabIndex = customTab ? workspace!.tabs.indexOf(customTab) + 1 : 0;
+  const tabList = useRef<HTMLDivElement>(null);
+  const selectTab = useCallback((id?: string) => {
+    setActiveTab(id);
+    if (id !== undefined) setVisitedTabs((visited) => visited.includes(id) ? visited : [...visited, id]);
+  }, []);
+  const openTab = useCallback((id: string) => {
+    const index = workspace?.tabs.findIndex((tab) => tab.id === id) ?? -1;
+    if (index < 0) return;
+    selectTab(id);
+    tabList.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[index + 1]?.focus();
+  }, [workspace, selectTab]);
+  const summaryRender = useMemo(() => workspace?.summary
+    ? (host?: HTMLElement) => workspace.summary!({ openTab }, host)
+    : undefined, [workspace, openTab]);
+  // App navigation is a request, even when the channel/root is unchanged.
+  // Keep the composer mounted: attachments, edits, and mention bindings survive.
   useEffect(() => {
-    setThreadOpener((forChannel, rootId) => {
-      if (forChannel === channelId) setThreadRoot(rootId);
-    });
-    return () => setThreadOpener(undefined);
-  }, [channelId]);
+    setThreadRoot(initialThreadRoot ?? (focusId ? client.messages(channelId).find((m) => m.id === focusId)?.rootId : undefined));
+    setActiveTab(undefined);
+  }, [client, channelId, channelJump, initialThreadRoot, focusId]);
+  useEffect(() => { setActiveTab(undefined); setVisitedTabs([]); }, [workspace]);
 
   const shown = threadRoot ? messages.filter((m) => m.id === threadRoot || m.rootId === threadRoot) : messages.filter((m) => !m.parentId);
   // Typed artifacts interleave by time. In the channel view, all of them;
   // in a thread, only LIVE tools — their handles are small and worth
   // having beside the conversation that built them, without dragging every
   // html/table artifact into the thread.
-  type TimelineRow = { ts: number; msg?: Msg; artifact?: Artifact };
+  type TimelineRow = { ts: number; msg?: Msg; artifact?: Artifact; question?: InputHistoryEntry };
   const allArtifacts = client.artifacts(channelId);
   // A refined tool is ONE tool, not a stack. Every rebuild republishes a
   // fresh `live` artifact tagged with its thread root, so collapse them to
@@ -1993,6 +2097,7 @@ function ChannelView({
   const artifactRows = [...scopedNonLive, ...liveTools];
   const rows: TimelineRow[] = [
     ...shown.map((m) => ({ ts: m.ts, msg: m })),
+    ...conversationQuestions(client, { kind: "channel", channelId, rootId: threadRoot }).map(question => ({ ts: question.requestedAt / 1000, question })),
     ...artifactRows.map((a) => ({ ts: a.ts, artifact: a })),
   ].sort((a, b) => a.ts - b.ts);
   const now = Date.now();
@@ -2005,14 +2110,18 @@ function ChannelView({
     turnStarts.current.set(agent, ts);
     return ts;
   };
-  const liveDrafts = [...(drafts?.entries() ?? [])].filter(([, d]) => now - d.ts < 15_000);
+  const waiting = client.waitingInputs();
+  const waitingNames = new Set(waiting.map(request => client.displayName(request.agentPk).toLowerCase()));
+  const liveDrafts = [...(drafts?.entries() ?? [])].filter(([pk, d]) => now - d.ts < 15_000 && !waiting.some(request => request.agentPk === pk));
   const draftsForRoot = (rootId: string) => liveDrafts.filter(([, d]) => d.rootId === rootId);
   // Threaded turns belong to their thread's own preview — showing them
   // here too doubled the indicator (steph appeared "thinking" in the
   // thread AND "working" at channel root). Frames without a root (older
   // agents, DMs) keep today's behavior.
   const workingNow = [...working.entries()].filter(
-    ([, w]) => now - w.ts < 30_000 && (threadRoot ? w.root === threadRoot || !w.root : !w.root)
+    ([agent, w]) => now - w.ts < 30_000 && (threadRoot ? w.root === threadRoot : !w.root)
+      // Scoped questions show their waiting status beside the form.
+      && !waiting.some(request => request.origin && client.displayName(request.agentPk) === agent)
   );
 
   // One turn per working agent, at whichever phase it has reached:
@@ -2020,7 +2129,8 @@ function ChannelView({
   // nothing. Drafts carry a pk; the working map carries a name, so the
   // roster answers for the face.
   const pkOfAgent = new Map([...client.agents().entries()].map(([pk, name]) => [name.toLowerCase(), pk]));
-  const draftByName = new Map(liveDrafts.filter(([, d]) => !d.rootId).map(([pk, d]) => [client.displayName(pk).toLowerCase(), { pk, d }]));
+  const visibleDrafts = liveDrafts.filter(([, d]) => threadRoot ? d.rootId === threadRoot : !d.rootId);
+  const draftByName = new Map(visibleDrafts.map(([pk, d]) => [client.displayName(pk).toLowerCase(), { pk, d }]));
   const liveTurns = workingNow.map(([agent, w]) => {
     const writing = draftByName.get(agent.toLowerCase());
     return {
@@ -2032,8 +2142,7 @@ function ChannelView({
     };
   });
   // An agent streaming without a working frame still gets its turn.
-  for (const [pk, d] of liveDrafts) {
-    if (d.rootId) continue;
+  for (const [pk, d] of visibleDrafts) {
     const name = client.displayName(pk);
     if (liveTurns.some((t) => t.agent.toLowerCase() === name.toLowerCase())) continue;
     liveTurns.push({ agent: name, pk, phase: "writing", line: d.content, since: turnStart(name, d.ts) });
@@ -2046,6 +2155,8 @@ function ChannelView({
   const timelineRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   useEffect(() => {
+    if (customTab) return;
+    if (questionId && threadRoot === initialThreadRoot) return;
     if (focusId) {
       document.getElementById(`msg-${focusId}`)?.scrollIntoView({ behavior: "auto", block: "center" });
       return;
@@ -2219,7 +2330,7 @@ function ChannelView({
       onDrop={(e) => {
         e.preventDefault();
         const files = [...e.dataTransfer.files];
-        if (files.length) void handleFiles(files);
+        if (!customTab && files.length) void handleFiles(files);
       }}
     >
       <header className="topbar">
@@ -2231,7 +2342,7 @@ function ChannelView({
             {channelBranch}
           </span>
         )}
-        {threadRoot && (
+        {threadRoot && !customTab && (
           <button className="thread-exit" onClick={() => setThreadRoot(undefined)}>← back to channel</button>
         )}
         {!threadRoot && (
@@ -2345,6 +2456,44 @@ function ChannelView({
           />
         )}
       </header>
+      {workspace && (
+        <>
+          {summaryRender && (
+            <div className="channel-workspace-summary">
+              <ExtensionPanel panel={{ name: `${workspaceNav!.name}:${channelId}:summary`, render: summaryRender }} />
+            </div>
+          )}
+          <div className="channel-workspace-tabs" role="tablist" aria-label="Channel views" ref={tabList}>
+            {[{ label: "Activity", id: undefined }, ...workspace.tabs].map((tab, index) => (
+              <button
+                key={index}
+                id={`${tabPrefix}-tab-${index}`}
+                role="tab"
+                aria-selected={tabIndex === index}
+                aria-controls={`${tabPrefix}-panel-${index}`}
+                tabIndex={tabIndex === index ? 0 : -1}
+                onClick={() => selectTab(tab.id)}
+                onKeyDown={(e) => {
+                  const buttons = tabList.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+                  if (!buttons) return;
+                  const next = e.key === "ArrowRight" ? (index + 1) % buttons.length
+                    : e.key === "ArrowLeft" ? (index + buttons.length - 1) % buttons.length
+                    : e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : undefined;
+                  if (next === undefined) return;
+                  e.preventDefault();
+                  buttons[next].focus();
+                  buttons[next].click();
+                }}
+              >{tab.label}</button>
+            ))}
+          </div>
+        </>
+      )}
+      <div className="channel-activity" hidden={!!customTab} role={workspace ? "tabpanel" : undefined} id={`${tabPrefix}-panel-0`} aria-labelledby={workspace ? `${tabPrefix}-tab-0` : undefined}>
+      <HistoryStatus state={history} onRetry={() => {
+        if (history.operation === "older") void client.loadOlderPage(channelId);
+        else void client.loadChannelHistory(channelId, threadRoot);
+      }} />
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
         {/* The two empty-state panels used to be inverted: FirstRun (the
             helpful one) required members > 1 — impossible for a fresh solo
@@ -2359,7 +2508,7 @@ function ChannelView({
             the channel info above carries the standing guidance, and a
             placeholder repeating "mention an agent" under it was one nag
             too many (removed on request, after shipping for an hour). */}
-        {messages.length === 0 &&
+        {history.status === "ready" && messages.length === 0 &&
           ![...client.state.workspace.channels.keys()].some(
             (id) => id !== channelId && client.messages(id).length > 0
           ) && (
@@ -2396,6 +2545,7 @@ function ChannelView({
           );
         })()}
         {rows.map((row, index) => {
+          if (row.question) return <QuestionRow key={row.question.id} client={client} entry={row.question} focused={row.question.id === questionId} />;
           if (row.artifact) {
             return (
               <div key={row.artifact.id}>
@@ -2427,18 +2577,13 @@ function ChannelView({
               onAuthor={() => onProfile(msg.authorPk)}
               onProfile={onProfile}
             />
-            {!threadRoot && <RootLiveArea client={client} rootId={msg.id} drafts={draftsForRoot(msg.id)} />}
+            {!threadRoot && <RootLiveArea client={client} rootId={msg.id} drafts={draftsForRoot(msg.id)} onQuestion={onQuestion} />}
           </div>
           );
         })}
-        {threadRoot &&
-          draftsForRoot(threadRoot).map(([pk, d]) => (
-            <LiveTurn key={pk} pk={pk} name={client.displayName(pk)} phase="writing" line={d.content} />
-          ))}
         {/* The turns live INSIDE the timeline, in the row their message
             will occupy — that adjacency is the whole point. */}
-        {!threadRoot &&
-          liveTurns.map((t) => (
+        {liveTurns.map((t) => (
             <LiveTurn
               key={t.agent}
               pk={t.pk}
@@ -2449,12 +2594,15 @@ function ChannelView({
               onWatch={() => onWatch(t.agent)}
             />
           ))}
+        {!threadRoot && channelId === WELCOME_CHANNEL_ID && client.state.isOwner(client.pubkey) && (
+          <ResearchStarter client={client} channelId={channelId} onStarted={setThreadRoot} onOpenAgents={onAgents} />
+        )}
         <div ref={bottomRef} />
       </div>
       {/* A person typing is a different fact from an agent working:
           theirs isn't observable, so it keeps the quiet line. */}
-      {typing.filter((who) => !workingNames.has(who.toLowerCase())).length > 0 && (
-        <div className="typing">{typing.filter((who) => !workingNames.has(who.toLowerCase())).join(", ")} typing…</div>
+      {typing.filter((who) => !workingNames.has(who.toLowerCase()) && !waitingNames.has(who.toLowerCase())).length > 0 && (
+        <div className="typing">{typing.filter((who) => !workingNames.has(who.toLowerCase()) && !waitingNames.has(who.toLowerCase())).join(", ")} typing…</div>
       )}
       {editing && (
         <div className="edit-banner">
@@ -2515,6 +2663,12 @@ function ChannelView({
         }
         onFiles={(files) => void handleFiles(files)}
       />
+      </div>
+      {workspace?.tabs.map((tab, index) => visitedTabs.includes(tab.id) && (
+        <div key={tab.id} className="channel-workspace-content" hidden={tab.id !== customTab?.id} role="tabpanel" tabIndex={0} id={`${tabPrefix}-panel-${index + 1}`} aria-labelledby={`${tabPrefix}-tab-${index + 1}`}>
+          <ExtensionPanel panel={{ name: `${workspaceNav!.name}:${channelId}:${tab.id}`, render: tab.render }} />
+        </div>
+      ))}
     </main>
   );
 }
@@ -2530,18 +2684,24 @@ function RootLiveArea({
   client,
   rootId,
   drafts,
+  onQuestion,
 }: {
   client: FezClient;
   rootId: string;
+  onQuestion: (request: PendingInput) => void;
   drafts: [string, { content: string; rootId?: string; ts: number }][];
 }) {
   // Slack's decision: the channel shows a COUNT, not a preview — the
   // bubble foot's "N replies →" carries it. This area only renders the
   // live parts: streaming drafts and per-root typing.
-  const typing = client.typingWho(rootId).filter((name) => name !== "You");
-  if (drafts.length === 0 && typing.length === 0) return null;
+  const waiting = client.waitingInputs().filter(request => request.origin?.kind === "channel" && request.origin.rootId === rootId);
+  const typing = client.typingWho(rootId).filter(name => name !== "You" && !waiting.some(request => client.displayName(request.agentPk) === name));
+  if (drafts.length === 0 && typing.length === 0 && waiting.length === 0) return null;
   return (
     <div className="root-live">
+      {waiting.map(request => <button key={request.id} className="input-thread-link" onClick={() => onQuestion(request)}>
+        @{client.displayName(request.agentPk)} · Waiting for your answer →
+      </button>)}
       {/* Under a root message the turn runs compact — same object, one
           line, so a thread preview never grows a second vocabulary. */}
       {drafts.map(([pk, d]) => (
@@ -2632,11 +2792,13 @@ function DmView({
   client,
   wire,
   convoKey,
+  questionId,
   onProfile,
 }: {
   client: FezClient;
   wire: BrowserWire;
   convoKey: string;
+  questionId?: string;
   onProfile: (pk: string) => void;
 }) {
   const [draft, setDraftState] = useState(() => localStorage.getItem(`fez-draft-dm-${convoKey}`) ?? "");
@@ -2653,6 +2815,11 @@ function DmView({
   const timelineRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
   const convo = client.dmConversations().get(convoKey);
+  const questions = conversationQuestions(client, { kind: "dm", convoKey });
+  const rows = [
+    ...(convo?.msgs ?? []).map(msg => ({ ts: msg.ts, msg, question: undefined })),
+    ...questions.map(question => ({ ts: question.requestedAt / 1000, msg: undefined, question })),
+  ].sort((a, b) => a.ts - b.ts);
   const group = convoKey.includes("+");
   const peers = client.dmPeers(convoKey);
   // The conversation's metadata channel — reactions/edits/unsends ride it,
@@ -2661,7 +2828,7 @@ function DmView({
 
   useEffect(() => {
     client.markDmRead(convoKey);
-    if (nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    if (!questionId && nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "auto" });
   });
 
   // Same double-send latch as the channel composer — see its comment.
@@ -2759,7 +2926,10 @@ function DmView({
           if (el) nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
       >
-        {(convo?.msgs ?? []).map((msg, index, all) => (
+        {rows.map((row, index, all) => {
+          if (row.question) return <QuestionRow key={row.question.id} client={client} entry={row.question} focused={row.question.id === questionId} />;
+          const msg = row.msg!;
+          return (
           <div key={msg.id}>
             {(index === 0 || !sameDay(all[index - 1].ts, msg.ts)) && (
               <div className="day-divider"><span>{dayLabel(msg.ts)}</span></div>
@@ -2801,7 +2971,7 @@ function DmView({
               <GitInstallOffer key={url} url={url} authorName={client.displayName(msg.senderPk)} client={client} />
             ))}
           </div>
-        ))}
+        ); })}
         <div ref={bottomRef} />
       </div>
       {editing && (
