@@ -31,8 +31,8 @@ npm install --prefix packages/fez-browser
 node dist/cli.js link packages/fez-browser
 ```
 
-A checkout link appears as `fez-browser`; an npm installation appears as
-`browser`. Both provide the same Browser settings panel and tools.
+Checkout links and npm installations use the package name `browser`.
+Older development installs may still appear as `fez-browser`.
 
 ## Tools
 

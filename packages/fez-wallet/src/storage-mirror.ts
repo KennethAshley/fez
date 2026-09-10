@@ -16,30 +16,12 @@ import type { SpendEntry } from "./log.js";
  * failed mirror must never break a transfer.
  */
 
-// Must match this package's INSTALLED name — the desktop's gui loader
-// namespace-locks api.storage to the registered extension name
-// (gui-extensions.ts), which is the package dir under ~/.fez/packages/.
-// And that name is NOT one value: `fez install` de-scopes @fezchat/wallet
-// to "wallet" while `fez link` keeps the source dir's "fez-wallet" — a
-// hardcoded name here has now been wrong in BOTH directions (first the
-// linked install read fez-wallet.json while this wrote wallet.json; then
-// the gallery install read wallet.json while this wrote fez-wallet.json
-// — the panel said "no wallet yet" over a mirrored treasury, live). So
-// the name is DERIVED from where this module actually runs: everything
-// that imports it — the mcp server, the cli (its ~/.fez/bin entry is a
-// symlink node realpath-resolves), the bundled panel — lives under
-// ~/.fez/packages/<name>/, and <name> is exactly the loader's namespace.
-// Off-install (the dev repo, tests) it falls back to the package's own
-// dir name, which is what a `fez link` registers.
 /**
- * Resolved PER CALL, not at import: the dev repo also lives under a
- * packages/ dir, and a smoke test run from it once took the dir name at
- * import time and forked the mirror into a second home while the app read
- * the first (found live, twice, once from each direction: the panel said
- * "no wallet yet" over a funded treasury). Only an INSTALL path under
- * ~/.fez names the namespace; anywhere else writes wherever a mirror
- * ALREADY lives — one home, never two — and call-time resolution also
- * honors a test's FEZ_EXTENSION_DATA_DIR set after import.
+ * Match the GUI's installed namespace. Older development installs used
+ * "fez-wallet", so installed paths and existing state retain their name.
+ * Fresh development runs use "wallet", the package identity shared by
+ * install and link. Resolve per call so a dev run joins an existing
+ * mirror and honors FEZ_EXTENSION_DATA_DIR set after import.
  */
 export function storageName(): string {
   try {
@@ -54,7 +36,7 @@ export function storageName(): string {
       if (fsSync.existsSync(path.join(storageDir(), `${name}.json`))) return name;
     }
   } catch { /* fresh machine — the default below stands */ }
-  return "fez-wallet";
+  return "wallet";
 }
 /** Every OTHER name this package has ever registered under — adoption
  * candidates, whichever home this run did not derive. */

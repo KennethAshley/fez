@@ -4,7 +4,7 @@ import chalk from "chalk";
 import fs from "fs/promises";
 import path from "path";
 import { CapabilityClient } from "../protocol/client.js";
-import { PackageManager, resolveSkillArgs } from "../extensions/package-manager.js";
+import { PackageManager, npmPackageName, resolveSkillArgs } from "../extensions/package-manager.js";
 import { fezHome, fezHomeAt } from "../shared/fez-home.js";
 import nodeFs from "node:fs";
 
@@ -307,6 +307,21 @@ program
       console.error(chalk.red(`No readable package.json in ${pkgDir}`));
       process.exit(1);
     }
+    // A checkout folder is not an extension identity: fez-wallet and
+    // wallet must overwrite the same install and keep the same tool grants.
+    const name = npmPackageName(manifest.name ?? path.basename(pkgDir));
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) {
+      throw new Error(`invalid package name: ${manifest.name ?? name}`);
+    }
+    const packagesDir = fezHome("packages");
+    if (manifest.name && fsSync.existsSync(packagesDir)) {
+      const pm = new PackageManager();
+      const aliases = fsSync.readdirSync(packagesDir)
+        .filter((id) => id !== name && pm.installedManifest(id)?.name === manifest.name);
+      if (aliases.length > 0) {
+        throw new Error(`${manifest.name} is already installed as ${aliases.join(", ")}; consolidate its data and agent attachments under ${name} before linking.`);
+      }
+    }
     // ── compat gate: same check `fez install` runs, before anything is
     // built or copied — a package built for a newer fez refuses here.
     {
@@ -344,8 +359,6 @@ program
       // foot-gun is the reason this command exists.
       execSync("npm run build", { cwd: pkgDir, stdio: "inherit" });
     }
-    const name = path.basename(pkgDir);
-
     // ── skill part: merge the MCP definition into the machine catalog.
     // Existing env VALUES the user filled in are kept; the package only
     // supplies names/defaults.
