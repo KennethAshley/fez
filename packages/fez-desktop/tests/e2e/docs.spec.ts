@@ -78,7 +78,7 @@ test("docs keep live agent discussion with a passage and undo a signed edit", as
     await expect(page.locator(".wiki-body")).toContainText("Agents edit when you explicitly ask.");
     await expect(page.locator(".wiki-body p").filter({ hasText: "Keep the reasoning with the passage." })).toHaveAttribute("data-retained", "yes");
     await expect(rail).toContainText("Does this give agents too much freedom?");
-    await page.screenshot({ path: "/private/tmp/fez-docs-workspace-desktop.png", animations: "disabled" });
+    await page.screenshot({ path: test.info().outputPath("fez-docs-workspace-desktop.png"), animations: "disabled" });
     await page.getByRole("tab", { name: /Changes/ }).click();
     await rail.getByRole("button", { name: "Undo change", exact: true }).click();
     await expect(page.locator(".wiki-body")).toContainText("Agents can edit after discussing a change.");
@@ -155,7 +155,7 @@ test("docs keep live agent discussion with a passage and undo a signed edit", as
     await expect(rail.locator("blockquote")).toContainText("Keep the reasoning with the passage.");
     await page.setViewportSize({ width: 850, height: 850 });
     await expect(rail.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
-    await page.screenshot({ path: "/private/tmp/fez-docs-workspace-narrow.png", animations: "disabled" });
+    await page.screenshot({ path: test.info().outputPath("fez-docs-workspace-narrow.png"), animations: "disabled" });
     await page.locator(".wiki-list button").filter({ hasText: "Release Process" }).click();
     await expect(page.locator(".wiki-body")).toContainText("Release Process");
     await page.getByRole("button", { name: "✎ edit", exact: true }).click();
