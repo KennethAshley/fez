@@ -15,19 +15,33 @@ const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 /** A real socket peer; only relay responses are controlled by the test. */
-async function peer(mode: "complete" | "closed" | "silent" | "drop", events: Event[] = [], auth = false) {
+async function peer(mode: "complete" | "closed" | "silent" | "drop", events: Event[] = [], auth = false, authReply: "accept" | "silent" | "deny" = "accept") {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(server, "listening");
   const address = server.address();
   if (!address || typeof address === "string") throw Error("missing relay port");
-  const state = { mode, events, rejected: 0, requests: [] as Filter[][] };
+  const state = { mode, events, rejected: 0, requests: [] as Filter[][], published: [] as string[] };
   server.on("connection", socket => {
     let authed = !auth;
     socket.on("message", bytes => {
       const [type, id, ...filters] = JSON.parse(bytes.toString());
       if (type === "AUTH") {
+        if (authReply === "silent") return;
+        if (authReply === "deny") {
+          socket.send(JSON.stringify(["OK", id.id, false, "restricted: authentication denied"]));
+          return;
+        }
         authed = true;
         socket.send(JSON.stringify(["OK", id.id, true, ""]));
+      }
+      if (type === "EVENT") {
+        if (!authed) {
+          socket.send(JSON.stringify(["AUTH", "publish-challenge"]));
+          socket.send(JSON.stringify(["OK", id.id, false, "auth-required: sign in"]));
+        } else {
+          state.published.push(id.id);
+          socket.send(JSON.stringify(["OK", id.id, true, ""]));
+        }
       }
       if (type !== "REQ") return;
       state.requests.push(filters);
@@ -115,6 +129,25 @@ describe("history query completion on the wire", () => {
     expect(server.state.rejected).toBeGreaterThan(0);
     expect(result.failures).toEqual([]);
     expect(result.events.map(e => e.id)).toEqual([event.id]);
+  });
+
+  it.each(["silent", "deny"] as const)("reports %s authentication without an unhandled rejection on disconnect", async authReply => {
+    const server = await peer("complete", [], true, authReply);
+    const relay = connection([server.url], true);
+    const result = await relay.queryWithStatus([{ kinds: [K.MESSAGE] }], 200);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].reason).toMatch(/timed out|authentication denied/);
+    relay.disconnect();
+    // Drain rejection callbacks: Vitest fails the gate for any unhandled one.
+    await new Promise(resolve => setTimeout(resolve, 20));
+  });
+
+  it("authenticates and retries a publish without requiring connect first", async () => {
+    const server = await peer("complete", [], true);
+    const relay = connection([server.url], true);
+    const event = message("authenticated publish");
+    await relay.publish(event);
+    expect(server.state.published).toEqual([event.id]);
   });
 
   it("carries failure and recovery through the desktop wire into channel state", async () => {
