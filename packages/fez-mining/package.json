@@ -1,7 +1,7 @@
 {
   "name": "@fezchat/mining",
-  "version": "0.1.3",
-  "description": "Mine any Bittensor subnet from fez — harness, CLI, and GUI.",
+  "version": "0.1.4",
+  "description": "Mine any Bittensor subnet from fez \u2014 harness, CLI, and GUI.",
   "type": "module",
   "bin": {
     "fez-mine": "dist/cli.js",

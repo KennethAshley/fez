@@ -2,9 +2,17 @@
 
 Develop shopping agents for **ORO, Bittensor mainnet subnet 15**, through Fez Mining's existing GUI and chat tools. The extension uses ORO's current generated-environment agent contract.
 
-## Install from a checkout
+## Install
 
-Build the package with `npm --prefix packages/fez-oro run build`, then run `fez link packages/fez-oro`. Install Mining and Wallet as well. This source addition does not publish an npm package or a desktop release.
+Install or update Mining to 0.1.4 or later and Wallet to 0.1.14 or later, then install ORO:
+
+```sh
+fez install @fezchat/wallet
+fez install @fezchat/mining
+fez install @fezchat/oro
+```
+
+For a development checkout, build with `npm --prefix packages/fez-oro run build`, then run `fez link packages/fez-oro`.
 
 Open Mining and select ORO. Setup, source checks, development evaluations, submissions and status share one adapter. Attach Mining to your coding agent to use `mining_setup`, `mining_config`, `mining_workspace` and `mining_submission`.
 
@@ -20,7 +28,7 @@ Link your repository and relative source in **Develop your miner**. Source check
 
 ## Prepare local evaluation
 
-Use Mining built from this checkout, which includes `development` commands. Select a clean ORO checkout at `ffb98e581e8976fbe33cc4a3a467eb617d4b0328` and a materialized release archive with SHA256 `9e5d11c6945edc19e06b730afd5681a035f75827933f958e6bfbcc846a28c73a`. A Git LFS pointer is not the archive.
+Use Mining 0.1.4 or later, which includes `development` commands. Select a clean ORO checkout at `ffb98e581e8976fbe33cc4a3a467eb617d4b0328` and a materialized release archive with SHA256 `9e5d11c6945edc19e06b730afd5681a035f75827933f958e6bfbcc846a28c73a`. A Git LFS pointer is not the archive.
 
 In Mining setup, fill in:
 
