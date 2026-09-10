@@ -2266,20 +2266,26 @@ pub(crate) fn spawn_agent_process(
 /// summoning; running a package's own daemon is not summoning, and one that
 /// inherited that gate would silently do nothing and report success.
 #[tauri::command]
-fn spawn_extension_agent(
+async fn spawn_extension_agent(
     extension: String,
     bin: String,
     name: String,
     env: Vec<(String, String)>,
 ) -> Result<u32, String> {
-    // Scoped to THIS bin: "drift" the chat agent must not block sending
-    // "drift" the miner — one name, two domains, two processes.
-    if agent_is_alive_bin(&name, Some(&bin)) {
-        return Err(format!("{name} is already running — recall it first"));
-    }
-    let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
-    extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
-    spawn_tracked_process(name, &bin, checked_env(env)?, vec![], None, None)
+    tauri::async_runtime::spawn_blocking(move || {
+        // Scoped to THIS bin: "drift" the chat agent must not block sending
+        // "drift" the miner — one name, two domains, two processes.
+        if agent_is_alive_bin(&name, Some(&bin)) {
+            return Err(format!("{name} is already running — recall it first"));
+        }
+        let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
+        extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
+        let env = checked_env(env)?;
+        managed_node::ensure_for_program(&fez_home()?.join("bin").join(&bin))?;
+        spawn_tracked_process(name, &bin, env, vec![], None, None)
+    })
+    .await
+    .map_err(|e| format!("extension startup task panicked: {e}"))?
 }
 
 /// One-shot: run a bin THIS extension's package ships and return what it
@@ -2302,6 +2308,7 @@ async fn run_extension_bin(
         let manifest = package_install::installed_manifest(&extension, &home);
         extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
         let program = home.join("bin").join(&bin);
+        managed_node::ensure_for_program(&program)?;
         use std::io::Read;
         use std::process::Stdio;
         let mut child = Command::new(&program)
