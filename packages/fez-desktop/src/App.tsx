@@ -61,6 +61,8 @@ import Onboarding from "./Onboarding";
 import FirstRun from "./FirstRun";
 import ResearchStarter from "./ResearchStarter";
 import { WELCOME_CHANNEL_ID } from "./welcome-core";
+import HistoryStatus from "./HistoryStatus";
+import { isNostrKeyInput, pubkeyFromInput, resolvePubkeyInput } from "./public-key";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
 import { EMOJI, searchEmoji } from "./emoji";
@@ -555,7 +557,7 @@ function Shell({
   useEffect(() => {
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
-      "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
+      "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged", "historyChanged",
       "dmMessage", "jobsChanged", "artifact", "inputsChanged",
     ] as const;
     for (const name of events) client.on(name, render as never);
@@ -1840,8 +1842,10 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
   // Type-to-find over everyone the workspace can name — an exact name
   // was the old contract, and "@dri" going nowhere while @drift sits on
   // the relay made the input feel broken. Enter takes the first match.
-  const q = who.trim().replace(/^@/, "").toLowerCase();
-  const matches = q && !/^[0-9a-f]{64}$/i.test(q)
+  const raw = who.trim().replace(/^@/, "");
+  const directPk = pubkeyFromInput(raw);
+  const q = raw.toLowerCase();
+  const matches = q && !directPk && !isNostrKeyInput(raw)
     ? [...client.knownNames().entries()]
         .filter(([, n]) => n.toLowerCase().includes(q))
         .sort(([, a], [, b]) => Number(b.toLowerCase().startsWith(q)) - Number(a.toLowerCase().startsWith(q)) || a.localeCompare(b))
@@ -1853,10 +1857,12 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
     onOpen(pk);
   };
   const start = () => {
-    const raw = who.trim().replace(/^@/, "");
-    const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw) ?? matches[0]?.[0];
-    if (!pk) return;
-    pick(pk);
+    try {
+      const pk = resolvePubkeyInput(raw, name => client.pkByName(name) ?? matches[0]?.[0]);
+      if (pk) pick(pk);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
   };
   if (!open) {
     return (
@@ -1870,7 +1876,7 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
         value={who}
         autoFocus
         spellCheck={false}
-        placeholder="@name or pubkey"
+        placeholder="@name, npub, or hex key"
         onChange={(e) => setWho(e.target.value)}
         onBlur={() => setOpen(false)}
         onKeyDown={(e) => {
@@ -1943,6 +1949,7 @@ function ChannelView({
    * mention, so mentioning one is never "reached nobody". */
   localAgents: ReadonlySet<string>;
 }) {
+  const history = client.historyState(channelId);
   /** agent → when its current turn began, for the elapsed readout. */
   const turnStarts = useRef(new Map<string, number>());
   // Drafts persist per channel (Buzz's DraftsPanel decision, minimal
@@ -2389,6 +2396,10 @@ function ChannelView({
           />
         )}
       </header>
+      <HistoryStatus state={history} onRetry={() => {
+        if (history.operation === "older") void client.loadOlderPage(channelId);
+        else void client.loadChannelHistory(channelId, threadRoot);
+      }} />
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
         {/* The two empty-state panels used to be inverted: FirstRun (the
             helpful one) required members > 1 — impossible for a fresh solo
@@ -2403,7 +2414,7 @@ function ChannelView({
             the channel info above carries the standing guidance, and a
             placeholder repeating "mention an agent" under it was one nag
             too many (removed on request, after shipping for an hour). */}
-        {messages.length === 0 &&
+        {history.status === "ready" && messages.length === 0 &&
           ![...client.state.workspace.channels.keys()].some(
             (id) => id !== channelId && client.messages(id).length > 0
           ) && (

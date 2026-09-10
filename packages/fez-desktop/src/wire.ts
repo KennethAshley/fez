@@ -150,6 +150,10 @@ export class BrowserWire implements Wire {
     return (await this.relay.query(filters as Filter[])) as WireEvent[];
   }
 
+  queryWithStatus(filters: WireFilter[]) {
+    return this.relay.queryWithStatus(filters as Filter[]);
+  }
+
   /** The custody seam — whoever the signer is, the wire never holds a key. */
   private async sign(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<WireEvent> {
     return this.signer.sign(tmpl);

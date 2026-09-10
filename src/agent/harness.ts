@@ -891,10 +891,32 @@ export function registerHarness(adapter: HarnessAdapter): void {
  */
 export type TurnErrorKind = "auth" | "aborted" | "transient" | "fatal";
 
+// Match explicit model lookup failures, not a temporarily unavailable model
+// endpoint, a missing local config file, or an unrelated HTTP 404.
+function isMissingModelError(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  while (!seen.has(err)) {
+    seen.add(err);
+    const message = err instanceof Error ? err.message : String(err);
+    if (/\bmodel[_ -]not[_ -]found\b|\bunknown model(?:\s*:|\s*$)|\bmodel\s+(?:(?:"[^"\r\n]+"|'[^'\r\n]+'|`[^`\r\n]+`)\s+)?(?:does not exist|(?:was |is )?not found)\b/i.test(message)) return true;
+    if (!(err instanceof Error)) break;
+    err = err.cause;
+  }
+  return false;
+}
+
+/** Shared recovery steps keep channel, document and private failure notices consistent. */
+export function modelRecoveryHint(err: unknown): string {
+  if (!isMissingModelError(err) || classifyTurnError(err) !== "fatal") return "";
+  return " — the configured model was not found. Open Agents, edit this agent, choose an available model, and save. Restart it if it is still running, then resend your request.";
+}
+
 export function classifyTurnError(err: unknown): TurnErrorKind {
   if (err instanceof Error && err.name === "AbortError") return "aborted";
   const message = err instanceof Error ? err.message : String(err);
   if (/Re-authenticate|API Error: 401|oauth|authenticat|logged in/i.test(message)) return "auth";
+  // A wrapper such as "exited before reply" must not retry a missing model.
+  if (isMissingModelError(err)) return "fatal";
   // 5xx is matched with CONTEXT (a status/error prefix or the named
   // phrase), never as a bare number — "processed 502 items" is not a
   // gateway error. 500/502/503 are server-side blips that self-healed

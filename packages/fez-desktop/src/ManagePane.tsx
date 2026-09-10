@@ -5,6 +5,7 @@ import { flash } from "./toast";
 import { relaySet } from "./relay";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
+import { resolvePubkeyInput } from "./public-key";
 
 /**
  * Channel/workspace management — Buzz's ChannelManagementSheet as a fez
@@ -274,12 +275,12 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
   const invite = async () => {
     const raw = who.trim().replace(/^@/, "");
     if (!raw) return;
-    const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw);
-    if (!pk) {
-      onResult(`✗ nobody named "${raw}" — use a known @name or a 64-hex pubkey`);
-      return;
-    }
     try {
+      const pk = resolvePubkeyInput(raw, name => client.pkByName(name));
+      if (!pk) {
+        onResult(`✗ nobody named "${raw}" — use a known @name, npub, or hex key`);
+        return;
+      }
       const name = await client.invite(pk, role);
       setWho("");
       onResult(`✓ invited ${name} as ${role}`);
@@ -295,7 +296,7 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
         <input
           className="manage-input"
           value={who}
-          placeholder="@name or pubkey hex"
+          placeholder="@name, npub, or hex key"
           spellCheck={false}
           onChange={(e) => setWho(e.target.value)}
           onKeyDown={(e) => {

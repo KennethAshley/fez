@@ -72,6 +72,18 @@ export interface WireFilter {
   [key: `#${string}`]: string[] | undefined;
 }
 
+export interface WireQueryResult {
+  events: WireEvent[];
+  failures: { url: string; reason: string }[];
+}
+
+export interface HistoryLoadState {
+  status: "idle" | "loading" | "ready" | "error";
+  operation: "recent" | "older";
+  partial?: boolean;
+  error?: string;
+}
+
 export interface DmRumor {
   senderPk: string;
   peerPk: string;
@@ -110,6 +122,8 @@ export interface Wire {
   signEvent?(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): WireEvent | Promise<WireEvent>;
   subscribe(filters: WireFilter[], onEvent: (event: WireEvent) => void): () => void;
   query(filters: WireFilter[]): Promise<WireEvent[]>;
+  /** Complete EOSE versus partial/failing reads; older wires can still reject query(). */
+  queryWithStatus?(filters: WireFilter[]): Promise<WireQueryResult>;
   /**
    * Crypto may be SYNC OR ASYNC: a wire that holds the key in-process
    * returns plain values; a wire whose key lives behind a custody seam
@@ -524,6 +538,7 @@ export interface WorkflowRunInfo {
 }
 
 export interface ClientEvents {
+  historyChanged: (channelId: string) => void;
   /** A channel message entered the cache. live=false during history backfill/paging. */
   message: (channelId: string, msg: Msg, ctx: { live: boolean; prepend: boolean }) => void;
   /** Content of an existing message changed (40003 edit). */
@@ -591,8 +606,8 @@ export class FezClient {
   private nextThreadNo = 1;
   private summaryByRoot = new Map<string, { replyCount: number; lastAuthorTs: number; summaryTs: number }>();
   private exhaustedChannels = new Set<string>();
-  /** Sparse thread jumps must not skip the gap in ordinary channel pagination. */
-  private channelHistoryBefore = new Map<string, number>();
+  private historyByChannel = new Map<string, HistoryLoadState>();
+  private olderUntil = new Map<string, number>();
 
   // reactions
   private reactionsByTarget = new Map<string, Map<string, Set<string>>>();
@@ -2330,7 +2345,40 @@ export class FezClient {
 
   // ── History windows (Buzz's channel window, dumb-relay-shaped) ─────────
 
+  historyState(channelId: string): Readonly<HistoryLoadState> {
+    return this.historyByChannel.get(channelId) ?? { status: "idle", operation: "recent" };
+  }
+
+  private beginHistory(channelId: string, operation: HistoryLoadState["operation"]): HistoryLoadState {
+    const state: HistoryLoadState = { status: "loading", operation };
+    this.historyByChannel.set(channelId, state);
+    this.emit("historyChanged", channelId);
+    return state;
+  }
+
+  private finishHistory(channelId: string, loading: HistoryLoadState, failures: WireQueryResult["failures"]): void {
+    // A slower prior request must not replace the status of a newer retry.
+    if (this.historyByChannel.get(channelId) !== loading) return;
+    this.historyByChannel.set(channelId, { operation: loading.operation,
+      status: failures.length ? "error" : "ready",
+      partial: failures.length > 0 && this.messages(channelId).length > 0,
+      error: failures.length ? [...new Set(failures.map(f => `${f.url}: ${f.reason}`))].join("; ") : undefined,
+    });
+    this.emit("historyChanged", channelId);
+  }
+
+  private async queryHistory(filters: WireFilter[]): Promise<WireQueryResult> {
+    try {
+      return this.wire.queryWithStatus
+        ? await this.wire.queryWithStatus(filters)
+        : { events: await this.wire.query(filters), failures: [] };
+    } catch (err) {
+      return { events: [], failures: [{ url: this.wire.relays?.[0] ?? "relay", reason: err instanceof Error ? err.message : String(err) }] };
+    }
+  }
+
   async loadChannelHistory(channelId: string, threadRoot?: string): Promise<void> {
+    const loading = this.beginHistory(channelId, "recent");
     // Artifacts backfill rides alongside — failures never block messages.
     void this.wire
       .query([{ kinds: [K.ARTIFACT], "#h": [channelId], limit: 50 }])
@@ -2338,22 +2386,26 @@ export class FezClient {
         for (const event of events) this.absorbArtifact(event);
       })
       .catch(() => {});
-    const [msgs, reactions, deletions, ops, receipts, thread] = await Promise.all([
-      this.wire.query([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
-      this.wire.query([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.PAYMENT_RECEIPT], "#h": [channelId], limit: 300 }]),
-      threadRoot ? this.wire.query([
+    const results = await Promise.all([
+      this.queryHistory([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
+      this.queryHistory([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.PAYMENT_RECEIPT], "#h": [channelId], limit: 300 }]),
+      threadRoot ? this.queryHistory([
         { kinds: [K.MESSAGE], "#h": [channelId], ids: [threadRoot], limit: 1 },
         { kinds: [K.MESSAGE], "#h": [channelId], "#e": [threadRoot], limit: 200 },
-      ]) : Promise.resolve([]),
+      ]) : Promise.resolve({ events: [], failures: [] }),
     ]);
+    const [msgs, reactions, deletions, ops, receipts, thread] = results.map(result => result.events);
     const ordered = msgs
       .filter((e) => this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at)
       .slice(-HISTORY_LIMIT);
-    if (ordered.length) this.channelHistoryBefore.set(channelId, Math.min(this.channelHistoryBefore.get(channelId) ?? Infinity, ordered[0].created_at));
+    // A sparse thread jump must not move ordinary channel paging past its gap.
+    if (ordered.length && !results[0].failures.length && !this.olderUntil.has(channelId)) {
+      this.olderUntil.set(channelId, ordered[0].created_at);
+    }
     for (const event of [...ordered, ...thread.filter(e => e.kind === K.MESSAGE && this.state.isMember(e.pubkey) && e.tags.some(t => t[0] === "h" && t[1] === channelId))]) {
       if (this.seenMessages.has(event.id)) continue;
       this.seenMessages.add(event.id);
@@ -2376,21 +2428,39 @@ export class FezClient {
       if (newest) this.markRead(channelId, newest.ts);
     }
     this.emit("unreadsChanged");
+    this.finishHistory(channelId, loading, results.flatMap(result => result.failures));
   }
 
   /** Scroll-up paging: until-filter keyset with limit+1 has_more probe. Returns the fresh page, oldest first. */
   async loadOlderPage(channelId: string): Promise<Msg[]> {
-    const list = this.messagesByChannel.get(channelId) ?? [];
-    const oldest = this.channelHistoryBefore.get(channelId) ?? list[0]?.ts;
+    // A failed initial read may leave only sparse thread rows in the cache.
+    // Finish/retry the recent window before using its ordinary paging cursor.
+    if (this.historyByChannel.has(channelId) && !this.olderUntil.has(channelId)) return [];
+    const oldest = this.olderUntil.get(channelId) ?? this.messagesByChannel.get(channelId)?.[0]?.ts;
     if (!oldest || this.exhaustedChannels.has(channelId)) return [];
-    const events = await this.wire.query([
+    // Partial rows may move the oldest message. Retry the original window
+    // until it completes, or messages between those timestamps get skipped.
+    this.olderUntil.set(channelId, oldest);
+    const loading = this.beginHistory(channelId, "older");
+    const { events, failures: queryFailures } = await this.queryHistory([
       { kinds: [K.MESSAGE], "#h": [channelId], until: oldest, limit: PAGE_SIZE + 1 },
     ]);
-    if (events.length <= PAGE_SIZE) this.exhaustedChannels.add(channelId);
-    const fresh = events
+    const failures = [...queryFailures];
+    // Page the newest limit+1 rows of the merged relay responses. An old
+    // cached partial row, or a sparse mirror, must not skip a dense page.
+    const page = [...events].sort((a, b) => b.created_at - a.created_at).slice(0, PAGE_SIZE + 1);
+    if (!failures.length && page.length > PAGE_SIZE && page[page.length - 1].created_at >= oldest) {
+      // ponytail: timestamp paging stops at a full tied-second window;
+      // expand the query window if paging dense imports is needed.
+      failures.push({ url: this.wire.relays?.[0] ?? "relay", reason: "History could not advance past messages with the same timestamp" });
+    }
+    if (!failures.length && this.olderUntil.get(channelId) === oldest) {
+      if (page.length) this.olderUntil.set(channelId, page[page.length - 1].created_at);
+      if (events.length <= PAGE_SIZE) this.exhaustedChannels.add(channelId);
+    }
+    const fresh = (failures.length ? events : page)
       .filter((e) => !this.seenMessages.has(e.id) && this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at);
-    if (events.length) this.channelHistoryBefore.set(channelId, Math.min(...events.map(e => e.created_at)));
     const freshMsgs: Msg[] = [];
     for (const event of fresh) {
       this.seenMessages.add(event.id);
@@ -2399,7 +2469,9 @@ export class FezClient {
       this.msgByIdMap.set(msg.id, msg);
       if (msg.rootId) this.threadNo(msg.rootId);
     }
+    const list = this.messagesByChannel.get(channelId) ?? [];
     this.messagesByChannel.set(channelId, [...freshMsgs, ...list].sort((a, b) => a.ts - b.ts).slice(-MSG_CACHE_CAP));
+    this.finishHistory(channelId, loading, failures);
     return freshMsgs;
   }
 

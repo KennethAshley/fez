@@ -3,6 +3,7 @@ import type { FezClient } from "@fezchat/client";
 import Avatar from "./Avatar";
 import { flash } from "./toast";
 import { cardActions } from "./user-card-actions";
+import CopyNpub from "./CopyNpub";
 
 /**
  * The moderation home for one person. Opens from a face or a name, and
@@ -64,7 +65,7 @@ export default function UserCard({
               {name}
               {client.isOnline(pk) && <span className="ucard-presence" title="online" />}
             </div>
-            <div className="ucard-npub">{`npub ${pk.slice(0, 8)}…${pk.slice(-4)}`}{badge ? ` · ${badge}` : ""}</div>
+            <div className="ucard-npub"><CopyNpub pk={pk} compact />{badge ? ` · ${badge}` : ""}</div>
           </div>
         </div>
 

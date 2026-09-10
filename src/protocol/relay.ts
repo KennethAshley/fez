@@ -1,10 +1,17 @@
-import { type Filter, type Event } from "nostr-tools";
+import { type Filter, type Event, verifyEvent } from "nostr-tools";
+import type { Subscription } from "nostr-tools/abstract-relay";
 import { SimplePool } from "nostr-tools/pool";
 import { normalizeURL } from "nostr-tools/utils";
 
 export interface RelayHealth {
   url: string;
   connected: boolean;
+}
+
+/** EOSE from every configured relay is required to claim a complete read. */
+export interface RelayQueryResult {
+  events: Event[];
+  failures: { url: string; reason: string }[];
 }
 
 export interface RelayOptions {
@@ -435,19 +442,7 @@ export class RelayConnection {
     };
   }
 
-  /**
-   * Wait briefly for at least one relay before answering a query.
-   *
-   * A client's first queries run the instant it is constructed — the
-   * socket is a millisecond away from ready and indistinguishable from
-   * "offline" if you only look at connection state. Answering those
-   * with an empty result is answering a question about the relay
-   * without asking it, and the caller can't tell "nothing there" from
-   * "asked too early". That mistake once emptied a real user's client
-   * of every community it belonged to. Dials the down relays itself:
-   * the watchdog may be idle (no subscriptions yet), and the pool only
-   * connects on demand.
-   */
+  /** Startup callers allow a local relay a brief window to come online. */
   private async whenConnected(timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (!this.closed && this.connectedUrls().size === 0) {
@@ -460,24 +455,69 @@ export class RelayConnection {
     }
   }
 
-  /**
-   * Query events (one-shot). Returns a promise with results.
-   * See subscribe() above for why this issues one querySync() per filter.
-   */
+  /** Best-effort union. Use queryWithStatus when an incomplete read matters. */
   async query(filters: Filter[], timeoutMs = 5000): Promise<Event[]> {
     await this.whenConnected();
-    // The UNION across the relay set, deduped by id. An event that only
-    // ever reached one relay is still an event that happened — dropping
-    // it because the others don't have it would make the set weaker than
-    // any single relay in it.
-    const results = await Promise.all(
-      filters.map((filter) => this.pool.querySync(this.urls, filter, { maxWait: timeoutMs }))
-    );
+    return (await this.queryWithStatus(filters, timeoutMs)).events;
+  }
+
+  /** Keep partial events while distinguishing real EOSE from CLOSED or timeout. */
+  async queryWithStatus(filters: Filter[], timeoutMs = 5000): Promise<RelayQueryResult> {
+    if (filters.length === 0) return { events: [], failures: [] };
     const byId = new Map<string, Event>();
-    for (const events of results) {
-      for (const event of events) byId.set(event.id, event);
-    }
-    return Array.from(byId.values());
+    // Keep one REQ per filter, as query() historically did: relays may
+    // cap filters per request (including fez-relay's configurable cap).
+    const results = await Promise.all(this.urls.flatMap(url => filters.map(filter => new Promise<RelayQueryResult["failures"][number] | undefined>(resolve => {
+      let done = false;
+      let request: Subscription | undefined;
+      const finish = (reason?: string) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (request) {
+          // close() alone leaves nostr-tools' synthetic EOSE timer running.
+          request.oneose = undefined;
+          request.receivedEose();
+          request.close();
+          request = undefined;
+        }
+        resolve(reason ? { url, reason } : undefined);
+      };
+      const timer = setTimeout(() => finish("history query timed out"), timeoutMs);
+      if (this.closed) { finish("connection closed"); return; }
+      void this.pool.ensureRelay(url, { connectionTimeout: timeoutMs }).then(relay => {
+        let authRetried = false;
+        const open = () => {
+          if (done) return;
+          if (this.closed) { finish("connection closed"); return; }
+          const sub = relay.subscribe([{ ...filter }], {
+            // Our deadline fires first. The library also calls oneose on its
+            // own timer, which must never certify a complete history read.
+            eoseTimeout: timeoutMs + 1000,
+            onevent: event => { if (!done) byId.set(event.id, event); },
+            oneose: () => finish(),
+            onclose: reason => {
+              sub.oneose = undefined;
+              sub.receivedEose();
+              request = undefined; // already closed by the relay/library
+              if (done) return;
+              if (reason.startsWith("auth-required:") && this.options.authSigner && !authRetried) {
+                authRetried = true;
+                void relay.auth(async template => {
+                  const event = await this.options.authSigner!(template);
+                  if (!verifyEvent(event)) throw new Error("invalid auth signature");
+                  return event;
+                }).then(open).catch(err => finish(errText(err)));
+              } else finish(reason || "subscription closed before history completed");
+            },
+          });
+          request = sub;
+        };
+        open();
+      }).catch(err => finish(errText(err)));
+    }))));
+    const failed = results.filter((failure): failure is NonNullable<typeof failure> => !!failure);
+    return { events: [...byId.values()], failures: [...new Map(failed.map(f => [f.url, f])).values()] };
   }
 
   /**

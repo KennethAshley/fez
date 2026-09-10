@@ -3,6 +3,7 @@ import {
   RelayConnection,
   CapabilityClient,
   classifyTurnError,
+  modelRecoveryHint,
   conversationKey,
   engramHeads,
   findHarness,
@@ -1323,8 +1324,11 @@ async function main() {
     }
     let pooled = await getSession(scope);
     try {
+      signal?.throwIfAborted();
       const instruction = withHandoff(scope, await buildPrompt(!pooled.primed), !pooled.primed);
+      signal?.throwIfAborted();
       const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
+      signal?.throwIfAborted();
       // An empty reply is a FAILED turn, not a publishable one (seen
       // live: pi provider flaked, harness emitted only retry noise, the
       // scrubbed remainder was "" — and an empty message still breaks
@@ -1338,22 +1342,26 @@ async function main() {
     } catch (err) {
       const kind = classifyTurnError(err);
       dropSession(scope); // failed or aborted mid-prompt — never reuse
+      signal?.throwIfAborted();
       if (kind !== "transient") throw err;
       console.log(`↻ transient harness error — recycling session, replaying once: ${err instanceof Error ? err.message : err}`);
       pooled = await getSession(scope);
-      const reply = await pooled.session.prompt(
-        withHandoff(scope, await buildPrompt(true), true),
-        onProgress,
-        onUpdate,
-        signal
-      );
-      // The replay came back empty too — the harness/provider is down,
-      // not blinking. Fail the turn (outer ladder decides what's next).
-      if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down", { cause: err });
-      pooled.primed = true;
-      pooled.turns++;
-      pooled.lastUsed = Date.now();
-      return reply;
+      try {
+        signal?.throwIfAborted();
+        const instruction = withHandoff(scope, await buildPrompt(true), true);
+        signal?.throwIfAborted();
+        const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
+        signal?.throwIfAborted();
+        // The replay came back empty too — let the outer retry ladder recover.
+        if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down", { cause: err });
+        pooled.primed = true;
+        pooled.turns++;
+        pooled.lastUsed = Date.now();
+        return reply;
+      } catch (replayError) {
+        dropSession(scope);
+        throw replayError;
+      }
     } finally {
       pooled.busy = false;
       pooled.lastUsed = Date.now();
@@ -1382,31 +1390,51 @@ async function main() {
   // into one coherent turn. Transient turn failures requeue with a
   // backoff ladder (5s → 30s → 120s) before dead-lettering loudly.
   type ChEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
-  type DocContext = { rootId: string; anchor: string; slug?: string };
+  type DocTurn = { rootId: string; anchor: string; slug?: string };
+  interface ChannelTurnOptions {
+    redispatch?: boolean;
+    attempts?: number;
+    doc?: DocTurn;
+    steering?: ChEvent[];
+    scope?: string;
+  }
   interface PendingItem {
     scope: string;
     kind: "ch" | "dm";
     chEvent?: ChEvent;
-    doc?: DocContext;
+    doc?: DocTurn;
+    steering?: ChEvent[];
     dm?: DmRumor;
     attempts: number;
     notBefore: number;
   }
-  const SCOPE_QUEUE_CAP = 20;
+  const QUEUE_CAP = 20; // per channel (across threads), or DM conversation
   const RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
-  const pendingByScope = new Map<string, PendingItem[]>();
+  const pendingByScope = new Map<string, (PendingItem & { order: number })[]>();
+  let enqueueOrder = 0;
   const scopeOrder: string[] = [];
 
   function enqueue(item: PendingItem): void {
+    const dedupeId = item.chEvent?.id ?? item.dm?.id;
+    if (pendingByScope.get(item.scope)?.some(existing => (existing.chEvent?.id ?? existing.dm?.id) === dedupeId)) return;
+    const channelId = item.chEvent?.tags.find(t => t[0] === "h")?.[1];
+    // ponytail: scan pending work; index by channel if queue volume makes this hot.
+    const queued = [...pendingByScope.values()].flat().filter(existing => item.kind === "ch"
+      ? existing.kind === "ch" && existing.chEvent?.tags.find(t => t[0] === "h")?.[1] === channelId
+      : existing.scope === item.scope);
+    if (queued.length >= QUEUE_CAP) {
+      const dropped = queued.reduce((oldest, next) => next.order < oldest.order ? next : oldest);
+      const list = pendingByScope.get(dropped.scope)!;
+      list.splice(list.indexOf(dropped), 1);
+      if (list.length === 0) {
+        pendingByScope.delete(dropped.scope);
+        scopeOrder.splice(scopeOrder.indexOf(dropped.scope), 1);
+      }
+      console.warn(`⚠️  queue for ${channelId ?? item.scope} full — dropped oldest (${(dropped.chEvent?.id ?? dropped.dm?.id ?? "?").slice(0, 8)})`);
+    }
     let list = pendingByScope.get(item.scope);
     if (!list) pendingByScope.set(item.scope, (list = []));
-    const dedupeId = item.chEvent?.id ?? item.dm?.id;
-    if (list.some((existing) => (existing.chEvent?.id ?? existing.dm?.id) === dedupeId)) return;
-    if (list.length >= SCOPE_QUEUE_CAP) {
-      const dropped = list.shift();
-      console.warn(`⚠️  queue for ${item.scope} full — dropped oldest (${(dropped?.chEvent?.id ?? dropped?.dm?.id ?? "?").slice(0, 8)})`);
-    }
-    list.push(item);
+    list.push({ ...item, order: enqueueOrder++ });
     if (!scopeOrder.includes(item.scope)) scopeOrder.push(item.scope);
     console.log(`⏳ queued for ${item.scope} (${list.length} pending${item.attempts ? `, attempt ${item.attempts + 1}` : ""})`);
   }
@@ -1454,6 +1482,11 @@ async function main() {
     dispatching = true; // Reserve the delayed dispatch and its async admission, before busy is set.
     try {
       await runtimeRefresh.run(async () => {
+        for (const item of items) item.steering = item.steering?.filter(event => {
+          if (workspace.isMember(event.pubkey)) return true;
+          recent.remove(scope, event.id);
+          return false;
+        });
         items = items.filter((item) => {
           if (item.kind === "dm" || workspace.isMember(item.chEvent!.pubkey)) return true;
           recent.remove(scope, item.chEvent!.id);
@@ -1462,29 +1495,30 @@ async function main() {
         });
         if (!items.length) return;
         const attempts = Math.max(...items.map((item) => item.attempts));
-        const last = items[items.length - 1];
-        if (last.kind === "ch") {
-          // Only currently admitted messages may be woven into the final trigger.
-          if (items.length > 1) {
-            steeringByScope.set(scope, [
-              ...(steeringByScope.get(scope) ?? []),
-              ...items.slice(0, -1).map((item) => `${who(item.chEvent!.pubkey)}: ${item.chEvent!.content}`),
-            ]);
-            console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
-          }
-          await handleChannelMessage(last.chEvent!, true, attempts, last.doc);
+        if (items[0].kind === "ch") {
+          const last = items[items.length - 1];
+          const steering = [...new Map(items.flatMap(item => [
+            ...(item.steering ?? []), ...(item === last ? [] : [item.chEvent!]),
+          ]).filter(event => event.id !== last.chEvent!.id).map(event => [event.id, event])).values()];
+          if (items.length > 1) console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
+          const doc = last.doc ? { ...last.doc,
+            anchor: last.doc.anchor || items.find(item => item.doc?.anchor)?.doc?.anchor || "",
+          } : undefined;
+          await handleChannelMessage(last.chEvent!, { redispatch: true, attempts, doc, steering, scope });
         } else {
-          const merged: DmRumor = items.length > 1
-            ? { ...last.dm!, text: items.map((item) => `${item.dm!.senderPk.slice(0, 8)}: ${item.dm!.text}`).join("\n") }
-            : last.dm!;
+          const last = items[items.length - 1];
+          const merged: DmRumor =
+            items.length > 1
+              ? { ...last.dm!, text: items.map((item) => `${item.dm!.senderPk.slice(0, 8)}: ${item.dm!.text}`).join("\n") }
+              : last.dm!;
           if (items.length > 1) console.log(`📦 batching ${items.length} queued DMs for ${scope} into one turn`);
           seenEventIds.delete(merged.id);
-          await handleDm(merged, false, attempts);
+          await handleDm(merged, false, attempts, true);
         }
-      }, 100);
+      });
     } finally {
       dispatching = false;
-      scheduleDrain(); // Admission can reject/requeue before a turn's own finally is reached.
+      scheduleDrain(0); // Admission may reject before a turn reaches its own finally.
     }
   }
 
@@ -1495,8 +1529,10 @@ async function main() {
   // FEZ_AGENT_ON_BUSY=queue restores the queue-only behavior.
   const onBusy = process.env.FEZ_AGENT_ON_BUSY === "queue" ? "queue" : "steer";
   let turnController: AbortController | undefined;
-  let turnScope: string | undefined;
-  const steeringByScope = new Map<string, string[]>();
+  let turnKind: "ch" | "dm" | undefined; // steer may only abort CHANNEL turns; cancel aborts either
+  let activeScope: string | undefined;
+  let turnAcceptsSteering = false;
+  const steerMessages: ChEvent[] = [];
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
@@ -1509,23 +1545,8 @@ async function main() {
     isAddressedTo(event, personaId!, myPubkey, owner, persona.aliases ?? []);
 
   const handleChannelMessage = async (
-    event: {
-      id: string;
-      pubkey: string;
-      created_at: number;
-      content: string;
-      tags: string[][];
-    },
-    /** true for our own deliberate re-entries (steer re-dispatch, queue drain) — they reuse a seen event. */
-    redispatch = false,
-    attempts = 0,
-    /**
-     * Set when the trigger is a DOC COMMENT (40101) rather than a chat
-     * message: the whole turn then lives in the document — the reply is
-     * published back into the comment thread, and nothing (no draft, no
-     * typing, no message) touches the channel timeline.
-     */
-    doc?: DocContext
+    event: ChEvent,
+    { redispatch = false, attempts = 0, doc, steering = [], scope: queuedScope }: ChannelTurnOptions = {}
   ): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       if (!channelId || event.pubkey === myPubkey) return;
@@ -1540,7 +1561,9 @@ async function main() {
       const { rootId: triggerRoot } = parseThreadRef(event.tags);
       // A top-level message starts a thread; its replies use that same root.
       // This one scope drives context, session reuse, queueing and steering.
-      const scope = doc ? `doc:${channelId}:${doc.rootId}` : `ch:${channelId}:${triggerRoot ?? event.id}`;
+      const scope = queuedScope ?? (doc
+        ? `doc:${JSON.stringify([doc.slug ? "wiki" : "channel", doc.slug || channelId, doc.rootId.toLowerCase()])}`
+        : `ch:${JSON.stringify([channelId, (triggerRoot ?? event.id).toLowerCase()])}`);
       if (!redispatch) recent.add(scope, event.id, `${who(event.pubkey)}: ${event.content}`);
 
       if (!isMention(event)) return;
@@ -1575,18 +1598,23 @@ async function main() {
 
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
-      if (busy) {
-        if (onBusy === "steer" && turnController && turnScope === scope && !cancelRequested) {
-          steeringByScope.set(scope, [...(steeringByScope.get(scope) ?? []), `${who(event.pubkey)}: ${event.content}`]);
+      if (busy || (dispatching && !redispatch)) {
+        if (onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
+          steerMessages.push(...steering, event);
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
         } else {
-          enqueue({ scope, kind: "ch", chEvent: event, doc, attempts: 0, notBefore: 0 });
+          enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts, notBefore: 0 });
         }
         return;
       }
 
       busy = true;
+      activeScope = scope;
+      turnController = new AbortController();
+      turnKind = "ch";
+      turnAcceptsSteering = true;
+      cancelRequested = false;
       lastAcceptedAt = Date.now();
       turnTimes.push(Date.now());
 
@@ -1644,15 +1672,8 @@ async function main() {
           )
           .catch(() => {});
       }, 3000);
-      turnController = new AbortController();
-      turnScope = scope;
-      cancelRequested = false;
       turnUsage = undefined;
       const turnStartedAt = Date.now();
-      // Steering guidance consumed into this turn's prompt (Buzz frames
-      // steered messages as "arrived while you were working — weave in").
-      const steering = steeringByScope.get(scope) ?? [];
-      steeringByScope.delete(scope);
       // NIP-10 markers, Buzz's exact shape (threading.ts) — computed
       // BEFORE the try so drafts, the reply, and the failure notice all
       // carry the same thread tags.
@@ -1711,7 +1732,7 @@ async function main() {
               ...(steering.length > 0
                 ? [
                     `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response:`,
-                    ...steering,
+                    ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
                   ]
                 : []),
               docFraming
@@ -1784,10 +1805,11 @@ async function main() {
             `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
             `Recent messages:`,
             ...recent.get(scope, `${who(event.pubkey)}: ${event.content}`),
+            `Current request from ${who(event.pubkey)}: ${event.content}`,
             ...(steering.length > 0
               ? [
                   `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
-                  ...steering,
+                  ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
                 ]
               : []),
             // Next to the trigger, as work for THIS turn — the ambient
@@ -1832,6 +1854,8 @@ async function main() {
           onUpdate,
           turnController.signal
         );
+        turnAcceptsSteering = false;
+        if (turnController.signal.aborted) throw Object.assign(new Error("turn aborted"), { name: "AbortError" });
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
@@ -1849,6 +1873,7 @@ async function main() {
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
         await relay.publish(replyEvent);
+        recent.add(scope, replyEvent.id, `${who(replyEvent.pubkey)}: ${replyEvent.content}`);
         // Tag the artifact with the conversation's thread root, so a
         // client can scope it to the thread that built it (triggerRoot in
         // an existing thread; the message we're replying to when a
@@ -1871,10 +1896,14 @@ async function main() {
         consecutiveFailures = 0;
         console.log(`✅ Replied (${reply.length} chars)`);
       } catch (err) {
+        turnAcceptsSteering = false;
+        // Opening/replaying a session may fail without observing cancellation.
+        // Steering still owns that exit; retrying first would discard its follow-ups.
+        if (turnController?.signal.aborted) err = turnController.signal.reason;
         if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
           // Owner cancel — the turn just STOPS. No steer re-dispatch, and
           // an honest threaded notice instead of silence.
-          steeringByScope.delete(scope);
+          steerMessages.length = 0;
           publishObserver({ type: "turn", status: "cancelled" });
           publishTurnMetric(`ch:${channelId}`, "cancelled", turnStartedAt, 0, event.id);
           console.log("⏹ Turn cancelled by owner");
@@ -1893,7 +1922,7 @@ async function main() {
           publishObserver({ type: "turn", status: "retrying" });
           const delay = RETRY_DELAYS_MS[attempts];
           console.warn(`↻ transient turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
-          enqueue({ scope, kind: "ch", chEvent: event, doc, attempts: attempts + 1, notBefore: Date.now() + delay });
+          enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts: attempts + 1, notBefore: Date.now() + delay });
         } else {
           publishObserver({ type: "turn", status: "failed" });
           publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, 0, event.id);
@@ -1905,7 +1934,7 @@ async function main() {
           // from a broken agent. Auth failures name their fix.
           const hint = classifyTurnError(err) === "auth"
             ? " — my harness isn't logged in: run `claude /login`, then mention me again (fez doctor has the details)"
-            : "";
+            : modelRecoveryHint(err);
           // Failure CALLBACK (mirror of the completed-work callback): if a
           // fellow agent delegated this turn, the notice @mentions them so
           // the chain can adapt instead of hanging on a hop that died.
@@ -1949,17 +1978,17 @@ async function main() {
         clearStatusReactions();
         clearInterval(typing);
         turnController = undefined;
-        turnScope = undefined;
+        turnKind = undefined;
+        activeScope = undefined;
+        turnAcceptsSteering = false;
         inputOrigin = undefined;
         busy = false;
-        if (steeringByScope.has(scope)) {
-          // Steered: re-dispatch the SAME trigger — the unconsumed steer
-          // messages get woven into the merged prompt.
-          void runtimeRefresh.run(() => handleChannelMessage(event, true, attempts, doc), 250).finally(() => scheduleDrain());
-        } else {
-          // Drain: the next scope with ready work gets a (batched) turn.
-          scheduleDrain();
+        if (steerMessages.length > 0) {
+          const followups = steerMessages.splice(0);
+          if (!cancelRequested) enqueue({ scope, kind: "ch", chEvent: event, doc,
+            steering: [...steering, ...followups], attempts, notBefore: 0 });
         }
+        drainNext();
       }
   };
 
@@ -1989,7 +2018,7 @@ async function main() {
     await relay.publish(toSelf);
   };
 
-  const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0): Promise<void> => {
+  const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0, redispatch = false): Promise<void> => {
     if (seenEventIds.has(dm.id)) return;
     seenEventIds.add(dm.id);
     if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
@@ -2035,8 +2064,8 @@ async function main() {
     }
     if (Date.now() < breakerUntil) return;
 
-    if (busy) {
-      enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts: 0, notBefore: 0 });
+    if (busy || (dispatching && !redispatch)) {
+      enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts, notBefore: 0 });
       return;
     }
 
@@ -2044,7 +2073,8 @@ async function main() {
     lastAcceptedAt = Date.now();
     turnTimes.push(Date.now());
     turnController = new AbortController();
-    turnScope = `dm:${convoKey}`;
+    turnKind = "dm";
+    activeScope = `dm:${convoKey}`;
     cancelRequested = false;
     turnUsage = undefined;
     const turnStartedAt = Date.now();
@@ -2129,13 +2159,14 @@ async function main() {
         closeAllSessions();
       }
       // Failure notice goes back over the same private pipe.
-      void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}`, dm.depth + 1).catch(() => {});
+      void sendDmReply(replyTargets, `⚠️ I couldn't finish that: ${reason.slice(0, 160)}${modelRecoveryHint(err)}`, dm.depth + 1).catch(() => {});
     } finally {
       inputOrigin = undefined;
       busy = false;
       turnController = undefined;
-      turnScope = undefined;
-      scheduleDrain();
+      turnKind = undefined;
+      activeScope = undefined;
+      drainNext();
     }
   };
 
@@ -2145,9 +2176,7 @@ async function main() {
   // — otherwise every restart re-answers the last DM.
   let dmLive = false;
   /**
-   * A comment on a doc/page that addresses us. Replies (e-tagged to a
-   * root) are other people's thread traffic — only ROOT comments are
-   * requests, and only if they mention us. The turn runs through the
+   * A comment or follow-up on a doc/page that addresses us runs through the
    * same machinery as a chat mention, but tagged as a doc turn so the
    * answer goes back into the margin instead of the channel.
    */
@@ -2164,17 +2193,20 @@ async function main() {
     const parent = event.tags.find((t) => t[0] === "e")?.[1];
     // A reply that mentions us is still a request — answer in that same
     // thread (its root), not a new one.
-    const rootId = parent ?? event.id;
+    const rootId = parent && /^[0-9a-f]{64}$/i.test(parent) ? parent.toLowerCase() : event.id;
     if (parent && (anchor === undefined || slug === undefined)) {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
-      const root = (await relay.query([{ kinds: [KIND_DOC_COMMENT], ids: [parent], limit: 1 }]).catch(() => []))
-        .find((candidate) => candidate.tags.some((t) => t[0] === "h" && t[1] === channelId));
+      const root = (await relay.query([{ kinds: [KIND_DOC_COMMENT], ids: [rootId], limit: 1 }]).catch(() => []))
+        .find((candidate) => {
+          const page = candidate.tags.find(t => t[0] === "d")?.[1];
+          return page ? slug === undefined || page === slug : candidate.tags.some(t => t[0] === "h" && t[1] === channelId);
+        });
       anchor ??= root?.tags.find((t) => t[0] === "anchor")?.[1];
       slug ??= root?.tags.find((t) => t[0] === "d")?.[1];
     }
     await resolveName(event.pubkey);
     console.log(`📝 Doc comment from ${who(event.pubkey)} on ${slug ? `page "${slug}"` : "the channel doc"}`);
-    await handleChannelMessage(event, false, 0, { rootId, anchor: anchor ?? "", slug });
+    await handleChannelMessage(event, { doc: { rootId, anchor: anchor ?? "", slug } });
   };
 
   const dmBacklog: DmRumor[] = [];
@@ -2267,7 +2299,7 @@ async function main() {
   const runningVersion = process.env.FEZ_AGENT_BUILD_VERSION;
   if (runningVersion && process.execve) {
     runtimeRefresh.watch(path.join(os.homedir(), ".fez", "bin", ".pi-agent-version"), runningVersion,
-      () => !busy && !steeringByScope.size && dmLive && !dmBacklog.length &&
+      () => !busy && !steerMessages.length && dmLive && !dmBacklog.length &&
         [...pendingByScope.values()].every(items => !items.length) && [...sessionPool.values()].every(session => !session.busy),
       () => {
         // Preserve dedupe across execve so startup backfill cannot repeat a completed turn.
