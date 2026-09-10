@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Artifact, FezClient } from "@fezchat/client";
 import { parseQuery } from "@fezchat/client";
-import { registerArtifactViewer } from "./artifact-viewers";
+import { registerArtifactViewer, snapshotArtifactViewers } from "./artifact-viewers";
 import { notifyEvent } from "./notify";
 import { toast } from "./toast";
 import { invitePersona } from "./invite-persona";
@@ -752,7 +752,7 @@ export function guiExtensionStatus(): readonly GuiExtStatus[] {
   return status;
 }
 
-type Activate = (api: GuiExtensionApi) => void;
+type Activate = (api: GuiExtensionApi) => void | Promise<void>;
 
 /**
  * Extensions run in the page, so "gating" means: hand them a narrowed
@@ -828,65 +828,50 @@ async function importModule(
 }
 
 /**
- * The registries hold BOTH core registrations (made at boot, before any
- * extension) and extension ones. To unload an extension live we can't wipe
- * them — that would drop core's views/themes too. So capture a baseline of
- * the core-only state on the first load, and rewind to it before a reload:
- * arrays truncate to their baseline length, Maps keep only baseline keys.
- * Assumes core registers before the first loadGuiExtensions (it does — the
- * app boots core, then loads extensions) and extensions only ADD.
+ * Restore core on reload, or the preceding extensions when activation
+ * fails. Keep values as well as keys/lengths: registration can replace an
+ * existing entry. Core registers before the first load, when baseline is captured.
  */
-let baseline:
-  | {
-      decorators: number;
-      settingsPanels: number;
-      guiCommands: string[];
-      markdownPlugins: number;
-      blockRenderers: string[];
-      blockMenu: number;
-      threadViews: number;
-      pageViews: number;
-      navViews: number;
-      artifactActions: number;
-      themes: string[];
-    }
-  | undefined;
+let baseline: Dispose | undefined;
 
 // Companion CSS is 100% extension-owned — core never injects any — so
 // unlike the registries above this needs no baseline snapshot: a reload
 // can simply dispose everything and let the fresh load re-inject.
 const styleDisposers = new Map<string, Dispose>();
 
-function captureBaseline(): void {
-  if (baseline) return; // core-only, once
-  baseline = {
-    decorators: decorators.length,
-    settingsPanels: settingsPanels.length,
-    guiCommands: [...guiCommands.keys()],
-    markdownPlugins: markdownPlugins.length,
-    blockRenderers: [...blockRenderers.keys()],
-    blockMenu: blockMenu.length,
-    threadViews: threadViews.length,
-    pageViews: pageViews.length,
-    navViews: navViews.length,
-    artifactActions: artifactActions.length,
-    themes: [...themes.keys()],
+function snapshotArray<T>(registry: T[]): Dispose {
+  const snapshot = [...registry];
+  return () => { registry.splice(0, registry.length, ...snapshot); };
+}
+
+function snapshotMap<K, V>(registry: Map<K, V>): Dispose {
+  const snapshot = new Map(registry);
+  return () => {
+    registry.clear();
+    for (const [key, value] of snapshot) registry.set(key, value);
   };
 }
 
+function snapshotRegistrations(): Dispose {
+  const snapshots = [
+    snapshotArray(decorators),
+    snapshotArray(settingsPanels),
+    snapshotMap(guiCommands),
+    snapshotArray(markdownPlugins),
+    snapshotMap(blockRenderers),
+    snapshotArray(blockMenu),
+    snapshotArray(threadViews),
+    snapshotArray(pageViews),
+    snapshotArray(navViews),
+    snapshotArray(artifactActions),
+    snapshotArtifactViewers(),
+    snapshotMap(themes),
+  ];
+  return () => { for (const restore of snapshots) restore(); };
+}
+
 function restoreBaseline(): void {
-  if (!baseline) return;
-  decorators.length = baseline.decorators;
-  settingsPanels.length = baseline.settingsPanels;
-  for (const k of [...guiCommands.keys()]) if (!baseline.guiCommands.includes(k)) guiCommands.delete(k);
-  markdownPlugins.length = baseline.markdownPlugins;
-  for (const k of [...blockRenderers.keys()]) if (!baseline.blockRenderers.includes(k)) blockRenderers.delete(k);
-  blockMenu.length = baseline.blockMenu;
-  threadViews.length = baseline.threadViews;
-  pageViews.length = baseline.pageViews;
-  navViews.length = baseline.navViews;
-  artifactActions.length = baseline.artifactActions;
-  for (const k of [...themes.keys()]) if (!baseline.themes.includes(k)) themes.delete(k);
+  baseline?.();
   for (const dispose of styleDisposers.values()) dispose();
   styleDisposers.clear();
 }
@@ -909,12 +894,22 @@ export function injectExtensionStyles(name: string, css: string): Dispose {
 
 /** Unload every extension and load the current set fresh — for install/uninstall/update without a relaunch. */
 export async function reloadGuiExtensions(client: FezClient): Promise<string[]> {
-  restoreBaseline();
   return loadGuiExtensions(client);
 }
 
-export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
-  captureBaseline();
+let pendingLoad: Promise<unknown> = Promise.resolve();
+
+export function loadGuiExtensions(client: FezClient): Promise<string[]> {
+  // A boot load and install/update reloads share registries: finish the
+  // previous activation before clearing its registrations.
+  const loading = pendingLoad.then(() => loadCurrentGuiExtensions(client));
+  pendingLoad = loading.catch(() => {});
+  return loading;
+}
+
+async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
+  baseline ??= snapshotRegistrations();
+  restoreBaseline();
   const loaded: string[] = [];
   status.length = 0;
   let files: [string, string, string][];
@@ -1092,16 +1087,18 @@ export async function loadGuiExtensions(client: FezClient): Promise<string[]> {
             registerSettingsPanel(name, render, opts)
         : (refuse("ui", "add a settings panel") as never),
     };
+    const rollback = snapshotRegistrations();
     try {
       const mod = await importModule(code, name, hosts);
       const activate = mod.default ?? mod.activate;
       if (typeof activate !== "function") throw new Error("no default export / activate()");
-      activate(api);
+      await activate(api);
       if (styles) styleDisposers.set(name, injectExtensionStyles(name, styles));
       loaded.push(name);
       status.push({ name, ok: true });
       console.log(`🧩 gui extension loaded: ${name}`);
     } catch (err) {
+      rollback();
       status.push({ name, ok: false, error: err instanceof Error ? err.message : String(err) });
       console.error(`🧩 gui extension "${name}" failed to load:`, err);
     }

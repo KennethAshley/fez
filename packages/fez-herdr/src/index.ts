@@ -3,7 +3,11 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { FezExtensionAPI } from "./api-types.js";
+import { getPublicKey } from "nostr-tools/pure";
+import { hexToBytes } from "nostr-tools/utils";
+import { getKey } from "../../../src/identity/keys.js";
+import { replaceableEventWins } from "../../fez-client/dist/workspace-state.js";
+import type { FezExtensionAPI, NostrEvent } from "./api-types.js";
 
 /**
  * fez-herdr — register fez personas as herdr-managed tabs and pin a
@@ -202,6 +206,8 @@ export default function herdr(api: FezExtensionAPI): void {
   // Pubkeys allowed to summon local personas via @mention (self is implicit):
   // hydrated from the user's own 47006 attestations, grown on new attests.
   const attestedSiblings = new Set<string>();
+  // ponytail: serialize this summoner's roster writes; cross-process races need one shared roster writer.
+  let rosterWrite: Promise<void> = Promise.resolve();
 
   /**
    * Owner attestation (47006): the registering user signs "this pubkey is
@@ -212,9 +218,9 @@ export default function herdr(api: FezExtensionAPI): void {
   function attestAgent(agentPubkey: string): void {
     if (attested.has(agentPubkey)) return;
     attested.add(agentPubkey);
-    attestedSiblings.add(agentPubkey); // freshly attested agents may summon too
     void api
       .nostr!.publish({ kind: KIND_AGENT_ATTESTATION, tags: [["p", agentPubkey]], content: "" })
+      .then(() => attestedSiblings.add(agentPubkey))
       .catch(() => attested.delete(agentPubkey));
   }
 
@@ -264,17 +270,37 @@ export default function herdr(api: FezExtensionAPI): void {
     }
   }
 
+  function personaPubkey(name: string): string | undefined {
+    try {
+      const key = getKey(`agent:${name}`);
+      return key ? getPublicKey(hexToBytes(key)) : undefined;
+    } catch {
+      return undefined; // A missing or inaccessible local key never falls back to relay names.
+    }
+  }
+
   /**
    * Add a spawned agent to the WORKSPACE roster. One roster per relay,
    * so the agent arrives with access to every channel — there is no
    * per-channel invite left to forget.
    */
-  async function inviteToWorkspace(agentPubkey: string): Promise<void> {
-    const rosters = await api.nostr!.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
-    const latest = rosters.sort((a, b) => a.created_at - b.created_at).at(-1);
-    const ptags = latest?.tags.filter((t) => t[0] === "p") ?? [];
+  function inviteToWorkspace(agentPubkey: string): Promise<void> {
+    const write = rosterWrite.then(() => publishWorkspaceInvite(agentPubkey));
+    rosterWrite = write.catch(() => {});
+    return write;
+  }
+
+  async function publishWorkspaceInvite(agentPubkey: string): Promise<void> {
+    const owner = api.nostr!.pubkey;
+    const rosters = await api.nostr!.query([{ kinds: [KIND_MEMBERSHIP], authors: [owner], "#d": [ROSTER_D] }]);
+    const latest = rosters
+      .filter((event) => event.kind === KIND_MEMBERSHIP && event.pubkey === owner && event.tags.find((tag) => tag[0] === "d")?.[1] === ROSTER_D)
+      .reduce<NostrEvent | undefined>((latest, event) => replaceableEventWins(event, latest) ? event : latest, undefined);
+    if (!latest) throw new Error("owner roster unavailable — refusing to replace its members");
+    const ptags = latest.tags.filter((t) => t[0] === "p");
     if (ptags.some((t) => t[1] === agentPubkey)) return; // already on the roster
     ptags.push(["p", agentPubkey, "bot"]);
+    if (!ptags.some((t) => t[1] === owner)) ptags.unshift(["p", owner, "owner"]);
     await api.nostr!.publish({
       kind: KIND_MEMBERSHIP,
       tags: [["d", ROSTER_D], ...ptags],
@@ -341,7 +367,7 @@ export default function herdr(api: FezExtensionAPI): void {
       ],
       (event) => {
         const persona = agentPkToName.get(event.pubkey);
-        if (!persona) return;
+        if (!persona || !registered.some((entry) => entry.persona === persona) || personaPubkey(persona) !== event.pubkey) return;
         if (event.kind === KIND_REACTION) {
           if (event.content === "👀") setStatusSuffix(persona, " 👀");
           else if (event.content === "💬") setStatusSuffix(persona, " ⚙");
@@ -378,6 +404,7 @@ export default function herdr(api: FezExtensionAPI): void {
         if (!recipient || recipient === nostr.pubkey) return; // our own inbox is the communities extension's business
         const persona = agentPkToName.get(recipient);
         if (!persona || spawning.has(persona) || !personaExists(persona)) return;
+        if (personaPubkey(persona) !== recipient) return;
         // Liveness = a real agent PROCESS, not a live herdr tab — a tab
         // whose agent died (or an agent running outside herdr entirely)
         // must not fool the summons either way.
@@ -449,16 +476,19 @@ export default function herdr(api: FezExtensionAPI): void {
         }
         if (!name) return;
         agentPkToName.set(event.pubkey, name);
-        // Any of our registered agents announcing itself gets an owner
+        if (!pendingInvites.has(name) && !registered.some((t) => t.persona === name)) return;
+        if (personaPubkey(name) !== event.pubkey) return;
+        // A registered or just-spawned agent announcing itself gets an owner
         // attestation — makes it a verifiable sibling to the rest of the
         // fleet, regardless of how it was started.
-        if (registered.some((t) => t.persona === name)) attestAgent(event.pubkey);
+        attestAgent(event.pubkey);
         if (!pendingInvites.has(name)) return;
-        const _target = pendingInvites.get(name)!;
-        pendingInvites.delete(name);
         spawning.delete(name);
         inviteToWorkspace(event.pubkey)
-          .then(() => api.ui.notify("herdr · " + `**@${name}** is up and invited — it'll answer your mention momentarily.`))
+          .then(() => {
+            pendingInvites.delete(name);
+            api.ui.notify("herdr · " + `**@${name}** is up and invited — it'll answer your mention momentarily.`);
+          })
           .catch(() => api.ui.notify("herdr · " + `⚠️ @${name} spawned but the invite failed — /invite ${event.pubkey} bot`));
       }
     );

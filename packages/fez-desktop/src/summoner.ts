@@ -61,19 +61,9 @@ export function startSummoner(opts: {
       const harness = raw.match(/^harness:\s*(.+)$/m)?.[1]?.trim();
       return harness !== undefined && harness !== "router";
     },
-    personaPubkey: async (name) => {
-      // Agent keys are minted CLI/sentinel-side; the desktop can't read
-      // the keychain for them, so pre-invite resolves via the announced
-      // roster instead. An unannounced brand-new persona summons fine —
-      // its announce-time invite (engine.handleAnnouncement) covers it.
-      const events = await wire.query([{ kinds: [KIND_METADATA], limit: 200 }]);
-      for (const ev of events) {
-        try {
-          if (JSON.parse(ev.content).name?.toLowerCase() === name) return ev.pubkey;
-        } catch { /* ignore */ }
-      }
-      return undefined;
-    },
+    // Only the public key crosses the bridge. A first spawn mints its
+    // key CLI-side; the announcement retries resolution once it exists.
+    personaPubkey: (name) => invoke<string>("get_pubkey", { account: `agent:${name}` }).catch(() => undefined),
     agentAlive: async (name) => {
       if (await invoke<boolean>("agent_alive", { persona: name }).catch(() => false)) return true;
       const pk = await host.personaPubkey(name).catch(() => undefined);

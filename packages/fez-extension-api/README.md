@@ -45,4 +45,16 @@ Each part is a bundled file with a default export the host calls with
 the injected API. `fez install @you/fez-something` (or `fez link .` for
 local dev) places every part; the host loads the ones it recognizes.
 
+GUI activation can return `Promise<void>`. Finish registrations before
+it resolves: the host waits before reporting the extension as loaded.
+If activation throws or rejects, its registry changes are rolled back
+and the error appears in extension status. Reloads run sequentially and
+restore the host registrations before activating the installed set again.
+This rollback covers registrations, not external writes or arbitrary
+background work started by the extension.
+
+Extensions run as trusted code in their host process. Grants restrict
+selected injected APIs; the current client surface is not fully narrowed
+by permission, and grants do not sandbox extension code.
+
 `@fezchat/git` is the worked example — it uses every surface.

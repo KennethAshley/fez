@@ -12,7 +12,7 @@ import { useArtifactDoc } from "./artifact-url";
  * live read-bridge viewer. Re-registering a type overrides the built-in.
  */
 
-export { registerArtifactViewer, viewerFor } from "@fezchat/artifact-viewers";
+export { registerArtifactViewer, viewerFor, snapshotArtifactViewers } from "@fezchat/artifact-viewers";
 export type { ArtifactViewer } from "@fezchat/artifact-viewers";
 
 /** Sandboxed page: scripts allowed, origin isolated. Inline content goes

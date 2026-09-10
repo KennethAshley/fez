@@ -190,6 +190,18 @@ export function emptyWorkspace(relay: string, name?: string): Workspace {
   };
 }
 
+/** Newer timestamps win; equal timestamps choose the lowest event id so arrival order cannot change membership. */
+export function replaceableEventWins(
+  candidate: { created_at?: number; id?: string },
+  current?: { created_at?: number; id?: string }
+): boolean {
+  if (!current) return true;
+  const nextTs = candidate.created_at ?? 0;
+  const currentTs = current.created_at ?? 0;
+  return nextTs > currentTs || (nextTs === currentTs &&
+    (current.id === undefined || (candidate.id !== undefined && candidate.id < current.id)));
+}
+
 export class WorkspaceState {
   /** The workspace currently open. One at a time — switching reconnects. */
   workspace: Workspace = emptyWorkspace("");
@@ -322,17 +334,7 @@ export class WorkspaceState {
 
     if (event.kind === KIND_MEMBERSHIP) {
       if (tag("d") !== ROSTER_D) return false; // per-channel rosters are the old model
-      if (event.created_at < ws.rosterCreatedAt) return false;
-      // Same-second tie: deterministic winner (lowest id), so every client
-      // converges regardless of arrival order. fez also bumps created_at on
-      // publish (see nextRosterCreatedAt) — belt and braces, as Buzz does.
-      if (
-        event.created_at === ws.rosterCreatedAt &&
-        ws.rosterEventId !== undefined &&
-        event.id >= ws.rosterEventId
-      ) {
-        return false;
-      }
+      if (!replaceableEventWins(event, { created_at: ws.rosterCreatedAt, id: ws.rosterEventId })) return false;
       const members = new Map<string, Role>();
       for (const t of event.tags) {
         if (t[0] === "p" && t[1]) members.set(t[1], (t[2] as Role) ?? "member");

@@ -1,5 +1,5 @@
 import { unixNow } from "../shared/time.js";
-import { bytesToHex, hexToBytes } from "nostr-tools/utils";
+import { hexToBytes } from "nostr-tools/utils";
 import {
   type Event,
   type UnsignedEvent,
@@ -98,13 +98,9 @@ export class Agent {
       this.privateKey = hexToBytes(config.privateKey);
     } else {
       this.privateKey = generateSecretKey();
-      console.log(
-        "⚡ Generated new keypair:",
-        bytesToHex(this.privateKey),
-        "\n   Save this to reuse the same identity."
-      );
     }
     this.pubkey = getPublicKey(this.privateKey);
+    if (!config.privateKey) console.log("⚡ Generated agent identity:", this.pubkey);
   }
 
   static async create(config: AgentConfig): Promise<Agent> {
@@ -113,7 +109,7 @@ export class Agent {
     return agent;
   }
 
-  /** Your agent's public key (npub format) */
+  /** Your agent's public key (hex). */
   getPubkey(): string {
     return this.pubkey;
   }
@@ -258,4 +254,3 @@ export class Agent {
 }
 
 // Helpers
-

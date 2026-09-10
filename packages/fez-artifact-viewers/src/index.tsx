@@ -35,6 +35,15 @@ export function viewerFor(type: string): ArtifactViewer | undefined {
   return registry.get(type);
 }
 
+/** Capture the host's viewers before loading extensions, including ones they may override. */
+export function snapshotArtifactViewers(): () => void {
+  const snapshot = new Map(registry);
+  return () => {
+    registry.clear();
+    for (const [type, viewer] of snapshot) registry.set(type, viewer);
+  };
+}
+
 // ── portable built-ins ────────────────────────────────────────────────
 
 /** Sandboxed page: scripts allowed, origin isolated (no cookies, no

@@ -29,6 +29,10 @@ import {
   KIND_DRAFT,
   KIND_MEMBERSHIP,
   ROSTER_D,
+  KIND_BAN_LIST,
+  BANS_D,
+  WorkspaceState,
+  fetchRelayInfo,
   KIND_ARTIFACT,
   KIND_OBSERVER,
   KIND_OBSERVER_CONTROL,
@@ -69,12 +73,13 @@ import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { loadServiceKey, resolveChannels } from "./service-common.js";
+import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
 import { RuntimeRefresh } from "./runtime-refresh.js";
+import { RecentContexts } from "./recent-context.js";
 import { decide, claimOwnership, takeOverActive, shutdownGraced, type OwnershipIO, type PresenceBeat } from "./ownership.js";
 
 export { piThinkingLevel };
@@ -748,7 +753,8 @@ async function main() {
    */
   async function pubkeyForName(name: string): Promise<string | undefined> {
     const wanted = name.toLowerCase();
-    for (const pubkey of roster.members) {
+    for (const pubkey of workspace.workspace.members.keys()) {
+      if (!workspace.isMember(pubkey)) continue;
       const known = await resolveName(pubkey);
       if (known && known.toLowerCase() === wanted) return pubkey;
       // resolveName just filled the alias cache for this pubkey (if it announced any).
@@ -920,21 +926,34 @@ async function main() {
     }, 60_000).unref?.();
   }
 
-  // Workspace roster (the owner's latest 47102, d = "roster"). A relay
-  // is a workspace, so there is one roster for every channel the agent
-  // sits in — being invited means being in all of them, which is why
-  // this is a single set rather than a map per channel.
-  const roster = { createdAt: 0, members: new Set<string>() };
-  function absorbMembership(event: { created_at: number; tags: string[][] }): void {
-    if (event.tags.find((t) => t[0] === "d")?.[1] !== ROSTER_D) return;
-    if (event.created_at < roster.createdAt) return;
-    roster.createdAt = event.created_at;
-    roster.members = new Set<string>(event.tags.filter((t) => t[0] === "p" && t[1]).map((t) => t[1]));
+  // Workspace authority comes from NIP-11, not the persona's owner.
+  // Reuse the client model for signer checks, timestamp ties and bans.
+  const workspace = new WorkspaceState();
+  async function refreshWorkspaceAuthority(): Promise<boolean> {
+    const info = await fetchRelayInfo(relayUrls[0]);
+    if (!info?.pubkey) return false;
+    const membershipEvents = await relay.query([
+      { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] },
+      { kinds: [KIND_BAN_LIST], "#d": [BANS_D] },
+    ]);
+    workspace.describe({ owner: info.pubkey });
+    // Load the roster before bans so current admins can sign moderation.
+    for (const kind of [KIND_MEMBERSHIP, KIND_BAN_LIST]) {
+      for (const event of membershipEvents.filter(event => event.kind === kind)) workspace.absorb(event);
+    }
+    return true;
   }
-
-  const membershipEvents = await relay.query([{ kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] }]);
-  for (const event of membershipEvents) absorbMembership(event);
-  if (!roster.members.has(myPubkey)) {
+  if (!(await refreshWorkspaceAuthority().catch(() => false))) {
+    console.warn("⚠️  Workspace owner unavailable — channel and document requests are blocked while relay info recovers.");
+    // Retry after each completed attempt; an HTTP outage must not require
+    // restarting a connected agent, or allow guessed workspace authority.
+    const retry = () => setTimeout(async () => {
+      if (await refreshWorkspaceAuthority().catch(() => false)) console.log("Workspace authority recovered — channel and document requests enabled.");
+      else retry();
+    }, 10_000).unref();
+    retry();
+  }
+  if (!workspace.isMember(myPubkey)) {
     console.warn(`⚠️  Not on this workspace's roster — replies will be dropped by other clients until the owner runs /invite ${myPubkey} bot`);
   }
 
@@ -1158,8 +1177,8 @@ async function main() {
     });
   }
 
-  // ── Session pool — Buzz's per-channel sessions, fez-shaped. One LIVE
-  // harness conversation per scope (channel or DM peer): the persona,
+  // ── Session pool — one LIVE harness conversation per thread, doc
+  // comment thread, or DM peer: the persona,
   // memory, and conventions go in once at open; every later turn is
   // just the new message, and the mind remembers its own earlier turns —
   // including handoffs it issued. This replaces fresh-process-per-turn
@@ -1338,7 +1357,7 @@ async function main() {
     }
   }
 
-  const recent = new Map<string, string[]>(); // channelId -> last few messages, as harness context
+  const recent = new RecentContexts();
   // Event-id dedupe: relays can deliver an event more than once (and the
   // startup backfill can overlap the live subscription); without this a
   // duplicate delivery runs a second full turn and double-posts the reply
@@ -1360,11 +1379,12 @@ async function main() {
   // into one coherent turn. Transient turn failures requeue with a
   // backoff ladder (5s → 30s → 120s) before dead-lettering loudly.
   type ChEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
+  type DocContext = { rootId: string; anchor: string; slug?: string };
   interface PendingItem {
     scope: string;
     kind: "ch" | "dm";
     chEvent?: ChEvent;
-    chChannelId?: string;
+    doc?: DocContext;
     dm?: DmRumor;
     attempts: number;
     notBefore: number;
@@ -1389,8 +1409,15 @@ async function main() {
   }
 
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  let dispatching = false;
+  function scheduleDrain(delay = 250): void {
+    clearTimeout(drainTimer);
+    drainTimer = setTimeout(() => { drainTimer = undefined; drainNext(); }, delay);
+    drainTimer.unref?.();
+  }
+
   function drainNext(): void {
-    if (busy) return;
+    if (busy || dispatching) return;
     const now = Date.now();
     for (let i = 0; i < scopeOrder.length; i++) {
       const scope = scopeOrder[i];
@@ -1407,7 +1434,7 @@ async function main() {
       pendingByScope.set(scope, list.filter((item) => item.notBefore > now));
       scopeOrder.splice(i, 1);
       scopeOrder.push(scope); // rotate: next drain favors other scopes
-      dispatchBatch(scope, ready);
+      void dispatchBatch(scope, ready);
       return;
     }
     // Nothing ready — wake when the earliest backoff expires.
@@ -1416,32 +1443,45 @@ async function main() {
       for (const item of list) earliest = Math.min(earliest, item.notBefore);
     }
     if (earliest < Infinity) {
-      clearTimeout(drainTimer);
-      drainTimer = setTimeout(drainNext, Math.max(50, earliest - now));
-      drainTimer.unref?.();
+      scheduleDrain(Math.max(50, earliest - now));
     }
   }
 
-  function dispatchBatch(scope: string, items: PendingItem[]): void {
-    const attempts = Math.max(...items.map((item) => item.attempts));
-    if (items[0].kind === "ch") {
-      // Batch: earlier messages ride the steering channel (the prompt
-      // already frames them as "these also arrived — weave them in").
-      const last = items[items.length - 1];
-      for (const item of items.slice(0, -1)) {
-        steerMessages.push(`${who(item.chEvent!.pubkey)}: ${item.chEvent!.content}`);
-      }
-      if (items.length > 1) console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
-      void runtimeRefresh.run(() => handleChannelMessage(last.chEvent!, true, attempts), 100);
-    } else {
-      const last = items[items.length - 1];
-      const merged: DmRumor =
-        items.length > 1
-          ? { ...last.dm!, text: items.map((item) => `${item.dm!.senderPk.slice(0, 8)}: ${item.dm!.text}`).join("\n") }
-          : last.dm!;
-      if (items.length > 1) console.log(`📦 batching ${items.length} queued DMs for ${scope} into one turn`);
-      seenEventIds.delete(merged.id);
-      void runtimeRefresh.run(() => handleDm(merged, false, attempts), 100);
+  async function dispatchBatch(scope: string, items: PendingItem[]): Promise<void> {
+    dispatching = true; // Reserve the delayed dispatch and its async admission, before busy is set.
+    try {
+      await runtimeRefresh.run(async () => {
+        items = items.filter((item) => {
+          if (item.kind === "dm" || workspace.isMember(item.chEvent!.pubkey)) return true;
+          recent.remove(scope, item.chEvent!.id);
+          console.log(`🚫 Queued message from ${item.chEvent!.pubkey.slice(0, 8)}… dropped — not on the workspace roster`);
+          return false;
+        });
+        if (!items.length) return;
+        const attempts = Math.max(...items.map((item) => item.attempts));
+        const last = items[items.length - 1];
+        if (last.kind === "ch") {
+          // Only currently admitted messages may be woven into the final trigger.
+          if (items.length > 1) {
+            steeringByScope.set(scope, [
+              ...(steeringByScope.get(scope) ?? []),
+              ...items.slice(0, -1).map((item) => `${who(item.chEvent!.pubkey)}: ${item.chEvent!.content}`),
+            ]);
+            console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
+          }
+          await handleChannelMessage(last.chEvent!, true, attempts, last.doc);
+        } else {
+          const merged: DmRumor = items.length > 1
+            ? { ...last.dm!, text: items.map((item) => `${item.dm!.senderPk.slice(0, 8)}: ${item.dm!.text}`).join("\n") }
+            : last.dm!;
+          if (items.length > 1) console.log(`📦 batching ${items.length} queued DMs for ${scope} into one turn`);
+          seenEventIds.delete(merged.id);
+          await handleDm(merged, false, attempts);
+        }
+      }, 100);
+    } finally {
+      dispatching = false;
+      scheduleDrain(); // Admission can reject/requeue before a turn's own finally is reached.
     }
   }
 
@@ -1452,8 +1492,8 @@ async function main() {
   // FEZ_AGENT_ON_BUSY=queue restores the queue-only behavior.
   const onBusy = process.env.FEZ_AGENT_ON_BUSY === "queue" ? "queue" : "steer";
   let turnController: AbortController | undefined;
-  let turnKind: "ch" | "dm" | undefined; // steer may only abort CHANNEL turns; cancel aborts either
-  const steerMessages: string[] = [];
+  let turnScope: string | undefined;
+  const steeringByScope = new Map<string, string[]>();
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
@@ -1482,7 +1522,7 @@ async function main() {
      * published back into the comment thread, and nothing (no draft, no
      * typing, no message) touches the channel timeline.
      */
-    doc?: { rootId: string; anchor: string; slug?: string }
+    doc?: DocContext
   ): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       if (!channelId || event.pubkey === myPubkey) return;
@@ -1490,24 +1530,18 @@ async function main() {
       seenEventIds.add(event.id);
       if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
 
-      const context = recent.get(channelId) ?? [];
-      context.push(`${who(event.pubkey)}: ${event.content}`);
-      recent.set(channelId, context.slice(-10));
-
-      const mentioned = isMention(event);
-      // The owner is implicitly a member of their own workspace — the
-      // same rule every client applies (workspace-state isMember). An
-      // owner-less roster write once deafened every agent to the owner
-      // for a day, silently; the implicit check plus the log line below
-      // make that failure impossible-and-loud instead of silent.
-      const authorIsMember = roster.members.has(event.pubkey) || event.pubkey === owner;
-
-      if (!mentioned) return;
-      if (!(await authorAllowed(event.pubkey))) return;
-      if (!authorIsMember) {
+      if (!workspace.isMember(event.pubkey)) {
         console.log(`🚫 Mention from ${event.pubkey.slice(0, 8)}… dropped — not on the workspace roster`);
         return;
       }
+      const { rootId: triggerRoot } = parseThreadRef(event.tags);
+      // A top-level message starts a thread; its replies use that same root.
+      // This one scope drives context, session reuse, queueing and steering.
+      const scope = doc ? `doc:${channelId}:${doc.rootId}` : `ch:${channelId}:${triggerRoot ?? event.id}`;
+      if (!redispatch) recent.add(scope, event.id, `${who(event.pubkey)}: ${event.content}`);
+
+      if (!isMention(event)) return;
+      if (!(await authorAllowed(event.pubkey))) return;
 
       // Agent-to-agent chain cap — the shared protocol limit, so the
       // TUI, orchestrator, workflows, and summoner all count with the
@@ -1539,12 +1573,12 @@ async function main() {
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
       if (busy) {
-        if (onBusy === "steer" && turnController && turnKind === "ch") {
-          steerMessages.push(`${who(event.pubkey)}: ${event.content}`);
+        if (onBusy === "steer" && turnController && turnScope === scope && !cancelRequested) {
+          steeringByScope.set(scope, [...(steeringByScope.get(scope) ?? []), `${who(event.pubkey)}: ${event.content}`]);
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
         } else {
-          enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: 0, notBefore: 0 });
+          enqueue({ scope, kind: "ch", chEvent: event, doc, attempts: 0, notBefore: 0 });
         }
         return;
       }
@@ -1591,9 +1625,7 @@ async function main() {
       // thread-scoped typing; a plain channel mention means channel-scoped
       // — the mentioning user is looking at the channel view, and a
       // thread-scoped indicator there would be invisible to them.
-      const typingThreadRoot =
-        event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ??
-        event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+      const typingThreadRoot = triggerRoot;
       const typing = setInterval(() => {
         if (doc) return; // a doc-comment turn never touches the channel timeline
         void relay
@@ -1610,18 +1642,17 @@ async function main() {
           .catch(() => {});
       }, 3000);
       turnController = new AbortController();
-      turnKind = "ch";
+      turnScope = scope;
       cancelRequested = false;
       turnUsage = undefined;
       const turnStartedAt = Date.now();
       // Steering guidance consumed into this turn's prompt (Buzz frames
       // steered messages as "arrived while you were working — weave in").
-      const steering = steerMessages.splice(0);
+      const steering = steeringByScope.get(scope) ?? [];
+      steeringByScope.delete(scope);
       // NIP-10 markers, Buzz's exact shape (threading.ts) — computed
       // BEFORE the try so drafts, the reply, and the failure notice all
       // carry the same thread tags.
-      const triggerParent = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
-      const triggerRoot = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? triggerParent;
       // A doc-comment turn answers INSIDE the document: a 40101 reply
       // e-tagged to the comment root. Chat threading tags don't apply.
       const replyTags = doc
@@ -1749,7 +1780,7 @@ async function main() {
             `- Fez tools: you have fez_* MCP tools — fez_send_message, fez_read_channel, fez_send_dm, fez_search, fez_mem_set/get/list, fez_doc_get/append, fez_list_agents. Prefer them over \`fez\` shell commands.`,
             `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
             `Recent messages:`,
-            ...(recent.get(channelId) ?? []),
+            ...recent.get(scope, `${who(event.pubkey)}: ${event.content}`),
             ...(steering.length > 0
               ? [
                   `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
@@ -1792,7 +1823,7 @@ async function main() {
         const onUpdate = makeOnUpdate();
         inputOrigin = doc ? undefined : { kind: "channel", channelId, rootId: triggerRoot ?? event.id, messageId: event.id };
         const rawReply = await promptSession(
-          `ch:${channelId}`,
+          scope,
           withNotice(buildPrompt, attachmentPrompt(event)),
           publishDraft,
           onUpdate,
@@ -1840,6 +1871,7 @@ async function main() {
         if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
           // Owner cancel — the turn just STOPS. No steer re-dispatch, and
           // an honest threaded notice instead of silence.
+          steeringByScope.delete(scope);
           publishObserver({ type: "turn", status: "cancelled" });
           publishTurnMetric(`ch:${channelId}`, "cancelled", turnStartedAt, 0, event.id);
           console.log("⏹ Turn cancelled by owner");
@@ -1858,7 +1890,7 @@ async function main() {
           publishObserver({ type: "turn", status: "retrying" });
           const delay = RETRY_DELAYS_MS[attempts];
           console.warn(`↻ transient turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
-          enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: attempts + 1, notBefore: Date.now() + delay });
+          enqueue({ scope, kind: "ch", chEvent: event, doc, attempts: attempts + 1, notBefore: Date.now() + delay });
         } else {
           publishObserver({ type: "turn", status: "failed" });
           publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, 0, event.id);
@@ -1914,16 +1946,16 @@ async function main() {
         clearStatusReactions();
         clearInterval(typing);
         turnController = undefined;
-        turnKind = undefined;
+        turnScope = undefined;
         inputOrigin = undefined;
         busy = false;
-        if (steerMessages.length > 0) {
+        if (steeringByScope.has(scope)) {
           // Steered: re-dispatch the SAME trigger — the unconsumed steer
           // messages get woven into the merged prompt.
-          void runtimeRefresh.run(() => handleChannelMessage(event, true), 250);
+          void runtimeRefresh.run(() => handleChannelMessage(event, true, attempts, doc), 250).finally(() => scheduleDrain());
         } else {
           // Drain: the next scope with ready work gets a (batched) turn.
-          setTimeout(drainNext, 250);
+          scheduleDrain();
         }
       }
   };
@@ -2009,7 +2041,7 @@ async function main() {
     lastAcceptedAt = Date.now();
     turnTimes.push(Date.now());
     turnController = new AbortController();
-    turnKind = "dm";
+    turnScope = `dm:${convoKey}`;
     cancelRequested = false;
     turnUsage = undefined;
     const turnStartedAt = Date.now();
@@ -2099,8 +2131,8 @@ async function main() {
       inputOrigin = undefined;
       busy = false;
       turnController = undefined;
-      turnKind = undefined;
-      setTimeout(drainNext, 250);
+      turnScope = undefined;
+      scheduleDrain();
     }
   };
 
@@ -2124,15 +2156,22 @@ async function main() {
     tags: string[][];
   }): Promise<void> => {
     if (event.pubkey === myPubkey) return;
-    const anchor = event.tags.find((t) => t[0] === "anchor")?.[1] ?? "";
-    const slug = event.tags.find((t) => t[0] === "d")?.[1];
+    let anchor = event.tags.find((t) => t[0] === "anchor")?.[1];
+    let slug = event.tags.find((t) => t[0] === "d")?.[1];
     const parent = event.tags.find((t) => t[0] === "e")?.[1];
     // A reply that mentions us is still a request — answer in that same
     // thread (its root), not a new one.
     const rootId = parent ?? event.id;
+    if (parent && (anchor === undefined || slug === undefined)) {
+      const channelId = event.tags.find((t) => t[0] === "h")?.[1];
+      const root = (await relay.query([{ kinds: [KIND_DOC_COMMENT], ids: [parent], limit: 1 }]).catch(() => []))
+        .find((candidate) => candidate.tags.some((t) => t[0] === "h" && t[1] === channelId));
+      anchor ??= root?.tags.find((t) => t[0] === "anchor")?.[1];
+      slug ??= root?.tags.find((t) => t[0] === "d")?.[1];
+    }
     await resolveName(event.pubkey);
     console.log(`📝 Doc comment from ${who(event.pubkey)} on ${slug ? `page "${slug}"` : "the channel doc"}`);
-    await handleChannelMessage(event, false, 0, { rootId, anchor, slug });
+    await handleChannelMessage(event, false, 0, { rootId, anchor: anchor ?? "", slug });
   };
 
   const dmBacklog: DmRumor[] = [];
@@ -2147,9 +2186,10 @@ async function main() {
       ...(channels.length > 0
         ? [
             { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
-            { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], since: Math.floor(Date.now() / 1000) },
           ]
         : []),
+      { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] },
+      { kinds: [KIND_BAN_LIST], "#d": [BANS_D] },
       // Doc comments addressed to us: work handed over INSIDE a document.
       // p-tag filtered (not #h) because a wiki page's comments can come
       // from any channel in the community.
@@ -2157,8 +2197,8 @@ async function main() {
       { kinds: [KIND_GIFT_WRAP], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) - DM_FUZZ_WINDOW_S },
     ],
     (event) => {
-      if (event.kind === KIND_MEMBERSHIP) {
-        absorbMembership(event);
+      if (event.kind === KIND_MEMBERSHIP || event.kind === KIND_BAN_LIST) {
+        workspace.absorb(event);
         return;
       }
       if (event.kind === KIND_DOC_COMMENT) {
@@ -2188,7 +2228,7 @@ async function main() {
     ownReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e" && t[3] === "reply").map((t) => t[1]))
   );
   const pending = recentMessages
-    .filter((e) => e.pubkey !== myPubkey && isMention(e) && !answered.has(e.id))
+    .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && isMention(e) && !answered.has(e.id))
     .sort((a, b) => a.created_at - b.created_at)
     .at(-1);
   // Same race for doc comments: the comment that summoned us predates the
@@ -2201,7 +2241,7 @@ async function main() {
     .catch(() => []);
   const answeredComments = new Set(myCommentReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])));
   const pendingComment = recentComments
-    .filter((e) => e.pubkey !== myPubkey && !answeredComments.has(e.id))
+    .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && !answeredComments.has(e.id))
     .sort((a, b) => a.created_at - b.created_at)
     .at(-1);
   if (pendingComment) {
@@ -2224,7 +2264,7 @@ async function main() {
   const runningVersion = process.env.FEZ_AGENT_BUILD_VERSION;
   if (runningVersion && process.execve) {
     runtimeRefresh.watch(path.join(os.homedir(), ".fez", "bin", ".pi-agent-version"), runningVersion,
-      () => !busy && !steerMessages.length && dmLive && !dmBacklog.length &&
+      () => !busy && !steeringByScope.size && dmLive && !dmBacklog.length &&
         [...pendingByScope.values()].every(items => !items.length) && [...sessionPool.values()].every(session => !session.busy),
       () => {
         // Preserve dedupe across execve so startup backfill cannot repeat a completed turn.

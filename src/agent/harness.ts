@@ -1,5 +1,6 @@
 import { fezHome } from "../shared/fez-home.js";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -645,7 +646,18 @@ async function decidePermission(params: {
  * flow into the same conversation, so turn N remembers turns 1..N-1
  * (Buzz's per-channel session model; the cure for fresh-mind-per-turn).
  */
-function openAcpSession(
+async function spawnAcp(descriptor: AcpDescriptor) {
+  const child = spawn(descriptor.command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
+  child.stdin.on("error", () => {});
+  child.stdout.on("error", () => {});
+  child.stderr.on("error", () => {});
+  // ENOENT/EACCES must reject this turn, not emit an unhandled error
+  // that terminates the standing agent (and every queued conversation).
+  await once(child, "spawn");
+  return child;
+}
+
+async function openAcpSession(
   descriptor: AcpDescriptor,
   cwd: string,
   mcpServers?: McpServer[],
@@ -654,10 +666,7 @@ function openAcpSession(
   onInput?: InputHandler
 ): Promise<HarnessSession> {
   const { command } = descriptor;
-  const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
-  child.stdin?.on("error", () => {});
-  child.stdout?.on("error", () => {});
-  child.stderr?.on("error", () => {});
+  const child = await spawnAcp(descriptor);
   let stderrTail = "";
   child.stderr?.on("data", (chunk: Buffer) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-2000);
@@ -800,16 +809,7 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
       openAcpSession(descriptor, cwd, mcpServers, timeouts, systemPrompt, onInput),
 
     async invoke(instruction, cwd = process.cwd(), onProgress, mcpServers, onUpdate, signal, onInput) {
-      const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"], env: descriptor.env() });
-
-      // Without these, a write to a pipe whose reader already exited (e.g.
-      // the process quitting mid-chain, with a persona subprocess still
-      // running) emits an unhandled 'error' event and crashes the whole
-      // Node process, not just this one call — this is what invoke() should
-      // fail with, not what should take down the caller.
-      child.stdin?.on("error", () => {});
-      child.stdout?.on("error", () => {});
-      child.stderr?.on("error", () => {});
+      const child = await spawnAcp(descriptor);
 
       // Captured, not inherited: claude-agent-acp can print its own crash
       // trace to stderr when killed mid-write (e.g. we kill it on quit

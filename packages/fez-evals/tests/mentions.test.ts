@@ -29,6 +29,10 @@ describe("mentionedNames", () => {
   it("finds nothing in a message that names nobody", () => {
     expect(mentionedNames("reviewer already confirmed this")).toEqual([]);
   });
+
+  it("keeps quoted names for notification tags even though they do not summon", () => {
+    expect(mentionedNames('Example: "@reviewer" and `@researcher`')).toEqual(["reviewer", "researcher"]);
+  });
 });
 
 describe("mentionTags", () => {

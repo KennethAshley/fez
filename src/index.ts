@@ -26,13 +26,15 @@
 export { Agent, type AgentConfig, type TaskPayload, type TaskResult } from "./agent/agent.js";
 export { CapabilityClient, type ClientConfig, type Capability, type TaskOptions, type TaskResult as ClientTaskResult } from "./protocol/client.js";
 export { RelayConnection, type RelayOptions } from "./protocol/relay.js";
-export { mentionedNames, mentionTags } from "./agent/mentions.js";
+export { mentionedNames, mentionTags, proseMentions } from "./agent/mentions.js";
 export { makeChannels, cleanSource, type ChannelsAccess, type ChannelSpec, type ChannelRef } from "./protocol/channels.js";
 export { KIND_HTTP_AUTH, buildNip98Header, verifyNip98Header, type Nip98Result, type VerifyOptions } from "./protocol/nip98.js";
 export { FezTUI } from "./cli/tui.js";
 export { PackageManager, skillEntryFor, type FezPackage, type FezManifest } from "./extensions/package-manager.js";
 export * from "./protocol/kinds.js";
 export { requestInput, type InputForm, type InputResponse, type InputOrigin } from "../packages/fez-client/dist/agent-input.js";
+/** Standing runtimes use the same roster and moderation rules as GUI clients. */
+export { WorkspaceState } from "../packages/fez-client/dist/workspace-state.js";
 export { MAX_CHAIN_DEPTH } from "./protocol/limits.js";
 export {
   allowedMediaHosts,

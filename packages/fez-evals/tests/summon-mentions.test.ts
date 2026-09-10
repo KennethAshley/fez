@@ -17,6 +17,11 @@ describe("summonMentions — prose mentions summon, quoted/coded ones don't", ()
     expect(summonMentions("hey @chip and @scout look at this")).toEqual(["chip", "scout"]);
   });
 
+  it("ignores email, SSH, path and doubled-at tokens while keeping prose mentions", () => {
+    expect(summonMentions("ken@scout.example user@chip path/@loom @@pilot")).toEqual([]);
+    expect(summonMentions("ken@scout.example then @chip take over")).toEqual(["chip"]);
+  });
+
   it("ignores a mention in inline backticks", () => {
     expect(summonMentions("the button should run `@scout what's new`")).toEqual([]);
   });
