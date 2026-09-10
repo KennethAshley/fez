@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SubmissionStatus } from "../../fez-extension-api/src/miner.js";
+import type { ConfigField, SubmissionStatus } from "../../fez-extension-api/src/miner.js";
 import type { MinerEntry } from "../../fez-mining/src/state.js";
 
 // Mount the browser bundle using the host's React; all host IO is fake.
@@ -15,6 +15,10 @@ const { act } = React;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const code = execFileSync(createRequire(resolve(__dirname, "test.cjs")).resolve("esbuild/bin/esbuild"), [
   resolve(__dirname, "../../fez-mining/src/gui.tsx"), "--bundle", "--format=iife",
+  "--global-name=__fezExt", "--platform=browser", "--jsx-factory=h",
+], { encoding: "utf8" });
+const panelCode = execFileSync(createRequire(resolve(__dirname, "test.cjs")).resolve("esbuild/bin/esbuild"), [
+  resolve(__dirname, "../../fez-mining/src/submission-gui.tsx"), "--bundle", "--format=iife",
   "--global-name=__fezExt", "--platform=browser", "--jsx-factory=h",
 ], { encoding: "utf8" });
 const pending: SubmissionStatus = {
@@ -29,13 +33,16 @@ const entry = (): MinerEntry => ({ netuid: 777, persona: "scout", mode: "submiss
 const disposers: (() => void)[] = [];
 afterEach(async () => { await act(async () => { for (const dispose of disposers.splice(0)) dispose(); }); vi.useRealTimers(); });
 
-async function mount(options: { coding?: boolean; fleet?: MinerEntry[]; liveFleet?: MinerEntry[]; thread?: boolean; cachedSubmission?: boolean; refreshedSubmission?: boolean } = {}) {
+async function mount(options: { direct?: boolean; schema?: ConfigField[]; config?: Record<string, string | number | boolean>; configFailure?: string; failure?: string; coding?: boolean; fleet?: MinerEntry[]; liveFleet?: MinerEntry[]; thread?: boolean; cachedSubmission?: boolean; refreshedSubmission?: boolean } = {}) {
   const state = {
     miners: options.fleet ?? [entry()], subnets: [{ netuid: 777, name: "Submission fixture" }], covered: [777],
     submissionNetuids: options.cachedSubmission === false ? [] : [777], requirementsByNetuid: { 777: { gpu: "A100" } },
   };
   let snapshot = pending;
-  let failure = "";
+  let failure = options.failure ?? "";
+  const config = { ...options.config };
+  let configFailure = options.configFailure ?? "";
+  let deferConfig: (() => Promise<Record<string, string> | void>) | undefined;
   const receipt = { sha256: "a".repeat(64), ...(options.coding ? {} : { prediction: 0.42 }), detail: "Isolated Docker test passed" };
   let deferTest: (() => Promise<typeof receipt>) | undefined;
   let deferStatus: (() => Promise<SubmissionStatus>) | undefined;
@@ -50,7 +57,20 @@ async function mount(options: { coding?: boolean; fleet?: MinerEntry[]; liveFlee
     let result: unknown;
     if (args[0] === "status") result = (options.liveFleet ?? state.miners).map(m => ({ ...m, alive: false }));
     else if (args[0] === "subnets") result = { ...state, submissionNetuids: options.refreshedSubmission === false ? [] : [777] };
-    else if (args[0] === "describe") result = { netuid: 777, mode: "submission", network: options.coding ? "finney" : "test", submissionNotice: options.coding ? "Screening bills your OpenRouter account." : undefined, config: [] };
+    else if (args[0] === "describe") result = { netuid: 777, mode: "submission", network: options.coding ? "finney" : "test", submissionNotice: options.coding ? "Screening bills your OpenRouter account." : undefined, config: options.schema ?? [] };
+    else if (args[0] === "config") {
+      const deferred = deferConfig ? await deferConfig() : undefined;
+      if (configFailure) return { code: 1, stdout: configFailure, stderr: configFailure };
+      if (args[1] === "get") result = deferred ?? config;
+      else {
+        config[args[args.indexOf("--key") + 1]] = args.includes("--secret") ? "set" : args[args.indexOf("--value") + 1];
+        return { code: 0, stdout: "", stderr: "" };
+      }
+    }
+    else if (args[0] === "development") result = {
+      runs: [], canEvaluate: false, instructions: "Develop a candidate without submitting it.",
+      ...(args[1] === "configure" ? { workspace: { repository: args[args.indexOf("--repository") + 1], source: args[args.indexOf("--source") + 1] } } : {}),
+    };
     else if (args[0] === "do-token-status") result = { present: false };
     else if (args[0] === "cost") result = { netuid: 777, rao: "123000000", tao: "0.123" };
     else if (args[0] === "submission") {
@@ -63,19 +83,23 @@ async function mount(options: { coding?: boolean; fleet?: MinerEntry[]; liveFlee
   let nav!: () => unknown;
   let thread!: (props: object) => unknown;
   const denied = () => { throw Error("Unexpected network"); };
-  new Function("fetch", "WebSocket", code + ";return __fezExt")(denied, denied).default({
+  const api = {
     React, storage: { get: async (key: keyof typeof state) => state[key] }, processes: { run }, toast,
     personas: { list: async () => ["scout", "other"], invite, read: async () => markdown, update },
     registerNavView: (_id: string, _label: object, render: () => unknown) => { nav = render; },
     registerThreadView: (_id: string, _match: unknown, render: typeof thread) => { thread = render; },
-  });
+  };
+  new Function("fetch", "WebSocket", code + ";return __fezExt")(denied, denied).default(api);
+  const { SubmissionPanel } = new Function("fetch", "WebSocket", panelCode + ";return __fezExt")(denied, denied).createSubmissionGui(api, { card: {}, dim: {} });
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   let disposed = false;
   const dispose = () => { if (!disposed) { root.unmount(); host.remove(); disposed = true; } };
   disposers.push(dispose);
-  await act(async () => { root.render(options.thread ? thread({ channelId: "c", rootId: "r", rootContent: "⛏ mining · netuid 777 · persona scout" }) : nav()); });
+  const renderPanel = async (netuid: number) => { await act(async () => { root.render(React.createElement(SubmissionPanel, { netuid, persona: "scout" })); }); };
+  if (options.direct) await renderPanel(777);
+  else await act(async () => { root.render(options.thread ? thread({ channelId: "c", rootId: "r", rootContent: "⛏ mining · netuid 777 · persona scout" }) : nav()); });
   const button = (label: string) => {
     const found = Array.from(host.querySelectorAll("button")).find(b => b.textContent?.trim() === label);
     expect(found, "button " + label + "; rendered: " + host.textContent).toBeDefined();
@@ -91,16 +115,160 @@ async function mount(options: { coding?: boolean; fleet?: MinerEntry[]; liveFlee
       input.dispatchEvent(new Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
     });
   };
-  return { host, calls, toast, invite, update, button, click, change, dispose, receipt,
+  return { host, calls, toast, invite, update, button, click, change, dispose, receipt, renderPanel,
+    externalConfig: (values: typeof config) => Object.assign(config, values),
+    configFail: (message: string) => { configFailure = message; }, deferConfig: (fn: typeof deferConfig) => { deferConfig = fn; },
     fail: (message: string) => { failure = message; }, status: (value: SubmissionStatus) => { snapshot = value; },
     deferTest: (fn: typeof deferTest) => { deferTest = fn; }, deferStatus: (fn: typeof deferStatus) => { deferStatus = fn; } };
 }
 
 function noProcessCommands(calls: string[][]) {
-  expect(calls.filter(args => ["start", "stop", "machines", "balance", "logs", "config", "metagraph"].includes(args[0]))).toEqual([]);
+  expect(calls.filter(args => ["start", "stop", "machines", "balance", "logs", "metagraph"].includes(args[0]) || (args[0] === "config" && args[1] !== "get"))).toEqual([]);
 }
 
+const setupSchema: ConfigField[] = [
+  { key: "token", label: "API token", type: "secret", required: true, pattern: "sk-.+" },
+  { key: "name", label: "Miner name", type: "string", required: true },
+  { key: "count", label: "Attempts", type: "number", default: 2 },
+  { key: "model", label: "Model", type: "select", options: ["small", "large"], default: "small" },
+  { key: "enabled", label: "Enabled", type: "boolean", default: false },
+];
+
+describe("submission setup", () => {
+  it("saves development settings before required enrollment fields exist", async () => {
+    const p = await mount({ direct: true, schema: setupSchema, config: { token: "unset" } });
+    await p.change("Attempts", "3");
+    await p.click("Save setup");
+    expect(p.host.textContent).toContain("Setup saved");
+    expect(p.host.textContent).toContain("Required for submission: API token, Miner name");
+    expect(p.calls.filter(a => a[0] === "config" && a[1] === "set")).toEqual([
+      ["config", "set", "--netuid", "777", "--persona", "scout", "--key", "count", "--value", "3"],
+    ]);
+  });
+  it("refreshes settings changed through chat without clobbering unsaved drafts", async () => {
+    const p = await mount({ direct: true, schema: setupSchema, config: { token: "set", name: "existing" } });
+    p.externalConfig({ name: "changed-in-chat" });
+    await p.click("Refresh setup");
+    expect((p.host.querySelector('[aria-label="Miner name"]') as HTMLInputElement).value).toBe("changed-in-chat");
+    await p.change("Miner name", "unsaved-draft");
+    expect(p.button("Refresh setup").disabled).toBe(true);
+    expect((p.host.querySelector('[aria-label="Miner name"]') as HTMLInputElement).value).toBe("unsaved-draft");
+    expect(p.calls.some(a => a[0] === "config" && a[1] === "set")).toBe(false);
+    await p.change("Miner name", "changed-in-chat");
+    await p.click("Save setup");
+    expect(p.button("Refresh setup").disabled).toBe(false);
+  });
+  it("grants tools before status succeeds and saves only changed settings privately without paid actions", async () => {
+    const p = await mount({ thread: true, schema: setupSchema, config: { token: "unset", name: "existing" }, failure: "Configure first" });
+    expect(p.update).toHaveBeenCalled();
+    expect(p.calls).toContainEqual(["config", "get", "--netuid", "777", "--persona", "scout", "--json"]);
+    const secret = () => p.host.querySelector('[aria-label="API token"]') as HTMLInputElement;
+    expect(secret().type).toBe("password");
+    expect(secret().value).toBe("");
+    await p.click("Save setup");
+    expect(p.host.textContent).toContain("Required for submission: API token");
+    expect(p.calls.some(a => a[0] === "config" && a[1] === "set")).toBe(false);
+    await p.change("API token", "invalid-token");
+    await p.click("Save setup");
+    expect(p.host.textContent).toContain("API token is missing or invalid");
+    expect(p.calls.some(a => a[0] === "config" && a[1] === "set")).toBe(false);
+    await p.change("API token", "sk-private-value");
+    await p.change("Miner name", "updated");
+    await p.click("Save setup");
+    expect(p.calls.filter(a => a[0] === "config" && a[1] === "set")).toEqual([
+      ["config", "set", "--netuid", "777", "--persona", "scout", "--key", "token", "--value", "sk-private-value", "--secret"],
+      ["config", "set", "--netuid", "777", "--persona", "scout", "--key", "name", "--value", "updated"],
+    ]);
+    expect(secret().value).toBe("");
+    expect(p.host.textContent).not.toContain("sk-private-value");
+    expect(JSON.stringify([p.toast.mock.calls, p.update.mock.calls, p.invite.mock.calls])).not.toContain("sk-private-value");
+    expect(p.calls.some(a => ["start", "stop", "cost"].includes(a[0]) || (a[0] === "submission" && a[1] !== "status"))).toBe(false);
+  });
+
+  it("keeps stored secrets, invalidates receipts on updates, and suppresses raw save errors", async () => {
+    const p = await mount({ thread: true, schema: setupSchema, config: { token: "set", name: "existing" } });
+    await p.change("Source file", "/tmp/candidate.py");
+    await p.click("Test");
+    await p.click("Save setup");
+    expect(p.button("Submit tested version").disabled).toBe(false);
+    await p.change("Miner name", "updated");
+    await p.click("Save setup");
+    expect(p.button("Submit tested version").disabled).toBe(true);
+    expect(p.calls.filter(a => a[0] === "config" && a[1] === "set")).toHaveLength(1);
+    await p.change("API token", "sk-secret-error");
+    p.configFail("failed --value sk-secret-error");
+    await p.click("Save setup");
+    expect(p.host.textContent).toContain("Could not save setup");
+    expect(p.host.textContent).not.toContain("sk-secret-error");
+    expect(JSON.stringify(p.toast.mock.calls)).not.toContain("sk-secret-error");
+    p.deferConfig(async () => { throw Error("transport failed with sk-secret-error"); });
+    await p.click("Save setup");
+    expect(p.host.textContent).not.toContain("sk-secret-error");
+    expect(JSON.stringify(p.toast.mock.calls)).not.toContain("sk-secret-error");
+  });
+
+  it("hides raw config-read errors and never populates a secret from the returned settings", async () => {
+    const failed = await mount({ direct: true, schema: setupSchema, configFailure: "read failed sk-private-read" });
+    expect(failed.host.textContent).toContain("Could not load miner setup");
+    expect(failed.host.textContent).not.toContain("sk-private-read");
+    expect(JSON.stringify(failed.toast.mock.calls)).not.toContain("sk-private-read");
+    expect(failed.host.querySelector("fieldset")?.disabled).toBe(true);
+    const p = await mount({ direct: true, schema: setupSchema, config: { token: "sk-unexpected-plaintext", name: "existing" } });
+    expect((p.host.querySelector('[aria-label="API token"]') as HTMLInputElement).value).toBe("");
+    expect(p.host.textContent).not.toContain("sk-unexpected-plaintext");
+  });
+
+  it("discards persona drafts and stops an old save before its next field", async () => {
+    const p = await mount({ fleet: [], schema: setupSchema, config: { token: "set", name: "existing" } });
+    await p.click("Launch");
+    await p.change("API token", "sk-old-persona");
+    await p.change("Miner name", "old-persona-name");
+    let finish!: () => void;
+    p.deferConfig(() => new Promise(resolve => { finish = resolve; }));
+    await p.click("Save setup");
+    p.deferConfig(undefined);
+    await p.change("Submission persona", "other");
+    await act(async () => finish());
+    expect((p.host.querySelector('[aria-label="API token"]') as HTMLInputElement).value).toBe("");
+    expect((p.host.querySelector('[aria-label="Miner name"]') as HTMLInputElement).value).toBe("existing");
+    expect(p.calls.filter(a => a[0] === "config" && a[1] === "set")).toHaveLength(1);
+    expect(p.host.textContent).not.toContain("Setup saved");
+  });
+
+  it("drops old config reads and secret drafts when the subnet changes", async () => {
+    const p = await mount({ direct: true, schema: setupSchema, config: { token: "set", name: "existing" } });
+    await p.change("API token", "sk-old-subnet");
+    let finish!: (value: Record<string, string>) => void;
+    p.deferConfig(() => new Promise(resolve => { finish = resolve; }));
+    await p.renderPanel(778);
+    p.deferConfig(undefined);
+    await p.renderPanel(779);
+    await p.change("Miner name", "new-subnet-draft");
+    await act(async () => finish({ token: "unset", name: "OLD SETTINGS" }));
+    expect((p.host.querySelector('[aria-label="API token"]') as HTMLInputElement).value).toBe("");
+    expect((p.host.querySelector('[aria-label="Miner name"]') as HTMLInputElement).value).toBe("new-subnet-draft");
+    expect(p.host.textContent).toContain("Secret configured");
+    await p.click("Save setup");
+    expect(p.calls.filter(a => a[0] === "config" && a[1] === "set")).toEqual([
+      ["config", "set", "--netuid", "779", "--persona", "scout", "--key", "name", "--value", "new-subnet-draft"],
+    ]);
+  });
+});
+
 describe("generic submission mining GUI", () => {
+  it("uses the linked development source and clears its previous test and confirmation", async () => {
+    const p = await mount({ thread: true });
+    await p.change("Source file", "/tmp/old.py");
+    await p.click("Test");
+    await p.click("Submit tested version");
+    await p.change("Repository folder", "/tmp/miner-repo");
+    await p.change("Candidate source", "candidate.py");
+    await p.click("Link source");
+    expect((p.host.querySelector('[aria-label="Source file"]') as HTMLInputElement).value).toBe("/tmp/miner-repo/candidate.py");
+    expect(p.button("Submit tested version").disabled).toBe(true);
+    expect(p.host.querySelector('[aria-label="Confirm mining action"]')).toBeNull();
+    expect(p.calls.some(a => a[0] === "submission" && a[1] === "submit")).toBe(false);
+  });
   it("accepts coding checks without predictions and shows billing consequences before confirmation", async () => {
     const p = await mount({ thread: true, coding: true });
     await p.change("Source file", "/tmp/agent.py");

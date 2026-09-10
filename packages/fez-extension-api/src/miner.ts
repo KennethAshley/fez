@@ -125,6 +125,17 @@ export interface SubnetMiner {
     publicEndpoint?: boolean;
   };
   config?: ConfigField[];
+  /** Local development is separate from enrollment, deployment and paid upload. */
+  development?: {
+    instructions: string;
+    evaluate?: (ctx: SubmissionContext, sourcePath: string) => Promise<{
+      evaluator: string;
+      dataset: string;
+      metrics: Record<string, number>;
+      detail: string;
+      costUsd?: number;
+    }>;
+  };
   /** Uploaded jobs run by validators; never provision or supervise a local runner. */
   submission?: MinerSubmission;
   /** One-time machine setup (clone, deps). MUST be idempotent — the runner calls it every start. */

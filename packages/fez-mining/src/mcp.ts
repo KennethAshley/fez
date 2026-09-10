@@ -2,6 +2,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { runMine, minersForPersona, mineArgs, classifyConfigKey } from "./mine-cli.js";
 import type { ConfigField } from "@fezchat/extension-api";
 
@@ -20,6 +24,29 @@ if (!persona) {
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 const server = new McpServer({ name: "fez-mining", version: "0.1.0" });
+
+server.registerTool('mining_setup',{
+  description:'Read THIS persona’s miner setup schema, non-secret values and secret presence. Use before helping configure or create a miner. Use mining_config for ordinary settings; direct the user to Mining setup for private credentials, never ask for keys in chat.',
+  inputSchema:{netuid:z.number().int().nonnegative()},
+},async({netuid})=>{
+  const described=runMine(mineArgs.describe(netuid));
+  if(described.code!==0)return text('Could not read miner setup; check that its extension is installed.');
+  const descriptor=JSON.parse(described.stdout) as {config?:ConfigField[]};
+  const configured=runMine(['config','get','--netuid',String(netuid),'--persona',persona,'--json']);
+  const values=configured.code===0?JSON.parse(configured.stdout):{};
+  return text(JSON.stringify({fields:(descriptor.config??[]).map(f=>({...f,value:f.type==='secret'?(values[f.key]==='set'?'set':'unset'):values[f.key]}))}));
+});
+
+server.registerTool('mining_workspace',{
+  description:'Develop THIS persona’s custom miner. inspect reads linked repository/source, subnet instructions and experiment history. Use your coding/filesystem tools to create and commit the miner source according to those instructions. configure links an existing Git checkout and relative source file without executing it. evaluate starts a background evaluation and may incur inference costs: obtain user approval before calling it, then use inspect to follow its job status. Never retry while running. Compare runs only when evaluator/dataset/configuration match; a local score is not a guarantee of mining rewards. Never automatically submit, deploy, register or retry a failed evaluation.',
+  inputSchema:{netuid:z.number().int().nonnegative(),action:z.enum(['inspect','configure','evaluate']),repository:z.string().optional(),source:z.string().optional()},
+},async({netuid,action,repository,source})=>{
+  const args=['development',action,'--netuid',String(netuid),'--persona',persona,'--json',...(repository?['--repository',repository]:[]),...(source?['--source',source]:[])];
+  try {
+    const {stdout}=await promisify(execFile)(process.env.FEZ_MINE_BIN||join(homedir(),'.fez','bin','fez-mine'),args,{encoding:'utf8',maxBuffer:4*1024*1024});
+    return text(stdout);
+  }catch{return text('Mining workspace command failed. Check the selected repository, source and evaluator setup in Mining; inspect experiment history before retrying a paid evaluation.');}
+});
 
 server.registerTool(
   "mining_status",

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { developmentCommand, startDevelopmentEvaluation, runDevelopmentEvaluation } from './development.js';
 import { ensureMinerThread } from "./thread-store.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -509,7 +510,7 @@ function usage(): never {
     "fez-mine subnets [--refresh] | cost --netuid N | metagraph --netuid N --persona P | start --netuid N --persona P [--machine lium | --machine ssh --host user@host[:port] [--ssh-key path] [--serve-port N] | --machine do [--serve-port N]] | stop --netuid N --persona P | status [--json] | machines [--json] | balance [--json] | do-token-status [--json] | " +
       "config get --netuid N --persona P [--json] | config set --netuid N --persona P --key K --value V [--secret] | config unset --netuid N --persona P --key K | " +
       "thread ensure --netuid N --persona P --channel <channelId> | thread set-root --netuid N --persona P --root <eventId> | describe --netuid N --json | " +
-      "logs --netuid N --persona P [--lines 12] | submission status|register|test|submit --netuid N --persona P [--file path.py] [--sha256 tested-hash] [--json]"
+      "logs --netuid N --persona P [--lines 12] | submission status|register|test|submit --netuid N --persona P [--file path.py] [--sha256 tested-hash] [--json] | development inspect|configure|evaluate --netuid N --persona P [--repository /path/repo --source agent.py] [--json]"
   );
   process.exit(2);
 }
@@ -551,11 +552,15 @@ async function main(): Promise<void> {
   };
   const fileValue=optionValue("--file");
   const shaValue=optionValue("--sha256");
+  const repositoryValue=optionValue("--repository");
+  const sourceValue=optionValue("--source");
   const [cmd, sub] = argv.filter(
     (a, i) =>
       a !== "--json" &&
       a !== "--refresh" &&
       a !== "--secret" &&
+      a !== "--repository" && !(argv.indexOf("--repository") >= 0 && i === argv.indexOf("--repository")+1) &&
+      a !== "--source" && !(argv.indexOf("--source") >= 0 && i === argv.indexOf("--source")+1) &&
       a !== "--file" && !(argv.indexOf("--file") >= 0 && i === argv.indexOf("--file")+1) &&
       a !== "--sha256" && !(argv.indexOf("--sha256") >= 0 && i === argv.indexOf("--sha256")+1) &&
       a !== "--netuid" &&
@@ -581,6 +586,15 @@ async function main(): Promise<void> {
   );
 
   switch (cmd) {
+    case "development": {
+      if(netuidValue===undefined||!personaValue||!['inspect','configure','evaluate','evaluate-worker'].includes(sub??''))usage();
+      const options={repository:repositoryValue,source:sourceValue};
+      if(sub==='evaluate-worker'){await runDevelopmentEvaluation(netuidValue,personaValue,options);break;}
+      const result=sub==='evaluate'?await startDevelopmentEvaluation(netuidValue,personaValue,options,path.resolve(process.argv[1]))
+        :await developmentCommand(sub as 'inspect'|'configure',netuidValue,personaValue,options);
+      console.log(JSON.stringify(result));
+      break;
+    }
     case "submission": {
       if (netuidValue === undefined || !personaValue || !["status","register","test","submit"].includes(sub ?? "")) usage();
       const result = await submissionCommand(sub as SubmissionAction,netuidValue,personaValue,{file:fileValue,sha256:shaValue},fezHome(),WALLET_BIN);

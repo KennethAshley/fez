@@ -1,8 +1,10 @@
 import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
-import type { SubmissionStatus, SubmissionTest } from "@fezchat/extension-api";
+import type { ConfigField, SubmissionStatus, SubmissionTest } from "@fezchat/extension-api";
 import type { MinerEntry } from "./state.js";
 import { ensureMiningSkill } from "./persona-skill.js";
 import { submissionVersions } from "./gui-rows.js";
+import { validateConfig } from "./config.js";
+import { createDevelopmentGui } from "./development-gui.js";
 
 type PanelProps = {
   netuid: number;
@@ -19,6 +21,8 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
   const h = api.React.createElement;
   const { useState, useEffect, useRef } = api.React;
   const run = api.processes?.run;
+  const { DevelopmentPanel } = createDevelopmentGui(api, styles);
+  type Values = Record<string, string | number | boolean>;
 
   function SubmissionSummary({ status, error }: { status?: SubmissionStatus; error?: string }): JSX.Element {
     const { latest, active } = submissionVersions(status);
@@ -48,6 +52,11 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
     const [network, setNetwork] = useState<string | undefined>(undefined);
     const [notice, setNotice] = useState("");
     const [descriptorReady, setDescriptorReady] = useState(false);
+    const [schema, setSchema] = useState<ConfigField[]>([]);
+    const [settings, setSettings] = useState<Values>({});
+    const [drafts, setDrafts] = useState<Values>({});
+    const [setupReady, setSetupReady] = useState(false);
+    const [setupMessage, setSetupMessage] = useState("");
     const [file, setFile] = useState("");
     const [receipt, setReceipt] = useState<SubmissionTest | undefined>(undefined);
     const [busy, setBusy] = useState<string | undefined>(undefined);
@@ -65,8 +74,10 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
       if (granted.current) return;
       if (!api.personas) throw Error("Grant the personas permission to enable this persona's mining tools.");
       const invited = await api.personas.invite?.(persona, "bot");
+      if (!alive.current) return;
       if (invited && invited !== "invited") throw Error(`Could not invite ${persona}: ${invited}`);
       const md = await api.personas.read(persona);
+      if (!alive.current) return;
       const next = ensureMiningSkill(md);
       if (next !== md) await api.personas.update(persona, next);
       granted.current = true;
@@ -107,9 +118,6 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
           setStatus(snapshot);
           setStatusError(undefined);
           if (action === "submit") setReceipt(undefined);
-          try { await grant(); } catch (err) {
-            if (alive.current) report(`Status saved; mining tools need attention: ${err instanceof Error ? err.message : String(err)}`);
-          }
           if (alive.current) await changed.current?.();
         }
       } catch (err) {
@@ -123,15 +131,33 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
       }
     }
 
+    async function loadSetup(fields: ConfigField[]): Promise<void> {
+      const current = await json(["config", "get", "--netuid", String(netuid), "--persona", persona, "--json"]) as Values;
+      if (!alive.current) return;
+      const masked: Values = {};
+      for (const f of fields) {
+        // Only the CLI's presence marker is accepted for secrets, never a value.
+        masked[f.key] = f.type === "secret" ? (current[f.key] === "set" ? "set" : "unset") : (current[f.key] ?? f.default ?? "");
+      }
+      setSettings(masked);
+      setSetupReady(true);
+    }
+
     useEffect(() => {
       alive.current = true;
-      void json(["describe", "--netuid", String(netuid), "--json"]).then(value => {
-        const descriptor = value as { mode?: string; network?: string; submissionNotice?: string };
+      void grant().catch(() => { if (alive.current) report("Could not enable mining tools for this persona. Reopen the panel to retry."); });
+      void json(["describe", "--netuid", String(netuid), "--json"]).then(async value => {
+        const descriptor = value as { mode?: string; network?: string; submissionNotice?: string; config?: ConfigField[] };
         if (descriptor.mode !== "submission") throw Error("This subnet has no submission adapter");
+        if (!alive.current) return;
         if (alive.current) setNetwork(descriptor.network);
         if (alive.current && typeof descriptor.submissionNotice === "string") setNotice(descriptor.submissionNotice);
         if (alive.current) setDescriptorReady(true);
-      }).catch(err => { if (alive.current) report(String(err)); });
+        const fields = descriptor.config ?? [];
+        setSchema(fields);
+        if (!fields.length) return;
+        await loadSetup(fields);
+      }).catch(() => { if (alive.current) report("Could not load miner setup. Reopen the panel to retry."); });
       void execute("status");
       // Single-flight, status only. Candidate testing and upload are explicit.
       const timer = setInterval(() => { if (!confirming.current) void execute("status"); }, 30_000);
@@ -139,6 +165,57 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
     }, [netuid, persona]);
 
     const cancel = () => { confirming.current = false; setConfirm(undefined); };
+    const changeSource = (path: string) => { fileRevision.current++; setFile(path); setReceipt(undefined); cancel(); };
+    const hasDrafts = Object.keys(drafts).length > 0;
+    const outstanding = schema.filter(f => f.required && (f.type === "secret" ? settings[f.key] !== "set" : settings[f.key] === undefined || settings[f.key] === "")).map(f => f.label);
+    async function refreshSetup(): Promise<void> {
+      if (hasDrafts || inFlight.current) return;
+      inFlight.current = true;
+      setBusy("refreshing setup");
+      setSetupMessage("");
+      // Credentials can have changed externally even when presence is still "set".
+      fileRevision.current++;
+      setReceipt(undefined);
+      cancel();
+      try { await loadSetup(schema); }
+      catch { if (alive.current) setSetupMessage("Could not refresh setup. Try again."); }
+      finally { inFlight.current = false; if (alive.current) setBusy(undefined); }
+    }
+    async function saveSetup(): Promise<void> {
+      if (!run || !setupReady || inFlight.current) return;
+      const updates = schema.filter(f => drafts[f.key] !== undefined && drafts[f.key] !== "" && (f.type === "secret" || String(drafts[f.key]) !== String(settings[f.key])));
+      // Development setup can precede enrollment; submission validates the full config.
+      const invalid = validateConfig(updates, drafts);
+      if (invalid) { setSetupMessage(`${invalid} is missing or invalid`); return; }
+      if (!updates.length) { setDrafts({}); setSetupMessage("No setup changes"); return; }
+      inFlight.current = true;
+      setBusy("saving setup");
+      setSetupMessage("");
+      fileRevision.current++;
+      setReceipt(undefined);
+      cancel();
+      const saved = { ...settings };
+      try {
+        for (const f of updates) {
+          if (!alive.current) return;
+          const args = ["config", "set", "--netuid", String(netuid), "--persona", persona, "--key", f.key, "--value", String(drafts[f.key])];
+          if (f.type === "secret") args.push("--secret");
+          const out = await run("fez-mine", args);
+          if (out.code !== 0) throw Error("Config write failed");
+          saved[f.key] = f.type === "secret" ? "set" : drafts[f.key];
+        }
+        if (!alive.current) return;
+        setSettings(saved);
+        setDrafts({});
+        setSetupMessage("Setup saved");
+      } catch {
+        // Process failures may echo argv (including credentials). Never display them.
+        if (alive.current) setSetupMessage("Could not save setup. Some fields may have saved; retry to finish.");
+      } finally {
+        inFlight.current = false;
+        if (alive.current) setBusy(undefined);
+      }
+    }
     return <div style={{ display: "grid", gap: 8, marginTop: 12, overflowWrap: "anywhere" }}>
       <div className="skill-desc" style={styles.dim}>{persona} · netuid {netuid}{network ? ` · ${network}` : ""}{status?.uid !== undefined ? ` · uid ${status.uid}` : ""}</div>
       <SubmissionSummary status={status} error={statusError} />
@@ -154,9 +231,32 @@ export function createSubmissionGui(api: GuiExtensionApi, styles: { card: Record
         <button className="agent-action" disabled={!run || !!busy || !!confirm || network !== "test"} onClick={() => void execute("cost")}>Register</button>
       </div>
       <p style={styles.dim}>Refresh adopts an existing submission. Registration is optional and requires confirmation.</p>
+      {schema.length ? <fieldset disabled={!setupReady || !!busy} style={{ border: 0, padding: 0 }}>
+        <legend>Miner setup</legend>
+        <p style={styles.dim}>Secrets stay in local secure storage. Leave a secret blank to keep it. Saving does not register, submit, or start mining.</p>
+        {setupReady && outstanding.length ? <p style={styles.dim}>Required for submission: {outstanding.join(", ")}. You can save development settings now.</p> : null}
+        {schema.map(f => {
+          const value = drafts[f.key] ?? (f.type === "secret" ? "" : settings[f.key] ?? "");
+          const change = (v: string | boolean) => { setDrafts(prev => ({ ...prev, [f.key]: v })); setSetupMessage(""); };
+          return <label key={f.key} style={{ display: "grid", gap: 4, marginTop: 8 }}>
+            {f.label}{f.required ? " *" : ""}
+            {f.type === "select" ? <select className="manage-input" aria-label={f.label} value={String(value)} onChange={(e: { target: { value: string } }) => change(e.target.value)}>
+              <option value="">Choose…</option>{f.options?.map(o => <option key={o} value={o}>{o}</option>)}
+            </select> : f.type === "boolean" ? <input aria-label={f.label} type="checkbox" checked={value === true || value === "true"} onChange={(e: { target: { checked: boolean } }) => change(e.target.checked)} /> :
+              <input className="manage-input" aria-label={f.label} type={f.type === "secret" ? "password" : f.type === "number" ? "number" : "text"} autoComplete={f.type === "secret" ? "new-password" : "off"} value={String(value)} onChange={(e: { target: { value: string } }) => change(e.target.value)} />}
+            {f.type === "secret" ? <span style={styles.dim}>{settings[f.key] === "set" ? "Secret configured" : "Secret not configured"}</span> : null}
+            {f.help ? <span style={styles.dim}>{f.help}</span> : null}
+          </label>;
+        })}
+        <button className="agent-action" onClick={() => void saveSetup()}>Save setup</button>
+        <button className="skill-link" disabled={hasDrafts} onClick={() => void refreshSetup()}>Refresh setup</button>
+        {hasDrafts ? <p style={styles.dim}>Save your drafts before refreshing setup.</p> : null}
+        {setupMessage ? <p role="status">{setupMessage}</p> : null}
+      </fieldset> : null}
+      <DevelopmentPanel netuid={netuid} persona={persona} onSource={changeSource} />
       <label style={{ display: "grid", gap: 6 }}>Source file (absolute .py path)
         <input className="manage-input" style={{ width: "100%", boxSizing: "border-box" }} aria-label="Source file" value={file} placeholder="/absolute/path/miner.py"
-          onChange={(e: { target: { value: string } }) => { fileRevision.current++; setFile(e.target.value); setReceipt(undefined); cancel(); }} />
+          onChange={(e: { target: { value: string } }) => changeSource(e.target.value)} />
       </label>
       <p style={styles.dim}>Checks require local Docker and run in an isolated, networkless container without wallet keys. The result describes what was checked.</p>
       {notice ? <p className="skill-desc">{notice}</p> : null}

@@ -7,6 +7,7 @@ import { MINING_SOURCE, MINING_CHANNEL_NAME, minerRootLine, parseMinerRoot } fro
 import { ensureMiningSkill } from "./persona-skill.js";
 import { SUBNET_LOGOS } from "./subnet-logos.js";
 import { createSubmissionGui } from "./submission-gui.js";
+import { createDevelopmentGui } from "./development-gui.js";
 import { miningChannel, MINING_WORKSPACE_META, MINING_WORKSPACE_ID, type MiningChannel } from "./workspace.js";
 
 /**
@@ -61,6 +62,7 @@ export default function activate(api: GuiExtensionApi): void {
   };
   const dim = { opacity: 0.75, fontSize: 12 };
   const { SubmissionPanel, SubmissionSummary } = createSubmissionGui(api, { card, dim });
+  const { DevelopmentPanel } = createDevelopmentGui(api, { card, dim });
   const sectionLabel = {
     display: "flex",
     alignItems: "center",
@@ -1538,6 +1540,7 @@ export default function activate(api: GuiExtensionApi): void {
           {logs || "no logs yet"}
         </pre>
 
+        <DevelopmentPanel key={`${netuid}:${persona}`} netuid={netuid} persona={persona} />
         {Label("config")}
         {editing ? (
           <div>

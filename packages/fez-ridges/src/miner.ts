@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { MinerSubmission, SubmissionContext, SubmissionStatus, SubnetMiner } from "@fezchat/extension-api";
 import { checkSource, IMAGE, source, type Run } from "./miner-check.js";
+import { evaluateRidges, ridgesDevelopmentInstructions } from "./evaluation.js";
 
 const API = "https://agent-upload.ridges.ai";
 const hash = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
@@ -176,10 +177,15 @@ const ridges: SubnetMiner = {
     { key: "hotkey", label: "Existing registered SN62 hotkey", type: "string", required: true, pattern: "[1-9A-HJ-NP-Za-km-z]{48}" },
     { key: "competition", label: "Competition ID (Ridges dashboard)", type: "number", required: true },
     { key: "name", label: "Agent display name", type: "string" },
+    { key: "evaluation_checkout", label: "Local official Ridges evaluator checkout", type: "string" },
+    { key: "evaluation_commit", label: "User-selected evaluator commit (full SHA)", type: "string", pattern: "[0-9a-f]{40}" },
+    { key: "evaluation_python", label: "Installed evaluator Python (absolute executable path)", type: "string" },
+    { key: "evaluation_task", label: "Local dataset: one materialized Harbor task directory", type: "string" },
     { key: "ticket", label: "Single-use funded upload ticket", type: "secret" },
     { key: "openrouter_api_key", label: "OpenRouter runtime key (shared with Ridges on Submit)", type: "secret" },
     { key: "openrouter_management_key", label: "OpenRouter management key (shared with Ridges on Submit)", type: "secret" },
   ],
   submission: createRidgesSubmission(),
+  development: { instructions: ridgesDevelopmentInstructions, evaluate: evaluateRidges },
 };
 export default [ridges];
