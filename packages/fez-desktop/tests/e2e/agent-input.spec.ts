@@ -54,6 +54,7 @@ test("answers several agent questions privately and restores a waiting form afte
     const form = inputForm({ mode: "form", message: "Choose the layout and features", requestedSchema: { properties: {
       layout: { type: "string", title: "Layout", oneOf: [{ const: "grid", title: "Grid", description: "Cards in columns" }, { const: "list", title: "List" }] },
       features: { type: "array", title: "Features", items: { anyOf: [{ const: "search", title: "Search" }, { const: "filters", title: "Filters" }] } },
+      count: { type: "integer", title: "Count" },
       custom: { type: "string", title: "Other" },
     }, required: ["layout"] } });
     const pending = requestInput({
@@ -62,19 +63,33 @@ test("answers several agent questions privately and restores a waiting form afte
       subscribe: (filters, receive) => connection.subscribe(filters, receive),
       encrypt: (peer, text) => agent.encryptTo(peer, text), decrypt: (peer, text) => agent.decryptFrom(peer, text),
     }, owner, form, { signal: abort.signal, timeoutMs: 45_000 });
-    await expect(page.getByText("@quill needs your input")).toBeVisible();
+    await expect(page.getByRole("region", { name: "Questions from quill" })).toBeVisible();
     await expect(page.getByLabel("1 pending question request")).toHaveText("1");
     await expect.poll(() => notifications.length).toBe(1);
     expect(notifications[0]).toEqual({ title: "quill needs your input", body: "Open Fez to answer privately." });
-    await page.reload();
-    await expect(page.getByText("@quill needs your input")).toBeVisible();
     await page.getByRole("radio", { name: /Grid/ }).check();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
     await page.getByRole("checkbox", { name: "Search" }).check();
     await page.getByRole("checkbox", { name: "Filters" }).check();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await page.getByRole("spinbutton", { name: "Count", exact: true }).pressSequentially("1e");
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("Count: enter a complete number");
+    await expect(page.getByText("Question 3 of 4", { exact: true })).toBeVisible();
+    await page.getByRole("spinbutton", { name: "Count", exact: true }).fill("0");
+    await page.getByRole("button", { name: "Next", exact: true }).click();
     await page.getByRole("textbox", { name: "Other", exact: true }).fill("Compact spacing");
+    await page.reload();
+    await expect(page.getByRole("region", { name: "Questions from quill" })).toBeVisible();
+    await expect(page.getByText("Question 4 of 4", { exact: true })).toBeVisible();
+    await expect(page.getByRole("radio", { name: /Grid/, includeHidden: true })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Search", includeHidden: true })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Filters", includeHidden: true })).toBeChecked();
+    await expect(page.getByRole("textbox", { name: "Other", exact: true })).toHaveValue("Compact spacing");
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/fez-agent-input-desktop.png" });
-    await page.getByRole("button", { name: "Submit answers" }).click();
-    await expect(pending).resolves.toEqual({ action: "accept", content: { layout: "grid", features: ["search", "filters"], custom: "Compact spacing" } });
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(pending).resolves.toEqual({ action: "accept", content: { layout: "grid", features: ["search", "filters"], count: 0, custom: "Compact spacing" } });
     await expect(page.locator(".input-card")).toHaveCount(0);
     await expect(page.getByLabel("1 pending question request")).toHaveCount(0);
     await page.getByRole("button", { name: "History", exact: true }).click();

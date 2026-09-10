@@ -67,6 +67,7 @@ for (const kind of ["channel", "dm"] as const) test(`${kind}: questions open in 
       encrypt: (peer, text) => agent.encryptTo(peer, text), decrypt: (peer, text) => agent.decryptFrom(peer, text),
     }, owner, inputForm({ mode: "form", message: "Choose the private layout", requestedSchema: { properties: {
       layout: { type: "string", title: "Layout", enum: ["Grid", "List"] },
+      custom: { type: "string", title: "Details" },
     }, required: ["layout"] } }), { origin, signal: abort.signal, timeoutMs: 80_000 });
     await expect(page.getByLabel("1 pending question request")).toBeVisible();
     await expect(page.locator(".agent-input")).toBeHidden();
@@ -78,10 +79,13 @@ for (const kind of ["channel", "dm"] as const) test(`${kind}: questions open in 
     });
     expect(banner).toEqual({ title: "quill needs your input", body: "Open Fez to answer privately." });
     const inline = page.locator("main .timeline .conversation-question");
-    await expect(inline.getByText("@quill needs your input")).toBeVisible();
+    await expect(inline.getByRole("region", { name: "Questions from quill" })).toBeVisible();
     await expect(inline.getByText("Waiting for your answer")).toBeVisible();
     await expect(page.locator("main .timeline").getByText("Waiting for your answer", { exact: true })).toHaveCount(1);
     await expect(page.getByText(kind === "channel" ? "Original design discussion" : "Private design discussion", { exact: true })).toBeVisible();
+    await inline.getByRole("radio", { name: "Grid", exact: true }).check();
+    await inline.getByRole("button", { name: "Next", exact: true }).click();
+    await inline.getByRole("textbox", { name: "Details", exact: true }).fill("Compact spacing");
     if (kind === "channel") {
       await page.getByRole("button", { name: "← back to channel" }).click();
       await expect(inline).toHaveCount(0);
@@ -96,10 +100,21 @@ for (const kind of ["channel", "dm"] as const) test(`${kind}: questions open in 
     await page.locator(".agent-input .input-thread-link").click();
     await expect(inline).toBeVisible();
     await expect(page.getByText(kind === "channel" ? "Original design discussion" : "Private design discussion", { exact: true })).toBeVisible();
-    await inline.getByRole("radio", { name: "Grid", exact: true }).check();
+    await expect(inline.getByRole("textbox", { name: "Details", exact: true })).toHaveValue("Compact spacing");
+    await expect(inline.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+    await inline.getByRole("button", { name: "Back", exact: true }).click();
+    const grid = inline.getByRole("radio", { name: "Grid", exact: true });
+    await expect(grid).toBeChecked();
+    await grid.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(inline.getByRole("radio", { name: "List", exact: true })).toBeChecked();
+    await page.keyboard.press("ArrowLeft");
+    await expect(grid).toBeChecked();
     await page.screenshot({ path: `/tmp/fez-question-${kind}.png` });
-    await inline.getByRole("button", { name: "Submit answers" }).click();
-    await expect(pending).resolves.toEqual({ action: "accept", content: { layout: "Grid" } });
+    await inline.screenshot({ path: `/tmp/fez-question-card-${kind}.png` });
+    await inline.getByRole("button", { name: "Next", exact: true }).click();
+    await inline.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(pending).resolves.toEqual({ action: "accept", content: { layout: "Grid", custom: "Compact spacing" } });
     await expect(inline.getByText("Received by agent")).toBeVisible();
     await expect(page.getByLabel("1 pending question request")).toHaveCount(0);
     await page.reload();
