@@ -554,7 +554,7 @@ pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String, String)> {
     out
 }
 
-/// Every extension with a headless, gui, and/or skills part, keyed by
+/// Every extension with a headless, gui, miner, and/or skills part, keyed by
 /// package name — the desktop UI's installed-extension list (lib.rs's
 /// `list_local_extensions` tauri command is a thin wrapper over this).
 /// Headless still comes from the flat `extensions/` symlink index —
@@ -582,6 +582,9 @@ pub(crate) fn local_extensions(home: &Path) -> Vec<(String, Vec<String>)> {
         for entry in entries.flatten() {
             let Ok(name) = entry.file_name().into_string() else { continue };
             let Some(manifest) = installed_manifest(&name, home) else { continue };
+            if manifest.pointer("/fez/parts/miner").and_then(|value| value.as_str()).is_some() {
+                map.entry(name.clone()).or_default().push("miner".to_string());
+            }
             if manifest.pointer("/fez/skills").is_some() {
                 map.entry(name).or_default().push("skills".to_string());
             }
@@ -729,8 +732,10 @@ mod tests {
         let descriptor = home.path().join("miners/numinous.js");
         assert_eq!(std::fs::read_to_string(&descriptor).unwrap(), "export default [{ netuid: 155 }];");
         assert!(std::fs::canonicalize(&descriptor).unwrap().starts_with(std::fs::canonicalize(home.path().join("packages/numinous")).unwrap()));
+        assert_eq!(local_extensions(home.path()), vec![("numinous".to_string(), vec!["miner".to_string()])]);
         remove_installed("numinous", home.path()).unwrap();
         assert!(std::fs::symlink_metadata(&descriptor).is_err());
+        assert!(local_extensions(home.path()).is_empty());
     }
 
     fn fixture_tar() -> Vec<u8> {

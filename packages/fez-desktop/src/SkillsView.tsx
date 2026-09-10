@@ -223,7 +223,7 @@ export default function SkillsView({
           wanted: [...new Set([...toolWanted, ...packWanted])],
         };
       })
-      // EXTENSIONS = renders in this app (has a gui part). TOOLS = every
+      // EXTENSIONS = renders in this app (GUI or Mining adapter). TOOLS = every
       // settings.json entry agents can call, plus skill packs — INCLUDING
       // tools shipped by gui-bearing extensions. The old rule hid those
       // ("the extension row carries it"), and the first user to install
@@ -234,7 +234,7 @@ export default function SkillsView({
       // belong to the TUI's environment and get no desktop row at all.
       .filter((row) => {
         if (!only) return true;
-        const inApp = row.parts.includes("gui");
+        const inApp = row.parts.includes("gui") || row.parts.includes("miner");
         return only === "extensions" ? inApp : !!row.config || (row.pack?.length ?? 0) > 0;
       });
   }, [localParts, installed, skillPacks, agentDeps, only]);
@@ -678,7 +678,7 @@ export default function SkillsView({
                       </span>
                     )}
                   </div>
-                  {(config || pack) && (
+                  {(config || pack || parts.length > 0) && (
                     <div className="skill-actions">
                       {publishing === name ? (
                         <PublishForm onPublish={(meta) => void publish(name, meta)} onCancel={() => setPublishing(undefined)} />
@@ -704,12 +704,13 @@ export default function SkillsView({
                               ↗ list on relay
                             </button>
                           )}
-                          <button className="mini" onClick={() => setGivingTo(givingTo === name ? undefined : name)}>
-                            give to…
-                          </button>
-                          {/* A tool row removes its settings entry; a pack row
-                              removes the whole package (its skills live only
-                              there). ponytail: a row with BOTH keeps tool
+                          {(config || pack) && (
+                            <button className="mini" onClick={() => setGivingTo(givingTo === name ? undefined : name)}>
+                              give to…
+                            </button>
+                          )}
+                          {/* A tool row removes its settings entry; a package
+                              row removes the whole package. ponytail: a row with BOTH keeps tool
                               semantics — no such package exists yet. */}
                           <button
                             className="mini"
