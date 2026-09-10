@@ -331,6 +331,20 @@ interface AcpDescriptor {
 }
 
 /**
+ * Claude persists SDK sessions under ~/.claude/projects by default, where
+ * Codex imports them as user tasks. Fez owns this live conversation, so its
+ * persistent and one-shot Claude sessions stay memory-only.
+ */
+export function acpSessionMeta(harnessId: string, systemPrompt?: string): Record<string, unknown> {
+  return {
+    ...(systemPrompt ? { "fez/systemPrompt": systemPrompt } : {}),
+    ...(harnessId === "claude-code"
+      ? { claudeCode: { options: { persistSession: false } } }
+      : {}),
+  };
+}
+
+/**
  * Drive ONE prompt lifecycle on a live ACP session: fire the prompt,
  * consume updates (idle + hard timeouts, abort racing) until "stop",
  * return the accumulated text. Shared by one-shot invoke() and
@@ -721,8 +735,9 @@ async function openAcpSession(
         // iterating undefined and every session open failed with
         // "request.mcpServers is not iterable". The string form defaults
         // it; the object form does not.
-        let builder = systemPrompt
-          ? ctx.buildSession({ cwd, mcpServers: [], _meta: { "fez/systemPrompt": systemPrompt } } as never)
+        const sessionMeta = acpSessionMeta(descriptor.id, systemPrompt);
+        let builder = Object.keys(sessionMeta).length
+          ? ctx.buildSession({ cwd, mcpServers: [], _meta: sessionMeta } as never)
           : ctx.buildSession(cwd);
         // oauth-marked skills get a fresh Bearer here, at spawn — tokens
         // refresh before use, and a dead connection withholds its skill.
@@ -851,7 +866,10 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
         return await app.connectWith(stream, async (ctx) => {
           const negotiated = await bridge.initialize(ctx);
           onUpdate?.({ type: "usage", metering: negotiated._meta?.fezUsage === 1 ? "ready" : "unavailable" });
-          let builder = ctx.buildSession(cwd);
+          const sessionMeta = acpSessionMeta(descriptor.id);
+          let builder = Object.keys(sessionMeta).length
+            ? ctx.buildSession({ cwd, mcpServers: [], _meta: sessionMeta } as never)
+            : ctx.buildSession(cwd);
           for (const server of await withFreshOAuth(mcpServers ?? [])) {
             builder = builder.withMcpServer(server);
           }
