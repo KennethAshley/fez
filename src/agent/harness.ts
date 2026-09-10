@@ -34,10 +34,12 @@ export interface HarnessUpdate {
   path?: string;
   /** File modification for edit-class tools, truncated at the source (observer frames stay small). */
   diff?: { path: string; oldText?: string; newText: string };
-  /** Token/cost figures when the harness surfaces them (usage type). Never estimated. */
+  /** Token/cost figures when the harness surfaces them (usage type). Engine-reported (may be price estimates, not invoices). */
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  /** Per-prompt cost reporting handshake and final-total marker. */
+  metering?: "ready" | "unavailable" | "complete";
 }
 
 /** Host-provided question UI. The signal closes the form when its tool or turn ends. */
@@ -96,6 +98,8 @@ export interface HarnessAdapter {
    * agent can be talked out of its own rules.
    */
   systemPromptMode?: SystemPromptMode;
+  /** Guarantees a usage handshake before any provider call; the engine may still refuse it. */
+  supportsCostMetering?: boolean;
   detect(): Promise<boolean>;
   /**
    * onProgress fires (throttled) with the accumulated text so far, before the call resolves.
@@ -558,18 +562,22 @@ async function drivePromptLoop(
     // adapters attach them to updates under obvious names. Forward what's
     // actually there — never estimate (Buzz's fail-closed usage rule).
     if (onUpdate) {
-      const raw = (update as Record<string, unknown>).usage ?? (update as Record<string, unknown>).tokenUsage;
+      const meta = update._meta?.fezUsage;
+      const raw = meta ?? (update as Record<string, unknown>).usage ?? (update as Record<string, unknown>).tokenUsage;
+      if (meta !== undefined && (!meta || typeof meta !== "object")) onUpdate({ type: "usage", metering: "unavailable" });
       if (raw && typeof raw === "object") {
         const u = raw as Record<string, unknown>;
         const num = (...keys: string[]) => {
-          for (const key of keys) if (typeof u[key] === "number") return u[key] as number;
+          for (const key of keys) if (typeof u[key] === "number" && Number.isFinite(u[key]) && (u[key] as number) >= 0) return u[key] as number;
           return undefined;
         };
         const inputTokens = num("inputTokens", "input_tokens", "promptTokens", "prompt_tokens");
         const outputTokens = num("outputTokens", "output_tokens", "completionTokens", "completion_tokens");
         const costUsd = num("costUsd", "cost_usd", "totalCostUsd", "total_cost_usd");
-        if (inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined) {
-          onUpdate({ type: "usage", inputTokens, outputTokens, costUsd });
+        if (meta !== undefined && (u.error === true || inputTokens === undefined || outputTokens === undefined || costUsd === undefined)) {
+          onUpdate({ type: "usage", metering: "unavailable" });
+        } else if (inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined) {
+          onUpdate({ type: "usage", inputTokens, outputTokens, costUsd, metering: u.complete === true ? "complete" : undefined });
         }
       }
     }
@@ -810,6 +818,7 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
     // "meta": we put it where the spec allows and prefix it too, but
     // no agent is obliged to treat it as outranking the conversation.
     systemPromptMode: "meta" as const,
+    supportsCostMetering: true,
     openSession: (cwd, mcpServers, timeouts, systemPrompt, onInput) =>
       openAcpSession(descriptor, cwd, mcpServers, timeouts, systemPrompt, onInput),
 
@@ -840,7 +849,8 @@ function acpHarness(descriptor: AcpDescriptor): HarnessAdapter {
         // decidePermission) — an unattended agent no longer auto-approves
         // a destructive command just because the harness asked nicely.
         return await app.connectWith(stream, async (ctx) => {
-          await bridge.initialize(ctx);
+          const negotiated = await bridge.initialize(ctx);
+          onUpdate?.({ type: "usage", metering: negotiated._meta?.fezUsage === 1 ? "ready" : "unavailable" });
           let builder = ctx.buildSession(cwd);
           for (const server of await withFreshOAuth(mcpServers ?? [])) {
             builder = builder.withMcpServer(server);

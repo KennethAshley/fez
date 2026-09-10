@@ -18,6 +18,7 @@
  * without binaries — the app then falls back to a system `pi` if present.
  * Set REQUIRE_PI_AGENT=1 (CI release builds) to hard-fail instead.
  */
+import { patchPiUsageMeter } from "./pi-usage-meter.mjs";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -29,7 +30,7 @@ const PI_VERSION = "0.84.2"; // @earendil-works/pi-coding-agent
 const PI_ACP_VERSION = "0.0.33"; // pi-acp (the ACP↔pi-rpc bridge)
 // The bundle's identity: any shipped binary changing must change this
 // string, or installed apps skip the recopy.
-const BUNDLE_VERSION = `${PI_VERSION}+svc17`; // svc17: structured question guidance plus current main's hire delivery
+const BUNDLE_VERSION = `${PI_VERSION}+svc18`; // svc18: native Pi usage and budgeted repository hires
 const PI_REPO = "https://github.com/earendil-works/pi.git";
 // Pin a tag or commit SHA for reproducibility. Defaults to the release
 // tag matching PI_VERSION (the version check below still guards a tag
@@ -95,16 +96,16 @@ if (!hasBun()) {
 
 fs.mkdirSync(WORK, { recursive: true });
 
-// Per-artifact reuse — for the PINNED EXTERNAL binaries only (pi,
-// pi-acp): upstream pi ships no lockfile, so a fresh-cache source build
+// Per-artifact reuse — for the pinned Pi binary only:
+// upstream pi ships no lockfile, so a fresh-cache source build
 // can drift and fail; a binary that already works is kept. fez's OWN
-// binaries (fez-relay, fez-agent) are cheap bun compiles
+// binaries (including our patched pi-acp) are cheap bun compiles
 // of THIS repo's source and always rebuild — a reused copy silently
 // ships yesterday's runtime (found live: a fez-agent predating the
 // managed Claude adapter refused every claude-code persona on a machine
 // where the desktop had just verified Claude READY). FORCE=1 re-runs
 // the assembly; FORCE_ALL=1 rebuilds even the pinned externals.
-const OWN = new Set(["fez-relay", "fez-agent", "fez-mcp"]);
+const OWN = new Set(["fez-relay", "fez-agent", "fez-mcp", "pi-acp"]);
 const reuse = (name) =>
   !OWN.has(name) && !process.env.FORCE_ALL && fs.existsSync(path.join(OUT, `${name}${EXE}`));
 
@@ -131,8 +132,10 @@ if (reuse("pi-acp")) {
   const acpPkg = path.join(WORK, "pi-acp-pkg");
   fs.mkdirSync(acpPkg, { recursive: true });
   fs.writeFileSync(path.join(acpPkg, "package.json"), JSON.stringify({ name: "fez-pi-acp-build", private: true }));
+  fs.rmSync(path.join(acpPkg, "node_modules", "pi-acp"), { recursive: true, force: true });
   run(`npm install pi-acp@${PI_ACP_VERSION} --no-save --no-fund --no-audit`, acpPkg);
   const acpEntry = path.join(acpPkg, "node_modules", "pi-acp", "dist", "index.js");
+  fs.writeFileSync(acpEntry, patchPiUsageMeter(fs.readFileSync(acpEntry, "utf8")));
   run(`bun build --compile ${JSON.stringify(acpEntry)} --outfile ${JSON.stringify(path.join(WORK, "pi-acp"))}`, WORK);
 }
 
