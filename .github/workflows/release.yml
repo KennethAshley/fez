@@ -14,7 +14,7 @@
 # pi-agent-v<ver> prerelease, not built from source: upstream pi ships
 # no bun lockfile, so fresh-cache source builds drift and fail
 # (found the hard way). Refresh the seed from a dev machine via
-# prepare-pi-agent.mjs + re-upload.
+# prepare-pi-agent.mjs + upload an asset named for its full VERSION.
 name: release
 on:
   push:
@@ -80,7 +80,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PI_VER=$(grep -m1 'const PI_VERSION' packages/fez-desktop/scripts/prepare-pi-agent.mjs | sed 's/.*"\(.*\)".*/\1/')
-          gh release download "pi-agent-v${PI_VER}" --pattern 'pi-agent-macos-arm64.tar.gz' --output /tmp/pi-agent.tar.gz
+          WANT_VER=$(node -p "const s=require('fs').readFileSync('packages/fez-desktop/scripts/prepare-pi-agent.mjs','utf8'); const pi=s.match(/const PI_VERSION = \"([^\"]+)\"/)[1]; const svc=s.match(/PI_VERSION\}\+(svc\d+)/)[1]; pi+'+'+svc")
+          ASSET="pi-agent-macos-arm64-${WANT_VER}.tar.gz"
+          gh release download "pi-agent-v${PI_VER}" --pattern "$ASSET" --output /tmp/pi-agent.tar.gz
           tar -xzf /tmp/pi-agent.tar.gz -C packages/fez-desktop/src-tauri
           test -x packages/fez-desktop/src-tauri/pi-agent/pi
           test -x packages/fez-desktop/src-tauri/pi-agent/fez-relay
@@ -90,8 +92,7 @@ jobs:
           # with the fix in the message. (v0.4.24's first run died on
           # exactly this: seed at +svc9, source at +svc10.)
           SEED_VER=$(cat packages/fez-desktop/src-tauri/pi-agent/VERSION)
-          WANT_VER=$(node -p "const s=require('fs').readFileSync('packages/fez-desktop/scripts/prepare-pi-agent.mjs','utf8'); const pi=s.match(/const PI_VERSION = \"([^\"]+)\"/)[1]; const svc=s.match(/PI_VERSION\}\+(svc\d+)/)[1]; pi+'+'+svc")
-          [ "$SEED_VER" = "$WANT_VER" ] || { echo "✗ seed pi-agent is $SEED_VER but source wants $WANT_VER — refresh it: run prepare-pi-agent.mjs on a dev machine, tar pi-agent/, gh release upload pi-agent-v${PI_VER} --clobber"; exit 1; }
+          [ "$SEED_VER" = "$WANT_VER" ] || { echo "✗ seed pi-agent is $SEED_VER but source wants $WANT_VER — rebuild and upload $ASSET to pi-agent-v${PI_VER}"; exit 1; }
           echo "seeded pi-agent $SEED_VER"
 
       - name: Tag must match the version being built

@@ -19,6 +19,13 @@ repository and its bundled-agent cache; it cannot publish to another repository.
 
 ## Cut a release
 
+When the bundled runtime changes, run `FORCE=1 npm run prepare-pi-agent` in
+the desktop package. Archive `src-tauri/pi-agent/` as
+`pi-agent-macos-arm64-<VERSION>.tar.gz` using the full value in its `VERSION`
+file, and upload it to the private `pi-agent-v<PI_VERSION>` cache release.
+Each runtime has its own asset so simultaneous releases cannot overwrite
+one another's cache. Keep older assets for release retries.
+
 1. Update the version in `package.json`, `package-lock.json`, and
    `src-tauri/tauri.conf.json` together.
 2. Run the Fez eval gate and desktop build checks, then push the reviewed commit.

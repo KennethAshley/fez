@@ -6,6 +6,37 @@ import { expect, test } from "vitest";
 
 const desktop = path.resolve(import.meta.dirname, "../../fez-desktop");
 
+test("release cache selects the exact runtime version so overlapping releases cannot replace it", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fez-release-cache-"));
+  try {
+    const workflow = fs.readFileSync(path.resolve(desktop, "../../.github/workflows/release.yml"), "utf8");
+    const run = workflow.match(/- name: Seed bundled agent from cache release[\s\S]*?run: \|\n([\s\S]*?)\n {6}- name:/)![1].replace(/^ {10}/gm, "");
+    const prepare = fs.readFileSync(path.join(desktop, "scripts/prepare-pi-agent.mjs"), "utf8");
+    const pi = prepare.match(/const PI_VERSION = "([^"]+)"/)![1];
+    const version = `${pi}+${prepare.match(/PI_VERSION\}\+(svc\d+)/)![1]}`;
+    const scripts = path.join(tmp, "packages/fez-desktop/scripts");
+    fs.mkdirSync(scripts, { recursive: true });
+    fs.writeFileSync(path.join(scripts, "prepare-pi-agent.mjs"), prepare);
+    fs.mkdirSync(path.join(tmp, "packages/fez-desktop/src-tauri"));
+    const seed = path.join(tmp, "pi-agent"); fs.mkdirSync(seed);
+    fs.writeFileSync(path.join(seed, "VERSION"), version);
+    for (const name of ["pi", "fez-relay"]) fs.writeFileSync(path.join(seed, name), "#!/bin/sh\n", { mode: 0o755 });
+    const archive = path.join(tmp, "seed.tar.gz");
+    expect(spawnSync("tar", ["-czf", archive, "-C", tmp, "pi-agent"]).status).toBe(0);
+    const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "gh"), `#!${process.execPath}
+const fs = require('node:fs'), args = process.argv.slice(2);
+if (args[2] !== ${JSON.stringify(`pi-agent-v${pi}`)} || args[args.indexOf('--pattern') + 1] !== ${JSON.stringify(`pi-agent-macos-arm64-${version}.tar.gz`)}) process.exit(1);
+fs.copyFileSync(${JSON.stringify(archive)}, args[args.indexOf('--output') + 1]);
+`, { mode: 0o755 });
+    const result = spawnSync("bash", ["-e", "-c", run.replaceAll("/tmp/pi-agent.tar.gz", path.join(tmp, "download.tar.gz"))], {
+      cwd: tmp, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8", timeout: 10_000,
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(tmp, "packages/fez-desktop/src-tauri/pi-agent/VERSION"), "utf8")).toBe(version);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
 function release(visibility = "PUBLIC", failUpload = false) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fez-public-release-"));
   const scripts = path.join(tmp, "scripts");
