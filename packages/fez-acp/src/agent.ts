@@ -69,6 +69,7 @@ import { execSync, execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { isAddressedTo } from "./addressing.js";
+import { deliverHire } from "./hire-delivery.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
@@ -593,20 +594,12 @@ async function main() {
       process.exit(4);
     }
     try {
-      git(["add", "-A"]);
-      if (!git(["status", "--porcelain"]).toString().trim()) {
-        console.error("FEZ_HIRE_ERROR=the engine finished but changed no files");
-        process.exit(5);
-      }
       emit("committing and pushing the branch");
       const msg = (summary.split("\n").find((l) => l.trim())?.trim() || hireTask).slice(0, 72);
-      git(["-c", `user.name=${personaId}`, "-c", `user.email=${personaId}@fez`, "commit", "-m", msg]);
-      execFileSync("git", ["-c", `http.extraHeader=${nip98()}`, "push", "origin", branchName], { cwd: hireDir, stdio: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+      deliverHire({ dir: hireDir, branch: branchName, personaId, message: msg, authHeader: nip98 });
     } catch (err) {
-      console.error(`FEZ_HIRE_ERROR=commit/push failed: ${(err as Error).message.slice(0, 200)}`);
+      console.error(`FEZ_HIRE_ERROR=${(err as Error).message.replace(/\s+/g, " ")}`);
       process.exit(6);
-    } finally {
-      fs.rmSync(hireDir, { recursive: true, force: true });
     }
     console.log(`FEZ_HIRE_BRANCH=${branchName}`);
     console.log(`FEZ_HIRE_SUMMARY=${(summary.split("\n").find((l) => l.trim())?.trim() || "done").slice(0, 200)}`);
