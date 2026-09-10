@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { finalizeEvent } from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 
 export type Handlers = Record<string, (args: Record<string, unknown>) => unknown>;
 
@@ -82,6 +82,12 @@ export async function installMockBridge(page: Page, overrides: Handlers = {}, dy
   // Registered BEFORE addInitScript so the window-side invoke wrapper
   // can already reference it once the page's own scripts start running.
   if (identities) {
+    await page.exposeFunction("__fezBridgePubkey", (args?: { account?: string }) => {
+      const account = args?.account ?? "default";
+      const hex = identities[account];
+      if (!hex) throw new Error(`no fez identity in the keychain for account "${account}"`);
+      return getPublicKey(Uint8Array.from(hex.match(/.{2}/g)!, b => parseInt(b, 16)));
+    });
     await page.exposeFunction(
       "__fezBridgeSign",
       (tmpl: { kind: number; content: string; tags: string[][]; createdAt?: number }) => {
@@ -120,6 +126,9 @@ export async function installMockBridge(page: Page, overrides: Handlers = {}, dy
             cmd,
             args
           );
+          if (identities && cmd === "get_pubkey") {
+            return (window as unknown as { __fezBridgePubkey: (args: unknown) => Promise<string> }).__fezBridgePubkey(args);
+          }
           if (identities && cmd === "get_identity") {
             const account = (args as { account?: string } | undefined)?.account ?? "default";
             const hex = (identities as Record<string, string>)[account] ?? (identities as Record<string, string>).default;

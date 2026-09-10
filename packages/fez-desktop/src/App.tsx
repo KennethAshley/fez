@@ -9,6 +9,7 @@ import { FezClient, dmConvoKey, setStatePersistence, type Artifact, type InputHi
 import { embedUrls, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
+import { fetchRelayInfo } from "../../../src/protocol/nip11";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -174,7 +175,8 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     // identity landed exactly there — no path had spawned the relay).
     // ensure_local_relay is idempotent: pidfile verified by process
     // name, spawn skipped when it's genuinely running.
-    if (relaySet().every((u) => u.includes("127.0.0.1") || u.includes("localhost"))) {
+    if (relaySet().every((u) => u.includes("127.0.0.1") || u.includes("localhost")) &&
+        (!localStorage.getItem("fez-relay") || !(await fetchRelayInfo(relaySet()[0])))) {
       try {
         const savedName = localStorage.getItem("fez-name")?.trim();
         const url = await invoke<string>("ensure_local_relay", {

@@ -194,4 +194,45 @@ describe("a second person joins the workspace", () => {
     await expect(client.sendChannelMessage("let me in")).rejects.toThrow();
     wire.close();
   }, 30_000);
+
+  test("overlapping person and agent invites grant live access without losing either member", async () => {
+    const personKey = generateSecretKey();
+    const agentKey = generateSecretKey();
+    const personPk = getPublicKey(personKey);
+    const agentPk = getPublicKey(agentKey);
+    blankState();
+    const ownerWire = new BrowserWire([RELAY], ownerHex);
+    const personWire = new BrowserWire([RELAY], Buffer.from(personKey).toString("hex"));
+    const agentWire = new BrowserWire([RELAY], Buffer.from(agentKey).toString("hex"));
+    try {
+      const owner = new FezClient(ownerWire);
+      const person = new FezClient(personWire);
+      const agent = new FezClient(agentWire);
+      await owner.start();
+      await person.start();
+      await agent.start();
+      expect(person.state.isMember(personPk)).toBe(false);
+      expect(agent.state.isMember(agentPk)).toBe(false);
+
+      await Promise.all([owner.invite(personPk, "member"), owner.invite(agentPk, "bot")]);
+      await expect.poll(() => person.state.roleOf(personPk)).toBe("member");
+      await expect.poll(() => agent.state.roleOf(agentPk)).toBe("bot");
+      expect(owner.state.isMember(guestPk)).toBe(true);
+
+      for (const client of [person, agent]) {
+        await client.loadChannelHistory(channels.food);
+        expect(client.messages(channels.food).map(m => m.content)).toContain("best biscuits in town?");
+        client.setScope(channels.food);
+        await client.sendChannelMessage(`joined as ${client.state.roleOf(client.pubkey)}`);
+      }
+      owner.setScope(channels.food);
+      await owner.sendChannelMessage("welcome person and agent");
+      await expect.poll(() => person.messages(channels.food).map(m => m.content)).toContain("welcome person and agent");
+      await expect.poll(() => agent.messages(channels.food).map(m => m.content)).toContain("welcome person and agent");
+    } finally {
+      ownerWire.close();
+      personWire.close();
+      agentWire.close();
+    }
+  }, 30_000);
 });

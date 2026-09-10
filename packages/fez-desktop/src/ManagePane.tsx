@@ -2,7 +2,9 @@ import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient } from "@fezchat/client";
 import { flash } from "./toast";
-import { relaySet } from "./relay";
+import { relaySet, setRelays } from "./relay";
+import { fetchRelayInfo } from "../../../src/protocol/nip11";
+import { invitePersona } from "./invite-persona";
 import Avatar from "./Avatar";
 import UserCard from "./UserCard";
 import { resolvePubkeyInput } from "./public-key";
@@ -36,24 +38,6 @@ export default function ManagePane({
     }
   };
 
-  if (!current) {
-    return (
-      <aside className="pane">
-        <header className="pane-head">
-          <span>⚙ manage</span>
-          <button className="pane-close" onClick={onClose}>✕</button>
-        </header>
-        <div className="pane-body">
-          <div className="pane-empty">no channel scope — pick a channel first</div>
-          <CreateCommunity client={client} onOpenChannel={onOpenChannel} onResult={flash} />
-          <JoinByCode client={client} onOpenChannel={onOpenChannel} onResult={flash} />
-        </div>
-      </aside>
-    );
-  }
-
-  const channel = current;
-
   const amCreator = client.state.isOwner(client.pubkey);
   const myRole = client.state.roleOf(client.pubkey);
   const members = [...client.state.workspace.members.entries()]
@@ -64,7 +48,7 @@ export default function ManagePane({
   return (
     <aside className="pane">
       <header className="pane-head">
-        <span>⚙ #{channel.name}</span>
+        <span>{current ? `⚙ #${current.name}` : "⚙ manage"}</span>
         <button className="pane-close" onClick={onClose}>✕</button>
       </header>
       <div className="pane-body">
@@ -131,17 +115,17 @@ export default function ManagePane({
             label="new channel"
             placeholder="channel name"
             exists={(name) => !!client.state.findChannelByName(name)}
-            onCreate={(name) =>
-              void run(`${client.state.findChannelByName(name) ? "opened" : "created"} #${name}`, async () => {
-                const channelId = await client.createChannel(name);
-                onOpenChannel(channelId);
-              })
-            }
+            onCreate={async (name) => {
+              const existed = !!client.state.findChannelByName(name);
+              const channelId = await client.createChannel(name);
+              onOpenChannel(channelId);
+              flash(`✓ ${existed ? "opened" : "created"} #${name}`);
+            }}
           />
         )}
 
         <CreateCommunity client={client} onOpenChannel={onOpenChannel} onResult={flash} />
-        <JoinByCode client={client} onOpenChannel={onOpenChannel} onResult={flash} />
+        <JoinByCode client={client} onResult={flash} />
       </div>
     </aside>
   );
@@ -213,15 +197,15 @@ function InviteCode({ communityName }: { communityName: string }) {
 
 function JoinByCode({
   client,
-  onOpenChannel,
   onResult,
 }: {
   client: FezClient;
-  onOpenChannel: (channelId: string) => void;
   onResult: (text: string) => void;
 }) {
   const [code, setCode] = useState("");
+  const [pending, setPending] = useState(false);
   const join = async () => {
+    if (pending) return;
     // An invite is just a relay now. The workspace IS the relay, so
     // there is no community id to carry and nothing to look up — the
     // old fez-join:<relay>#<community> form is still accepted, with the
@@ -233,20 +217,21 @@ function JoinByCode({
     // relay used to clear it first and report nothing, so a mistyped
     // invite was simply gone.
     try {
-      const claimed = await client.openWorkspace(relay);
-      setCode("");
-      if (!claimed) {
-        return onResult(`+ added ${relay}, but it has no owner yet — it's an unclaimed workspace`);
-      }
-      const first = [...client.state.workspace.channels.values()][0];
-      if (first) onOpenChannel(first.id);
-      onResult(
-        client.state.isMember(client.pubkey)
-          ? `✓ joined ${client.state.workspace.name}`
-          : `+ added ${client.state.workspace.name} — ask its owner to invite ${client.pubkey.slice(0, 12)}…`
-      );
+      const url = new URL(relay);
+      if (!["ws:", "wss:"].includes(url.protocol)) throw new Error("expected a ws:// or wss:// relay URL");
+      setPending(true);
+      const info = await fetchRelayInfo(relay);
+      if (!info) throw new Error("relay unavailable — check the invite and try again");
+      if (!info.pubkey) throw new Error("this relay has no workspace owner yet");
+      // A workspace switch needs a fresh client and subscriptions. Merely
+      // changing its state kept reading and publishing on the old relay.
+      await setRelays([url.href], { requirePersistence: true });
+      client.state.open(url.href, info.name);
+      window.location.reload();
     } catch (err) {
       onResult(`✗ couldn't open ${relay}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPending(false);
     }
   };
   return (
@@ -256,6 +241,7 @@ function JoinByCode({
         <input
           className="manage-input"
           value={code}
+          disabled={pending}
           placeholder="fez-join:wss://…#…"
           spellCheck={false}
           onChange={(e) => setCode(e.target.value)}
@@ -263,7 +249,7 @@ function JoinByCode({
             if (e.key === "Enter") void join();
           }}
         />
-        <button className="agent-action" onClick={() => void join()}>join</button>
+        <button className="agent-action" disabled={pending || !code.trim()} onClick={() => void join()}>{pending ? "joining…" : "join"}</button>
       </div>
     </>
   );
@@ -272,13 +258,25 @@ function JoinByCode({
 function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: string) => void }) {
   const [who, setWho] = useState("");
   const [role, setRole] = useState<"member" | "admin" | "bot">("member");
+  const [pending, setPending] = useState(false);
 
   const invite = async () => {
     const raw = who.trim().replace(/^@/, "");
-    if (!raw) return;
+    if (!raw || pending) return;
+    setPending(true);
     try {
       const pk = resolvePubkeyInput(raw, name => client.pkByName(name));
       if (!pk) {
+        const result = await invitePersona(client, raw, role);
+        if (result.kind === "invited") {
+          setWho("");
+          onResult(`✓ invited @${result.persona} as ${result.role}`);
+          return;
+        }
+        if (result.kind === "no-key") {
+          onResult(`mention @${result.persona} in a channel to create its identity and invite it`);
+          return;
+        }
         onResult(`✗ nobody named "${raw}" — use a known @name, npub, or hex key`);
         return;
       }
@@ -287,6 +285,8 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
       onResult(`✓ invited ${name} as ${role}`);
     } catch (err) {
       onResult(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPending(false);
     }
   };
 
@@ -297,6 +297,7 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
         <input
           className="manage-input"
           value={who}
+          disabled={pending}
           placeholder="@name, npub, or hex key"
           spellCheck={false}
           onChange={(e) => setWho(e.target.value)}
@@ -304,12 +305,12 @@ function InviteBox({ client, onResult }: { client: FezClient; onResult: (text: s
             if (e.key === "Enter") void invite();
           }}
         />
-        <select className="manage-select" value={role} onChange={(e) => setRole(e.target.value as "member" | "admin" | "bot")}>
+        <select className="manage-select" disabled={pending} value={role} onChange={(e) => setRole(e.target.value as "member" | "admin" | "bot")}>
           <option value="member">member</option>
           <option value="admin">admin</option>
           <option value="bot">bot</option>
         </select>
-        <button className="agent-action" onClick={() => void invite()}>invite</button>
+        <button className="agent-action" disabled={pending || !who.trim()} onClick={() => void invite()}>{pending ? "inviting…" : "invite"}</button>
       </div>
     </>
   );
@@ -323,15 +324,23 @@ function CreateRow({
 }: {
   label: string;
   placeholder: string;
-  onCreate: (name: string) => void;
+  onCreate: (name: string) => Promise<void>;
   exists?: (name: string) => boolean;
 }) {
   const [name, setName] = useState("");
-  const submit = () => {
+  const [pending, setPending] = useState(false);
+  const submit = async () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
-    setName("");
-    onCreate(trimmed);
+    if (!trimmed || pending) return;
+    setPending(true);
+    try {
+      await onCreate(trimmed);
+      setName("");
+    } catch (err) {
+      flash(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPending(false);
+    }
   };
   return (
     <>
@@ -340,14 +349,15 @@ function CreateRow({
         <input
           className="manage-input"
           value={name}
+          disabled={pending}
           placeholder={placeholder}
           spellCheck={false}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
+            if (e.key === "Enter") void submit();
           }}
         />
-        <button className="agent-action" onClick={submit}>{exists?.(name.trim()) ? "Open existing channel" : "create"}</button>
+        <button className="agent-action" disabled={pending || !name.trim()} onClick={() => void submit()}>{pending ? "creating…" : exists?.(name.trim()) ? "Open existing channel" : "create"}</button>
       </div>
     </>
   );
@@ -362,21 +372,16 @@ function CreateCommunity({
   onOpenChannel: (channelId: string) => void;
   onResult: (text: string) => void;
 }) {
+  if (!client.state.isOwner(client.pubkey) || client.state.workspace.channels.size > 0) return null;
   return (
     <CreateRow
-      label="new workspace"
-      placeholder="workspace name"
-      onCreate={(name) =>
-        void (async () => {
-          try {
-            const { channelId } = await client.claimWorkspace(name);
-            onOpenChannel(channelId);
-            onResult(`✓ created #${name}`);
-          } catch (err) {
-            onResult(`✗ ${err instanceof Error ? err.message : String(err)}`);
-          }
-        })()
-      }
+      label="initialize workspace"
+      placeholder="first channel name"
+      onCreate={async (name) => {
+        const { channelId } = await client.claimWorkspace(name);
+        onOpenChannel(channelId);
+        onResult(`✓ created #${name}`);
+      }}
     />
   );
 }

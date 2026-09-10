@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getPublicKey } from "nostr-tools/pure";
 import type { FezClient } from "@fezchat/client";
 
 /**
@@ -21,20 +20,21 @@ export type InviteResult =
   | { kind: "no-key"; persona: string }
   | { kind: "unknown" };
 
-export async function invitePersona(client: FezClient, rawName: string, role: "bot" | "member" = "bot"): Promise<InviteResult> {
+export async function invitePersona(client: FezClient, rawName: string, role: "bot" | "member" | "admin" = "bot"): Promise<InviteResult> {
   const wanted = rawName.replace(/^@/, "").toLowerCase();
   const personas = await invoke<string[]>("list_personas").catch(() => [] as string[]);
   const persona = personas.find((p) => p.toLowerCase() === wanted);
   if (!persona) return { kind: "unknown" };
+  let pk: string;
   try {
-    const keyHex = await invoke<string>("get_identity", { account: `agent:${persona}` });
-    const pk = getPublicKey(Uint8Array.from(keyHex.trim().match(/../g)!.map((b) => parseInt(b, 16))));
-    await client.invite(pk, role as never);
-    return { kind: "invited", persona, role };
-  } catch {
+    pk = await invoke<string>("get_pubkey", { account: `agent:${persona}` });
+  } catch (err) {
+    if (!/no fez identity/i.test(String(err))) throw err;
     // No key yet — the runtime mints one on first spawn, and the
     // webview deliberately cannot create keys. Summoning both spawns
     // and invites, so that is the honest redirect.
     return { kind: "no-key", persona };
   }
+  await client.invite(pk, role);
+  return { kind: "invited", persona, role };
 }

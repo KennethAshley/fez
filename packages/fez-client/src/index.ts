@@ -1653,22 +1653,22 @@ export class FezClient {
    * "Home" on every run: there is nothing to mint.
    */
   async claimWorkspace(firstChannel = "general"): Promise<{ channelId: string }> {
-    if (this.state.workspace.owner && this.state.workspace.owner !== this.pubkey) {
-      throw new Error("this workspace already has an owner");
+    if (!this.state.isOwner(this.pubkey)) {
+      throw new Error("configure this relay's owner before initializing the workspace");
     }
-    const channelId = crypto.randomUUID();
+    if (this.state.workspace.channels.size > 0) {
+      throw new Error("this workspace already has channels — add a channel or join a different relay");
+    }
+    firstChannel = firstChannel.trim();
+    if (!firstChannel) throw new Error("channel name is required");
+    const channelId = "bootstrap-general";
     const channelEvent = await this.wire.publish({
       kind: K.CHANNEL,
       tags: [["d", channelId]],
       content: JSON.stringify({ name: firstChannel, visibility: "open" }),
     });
-    const rosterEvent = await this.wire.publish({
-      kind: K.MEMBERSHIP,
-      tags: [["d", K.ROSTER_D], ["p", this.pubkey, "owner"]],
-      content: "",
-    });
+    await this.publishRoster(() => {});
     this.state.absorb(channelEvent);
-    this.state.absorb(rosterEvent);
     this.state.scope = { channelId };
     this.state.save();
     this.resubscribe();
@@ -1909,24 +1909,32 @@ export class FezClient {
     return Math.max(Math.floor(Date.now() / 1000), this.state.workspace.rosterCreatedAt + 1);
   }
 
-  /** Republish the workspace roster — the one place membership changes. */
-  private async publishRoster(members: Map<string, Role>): Promise<void> {
-    // The owner is ALWAYS on their own roster. Agents gate mentions on
-    // the roster's p-tags alone, so a single owner-less write silently
-    // deafened every agent to the owner — and self-perpetuated, because
-    // each later publish copied the map. (Aug 25 incident: one rewrite
-    // dropped the owner; nothing replied for a day.) Guarding at the
-    // ONE write site beats trusting every caller's hydration.
-    const owner = this.state.workspace.owner;
-    if (owner && !members.has(owner)) members = new Map([[owner, "owner" as Role], ...members]);
-    const event = await this.wire.publish({
-      kind: K.MEMBERSHIP,
-      tags: [["d", K.ROSTER_D], ...[...members.entries()].map(([pk, r]) => ["p", pk, r])],
-      content: "",
-      created_at: this.nextRosterCreatedAt(),
+  private rosterWrite: Promise<void> = Promise.resolve();
+
+  /** Serialize read-modify-publish so overlapping invitations cannot drop members. */
+  private publishRoster(update: (members: Map<string, Role>) => void): Promise<void> {
+    const workspace = this.state.workspace;
+    const write = this.rosterWrite.then(async () => {
+      if (this.state.workspace !== workspace) throw new Error("workspace changed — try again");
+      const members = new Map(workspace.members);
+      update(members);
+      // Agents gate mentions on the roster's p-tags alone. Every write
+      // must retain the owner, even when hydration omitted their key.
+      const owner = workspace.owner;
+      if (owner) members.set(owner, "owner");
+      const event = await this.wire.publish({
+        kind: K.MEMBERSHIP,
+        tags: [["d", K.ROSTER_D], ...[...members.entries()].map(([pk, r]) => ["p", pk, r])],
+        content: "",
+        created_at: this.nextRosterCreatedAt(),
+      });
+      if (this.state.workspace === workspace) {
+        this.state.absorb(event);
+        this.emit("channelsChanged");
+      }
     });
-    this.state.absorb(event);
-    this.emit("channelsChanged");
+    this.rosterWrite = write.catch(() => {});
+    return write;
   }
 
   /**
@@ -1935,10 +1943,15 @@ export class FezClient {
    * per-channel invite to get wrong.
    */
   async invite(pubkey: string, role: Role): Promise<string> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can invite");
-    const members = new Map(this.state.workspace.members);
-    if (!members.has(pubkey)) members.set(pubkey, role);
-    await this.publishRoster(members);
+    pubkey = pubkey.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) throw new Error("invalid public key — use a 64-character hex key");
+    if (!["owner", "admin", "member", "bot"].includes(role)) throw new Error("invalid member role");
+    if (role === "owner" && pubkey !== this.state.workspace.owner) throw new Error("the workspace owner is fixed");
+    await this.publishRoster((members) => {
+      if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can invite");
+      if (this.state.isBanned(pubkey)) throw new Error("this member is banned — unban them before inviting");
+      if (!members.has(pubkey)) members.set(pubkey, role);
+    });
     return this.displayName(pubkey);
   }
 
@@ -2033,33 +2046,33 @@ export class FezClient {
 
   /** A moderator republishes the roster without the pubkey. Their history stays. */
   async kick(pubkey: string): Promise<string> {
-    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can remove members");
-    if (pubkey === this.state.workspace.owner) {
-      throw new Error("the owner can't be removed — the workspace is rooted in their signature");
-    }
-    this.assertCanTarget(pubkey);
-    const members = new Map(this.state.workspace.members);
-    if (!members.delete(pubkey)) throw new Error("not a member of this workspace");
-    await this.publishRoster(members);
+    await this.publishRoster((members) => {
+      if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can remove members");
+      if (pubkey === this.state.workspace.owner) {
+        throw new Error("the owner can't be removed — the workspace is rooted in their signature");
+      }
+      this.assertCanTarget(pubkey);
+      if (!members.delete(pubkey)) throw new Error("not a member of this workspace");
+    });
     return this.displayName(pubkey);
   }
 
   /** Owner-only: promote a member to admin (or demote back to member). */
   async promote(pubkey: string): Promise<void> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
-    if (pubkey === this.state.workspace.owner) throw new Error("the owner's role is fixed");
-    const members = new Map(this.state.workspace.members);
-    if (!members.has(pubkey)) throw new Error("not a member of this workspace");
-    members.set(pubkey, "admin");
-    await this.publishRoster(members);
+    await this.publishRoster((members) => {
+      if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
+      if (pubkey === this.state.workspace.owner) throw new Error("the owner's role is fixed");
+      if (!members.has(pubkey)) throw new Error("not a member of this workspace");
+      members.set(pubkey, "admin");
+    });
   }
 
   async demote(pubkey: string): Promise<void> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
-    const members = new Map(this.state.workspace.members);
-    if (members.get(pubkey) !== "admin") throw new Error("not an admin");
-    members.set(pubkey, "member");
-    await this.publishRoster(members);
+    await this.publishRoster((members) => {
+      if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
+      if (members.get(pubkey) !== "admin") throw new Error("not an admin");
+      members.set(pubkey, "member");
+    });
   }
 
   /**
