@@ -33,15 +33,17 @@ export interface Subnet {
   discord: string;
 }
 
-let apiPromise: Promise<ApiPromise> | undefined;
-function chain(): Promise<ApiPromise> {
+const connections = new Map<string, Promise<ApiPromise>>();
+function chain(endpoint: string): Promise<ApiPromise> {
+  let apiPromise = connections.get(endpoint);
   if (!apiPromise) {
     // Dynamic import so the heavy @polkadot/api graph (WASM crypto init)
     // loads on the first query, not at process start — the MCP handshake
     // must answer instantly or a host (claude-code) gives up attaching it.
     apiPromise = import("@polkadot/api").then(({ ApiPromise, WsProvider }) =>
-      ApiPromise.create({ provider: new WsProvider(FINNEY), noInitWarn: true })
+      ApiPromise.create({ provider: new WsProvider(endpoint), noInitWarn: true })
     );
+    connections.set(endpoint, apiPromise);
   }
   return apiPromise;
 }
@@ -61,8 +63,8 @@ export function subnetFromIdentity(netuid: number, id: Record<string, unknown>):
 
 /** Every registered subnet with whatever identity its owner committed. One
  * multi-query for the netuid list, one for all identities — no N+1. */
-export async function allSubnets(): Promise<Subnet[]> {
-  const api = await chain();
+export async function allSubnets(endpoint = FINNEY, enrich = true): Promise<Subnet[]> {
+  const api = await chain(endpoint);
   const st = api.query.subtensorModule;
   const added = await st.networksAdded.entries();
   const netuids = added
@@ -74,7 +76,8 @@ export async function allSubnets(): Promise<Subnet[]> {
     const id = (identities[i]?.toJSON() ?? {}) as Record<string, unknown>;
     return subnetFromIdentity(netuid, id);
   });
-  return maybeEnrich(subnets);
+  // Taostats identities are mainnet-only; callers browsing testnet disable enrichment.
+  return enrich ? maybeEnrich(subnets) : subnets;
 }
 
 /** Fill blank name/github from Taostats — only when a key is set and the

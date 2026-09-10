@@ -13,6 +13,16 @@ import type { MinerEntry } from "./state.js";
  * text when several things happened between polls.
  */
 export function lifecycleMessage(prev: MinerEntry | undefined, next: MinerEntry): string | null {
+  if (next.mode === "submission") {
+    if (next.submissionError && next.submissionError !== prev?.submissionError) return `⚠ Submission status unavailable: ${next.submissionError}`;
+    const s = next.submission;
+    if (!s) return null;
+    if (!prev?.submission || s.phase !== prev.submission.phase ||
+        s.versions[0]?.id !== prev.submission.versions[0]?.id || s.activeVersionId !== prev.submission.activeVersionId) {
+      return `Submission ${s.phase}: ${s.detail}`;
+    }
+    return null;
+  }
   if (!prev) return next.desired === "running" ? "▶ started" : null;
 
   if (prev.desired !== "running" && next.desired === "running") return "▶ started";

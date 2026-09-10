@@ -9,11 +9,12 @@
 use crate::package_install::{link_index, remove_if_owned, safe_bin_name, write_atomic};
 use std::path::Path;
 
-const PART_DIRS: [(&str, &str); 4] = [
+const PART_DIRS: [(&str, &str); 5] = [
     ("gui", "gui-extensions"),
     ("headless", "extensions"),
     ("relay", "relay-extensions"),
     ("workspace", "workspace-providers"),
+    ("miner", "miners"),
 ];
 
 /// For every name in `settings.extensionPermissions` with no

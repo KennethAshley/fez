@@ -25,7 +25,7 @@ export function planRemote(
 ): ReconcileAction[] {
   const out: ReconcileAction[] = [];
   for (const m of miners) {
-    if (m.desired !== "running" || isAlive(m.pid)) continue;
+    if (m.mode === "submission" || m.desired !== "running" || isAlive(m.pid)) continue;
     if (m.machine?.kind !== "lium") {
       out.push({ miner: m, action: "respawn-runner" });
       continue;

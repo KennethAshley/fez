@@ -1,14 +1,14 @@
 {
   "name": "@fezchat/mining",
   "version": "0.1.0",
-  "description": "Mine any Bittensor subnet from fez — harness, CLI, and GUI.",
+  "description": "Mine any Bittensor subnet from fez \u2014 harness, CLI, and GUI.",
   "type": "module",
   "bin": {
     "fez-mine": "dist/cli.js",
     "fez-mine-run": "dist/run.js"
   },
   "scripts": {
-    "build": "esbuild src/cli.ts src/run.ts --bundle --format=esm --platform=node --external:@fezchat/bittensor --external:@fezchat/lium --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
+    "build": "esbuild src/cli.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___fezMiningCreateRequire}from'module';const require=___fezMiningCreateRequire(import.meta.url);\" --outdir=dist && esbuild src/run-main.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___fezMiningCreateRequire}from'module';const require=___fezMiningCreateRequire(import.meta.url);\" --outfile=dist/run.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js && esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/mcp.ts --bundle --format=esm --platform=node --outfile=dist/mcp.js",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
@@ -34,7 +34,7 @@
       "publish",
       "network:.opentensor.ai"
     ],
-    "minFezVersion": "0.2.0"
+    "minFezVersion": "0.2.1"
   },
   "dependencies": {
     "@fezchat/bittensor": "file:../fez-bittensor",
@@ -50,5 +50,13 @@
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
   }
 }

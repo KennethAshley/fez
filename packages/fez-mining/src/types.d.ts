@@ -10,7 +10,7 @@ declare module "@fezchat/bittensor/subnets" {
     description?: string;
     github?: string;
   }
-  export function allSubnets(): Promise<Subnet[]>;
+  export function allSubnets(endpoint?: string, enrich?: boolean): Promise<Subnet[]>;
 }
 
 // @fezchat/lium ships dist/cli-lib.js under the "./cli" exports subpath but

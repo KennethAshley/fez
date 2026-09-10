@@ -25,14 +25,14 @@ server.registerTool(
   "mining_status",
   {
     description:
-      "Report the status of THIS agent's own Bittensor miners (subnet, running/stopped, machine). Use when asked how mining is going or what you're mining.",
+      "Report THIS agent's own Bittensor miners. Process miners have running/stopped and machine state. For mode=submission, report submission.phase and versions: no local process is expected, so alive=false does not mean the submitted miner stopped. Use when asked how mining is going.",
     inputSchema: {},
   },
   async () => {
     const out = runMine(mineArgs.status());
     if (out.code !== 0) return text(`could not read mining status: ${out.stderr.trim()}`);
     const mine = minersForPersona(out.stdout, persona);
-    if (mine.length === 0) return text(`${persona} has no miners running.`);
+    if (mine.length === 0) return text(`${persona} has no recorded miners. For an existing uploaded miner, use mining_submission status to adopt it.`);
     return text(JSON.stringify(mine, null, 2));
   }
 );
@@ -85,7 +85,7 @@ server.registerTool(
   "mining_config",
   {
     description:
-      "Set a NON-secret config parameter on THIS agent's miner for a subnet (e.g. daily cap, model). Secrets like API keys are REFUSED here — set those in the mining cockpit. The change applies on the next restart; ask the user before restarting (a Lium restart costs money).",
+      "Set a NON-secret config parameter on THIS agent's miner (e.g. daily cap, model, submission name). Secrets are refused here. Changes apply on the next process restart or next code submission, depending on the descriptor. This tool never restarts or uploads.",
     inputSchema: {
       netuid: z.number().int().describe("the subnet"),
       key: z.string().describe("the config field to set"),
@@ -96,7 +96,13 @@ server.registerTool(
     const desc = runMine(mineArgs.describe(netuid));
     if (desc.code !== 0) return text(`could not read netuid ${netuid} config schema: ${desc.stderr.trim()}`);
     let schema: ConfigField[] = [];
-    try { schema = (JSON.parse(desc.stdout).config ?? []) as ConfigField[]; } catch { schema = []; }
+    let submission = false;
+    try {
+      const parsed = JSON.parse(desc.stdout);
+      schema = parsed.config ?? [];
+      submission = parsed.mode === "submission";
+      if (!Array.isArray(schema)) schema = [];
+    } catch { schema = []; }
     const verdict = classifyConfigKey(schema, key);
     if (verdict === "secret") return text(`"${key}" is a secret — set it in the mining cockpit, not chat.`);
     if (verdict === "unknown") {
@@ -105,9 +111,24 @@ server.registerTool(
     }
     const out = runMine(mineArgs.configSet(persona, netuid, key, value));
     if (out.code !== 0) return text(`could not set ${key}: ${out.stderr.trim() || out.stdout.trim()}`);
-    return text(`set ${key} = ${value} for netuid ${netuid}. This applies on the next restart — say the word and I'll stop and restart the miner.`);
+    return text(`set ${key} = ${value} for netuid ${netuid}. ${submission ? "This applies to the next code submission; the uploaded version is unchanged." : "This applies on the next restart — ask before restarting the miner."}`);
   }
 );
+
+server.registerTool("mining_submission", {
+  description: "Manage THIS agent's validator-hosted submission (Numinous testnet155). status adopts/refreshes existing uploaded versions without uploading; register explicitly enrolls and may burn test tokens. test runs a local Python source file in a keyless networkless Docker sandbox and returns its SHA256. submit uploads only those tested bytes and requires that SHA256. Ask the user before registration or replacing a submission; never automatically retry an uncertain upload. Activation is not proof of execution or rewards. No container start/stop or provider linking.",
+  inputSchema: {
+    netuid:z.number().int().nonnegative(),
+    action:z.enum(["status","register","test","submit"]),
+    file:z.string().optional().describe("Absolute local Python source file for test/submit"),
+    sha256:z.string().regex(/^[a-f0-9]{64}$/).optional().describe("Exact hash returned by a successful test; required to submit"),
+  },
+}, async ({netuid,action,file,sha256}) => {
+  if ((action === "test" || action === "submit") && !file) return {...text("file is required"),isError:true};
+  if (action === "submit" && !sha256) return {...text("Test the file first and pass its sha256"),isError:true};
+  const out=runMine(mineArgs.submission(persona,netuid,action,file,sha256));
+  return out.code === 0 ? text(out.stdout.trim()) : {...text(out.stderr.trim() || "Submission operation failed"),isError:true};
+});
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

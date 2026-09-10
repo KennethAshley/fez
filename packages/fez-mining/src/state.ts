@@ -2,6 +2,9 @@ import * as fs from "node:fs/promises";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SubmissionStatus } from "@fezchat/extension-api";
+import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 // Structural view of @fezchat/bittensor's Subnet (which carries additional fields at runtime)
 export interface Subnet {
@@ -43,6 +46,10 @@ export type MinerMachineState =
     };
 
 export interface MinerEntry {
+  mode?: "submission";
+  submission?: SubmissionStatus;
+  /** Refresh failure; the previous successful snapshot remains visible with its timestamp. */
+  submissionError?: string;
   netuid: number;
   persona: string;
   hotkey: string;
@@ -65,6 +72,7 @@ export interface MiningState {
   miners: MinerEntry[];
   subnets: Subnet[];
   covered: number[];
+  submissionNetuids?: number[];
   /** Descriptor-declared requirements, by netuid — drives the GUI's machine picker. */
   requirementsByNetuid?: Record<number, { gpu?: string; publicEndpoint?: boolean }>;
 }
@@ -99,6 +107,7 @@ export async function readState(home = fezHome()): Promise<MiningState> {
       miners: raw.miners ?? [],
       subnets: raw.subnets ?? [],
       covered: raw.covered ?? [],
+      submissionNetuids: raw.submissionNetuids ?? [],
       requirementsByNetuid: raw.requirementsByNetuid ?? {},
     };
   } catch {
@@ -107,7 +116,32 @@ export async function readState(home = fezHome()): Promise<MiningState> {
 }
 export async function writeState(home: string, s: MiningState): Promise<void> {
   await fs.mkdir(path.dirname(stateFile(home)), { recursive: true });
-  await fs.writeFile(stateFile(home), JSON.stringify(s, null, 2));
+  const temp = `${stateFile(home)}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temp, JSON.stringify(s, null, 2), {mode:0o600});
+    await fs.rename(temp,stateFile(home));
+  } finally { await fs.rm(temp,{force:true}); }
+}
+
+/** Serialize short read/merge/write transactions across submission CLI processes.
+ * Keep wallet and network calls outside this lock. */
+export async function updateState(home: string, change: (s: MiningState) => MiningState | undefined): Promise<void> {
+  const lockPath = `${stateFile(home)}.lock`;
+  await fs.mkdir(path.dirname(lockPath),{recursive:true});
+  const deadline = Date.now()+5_000;
+  let lock;
+  while (!lock) {
+    try { lock=await fs.open(lockPath,"wx"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (Date.now() >= deadline) throw Error("Mining state is busy; retry after the current operation finishes", { cause: error });
+      await delay(20);
+    }
+  }
+  try {
+    const next=change(await readState(home));
+    if (next) await writeState(home,next);
+  } finally { await lock.close(); await fs.unlink(lockPath); }
 }
 export const minerKey = (netuid: number, persona: string) => `${netuid}:${persona}`;
 export function upsertMiner(s: MiningState, e: MinerEntry): MiningState {

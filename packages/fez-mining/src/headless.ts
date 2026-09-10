@@ -1,5 +1,5 @@
 import type { FezExtensionAPI } from "@fezchat/extension-api/headless";
-import { readState, writeState, upsertMiner, minerKey, fezHome, type MinerEntry } from "./state.js";
+import { readState, writeState, upsertMiner, updateState, minerKey, fezHome, type MinerEntry } from "./state.js";
 import { alive, spawnDetached } from "./procs.js";
 import { planRemote } from "./reconcile.js";
 import { podAlive } from "./machine-lium.js";
@@ -7,6 +7,9 @@ import { lifecycleMessage } from "./lifecycle.js";
 import { MINING_CHANNEL_NAME, MINING_SOURCE, minerRootLine } from "./thread.js";
 import { postAsPersona, dmOwnerAsPersona } from "./persona-post.js";
 import { attentionDmText, shouldDmAttention } from "./attention-dm.js";
+import { submissionCommand } from "./submission.js";
+import path from "node:path";
+import { homedir } from "node:os";
 
 /** Pure seam for testing: the thread-root backfill text for a miner. */
 export function rootBackfillText(netuid: number, persona: string): string {
@@ -48,6 +51,18 @@ export default function activate(api: FezExtensionAPI): void {
   api.registerScheduledTask("mining-reconcile", 120_000, async (ctx) => {
     const home = fezHome();
     const s = await readState(home);
+
+    for (const miner of s.miners.filter(m => m.mode === "submission")) {
+      try {
+        await submissionCommand("status",miner.netuid,miner.persona,{},home,
+          process.env.FEZ_WALLET_BIN || path.join(homedir(),".fez/bin/fez-wallet"));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Refresh failed";
+        if (message.includes("operation is in progress")) continue;
+        // submissionCommand records the stale snapshot for every caller.
+        console.error(`mining-reconcile: ${miner.netuid}:${miner.persona} — ${message}`);
+      }
+    }
 
     const podIds = [
       ...new Set(
@@ -132,12 +147,13 @@ export default function activate(api: FezExtensionAPI): void {
       let final = await readState(home);
       for (const miner of final.miners) {
         if (!miner.threadRootId) {
-          if (miner.desired !== "running") continue; // no thread for a stopped, never-opened miner
+          if (miner.mode !== "submission" && miner.desired !== "running") continue;
           try {
             const rootId = await postAsPersona(miner.persona, channelId, rootBackfillText(miner.netuid, miner.persona));
-            const st = await readState(home);
-            const e = st.miners.find((x) => x.netuid === miner.netuid && x.persona === miner.persona);
-            if (e) await writeState(home, upsertMiner(st, { ...e, threadRootId: rootId }));
+            await updateState(home,st => {
+              const e = st.miners.find((x) => x.netuid === miner.netuid && x.persona === miner.persona);
+              return e ? upsertMiner(st, { ...e, threadRootId: rootId }) : undefined;
+            });
             miner.threadRootId = rootId; // use it for this tick's lifecycle reply too
             final = await readState(home);
           } catch (err) {

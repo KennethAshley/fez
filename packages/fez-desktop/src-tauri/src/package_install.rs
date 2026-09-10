@@ -178,7 +178,7 @@ fn materialize(tar_bytes: &[u8], pkg_dir: &Path, rel: &str, missing_ctx: &str) -
 /// materializes a part just to check for its existence.
 fn has_installable_content(pkg: &serde_json::Value, tar_bytes: &[u8]) -> bool {
     let parts = pkg.pointer("/fez/parts");
-    let has_code_or_skill_part = ["gui", "headless", "relay", "workspace", "skill"]
+    let has_code_or_skill_part = ["gui", "headless", "relay", "workspace", "miner", "skill"]
         .iter()
         .any(|k| parts.and_then(|p| p.get(k)).is_some());
     let has_bin = pkg.get("bin").and_then(|v| v.as_object()).is_some_and(|m| !m.is_empty());
@@ -217,7 +217,7 @@ pub(crate) fn install_from_tarball(
     // phantom row for a package that installed nothing.
     if !has_installable_content(&pkg, tar_bytes) {
         return Err(format!(
-            "{name}@{version} has no installable gui/headless/relay/workspace/persona/skill part"
+            "{name}@{version} has no installable gui/headless/relay/workspace/miner/persona/skill part"
         ));
     }
 
@@ -256,13 +256,14 @@ pub(crate) fn install_from_tarball(
 
     // Code parts: materialize into the package dir. gui is loaded straight
     // from the package dir via the manifest (the webview's loader, gui_parts
-    // above) — it gets no flat symlink. The other three still get one, same
+    // above) — it gets no flat symlink. The other code parts still get one, same
     // as before.
     for (part_key, dir) in [
         ("gui", "gui-extensions"),
         ("headless", "extensions"),
         ("relay", "relay-extensions"),
         ("workspace", "workspace-providers"),
+        ("miner", "miners"),
     ] {
         let rel = match parts.and_then(|p| p.get(part_key)).and_then(|v| v.as_str()) {
             Some(r) => r,
@@ -480,6 +481,7 @@ pub(crate) fn remove_installed(base: &str, home: &Path) -> Result<Vec<String>, S
         ("headless", "extensions"),
         ("relay", "relay-extensions"),
         ("workspace", "workspace-providers"),
+        ("miner", "miners"),
     ] {
         if parts.and_then(|p| p.get(part_key)).is_none() {
             continue;
@@ -710,6 +712,27 @@ pub(crate) fn installed_skills(home: &Path) -> Vec<InstalledSkill> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn miner_only_package_installs_and_removes_its_descriptor() {
+        let home = tempfile::tempdir().unwrap();
+        let mut archive = tar::Builder::new(Vec::new());
+        for (path, content) in [
+            ("package/package.json", r#"{"name":"@fezchat/numinous","fez":{"type":"extension","parts":{"miner":"dist/miner.js"}}}"#),
+            ("package/dist/miner.js", "export default [{ netuid: 155 }];"),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64); header.set_mode(0o644); header.set_cksum();
+            archive.append_data(&mut header, path, content.as_bytes()).unwrap();
+        }
+        let out = install_from_tarball("@fezchat/numinous", &archive.into_inner().unwrap(), "0.1.0", home.path()).unwrap();
+        assert!(out.installed.iter().any(|line| line.starts_with("miner →")));
+        let descriptor = home.path().join("miners/numinous.js");
+        assert_eq!(std::fs::read_to_string(&descriptor).unwrap(), "export default [{ netuid: 155 }];");
+        assert!(std::fs::canonicalize(&descriptor).unwrap().starts_with(std::fs::canonicalize(home.path().join("packages/numinous")).unwrap()));
+        remove_installed("numinous", home.path()).unwrap();
+        assert!(std::fs::symlink_metadata(&descriptor).is_err());
+    }
+
     fn fixture_tar() -> Vec<u8> {
         let mut b = tar::Builder::new(Vec::new());
         let add = |b: &mut tar::Builder<Vec<u8>>, path: &str, data: &str| {

@@ -10,7 +10,8 @@
  */
 
 /** The ONE place fez states its own version — cli.ts --version reads it too. */
-export const FEZ_VERSION = "0.2.0";
+// 0.2.1 installs miner parts on both desktop and CLI.
+export const FEZ_VERSION = "0.2.1";
 
 /** Numeric x.y.z compare; missing parts are zero. NaN parts poison to NaN via the caller's guard. */
 export function compareSemver(a: string, b: string): number {

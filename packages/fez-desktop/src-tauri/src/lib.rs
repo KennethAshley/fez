@@ -1337,7 +1337,7 @@ fn remove_extension(name: String) -> Result<String, String> {
     if let Some(list) = modern {
         removed.extend(list);
     } else {
-        for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers"] {
+        for dir in ["gui-extensions", "extensions", "relay-extensions", "workspace-providers", "miners"] {
             for cand in &candidates {
                 let file = home.join(dir).join(format!("{cand}.js"));
                 if file.exists() && std::fs::remove_file(&file).is_ok() {
@@ -2840,7 +2840,7 @@ pub fn run() {
 /// The fez host version `fez.minFezVersion` is enforced against — a
 /// mirror of FEZ_VERSION in src/extensions/host-compat.ts. The
 /// host-compat eval in fez-evals keeps the two equal; bump them together.
-const FEZ_VERSION: &str = "0.2.0";
+const FEZ_VERSION: &str = "0.2.1";
 
 /// Mirrors minFezVersionError in host-compat.ts: None = allow. Absent
 /// field means no claim; an unparseable requirement refuses too — a

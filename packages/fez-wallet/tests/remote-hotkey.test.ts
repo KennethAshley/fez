@@ -3,6 +3,9 @@ import { cryptoWaitReady } from "@polkadot/util-crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 import { keyfileFor, exportRemoteHotkey } from "../src/cli-commands.js";
 import { generateWalletMnemonic } from "../src/derive.js";
 
@@ -64,6 +67,44 @@ describe("exportRemoteHotkey", () => {
     expect(r.created).toBe(true);
     expect(r.ss58Address).toBe(r.keyfile.ss58Address);
     expect((r.keyfile as { secretPhrase: string }).secretPhrase.split(" ")).toHaveLength(24);
+  });
+
+  it("existing-only refuses a missing key without creating any wallet entry", async () => {
+    await expect(exportRemoteHotkey("quill", { existing: true })).rejects.toThrow(/existing.*hotkey/i);
+    expect(fs.readdirSync(process.env.FEZ_WALLET_HOME!)).toEqual([]);
+  });
+
+  it("existing-only reuses a stored key without changing it", async () => {
+    const first = await exportRemoteHotkey("quill");
+    const file = path.join(process.env.FEZ_WALLET_HOME!, "wallet-store", "remote-hotkey", "quill");
+    const before = fs.statSync(file).mtimeMs;
+    const second = await exportRemoteHotkey("quill", { existing: true });
+    expect(second).toEqual({ ...first, created: false });
+    expect(fs.statSync(file).mtimeMs).toBe(before);
+  });
+
+  it("CLI --existing refuses missing keys and exports a stored key without changing it", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-wallet-existing-cli-"));
+    const outfile = path.join(dir, "wallet.mjs");
+    try {
+      await build({ entryPoints: [fileURLToPath(new URL("../src/cli.ts", import.meta.url))], outfile,
+        bundle: true, platform: "node", format: "esm", logLevel: "silent",
+        banner: { js: "import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);" } });
+      const invoke = () => spawnSync(process.execPath, [outfile, "export-hotkey", "--existing", "quill", "--json"], {
+        encoding: "utf8", timeout: 15000, env: { ...process.env, FEZ_EXTENSION_DATA_DIR: dir },
+      });
+      const missing = invoke();
+      expect(missing.status).toBe(1);
+      expect(missing.stdout).toBe("");
+      expect(missing.stderr).toMatch(/existing.*hotkey/i);
+      expect(fs.readdirSync(process.env.FEZ_WALLET_HOME!)).toEqual([]);
+      const first = await exportRemoteHotkey("quill");
+      const existing = invoke();
+      expect(existing.status).toBe(0);
+      const result = JSON.parse(existing.stdout);
+      expect(result.created).toBe(false);
+      expect(result.ss58Address).toBe(first.ss58Address);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("loads the same key on a second export (create-or-load, idempotent)", async () => {

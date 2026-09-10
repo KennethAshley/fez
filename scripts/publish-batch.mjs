@@ -25,6 +25,7 @@ const ROOT = process.cwd();
 // Infra libs first (extensions may externalize @fezchat/client etc.), then
 // the installable extensions + agents.
 const INFRA = [
+  "packages/fez-extension-api",
   "packages/fez-client",
   "packages/fez-artifact-viewers",
   "packages/fez-relay",
@@ -70,6 +71,8 @@ const EXTENSIONS = [
   // published range.
   "packages/fez-themes",
   "packages/fez-wallet",
+  "packages/fez-mining",
+  "packages/fez-numinous",
   "packages/fez-ridges",
 ];
 

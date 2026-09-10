@@ -43,9 +43,9 @@ describe("runner", () => {
 describe("bin entry", () => {
   // installBins copies dist/run.js to a canonical file RENAMED to the bin
   // key (no .js extension) and symlinks ~/.fez/bin to it — so the built
-  // file is named "fez-mine-run" here, not "run.js", to prove the
-  // realpath-based main-module check (not a naive endsWith("run.js"))
-  // is what makes the bin entry fire.
+  // file is named "fez-mine-run" here, not "run.js". The executable
+  // entry is separate from the runner library so bundling that library
+  // into the CLI never starts a second main function.
   let binPath: string;
 
   beforeAll(async () => {
@@ -53,7 +53,7 @@ describe("bin entry", () => {
     const outDir = mkdtempSync(path.join(tmpdir(), "fez-mine-build-"));
     binPath = path.join(outDir, "fez-mine-run");
     await esbuild.build({
-      entryPoints: [path.join(__dirname, "..", "src", "run.ts")],
+      entryPoints: [path.join(__dirname, "..", "src", "run-main.ts")],
       bundle: true,
       format: "esm",
       platform: "node",
