@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { execFile } from "node:child_process";
 import http from "node:http";
 import { randomBytes } from "node:crypto";
-import { auth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import { auth, discoverOAuthServerInfo, refreshAuthorization, selectResourceURL, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { loadSettings, saveSettings } from "../shared/settings.js";
 
@@ -251,12 +251,6 @@ function makeProvider(
       await opts.onAuthUrl(url.href);
     },
   };
-  if (!redirect) {
-    provider.prepareTokenRequest = () => {
-      if (!blob.tokens?.refresh_token) throw new NeedsSignIn();
-      return new URLSearchParams({ grant_type: "refresh_token", refresh_token: blob.tokens.refresh_token });
-    };
-  }
   return { provider, commit: () => writeConnection(entry.key, { ...blob, url: entry.url }) };
 }
 
@@ -388,13 +382,24 @@ export async function freshToken(key: string, opts: { signal?: AbortSignal } = {
   if (blob?.url && blob.url !== entry.url) throw new NeedsSignIn();
   if (!blob?.tokens?.access_token && !blob?.tokens?.refresh_token) throw new NeedsSignIn();
   if (!isStale(blob)) return blob.tokens!.access_token!;
+  if (!blob.tokens?.refresh_token) throw new NeedsSignIn();
   const { provider, commit } = makeProvider(entry, {});
   const signal = opts.signal ?? AbortSignal.timeout(30_000);
   signal.throwIfAborted();
-  const result = await auth(provider, { serverUrl: entry.url, scope: entry.scope,
-    fetchFn: (input, init) => fetch(input, { ...init,
-      signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal, redirect: "error" }) });
-  if (result !== "AUTHORIZED") throw new NeedsSignIn();
+  const clientInformation = await provider.clientInformation();
+  if (!clientInformation) throw new NeedsSignIn();
+  const fetchFn: typeof fetch = (input, init) => fetch(input, { ...init,
+    signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal, redirect: "error" });
+  // Without a redirect, auth() bypasses refresh. Use the SDK refresh flow directly.
+  const discovery = await discoverOAuthServerInfo(entry.url, { fetchFn });
+  const tokens = await refreshAuthorization(discovery.authorizationServerUrl, {
+    metadata: discovery.authorizationServerMetadata,
+    clientInformation,
+    refreshToken: blob.tokens.refresh_token,
+    resource: await selectResourceURL(entry.url, provider, discovery.resourceMetadata),
+    fetchFn,
+  });
+  await provider.saveTokens(tokens);
   signal.throwIfAborted();
   commit();
   const token = readConnection(key)?.tokens?.access_token;
