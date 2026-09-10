@@ -42,11 +42,13 @@ export interface HarnessUpdate {
 
 /** Host-provided question UI. The signal closes the form when its tool or turn ends. */
 export type InputHandler = (form: InputForm, signal: AbortSignal) => Promise<InputResponse>;
-interface HarnessInputState { controller?: AbortController; pending: number; answeredAt?: number }
+interface HarnessInputState { enabled: boolean; controller?: AbortController; pending: number; answeredAt?: number }
+
+const QUESTION_GUIDANCE = "Fez question UI is supported. When collecting choices from your owner, including an explicit request for multiple-choice questions, call the structured question tool (AskUserQuestion in Claude) and group related questions in one call. A repeated request means open a NEW form. Earlier skipped or unanswered questions do NOT mean the tool or UI is unavailable: check your current tools, never infer availability from conversation history. Plain-text choices do not create a form; use them only if no question tool exists or the user explicitly requests plain text. Wait for the tool result. If skipped, cancelled, expired, or unanswered, the form is closed: acknowledge that and stop. Do not claim it is still waiting or repeat its questions in text. Ask again only on a new user request.";
 
 /** One ACP negotiation/handler for both persistent and one-shot harnesses. */
 export function createHarnessClient(onInput?: InputHandler) {
-  const input: HarnessInputState = { pending: 0 };
+  const input: HarnessInputState = { enabled: !!onInput, pending: 0 };
   const app = client({ name: "fez" });
   app.onRequest("session/request_permission", async ({ params }) => decidePermission({ options: params.options,
     toolCall: { title: params.toolCall.title ?? undefined, kind: params.toolCall.kind ?? undefined, rawInput: params.toolCall.rawInput } }));
@@ -403,7 +405,10 @@ export async function drivePrompt(
   if (signal?.aborted) abort();
   if (input) input.controller = controller;
   try {
-    return await drivePromptLoop(session, command, instruction, onProgress, onUpdate, controller.signal, timeouts, images, input);
+    // Both session modes use this path. Repeat the capability notice so a
+    // reused/compacted conversation cannot learn to fall back to text lists.
+    const framed = input?.enabled ? `${QUESTION_GUIDANCE}\n\n${instruction}` : instruction;
+    return await drivePromptLoop(session, command, framed, onProgress, onUpdate, controller.signal, timeouts, images, input);
   } finally {
     controller.abort();
     if (input) input.controller = undefined;
