@@ -647,13 +647,13 @@ export default function SkillsView({
                         <h2>{entry?.title ?? name}</h2>
                         <p>{config?.description ?? entry?.blurb ?? (config ? "MCP tool. Open Configure to review its setup." : "Instructions your agents can load when they need them.")}</p>
                       </div>
+                    </div>
+                    <div className="tool-item-actions">
+                      <button className="agent-action" aria-expanded={givingTo === name} onClick={() => setGivingTo(givingTo === name ? undefined : name)}>Assign to agent</button>
                       <span className="tool-location">{config ? config.url ? "Remote server" : "Runs locally" : "Instruction pack"}</span>
                     </div>
                     {pack?.map(s => <p className="tool-pack-skill" key={s.id}><strong>{s.name}</strong> {s.description}</p>)}
-                    <div className="tool-access">
-                      <span>{wanted.length ? <>Assigned to {wanted.map(a => `@${a}`).join(", ")}</> : "Not assigned to any agent"}</span>
-                      <button className="agent-action" aria-expanded={givingTo === name} onClick={() => setGivingTo(givingTo === name ? undefined : name)}>Assign to agent</button>
-                    </div>
+                    <p className="tool-access">{wanted.length ? <>Assigned to {wanted.map(a => `@${a}`).join(", ")}</> : "Not assigned to any agent"}</p>
                     {assignmentPicker(name, config, pack, wanted)}
                     {config && <ToolSetup name={name} config={config}>
                       <div className="tool-sharing">
