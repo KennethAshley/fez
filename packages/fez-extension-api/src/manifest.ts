@@ -27,6 +27,10 @@ export interface FezManifest {
       /** Opt the headless part's scheduled tasks into the always-on sentinel. */
       background?: boolean;
     };
+    /** Channel-source settings shortcut, declared without evaluating an isolated GUI bundle. */
+    settingsSource?: string;
+    /** Requires the separate settings runner; unsupported hosts must not execute this GUI part in main. */
+    guiRuntime?: "isolated-settings";
     /** What this package asks for — the install dialog shows these. See the permissions reference. */
     permissions?: string[];
     /**
@@ -47,11 +51,13 @@ export type FezPermission =
   | "read:dms"
   | "read:agents"
   | "publish"
+  | "sign"
   | "commands"
   | "ui"
   | "background"
   | "system-prompt"
   | "personas"
   | "processes"
+  | "notifications"
   | "network:relay"
   | `network:${string}`;

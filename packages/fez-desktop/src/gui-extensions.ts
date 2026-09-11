@@ -1,4 +1,6 @@
+/// <reference types="vite/client" />
 import React from "react";
+import { IsolatedPanelLauncher } from "./IsolatedPanelLauncher";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Artifact, FezClient } from "@fezchat/client";
@@ -8,6 +10,7 @@ import { notifyEvent } from "./notify";
 import { toast } from "./toast";
 import { invitePersona } from "./invite-persona";
 import type { Dispose, MountRender } from "./mount-result";
+import { createGuiClient, requireGuiPermission, type GuiClient } from "./gui-client";
 
 /**
  * Mirrors src/extension-permissions.ts (the eval-pinned source of truth).
@@ -64,7 +67,8 @@ function relayHostnames(): string[] {
 export interface GuiExtensionApi {
   React: typeof React;
   parseQuery: typeof parseQuery;
-  client: FezClient;
+  /** Absent without read:channels. Writes and crypto check their own grants. */
+  client?: GuiClient;
   /**
    * Read-only view of this extension's own state file
    * (~/.fez/extension-data/<name>.json — the same namespace the
@@ -211,16 +215,16 @@ export interface GuiExtensionApi {
   ) => void;
   /**
    * This extension's own secrets, namespaced to it, and WRITE-ONLY —
-   * `set` and `has`, never `get`. The keychain has no read path from the
-   * webview by design, and an extension is not the place to open one:
-   * whatever needs the value (a poller, a spawned agent) reads it host-
-   * side. So a panel can store a token it just obtained, and can ask
-   * whether one exists, and cannot exfiltrate it.
+   * `set` and `has`, never `get`. Consumers (a poller or spawned agent)
+   * read the value host-side. This API has no read operation; it does
+   * not sandbox code with access to the shared webview's native bridge.
    */
   secrets: {
     set(key: string, value: string): Promise<void>;
     has(key: string): Promise<boolean>;
   };
+  /** Explicit transport for libraries that otherwise use globalThis.fetch. */
+  fetch: typeof globalThis.fetch;
   /** Open a link in the real browser — an OAuth page, a repo. */
   openUrl(url: string): Promise<void>;
   /**
@@ -303,7 +307,7 @@ export interface PageViewProps {
   title: string;
   channelId: string;
     slug?: string;
-  /** false when an old version is on screen — views must not rewrite history */
+  /** False for historical versions or without publish permission. */
   editable: boolean;
 }
 
@@ -946,9 +950,10 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
   restoreBaseline();
   const loaded: string[] = [];
   status.length = 0;
-  let files: [string, string, string][];
+  type GuiPart = [name: string, code: string, styles: string, settingsSource?: string | null, runtime?: unknown];
+  let files: GuiPart[];
   try {
-    files = await invoke<[string, string, string][]>("list_gui_extensions");
+    files = await invoke<GuiPart[]>("list_gui_extensions");
   } catch {
     return loaded;
   }
@@ -957,7 +962,23 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
     grants = JSON.parse(await invoke<string>("read_extension_grants"));
   } catch { /* no grants recorded — everything falls back to the legacy grant */ }
 
-  for (const [name, code, styles] of files) {
+  for (const [name, code, styles, settingsSource, runtime] of files) {
+    if (runtime != null && runtime !== "isolated-settings") {
+      status.push({ name, ok: false, error: "Unsupported GUI runtime — update the extension or Fez" });
+      continue;
+    }
+    if (runtime === "isolated-settings") {
+      // Intercept before bundle evaluation or CSS injection into main.
+      // Rust independently checks the grants when this is opened.
+      if (!grants[name]?.includes("ui")) {
+        status.push({ name, ok: false, error: "Isolated panel requires a recorded ui grant" });
+        continue;
+      }
+      registerSettingsPanel(name, () => React.createElement(IsolatedPanelLauncher, { name, client }), { source: settingsSource ?? undefined });
+      loaded.push(name);
+      status.push({ name, ok: true });
+      continue;
+    }
     // `styles` is the gui part's companion CSS (the hashed `<gui>.css`
     // `fez pack` emits, returned by the Rust scan beside the code). Empty
     // string for the common no-CSS-module case, so injection below is a
@@ -972,14 +993,11 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
     const disposeUi = () => { active = false; closePanel?.(); };
     const api: GuiExtensionApi = {
       React,
+      fetch: gatedFetch(name, hosts),
       // Parse a natural-language query into the shape client.runQuery wants
       // — the seam an exported tool needs to answer its own data.
       parseQuery,
-      // The client is the whole protocol surface (read AND publish), so
-      // it is withheld entirely without read:channels; publish-less
-      // extensions still get it, since narrowing every method is a bigger
-      // change than this pass — flagged in the extensions view instead.
-      client: may("read:channels") ? client : (undefined as never),
+      client: may("read:channels") ? createGuiClient(client, name, granted) : undefined,
       // Read-only view of this extension's own state file — the gui
       // half of headless api.storage. Namespace-locked to `name` here;
       // the Rust command only re-checks the name can't traverse.
@@ -1012,7 +1030,20 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
       registerTheme: may("ui") ? registerTheme : (refuse("ui", "register a theme") as never),
       registerMessageDecorator: may("ui") ? registerMessageDecorator : (refuse("ui", "decorate messages") as never),
       registerBlockRenderer: may("ui") ? registerBlockRenderer : (refuse("ui", "render doc blocks") as never),
-      registerPageView: may("ui") ? registerPageView : (refuse("ui", "add a page view") as never),
+      registerPageView: may("ui")
+        ? (label, match, render) => registerPageView(label, match, (props, host) => render({
+            ...props,
+            editable: props.editable && may("publish"),
+            save: async (next) => {
+              requireGuiPermission(name, granted, "page.save", "publish");
+              await props.save(next);
+            },
+            comment: async (text, anchor, mentions) => {
+              requireGuiPermission(name, granted, "page.comment", "publish");
+              await props.comment(text, anchor, mentions);
+            },
+          }, host))
+        : (refuse("ui", "add a page view") as never),
       registerMarkdownPlugin: may("ui") ? registerMarkdownPlugin : (refuse("ui", "extend markdown") as never),
       registerGuiCommand: may("commands")
         ? ((cmd: string, run: (args: string) => Promise<string> | string) => registerGuiCommand(cmd, run, name))
@@ -1045,10 +1076,10 @@ async function loadCurrentGuiExtensions(client: FezClient): Promise<string[]> {
               body,
               label: name,
             })
-        : (refuse("notifications", "send a notification") as never),
+        : undefined,
       toast: may("ui")
         ? (message: string, v?: "success" | "error" | "warn" | "info") => toast[v ?? "info"](message)
-        : (refuse("ui", "show a toast") as never),
+        : undefined,
       agents: may("processes")
         ? {
             spawn: (bin: string, opts: { name: string; env?: Record<string, string> }) =>

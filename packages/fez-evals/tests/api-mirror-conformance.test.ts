@@ -65,6 +65,15 @@ const FAMILIES = [
     // --jsx too: the real API imports a .tsx module for artifact viewers.
     resolution: ["--module", "ESNext", "--moduleResolution", "bundler", "--jsx", "react-jsx"],
   },
+  {
+    // Inline GUI contracts must obey the same rules as gui-types.ts.
+    file: "src/gui.tsx",
+    declaration: "export interface GuiApi",
+    real: REAL_GUI_API,
+    name: "GuiExtensionApi",
+    mirrorName: "GuiApi",
+    resolution: ["--module", "ESNext", "--moduleResolution", "bundler", "--jsx", "react-jsx"],
+  },
 ];
 
 interface Mirror {
@@ -84,10 +93,11 @@ function findMirrors(): Mirror[] {
     for (const family of FAMILIES) {
       const file = path.join(packagesDir, pkg, family.file);
       if (!fs.existsSync(file)) continue;
+      if (family.declaration && !fs.readFileSync(file, "utf8").includes(family.declaration)) continue;
       found.push({
         // The probe filename has to be unique per mirror, not per
         // package — fez-git has both families.
-        pkg: family.file.includes("gui-") ? `${pkg}--gui` : pkg,
+        pkg: family.file.includes("gui") ? `${pkg}--gui` : pkg,
         file,
         real: family.real,
         name: family.name,
@@ -96,6 +106,8 @@ function findMirrors(): Mirror[] {
       });
     }
   }
+  const github = found.find(m => m.pkg === "fez-github--gui");
+  if (github) found.push({ ...github, pkg: "fez-github--isolated", name: "IsolatedPanelApi", real: path.join(REPO, "packages/fez-desktop/src/isolated-panel.tsx") });
   return found.sort((a, b) => a.pkg.localeCompare(b.pkg));
 }
 
@@ -210,6 +222,8 @@ describe("@fezchat/extension-api is a faithful subset of the real hosts", () => 
     { name: "RelayExtensionAPI", real: path.join(REPO, "packages/fez-relay/src/extensions.ts"), pkgFile: "relay.ts", resolution: ["--module", "NodeNext", "--moduleResolution", "NodeNext"] },
     { name: "WorkspaceRequest", real: path.join(REPO, "packages/fez-acp/src/workspaces.ts"), pkgFile: "workspace.ts", resolution: ["--module", "NodeNext", "--moduleResolution", "NodeNext"] },
     { name: "GuiExtensionApi", real: REAL_GUI_API, pkgFile: "gui.ts", resolution: ["--module", "ESNext", "--moduleResolution", "bundler", "--jsx", "react-jsx"] },
+    { name: "IsolatedPanelApi", real: path.join(REPO, "packages/fez-desktop/src/isolated-panel.tsx"), pkgFile: "gui.ts", resolution: ["--module", "ESNext", "--moduleResolution", "bundler", "--jsx", "react-jsx"] },
+    { name: "PermissionId", publishedName: "FezPermission", real: path.join(REPO, "src/extensions/extension-permissions.ts"), pkgFile: "manifest.ts", resolution: ["--module", "NodeNext", "--moduleResolution", "NodeNext"] },
   ];
 
   it("every published surface accepts its real host API", () => {
@@ -227,8 +241,9 @@ describe("@fezchat/extension-api is a faithful subset of the real hosts", () => 
           probe,
           [
             `import type { ${s.name} as Real } from "${rel(WORK, s.real)}";`,
-            `import type { ${s.name} as Pub } from "${rel(WORK, path.join(PKG, s.pkgFile))}";`,
+            `import type { ${s.publishedName ?? s.name} as Pub } from "${rel(WORK, path.join(PKG, s.pkgFile))}";`,
             `export const check: (real: Real) => Pub = (real) => real;`,
+            ...(s.publishedName ? [`export const reverse: (published: Pub) => Real = (published) => published;`] : []),
             ``,
           ].join("\n")
         );

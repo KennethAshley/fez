@@ -21,7 +21,7 @@ import { ago, parseLiveBlock, formatLiveBlock, parseLiveCommand, LIVE_LANG } fro
 interface ClientLike {
   displayName(pk: string): string;
   pkByName(name: string): string | undefined;
-  state: { scope?: { channelId: string } };
+  state: { scope: { channelId: string } | null };
   sendChannelMessage(text: string, opts?: object): Promise<unknown>;
   publishDocComment(
     channelId: string,
@@ -40,10 +40,10 @@ interface BlockProps {
   slug?: string;
 }
 
-interface GuiApi {
+export interface GuiApi {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   React: { createElement: (...args: any[]) => unknown; useState: <T>(v: T) => [T, (v: T) => void] };
-  client: ClientLike;
+  client?: ClientLike;
   registerBlockRenderer(lang: string, render: (props: BlockProps) => unknown): void;
   registerGuiCommand(name: string, run: (args: string) => Promise<string> | string): void;
   toast?(message: string, variant?: "success" | "error" | "warn" | "info"): void;
@@ -54,6 +54,7 @@ let h: any;
 
 export default function activate(api: GuiApi): void {
   h = api.React.createElement;
+  if (!api.client) throw new Error("fez-live-blocks needs read:channels permission");
   const { client } = api;
 
   api.registerBlockRenderer(LIVE_LANG, ({ info, body, raw, channelId, slug }) => {

@@ -1,6 +1,7 @@
 use nostr::JsonUtil as _;
 mod bounded_command;
 mod git_install;
+mod isolated_panel;
 mod managed_agents;
 mod managed_node;
 mod notifications;
@@ -467,7 +468,15 @@ fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
         .args(["find-generic-password", "-s", "fez-skill-env", "-a", &account])
         .output()
         .map_err(|e| format!("couldn't run security: {e}"))?;
-    Ok(output.status.success())
+    keychain_presence(output.status.code())
+}
+
+fn keychain_presence(code: Option<i32>) -> Result<bool, String> {
+    match code {
+        Some(0) => Ok(true),
+        Some(44) => Ok(false), // errSecItemNotFound; a locked/denied keychain is not "disconnected".
+        _ => Err("keychain access failed".into()),
+    }
 }
 
 /// GUI extension parts installed by `fez install`/`fez link`
@@ -475,81 +484,26 @@ fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
 /// webview imports each as an ES module and calls its activate(api) — the
 /// GUI's version of the TUI's extension loader.
 #[tauri::command]
-fn list_gui_extensions() -> Result<Vec<(String, String, String)>, String> {
+fn list_gui_extensions() -> Result<Vec<(String, String, String, Option<String>, Option<String>)>, String> {
     let home_path = fez_home()?;
-    Ok(package_install::gui_parts(&home_path))
+    Ok(package_install::gui_parts(&home_path).into_iter().map(|(name, code, styles, runtime)| {
+        let source = package_install::installed_manifest(&name, &home_path)
+            .and_then(|manifest| manifest.pointer("/fez/settingsSource").and_then(serde_json::Value::as_str)
+                .filter(|source| valid_secret_name(source)).map(str::to_owned));
+        (name, code, styles, source, runtime)
+    }).collect())
 }
 
-/// Read one extension's state file (~/.fez/extension-data/<name>.json)
-/// whole, as text. The gui loader namespaces calls to the extension's
-/// own stem — this command only enforces that the name can't traverse.
-/// Read-only: gui parts render state; headless/CLI own writes.
+/// Legacy main-webview API. Isolated panels use the caller-bound broker.
 #[tauri::command]
 fn extension_storage_read(name: String) -> Result<String, String> {
-    let ok_first = name
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_alphanumeric())
-        .unwrap_or(false);
-    let ok_rest = name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    if !ok_first || !ok_rest || name.contains("..") {
-        return Err(format!("invalid extension name: {name}"));
-    }
-    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
-    let file = std::path::Path::new(&home)
-        .join(".fez")
-        .join("extension-data")
-        .join(format!("{name}.json"));
-    Ok(std::fs::read_to_string(file).unwrap_or_else(|_| "{}".to_string()))
+    isolated_panel::read_storage(&fez_home()?, &name).map(|value| value.to_string())
 }
 
-/// Write ONE key under an extension's `prefs` object
-/// (~/.fez/extension-data/<name>.json). Name validation mirrors
-/// `extension_storage_read` verbatim.
-///
-/// Scoped to `prefs` on purpose: the CLI rewrites the rest of this file
-/// on every spend, so a webview writing those keys would clobber ledger
-/// rows outright. The scoping is what keeps a panel write from ever
-/// TARGETING a CLI-owned key; it does not serialize the two writers.
-/// This function read-modify-writes the whole file, and so does the node
-/// side, from a different process — two concurrent writes can still lose
-/// an update. This is a correctness boundary — gui parts run in the page
-/// and can reach every command regardless, so it is not, and must not be
-/// described as, a security boundary.
 #[tauri::command]
 fn extension_storage_write(name: String, key: String, value: String) -> Result<(), String> {
-    let ok_first = name
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_alphanumeric())
-        .unwrap_or(false);
-    let ok_rest = name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    if !ok_first || !ok_rest || name.contains("..") {
-        return Err(format!("invalid extension name: {name}"));
-    }
-    let parsed: serde_json::Value =
-        serde_json::from_str(&value).map_err(|e| format!("invalid value json: {e}"))?;
-    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
-    let dir = std::path::Path::new(&home).join(".fez").join("extension-data");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let file = dir.join(format!("{name}.json"));
-    let mut state: serde_json::Value = std::fs::read_to_string(&file)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if !state.is_object() {
-        state = serde_json::json!({});
-    }
-    if !state["prefs"].is_object() {
-        state["prefs"] = serde_json::json!({});
-    }
-    state["prefs"][key] = parsed;
-    std::fs::write(&file, serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+    let value = serde_json::from_str(&value).map_err(|e| format!("invalid value json: {e}"))?;
+    isolated_panel::write_preference(&fez_home()?, &name, &key, value)
 }
 
 /// What each installed extension was granted (settings.extensionPermissions).
@@ -2682,9 +2636,13 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
     Ok(())
 }
 
+fn app_context<R: tauri::Runtime>() -> tauri::Context<R> { tauri::generate_context!() }
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .channel_interceptor(isolated_panel::channel_message)
+        .manage(isolated_panel::PanelHost::new(fez_home().expect("Fez home directory")))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2777,8 +2735,8 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![notifications::notify_with_click, stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
-        .build(tauri::generate_context!())
+        .invoke_handler(isolated_panel::guard(tauri::generate_handler![notifications::notify_with_click, isolated_panel::open_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_reply, isolated_panel::isolated_panel_host_request, stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package]))
+        .build(app_context())
         .expect("error while building tauri application")
         .run(|_app, _event| {
             // Agents are DETACHED and deliberately outlive the window —

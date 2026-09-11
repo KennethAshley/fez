@@ -1,13 +1,6 @@
-import type { GuiClient, GuiExtensionApi } from "@fezchat/extension-api/gui";
+import type { IsolatedPanelApi } from "@fezchat/extension-api/gui";
 import { PINNED, voiceFor } from "./voices.js";
 
-/** `agents()` (pk → persona name) isn't in the shared GuiClient slice
- * (extension-api types only what most gui parts need) — reach for it
- * the way fez-wallet reaches under GuiClient for things it needs, typed
- * against what's actually used (fez-client:667). */
-interface VoiceClient extends GuiClient {
-  agents(): Map<string, string>;
-}
 
 /**
  * fez-elevenlabs, GUI part — the voice map.
@@ -23,33 +16,54 @@ interface VoiceClient extends GuiClient {
  * as markup while the compiled output is the same host-React
  * createElement calls as before — one React on the page, no bundle.
  */
-export default function activate(api: GuiExtensionApi): void {
+export default function activate(api: IsolatedPanelApi): void {
   const h = api.React.createElement;
   const { useState, useEffect } = api.React;
-  const client = api.client as VoiceClient;
+  if (!api.client) throw new Error("fez-elevenlabs needs read:channels permission");
+  const { client } = api;
 
   function Panel(): JSX.Element {
     const [voices, setVoices] = useState<Record<string, string>>({});
     const [agents, setAgents] = useState<{ name: string; pk: string }[]>([]);
 
+    const [error, setError] = useState("");
+    const [ready, setReady] = useState(false);
+    const [saving, setSaving] = useState(false);
+
     useEffect(() => {
-      void api.prefs.get<Record<string, string>>("voices").then((v) => setVoices(v ?? {}));
-      const list = [...client.agents().entries()].map(([pk, name]) => ({ pk, name }));
-      setAgents(list.sort((a, b) => a.name.localeCompare(b.name)));
+      void api.prefs.get<Record<string, string>>("voices").then((v) => {
+        setVoices(v ?? {});
+        setReady(true);
+      }).catch((err: unknown) => setError(String(err)));
+      try {
+        const list = [...client.agents().entries()].map(([pk, name]) => ({ pk, name }));
+        setAgents(list.sort((a, b) => a.name.localeCompare(b.name)));
+      } catch (err) { setError(String(err)); }
     }, []);
 
-    const set = (agent: string, id: string) => {
+    const set = async (agent: string, id: string) => {
+      if (!ready || saving) return;
       const next = { ...voices };
       if (id) next[agent] = id;
       else delete next[agent];
-      setVoices(next);
-      void api.prefs.set("voices", next);
+      setSaving(true);
+      setError("");
+      try {
+        await api.prefs.set("voices", next);
+        setVoices(next);
+      } catch (err) { setError(String(err)); }
+      finally { setSaving(false); }
     };
 
-    if (agents.length === 0) return <div className="settings-hint">no agents yet — voices attach to agents.</div>;
+    const preview = async (url: string) => {
+      try { await new Audio(url).play(); }
+      catch { setError("Voice preview is unavailable in this window."); }
+    };
 
     return (
       <div>
+        {error && <p role="alert">{error}</p>}
+        {agents.length === 0 && <div className="settings-hint">no agents yet — voices attach to agents.</div>}
         <div className="settings-hint">
           Each agent speaks with a stable voice — assigned from its identity, overridable here. The API key lives on
           the skill, in Settings → skills.
@@ -61,9 +75,11 @@ export default function activate(api: GuiExtensionApi): void {
             <div key={name} className="set-row">
               <span className="set-label">@{name}</span>
               <select
+                aria-label={`Voice for @${name}`}
                 className="manage-select"
+                disabled={!ready || saving}
                 value={overridden ? current.id : ""}
-                onChange={(e: { target: { value: string } }) => set(name, e.target.value)}
+                onChange={(e: { target: { value: string } }) => void set(name, e.target.value)}
               >
                 <option value="">{current.name} (default)</option>
                 {PINNED.map((v) => (
@@ -73,7 +89,7 @@ export default function activate(api: GuiExtensionApi): void {
                 ))}
               </select>
               {current.previewUrl && (
-                <button className="mini" onClick={() => void new Audio(current.previewUrl).play()}>
+                <button className="mini" aria-label={`Preview ${current.name}`} onClick={() => void preview(current.previewUrl!)}>
                   ▶
                 </button>
               )}

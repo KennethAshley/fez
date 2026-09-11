@@ -15,6 +15,7 @@
     "permissions": [
       "commands",
       "read:channels",
+      "read:agents",
       "publish",
       "ui",
       "background",

@@ -59,6 +59,7 @@ export function makeLaneBoard(api: GuiExtensionApi) {
   const h = api.React.createElement;
   const { useState, useEffect, useCallback } = api.React;
   const { client } = api;
+  if (!client) throw new Error("fez-git needs read:channels permission");
 
   return function LaneBoard({ channelId, rootContent }: { channelId: string; rootId: string; rootContent: string }): JSX.Element | null {
     const [lanes, setLanes] = useState<Lane[]>([]);
@@ -133,7 +134,9 @@ export function makeLaneBoard(api: GuiExtensionApi) {
     }
 
     if (!line || !repo || !base) return null;
-    const working = client.workingAgents();
+    let working;
+    try { working = client.workingAgents(); }
+    catch (err) { return <div className="settings-hint">{String(err)}</div>; }
 
     return (
       <div className="lane-board">

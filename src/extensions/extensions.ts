@@ -388,11 +388,6 @@ export function findUrlHandler(url: string): UrlHandler | undefined {
 }
 
 /**
- * Build the API an extension actually receives. Capabilities it wasn't
- * granted are REPLACED with no-ops that say so once — an extension that
- * quietly does nothing is worse to debug than one that logs why.
- */
-/**
  * Wrap the FezClient handed to an extension so its KEY/crypto methods obey
  * the same gates as api.nostr. Without this, api.client is a SECOND ungated
  * door to signing/decrypting AS THE USER — and it's handed out on the mundane
@@ -409,24 +404,27 @@ export function findUrlHandler(url: string): UrlHandler | undefined {
 function gatedClient(
   client: FezClient,
   may: (p: string) => boolean,
-  refuse: (permission: string, what: string) => () => void
+  deny: (permission: string, operation: string) => never
 ): FezClient {
   const canSign = () => may("sign") || may("publish");
   const canDecrypt = () => may("sign") || may("read:dms");
   return new Proxy(client, {
     get(target, prop) {
       if (prop === "signEvent" && !canSign())
-        return () => { refuse("sign", "sign an event via the client")(); throw new Error('extension denied: needs "sign" or "publish" to signEvent'); };
+        return () => deny("sign or publish", "client.signEvent");
       if (prop === "encrypt" && !canSign())
-        return () => { refuse("sign", "encrypt via the client")(); return ""; };
-      if ((prop === "decrypt" || prop === "decryptFrom") && !canDecrypt())
-        return () => { refuse("sign", "decrypt via the client")(); throw new Error('extension denied: needs "sign" or "read:dms" to decrypt'); };
+        return () => deny("sign or publish", "client.encrypt");
+      if (prop === "decrypt" && !canDecrypt())
+        return () => deny("sign or read:dms", "client.decrypt");
+      if (prop === "decryptFrom" && !canDecrypt())
+        return async () => deny("sign or read:dms", "client.decryptFrom");
       const v = Reflect.get(target, prop);
       return typeof v === "function" ? v.bind(target) : v;
     },
   }) as FezClient;
 }
 
+/** Denied protocol calls fail explicitly; registration without a grant warns and skips. */
 export function buildApi(granted: readonly string[], extensionName = "extension"): FezExtensionAPI {
   const refuse = (permission: string, what: string) => {
     let warned = false;
@@ -438,6 +436,9 @@ export function buildApi(granted: readonly string[], extensionName = "extension"
     };
   };
   const may = (permission: string) => granted.includes(permission);
+  const deny = (permission: string, operation: string): never => {
+    throw new Error(`extension "${extensionName}" denied ${operation}: needs ${permission} permission`);
+  };
 
   /**
    * Who owns this workspace, per the relay's own NIP-11 document — never
@@ -469,35 +470,26 @@ export function buildApi(granted: readonly string[], extensionName = "extension"
     pubkey: bk.pubkey, // public — safe to expose ungated
     publish: may("publish")
       ? bk.publish
-      : (async (tmpl) => {
-          refuse("publish", "publish an event")();
-          return { ...tmpl, id: "", pubkey: "", created_at: 0, sig: "" } as never;
-        }),
+      : (async () => deny("publish", "nostr.publish")),
     signEvent: canSign()
       ? bk.signEvent
-      : ((tmpl) => {
-          refuse("sign", "sign an event")();
-          return { ...tmpl, id: "", pubkey: "", created_at: tmpl.created_at ?? 0, sig: "" } as never;
-        }),
+      : (() => deny("sign or publish", "nostr.signEvent")),
     encrypt: canSign()
       ? bk.encrypt
-      : ((_peer, _text) => { refuse("sign", "encrypt with your key")(); return ""; }),
+      : (() => deny("sign or publish", "nostr.encrypt")),
     // Decrypt reads private content addressed to you — `read:dms` covers the
     // inbox case, `sign` the general crypto case. Throw (not "") so a denied
     // call can't masquerade as valid empty plaintext; decrypt already throws
     // on bad input, so callers cope with a throw.
     decrypt: (may("sign") || may("read:dms"))
       ? bk.decrypt
-      : ((_peer, _cipher) => {
-          refuse("sign", "decrypt with your key")();
-          throw new Error('extension denied: needs "sign" or "read:dms" to decrypt');
-        }),
-    sendDm: may("publish") ? bk.sendDm : (async () => { refuse("publish", "send a DM")(); return ""; }),
-    query: may("read:channels") ? bk.query : (async () => { refuse("read:channels", "query the relay")(); return []; }),
+      : (() => deny("sign or read:dms", "nostr.decrypt")),
+    sendDm: may("publish") ? bk.sendDm : (async () => deny("publish", "nostr.sendDm")),
+    query: may("read:channels") ? bk.query : (async () => deny("read:channels", "nostr.query")),
     subscribe: may("read:channels")
       ? bk.subscribe
-      : (() => { refuse("read:channels", "subscribe to the relay")(); return () => {}; }),
-    unwrapDm: may("read:dms") ? bk.unwrapDm : (() => { refuse("read:dms", "read a DM")(); return undefined; }),
+      : (() => deny("read:channels", "nostr.subscribe")),
+    unwrapDm: may("read:dms") ? bk.unwrapDm : (() => deny("read:dms", "nostr.unwrapDm")),
   };
 
   return {
@@ -532,7 +524,7 @@ export function buildApi(granted: readonly string[], extensionName = "extension"
       if (!workspaceBackend && owner === undefined) return undefined;
       return { relayUrl: workspaceBackend?.relayUrl, owner, info: workspaceBackend?.info };
     },
-    client: may("read:channels") && clientBackend ? gatedClient(clientBackend, may, refuse) : undefined,
+    client: may("read:channels") && clientBackend ? gatedClient(clientBackend, may, deny) : undefined,
     ui: {
       setStatus,
       createSidePanel: (opts) =>

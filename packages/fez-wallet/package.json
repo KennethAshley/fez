@@ -31,6 +31,7 @@
       "network:relay",
       "publish",
       "read:channels",
+      "read:agents",
       "ui",
       "processes"
     ],

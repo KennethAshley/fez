@@ -15,23 +15,14 @@
  * merely discouraged.
  *
  * What this is NOT: a sandbox. A headless extension is a Node module and
- * can require() its way around anything we do here; the GUI half is
- * better (we control the scope it evaluates in) but not airtight. The
+ * can require() its way around anything we do here; GUI extensions share
+ * the host's webview globals and native bridge. The
  * value is informed consent and accident-resistance, and the honest
  * framing at install time is "this is what it says it needs", not "this
  * is all it can do".
  */
 
-export type PermissionId =
-  | "read:channels"
-  | "read:dms"
-  | "read:agents"
-  | "publish"
-  | "sign"
-  | "commands"
-  | "ui"
-  | "background"
-  | `network:${string}`;
+export type PermissionId = keyof typeof KNOWN | `network:${string}`;
 
 export interface PermissionInfo {
   id: string;
@@ -41,7 +32,7 @@ export interface PermissionInfo {
   sensitive: boolean;
 }
 
-const KNOWN: Record<string, Omit<PermissionInfo, "id">> = {
+const KNOWN = {
   "read:channels": { description: "Read messages in your channels", sensitive: false },
   "read:dms": { description: "Read your private direct messages", sensitive: true },
   "read:agents": { description: "See your agent roster and their activity", sensitive: false },
@@ -64,7 +55,7 @@ const KNOWN: Record<string, Omit<PermissionInfo, "id">> = {
   // what the API is called — matching the desktop's wording.
   processes: { description: "Run its own programs on your machine", sensitive: true },
   notifications: { description: "Send you native notifications", sensitive: false },
-};
+} satisfies Record<string, Omit<PermissionInfo, "id">>;
 
 export interface ParsedPermissions {
   granted: string[];
@@ -88,7 +79,7 @@ export function parsePermissions(declared: readonly string[] | undefined): Parse
       }
       continue;
     }
-    if (id in KNOWN) granted.push(id);
+    if (Object.hasOwn(KNOWN, id)) granted.push(id);
     else unknown.push(id);
   }
   return { granted: [...new Set(granted)], networkHosts: [...new Set(networkHosts)], unknown };
@@ -106,7 +97,7 @@ export function describePermission(id: string): PermissionInfo {
       sensitive: host === "*",
     };
   }
-  const known = KNOWN[id];
+  const known = Object.hasOwn(KNOWN, id) ? KNOWN[id as keyof typeof KNOWN] : undefined;
   return known ? { id, ...known } : { id, description: `Unrecognized permission "${id}"`, sensitive: true };
 }
 

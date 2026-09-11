@@ -54,23 +54,23 @@ function readRepo(channel: RepoChannelLike, base: string | undefined): Repo {
 export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
   const { useState, useEffect, useCallback } = api.React;
-  const { client } = api;
+  const { client: availableClient } = api;
 
   // A linked extension meets whatever host is installed. The mirror
   // conformance eval proves this compiles against TODAY'S desktop; it
   // cannot prove the desktop on disk is today's. A missing seam must
   // say so — a render that throws is a blank card with no clue in it.
   if (
-    typeof client?.relayInfo !== "function" ||
-    typeof client?.channelsFrom !== "function" ||
-    typeof client?.ensureChannel !== "function"
+    typeof availableClient?.relayInfo !== "function" ||
+    typeof availableClient?.channelsFrom !== "function" ||
+    typeof availableClient?.ensureChannel !== "function"
   ) {
     api.registerSettingsPanel(
       "Repos",
       () => (
         <div className="ext-panel">
-          <p>This fez-desktop build is older than the fez-git extension.</p>
-          <p className="dim">Rebuild and reinstall the app (packages/fez-desktop), then reopen this panel.</p>
+          <p>{availableClient ? "This fez-desktop build is older than the fez-git extension." : "fez-git needs read:channels permission."}</p>
+          <p className="dim">{availableClient ? "Update the desktop app, then reopen this panel." : "Reinstall the extension to review its permissions."}</p>
         </div>
       ),
       { source: "fez-git" }
@@ -78,6 +78,7 @@ export default function activate(api: GuiExtensionApi): void {
     return;
   }
 
+  const client = availableClient;
   /** The advertised git base, or undefined when this relay serves none. */
   const base = (): string | undefined => cloneBase(client.relayInfo());
 
@@ -438,7 +439,9 @@ export default function activate(api: GuiExtensionApi): void {
         const agents = stubs
           .map((reply) => reply.content.match(/`([^`/]+)\//)?.[1])
           .filter((name): name is string => !!name);
-        const working = client.workingAgents();
+        let working;
+        try { working = client.workingAgents(); }
+        catch (err) { return <div className="settings-hint">{String(err)}</div>; }
         const busy = agents.filter((name) => working.has(name));
         return (
           <div className="line-chip">

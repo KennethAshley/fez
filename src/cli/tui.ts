@@ -452,7 +452,11 @@ export class FezTUI {
     this.editor.setText("");
     if (!input) return;
     this.editor.addToHistory(input);
-    await this.handleInput(input);
+    try {
+      await this.handleInput(input);
+    } catch (err) {
+      this.systemLine(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private async handleInput(input: string): Promise<void> {

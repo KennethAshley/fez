@@ -62,7 +62,7 @@ export interface NostrAccess {
  * was nothing else on offer. There is now, and this is the shape of it.
  */
 export interface ChannelsAccess {
-  list(): Promise<{ id: string; name: string; source?: string; meta?: Record<string, string> }[]>;
+  list(): Promise<{ id: string; name: string; source?: string; meta?: Record<string, string>; archived?: boolean }[]>;
   /** Find by name or open it. Undefined when this key may not create channels. */
   ensure(spec: {
     name: string;
@@ -92,6 +92,7 @@ export interface FezExtensionAPI {
   client?: unknown;
   /** Gated by permissions; undefined when the host offers none. */
   nostr?: NostrAccess;
+  channels?: ChannelsAccess;
   ui: {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;

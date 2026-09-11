@@ -1,13 +1,13 @@
 import type { FezExtensionAPI, ScheduledTaskContext } from "./api-types.js";
-import { channelNameFor, checksFor, headline, installedRepos, ready, recentItems, validRepo, type Item } from "./github.js";
+import { checksFor, headline, installedRepos, ready, recentItems, validRepo, type Item } from "./github.js";
 import { STATE_FILE, changeLine, keyFor, readJson, writeJson, type State } from "./state.js";
-import { CONFIG_D, CONFIG_KIND, loadConfig, saveConfig, type Config } from "./config.js";
+import { CONFIG_D, CONFIG_KIND, loadConfig, saveConfig, destinationFor, legacyChannel, type Config, type DestinationChannel } from "./config.js";
 
 /**
  * fez-github, headless part — a repo's activity, in a channel.
  *
- * A repo is a CHANNEL and each pull request or issue is a THREAD in it.
- * A channel per PR would bury the sidebar on any real repo.
+ * A repo attaches to a chosen channel; each pull request or issue is a thread.
+ * Multiple repositories can share a channel without owning its navigation.
  *
  * What lands on the relay is what HAPPENED — opened, merged, "2/30
  * checks failing" — because that is history. What is TRUE RIGHT NOW is
@@ -27,31 +27,6 @@ import { CONFIG_D, CONFIG_KIND, loadConfig, saveConfig, type Config } from "./co
  */
 
 export default function github(api: FezExtensionAPI): void {
-  /**
-   * The repo's channel, opened on first sight.
-   *
-   * `source` is what groups every repo under one heading in the rail
-   * instead of scattering them among the rooms people made; `repo`
-   * carries the full owner/name, since the channel is named for the
-   * short half and two owners can both have a `docs`.
-   */
-  async function channelFor(
-    ctx: ScheduledTaskContext,
-    repo: string,
-    config: Config
-  ): Promise<string | undefined> {
-    const branch = config.available?.find((row) => row.repo === repo)?.defaultBranch;
-    const id = await ctx.channels.ensure({
-      name: channelNameFor(repo),
-      source: "github",
-      meta: branch ? { repo, branch } : { repo },
-    });
-    if (!id) {
-      console.warn(`⚠️  fez-github: no #${channelNameFor(repo)} channel, and only the workspace owner can add one`);
-    }
-    return id;
-  }
-
   /**
    * Hand a new item to the orchestrator, in its own thread.
    *
@@ -90,7 +65,12 @@ export default function github(api: FezExtensionAPI): void {
     );
   }
 
-  async function pollRepo(ctx: ScheduledTaskContext, repo: string, state: State, config: Config): Promise<boolean> {
+  async function pollRepo(ctx: ScheduledTaskContext, repo: string, state: State, config: Config, channels: DestinationChannel[]): Promise<boolean> {
+    const channelId = destinationFor(config, repo, channels)?.id;
+    if (!channelId) {
+      console.warn(`⚠️  fez-github ${repo}: choose an available destination channel in settings`);
+      return false;
+    }
     let items: Item[];
     try {
       items = await recentItems(repo);
@@ -101,8 +81,6 @@ export default function github(api: FezExtensionAPI): void {
       console.warn(`⚠️  fez-github ${repo}: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
-    const channelId = await channelFor(ctx, repo, config);
-    if (!channelId) return false;
 
     // FIRST SIGHT: record the watermark, say one line, publish nothing
     // else. Backfilling looked harmless until it was counted — pointing
@@ -117,7 +95,7 @@ export default function github(api: FezExtensionAPI): void {
     // summary again — every three minutes, forever.
     const seenKey = `${repo}#!`;
     if (!state[seenKey]) {
-      state[seenKey] = { updatedAt: new Date().toISOString(), state: "watching", comments: 0, rootId: "" };
+      state[seenKey] = { updatedAt: new Date().toISOString(), state: "watching", comments: 0, rootId: "", channelId };
       for (const item of items) {
         state[keyFor(repo, item.number)] = {
           updatedAt: item.updatedAt,
@@ -138,6 +116,19 @@ export default function github(api: FezExtensionAPI): void {
     }
 
     let touched = false;
+    const marker = state[seenKey];
+    if (marker.channelId !== channelId) {
+      const previous = marker.channelId ?? legacyChannel(repo, channels)?.id;
+      if (previous !== channelId) {
+        // Keep the watermark and relay history; the next change gets a root
+        // in the new channel instead of replying into the old channel.
+        for (const [key, seen] of Object.entries(state)) {
+          if (key.startsWith(`${repo}#`)) seen.rootId = "";
+        }
+      }
+      marker.channelId = channelId;
+      touched = true;
+    }
     // Oldest first, so a batch reads in the order things happened.
     for (const item of [...items].reverse()) {
       const key = keyFor(repo, item.number);
@@ -204,18 +195,16 @@ export default function github(api: FezExtensionAPI): void {
   let availableCheckedAt = 0;
   const AVAILABLE_EVERY_MS = 30 * 60_000;
 
-  async function refreshAvailable(ctx: ScheduledTaskContext, config: Config): Promise<void> {
+  async function refreshAvailable(ctx: ScheduledTaskContext): Promise<void> {
     if (Date.now() - availableCheckedAt < AVAILABLE_EVERY_MS) return;
     availableCheckedAt = Date.now();
     try {
       const available = await installedRepos();
-      if (JSON.stringify(available) === JSON.stringify(config.available ?? [])) return;
-      await saveConfig(ctx.nostr, { ...config, available });
-      // Also update the copy THIS poll is using. Without it the branch a
-      // repo tracks is known but unused until the next tick, because the
-      // config was read before this ran — three minutes of a channel
-      // header missing something already on disk.
-      config.available = available;
+      // Discovery can take seconds. Preserve edits made while it ran.
+      const latest = await loadConfig(ctx.nostr, ctx.ownerPubkey);
+      if (JSON.stringify(available) !== JSON.stringify(latest.available ?? [])) {
+        await saveConfig(ctx.nostr, { ...latest, available });
+      }
     } catch (err) {
       // The picker keeps its last answer; never fail a poll over it.
       console.warn(`⚠️  fez-github: couldn't list installed repos — ${err instanceof Error ? err.message : String(err)}`);
@@ -223,7 +212,6 @@ export default function github(api: FezExtensionAPI): void {
   }
 
   async function poll(ctx: ScheduledTaskContext): Promise<string> {
-    const config = await loadConfig(ctx.nostr, ctx.ownerPubkey);
     const gh = await ready();
     if (!gh.ok) {
       console.warn(`⚠️  fez-github: ${gh.why}`);
@@ -231,9 +219,21 @@ export default function github(api: FezExtensionAPI): void {
     }
     // Before the early return: a fresh connection watching nothing yet is
     // exactly when the panel most needs a list to offer.
-    await refreshAvailable(ctx, config);
+    await refreshAvailable(ctx);
+    const channels = await ctx.channels.list();
+    // Channel discovery can race a settings edit. Migrate only the latest watches.
+    const config = await loadConfig(ctx.nostr, ctx.ownerPubkey);
     if (config.repos.length === 0) return "connected, watching nothing yet";
-
+    let migrated = false;
+    for (const repo of config.repos) {
+      if (config.channelIds?.[repo]) continue;
+      const old = legacyChannel(repo, channels);
+      if (old) {
+        config.channelIds = { ...config.channelIds, [repo]: old.id };
+        migrated = true;
+      }
+    }
+    if (migrated) await saveConfig(ctx.nostr, config);
     const state = await readJson<State>(STATE_FILE, {});
     let touched = false;
     for (const repo of config.repos) {
@@ -241,7 +241,7 @@ export default function github(api: FezExtensionAPI): void {
         console.warn(`⚠️  fez-github: "${repo}" is not owner/name — skipped`);
         continue;
       }
-      if (await pollRepo(ctx, repo, state, config)) touched = true;
+      if (await pollRepo(ctx, repo, state, config, channels)) touched = true;
     }
     if (touched) await writeJson(STATE_FILE, state);
     return `synced ${config.repos.length} repo${config.repos.length === 1 ? "" : "s"}`;
@@ -289,26 +289,32 @@ export default function github(api: FezExtensionAPI): void {
   api.registerCommand("github", async (args, ctx) => {
     const nostr = api.nostr;
     if (!nostr) return ctx.reply("⑂ this client gave the extension no relay access");
-    const [verb, value] = args.trim().split(/\s+/);
+    const [verb, value, destination] = args.trim().split(/\s+/);
     const config = await loadConfig(nostr, nostr.pubkey);
 
     if (verb === "watch" && value) {
       if (!validRepo(value)) return ctx.reply(`⑂ "${value}" is not owner/name`);
+      if (!destination) return ctx.reply("⑂ choose a channel: /github watch owner/name <channel-id>. Create a new channel in Fez first, or use GitHub settings.");
+      if (typeof api.channels?.list !== "function") return ctx.reply("⑂ this host cannot list destination channels; update Fez or use GitHub settings");
+      const channel = (await api.channels.list()).find(channel => !channel.archived && channel.id === destination);
+      if (!channel) return ctx.reply("⑂ that channel is unavailable — choose an existing channel ID");
       const gh = await ready();
       if (!gh.ok) return ctx.reply(`⑂ ${gh.why}`);
-      if (config.repos.includes(value)) return ctx.reply(`⑂ already watching ${value}`);
-      await saveConfig(nostr, { ...config, repos: [...config.repos, value] });
-      ctx.reply(
-        `⑂ watching ${value} — #${channelNameFor(value)} opens on the next poll with a summary, ` +
-          `then only what changes from here`
-      );
+      await saveConfig(nostr, {
+        ...config, repos: [...new Set([...config.repos, value])],
+        channelIds: { ...config.channelIds, [value]: channel.id },
+      });
+      ctx.reply(`⑂ watching ${value} in #${channel.name} — only changes from here`);
       return;
     }
 
     if (verb === "forget" && value) {
+      const channelIds = { ...config.channelIds };
+      delete channelIds[value];
       await saveConfig(nostr, {
         ...config,
         repos: config.repos.filter((r) => r !== value),
+        channelIds,
         // Triage on a repo nobody polls is a standing instruction with
         // nothing to trigger it.
         triage: (config.triage ?? []).filter((r) => r !== value),
@@ -337,8 +343,8 @@ export default function github(api: FezExtensionAPI): void {
       .join(", ");
     ctx.reply(
       config.repos.length === 0
-        ? `⑂ ${health} · watching nothing\n/github watch owner/name`
-        : `⑂ ${health} · watching ${watching}\n/github watch owner/name · /github forget owner/name · /github triage owner/name`
+        ? `⑂ ${health} · watching nothing\n/github watch owner/name <channel-id>`
+        : `⑂ ${health} · watching ${watching}\n/github watch owner/name <channel-id> · /github forget owner/name · /github triage owner/name`
     );
   });
 }

@@ -20,9 +20,11 @@
       "network:relay",
       "publish",
       "read:channels",
+      "read:agents",
       "ui"
     ],
-    "minFezVersion": "0.2.0"
+    "minFezVersion": "0.2.0",
+    "guiRuntime": "isolated-settings"
   },
   "scripts": {
     "build": "esbuild src/mcp.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outdir=dist && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js",

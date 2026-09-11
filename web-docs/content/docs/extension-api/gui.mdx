@@ -37,13 +37,37 @@ Build with `esbuild --format=iife --global-name=__fezExt --platform=browser
 | `registerBlockRenderer(lang, render, menu?)` | own a fenced code block by language tag. Pass `menu` (label + insert template) or your block type stays undiscoverable | `ui` |
 | `watchAgent(name)` | open the live activity pane for an agent | `read:agents` |
 | `openThread(channelId, rootId)` / `openUrl(url)` | navigation | `ui` |
-| `client` | the full `FezClient` — withheld entirely without the grant | `read:channels` |
+| `client` | a restricted client adapter; absent without the grant | `read:channels` |
+| `notify` / `toast` | host notifications / in-app feedback; absent without their grants | `notifications` / `ui` |
 | `personas` | list/read/update/create personas and roster their keys — the power to reprogram every agent on the machine | `personas` (sensitive) |
 | `secrets` | `set(key, value)` and `has(key)` — **write-only by design**. A panel can store a token it just obtained and check one exists; it can never read it back. The value lands in the OS keychain and is read host-side | `ui` |
 
 Host-only (no published types yet): `registerTheme` (a CSS-variable pack,
 light + dark), `registerMarkdownPlugin` (a remark plugin, runs after gfm),
 `registerArtifactViewer` (render a typed kind-40300 artifact), `parseQuery`.
+
+## Client contract
+
+Check `api.client` before using it. Its read methods return snapshots: changing
+a returned map or message cannot change the host's cache. The adapter exposes
+an explicit set of methods, not the raw `FezClient` or its wire. New core
+methods do not automatically become extension capabilities.
+
+| Operation | Additional grant |
+| --- | --- |
+| `ensureChannel`, `sendChannelMessage`, `toggleReaction`, `publishDoc`, `publishDocComment`, `publishArtifact`, `saveExtensionConfig` | `publish` |
+| `httpAuthHeader` | `sign` or `publish`, matching the headless signing rule |
+| `decryptFrom` | `sign` or `read:dms` |
+| `extensionConfig` | `sign` |
+| `agents`, `workingAgents`, `runQuery` with source `runs` | `read:agents` |
+
+Denied synchronous calls throw; denied asynchronous calls reject. Errors name
+the extension, operation, and missing grant. Handle these errors in buttons and
+effects. An empty result does not stand in for denied access. `on` supports
+`channelsChanged` and `paymentReceipt`; other events are rejected.
+
+Existing installations keep their recorded grants. If an extension adds a
+required permission, reinstall it to review and grant that request.
 
 ## Page and block props
 
@@ -52,7 +76,8 @@ channelId, slug?, editable }`. `save(next)` is the whole write path — it
 publishes a new version; your view never learns whether it's a wiki page or
 a channel doc. `comment(text, anchor, mentions)` anchors a thread to a line —
 mention an agent in it and the agent answers inside the document. `editable`
-is `false` when an old version is on screen: a view must not rewrite history.
+is `false` when an old version is on screen or the extension lacks `publish`.
+Both callbacks reject without `publish`, even if a view ignores `editable`.
 
 Block renderers receive `{ info, body, raw, channelId, slug? }` — `info` is
 everything after the language tag on the fence (`agent=researcher
@@ -60,11 +85,155 @@ refresh=daily`), and `raw` is the verbatim block, the anchor for comments.
 
 ## Network access
 
-The webview shadows `fetch` and `WebSocket` for extension code. Requests are
+The IIFE loader shadows `fetch` and `WebSocket` for extension code. Requests are
 refused unless a `network:` permission matches: `network:relay` expands to
 your workspace's relay hosts at call time, `network:example.com` is an exact
 host, `network:.example.com` covers subdomains, and `network:*` (sensitive)
 allows anything. `XMLHttpRequest` always throws — use `fetch`.
+
+These checks protect the supplied API from accidental misuse; they are **not
+a sandbox**. GUI extensions share the host webview and can reach its globals
+and native bridge. The ES-module loading path does not shadow network globals.
+Install only trusted GUI code; isolating third-party code requires a separate
+execution boundary and native authorization.
+
+Native process checks validate the named installed package's grants and
+binary manifest, but the extension name comes from the caller. They cannot
+identify which GUI extension invoked the command. Moving key export to a
+different window alone would leave installer and process access available.
+Boot and agent setup use public keys and native signing; onboarding and
+backup still handle private keys in the shared webview.
+
+## Isolated settings runner (macOS)
+
+Compatible settings-only GUI parts select a separate native webview in their
+package manifest:
+
+```json
+{
+  "fez": {
+    "type": "extension",
+    "parts": { "gui": "dist/gui.js" },
+    "guiRuntime": "isolated-settings",
+    "permissions": ["ui"]
+  }
+}
+```
+
+No development flag is needed. GitHub and ElevenLabs declare this runtime.
+Install or relink the updated package so its installed manifest includes the
+declaration, then open its settings normally. For ElevenLabs, grant `ui`,
+`read:channels` and `read:agents`, and open
+**Settings → Extensions → elevenlabs → Open elevenlabs settings**. The main
+loader registers this launcher without evaluating the extension bundle or
+injecting its CSS. The separate entry supports both legacy React elements
+and the mount/dispose callback; mounting React alone in the main page does
+not provide this boundary.
+
+Each declared extension gets its own window, native session and preference
+namespace. All require a recorded `ui` grant. An absent `guiRuntime` keeps
+the legacy GUI host. Unknown or malformed runtime declarations fail visibly
+without evaluating the bundle or injecting its CSS. A declared isolated part
+never falls back to execution in the main page if loading fails, including
+on platforms where the isolated runner is unsupported.
+
+Use a desktop build that supports this field: older releases ignore unknown
+manifest fields. The declaration does not retrofit isolation into an older
+host. The previous `VITE_FEZ_ISOLATED_PANEL` selector has been removed.
+
+Build compatible settings parts against the explicit, type-only contract:
+
+```ts
+import type { IsolatedPanelApi } from "@fezchat/extension-api/gui";
+
+export default function activate(api: IsolatedPanelApi) {
+  api.registerSettingsPanel("My settings", (host) => {
+    if (!host) throw new Error("Mount node required");
+    host.textContent = "Settings are ready";
+    return () => { host.replaceChildren(); };
+  });
+}
+```
+
+`IsolatedPanelApi` contains local React, one settings registration, preferences,
+write-only secrets, browser links, HTTPS fetch, and a limited optional client.
+Rust binds each request to the actual webview, checks current recorded grants,
+and refuses general native commands. Preferences stay in the installed
+extension's own file and preserve other state; corrupt files fail closed.
+The published contract and GitHub's mirror are compiled against the real host.
+
+The client requires `read:channels`. Its `agents()` method is an initial
+snapshot requiring `read:agents`. Config reads require `sign`; config writes
+also require `publish`. Config operations reuse FezClient in the main window,
+including its existing encryption and relay publication. Extensions receive
+neither the raw client nor arbitrary signing/decryption operations.
+
+`client.listChannels()` returns current active channels as copied records
+(`id`, `name`, optional `source` and `meta`). Store the chosen ID as an
+integration destination; channel names can change or collide.
+`client.createChannel(name)` creates an ordinary channel and returns its new ID.
+It requires `publish` and workspace ownership, and never adopts or retags an
+existing channel with the same name. Both methods also work in the legacy GUI host.
+
+Config and secret namespaces use the installed directory with `fez-` added
+when absent: both `github` and a locally linked `fez-github` use `fez-github`.
+If both aliases are installed, config and secret access fail until the
+duplicate is removed. An extension cannot request another namespace. Secrets
+expose only `set` and `has`, use the existing keychain slots, and require `ui`.
+A keychain access error is reported rather than interpreted as disconnected.
+
+### GitHub settings
+
+Update the GitHub package and approve its declared permissions, including
+`network:github.com` and `network:api.github.com`. Existing recorded grants
+are not silently expanded by the runner. Its installed manifest selects
+`"guiRuntime": "isolated-settings"`; both `github` and the locally linked
+`fez-github` directory work without a launch flag.
+The GitHub panel keeps device login, repository discovery, watch/triage
+settings and GitHub browser links. Each repository attaches to a selected
+ordinary channel, or the user can create one. Existing watches migrate using
+their exact repository metadata and retain their history. GitHub and ElevenLabs
+omit `settingsSource`, so their panels appear in global Settings. Extensions
+that need a dedicated source group can still declare `settingsSource` in their
+manifest; isolated registration options do not override that metadata.
+
+Use `api.fetch` explicitly, including when configuring HTTP libraries.
+The native transport permits UTF-8 GET/HEAD/POST requests only, over HTTPS
+port 443 with an exact recorded `network:<hostname>` grant. It rejects URL
+credentials, non-public resolved addresses, cookies and privileged headers,
+redirects, bodies above 64 KiB, and responses above 2 MiB. Browser links use
+the same HTTPS/hostname grant check. Wildcards and `network:relay` are not
+resolved by this transport. There are at most 16 in-flight requests per
+panel; host replies time out after 30 seconds. HTTP uses a 20-second transport
+timeout; system DNS resolution can outlast that timeout.
+
+Main-window operations are delivered by a channel carrying request IDs only;
+a main-only command returns the authorized operation. Large Tauri channel
+messages are delivered directly to their bound webview, avoiding Tauri 2's
+unscoped fetch queue. Replies are withheld after revocation or close. Operations
+already dispatched may finish; closing a panel does not roll back a write.
+
+This is **native privilege isolation, not a complete extension sandbox**.
+CSP blocks direct fetch, WebSocket and media requests; the broker's HTTPS
+transport is separate. Voice previews remain unavailable. The macOS probe
+confirmed that WebRTC can still send STUN traffic. Separate webviews do not
+guarantee a dedicated OS process. This runner currently refuses non-macOS
+hosts: Tauri's large invoke-response path needs separate hardening there.
+Installed executable parts and other GUI extensions retain their existing
+execution model. Agent snapshots refresh when reopened; concurrent CLI and
+GUI preference writes still need a shared cross-process lock. Panels needing
+process execution, live subscriptions, or other GUI registrations need further
+migration. Isolation remains opt-in.
+
+The manual native probe uses temporary state and simulated credentials; it
+never starts agents or accesses the user's keychain. Build ElevenLabs and
+the desktop, then run
+`cargo run --example isolated-panel-probe --features tauri/custom-protocol`
+from the desktop's `src-tauri` directory. It checks the real bundled webview,
+config and secret routing, large JSON/binary channel delivery and privilege
+denials. Its success marker is `WKWebView probe: PASS`. GitHub's browser test
+loads the real bundle with simulated GitHub/keychain responses; it does not
+connect the user's account. The regular eval gate checks native authorization.
 
 ## Reload behavior
 

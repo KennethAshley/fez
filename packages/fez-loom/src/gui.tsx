@@ -29,14 +29,14 @@ import { exportFiles } from "./export.js";
 
 interface ClientLike {
   state: {
-    scope?: { channelId: string };
+    scope: { channelId: string } | null;
     workspace: { channels: ReadonlyMap<string, { name: string }> };
   };
   publishArtifact(channelId: string, artifact: { type: string; title: string; content: string }): Promise<unknown>;
 }
 
-interface GuiApi {
-  client: ClientLike;
+export interface GuiApi {
+  client?: ClientLike;
   registerNavView(name: string, opts: { glyph: string; label: string }, render: (host?: HTMLElement) => () => void): void;
   registerArtifactAction(
     name: string,
@@ -48,6 +48,7 @@ interface GuiApi {
 }
 
 export default function activate(api: GuiApi): void {
+  if (!api.client) throw new Error("fez-loom needs read:channels permission");
   const { client } = api;
 
   /** Re-render whenever the kept set changes, whoever changed it. */
@@ -81,6 +82,7 @@ export default function activate(api: GuiApi): void {
   }
 
   api.registerArtifactAction("keep", ({ artifact }, host) => {
+    if (!artifact.content) return;
     const root = createRoot(host!);
     root.render(<KeepStar artifact={artifact} />);
     return () => root.unmount();

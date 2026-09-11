@@ -22,6 +22,8 @@ export interface Config {
 }
 
 export interface Seen {
+  /** On the repo marker: prevents roots from following a watch to another channel. */
+  channelId?: string;
   updatedAt: string;
   state: string;
   merged?: boolean;

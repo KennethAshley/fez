@@ -6,7 +6,9 @@ const native = vi.hoisted(() => ({ files: [] as [string, string, string][] }));
 vi.mock("../../fez-desktop/node_modules/@tauri-apps/api/core.js", () => ({
   invoke: async (command: string) => {
     if (command === "list_gui_extensions") return native.files;
-    if (command === "read_extension_grants") return JSON.stringify({ probe: ["ui"] });
+    if (command === "read_extension_grants") return JSON.stringify(
+      Object.fromEntries(native.files.map(([name]) => [name, ["ui", "commands"]])),
+    );
     throw new Error(`Unexpected native call: ${command}`);
   },
 }));
