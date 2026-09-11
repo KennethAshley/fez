@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { compact } from "./format";
+import { parseSkillSource } from "@fezchat/client";
 
 /**
  * "@researcher wants web-search — what IS that?"
@@ -93,14 +94,14 @@ export default function FindSource({
   onCancel,
 }: {
   skill: string;
-  agent: string;
+  agent?: string;
   /** (sourceSpec, provenance) — the caller resolves and renders it before anything runs. */
   onPick: (source: string, provenance: string) => void;
   onCancel: () => void;
 }) {
   // Biased toward MCP servers, because that is what a skill is. Fully
   // editable: the name in the persona is a guess about the query too.
-  const [query, setQuery] = useState(`${skill} mcp`);
+  const [query, setQuery] = useState(skill ? `${skill} mcp` : "mcp server");
   const [hits, setHits] = useState<NpmHit[]>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -155,18 +156,17 @@ export default function FindSource({
 
   return (
     <div className="overlay" onMouseDown={onCancel}>
-      <div className="search-box install-box find-box" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="install-head">what is "{skill}"?</div>
+      <div className="search-box install-box find-box" role="dialog" aria-modal="true" aria-label="Search MCP packages" onMouseDown={(e) => e.stopPropagation()} onKeyDown={e => { if (e.key === "Escape") onCancel(); }}>
+        <div className="install-head">{agent ? `Find a package for ${skill}` : "Search MCP packages"}</div>
         <div className="settings-hint">
-          @{agent} declares <strong>{skill}</strong>, which is a nickname — its persona never said which package that is.
-          These are npm search results. <strong>fez has not verified any of them</strong>: anyone may publish a package
-          under any name, and forks routinely copy the original's description word for word. Check the publisher, read
-          it on npm, then pick.
+          {agent && <>@{agent} needs <strong>{skill}</strong>, but its setup does not specify a package. </>}
+          These results come from npm. Check the publisher and package details before choosing; Fez has not verified these tools.
         </div>
 
         <div className="find-search">
           <input
             className="manage-input"
+            aria-label="Search MCP packages"
             value={query}
             autoFocus
             spellCheck={false}
@@ -226,6 +226,7 @@ export default function FindSource({
               <div className="skill-actions">
                 <button
                   className="agent-action"
+                  disabled={!parseSkillSource(`npm:${hit.name}`)}
                   onClick={() => onPick(`npm:${hit.name}`, `you picked this from npm search — published by ${hit.publisher ?? "an unknown account"}`)}
                 >
                   use this…
