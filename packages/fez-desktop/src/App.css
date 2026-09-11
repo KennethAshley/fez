@@ -2464,6 +2464,21 @@ button.author:hover { text-decoration: underline; }
 .install-offer-title { font-size: 13px; font-weight: 600; color: var(--fg); }
 .install-offer-blurb { font-size: 12px; color: var(--fg-dim); }
 .install-offer-consent { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 6px; }
+/* GitHub imports retain source paths and explicit per-instruction consent. */
+.git-import-selection { display: grid; gap: 10px; border: 0; padding: 6px 0; min-width: 0; }
+.git-import-selection legend { color: var(--fg); font-size: 13px; padding: 0; }
+.git-import-choice { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; cursor: pointer; }
+.git-import-choice input { margin-top: 3px; accent-color: var(--accent); }
+.git-import-choice input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.git-import-choice > span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.git-import-choice > span > span, .git-import-choice code { color: var(--fg-dim); }
+.git-import-unsupported { border-left: 2px solid var(--yellow); padding: 6px 10px; font-size: 12.5px; }
+.git-import .install-offer-title, .git-import .install-offer-consent { overflow-wrap: anywhere; }
+.git-import .install-offer-row { flex-wrap: wrap; }
+.git-import .install-offer-main { flex-basis: 160px; }
+.git-import .ext-modal-actions { flex-wrap: wrap; }
+.gallery-from-url form { display: flex; gap: 8px; flex-wrap: wrap; }
+.gallery-from-url input { flex: 1; min-width: min(240px, 100%); background: var(--bg0); color: var(--fg); border: 1px solid var(--hairline); padding: 6px 8px; font: inherit; }
 /* Syntax color for fenced code — fez's own quiet palette on hljs's
    token classes, not a shipped theme: keywords in the app's ember,
    strings gone mossy, comments receding, everything else near-fg so a

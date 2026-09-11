@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "../../fez-acp/src/skills-prompt";
+import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "../../fez-acp/src/skills-prompt";
 
 const pony = { pkg: "p", id: "ponytail", name: "ponytail", description: "lazy senior dev", path: "/x/ponytail.md" };
 
@@ -20,6 +20,23 @@ describe("skills prompt", () => {
     expect(JSON.parse(skillsEnvJson([{ ...pony, setting: "ultra" }]))).toEqual({
       ponytail: { path: "/x/ponytail.md", setting: "ultra" },
     });
+  });
+  it("withholds manual-only skills from both automatic discovery and the model's loader", () => {
+    const manual = { ...pony, disableModelInvocation: true };
+    expect(skillsPromptSection([manual])).toBeUndefined();
+    expect(JSON.parse(skillsEnvJson([manual]))).toEqual({});
+    expect(resolveAttachedSkills(["ponytail"], [manual]).attached).toEqual([manual]);
+  });
+  it("activates only an exact leading owner command, including the skill author's direct slash name", () => {
+    const manual = { ...pony, id: "category/adhd", name: "i-have-adhd", disableModelInvocation: true, setting: "lite" };
+    for (const content of ["/skill category/adhd help", "/skill i-have-adhd help", "/i-have-adhd help", "@helper /i-have-adhd help"]) {
+      expect(manualSkillForInput([manual], { content, author: "owner", owner: "owner", persona: "helper" })).toEqual(manual);
+    }
+    for (const content of ["Earlier: /i-have-adhd", "```\n/i-have-adhd\n```", "/i-have-adhd-extra", "/skill unknown", "@other /i-have-adhd", "use /skill i-have-adhd"]) {
+      expect(manualSkillForInput([manual], { content, author: "owner", owner: "owner", persona: "helper" })).toBeUndefined();
+    }
+    expect(manualSkillForInput([manual], { content: "/i-have-adhd", author: "peer", owner: "owner", persona: "helper" })).toBeUndefined();
+    expect(manualSkillForInput([manual], { content: "/i-have-adhd", author: "", owner: "", persona: "helper" })).toBeUndefined();
   });
   it("settings resolve by declared identifier and reach the section line", () => {
     const { attached } = resolveAttachedSkills(["ponytail"], [pony], { ponytail: "ultra" });

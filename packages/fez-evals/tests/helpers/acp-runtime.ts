@@ -13,7 +13,9 @@ export const TEST_CHANNEL = "00000000-0000-4000-8000-000000000001";
 export const OTHER_CHANNEL = "00000000-0000-4000-8000-000000000002";
 export interface RuntimePrompt { type: "prompt"; id: number; session: number; instruction: string }
 
-export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { relayInfoAvailable = true } = {}) {
+export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { relayInfoAvailable = true, skills = [] }: {
+  relayInfoAvailable?: boolean; skills?: { id: string; content: string; setting?: string }[];
+} = {}) {
   const repo = fileURLToPath(new URL("../../../../", import.meta.url));
   const cache = path.join(repo, "node_modules/.cache");
   await fs.mkdir(cache, { recursive: true });
@@ -35,7 +37,14 @@ export async function startAcpRuntime(onBusy: "steer" | "queue" = "steer", { rel
   relay.events.push(owner.signEvent({ kind: 47102, tags: [["d", "roster"], ["p", ownerPk, "owner"], ["p", agentPk, "bot"]], content: "" }));
   await fs.mkdir(path.join(testHome, ".fez/personas"), { recursive: true });
   await fs.mkdir(path.join(testHome, ".fez/agents"), { recursive: true });
-  await fs.writeFile(path.join(testHome, ".fez/personas/scope-test.md"), "---\nharness: test-harness\n---\nRuntime routing test.\n");
+  for (const skill of skills) {
+    const dir = path.join(testHome, ".fez/packages/test-skills/skills", skill.id);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "SKILL.md"), skill.content);
+  }
+  if (skills.length) await fs.writeFile(path.join(testHome, ".fez/packages/test-skills/package.json"), JSON.stringify({ fez: { skills: {} } }));
+  const skillDecls = skills.length ? `skills: [${skills.map(skill => `${skill.id}${skill.setting ? `(${skill.setting})` : ""}`).join(", ")}]\n` : "";
+  await fs.writeFile(path.join(testHome, ".fez/personas/scope-test.md"), `---\nharness: test-harness\n${skillDecls}---\nRuntime routing test.\n`);
   await fs.writeFile(path.join(testHome, ".fez/agents/scope-test.key"), Buffer.from(agentKey).toString("hex"), { mode: 0o600 });
   const wire = new RelayConnection({ urls: [relay.url] });
   await wire.connect();

@@ -1073,22 +1073,6 @@ fn install_package(name: String) -> Result<String, String> {
         return Err(format!("{name} expands past {}MB — refusing", MAX_TAR / (1024 * 1024)));
     }
 
-    // 3. Read package.json (npm tarballs prefix every path with "package/").
-    let pkg_bytes = package_install::tar_read(&tar_bytes, "package.json").ok_or("no package.json in tarball")?;
-    let pkg: serde_json::Value =
-        serde_json::from_slice(&pkg_bytes).map_err(|e| format!("bad package.json: {e}"))?;
-
-    // 3b. Compat gate — BEFORE anything is copied, same as the CLI's
-    // install and link. The gallery used to bypass this entirely: a
-    // package built against a newer FezExtensionAPI installed fine and
-    // hit an undefined method three layers into someone's afternoon.
-    if let Some(err) = min_fez_version_error(
-        pkg.pointer("/fez/minFezVersion").and_then(|v| v.as_str()),
-        FEZ_VERSION,
-    ) {
-        return Err(format!("{name} {err}"));
-    }
-
     finish_install(&name, &tar_bytes, latest)
 }
 
@@ -1098,7 +1082,14 @@ fn install_package(name: String) -> Result<String, String> {
 /// settings.json. See package_install for the on-disk layout (shared with
 /// the CLI's PackageManager).
 fn finish_install(name: &str, tar_bytes: &[u8], version: &str) -> Result<String, String> {
+    let pkg_bytes = package_install::tar_read(tar_bytes, "package.json").ok_or("no package.json in tarball")?;
+    let pkg: serde_json::Value = serde_json::from_slice(&pkg_bytes).map_err(|e| e.to_string())?;
+    if let Some(error) = min_fez_version_error(pkg.pointer("/fez/minFezVersion").and_then(|v| v.as_str()), FEZ_VERSION) {
+        return Err(format!("{name} {error}"));
+    }
     let home = fez_home()?;
+    let base = name.rsplit('/').next().unwrap_or(name).trim_start_matches('@');
+    git_install::check_replacement(&pkg, package_install::installed_manifest(base, &home).as_ref())?;
     // The emptiness check (no installable gui/headless/relay/workspace/
     // persona part) and the bin-collision refusal both now live INSIDE
     // install_from_tarball, before any write — a refused install must
@@ -1139,38 +1130,57 @@ fn finish_install(name: &str, tar_bytes: &[u8], version: &str) -> Result<String,
     Ok(format!("installed {name}@{version}: {}", outcome.installed.join(", ")))
 }
 
-/// Inspect a GitHub repo (owner/repo, optional #ref) without installing
-/// anything: fetch by resolved sha, run it through `git_install::convert`,
-/// and hand back the report as JSON for the confirm-before-install card.
+/// Inspect a scoped GitHub source. Fetching stays off the UI thread;
+/// the report's canonical URL preserves the resolved ref/path boundary.
 #[tauri::command]
-fn inspect_git_package(url: String) -> Result<String, String> {
-    let (owner, repo, want_ref) = git_install::parse_github_url(&url)?;
-    let (tar_bytes, sha) = git_install::fetch(&owner, &repo, want_ref.as_deref())?;
-    let canonical = format!("github.com/{owner}/{repo}");
-    let (report, _npm_tar) = git_install::convert(&tar_bytes, &owner, &repo, &canonical, &sha)?;
-    let installed = package_install::installed_manifest(&report.name, &fez_home()?).is_some();
-    let mut value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
-    let obj = value.as_object_mut().ok_or("bad report")?;
-    obj.insert("sha".to_string(), serde_json::json!(sha));
-    obj.insert("url".to_string(), serde_json::json!(url));
-    obj.insert("installed".to_string(), serde_json::json!(installed));
-    serde_json::to_string(&value).map_err(|e| e.to_string())
+async fn inspect_git_package(url: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut source = git_install::parse_github_url(&url)?;
+        let (tar_bytes, sha) = git_install::fetch_source(&mut source)?;
+        let (mut report, npm_tar) = git_install::convert(&tar_bytes, &source, &sha, None)?;
+        if let Some(tar) = npm_tar {
+            if let Some(bytes) = package_install::tar_read(&tar, "package.json") {
+                let pkg: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                if let Some(error) = min_fez_version_error(pkg.pointer("/fez/minFezVersion").and_then(|v| v.as_str()), FEZ_VERSION) {
+                    report.refused.push(error);
+                }
+                let base = report.name.rsplit('/').next().unwrap_or(&report.name).trim_start_matches('@');
+                if let Err(error) = git_install::check_replacement(&pkg, package_install::installed_manifest(base, &fez_home()?).as_ref()) {
+                    report.refused.push(error);
+                }
+            }
+        }
+        let base = report.name.rsplit('/').next().unwrap_or(&report.name).trim_start_matches('@');
+        let installed = package_install::installed_manifest(base, &fez_home()?).is_some();
+        let mut value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+        let obj = value.as_object_mut().ok_or("bad report")?;
+        obj.insert("sha".into(), serde_json::json!(sha));
+        obj.insert("url".into(), serde_json::json!(source.url()));
+        obj.insert("installed".into(), serde_json::json!(installed));
+        serde_json::to_string(&value).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
 }
 
-/// Install a GitHub repo as a persona pack: fetch by resolved sha, convert,
-/// and — unless the repo is refused (code files, hooks) — run it through
-/// the same install tail as an npm package.
+/// Install only the reviewed commit and selected source entries. Importing
+/// foreign skills is explicit, and never activates that host's plugin code.
 #[tauri::command]
-fn install_git_package(url: String) -> Result<String, String> {
-    let (owner, repo, want_ref) = git_install::parse_github_url(&url)?;
-    let (tar_bytes, sha) = git_install::fetch(&owner, &repo, want_ref.as_deref())?;
-    let canonical = format!("github.com/{owner}/{repo}");
-    let (report, npm_tar) = git_install::convert(&tar_bytes, &owner, &repo, &canonical, &sha)?;
-    let Some(npm_tar) = npm_tar else {
-        return Err(format!("{} refused: {}", report.name, report.refused.join(", ")));
-    };
-    let version = format!("0.0.0-{}", &sha[..sha.len().min(7)]);
-    finish_install(&report.name, &npm_tar, &version)
+async fn install_git_package(url: String, selected_paths: Option<Vec<String>>, allow_skills_only: Option<bool>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut source = git_install::parse_github_url(&url)?;
+        source.require_pinned()?;
+        let (tar_bytes, sha) = git_install::fetch_source(&mut source)?;
+        let (report, npm_tar) = git_install::convert(&tar_bytes, &source, &sha, selected_paths.as_deref())?;
+        if report.kind == "skills" && (allow_skills_only != Some(true) || selected_paths.is_none()) {
+            return Err("choose the skills to import and confirm that foreign plugin integrations are not installed".into());
+        }
+        let Some(npm_tar) = npm_tar else {
+            return Err(format!("{} refused: {}", report.name, report.refused.join(", ")));
+        };
+        let bytes = package_install::tar_read(&npm_tar, "package.json").ok_or("missing package manifest")?;
+        let pkg: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        let version = pkg.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0");
+        finish_install(&report.name, &npm_tar, version)
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// The installed version per extension, as JSON. The package dir

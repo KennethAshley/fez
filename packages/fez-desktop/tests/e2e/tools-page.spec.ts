@@ -12,7 +12,7 @@ test("tools show agent access, keep sharing in details, and offer discovery on a
   const secret = generateSecretKey();
   const relay = await spawnRelay(port, { owner: getPublicKey(secret) });
   try {
-    await installMockBridge(page, {
+    const { calls } = await installMockBridge(page, {
       provider_key_present: () => true,
       list_personas: () => ["fez", "quill"],
       read_persona: () => "---\nmcpServers: [web-search]\nskills: [review]\n---\nResearch carefully.\n",
@@ -25,6 +25,12 @@ test("tools show agent access, keep sharing in details, and offer discovery on a
       read_keymap: () => "{}", read_media_server: () => "",
       latest_version: () => "0.1.0", package_info: () => "{}", spawned_agents: () => [],
       has_skill_secret: () => false,
+      inspect_git_package: () => JSON.stringify({ kind: "skills", name: "gh-ayghri-i-have-adhd-scoped", sha: "0123456789abcdef0123456789abcdef01234567",
+        url: "https://github.com/ayghri/i-have-adhd/blob/main/skills/i-have-adhd/SKILL.md",
+        skills: [{ id: "i-have-adhd", path: "skills/i-have-adhd/SKILL.md", description: "Help with attention and planning." }], agents: [],
+        unsupported: ["Host lifecycle hooks"], components: ["skills"], permissions: [], refused: [], ignored: [], installed: false }),
+      install_git_package: () => "imported fixture instructions",
+
     }, { identities: { default: Buffer.from(secret).toString("hex") } });
     await page.addInitScript(url => localStorage.setItem("fez-relay", url), relay.url);
     await page.route("https://fez.chat/api/counts", route => route.fulfill({ json: {} }));
@@ -55,7 +61,29 @@ test("tools show agent access, keep sharing in details, and offer discovery on a
     await expect(page.getByRole("dialog", { name: "Add new-tool" })).toContainText("Assigned agents will connect to this server");
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toBeHidden();
+    // An exact GitHub skill is an instruction import, never an HTTP MCP entry.
+    const source = "https://github.com/ayghri/i-have-adhd/blob/main/skills/i-have-adhd/SKILL.md";
+    await page.getByRole("textbox", { name: "Tool name", exact: true }).fill("");
+    await page.getByRole("textbox", { name: "Package or server URL", exact: true }).fill(source);
+    await page.getByRole("button", { name: "Review GitHub source" }).click();
+    await expect(page.getByText("Skills-only import", { exact: true })).toBeVisible();
+    await expect(page.getByText("Host lifecycle hooks", { exact: true })).toBeVisible();
+    const selection = page.getByRole("checkbox", { name: /i-have-adhd/ });
+    await expect(selection).toBeChecked();
+    await selection.uncheck();
+    await expect(page.getByRole("button", { name: "Import selected instructions" })).toBeDisabled();
+    await selection.check();
     await page.setViewportSize({ width: 760, height: 900 });
+    await page.screenshot({ path: test.info().outputPath("github-import-narrow.png"), fullPage: true, animations: "disabled" });
+    expect(await page.locator(".tools-page").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.getByRole("button", { name: "Import selected instructions" }).click();
+    await expect(page.getByText("Instructions imported. Choose an agent in Tools.", { exact: true })).toBeVisible();
+    await expect.poll(() => calls.filter(call => call.cmd === "install_git_package")).toHaveLength(1);
+    expect(calls.find(call => call.cmd === "install_git_package")?.args).toEqual({
+      url: `${source}#0123456789abcdef0123456789abcdef01234567`, selectedPaths: ["skills/i-have-adhd/SKILL.md"], allowSkillsOnly: true,
+    });
+    expect(calls.some(call => call.cmd === "write_skill" || call.cmd === "update_persona")).toBe(false);
+
     await page.screenshot({ path: test.info().outputPath("add-tools-narrow.png"), fullPage: true, animations: "disabled" });
     expect(await page.locator(".tools-page").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.setViewportSize({ width: 1280, height: 920 });

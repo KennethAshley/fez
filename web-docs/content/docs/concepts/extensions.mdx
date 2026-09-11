@@ -79,6 +79,13 @@ The desktop's extension gallery installs the same packages with no node or
 npm on the machine — it fetches the tarball itself. Gui parts appear live;
 headless and relay parts load when their host restarts.
 
+For GitHub sources, Fez reviews a native package's complete declared components
+and permissions at an exact commit. The repository or selected package directory
+must include its built outputs; the desktop does not build code or run install
+scripts. Plugins for other hosts can instead offer an explicit
+[skills-only import](/concepts/skills#import--from-github), with unsupported
+integrations listed before approval.
+
 Removal keeps the tool *definition*: personas may still declare it, and any
 secret values you filled are yours ([custody](/concepts/tools#secrets)).
 

@@ -8,6 +8,7 @@ import Avatar from "./Avatar";
 import { EnvKeyStatus } from "./SkillSecrets";
 import FindSource from "./FindSource";
 import { ExtensionGallery } from "./ExtensionGallery";
+import { GitInstallOffer, isGitHubSource } from "./InstallOffer";
 import { flash } from "./toast";
 import { AnimatedSprite } from "@fezchat/ui";
 import { generateArtifact } from "./artifact-sprite";
@@ -818,7 +819,7 @@ export default function SkillsView({
             onNotice={flash}
           />
         )}
-        {tab === "browse" && only === "skills" && <AddTool installed={installed} onSearch={() => setFinding({ skill: "" })} onReview={setInstalling} />}
+        {tab === "browse" && only === "skills" && <AddTool client={client} installed={installed} onSearch={() => setFinding({ skill: "" })} onReview={setInstalling} />}
         {tab === "browse" && only !== "extensions" && (
           <div className="skill-section">
             <div className="manage-section">
@@ -954,10 +955,12 @@ export default function SkillsView({
   );
 }
 
-function AddTool({ installed, onSearch, onReview }: { installed: Record<string, SkillConfig>; onSearch: () => void; onReview: (target: InstallTarget) => void }) {
+function AddTool({ client, installed, onSearch, onReview }: { client: FezClient; installed: Record<string, SkillConfig>; onSearch: () => void; onReview: (target: InstallTarget) => void }) {
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
-  const config = parseSkillSource(source);
+  const [githubReview, setGithubReview] = useState<string>();
+  const github = isGitHubSource(source);
+  const config = github ? undefined : parseSkillSource(source);
   const duplicate = Object.hasOwn(installed, name.trim());
   const validName = /^[A-Za-z0-9._@/-]{1,64}$/.test(name.trim());
   return <section className="tools-add" aria-label="Add a tool">
@@ -968,20 +971,22 @@ function AddTool({ installed, onSearch, onReview }: { installed: Record<string, 
     </div>
     <form className="tools-source" onSubmit={e => {
       e.preventDefault();
+      if (github) { setGithubReview(source.trim()); return; }
       if (!config || !validName || duplicate) return;
       onReview({ name: name.trim(), ...config, source: source.trim(), provenance: "You entered this source. Review where the tool runs before adding it." });
     }}>
-      <h2>add a package or server</h2>
-      <p>Already have one? Drop its package source or MCP address here.</p>
-      <div className="tools-source-fields">
-        <label>Tool name<input className="manage-input" aria-label="Tool name" value={name} placeholder="web-search" maxLength={64} onChange={e => setName(e.target.value)} /></label>
-        <label>Package or server URL<input className="manage-input" aria-label="Package or server URL" value={source} placeholder="https://example.com/mcp or npm:@publisher/package" spellCheck={false} onChange={e => setSource(e.target.value)} /></label>
+      <h2>add from a source</h2>
+      <p>Use a GitHub skill or package link, an MCP server address, or an npm package source.</p>
+      <div className={`tools-source-fields${github ? " git-source" : ""}`}>
+        {!github && <label>Tool name<input className="manage-input" aria-label="Tool name" value={name} placeholder="web-search" maxLength={64} onChange={e => setName(e.target.value)} /></label>}
+        <label>Package or server URL<input className="manage-input" aria-label="Package or server URL" value={source} placeholder="https://example.com/mcp or npm:@publisher/package" spellCheck={false} onChange={e => { setSource(e.target.value); setGithubReview(undefined); }} /></label>
       </div>
-      {name && !validName && <p className="ob-error">Use letters, numbers, dots, underscores, @, /, or hyphens.</p>}
-      {duplicate && <p className="ob-error">A tool named {name.trim()} is already saved. Choose another name to keep its setup.</p>}
-      {source && !config && <p className="ob-error">Enter a valid http(s) server URL without embedded credentials, or an npm:, uvx:, or pipx: package.</p>}
-      <button className="agent-action" disabled={!config || !validName || duplicate}>Review setup</button>
+      {!github && name && !validName && <p className="ob-error">Use letters, numbers, dots, underscores, @, /, or hyphens.</p>}
+      {!github && duplicate && <p className="ob-error">A tool named {name.trim()} is already saved. Choose another name to keep its setup.</p>}
+      {source && !github && !config && <p className="ob-error">Enter a valid http(s) server URL without embedded credentials, or an npm:, uvx:, or pipx: package.</p>}
+      <button className="agent-action" disabled={!github && (!config || !validName || duplicate)}>{github ? "Review GitHub source" : "Review setup"}</button>
     </form>
+    {githubReview && <GitInstallOffer key={githubReview} url={githubReview} authorName="you" client={client} inspectOnMount />}
   </section>;
 }
 

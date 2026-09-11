@@ -48,6 +48,7 @@
 .tools-search-entry .agent-action { flex-shrink: 0; }
 .tools-source { padding-top: 16px; }
 .tools-source-fields { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-block: 12px; }
+.tools-source-fields.git-source { grid-template-columns: minmax(0, 1fr); }
 .tools-source-fields label { display: grid; gap: 4px; font: 11px/1.5 var(--font-mono); text-transform: lowercase; }
 .tools-source-fields .manage-input { width: 100%; min-width: 0; font-size: 12px; }
 .tools-source > .ob-error { color: var(--red); margin-bottom: 10px; }

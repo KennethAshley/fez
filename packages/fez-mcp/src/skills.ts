@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { readSkillInstructions } from "@fezchat/protocol";
 
 /** One attached skill: where its body lives, plus the persona's per-attachment setting. */
 export interface AttachedSkillRef {
   path: string;
   setting?: string;
+  root?: string;
 }
 
 /** Parse FEZ_AGENT_SKILLS; bad/missing json -> {}. Values are
@@ -18,8 +19,8 @@ export function attachedSkills(envJson: string | undefined): Record<string, Atta
       for (const [name, v] of Object.entries(parsed as Record<string, unknown>)) {
         if (typeof v === "string") out[name] = { path: v };
         else if (typeof v === "object" && v !== null && typeof (v as { path?: unknown }).path === "string") {
-          const ref = v as { path: string; setting?: unknown };
-          out[name] = { path: ref.path, setting: typeof ref.setting === "string" ? ref.setting : undefined };
+          const ref = v as { path: string; setting?: unknown; root?: unknown };
+          out[name] = { path: ref.path, setting: typeof ref.setting === "string" ? ref.setting : undefined, root: typeof ref.root === "string" ? ref.root : undefined };
         }
       }
       return out;
@@ -38,6 +39,5 @@ export function loadSkillBody(name: string, attached: Record<string, AttachedSki
     const available = Object.keys(attached).join(", ") || "none";
     throw new Error(`unknown skill "${name}" — attached: ${available}`);
   }
-  const body = readFileSync(ref.path, "utf-8");
-  return ref.setting ? `${body}\n\n[Attached setting: ${ref.setting}]` : body;
+  return readSkillInstructions(ref.path, ref.setting, ref.root);
 }

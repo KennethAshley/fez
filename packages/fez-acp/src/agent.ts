@@ -13,6 +13,7 @@ import {
   wellKnownSource,
   resolveDeclaredSkills,
   skillsInstalled,
+  readSkillInstructions,
   invokeWithRetry,
   KIND_AGENT_ENGRAM,
   registerBuiltinHarnesses,
@@ -75,7 +76,7 @@ import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evalua
 import { runMeteredHire } from "./hire-usage.js";
 import { deliverHire } from "./hire-delivery.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
-import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
+import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson, manualSkillForInput } from "./skills-prompt.js";
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
 import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
@@ -1847,6 +1848,8 @@ async function main() {
             ].join("\n")
           : undefined;
 
+        const activatedSkill = manualSkillForInput(attachedSkills, { content: event.content, author: event.pubkey, owner, persona: personaId });
+        const manualSection = activatedSkill ? readSkillInstructions(activatedSkill.path, activatedSkill.setting, activatedSkill.root, true) : undefined;
         const buildPrompt = async (fresh: boolean): Promise<string> => {
           const memory = memoryPromptParts(await coreMemoryState());
           const workNotice = completedRequest
@@ -1856,6 +1859,7 @@ async function main() {
               : undefined;
           if (!fresh) {
             return [
+              ...(manualSection ? [manualSection] : []),
               ...(workNotice ? [workNotice] : []),
               // Core rides EVERY turn, not just the fresh prompt: the
               // harness compacts its own context, and a compaction that
@@ -1876,6 +1880,7 @@ async function main() {
             ].join("\n\n");
           }
           return [
+            ...(manualSection ? [manualSection] : []),
             ...(workNotice ? [workNotice] : []),
             persona.systemPrompt ?? "",
             ...(memory.section ? [memory.section] : []),
@@ -2238,10 +2243,13 @@ async function main() {
     turnUsage = undefined;
     const turnStartedAt = Date.now();
     try {
+      const activatedSkill = manualSkillForInput(attachedSkills, { content: dm.text, author: dm.senderPk, owner, persona: personaId });
+      const manualSection = activatedSkill ? readSkillInstructions(activatedSkill.path, activatedSkill.setting, activatedSkill.root, true) : undefined;
       const buildPrompt = async (fresh: boolean): Promise<string> => {
         const memory = memoryPromptParts(await coreMemoryState());
         if (!fresh) {
           return [
+            ...(manualSection ? [manualSection] : []),
             // Same rule as the channel path: core rides every turn so a
             // harness-side compaction can't drop the agent's identity.
             ...(memory.turnPreamble ? [memory.turnPreamble] : []),
@@ -2253,6 +2261,7 @@ async function main() {
             ? `This is a GROUP conversation with ${replyTargets.length + 1} participants (${replyTargets.map((pk) => pk.slice(0, 8)).join(", ")} and you) — your reply is delivered to everyone in it.`
             : undefined;
         return [
+          ...(manualSection ? [manualSection] : []),
           persona.systemPrompt ?? "",
           ...(memory.section ? [memory.section] : []),
           ...(skillsSection ? [skillsSection] : []),
