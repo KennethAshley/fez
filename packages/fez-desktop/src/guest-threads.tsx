@@ -1,19 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { Avatar as UiAvatar } from "@fezchat/ui";
-import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import type { BrowserWire } from "./wire";
-import { latestPendingFor, latestSentFor, updateRecord, tauriStore } from "./orchestration";
+import { latestPendingFor, findByTask, updateRecord, tauriStore } from "./orchestration";
 import { relaySet } from "./relay";
 import { BAZAAR_RELAY } from "./bazaar-record";
 import { fetchSaltPanel, invalidateSaltPanel, tierLabel, tierTitle, type SaltPanel } from "./salt-record";
 
+import { parseGuestEvent, isGuestReplyTo, replaceableEventWins } from "../../fez-client/src/guest-protocol.js";
+import { GuestHirePanel } from "./GuestHirePanel.js";
+import { readGuestJobs } from "./guest-job.js";
+
+type ParsedGuest = NonNullable<ReturnType<typeof parseGuestEvent>>;
+type GuestTask = Extract<ParsedGuest, { type: "task" }>;
+type GuestReply = Extract<ParsedGuest, { type: "result" | "progress" }>;
+
 const MD_PLUGINS = [remarkGfm, remarkBreaks];
 
 /**
- * Guest threads (spec 2026-09-03): hiring a stranger is a DM.
+ * Guest threads: public job conversations with a foreign identity.
  *
  * A guest is a foreign npub from a market relay — not a workspace member,
  * so nothing here touches the gift-wrap pipe. The thread is a PUBLIC
@@ -87,7 +94,7 @@ export function rememberGuestFace(pk: string, name?: string, picture?: string): 
   const guests = listGuests();
   const hit = guests.find((g) => g.pk === pk);
   if (!hit || (hit.name === name && hit.picture === picture)) return;
-  addGuest({ ...hit, ...(name ? { name } : {}), ...(picture ? { picture } : {}) });
+  addGuest({ ...hit, name, picture });
 }
 
 /** Forgetting a guest forgets the LEDGER ENTRY only — the thread itself is
@@ -95,34 +102,6 @@ export function rememberGuestFace(pk: string, name?: string, picture?: string): 
 export function removeGuest(pk: string): void {
   localStorage.setItem(LEDGER_KEY, JSON.stringify(listGuests().filter((g) => g.pk !== pk)));
   localStorage.removeItem(`${READ_KEY}-${pk}`);
-}
-
-/* ── the hire (model A: a negotiated lump) ─────────────────────────────
- * You chat and agree a price, then "start hire" locks it: the amount, the
- * account it pays FROM, and when. Settle pays it to the agent's announced
- * address via the wallet's tested `pay` verb. Persisted per guest so it
- * survives navigation; one active hire per guest at a time. */
-export interface Hire {
-  amount: string;         // tТАО, the agreed lump
-  persona: string;        // which of your wallet accounts pays
-  at: number;             // when the hire started (unix ms)
-  settled?: { txHash: string; at: number };
-  /** Escrow variant: the lump is HELD at a 2-of-3 multisig (you, the
-   *  agent, the arbiter) the moment terms lock — the agent can verify the
-   *  money exists before working, and release/refund each need two keys.
-   *  ponytail: the arbiter is currently your own escrowarbiter persona, so
-   *  today this protects delivery-shape, not you-vs-you; a neutral arbiter
-   *  (a validator) is the upgrade path. */
-  escrow?: { addr: string; state: "open" | "released" | "refunded" };
-}
-const HIRE_KEY = "fez-hire";
-export function getHire(pk: string): Hire | undefined {
-  try { return JSON.parse(localStorage.getItem(`${HIRE_KEY}-${pk}`) ?? "null") as Hire ?? undefined; }
-  catch { return undefined; }
-}
-export function setHire(pk: string, hire: Hire | undefined): void {
-  if (hire) localStorage.setItem(`${HIRE_KEY}-${pk}`, JSON.stringify(hire));
-  else localStorage.removeItem(`${HIRE_KEY}-${pk}`);
 }
 
 /* ── read marks + unread counts ───────────────────────────────────────
@@ -151,13 +130,17 @@ export function useGuestUnreads(guests: Guest[], selfPk: string): Record<string,
     // Per guest: which task ids are mine, and every answer seen with its
     // clock — recount filters against lastRead LIVE, so opening the thread
     // (markGuestRead) clears the badge on the next tick without any event.
-    const myTasks = new Map<string, string>();                    // taskId -> guest pk
-    const answers = new Map<string, { pk: string; ts: number }>(); // answerId -> owner + clock
+    const myTasks = new Map<string, GuestTask>();
+    const answers = new Map<string, Extract<ParsedGuest, { type: "result" }>>();
+    setCounts({});
     const recount = () => {
       if (closed) return;
       const next: Record<string, number> = {};
-      for (const { pk, ts } of answers.values()) {
-        if (ts > lastRead(pk)) next[pk] = (next[pk] ?? 0) + 1;
+      for (const reply of answers.values()) {
+        const task = myTasks.get(reply.taskId);
+        if (!task || !isGuestReplyTo(reply, task)) continue;
+        const pk = reply.event.pubkey;
+        if (reply.event.created_at > lastRead(pk)) next[pk] = (next[pk] ?? 0) + 1;
       }
       setCounts((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
     };
@@ -175,17 +158,22 @@ export function useGuestUnreads(guests: Guest[], selfPk: string): Record<string,
           ws.send(JSON.stringify(["REQ", "gu-ans", { kinds: [KIND_RESULT], authors: pks, limit: 300 }]));
         };
         ws.onmessage = (m) => {
-          let msg: unknown[];
-          try { msg = JSON.parse(String(m.data)) as unknown[]; } catch { return; }
-          if (msg[0] !== "EVENT") return;
-          const ev = msg[2] as WireEvent;
-          if (ev.kind === KIND_TASK) {
-            const to = ev.tags.find((t) => t[0] === "p")?.[1];
-            if (to && pks.includes(to)) myTasks.set(ev.id, to);
-          } else if (ev.kind === KIND_RESULT) {
-            const root = ev.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? ev.tags.find((t) => t[0] === "e")?.[1];
-            const owner = root ? myTasks.get(root) : undefined;
-            if (owner === ev.pubkey) answers.set(ev.id, { pk: ev.pubkey, ts: ev.created_at });
+          let msg: unknown;
+          if (closed || String(m.data).length > 262_144) return;
+          try { msg = JSON.parse(String(m.data)); } catch { return; }
+          if (!Array.isArray(msg) || msg[0] !== "EVENT" || !["gu-mine", "gu-ans"].includes(msg[1])) return;
+          for (const guestPk of pks) {
+            const parsed = parseGuestEvent(msg[2], { selfPk, guestPk });
+            if (parsed?.type === "task" && msg[1] === "gu-mine") {
+              if (myTasks.size >= 1000) myTasks.delete(myTasks.keys().next().value!);
+              myTasks.set(parsed.event.id, parsed);
+              break;
+            }
+            if (parsed?.type === "result" && msg[1] === "gu-ans") {
+              if (answers.size >= 1000) answers.delete(answers.keys().next().value!);
+              answers.set(parsed.event.id, parsed);
+              break;
+            }
           }
           recount();
         };
@@ -242,22 +230,19 @@ export function withoutContext(content: string): string {
 
 /* ── the view ─────────────────────────────────────────────────────── */
 
-interface WireEvent {
-  id: string;
-  pubkey: string;
-  kind: number;
-  content: string;
-  tags: string[][];
-  created_at: number;
-}
+type WireEvent = ParsedGuest["event"];
 
 type Turn =
   | { kind: "mine"; id: string; ts: number; text: string }
   | { kind: "theirs"; id: string; ts: number; text: string; status: string }
   | { kind: "progress"; id: string; ts: number; text: string };
 
-export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; selfPk: string; guest: Guest }) {
-  const [events, setEvents] = useState<Map<string, WireEvent>>(new Map());
+export function GuestThreadView(props: { wire: BrowserWire; selfPk: string; guest: Guest }) {
+  return <GuestConversation key={JSON.stringify([props.selfPk, props.guest.pk, props.guest.relay])} {...props} />;
+}
+
+function GuestConversation({ wire, selfPk, guest }: { wire: BrowserWire; selfPk: string; guest: Guest }) {
+  const [events, setEvents] = useState<Map<string, ParsedGuest>>(new Map());
   const [draft, setDraft] = useState(() => guest.draft ?? "");
   // Reopening the SAME guest (same pk) with a fresh draft — a second
   // openGuestDm call, e.g. from another proposal card — reuses this
@@ -272,18 +257,8 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   const [attachingRepo, setAttachingRepo] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
-  // The money context (read-only for now): where a settlement would go
-  // (the agent's announced receive address) and where it'd come from (your
-  // wallet's accounts, from the extension's public mirror). This is the
-  // "the bazaar can see the wallet" seam — the meter and settle build on it.
-  const [agentPayTo, setAgentPayTo] = useState<string>();
-  const [agentRate, setAgentRate] = useState<number>();       // tТАО/hr, if the agent offers a lease
-  const [leaseUntil, setLeaseUntil] = useState<number>(() => Number(localStorage.getItem(`fez-lease-${guest.pk}`) ?? 0));
-  const [leasing, setLeasing] = useState(false);
-  const [payFrom, setPayFrom] = useState<{ name: string; address: string }[]>([]);
-  // The hire (model A): persisted terms, plus the in-flight "start hire"
-  // form and the settle spinner.
-  const [hire, setHireState] = useState<Hire | undefined>(() => getHire(guest.pk));
+  const [offer, setOffer] = useState<Extract<ParsedGuest, { type: "announce" }>>();
+  const [face, setFace] = useState({ name: guest.name, picture: guest.picture });
   // Salt: what people outside this agent's household say. No workspace
   // client here, so rings are viewer-only — exactly the vantage that
   // makes a stranger "nameless", which is who the gate is for.
@@ -347,11 +322,6 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       setVouching(false);
     }
   };
-  const [starting, setStarting] = useState(false);
-  const [hireAmt, setHireAmt] = useState("");
-  const [hirePersona, setHirePersona] = useState("");
-  const [settling, setSettling] = useState(false);
-  const [hireErr, setHireErr] = useState<string>();
   const wsRef = useRef<WebSocket | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -365,98 +335,90 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
   const pendingOk = useRef(new Map<string, { ok: () => void; fail: (reason: string) => void }>());
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
 
-  // Read the wallet extension's public mirror (~/.fez/extension-data/…) for
-  // the accounts you could pay FROM. Read-only; the wallet owns writes.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      for (const name of ["wallet", "fez-wallet"]) {
-        try {
-          const raw = await invoke<string>("extension_storage_read", { name });
-          const mirror = JSON.parse(raw) as { addresses?: { treasury?: string; personas?: Record<string, string> } };
-          const accts: { name: string; address: string }[] = [];
-          if (mirror.addresses?.treasury) accts.push({ name: "treasury", address: mirror.addresses.treasury });
-          for (const [n, a] of Object.entries(mirror.addresses?.personas ?? {})) accts.push({ name: n, address: a });
-          if (accts.length && !cancelled) { setPayFrom(accts); return; }
-        } catch { /* no mirror under this name — try the next */ }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
   useEffect(() => {
     setEvents(new Map());
     let closed = false;
     let ws: WebSocket;
+    const latest = new Map<number, WireEvent>();
     const connect = () => {
       if (closed) return;
-      ws = new WebSocket(guest.relay);
-      wsRef.current = ws;
-      ws.onopen = () => {
-        // My asks at this guest; everything the guest signed; its face.
-        ws.send(JSON.stringify(["REQ", "gt-mine", { kinds: [KIND_TASK], authors: [selfPk], "#p": [guest.pk], limit: 200 }]));
-        ws.send(JSON.stringify(["REQ", "gt-them", { kinds: [KIND_PROGRESS, KIND_RESULT], authors: [guest.pk], limit: 500 }]));
-        ws.send(JSON.stringify(["REQ", "gt-face", { kinds: [KIND_PROFILE], authors: [guest.pk], limit: 1 }]));
+      const socket = new WebSocket(guest.relay);
+      ws = socket;
+      wsRef.current = socket;
+      socket.onopen = () => {
+        if (closed || wsRef.current !== socket) return;
+        // Relay filters are hints; every envelope is verified below.
+        try {
+          const ids = readGuestJobs(localStorage, { ownerPk: selfPk, guestPk: guest.pk, relay: guest.relay }).map(job => job.requestId);
+          if (ids.length) {
+            socket.send(JSON.stringify(["REQ", "gt-jobs", { kinds: [KIND_TASK], authors: [selfPk], ids }]));
+            socket.send(JSON.stringify(["REQ", "gt-job-results", { kinds: [KIND_RESULT], authors: [guest.pk], "#e": ids }]));
+          }
+        } catch { /* The payment panel reports corrupt storage and blocks spending. */ }
+        socket.send(JSON.stringify(["REQ", "gt-mine", { kinds: [KIND_TASK], authors: [selfPk], "#p": [guest.pk], limit: 200 }]));
+        socket.send(JSON.stringify(["REQ", "gt-them", { kinds: [KIND_PROGRESS, KIND_RESULT], authors: [guest.pk], limit: 500 }]));
+        socket.send(JSON.stringify(["REQ", "gt-face", { kinds: [KIND_PROFILE], authors: [guest.pk], limit: 1 }]));
         // The agent's announce carries its receive address (pay_to) — where
         // a settlement would land. Latest one wins.
-        ws.send(JSON.stringify(["REQ", "gt-pay", { kinds: [KIND_ANNOUNCE], authors: [guest.pk], limit: 1 }]));
+        socket.send(JSON.stringify(["REQ", "gt-pay", { kinds: [KIND_ANNOUNCE], authors: [guest.pk], limit: 1 }]));
         // Latest binding: empty content = the miner said goodbye cleanly.
-        ws.send(JSON.stringify(["REQ", "gt-bind", { kinds: [KIND_BINDING], authors: [guest.pk], limit: 1 }]));
+        socket.send(JSON.stringify(["REQ", "gt-bind", { kinds: [KIND_BINDING], authors: [guest.pk], limit: 1 }]));
       };
-      ws.onmessage = (m) => {
-        let msg: unknown[];
-        try { msg = JSON.parse(String(m.data)) as unknown[]; } catch { return; }
+      socket.onmessage = (m) => {
+        let msg: unknown;
+        if (closed || wsRef.current !== socket || String(m.data).length > 262_144) return;
+        try { msg = JSON.parse(String(m.data)); } catch { return; }
+        if (!Array.isArray(msg)) return;
         if (msg[0] === "OK") {
-          const [, id, accepted, reason] = msg as [string, string, boolean, string?];
+          const [, id, accepted, reason] = msg;
+          if (typeof id !== "string" || typeof accepted !== "boolean") return;
           const waiter = pendingOk.current.get(id);
           if (waiter) {
             pendingOk.current.delete(id);
             if (accepted) waiter.ok();
-            else waiter.fail(reason || "the relay rejected the message");
+            else waiter.fail(typeof reason === "string" ? reason : "the relay rejected the message");
           }
           return;
         }
         if (msg[0] !== "EVENT") return;
-        const ev = msg[2] as WireEvent;
-        if (ev.kind === KIND_PROFILE) {
-          try {
-            const p = JSON.parse(ev.content) as { name?: string; picture?: string };
-            rememberGuestFace(guest.pk, p.name, p.picture);
-          } catch { /* faceless is fine */ }
+        const parsed = parseGuestEvent(msg[2], { selfPk, guestPk: guest.pk });
+        if (!parsed) return;
+        const subscription = msg[1];
+        const expected = parsed.type === "task" ? ["gt-mine", "gt-jobs"]
+          : parsed.type === "profile" ? ["gt-face"] : parsed.type === "announce" ? ["gt-pay"]
+          : parsed.type === "binding" ? ["gt-bind"] : ["gt-them", "gt-job-results"];
+        if (!expected.includes(subscription)) return;
+        const ev = parsed.event;
+        if (["profile", "announce", "binding"].includes(parsed.type)) {
+          if (!replaceableEventWins(ev, latest.get(ev.kind))) return;
+          latest.set(ev.kind, ev);
+        }
+        if (parsed.type === "profile") {
+          const next = { name: parsed.profile?.name, picture: parsed.profile?.picture };
+          setFace(next);
+          rememberGuestFace(guest.pk, next.name, next.picture);
           return;
         }
-        if (ev.kind === KIND_ANNOUNCE) {
-          // The announce IS the heartbeat (miners re-send every 5 min) —
-          // its timestamp is the liveness lease, not just its payload.
-          setLastBeatAt((prev) => Math.max(prev, ev.created_at));
-          try {
-            const beat = JSON.parse(ev.content) as { pay_to?: string; rate?: { tao_hr?: number } };
-            if (beat.pay_to) setAgentPayTo(beat.pay_to);
-            if (beat.rate?.tao_hr && beat.rate.tao_hr > 0) setAgentRate(beat.rate.tao_hr);
-          } catch { /* unparseable beat */ }
+        if (parsed.type === "announce") {
+          setLastBeatAt(prev => Math.max(prev, ev.created_at));
+          setOffer(parsed);
           return;
         }
-        if (ev.kind === KIND_BINDING) {
-          if (ev.content) setLastBeatAt((prev) => Math.max(prev, ev.created_at)); // fresh enrollment = alive
-          else setRetiredAt((prev) => Math.max(prev, ev.created_at));
+        if (parsed.type === "binding") {
+          if (parsed.retired) setRetiredAt(ev.created_at);
+          else setLastBeatAt(prev => Math.max(prev, ev.created_at));
           return;
         }
-        if (ev.kind === KIND_RESULT && ev.pubkey === guest.pk) {
-          // Orchestration corpus: an answer to the sent task closes the
-          // "delivered" leg of the record. Best-effort — a log failure
-          // must never look like a dropped result.
-          const rootId = ev.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? ev.tags.find((t) => t[0] === "e")?.[1];
-          void latestPendingFor(tauriStore.read, guest.pk)
-            .then((rec) => {
-              if (!rec?.sentTaskId || rec.outcome) return;
-              if (rootId !== rec.sentTaskId) return; // only the proposed task closes the record
-              return updateRecord(tauriStore.read, tauriStore.write, rec.id, { outcome: { delivered: true } });
-            })
-            .catch(() => {});
-        }
-        setEvents((prev) => (prev.has(ev.id) ? prev : new Map(prev).set(ev.id, ev)));
+        setEvents(prev => {
+          if (prev.has(ev.id)) return prev;
+          const next = new Map(prev);
+          if (next.size >= 1000) next.delete(next.keys().next().value!);
+          next.set(ev.id, parsed);
+          return next;
+        });
       };
-      ws.onclose = () => {
+      socket.onclose = () => {
+        if (closed || wsRef.current !== socket) return;
         // A send the relay never acknowledged must fail loudly, not spin —
         // buzz rejects every in-flight publish on disconnect.
         for (const waiter of pendingOk.current.values()) waiter.fail("connection dropped before the relay confirmed");
@@ -465,7 +427,12 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       };
     };
     connect();
-    return () => { closed = true; ws?.close(); };
+    return () => {
+      closed = true;
+      for (const waiter of pendingOk.current.values()) waiter.fail("conversation closed before acknowledgement");
+      pendingOk.current.clear();
+      ws?.close();
+    };
   }, [guest.pk, guest.relay, selfPk]);
 
   // The clock drives the ephemeral bits (progress that ages out, the
@@ -483,10 +450,26 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
 
   // Timeline: my tasks, and ONLY guest events threaded to them — a guest
   // event aimed at someone else's task is not part of this conversation.
-  const all = [...events.values()];
-  const myTasks = all.filter((e) => e.kind === KIND_TASK && e.pubkey === selfPk);
-  const myTaskIds = new Set(myTasks.map((e) => e.id));
-  const rootOf = (e: WireEvent) => e.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? e.tags.find((t) => t[0] === "e")?.[1];
+  const parsedEvents = [...events.values()];
+  const tasks = parsedEvents.filter((event): event is GuestTask => event.type === "task");
+  const taskById = new Map(tasks.map(task => [task.event.id, task]));
+  const replies = parsedEvents.filter((event): event is GuestReply => {
+    if (event.type !== "result" && event.type !== "progress") return false;
+    const task = taskById.get(event.taskId);
+    return !!task && isGuestReplyTo(event, task);
+  });
+  const results = replies.filter((event): event is Extract<ParsedGuest, { type: "result" }> => event.type === "result");
+  const all = [...tasks, ...replies].map(event => event.event);
+  const myTasks = tasks.map(task => task.event);
+  const myTaskIds = new Set(myTasks.map(event => event.id));
+  const rootOf = (event: WireEvent) => replies.find(reply => reply.event.id === event.id)?.taskId;
+  useEffect(() => {
+    for (const result of results) {
+      void findByTask(tauriStore.read, guest.pk, result.taskId).then(record => {
+        if (record && !record.outcome) return updateRecord(tauriStore.read, tauriStore.write, record.id, { outcome: { delivered: result.status === "success" } });
+      }).catch(() => {});
+    }
+  }, [events, guest.pk]); // The parsed view only contains verified, correctly addressed replies.
 
   // Progress (47002) is EPHEMERAL status, not history. A miner emits
   // several ("on it", "editing", "pushing"), and each USED to become a
@@ -499,7 +482,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
     all.filter((e) => e.kind === KIND_RESULT && e.pubkey === guest.pk).map((e) => rootOf(e) ?? "")
   );
   const nowS = nowTick / 1000;
-  const deadlineFor = (root: string) => Number(events.get(root)?.tags.find((t) => t[0] === "deadline")?.[1] ?? 0);
+  const deadlineFor = (root: string) => Number(events.get(root)?.event.tags.find((t) => t[0] === "deadline")?.[1] ?? 0);
   const liveProgress = new Map<string, WireEvent>();
   for (const e of all) {
     if (e.kind !== KIND_PROGRESS || e.pubkey !== guest.pk) continue;
@@ -513,16 +496,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
 
   const turns: Turn[] = [
     ...myTasks.map((e): Turn => ({ kind: "mine", id: e.id, ts: e.created_at, text: withoutContext(e.content) })),
-    ...all
-      .filter((e) => e.kind === KIND_RESULT && e.pubkey === guest.pk && myTaskIds.has(rootOf(e) ?? ""))
-      .map((e): Turn => {
-        try {
-          const body = JSON.parse(e.content) as { status?: string; result?: string };
-          return { kind: "theirs", id: e.id, ts: e.created_at, text: body.result ?? e.content, status: body.status ?? "success" };
-        } catch {
-          return { kind: "theirs", id: e.id, ts: e.created_at, text: e.content, status: "success" };
-        }
-      }),
+    ...results.map((result): Turn => ({ kind: "theirs", id: result.event.id, ts: result.event.created_at, text: result.result, status: result.status })),
     ...[...liveProgress.values()].map((e): Turn => {
       let note = e.content;
       try { note = (JSON.parse(e.content) as { message?: string }).message ?? e.content; } catch { /* bare string stands */ }
@@ -567,7 +541,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       });
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error(`not connected to ${guest.relay}`);
-      const sid = (signed as WireEvent).id;
+      const verified = parseGuestEvent(signed, { selfPk, guestPk: guest.pk });
+      if (verified?.type !== "task") throw new Error("The signed task does not match this conversation.");
+      const sid = verified.event.id;
       // Optimistic, but bounded and reversible (buzz's send model): the
       // turn renders as "sending…" until the relay's OK lands; rejection
       // or a 25s silence removes the delivered-looking bubble and hands
@@ -584,7 +560,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         });
       });
       ws.send(JSON.stringify(["EVENT", signed]));
-      setEvents((prev) => new Map(prev).set(sid, signed as WireEvent));
+      setEvents((prev) => new Map(prev).set(sid, verified));
       setPendingIds((prev) => new Set(prev).add(sid));
       try {
         await acked;
@@ -615,148 +591,8 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
     }
   };
 
-  const name = guest.name ?? guest.pk.slice(0, 8);
-
-  // How many of my asks this agent actually delivered on — the meter's
-  // "work done" number (my task-roots that got a result).
-  const delivered = [...myTaskIds].filter((id) => resultRoots.has(id)).length;
-
-  const startHire = () => {
-    const amt = Number(hireAmt);
-    if (!(amt > 0)) { setHireErr("enter an amount greater than zero"); return; }
-    const persona = hirePersona || payFrom[0]?.name;
-    if (!persona) { setHireErr("no wallet account to pay from"); return; }
-    const h: Hire = { amount: hireAmt.trim(), persona, at: Date.now() };
-    setHire(guest.pk, h); setHireState(h); setStarting(false); setHireErr(undefined);
-  };
-
-  // Escrow hire: same terms, but the lump moves NOW — into a 2-of-3
-  // multisig (you, the agent, the arbiter) — so the agent can verify the
-  // money exists before working, and no single key can take it back.
-  const ARBITER = "escrowarbiter";
-  const arbiterAddr = payFrom.find((a) => a.name === ARBITER)?.address;
-  const walletCall = async (args: string[]): Promise<Record<string, unknown>> => {
-    const res = await invoke<{ code: number; stdout: string; stderr: string }>("run_extension_bin", {
-      extension: "wallet", bin: "fez-wallet", args,
-    });
-    if (res.code !== 0) throw new Error(res.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() || `wallet exited ${res.code}`);
-    return JSON.parse(res.stdout.trim().split("\n").pop() ?? "{}") as Record<string, unknown>;
-  };
-
-  const startEscrow = async () => {
-    const amt = Number(hireAmt);
-    if (!(amt > 0)) { setHireErr("enter an amount greater than zero"); return; }
-    const persona = hirePersona || payFrom[0]?.name;
-    if (!persona || settling) return;
-    if (!agentPayTo || !arbiterAddr) { setHireErr("escrow needs the agent's address and an arbiter account"); return; }
-    setSettling(true); setHireErr(undefined);
-    try {
-      const out = await walletCall(["escrow", "open", agentPayTo, arbiterAddr, hireAmt.trim(), "--as", persona, "--json"]);
-      const h: Hire = { amount: hireAmt.trim(), persona, at: Date.now(), escrow: { addr: String(out.escrow ?? ""), state: "open" } };
-      setHire(guest.pk, h); setHireState(h); setStarting(false);
-    } catch (err) {
-      setHireErr(err instanceof Error ? err.message : String(err));
-    } finally { setSettling(false); }
-  };
-
-  // Two approvals move escrowed funds: yours (the poster), then the
-  // arbiter's — the second executes the transfer. Both keys are local, so
-  // one click does both; when the arbiter is a neutral someday, the second
-  // half becomes their act, not this button's.
-  const closeEscrow = async (verb: "release" | "refund") => {
-    if (!hire?.escrow || settling) return;
-    const posterAddr = payFrom.find((a) => a.name === hire.persona)?.address;
-    if (!posterAddr || !agentPayTo || !arbiterAddr) { setHireErr("missing an escrow address — wallet mirror out of date?"); return; }
-    setSettling(true); setHireErr(undefined);
-    try {
-      const args = ["escrow", verb, posterAddr, agentPayTo, arbiterAddr, hire.amount, "--json"];
-      const first = await walletCall([...args, "--as", hire.persona]).catch((err: unknown) => {
-        // The chain's raw voice for "can't reserve the multisig deposit"
-        // is InsufficientBalance — translate it, because the money's
-        // already locked in escrow when this hits and a raw error reads
-        // as lost funds. The deposit (~0.2 tτ) is refunded on execution.
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/InsufficientBalance|too low/i.test(msg)) {
-          throw new Error(`${hire.persona} can't cover the release deposit (~0.2 tτ, held by the chain during approval and refunded when it executes) — top up ${hire.persona} and press ${verb} again; the escrow is safe meanwhile`);
-        }
-        throw err;
-      });
-      const exec = first.executed ? first : await walletCall([...args, "--as", ARBITER]);
-      const releaseTxHash = String(exec.txHash ?? "");
-      const done: Hire = {
-        ...hire,
-        escrow: { ...hire.escrow, state: verb === "release" ? "released" : "refunded" },
-        ...(verb === "release" ? { settled: { txHash: releaseTxHash, at: Date.now() } } : {}),
-      };
-      setHire(guest.pk, done); setHireState(done);
-      // Orchestration corpus: an escrow release is a paid hire — record
-      // what moved. Best-effort, and only on release (a refund paid nobody).
-      if (verb === "release") {
-        void latestSentFor(tauriStore.read, guest.pk)
-          .then((rec) => rec && updateRecord(tauriStore.read, tauriStore.write, rec.id, { hire: { kind: "escrow", paid: hire.amount, txHash: releaseTxHash } }))
-          .catch(() => {});
-      }
-    } catch (err) {
-      setHireErr(err instanceof Error ? err.message : String(err));
-    } finally { setSettling(false); }
-  };
-
-  // Streaming lease: pay for a block of hours at the agent's advertised
-  // rate, which buys PRIORITY (the miner tracks paidUntil and serves your
-  // asks first while paid). Reuses the tested `rent` verb. Persona-only
-  // for now (root-free rent can't sign as treasury — same limit `pay` had
-  // before payFromTreasury; a treasury lease is the matching follow-up).
-  const startLease = async (hours: number, persona: string) => {
-    if (leasing || !(hours > 0)) return;
-    setLeasing(true); setHireErr(undefined);
-    try {
-      const res = await invoke<{ code: number; stdout: string; stderr: string }>("run_extension_bin", {
-        extension: "wallet", bin: "fez-wallet",
-        args: ["rent", guest.pk, String(hours), "--as", persona, "--json"],
-      });
-      if (res.code !== 0) throw new Error(res.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() || `lease exited ${res.code}`);
-      // Extend from paid-through, not from now — mid-lease ticks stack
-      // (matching the miner's ledger), they don't reset the clock.
-      const until = Math.max(Date.now(), leaseUntil) + hours * 3_600_000;
-      localStorage.setItem(`fez-lease-${guest.pk}`, String(until));
-      setLeaseUntil(until);
-    } catch (err) {
-      setHireErr(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLeasing(false);
-    }
-  };
-
-  const settle = async () => {
-    if (!hire || settling) return;
-    if (!agentPayTo) { setHireErr("this agent hasn't published a receive address — nothing to settle to"); return; }
-    setSettling(true); setHireErr(undefined);
-    try {
-      // The tested `pay` verb, invoked as the wallet extension (holds
-      // `processes`). `--for` ties the receipt to one of my task roots so
-      // the settlement is legible on the relay.
-      const anyRoot = [...myTaskIds][0];
-      const res = await invoke<{ code: number; stdout: string; stderr: string }>("run_extension_bin", {
-        extension: "wallet",
-        bin: "fez-wallet",
-        args: ["pay", agentPayTo, hire.amount, "--as", hire.persona, "--to-pk", guest.pk, ...(anyRoot ? ["--for", anyRoot] : []), "--json"],
-      });
-      if (res.code !== 0) throw new Error(res.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() || `settle exited ${res.code}`);
-      const out = JSON.parse(res.stdout.trim().split("\n").pop() ?? "{}") as { txHash?: string };
-      const settleTxHash = out.txHash ?? "";
-      const settled: Hire = { ...hire, settled: { txHash: settleTxHash, at: Date.now() } };
-      setHire(guest.pk, settled); setHireState(settled);
-      // Orchestration corpus: what was actually paid, once settle succeeds.
-      // Best-effort — a log failure must never look like a failed settle.
-      void latestSentFor(tauriStore.read, guest.pk)
-        .then((rec) => rec && updateRecord(tauriStore.read, tauriStore.write, rec.id, { hire: { kind: "settle", paid: hire.amount, txHash: settleTxHash } }))
-        .catch(() => {});
-    } catch (err) {
-      setHireErr(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSettling(false);
-    }
-  };
+  const name = face.name ?? guest.pk.slice(0, 8);
+  const freshOffer = offer && nowTick / 1000 - offer.event.created_at <= FRESH_S ? offer : undefined;
 
   // Honesty for the silent case: a task past its deadline with no reply is
   // said out loud, not left hanging. The answered set keys it; nowTick
@@ -765,7 +601,7 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
     all.filter((e) => e.kind === KIND_RESULT && e.pubkey === guest.pk).map((e) => rootOf(e) ?? "")
   );
   const deadlineOf = (id: string) => {
-    const ev = events.get(id);
+    const ev = events.get(id)?.event;
     return Number(ev?.tags.find((t) => t[0] === "deadline")?.[1] ?? 0);
   };
   // nowTick is declared above (the timeline reads it); this only drives it.
@@ -781,8 +617,8 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
       <div className="guest-awning" aria-hidden />
       <header className="topbar">
         <div className="topbar-row" data-tauri-drag-region>
-          {guest.picture ? (
-            <img src={guest.picture} alt="" width={20} height={20} style={{ imageRendering: "pixelated", display: "block" }} />
+          {face.picture ? (
+            <img src={face.picture} alt="" width={20} height={20} style={{ imageRendering: "pixelated", display: "block" }} />
           ) : (
             // No published picture — the pk seeds the same generative face
             // as every other surface (agents-face rule: a pk earns a face).
@@ -820,16 +656,9 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
           >
             at the bazaar · public
           </span>
-          {/* Price discovery, not a control: renting is an agent act
-              (wallet_rent — the payer's own asks get priority). Here it
-              tells you the counter's rate. */}
-          {guest.rateTaoHr !== undefined ? (
-            <span
-              className="guest-chip"
-              style={{ color: "var(--ok, #b8bb26)" }}
-              data-tip={`this agent's asking rate: rent it for ${guest.rateTaoHr} tTAO per hour to jump its queue (one of your agents does the renting, via wallet_rent)`}
-            >
-              {`${guest.rateTaoHr} tτ/hr`}
+          {freshOffer?.offer?.rateTaoHr !== undefined ? (
+            <span className="guest-chip" data-tip="Verified advertised rate for prepaid priority; no automatic renewal.">
+              {`${freshOffer.offer.rateTaoHr} tτ/hr`}
             </span>
           ) : null}
           {/* The salt tier — ember when no one you can verify vouches
@@ -871,110 +700,11 @@ export function GuestThreadView({ wire, selfPk, guest }: { wire: BrowserWire; se
         </div>
       </header>
       <div className="guest-banner">
-        {`Anyone can read this thread — never share secrets here. Messages you send are tasks only ${name} may answer, signed with your name.`}
+        {`Anyone can read this thread. Share only the context intended for this job. Messages are signed with your identity and directed to ${name}.`}
       </div>
-      {/* The hire: chat free, then start a negotiated-lump hire, watch the
-          meter, and settle to the agent's address through the wallet. Four
-          states — settled, active (the meter), starting (the form), and the
-          idle offer to begin. */}
-      <div className="guest-hire">
-        {hire?.escrow?.state === "refunded" ? (
-          <span title={`the escrow at ${hire.escrow.addr} was refunded to ${hire.persona}`}>
-            {`↩ refunded — ${hire.amount} tτ returned to ${hire.persona}`}
-            <button className="guest-hire-link" onClick={() => { setHire(guest.pk, undefined); setHireState(undefined); }}>new hire</button>
-          </span>
-        ) : hire?.settled ? (
-          <span title={`paid ${hire.amount} tТАО from ${hire.persona}`}>
-            {hire.escrow ? `✓ released from escrow — ${hire.amount} tτ paid` : `✓ settled — paid ${hire.amount} tτ from ${hire.persona}`}
-            {hire.settled.txHash ? <span className="dim">{` · tx ${hire.settled.txHash.slice(0, 10)}…`}</span> : null}
-            <button className="guest-hire-link" onClick={() => { setHire(guest.pk, undefined); setHireState(undefined); }}>new hire</button>
-          </span>
-        ) : hire?.escrow ? (
-          <span>
-            {`◈ escrowed · ${hire.amount} tτ held at ${hire.escrow.addr.slice(0, 6)}…${hire.escrow.addr.slice(-4)} · ${delivered} delivered`}
-            <button className="guest-hire-btn" disabled={settling} title={`two approvals (you + the arbiter) move ${hire.amount} tТАО to ${name}`} onClick={() => void closeEscrow("release")}>
-              {settling ? "signing…" : "release & pay"}
-            </button>
-            <button className="guest-hire-link" disabled={settling} title="two approvals return the funds to you" onClick={() => void closeEscrow("refund")}>refund</button>
-          </span>
-        ) : hire ? (
-          <span>
-            {`◈ hired · ${hire.amount} tτ agreed · from ${hire.persona} · ${delivered} delivered`}
-            <button className="guest-hire-btn" disabled={settling || !agentPayTo} title={agentPayTo ? `pay ${hire.amount} tТАО to ${name}` : "the agent hasn't published a receive address yet"} onClick={() => void settle()}>
-              {settling ? "settling…" : "settle & pay"}
-            </button>
-            <button className="guest-hire-link" onClick={() => { setHire(guest.pk, undefined); setHireState(undefined); setHireErr(undefined); }}>cancel</button>
-          </span>
-        ) : starting ? (
-          <span className="guest-hire-form">
-            <span className="dim">start hire —</span>
-            <input className="guest-hire-amt" placeholder="amount" value={hireAmt} onChange={(e) => setHireAmt(e.target.value)} />
-            <span className="dim">tτ, paid from</span>
-            <select className="guest-hire-sel" value={hirePersona} onChange={(e) => setHirePersona(e.target.value)}>
-              {payFrom.filter((a) => a.name !== ARBITER).map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
-            </select>
-            <button className="guest-hire-btn" onClick={startHire} title="a handshake — nothing moves until you settle">lock terms</button>
-            {agentPayTo && arbiterAddr ? (
-              <button className="guest-hire-btn" disabled={settling} onClick={() => void startEscrow()} title="funds move NOW into a 2-of-3 multisig the agent can verify; release or refund needs two keys. Releasing also holds a ~0.2 tτ chain deposit from the paying account (refunded when it executes)">
-                {settling ? "funding…" : "hold in escrow"}
-              </button>
-            ) : null}
-            <button className="guest-hire-link" onClick={() => { setStarting(false); setHireErr(undefined); }}>cancel</button>
-          </span>
-        ) : (
-          <span>
-            {agentPayTo
-              ? <span className="dim">{`◈ hireable — settles to ${agentPayTo.slice(0, 6)}…${agentPayTo.slice(-4)}`}</span>
-              : <span className="dim" title="the agent hasn't published a receive address — its miner needs a wallet account (fez-wallet derive <name>)">◇ no receive address yet</span>}
-            {payFrom.length ? (
-              <button className="guest-hire-link" onClick={() => { setStarting(true); setHirePersona(payFrom[0]?.name ?? ""); }}>start a hire</button>
-            ) : <span className="dim"> · no wallet to pay from</span>}
-          </span>
-        )}
-        {/* Streaming lease — pay-per-time, buys PRIORITY. Shown when the
-            agent advertises a rate. Paid from a persona (rent is root-free).
-            Active → the priority meter; idle → a one-hour lease button. */}
-        {(() => {
-          const leasePayer = payFrom.find((a) => a.name !== "treasury")?.name;
-          // Ticks, not a fixed hour: the lease is prepaid per-call, so a
-          // thin allowance can still buy 15 minutes of priority. Costs are
-          // hours × the announced rate, shown so the click IS the consent.
-          const TICKS: [number, string][] = [[0.25, "15m"], [1, "1h"]];
-          const cost = (h: number) => {
-            const c = h * (agentRate ?? 0);
-            return `${Number(c.toFixed(3))} tτ`;
-          };
-          if (leaseUntil > nowTick) {
-            const t = new Date(leaseUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-            return (
-              <span className="guest-lease on" title="you have priority — the agent serves your asks first while the lease is live">
-                {` · ⚡ priority through ${t}`}
-                {agentRate && leasePayer
-                  ? TICKS.map(([h, label]) => (
-                      <button key={label} className="guest-hire-link" disabled={leasing} title={`extend ${label} for ${cost(h)}, paid from ${leasePayer}`} onClick={() => void startLease(h, leasePayer)}>
-                        {leasing ? "…" : `+${label}`}
-                      </button>
-                    ))
-                  : null}
-              </span>
-            );
-          }
-          if (agentRate && leasePayer) {
-            return (
-              <span className="guest-lease">
-                {" · ⚡ lease"}
-                {TICKS.map(([h, label]) => (
-                  <button key={label} className="guest-hire-link" disabled={leasing} title={`${label} of priority for ${cost(h)}, paid from ${leasePayer}`} onClick={() => void startLease(h, leasePayer)}>
-                    {leasing ? "…" : `${label} (${cost(h)})`}
-                  </button>
-                ))}
-              </span>
-            );
-          }
-          return null;
-        })()}
-        {hireErr ? <span className="guest-hire-err">{` · ${hireErr}`}</span> : null}
-      </div>
+      <GuestHirePanel key={JSON.stringify([selfPk, guest.pk, guest.relay])}
+        scope={{ ownerPk: selfPk, guestPk: guest.pk, relay: guest.relay }}
+        tasks={tasks.filter(task => !pendingIds.has(task.event.id))} results={results} offer={freshOffer} />
       <div className="guest-timeline">
         {turns.map((t) =>
           t.kind === "progress" ? (

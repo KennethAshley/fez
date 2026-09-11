@@ -117,8 +117,13 @@ it("CLI consumes file/hash options before positional verbs and rejects missing o
 });
 
 // Exercise the shipped CLI, so an adapter cannot trust flags an old wallet ignores.
-it("the wallet advertises its key-export and testnet guards without opening a wallet", () => {
+it("the wallet advertises its key-export, testnet and guest-payment guards without opening a wallet", () => {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('../../fez-wallet/dist/cli.js', import.meta.url)), 'capabilities', '--json'], { encoding: 'utf8', timeout: 10_000 });
   expect(result.status).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({ existingHotkey: true, metagraphRequireTestnet: true });
+  expect(JSON.parse(result.stdout)).toEqual({
+    existingHotkey: true,
+    metagraphRequireTestnet: true,
+    guestPaymentBinding: true,
+    guestPayments: 1,
+  });
 });
