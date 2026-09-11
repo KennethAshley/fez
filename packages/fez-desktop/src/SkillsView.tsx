@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useMemo, useState } from "react";
+import { Component, Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FezClient, WireEvent } from "@fezchat/client";
@@ -17,6 +17,8 @@ import { useConfig, bumpConfig } from "./config-store";
 import { attachSkill, detachSkill, declaredSkills, rememberSkillSource } from "./skill-attach";
 import type { MountRender } from "./mount-result";
 import { MountPoint } from "./MountPoint";
+import ToolSetup, { type ToolConfig } from "./ToolSetup";
+import "./Tools.css";
 
 /**
  * Skills — the machine catalog + the decentralized marketplace.
@@ -41,19 +43,7 @@ const KIND_SKILL_INSTALL = 40201;
 const DEFAULT_COUNTS_URL = "https://fez.chat/api/counts";
 const countsUrl = () => localStorage.getItem("fez-skill-counts-url") ?? DEFAULT_COUNTS_URL;
 
-interface SkillConfig {
-  command?: string;
-  args?: string[];
-  type?: string;
-  url?: string;
-  env?: Record<string, string>;
-  /** Install provenance (Task 2) — the portable `name=source` form for a persona that gains this skill. */
-  source?: string;
-  /** Canonical package id, so a persona declaring this package under ANY local name still resolves. */
-  package?: string;
-  /** One line for a picker (Task 5) — carried from the listing at install time. */
-  description?: string;
-}
+type SkillConfig = ToolConfig;
 
 interface Listing {
   name: string;
@@ -149,8 +139,10 @@ export default function SkillsView({
   // reactive to installs/removes without a local fetch to keep in sync.
   const { skills: installed, localParts } = useConfig() as { skills: Record<string, SkillConfig>; localParts: Record<string, string[]> };
   const [listings, setListings] = useState<Listing[]>();
+  const [listingError, setListingError] = useState<string>();
+  const [listingNonce, setListingNonce] = useState(0);
   const [installing, setInstalling] = useState<InstallTarget>();
-  const [finding, setFinding] = useState<{ agent: string; skill: string }>();
+  const [finding, setFinding] = useState<{ agent?: string; skill: string }>();
   const [publishing, setPublishing] = useState<string>();
   const [installs, setInstalls] = useState<Map<string, number>>(new Map());
   const [copied, setCopied] = useState<string>();
@@ -236,7 +228,8 @@ export default function SkillsView({
         if (!only) return true;
         const inApp = row.parts.includes("gui");
         return only === "extensions" ? inApp : !!row.config || (row.pack?.length ?? 0) > 0;
-      });
+      })
+      .sort((a, b) => only === "skills" ? Number(!!b.config) - Number(!!a.config) : 0);
   }, [localParts, installed, skillPacks, agentDeps, only]);
 
   /**
@@ -305,6 +298,12 @@ export default function SkillsView({
         setSkillPacks(packs);
       } catch { /* command absent or no packages */ }
     })();
+  }, [reload, agentNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setListingError(undefined);
+    setListings(undefined);
     void (async () => {
       const events = await wire.query([{ kinds: [KIND_SKILL_LISTING], limit: 100 }]);
       const latest = new Map<string, Listing>();
@@ -318,10 +317,11 @@ export default function SkillsView({
           latest.set(key, { ...body, authorPk: event.pubkey, ts: event.created_at });
         } catch { /* malformed listing */ }
       }
+      if (cancelled) return;
       setListings([...latest.values()].sort((a, b) => b.ts - a.ts));
       // Install receipts (40201): distinct signer pubkeys per listing —
       // the decentralized download counter.
-      const receipts = await wire.query([{ kinds: [KIND_SKILL_INSTALL], limit: 500 }]);
+      const receipts = await wire.query([{ kinds: [KIND_SKILL_INSTALL], limit: 500 }]).catch(() => []);
       const counts = new Map<string, Set<string>>();
       for (const receipt of receipts as WireEvent[]) {
         const skillName = receipt.tags.find((t) => t[0] === "skill")?.[1];
@@ -339,9 +339,10 @@ export default function SkillsView({
         const body = (await res.json()) as { counts?: { skill_name: string; listing_author: string; installs: number }[] };
         for (const row of body.counts ?? []) merged.set(`${row.listing_author}:${row.skill_name}`, row.installs);
       } catch { /* index unreachable — relay-local counts stand */ }
-      setInstalls(merged);
-    })();
-  }, [wire, reload, agentNonce]);
+      if (!cancelled) setInstalls(merged);
+    })().catch(err => { if (!cancelled) setListingError(String(err)); });
+    return () => { cancelled = true; };
+  }, [wire, listingNonce]);
 
   /**
    * The name THIS agent uses for a catalog key, or undefined when it
@@ -390,7 +391,8 @@ export default function SkillsView({
       }),
     });
     setPublishing(undefined);
-    flash(`📡 published "${name}" — signed by you, env values not included`);
+    setListingNonce(n => n + 1);
+    flash(`📡 Shared setup for "${name}" on your relay. Credential values were not included.`);
   };
 
   /** Marketplace persona → DRAFT for review in the agents pane. */
@@ -427,6 +429,7 @@ export default function SkillsView({
     `${listing.authorPk}:${listing.artifact === "persona" ? "persona:" : ""}${listing.name}`;
   const ranked = [...(listings ?? [])]
     .filter((listing) => {
+      if (only === "skills") return (listing.artifact ?? "mcp") === "mcp";
       if (filter === "all") return true;
       if (filter === "agents") return listing.artifact === "persona";
       // "skills" means SKILL.md listings (artifact "skill"), not MCP
@@ -437,15 +440,55 @@ export default function SkillsView({
     })
     .sort((a, b) => (installs.get(countKey(b)) ?? 0) - (installs.get(countKey(a)) ?? 0) || b.ts - a.ts);
 
+  const assignmentPicker = (name: string, config: SkillConfig | undefined, pack: { id: string; name: string; description: string }[] | undefined, wanted: string[]) => (
+    givingTo === name && (
+      <div className="skill-give">
+        {allAgents.length === 0 && <p>Create an agent in Agents to assign this tool.</p>}
+        {allAgents.map((agent) => {
+          const has = wanted.includes(agent);
+          const busy = givingBusy === agent;
+          return (
+            <button
+              key={agent}
+              className={has ? "ext-filter active" : "ext-filter"}
+              disabled={busy}
+              onClick={() => {
+                const on = !has;
+                setGivingBusy(agent);
+                // Giving uses this machine's key; taking back
+                // uses whatever name that agent wrote. A pack
+                // row gives its skills (the skills: key), a
+                // tool row its settings entry (mcpServers:).
+                const target = on ? name : declaredNameFor(agent, name) ?? name;
+                void (!config && pack
+                  ? setSkillPackOnAgent(agent, pack, on)
+                  : setSkillOnAgent(agent, target, config?.source, on))
+                  .then((result) =>
+                    reportSkillWrite(result, agent, name, on, () => {
+                      reload();
+                      setAgentNonce((n) => n + 1);
+                    })
+                  )
+                  .finally(() => setGivingBusy(undefined));
+              }}
+            >
+              @{agent} {has ? "✓" : ""}
+            </button>
+          );
+        })}
+      </div>
+    )
+  );
+
   return (
-    <main className="main">
+    <main className={only === "skills" ? "main tools-page" : "main"}>
       <header className="topbar">
         <div className="topbar-row">
-          {only === "skills" ? "🔧 tools" : "⊞ extensions"}
+          {only === "skills" ? "⚒ tools" : "⊞ extensions"}
           {<span className="ext-tabs">
-            {(["browse", "installed"] as const).map((name) => (
-              <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} onClick={() => setTab(name)}>
-                {name}
+            {(only === "skills" ? ["installed", "browse"] as const : ["browse", "installed"] as const).map((name) => (
+              <button key={name} className={tab === name ? "ext-tab active" : "ext-tab"} aria-pressed={tab === name} onClick={() => setTab(name)}>
+                {only === "skills" ? name === "installed" ? "Your tools" : "Add tools" : name}
                 {name === "installed" && <span className="ext-tab-count">{everything.length}</span>}
               </button>
             ))}
@@ -453,27 +496,14 @@ export default function SkillsView({
         </div>
       </header>
       <div className="timeline pulse-scroll">
-        {/* The vocabulary, once, at the top — as a KEY, not a sentence,
-            because that is what it is. The tags on every row below are
-            these three words, and until you know they name PLACES
-            rather than sorts of thing, a row tagged "gui skill" reads
-            as a contradiction instead of a package with two parts.
-
-            It sits in the BODY, not the header: putting it in the
-            topbar made the bar four rows tall and pushed its bottom
-            rule off the top of the window, so this view alone looked
-            like it had no header at all. */}
-        <div className="ext-legend">
-          {only === "skills" ? (
-            <div className="ext-legend-lead">
-              <strong>Tools</strong> are MCP servers your agents call — granted to an agent in its persona. <strong>Skills</strong> are instruction packs agents load — attach them in an agent's editor.
-            </div>
-          ) : (
-            <div className="ext-legend-lead">
-              <strong>Extensions</strong> are features you install — a board, a repo panel, a slash command. Some also give your agents a tool, which appears under <strong>Tools</strong>.
-            </div>
-          )}
-        </div>
+        {only === "skills" && <div className="tools-intro">
+          <p>{tab === "installed" ? "Tools let your agents search, build, and use services. Choose who gets each one." : "Find an MCP tool, or bring a server you already use."}</p>
+        </div>}
+        {only !== "skills" && <div className="ext-legend">
+          <div className="ext-legend-lead">
+            <strong>Extensions</strong> are features you install — a board, a repo panel, a slash command. Some also give your agents a tool, which appears under <strong>Tools</strong>.
+          </div>
+        </div>}
 
         {/* ── the install just finished, nothing declares it yet ──
             Rendered OUTSIDE the tab switch, on purpose: the button that
@@ -488,8 +518,9 @@ export default function SkillsView({
             would yank the view out from under someone mid-browse. */}
         {justInstalled && (
           <div className="manage-notice">
-            ✓ installed {justInstalled.name} — give it to?
+            ✓ Added {justInstalled.name}. Assign to an agent:
             <div className="skill-give">
+              {allAgents.length === 0 && <p>Create an agent in Agents to use this tool.</p>}
               {allAgents.map((agent) => {
                 const busy = givingBusy === agent;
                 return (
@@ -534,9 +565,9 @@ export default function SkillsView({
                       <div className="skill-main">
                         <span className="skill-name">
                           {skill}
-                          <span className="role-tag missing-tag">not installed</span>
+                          <span className="role-tag missing-tag">Setup missing</span>
                         </span>
-                        <span className="skill-desc">@{agent} declares it — until it exists, that agent runs without it</span>
+                        <span className="skill-desc">@{agent} needs this tool. Add its setup so the agent can use it.</span>
                         {/* The command, before the button, not after it. */}
                         {runs && <code className="skill-cmd">{runs}</code>}
                         {source && !runs && (
@@ -587,16 +618,60 @@ export default function SkillsView({
 
             {/* ── everything on this machine ───────────────────── */}
             <div className="skill-section">
-              <div className="manage-section">{only === "extensions" ? "installed" : "defined here"}</div>
-              {everything.length === 0 && <div className="pane-empty">nothing installed yet — see browse</div>}
-              {everything.map(({ name, parts, config, pack, wanted }) => {
+              <div className="manage-section">{only === "extensions" ? "installed" : "Saved on this computer"}</div>
+              {only === "skills" && <p className="settings-hint">Saved here ≠ assigned to an agent. Changes apply when the agent next starts.</p>}
+              {everything.length === 0 && <div className="tools-empty">
+                <h2>{only === "skills" ? "an empty toolkit" : "Nothing installed yet"}</h2>
+                <p>Add a tool, then give an agent access.</p>
+                <button className="agent-action" onClick={() => setTab("browse")}>{only === "skills" ? "Add tools" : "Browse extensions"}</button>
+              </div>}
+              {everything.map(({ name, parts, config, pack, wanted }, index) => {
                 const localPath = machineLocalPath(config);
                 // The relic grammar continues from browse: the sprite that
                 // sat dormant in the gallery stands lit in the inventory.
                 // Catalog metadata (title, blurb, where) dresses official
                 // packages; anything sideloaded keeps its bare name.
-                const entry = only === "extensions" ? catalogEntry(name) : undefined;
+                const entry = catalogEntry(config?.package ?? name);
                 const relic = only === "extensions";
+                if (only === "skills") return (
+                  <Fragment key={name}>
+                  {!config && (index === 0 || everything[index - 1].config) && <div className="tools-pack-heading">
+                    <h2>Instruction packs</h2><p>Guidance agents can load. These do not connect to an MCP server.</p>
+                  </div>}
+                  <article className="tool-item inv-row">
+                    <span className="artifact-slot" aria-hidden="true">
+                      <AnimatedSprite sprite={generateArtifact(entry?.name ?? config?.package ?? name)} scale={3} />
+                    </span>
+                    <div className="tool-item-head">
+                      <div className="skill-main">
+                        <h2>{entry?.title ?? name}</h2>
+                        <p>{config?.description ?? entry?.blurb ?? (config ? "MCP tool. Open Configure to review its setup." : "Instructions your agents can load when they need them.")}</p>
+                      </div>
+                      <span className="tool-location">{config ? config.url ? "Remote server" : "Runs locally" : "Instruction pack"}</span>
+                    </div>
+                    {pack?.map(s => <p className="tool-pack-skill" key={s.id}><strong>{s.name}</strong> {s.description}</p>)}
+                    <div className="tool-access">
+                      <span>{wanted.length ? <>Assigned to {wanted.map(a => `@${a}`).join(", ")}</> : "Not assigned to any agent"}</span>
+                      <button className="agent-action" aria-expanded={givingTo === name} onClick={() => setGivingTo(givingTo === name ? undefined : name)}>Assign to agent</button>
+                    </div>
+                    {assignmentPicker(name, config, pack, wanted)}
+                    {config && <ToolSetup name={name} config={config}>
+                      <div className="tool-sharing">
+                        <p>Share setup so others can add this tool. Sharing does not host the server, share credentials, or grant agent access.</p>
+                        {publishing === name
+                          ? <PublishForm onPublish={meta => void publish(name, meta).catch(err => flash(`✗ Could not share setup: ${String(err)}`))} onCancel={() => setPublishing(undefined)} />
+                          : <button className="mini" disabled={!!localPath} title={localPath ? "This setup uses a file on your computer. Publish the package before sharing its setup." : undefined} onClick={() => setPublishing(name)}>Share tool setup</button>}
+                        {localPath && <p className="settings-hint">This setup uses a local file and cannot be shared.</p>}
+                        <button className="mini" onClick={() => void invoke("remove_skill", { name }).then(reload).catch(err => flash(`✗ Could not remove tool: ${String(err)}`))}>Remove tool</button>
+                      </div>
+                    </ToolSetup>}
+                    {!config && <details className="tool-setup"><summary>Pack details</summary><div className="tool-setup-body">
+                      <p className="settings-hint">Instruction packs guide agents; they do not connect to an MCP server.</p>
+                      <button className="mini" onClick={() => void invoke("remove_extension", { name }).then(() => { reload(); setAgentNonce(n => n + 1); }).catch(err => flash(`✗ Could not remove pack: ${String(err)}`))}>Remove instruction pack</button>
+                    </div></details>}
+                  </article>
+                  </Fragment>
+                );
                 return (
                 <div key={name} className={relic ? "skill-row inv-row" : "skill-row"}>
                   {relic && (
@@ -619,7 +694,7 @@ export default function SkillsView({
                           "tool" chip on all ten restated the heading
                           ten times; the other parts (gui, headless) are
                           still worth naming. */}
-                      {parts.filter((part) => !(only === "skills" && part === "tool")).map((part) => (
+                      {parts.map((part) => (
                         <span
                           key={part}
                           className="role-tag"
@@ -727,42 +802,7 @@ export default function SkillsView({
                       )}
                     </div>
                   )}
-                  {givingTo === name && (
-                    <div className="skill-give">
-                      {allAgents.map((agent) => {
-                        const has = wanted.includes(agent);
-                        const busy = givingBusy === agent;
-                        return (
-                          <button
-                            key={agent}
-                            className={has ? "ext-filter active" : "ext-filter"}
-                            disabled={busy}
-                            onClick={() => {
-                              const on = !has;
-                              setGivingBusy(agent);
-                              // Giving uses this machine's key; taking back
-                              // uses whatever name that agent wrote. A pack
-                              // row gives its skills (the skills: key), a
-                              // tool row its settings entry (mcpServers:).
-                              const target = on ? name : declaredNameFor(agent, name) ?? name;
-                              void (!config && pack
-                                ? setSkillPackOnAgent(agent, pack, on)
-                                : setSkillOnAgent(agent, target, config?.source, on))
-                                .then((result) =>
-                                  reportSkillWrite(result, agent, name, on, () => {
-                                    reload();
-                                    setAgentNonce((n) => n + 1);
-                                  })
-                                )
-                                .finally(() => setGivingBusy(undefined));
-                            }}
-                          >
-                            @{agent} {has ? "✓" : ""}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+                  {assignmentPicker(name, config, pack, wanted)}
                 </div>
                 );
               })}
@@ -778,11 +818,12 @@ export default function SkillsView({
             onNotice={flash}
           />
         )}
+        {tab === "browse" && only === "skills" && <AddTool installed={installed} onSearch={() => setFinding({ skill: "" })} onReview={setInstalling} />}
         {tab === "browse" && only !== "extensions" && (
           <div className="skill-section">
             <div className="manage-section">
-              <span>listed on your relay</span>
-              <span className="ext-filters">
+              <span>{only === "skills" ? "Shared by your workspace" : "listed on your relay"}</span>
+              <span className="ext-filters" hidden={only === "skills"}>
                 {(["all", "agents", "skills", "packs"] as const).map((name) => (
                   <button key={name} className={filter === name ? "ext-filter active" : "ext-filter"} onClick={() => setFilter(name)}>
                     {name}
@@ -791,13 +832,13 @@ export default function SkillsView({
               </span>
             </div>
             <div className="settings-hint">
-              Signed listings, ranked by installs. Installing an agent lands as a DRAFT you review; installing a
-              skill adds its definition (secrets stay yours, in the keychain). Read before installing.
+              {only === "skills" ? "Tool setup shared on your relay. Each listing identifies who shared it; review the setup before adding it." : "Signed listings, ranked by installs. Agents are added as drafts for review. Tool setup is saved locally."}
             </div>
-            {!listings && <div className="pane-empty">loading…</div>}
+            {listingError && <div className="tools-relay-error" role="alert">Could not load shared tools: {listingError} <button className="mini" onClick={() => setListingNonce(n => n + 1)}>Retry</button></div>}
+            {!listings && !listingError && <div className="pane-empty" role="status">Loading shared tools…</div>}
             {listings && ranked.length === 0 && (
               <div className="pane-empty">
-                nothing listed on this relay yet — share something of yours from the installed tab
+                {only === "skills" ? "No tools shared here yet. Search packages or enter a server address above to add your own." : "Nothing listed on this relay yet."}
               </div>
             )}
             {ranked.map((listing) => {
@@ -813,7 +854,7 @@ export default function SkillsView({
                   <span className="skill-name">
                     {isPersona ? `@${listing.name}` : listing.name}
                     <span className="role-tag">{isPersona ? "agent" : isMcp ? "tool" : listing.artifact}</span>
-                    {isInstalled && <span className="role-tag installed-tag">installed</span>}
+                    {isInstalled && <span className="role-tag installed-tag">Setup saved</span>}
                     <span className="skill-installs">⇩ {count}</span>
                   </span>
                   {listing.description && <span className="skill-desc">{listing.description}</span>}
@@ -870,7 +911,7 @@ export default function SkillsView({
             onPick={(source, provenance) => {
               setFinding(undefined);
               setInstalling({
-                name: finding.skill,
+                name: finding.skill || packageFromSource(source) || "tool",
                 ...parseSkillSource(source)!,
                 provenance,
                 source,
@@ -887,6 +928,7 @@ export default function SkillsView({
           <InstallDialog
             target={installing}
             wire={wire}
+            installed={installed}
             onDone={(didInstall) => {
               const done = installing;
               setInstalling(undefined);
@@ -912,6 +954,37 @@ export default function SkillsView({
   );
 }
 
+function AddTool({ installed, onSearch, onReview }: { installed: Record<string, SkillConfig>; onSearch: () => void; onReview: (target: InstallTarget) => void }) {
+  const [name, setName] = useState("");
+  const [source, setSource] = useState("");
+  const config = parseSkillSource(source);
+  const duplicate = Object.hasOwn(installed, name.trim());
+  const validName = /^[A-Za-z0-9._@/-]{1,64}$/.test(name.trim());
+  return <section className="tools-add" aria-label="Add a tool">
+    <div className="tools-search-entry inv-row">
+      <span className="artifact-slot" aria-hidden="true"><AnimatedSprite sprite={generateArtifact("fez-tool-search")} scale={3} /></span>
+      <div><h2>find a tool</h2><p>Search npm by name or what you need done.</p></div>
+      <button className="agent-action" onClick={onSearch}>Search packages</button>
+    </div>
+    <form className="tools-source" onSubmit={e => {
+      e.preventDefault();
+      if (!config || !validName || duplicate) return;
+      onReview({ name: name.trim(), ...config, source: source.trim(), provenance: "You entered this source. Review where the tool runs before adding it." });
+    }}>
+      <h2>add a package or server</h2>
+      <p>Already have one? Drop its package source or MCP address here.</p>
+      <div className="tools-source-fields">
+        <label>Tool name<input className="manage-input" aria-label="Tool name" value={name} placeholder="web-search" maxLength={64} onChange={e => setName(e.target.value)} /></label>
+        <label>Package or server URL<input className="manage-input" aria-label="Package or server URL" value={source} placeholder="https://example.com/mcp or npm:@publisher/package" spellCheck={false} onChange={e => setSource(e.target.value)} /></label>
+      </div>
+      {name && !validName && <p className="ob-error">Use letters, numbers, dots, underscores, @, /, or hyphens.</p>}
+      {duplicate && <p className="ob-error">A tool named {name.trim()} is already saved. Choose another name to keep its setup.</p>}
+      {source && !config && <p className="ob-error">Enter a valid http(s) server URL without embedded credentials, or an npm:, uvx:, or pipx: package.</p>}
+      <button className="agent-action" disabled={!config || !validName || duplicate}>Review setup</button>
+    </form>
+  </section>;
+}
+
 function PublishForm({
   onPublish,
   onCancel,
@@ -932,14 +1005,14 @@ function PublishForm({
           what. The listing carries the COMMAND — that is the thing
           other people will run — and the env KEY NAMES, never values. */}
       <span className="publish-what">
-        Signed by you, to this workspace's relay. Everyone here will see the command it runs and can install it in
-        one click. Your env values stay on this machine — only the key names travel.
+        Your signed listing shares the command or server address with this workspace. Credential values stay private.
+        Others still need their own access and must assign the tool to an agent.
       </span>
-      <input className="manage-input" value={description} autoFocus placeholder="what does it do?" onChange={(e) => setDescription(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
+      <input className="manage-input" aria-label="Tool description" value={description} autoFocus placeholder="what does it do?" onChange={(e) => setDescription(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
       <input className="manage-input" value={github} spellCheck={false} placeholder="github url (optional)" onChange={(e) => setGithub(e.target.value)} />
       <input className="manage-input" value={npm} spellCheck={false} placeholder="npm package (optional)" onChange={(e) => setNpm(e.target.value)} />
       <span className="agent-actions">
-        <button className="mini" disabled={!description.trim()} onClick={submit}>publish</button>
+        <button className="mini" disabled={!description.trim()} onClick={submit}>Share tool setup</button>
         <button className="mini" onClick={onCancel}>cancel</button>
       </span>
     </span>
@@ -1055,11 +1128,15 @@ function reportSkillWrite(result: SkillWriteResult, agent: string, skill: string
 }
 
 /** The consent gate: full command verbatim + env values filled locally. */
-function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: BrowserWire; onDone: (didInstall: boolean) => void }) {
+function InstallDialog({ target, wire, installed, onDone }: { target: InstallTarget; wire: BrowserWire; installed: Record<string, SkillConfig>; onDone: (didInstall: boolean) => void }) {
   const [env, setEnv] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const duplicate = Object.hasOwn(installed, target.name);
 
   const install = async () => {
+    if (busy || duplicate) return;
+    if (!/^[A-Za-z0-9._@/-]{1,64}$/.test(target.name)) return setError("This tool name is invalid. Use a name of up to 64 letters, numbers, dots, underscores, @, /, or hyphens.");
     const missing = (target.envKeys ?? []).filter((key) => !env[key]?.trim());
     if (missing.length > 0) return setError(`fill in: ${missing.join(", ")}`);
     // Provenance, when there is any — the whole point of the branch.
@@ -1074,13 +1151,19 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
         : {
             command: target.command,
             ...(target.args?.length ? { args: target.args } : {}),
-            ...(target.envKeys?.length ? { env } : {}),
+            ...(target.envKeys?.length ? { env: Object.fromEntries(target.envKeys.map(key => [key, ""])) } : {}),
           }),
       ...(target.source ? { source: target.source } : {}),
       ...(pkg ? { package: pkg } : {}),
       ...(target.description ? { description: target.description } : {}),
     };
+    setBusy(true);
     try {
+      const current = JSON.parse(await invoke<string>("read_skills"));
+      if (Object.hasOwn(current, target.name)) throw new Error(`A tool named ${target.name} is already saved. Choose another name.`);
+      for (const [key, value] of Object.entries(env)) {
+        await invoke("set_skill_secret", { skill: target.name, key, value });
+      }
       await invoke("write_skill", { name: target.name, configJson: JSON.stringify(config) });
       // The receipt: +1 on the listing's install count, signed by you —
       // on the relay (truth) and pushed to the cross-relay index
@@ -1099,16 +1182,16 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
       onDone(true);
     } catch (err) {
       setError(String(err));
-    }
+    } finally { setBusy(false); }
   };
 
   return (
-    <div className="overlay" onMouseDown={() => onDone(false)}>
-      <div className="search-box install-box" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="install-head">install "{target.name}"</div>
+    <div className="overlay" onMouseDown={() => { if (!busy) onDone(false); }}>
+      <div className="search-box install-box" role="dialog" aria-modal="true" aria-label={`Add ${target.name}`} onMouseDown={(e) => e.stopPropagation()} onKeyDown={e => { if (e.key === "Escape" && !busy) onDone(false); }}>
+        <div className="install-head">Add {target.name}</div>
         <div className="settings-hint">{target.provenance}</div>
         <div className="settings-hint">
-          This exact command will run on your machine whenever an agent with this skill spawns:
+          {target.url ? "Assigned agents will connect to this server:" : "This exact command will run on your computer when an assigned agent starts:"}
         </div>
         <pre className="draft-content">{target.url ?? [target.command, ...(target.args ?? [])].join(" ")}</pre>
         {(target.envKeys ?? []).map((key) => (
@@ -1122,10 +1205,12 @@ function InstallDialog({ target, wire, onDone }: { target: InstallTarget; wire: 
             />
           </div>
         ))}
-        {error && <div className="ob-error">{error}</div>}
+        <p className="settings-hint">This saves the setup. Next, choose which agents can use it. The connection has not been tested.</p>
+        {duplicate && <div className="ob-error" role="alert">A tool named {target.name} is already saved. Its setup will not be replaced.</div>}
+        {error && <div className="ob-error" role="alert">{error}</div>}
         <div className="agent-actions">
-          <button className="agent-action" onClick={() => void install()}>I read the command — install</button>
-          <button className="agent-action" onClick={() => onDone(false)}>cancel</button>
+          <button className="agent-action" autoFocus disabled={busy || duplicate} onClick={() => void install()}>{busy ? "Adding…" : "Add tool"}</button>
+          <button className="agent-action" disabled={busy} onClick={() => onDone(false)}>cancel</button>
         </div>
       </div>
     </div>

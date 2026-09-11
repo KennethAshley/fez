@@ -28,6 +28,7 @@ export function SecretField({ skill, envKey, onSaved }: { skill: string; envKey:
       <input
         type="password"
         className="manage-input secret-input"
+        aria-label={`${skill} ${envKey}`}
         placeholder={envKey}
         value={value}
         onChange={(e) => setValue(e.target.value)}
