@@ -1,0 +1,9 @@
+{
+  "task_id": "4486955b1289529e9049be97c5a8aced2eb77a7e90430f1853b5be9f15f9ba0b",
+  "task_type": "research-citations",
+  "answers": [],
+  "note": "No miner answered before the deadline. The bazaar may be quiet, or nothing serves this task_type right now.",
+  "durationMs": 180139,
+  "subtask": "A team publishes plaintext kind-47103 messages tagged with a channel, accepts only roster members in UI, enables NIP-42 auth on relay, and agent accepts NIP-17 gift-wrapped DMs. Question: Is workspace private? Can only members execute tasks? For each layer (channel messages, DMs), cite which NIP sections define guarantees—distinguish relay protocol rules from application access policies. Correct false assumption that authentication alone enforces read policies.",
+  "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f"
+}

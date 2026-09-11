@@ -13,6 +13,7 @@ import { SPRITES } from "@fezchat/ui";
 import { generateSprite } from "@fezchat/ui";
 import { buildFezPersonaMd, buildStarterPersonaMd, STARTER_TEAM } from "./welcome-core";
 import { PROVIDERS } from "./providers";
+import { localAgents, agentReady, type LocalAgentStatus } from "./harnesses";
 
 export { nextStep, prevStep };
 
@@ -21,15 +22,11 @@ const ACCOUNT = (import.meta as { env?: Record<string, string> }).env?.VITE_FEZ_
 /** Who greets you at the door — the guide in the middle, flanked. */
 const WELCOME_CAST = ["scout", "quill", "fez", "drift", "loom"] as const;
 
-/**
- * The wizard's spine. Five screens follow the door, and until now none
- * of them said which one you were on — five dialogs in a trench coat.
- * The numbers are the app's own mono; the current one wears ember.
- */
-function Spine({ at }: { at: 1 | 2 | 3 | 4 | 5 }) {
+/** Four steps follow the welcome screen; the current one wears ember. */
+function Spine({ at }: { at: 1 | 2 | 3 | 4 }) {
   return (
-    <div className="ob-spine">
-      {[1, 2, 3, 4, 5].map((n, i) => (
+    <div className="ob-spine" aria-label={`Step ${at} of 4`}>
+      {[1, 2, 3, 4].map((n, i) => (
         <Fragment key={n}>
           {i > 0 && <span className="ob-spine-rule" />}
           <span className={n === at ? "ob-spine-step on" : n < at ? "ob-spine-step done" : "ob-spine-step"}>
@@ -119,26 +116,6 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
   // target travels as state rather than being baked into the step name.
   const [reconnectFrom, setReconnectFrom] = useState<"pairing" | "community">("pairing");
 
-  // The Claude probe is lifted here (not local to HarnessStep) so the
-  // defaults page can read the same READY-ness without re-detecting —
-  // "installed but the page you're on right now didn't check" is not a
-  // state either page should have to explain.
-  const [claude, setClaude] = useState<ClaudeBrain>();
-  const probeClaude = () =>
-    invoke<string>("claude_brain_status")
-      .then((json) => setClaude(JSON.parse(json) as ClaudeBrain))
-      .catch(() => setClaude({ installed: false, authed: false, adapterReady: false }));
-  useEffect(() => {
-    // Once per visit to the page that cares, not once per app lifetime —
-    // the guard is "haven't probed yet", not a ref, so navigating away
-    // and back re-checks (e.g. after installing Claude Code and returning).
-    if (step === "harness" && !claude) void probeClaude();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
-  const setupClaude = async () => {
-    await invoke("ensure_claude_adapter");
-    setClaude((c) => (c ? { ...c, adapterReady: true } : c));
-  };
   const [brain, setBrain] = useState<Brain>(resumed?.brain ?? {});
 
   // Every step past the front door snapshots itself (and the brain
@@ -248,7 +225,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
         // Identity already exists — the wire signs via Rust custody, so
         // it gets the pubkey-bearing signer, never the secret.
         const secretBytes = hexToBytes(keyHex);
-        const wire = new BrowserWire(relayUrl.split(","), rustSigner(getPublicKey(secretBytes)));
+        const wire = new BrowserWire(relayUrl.split(","), rustSigner(getPublicKey(secretBytes), ACCOUNT));
         await new Promise((r) => setTimeout(r, 600));
         await wire.publish({
           kind: 0,
@@ -263,7 +240,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
 
   /**
    * TeamStep's onFinish: the ONE place personas get written — a user who
-   * changes their mind three times on the defaults page never leaves a
+   * changes their mind on the AI connection screen never leaves a
    * half-written persona behind, because nothing writes one until here.
    */
   const finishWizard = async () => {
@@ -335,7 +312,7 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
       {/* The welcome step is the front door and carries no card — the
           party stands on the page. Every other step keeps the card it
           has always had. */}
-      <div className={step === "welcome" ? "ob-card ob-welcome" : "ob-card"}>
+      <div className={step === "welcome" ? "ob-card ob-welcome" : step === "harness" || step === "defaults" ? "ob-card ob-connect" : "ob-card"}>
         {step === "welcome" && (
           <>
             {/* The wordmark IS the name — an <h1>fez</h1> under it just
@@ -358,8 +335,8 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
               ))}
             </div>
             <p className="ob-lede">
-              <span className="ob-prompt">&gt;</span> Communities for you and your agents. Your identity is a key on
-              this machine, not an account on someone's server — and everything private is encrypted before it leaves.
+              <span className="ob-prompt">&gt;</span> Work with a team of AI agents that research, write, and collaborate in one shared workspace.
+              Give @fez a task, and it brings in the right teammate.
             </p>
             {error && <p className="ob-error">{error}</p>}
             <button className="ob-primary" disabled={busy} onClick={() => void start()}>
@@ -445,23 +422,13 @@ export default function Onboarding({ onComplete }: { onComplete: (relayUrl: stri
           <ReconnectStep onNext={() => setStep(reconnectFrom === "community" ? "profile" : "harness")} />
         )}
 
-        {step === "harness" && (
-          <HarnessStep
-            claude={claude}
-            onProbe={probeClaude}
-            onSetup={setupClaude}
-            onNext={() => setStep(nextStep("harness"))}
-            onBack={() => setStep(prevStep("harness"))}
-          />
-        )}
-
-        {step === "defaults" && (
-          <DefaultsStep
-            claudeReady={!!claude?.installed && !!claude?.authed && !!claude?.adapterReady}
+        {(step === "harness" || step === "defaults") && (
+          <ConnectAiStep
             brain={brain}
             setBrain={setBrain}
-            onNext={() => setStep(nextStep("defaults"))}
-            onBack={() => setStep(prevStep("defaults"))}
+            onNext={() => setStep(nextStep("harness"))}
+            onSkip={() => { setBrain({}); setStep(nextStep("harness")); }}
+            onBack={() => setStep("welcome")}
           />
         )}
 
@@ -738,21 +705,21 @@ function CommunityStep({
 }) {
   return (
     <>
-      <Spine at={3} />
-      <h2>Join or create a community</h2>
-      <Escort who="fez" says="Where should we all live?" />
+      <Spine at={2} />
+      <h2>Choose your workspace</h2>
+      <Escort who="fez" says="Start with just us, or join other people and their agents." />
       <div className="ob-brains">
+        <button className="ob-brain" disabled={busy} onClick={onCreated}>
+          <span className="ob-brain-name">Start a workspace for me and my agents</span>
+          <span className="ob-brain-hint">runs on this machine — no team or invite needed</span>
+        </button>
         <button className="ob-brain" disabled={busy} onClick={onJoin}>
           <span className="ob-brain-name">Join a community</span>
-          <span className="ob-brain-hint">paste an invite code or community URL</span>
-        </button>
-        <button className="ob-brain" disabled={busy} onClick={onCreated}>
-          <span className="ob-brain-name">Create a community</span>
-          <span className="ob-brain-hint">this machine becomes your workspace</span>
+          <span className="ob-brain-hint">use an invite from someone else</span>
         </button>
         <button className="ob-brain" disabled={busy} onClick={onReconnect}>
-          <span className="ob-brain-name">I already have a community</span>
-          <span className="ob-brain-hint">your key is your membership — add its relay</span>
+          <span className="ob-brain-name">Reconnect an existing workspace</span>
+          <span className="ob-brain-hint">use a workspace you already belong to</span>
         </button>
       </div>
       {error && <p className="ob-error">{error}</p>}
@@ -796,11 +763,10 @@ function ProfileStep({
   };
   return (
     <>
-      <Spine at={4} />
+      <Spine at={3} />
       <h2>Build your profile</h2>
       <p className="ob-lede">
-        <span className="ob-prompt">&gt;</span> Your key already grew you a face. Give it a name — or bring your own
-        picture.
+        <span className="ob-prompt">&gt;</span> What should your teammates call you? Keep your generated avatar, or choose a picture.
       </p>
       {/* The face the key made, not a grey + asking for an upload: it
           already exists, it is on every surface, and showing it makes
@@ -860,7 +826,7 @@ function TeamStep({ keyHex, error, onFinish, onBack }: { keyHex?: string; error?
   };
   return (
     <>
-      <Spine at={5} />
+      <Spine at={4} />
       <h2>Meet your starter team</h2>
       <p className="ob-lede">
         <span className="ob-prompt">&gt;</span> fez brings agents into the same room. These three will help you get
@@ -876,8 +842,8 @@ function TeamStep({ keyHex, error, onFinish, onBack }: { keyHex?: string; error?
         ))}
       </div>
       <p className="ob-lede">
-        <span className="ob-prompt">&gt;</span> Your key lives in the macOS keychain. If you lose this machine without
-        a backup, the identity is gone — that's the deal with owning it.
+        <span className="ob-prompt">&gt;</span> You own your identity: it is saved in this Mac’s keychain. Keep a backup to recover it
+        if you lose this machine. Never share your backup key — it gives access to your identity.
       </p>
       {keyHex && (
         <div className="ob-backup">
@@ -963,294 +929,192 @@ function ReconnectStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-interface ClaudeBrain {
-  installed: boolean;
-  authed: boolean;
-  adapterReady: boolean;
-}
-
-/**
- * The brain @fez ends up with, threaded through defaults → (Task 9)
- * finish, where it becomes a single `write_persona` call. Nothing here
- * writes a persona — that happens once, on wizard completion, so a user
- * who changes their mind three times on this page never leaves a
- * half-written file behind.
- */
-interface Brain {
-  harness?: "pi" | "claude-code";
+/** Saved once for the guide and its starter teammates. */
+export interface Brain {
+  harness?: string;
   providerId?: string;
   provider?: string;
   model?: string;
   effort?: string;
 }
 
-/**
- * Buzz's harness grid, fez-sized: two cards, purely informational — no
- * selection happens here, because it's not a choice yet, it's a status
- * check. Fez ships with the app and is always ready; Claude Code is
- * detected live and walked through install → sign-in → one-time bridge
- * setup. The actual "what does @fez run on" choice is the next page.
- */
-function HarnessStep({
-  claude,
-  onProbe,
-  onSetup,
-  onNext,
-  onBack,
-}: {
-  claude?: ClaudeBrain;
-  onProbe: () => void;
-  onSetup: () => Promise<void>;
-  onNext: () => void;
-  onBack: () => void;
-}) {
-  const [settingUp, setSettingUp] = useState(false);
-  const [error, setError] = useState<string>();
-
-  return (
-    <>
-      <Spine at={1} />
-      <h2>Your agent harnesses</h2>
-      <Escort who="scout" says="I checked this machine." />
-      <p className="ob-lede">
-        <span className="ob-prompt">&gt;</span> Fez ships with the app; Claude Code is detected if you have it.
-      </p>
-      <div className="ob-brains">
-        <div className="ob-brain">
-          <span className="ob-brain-name">Fez</span>
-          <span className="ob-brain-pill ready">READY</span>
-          <span className="ob-brain-hint">ships with fez — bring a model key on the next page</span>
-        </div>
-
-        <button
-          className={`ob-brain ${claude?.installed ? "" : "unavailable"} ${!claude || settingUp ? "working" : ""}`}
-          disabled={settingUp}
-          onClick={() => {
-            if (!claude) return; // still probing — do nothing until we know
-            if (!claude.installed) return void openBrainInstall();
-            if (!claude.authed) return; // SIGN IN state — the hint says how
-            if (claude.adapterReady) return; // already READY — nothing to do
-            // One-time bridge setup: the managed node runtime + the ACP
-            // adapter as a real node program (compiling it was tried and
-            // is impossible — its SDK loads dynamically).
-            setSettingUp(true);
-            setError(undefined);
-            void onSetup()
-              .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-              .finally(() => setSettingUp(false));
-          }}
-        >
-          <span className="ob-brain-name">Claude Code</span>
-          {!claude ? (
-            <span className="ob-brain-pill working"><span className="ob-brain-spin">⚙</span>CHECKING…</span>
-          ) : !claude.installed ? (
-            <>
-              <span className="ob-brain-pill">INSTALL</span>
-              <span className="ob-brain-hint">not detected — opens the install page</span>
-            </>
-          ) : !claude.authed ? (
-            <>
-              <span className="ob-brain-pill">SIGN IN</span>
-              <span className="ob-brain-hint">
-                installed but signed out — run <code>claude /login</code> in Terminal, then{" "}
-                <a
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onProbe();
-                  }}
-                >
-                  check again
-                </a>
-              </span>
-            </>
-          ) : settingUp ? (
-            <>
-              <span className="ob-brain-pill working"><span className="ob-brain-spin">⚙</span>SETTING UP…</span>
-              <span className="ob-brain-hint">downloading the bridge runtime (~50MB, tens of seconds) — one time only</span>
-            </>
-          ) : claude.adapterReady ? (
-            <>
-              <span className="ob-brain-pill ready">READY</span>
-              <span className="ob-brain-hint">signed in — uses your Claude subscription</span>
-            </>
-          ) : (
-            <>
-              <span className="ob-brain-pill">SET UP</span>
-              <span className="ob-brain-hint">signed in — click to install the bridge (one time, ~30s)</span>
-            </>
-          )}
-        </button>
-      </div>
-      {error && <p className="ob-error">{error}</p>}
-      <button className="ob-primary" onClick={onNext}>continue</button>
-      <button className="ob-secondary" onClick={onBack}>back</button>
-    </>
-  );
-}
-
-/** The vendor's install page — fez never curls-pipes-bash on your behalf. */
-async function openBrainInstall(): Promise<void> {
-  const { openUrl } = await import("@tauri-apps/plugin-opener");
-  await openUrl("https://claude.com/claude-code");
-}
-
-export const CLAUDE_MODELS = ["default", "opus", "sonnet", "haiku"];
 export const EFFORTS = ["low", "medium", "high"];
 
-/**
- * What @fez runs on, chosen once and changeable later in Settings. Two
- * shapes: Claude Code (nothing to configure — it uses your subscription,
- * gated on the harness page's READY state) or Fez/pi (pick a provider,
- * paste a key, verify it against a live model list — Buzz's page-4
- * verification, generalized past Chutes to the four-provider table).
- */
-function DefaultsStep({
-  claudeReady,
-  brain,
-  setBrain,
-  onNext,
-  onBack,
-}: {
-  claudeReady: boolean;
+export function ConnectAiStep({ brain, setBrain, onNext, onSkip, onBack, saving = false }: {
   brain: Brain;
-  setBrain: (b: Brain) => void;
+  setBrain: (brain: Brain) => void;
   onNext: () => void;
+  onSkip?: () => void;
+  saving?: boolean;
   onBack: () => void;
 }) {
-  const [providerKey, setProviderKey] = useState("");
-  const [models, setModels] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<Record<string, LocalAgentStatus>>({});
+  const [checking, setChecking] = useState(true);
+  const [probeError, setProbeError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [providerKey, setProviderKey] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [verified, setVerified] = useState(false);
+  const alive = useRef(true);
 
-  const verify = async () => {
-    if (!brain.providerId) return;
+  const probe = async () => {
+    setChecking(true);
+    setProbeError(undefined);
+    const results = await Promise.all(localAgents.map(async (agent) => {
+      try {
+        return [agent.id, JSON.parse(await invoke<string>(agent.statusCommand)) as LocalAgentStatus] as const;
+      } catch {
+        if (alive.current) setProbeError("Couldn’t check installed agents. Check again, or configure Fez’s built-in agent.");
+        return [agent.id, { installed: false, authed: false, adapterReady: false }] as const;
+      }
+    }));
+    if (!alive.current) return;
+    setStatuses(Object.fromEntries(results));
+    setChecking(false);
+  };
+  useEffect(() => {
+    alive.current = true;
+    void probe();
+    return () => { alive.current = false; };
+  }, []);
+
+  const choose = (harness: string) => {
+    setBrain({ harness });
+    setProviderKey("");
+    setModels([]);
+    setVerified(false);
+    setError(undefined);
+  };
+  const local = localAgents.find((a) => a.id === brain.harness);
+  const detected = localAgents.filter((a) => statuses[a.id]?.installed);
+  const selectedStatus = local ? statuses[local.id] : undefined;
+  const ready = local ? agentReady(selectedStatus) : brain.harness === "pi" && verified && !!brain.model;
+
+  const setup = async () => {
+    if (!local) return;
     setBusy(true);
     setError(undefined);
-    // wire_provider_pi reads the key from the keychain, so store-then-
-    // verify is the only possible order — but a failed verify must take
-    // the key back OUT. It used to stay: readiness() only asks whether
-    // a key EXISTS, so a typo'd key sailed through, @fez posted the
-    // ready opener, and three agents spawned that could never complete
-    // a turn. Only a key stored by THIS attempt is deleted — a verify
-    // that reuses an older stored key may fail on a network blip, and
-    // that key isn't ours to discard.
-    const keyName = PROVIDERS.find((p) => p.id === brain.providerId)?.keyName;
-    const storedThisAttempt = !!(providerKey.trim() && keyName);
     try {
-      if (storedThisAttempt) {
-        await invoke("set_skill_secret", { skill: brain.providerId, key: keyName, value: providerKey.trim() });
-      }
-      const json = await invoke<string>("wire_provider_pi", { provider: brain.providerId });
-      const r = JSON.parse(json) as { provider: string; models: string[] };
-      setModels(r.models);
-      setBrain({ ...brain, harness: "pi", provider: r.provider, model: r.models[0], effort: brain.effort ?? "medium" });
+      await invoke(local.setupCommand);
+      await probe();
     } catch (err) {
-      if (storedThisAttempt) {
-        await invoke("delete_skill_secret", { skill: brain.providerId, key: keyName }).catch(() => {});
-      }
-      setError(err instanceof Error ? err.message : String(err));
+      if (alive.current) setError(String(err));
     } finally {
-      setBusy(false);
+      if (alive.current) setBusy(false);
+    }
+  };
+
+  const verify = async () => {
+    const provider = PROVIDERS.find((p) => p.id === brain.providerId);
+    if (!provider) return;
+    setBusy(true);
+    setError(undefined);
+    setVerified(false);
+    const storedThisAttempt = !!providerKey.trim();
+    try {
+      if (storedThisAttempt) await invoke("set_skill_secret", { skill: provider.id, key: provider.keyName, value: providerKey.trim() });
+      const result = JSON.parse(await invoke<string>("wire_provider_pi", { provider: provider.id })) as { provider: string; models: string[] };
+      if (!result.models.length) throw new Error("No models were returned. Check your provider access or choose another provider.");
+      if (!alive.current) return;
+      setModels(result.models);
+      setBrain({ ...brain, harness: "pi", provider: result.provider,
+        model: result.models.includes(brain.model ?? "") ? brain.model : result.models[0], effort: brain.effort ?? "medium" });
+      setVerified(true);
+      setProviderKey("");
+    } catch (err) {
+      if (storedThisAttempt) await invoke("delete_skill_secret", { skill: provider.id, key: provider.keyName }).catch(() => {});
+      if (alive.current) setError(String(err));
+    } finally {
+      if (alive.current) setBusy(false);
     }
   };
 
   return (
     <>
-      <Spine at={2} />
-      <h2>Configure your defaults</h2>
-      <Escort who="loom" says="This is what we'll all run on." />
-      <p className="ob-lede">
-        <span className="ob-prompt">&gt;</span> Your agents run on this unless you give one its own setup —
-        changeable any time in Settings.
-      </p>
-      <label className="ob-label">default harness</label>
-      <select
-        className="ob-input"
-        value={brain.harness ?? ""}
-        onChange={(e) => {
-          setModels([]);
-          setBrain({ ...brain, harness: e.target.value as Brain["harness"], providerId: undefined, provider: undefined, model: undefined });
-        }}
-      >
-        <option value="">choose…</option>
-        <option value="pi">Fez</option>
-        {claudeReady && <option value="claude-code">Claude Code</option>}
-      </select>
-
-      {brain.harness === "claude-code" && (
-        <>
-          <label className="ob-label">model</label>
-          <select className="ob-input" value={brain.model ?? "default"} onChange={(e) => setBrain({ ...brain, model: e.target.value })}>
-            {CLAUDE_MODELS.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-          <span className="ob-brain-hint">uses your Claude subscription</span>
-        </>
+      {onSkip && <Spine at={1} />}
+      <h2>Connect your AI</h2>
+      <Escort who="scout" says="Use an agent you already have, or give our built-in agent a model." />
+      <p className="ob-lede">This powers your whole starter team. You can change each agent’s setup later.</p>
+      {checking && <p role="status" className="ob-dim">Checking this machine…</p>}
+      {probeError && <p role="alert" className="ob-error">{probeError}</p>}
+      {detected.length > 0 && <div className="ob-brains" role="group" aria-label="Found on this machine">
+        <p className="ob-label">Found on this machine</p>
+        {detected.map((agent) => (
+          <button key={agent.id} className={`ob-brain ${brain.harness === agent.id ? "selected" : ""}`}
+            aria-pressed={brain.harness === agent.id} disabled={saving || busy || checking} onClick={() => choose(agent.id)}>
+            <span className="ob-brain-name">{agent.label}</span>
+            <span className="ob-brain-pill">{agentReady(statuses[agent.id]) ? "Connected" : "Setup needed"}</span>
+            <span className="ob-brain-hint">Use its existing sign-in and model setup. No provider key to enter in Fez.</span>
+          </button>
+        ))}
+      </div>}
+      {!checking && !probeError && detected.length === 0 && (
+        <p className="ob-dim">No compatible agents detected on this machine.</p>
       )}
-
-      {brain.harness === "pi" && (
-        <>
-          <label className="ob-label">provider</label>
-          <select
-            className="ob-input"
-            value={brain.providerId ?? ""}
-            onChange={(e) => {
-              setModels([]);
-              setBrain({ ...brain, providerId: e.target.value, provider: undefined, model: undefined });
-            }}
-          >
-            <option value="">choose…</option>
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-          {brain.providerId && models.length === 0 && (
-            <div className="ob-brain-auth">
-              <input
-                className="ob-input"
-                type="password"
-                placeholder={`${PROVIDERS.find((p) => p.id === brain.providerId)?.label} API key`}
-                value={providerKey}
-                spellCheck={false}
-                onChange={(e) => setProviderKey(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !busy) void verify();
-                }}
-              />
-              <button className="ob-secondary" disabled={busy} onClick={() => void verify()}>
-                {busy ? "checking…" : "verify"}
-              </button>
-              <span className="ob-brain-hint">{PROVIDERS.find((p) => p.id === brain.providerId)?.hint}</span>
-            </div>
-          )}
-          {models.length > 0 && (
-            <>
-              <label className="ob-label">model</label>
-              <select className="ob-input" value={brain.model ?? ""} onChange={(e) => setBrain({ ...brain, model: e.target.value })}>
-                {models.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-              <label className="ob-label">effort</label>
-              <select className="ob-input" value={brain.effort ?? "medium"} onChange={(e) => setBrain({ ...brain, effort: e.target.value })}>
-                {EFFORTS.map((e2) => (
-                  <option key={e2} value={e2}>{e2}</option>
-                ))}
-              </select>
-            </>
-          )}
-        </>
-      )}
-
-      {error && <p className="ob-error">{error}</p>}
-      <button className="ob-primary" disabled={busy || (brain.harness === "pi" && !brain.model)} onClick={onNext}>
-        {brain.harness === "pi" && brain.model ? `continue with ${brain.model}` : brain.harness === "claude-code" ? "continue with Claude Code" : "continue"}
-      </button>
-      <div className="ob-alts">
-        <button className="ob-link" onClick={onNext}>skip for now</button>
+      <button className="ob-link" disabled={saving || busy || checking} onClick={() => void probe()}>Check again for installed agents</button>
+      <div className="ob-brains" role="group" aria-label="Use Fez’s built-in agent">
+        <button className={`ob-brain ${brain.harness === "pi" ? "selected" : ""}`}
+          aria-pressed={brain.harness === "pi"} disabled={saving || busy} onClick={() => choose("pi")}>
+          <span className="ob-brain-name">Fez’s built-in agent</span>
+          <span className="ob-brain-pill">{verified ? "Connected" : "Connect a provider"}</span>
+          <span className="ob-brain-hint">Choose a provider, add an API key, and pick a model.</span>
+        </button>
       </div>
-      <button className="ob-secondary" onClick={onBack}>back</button>
+      {local && !checking && (
+        <div className="ob-ai-setup">
+          {!selectedStatus?.installed ? <p className="ob-dim">Your previous choice, {local.label}, is no longer detected. Check again or choose another option.</p>
+            : !selectedStatus.authed ? <p className="ob-lede">Sign in to {local.label}: run <code>{local.login}</code> in Terminal, then check again above.</p>
+            : !selectedStatus.adapterReady ? <>
+              <p className="ob-lede">{local.label} is signed in. Connect it to Fez once to let your team use it.</p>
+              <button className="ob-secondary" disabled={saving || busy} onClick={() => void setup()}>
+                {busy ? "Connecting…" : `Connect ${local.label} to Fez`}
+              </button>
+              <p className="ob-dim">Downloads the connection software (about 50 MB on first setup).</p>
+            </> : <p role="status" className="ob-dim">Your starter team will use {local.label}.</p>}
+        </div>
+      )}
+      {brain.harness === "pi" && (
+        <div className="ob-ai-setup">
+          <p className="ob-dim">Your provider supplies the model and bills API usage. An API key is separate from a chat subscription.</p>
+          <label className="ob-label" htmlFor="ob-provider">Provider</label>
+          <select id="ob-provider" className="ob-input" disabled={saving || busy} value={brain.providerId ?? ""}
+            onChange={(e) => { setBrain({ harness: "pi", providerId: e.target.value }); setModels([]); setVerified(false); setProviderKey(""); setError(undefined); }}>
+            <option value="">Choose a provider…</option>
+            {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          {brain.providerId && <>
+            {!verified && <>
+              <label className="ob-label" htmlFor="ob-api-key">API key</label>
+              <input id="ob-api-key" className="ob-input" type="password" disabled={saving || busy} value={providerKey}
+                autoComplete="off" spellCheck={false} placeholder={`${PROVIDERS.find((p) => p.id === brain.providerId)?.label} API key`}
+                onChange={(e) => setProviderKey(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !busy) void verify(); }} />
+              <span className="ob-brain-hint">{PROVIDERS.find((p) => p.id === brain.providerId)?.hint}. Leave blank to use a saved key.</span>
+              <button className="ob-secondary" disabled={saving || busy} onClick={() => void verify()}>{busy ? "Checking…" : "Verify key and load models"}</button>
+            </>}
+            {verified && <>
+              <label className="ob-label" htmlFor="ob-model">Model</label>
+              <select id="ob-model" className="ob-input" value={brain.model} onChange={(e) => setBrain({ ...brain, model: e.target.value })}>
+                {models.map((model) => <option key={model} value={model}>{model}</option>)}
+              </select>
+              <details className="ob-ai-details">
+                <summary>Advanced</summary>
+                <label className="ob-label" htmlFor="ob-effort">Reasoning effort</label>
+                <select id="ob-effort" className="ob-input" value={brain.effort ?? "medium"} onChange={(e) => setBrain({ ...brain, effort: e.target.value })}>
+                  {EFFORTS.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                </select>
+              </details>
+            </>}
+          </>}
+        </div>
+      )}
+      {error && <p role="alert" className="ob-error">{error}</p>}
+      <button className="ob-primary" disabled={saving || busy || checking || !ready} onClick={onNext}>
+        {local ? `Continue with ${local.label}` : brain.model && verified ? `Continue with ${brain.model}` : "Continue"}
+      </button>
+      {onSkip && <div className="ob-alts"><button className="ob-link" disabled={saving || busy} onClick={onSkip}>Explore first — connect AI later</button></div>}
+      {onSkip && <p className="ob-dim">Exploring is fine. Your agents can reply after you connect AI.</p>}
+      <button className="ob-secondary" disabled={saving || busy} onClick={onBack}>{onSkip ? "back" : "Cancel"}</button>
     </>
   );
 }

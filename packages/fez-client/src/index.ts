@@ -72,6 +72,18 @@ export interface WireFilter {
   [key: `#${string}`]: string[] | undefined;
 }
 
+export interface WireQueryResult {
+  events: WireEvent[];
+  failures: { url: string; reason: string }[];
+}
+
+export interface HistoryLoadState {
+  status: "idle" | "loading" | "ready" | "error";
+  operation: "recent" | "older";
+  partial?: boolean;
+  error?: string;
+}
+
 export interface DmRumor {
   senderPk: string;
   peerPk: string;
@@ -110,6 +122,8 @@ export interface Wire {
   signEvent?(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): WireEvent | Promise<WireEvent>;
   subscribe(filters: WireFilter[], onEvent: (event: WireEvent) => void): () => void;
   query(filters: WireFilter[]): Promise<WireEvent[]>;
+  /** Complete EOSE versus partial/failing reads; older wires can still reject query(). */
+  queryWithStatus?(filters: WireFilter[]): Promise<WireQueryResult>;
   /**
    * Crypto may be SYNC OR ASYNC: a wire that holds the key in-process
    * returns plain values; a wire whose key lives behind a custody seam
@@ -525,6 +539,7 @@ export interface WorkflowRunInfo {
 }
 
 export interface ClientEvents {
+  historyChanged: (channelId: string) => void;
   /** A channel message entered the cache. live=false during history backfill/paging. */
   message: (channelId: string, msg: Msg, ctx: { live: boolean; prepend: boolean }) => void;
   /** Content of an existing message changed (40003 edit). */
@@ -592,6 +607,8 @@ export class FezClient {
   private nextThreadNo = 1;
   private summaryByRoot = new Map<string, { replyCount: number; lastAuthorTs: number; summaryTs: number }>();
   private exhaustedChannels = new Set<string>();
+  private historyByChannel = new Map<string, HistoryLoadState>();
+  private olderUntil = new Map<string, number>();
 
   // reactions
   private reactionsByTarget = new Map<string, Map<string, Set<string>>>();
@@ -1583,22 +1600,22 @@ export class FezClient {
    * "Home" on every run: there is nothing to mint.
    */
   async claimWorkspace(firstChannel = "general"): Promise<{ channelId: string }> {
-    if (this.state.workspace.owner && this.state.workspace.owner !== this.pubkey) {
-      throw new Error("this workspace already has an owner");
+    if (!this.state.isOwner(this.pubkey)) {
+      throw new Error("configure this relay's owner before initializing the workspace");
     }
-    const channelId = crypto.randomUUID();
+    if (this.state.workspace.channels.size > 0) {
+      throw new Error("this workspace already has channels — add a channel or join a different relay");
+    }
+    firstChannel = firstChannel.trim();
+    if (!firstChannel) throw new Error("channel name is required");
+    const channelId = "bootstrap-general";
     const channelEvent = await this.wire.publish({
       kind: K.CHANNEL,
       tags: [["d", channelId]],
       content: JSON.stringify({ name: firstChannel, visibility: "open" }),
     });
-    const rosterEvent = await this.wire.publish({
-      kind: K.MEMBERSHIP,
-      tags: [["d", K.ROSTER_D], ["p", this.pubkey, "owner"]],
-      content: "",
-    });
+    await this.publishRoster(() => {});
     this.state.absorb(channelEvent);
-    this.state.absorb(rosterEvent);
     this.state.scope = { channelId };
     this.state.save();
     this.resubscribe();
@@ -1609,6 +1626,8 @@ export class FezClient {
   /** Owner adds a channel to the workspace; scope moves there. */
   async createChannel(name: string): Promise<string> {
     if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can add channels");
+    name = name.trim();
+    if (!name) throw new Error("channel name is required");
     const channelId = crypto.randomUUID();
     const channelEvent = await this.wire.publish({
       kind: K.CHANNEL,
@@ -1819,24 +1838,32 @@ export class FezClient {
     return Math.max(Math.floor(Date.now() / 1000), this.state.workspace.rosterCreatedAt + 1);
   }
 
-  /** Republish the workspace roster — the one place membership changes. */
-  private async publishRoster(members: Map<string, Role>): Promise<void> {
-    // The owner is ALWAYS on their own roster. Agents gate mentions on
-    // the roster's p-tags alone, so a single owner-less write silently
-    // deafened every agent to the owner — and self-perpetuated, because
-    // each later publish copied the map. (Aug 25 incident: one rewrite
-    // dropped the owner; nothing replied for a day.) Guarding at the
-    // ONE write site beats trusting every caller's hydration.
-    const owner = this.state.workspace.owner;
-    if (owner && !members.has(owner)) members = new Map([[owner, "owner" as Role], ...members]);
-    const event = await this.wire.publish({
-      kind: K.MEMBERSHIP,
-      tags: [["d", K.ROSTER_D], ...[...members.entries()].map(([pk, r]) => ["p", pk, r])],
-      content: "",
-      created_at: this.nextRosterCreatedAt(),
+  private rosterWrite: Promise<void> = Promise.resolve();
+
+  /** Serialize read-modify-publish so overlapping invitations cannot drop members. */
+  private publishRoster(update: (members: Map<string, Role>) => void): Promise<void> {
+    const workspace = this.state.workspace;
+    const write = this.rosterWrite.then(async () => {
+      if (this.state.workspace !== workspace) throw new Error("workspace changed — try again");
+      const members = new Map(workspace.members);
+      update(members);
+      // Agents gate mentions on the roster's p-tags alone. Every write
+      // must retain the owner, even when hydration omitted their key.
+      const owner = workspace.owner;
+      if (owner) members.set(owner, "owner");
+      const event = await this.wire.publish({
+        kind: K.MEMBERSHIP,
+        tags: [["d", K.ROSTER_D], ...[...members.entries()].map(([pk, r]) => ["p", pk, r])],
+        content: "",
+        created_at: this.nextRosterCreatedAt(),
+      });
+      if (this.state.workspace === workspace) {
+        this.state.absorb(event);
+        this.emit("channelsChanged");
+      }
     });
-    this.state.absorb(event);
-    this.emit("channelsChanged");
+    this.rosterWrite = write.catch(() => {});
+    return write;
   }
 
   /**
@@ -1845,10 +1872,15 @@ export class FezClient {
    * per-channel invite to get wrong.
    */
   async invite(pubkey: string, role: Role): Promise<string> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can invite");
-    const members = new Map(this.state.workspace.members);
-    if (!members.has(pubkey)) members.set(pubkey, role);
-    await this.publishRoster(members);
+    pubkey = pubkey.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) throw new Error("invalid public key — use a 64-character hex key");
+    if (!["owner", "admin", "member", "bot"].includes(role)) throw new Error("invalid member role");
+    if (role === "owner" && pubkey !== this.state.workspace.owner) throw new Error("the workspace owner is fixed");
+    await this.publishRoster((members) => {
+      if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can invite");
+      if (this.state.isBanned(pubkey)) throw new Error("this member is banned — unban them before inviting");
+      if (!members.has(pubkey)) members.set(pubkey, role);
+    });
     return this.displayName(pubkey);
   }
 
@@ -1943,33 +1975,33 @@ export class FezClient {
 
   /** A moderator republishes the roster without the pubkey. Their history stays. */
   async kick(pubkey: string): Promise<string> {
-    if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can remove members");
-    if (pubkey === this.state.workspace.owner) {
-      throw new Error("the owner can't be removed — the workspace is rooted in their signature");
-    }
-    this.assertCanTarget(pubkey);
-    const members = new Map(this.state.workspace.members);
-    if (!members.delete(pubkey)) throw new Error("not a member of this workspace");
-    await this.publishRoster(members);
+    await this.publishRoster((members) => {
+      if (!this.state.canModerate(this.pubkey)) throw new Error("only a moderator can remove members");
+      if (pubkey === this.state.workspace.owner) {
+        throw new Error("the owner can't be removed — the workspace is rooted in their signature");
+      }
+      this.assertCanTarget(pubkey);
+      if (!members.delete(pubkey)) throw new Error("not a member of this workspace");
+    });
     return this.displayName(pubkey);
   }
 
   /** Owner-only: promote a member to admin (or demote back to member). */
   async promote(pubkey: string): Promise<void> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
-    if (pubkey === this.state.workspace.owner) throw new Error("the owner's role is fixed");
-    const members = new Map(this.state.workspace.members);
-    if (!members.has(pubkey)) throw new Error("not a member of this workspace");
-    members.set(pubkey, "admin");
-    await this.publishRoster(members);
+    await this.publishRoster((members) => {
+      if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
+      if (pubkey === this.state.workspace.owner) throw new Error("the owner's role is fixed");
+      if (!members.has(pubkey)) throw new Error("not a member of this workspace");
+      members.set(pubkey, "admin");
+    });
   }
 
   async demote(pubkey: string): Promise<void> {
-    if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
-    const members = new Map(this.state.workspace.members);
-    if (members.get(pubkey) !== "admin") throw new Error("not an admin");
-    members.set(pubkey, "member");
-    await this.publishRoster(members);
+    await this.publishRoster((members) => {
+      if (!this.state.isOwner(this.pubkey)) throw new Error("only the workspace owner can change roles");
+      if (members.get(pubkey) !== "admin") throw new Error("not an admin");
+      members.set(pubkey, "member");
+    });
   }
 
   /**
@@ -2243,7 +2275,40 @@ export class FezClient {
 
   // ── History windows (Buzz's channel window, dumb-relay-shaped) ─────────
 
+  historyState(channelId: string): Readonly<HistoryLoadState> {
+    return this.historyByChannel.get(channelId) ?? { status: "idle", operation: "recent" };
+  }
+
+  private beginHistory(channelId: string, operation: HistoryLoadState["operation"]): HistoryLoadState {
+    const state: HistoryLoadState = { status: "loading", operation };
+    this.historyByChannel.set(channelId, state);
+    this.emit("historyChanged", channelId);
+    return state;
+  }
+
+  private finishHistory(channelId: string, loading: HistoryLoadState, failures: WireQueryResult["failures"]): void {
+    // A slower prior request must not replace the status of a newer retry.
+    if (this.historyByChannel.get(channelId) !== loading) return;
+    this.historyByChannel.set(channelId, { operation: loading.operation,
+      status: failures.length ? "error" : "ready",
+      partial: failures.length > 0 && this.messages(channelId).length > 0,
+      error: failures.length ? [...new Set(failures.map(f => `${f.url}: ${f.reason}`))].join("; ") : undefined,
+    });
+    this.emit("historyChanged", channelId);
+  }
+
+  private async queryHistory(filters: WireFilter[]): Promise<WireQueryResult> {
+    try {
+      return this.wire.queryWithStatus
+        ? await this.wire.queryWithStatus(filters)
+        : { events: await this.wire.query(filters), failures: [] };
+    } catch (err) {
+      return { events: [], failures: [{ url: this.wire.relays?.[0] ?? "relay", reason: err instanceof Error ? err.message : String(err) }] };
+    }
+  }
+
   async loadChannelHistory(channelId: string): Promise<void> {
+    const loading = this.beginHistory(channelId, "recent");
     // Artifacts backfill rides alongside — failures never block messages.
     void this.wire
       .query([{ kinds: [K.ARTIFACT], "#h": [channelId], limit: 50 }])
@@ -2251,13 +2316,14 @@ export class FezClient {
         for (const event of events) this.absorbArtifact(event);
       })
       .catch(() => {});
-    const [msgs, reactions, deletions, ops, receipts] = await Promise.all([
-      this.wire.query([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
-      this.wire.query([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
-      this.wire.query([{ kinds: [K.PAYMENT_RECEIPT], "#h": [channelId], limit: 300 }]),
+    const results = await Promise.all([
+      this.queryHistory([{ kinds: [K.MESSAGE], "#h": [channelId], limit: 200 }]),
+      this.queryHistory([{ kinds: [K.REACTION], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.DELETION], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.MSG_EDIT, K.MSG_PIN, K.MSG_BOOKMARK], "#h": [channelId], limit: 300 }]),
+      this.queryHistory([{ kinds: [K.PAYMENT_RECEIPT], "#h": [channelId], limit: 300 }]),
     ]);
+    const [msgs, reactions, deletions, ops, receipts] = results.map(result => result.events);
     const ordered = msgs
       .filter((e) => this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at)
@@ -2283,21 +2349,36 @@ export class FezClient {
       if (newest) this.markRead(channelId, newest.ts);
     }
     this.emit("unreadsChanged");
+    this.finishHistory(channelId, loading, results.flatMap(result => result.failures));
   }
 
   /** Scroll-up paging: until-filter keyset with limit+1 has_more probe. Returns the fresh page, oldest first. */
   async loadOlderPage(channelId: string): Promise<Msg[]> {
-    const list = this.messagesByChannel.get(channelId) ?? [];
-    const oldest = list[0]?.ts;
+    const oldest = this.olderUntil.get(channelId) ?? this.messagesByChannel.get(channelId)?.[0]?.ts;
     if (!oldest || this.exhaustedChannels.has(channelId)) return [];
-    const events = await this.wire.query([
+    // Partial rows may move the oldest message. Retry the original window
+    // until it completes, or messages between those timestamps get skipped.
+    this.olderUntil.set(channelId, oldest);
+    const loading = this.beginHistory(channelId, "older");
+    const { events, failures: queryFailures } = await this.queryHistory([
       { kinds: [K.MESSAGE], "#h": [channelId], until: oldest, limit: PAGE_SIZE + 1 },
     ]);
-    if (events.length <= PAGE_SIZE) this.exhaustedChannels.add(channelId);
-    const fresh = events
+    const failures = [...queryFailures];
+    // Page the newest limit+1 rows of the merged relay responses. An old
+    // cached partial row, or a sparse mirror, must not skip a dense page.
+    const page = [...events].sort((a, b) => b.created_at - a.created_at).slice(0, PAGE_SIZE + 1);
+    if (!failures.length && page.length > PAGE_SIZE && page[page.length - 1].created_at >= oldest) {
+      // ponytail: timestamp paging stops at a full tied-second window;
+      // expand the query window if paging dense imports is needed.
+      failures.push({ url: this.wire.relays?.[0] ?? "relay", reason: "History could not advance past messages with the same timestamp" });
+    }
+    if (!failures.length && this.olderUntil.get(channelId) === oldest) {
+      if (page.length) this.olderUntil.set(channelId, page[page.length - 1].created_at);
+      if (events.length <= PAGE_SIZE) this.exhaustedChannels.add(channelId);
+    }
+    const fresh = (failures.length ? events : page)
       .filter((e) => !this.seenMessages.has(e.id) && this.state.isMember(e.pubkey))
       .sort((a, b) => a.created_at - b.created_at);
-    if (fresh.length === 0) this.exhaustedChannels.add(channelId);
     const freshMsgs: Msg[] = [];
     for (const event of fresh) {
       this.seenMessages.add(event.id);
@@ -2306,7 +2387,9 @@ export class FezClient {
       this.msgByIdMap.set(msg.id, msg);
       if (msg.rootId) this.threadNo(msg.rootId);
     }
-    this.messagesByChannel.set(channelId, [...freshMsgs, ...list].slice(-MSG_CACHE_CAP));
+    const list = this.messagesByChannel.get(channelId) ?? [];
+    this.messagesByChannel.set(channelId, [...freshMsgs, ...list].sort((a, b) => a.ts - b.ts).slice(-MSG_CACHE_CAP));
+    this.finishHistory(channelId, loading, failures);
     return freshMsgs;
   }
 

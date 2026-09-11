@@ -139,11 +139,12 @@ export default function notifications(api: FezExtensionAPI): void {
         return;
       }
       if (event.kind === KIND_GIFT_WRAP) {
-        // Optional-chain the host method: an older host (or a host that
-        // withholds read:dms) may not expose unwrapDm, and calling it
-        // unguarded threw "unwrapDm is not a function" on every gift-wrap,
-        // spamming the relay error log. Missing method = skip, don't crash.
-        const dm = nostr.unwrapDm?.(event);
+        // Older hosts may omit the method; current hosts throw when
+        // read:dms is denied. This optional notification must handle both.
+        let dm;
+        try {
+          dm = nostr.unwrapDm?.(event);
+        } catch { return; }
         if (!dm || dm.senderPk === nostr.pubkey || dm.ts < sessionStartS) return;
         if (seenDmIds.has(dm.id)) return;
         seenDmIds.add(dm.id);

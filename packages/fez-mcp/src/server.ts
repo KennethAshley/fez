@@ -5,6 +5,7 @@ import { z } from "zod";
 import { quorumDecision, OPTION_EMOJI } from "./vote-logic.js";
 import { attachedSkills, loadSkillBody } from "./skills.js";
 import { registerConnectionTools } from "./connections.js";
+import { acceptWork, completeWork, workResult } from "../../fez-client/src/work-completion.js";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import {
   RelayConnection,
@@ -136,6 +137,13 @@ async function resolveChannel(spec: string): Promise<ChannelRef | { error: strin
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
+async function workMessage(id: string) {
+  if (!/^[a-f0-9]{64}$/.test(id)) throw new Error("Use the full work event id from your current request.");
+  const [event] = await relay.query([{ kinds: [47103], ids: [id] }]);
+  if (!event) throw new Error("Work message was not found on this relay.");
+  return event;
+}
+
 // ── Server + tools ───────────────────────────────────────────────────────
 
 const server = new McpServer({ name: "fez", version: "0.1.0" });
@@ -190,6 +198,48 @@ server.registerTool(
     return text(`Posted to #${ref.name}.`);
   }
 );
+
+server.registerTool("fez_complete_work", {
+  description: "Submit the terminal result of work explicitly assigned to you. Publishes a signed result in the original thread for its designated handler (the requester by default). Use error for a blocker; success means submitted, not accepted. Do not also send a callback message.",
+  inputSchema: {
+    requestId: z.string().regex(/^[a-f0-9]{64}$/),
+    status: z.enum(["success", "error"]),
+    summary: z.string().min(1).max(8000),
+    capability: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/).describe("capability used, e.g. speech, transcription, coding"),
+    artifacts: z.array(z.string()).max(16).default([]).describe("HTTPS deliverable URLs or signed artifact event ids"),
+  },
+}, async ({ requestId, ...result }) => {
+  try {
+    const request = await workMessage(requestId);
+    const template = completeWork(request, myPubkey, result);
+    const prior = await relay.query([{ kinds: [47103], authors: [myPubkey], "#result": [requestId] }]);
+    const existing = prior.find(e => workResult(e, request));
+    if (existing) return text(`Already submitted: ${existing.id}. Acceptance belongs to the requester.`);
+    const event = sign(template);
+    await relay.publish(event);
+    return text(`Submitted result ${event.id}. The requester has been notified. Do not post another callback; acceptance is still pending.`);
+  } catch (e) { return { ...text(e instanceof Error ? e.message : String(e)), isError: true }; }
+});
+
+server.registerTool("fez_accept_work", {
+  description: "Accept a specialist's successful result for work YOU assigned, after checking the deliverable. Publishes a signed chit naming the worker and result. Never accept your own work or equate a success claim with verification.",
+  inputSchema: {
+    resultId: z.string().regex(/^[a-f0-9]{64}$/),
+    note: z.string().min(1).max(2000).describe("what you actually checked and why it meets the original request"),
+  },
+}, async ({ resultId, note }) => {
+  try {
+    const result = await workMessage(resultId);
+    const request = await workMessage(result.tags.find(t => t[0] === "result")?.[1] ?? "");
+    const template = acceptWork(result, request, myPubkey, note);
+    const prior = await relay.query([{ kinds: [47007], authors: [myPubkey], "#e": [resultId] }]);
+    const existing = prior.find(e => e.tags.some(t => t[0] === "p" && t[1] === result.pubkey));
+    if (existing) return text(`Already accepted: ${existing.id}.`);
+    const event = sign(template);
+    await relay.publish(event);
+    return text(`Accepted result ${resultId}; chit ${event.id}. This records your judgment, not the user's approval.`);
+  } catch (e) { return { ...text(e instanceof Error ? e.message : String(e)), isError: true }; }
+});
 
 
 server.registerTool(

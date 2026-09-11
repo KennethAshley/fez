@@ -1,4 +1,4 @@
-import type { GuiClient, GuiExtensionApi } from "@fezchat/extension-api/gui";
+import type { GuiExtensionApi } from "@fezchat/extension-api/gui";
 import type { SpendEntry } from "./log.js";
 import type { Network } from "./storage-mirror.js";
 import qrcode from "qrcode-generator";
@@ -34,42 +34,6 @@ import type { X402MirrorRow, X402Meta } from "./storage-mirror.js";
 import { parseReceipt, type ParsedReceipt } from "./receipt.js";
 import type { SignedNostrEvent } from "./consent.js";
 
-/** `toggleReaction`, `msgById` and `myReactionTo` aren't in the shared
- * GuiClient slice (extension-api types only what most gui parts need) —
- * reach for them the way fez-git reaches under GuiClient for things it
- * needs, typed against what's actually used (fez-client:738, :922, :930). */
-interface WalletClient extends GuiClient {
-  /** pk → persona name — the derive ceremony offers accounts for the
-   * agents this workspace actually has (elevenlabs reaches for the same
-   * member, same reasoning: typed against what's actually used). */
-  agents(): Map<string, string>;
-  msgById(id: string): { authorPk: string; ts: number } | undefined;
-  /** My own live reaction on a target, if any (fez-client:922) — keyed by
-   * MY pubkey, which is exactly the owner check this card needs: the
-   * person viewing the wallet's consent card in their own client IS the
-   * owner whose ✅/❌ is authoritative. */
-  myReactionTo(targetId: string, emoji: string): string | undefined;
-  /** WHEN that reaction was placed (seconds) — requestStatus only counts
-   * a decision made inside the consent window. */
-  myReactionTimeTo(targetId: string, emoji: string): number | undefined;
-  toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
-  /** Payment receipts (47040) e-tagging one message, verbatim (fez-client's
-   * own paymentReceiptsFor()) — the AUTHENTICATED connection the desktop
-   * already maintains. A bare relay pool was tried here first and reverted:
-   * fez's relays are membership-gated (NIP-42), and an anonymous pool
-   * connection gets silently refused reads on one — indistinguishable from
-   * "nobody has paid anyone yet". Only `client`'s own connection has
-   * already authenticated. */
-  paymentReceiptsFor(targetId: string): readonly SignedNostrEvent[];
-  /** Restates GuiClient's own `on` overload alongside the new one: TS
-   * does not merge a narrower override of an inherited method, it
-   * replaces it, so both signatures have to be spelled out here. */
-  on(event: "channelsChanged", handler: () => void): () => void;
-  /** Fires once a live receipt lands e-tagging `targetId`, so an
-   * already-open message can pick it up without a remount. */
-  on(event: "paymentReceipt", handler: (channelId: string, targetId: string) => void): () => void;
-}
-
 type AddressBook = { treasury?: string; personas?: Record<string, string> };
 
 /**
@@ -98,8 +62,8 @@ type AddressBook = { treasury?: string; personas?: Record<string, string> };
 export default function activate(api: GuiExtensionApi): void {
   const h = api.React.createElement;
   const { useState, useEffect, useCallback, useRef } = api.React;
-  const client = api.client as WalletClient;
-  if (!client) return; // read:channels ungranted — nothing works without it
+  if (!api.client) return; // read:channels ungranted — nothing works without it
+  const { client } = api;
 
   const shortAddr = (s: string) => (s.length > 16 ? `${s.slice(0, 8)}…${s.slice(-6)}` : s);
 
@@ -302,7 +266,8 @@ export default function activate(api: GuiExtensionApi): void {
     const [now, setNow] = useState(Date.now() / 1000);
     const [spend, setSpend] = useState<{ txHash: string } | undefined>(undefined);
 
-    const react = (emoji: string) => () => void client.toggleReaction(channelId, msgId, emoji);
+    const react = (emoji: string) => () => void client.toggleReaction(channelId, msgId, emoji)
+      .catch(err => api.toast?.(`Decision failed: ${String(err)}`, "error"));
     // The TIME of each reaction rides along: requestStatus only counts a
     // decision made inside the consent window, so a late ✅ renders as
     // expired instead of "waiting for a transfer" the wallet refused.
@@ -724,7 +689,9 @@ export default function activate(api: GuiExtensionApi): void {
     const [busy, setBusy] = useState<string | undefined>(undefined);
     const [error, setError] = useState<string | undefined>(undefined);
     const run = api.processes?.run;
-    const names = [...new Set([...client.agents().values()])].filter((n) => n && !have.includes(n)).sort();
+    let names: string[];
+    try { names = [...new Set([...client.agents().values()])].filter((n) => n && !have.includes(n)).sort(); }
+    catch (err) { return <div className="settings-hint">{String(err)}</div>; }
     if (!run || names.length === 0) return null;
 
     const derive = async (name: string) => {

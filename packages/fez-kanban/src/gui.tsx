@@ -42,7 +42,7 @@ let useState: <T>(initial: T | (() => T)) => [T, (next: T | ((previous: T) => T)
 export default function activate(api: GuiExtensionApi): void {
   h = api.React.createElement;
   useState = api.React.useState;
-  knownAgent = (name) => !!api.client.pkByName(name);
+  knownAgent = (name) => !!api.client?.pkByName(name);
 
   api.registerPageView("▦ board", isBoard, (props) => <BoardView {...props} />);
 
@@ -248,7 +248,7 @@ function BoardView(props: PageViewProps) {
           );
         })}
       </div>
-      {!props.editable && <div className="board-readonly">an older version — switch to the latest to move cards</div>}
+      {!props.editable && <div className="board-readonly">read-only view</div>}
     </div>
   );
 }

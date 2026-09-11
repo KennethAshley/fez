@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "payer": "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52",
+  "worker": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+  "workerHost": "ken\u2019s MacBook Air",
+  "taskId": "1c1ca6557738ce98f2322e61582c52f9c39857b12bdf1b0b1ae689980c1d89f0",
+  "answerId": "9c8a87f78a1119aedb7e067b31cf75b3fb5df16114bbb98cbf9511417b9b2a49",
+  "latencySeconds": 9,
+  "grossTestTao": 0.005,
+  "workerReceivedTestTao": 0.0049,
+  "protocolFeeTestTao": 0.0001,
+  "chainFeeTestTao": 0.000314617,
+  "finalizedBlock": 7972302,
+  "minerStopped": true,
+  "hireModelUsd": 0.019671,
+  "airSessionModelUsd": 0.032277,
+  "backgroundModelUsd": 0.012606,
+  "walletRealMoneyUsd": 0,
+  "cumulativeReportedUsdApprox": 2.81574,
+  "conservativeCumulativeAccountedUsd": 14.50884,
+  "authorizedCumulativeUsd": 20,
+  "basis": "Configured token prices and actual Air miner ledger. Earlier remote reservations remain held. Not reconciled against provider invoices."
+}

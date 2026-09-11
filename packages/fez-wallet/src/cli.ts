@@ -16,6 +16,8 @@ const argv = process.argv.slice(2);
 // --json: the same ceremony, machine-shaped — the wallet panel's in-app
 // init/derive flow parses this instead of scraping prose.
 const json = argv.includes("--json");
+const existing = argv.includes("--existing");
+const requireTestnet = argv.includes("--require-testnet");
 // --netuid N: which subnet the stake-rehearsal verbs act on (default 553).
 const netuidFlag = argv.indexOf("--netuid");
 const netuidValue = netuidFlag >= 0 ? Number(argv[netuidFlag + 1]) : undefined;
@@ -30,12 +32,13 @@ const marketFlag = argv.indexOf("--market");
 // that address instead of deriving one from a local persona pair.
 const hotkeyFlag = argv.indexOf("--hotkey");
 const [cmd, ...rest] = argv.filter((a, i) =>
-  a !== "--json" && a !== "--netuid" && !(netuidFlag >= 0 && i === netuidFlag + 1)
+  a !== "--json" && a !== "--existing" && a !== "--require-testnet" && a !== "--netuid" && !(netuidFlag >= 0 && i === netuidFlag + 1)
   && a !== "--as" && !(asFlag >= 0 && i === asFlag + 1)
   && a !== "--market" && !(marketFlag >= 0 && i === marketFlag + 1)
   && a !== "--hotkey" && !(hotkeyFlag >= 0 && i === hotkeyFlag + 1));
 
 try {
+  if (requireTestnet && cmd !== "metagraph") throw new Error("--require-testnet is supported only by metagraph");
   await cryptoWaitReady();
   const adapter = () => substrateAdapter({ endpoint: loadConfig().endpoints.tao });
   switch (cmd) {
@@ -77,14 +80,14 @@ try {
     case "metagraph": {
       const hotkey = hotkeyFlag >= 0 ? argv[hotkeyFlag + 1] : undefined;
       const netuid = netuidArg();
-      if (!hotkey || netuid === undefined) throw new Error("usage: fez-wallet metagraph --netuid N --hotkey <ss58> [--json]");
-      if (json) console.log(JSON.stringify((await metagraphInfo(netuid, hotkey)) ?? {}));
-      else await cmdMetagraph(io, netuid, hotkey);
+      if (!hotkey || netuid === undefined) throw new Error("usage: fez-wallet metagraph --netuid N --hotkey <ss58> [--json] [--require-testnet]");
+      if (json) console.log(JSON.stringify((await metagraphInfo(netuid, hotkey, requireTestnet)) ?? {}));
+      else await cmdMetagraph(io, netuid, hotkey, requireTestnet);
       break;
     }
     case "export-hotkey": {
-      if (!rest[0]) throw new Error("usage: fez-wallet export-hotkey <persona> [--json]");
-      const r = await exportRemoteHotkey(rest[0]);
+      if (!rest[0]) throw new Error("usage: fez-wallet export-hotkey <persona> [--existing] [--json]");
+      const r = await exportRemoteHotkey(rest[0], { existing });
       if (json) console.log(JSON.stringify(r));
       else io.print(`${r.created ? "created" : "loaded"} remote hotkey for ${r.persona}: ${r.ss58Address}`);
       break;
@@ -182,8 +185,8 @@ try {
       io.print("  status [persona]        balances — with a persona: uid + free + staked");
       io.print("  register <persona> [--hotkey <ss58>]   register on the subnet (treasury pays the burn); --hotkey registers a remote address instead of deriving one");
       io.print("  cost [--netuid 553]     read-only: what registering would burn, before paying it");
-      io.print("  metagraph --netuid N --hotkey <ss58> [--json]   read-only: live incentive/emission/trust/rank/stake/immunity for a registered hotkey");
-      io.print("  export-hotkey <persona> [--json]   create-or-load a standalone remote-signing key, print its address (or the loadable keyfile with --json)");
+      io.print("  metagraph --netuid N --hotkey <ss58> [--json] [--require-testnet]   read-only: live miner performance; optional guard requires the exact testnet endpoint");
+      io.print("  export-hotkey <persona> [--existing] [--json]   export a remote-signing key; --existing refuses missing keys; --json includes the secret keyfile");
       io.print("  stake <persona> <amt>   the agent stakes to its own hotkey");
       io.print("  unstake <persona> <amt> symmetric");
       io.print("  payout <persona> [amt]  sweep earned alpha from the treasury to the agent's own name");

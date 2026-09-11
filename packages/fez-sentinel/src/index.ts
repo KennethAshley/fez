@@ -150,7 +150,14 @@ function agentProcessAlive(persona: string): boolean {
   }
 }
 
-async function main() {
+/** Explicit entry point for the CLI; importing pure helpers must not start a daemon. */
+export async function runSentinel(onlyExtensions?: readonly string[]) {
+  const { loadSettings } = await import("@fezchat/protocol");
+  const enabled = loadSettings().backgroundExtensions ?? [];
+  for (const name of onlyExtensions ?? []) {
+    if (!enabled.includes(name)) throw new Error(`Background extension "${name}" is not enabled`);
+  }
+  const background = onlyExtensions === undefined ? enabled : enabled.filter(name => onlyExtensions.includes(name));
   // BEFORE anything shells out. launchd hands this process
   // PATH=/usr/bin:/bin:/usr/sbin:/sbin, so Homebrew, uv, cargo and nvm
   // are all invisible — and an extension that shells out reports the
@@ -561,7 +568,7 @@ async function main() {
   // retried next tick; it can never take the sentinel down.
   await (async () => {
    try {
-    const { loadExtensions, registeredScheduledTasks, setNostrBackend, setWorkspaceBackend, loadSettings, fetchRelayInfo } =
+    const { loadExtensions, registeredScheduledTasks, setNostrBackend, setWorkspaceBackend, fetchRelayInfo } =
       await import("@fezchat/protocol");
     setNostrBackend(buildTaskNostr() as never);
     // Which workspace this is, and who owns it. The sentinel has no
@@ -601,7 +608,6 @@ async function main() {
     }
     // Only extensions that ASKED for background life (fez.parts.background
     // in their manifest, recorded at install time) run here.
-    const background = (loadSettings() as { backgroundExtensions?: string[] }).backgroundExtensions ?? [];
     if (background.length === 0) {
       console.log("   ⏱  no background extensions installed");
       return;
@@ -666,7 +672,7 @@ async function main() {
 // those imports start a real sentinel, which then failed on the missing
 // relay/identity and took the importing process down with process.exit(1).
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err) => {
+  runSentinel().catch((err) => {
     console.error("FAILED:", err);
     process.exit(1);
   });

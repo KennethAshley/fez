@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Scripts are intentionally executable here; native authority comes from
+         the caller-bound broker. Inline scripts support Vite's dev preamble.
+         This resource policy does not block WebRTC's separate network stack. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Extension settings · Fez</title>
+    <style>
+      :root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
+      body { margin: 0; padding: 24px; }
+      h1 { font-size: 20px; margin-top: 0; }
+      .settings-hint { opacity: .75; line-height: 1.5; margin-bottom: 20px; }
+      .set-row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+      .set-label { flex: 1; }
+      select, button { font: inherit; padding: 6px 10px; }
+      .skill-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; border-bottom: 1px solid light-dark(#ddd, #444); padding: 12px 0; }
+      .skill-main { flex: 1; min-width: 160px; }
+      .skill-actions { display: flex; gap: 8px; }
+      .skill-desc { display: block; opacity: .7; margin-top: 4px; }
+      .skill-author { margin-bottom: 12px; font-weight: 600; }
+      .role-tag { margin-left: 8px; opacity: .7; font-size: .8em; }
+      .skill-link { padding: 0; color: light-dark(#1748b5, #a0bdff); border: 0; background: none; text-decoration: underline; cursor: pointer; }
+      .gh-code-value { font: bold 28px ui-monospace, monospace; margin: 16px 0; }
+      .mini.on { background: light-dark(#d9e8ff, #28416b); }
+      [role=alert] { color: light-dark(#a21d25, #ff9298); }
+    </style>
+  </head>
+  <body><div id="root"></div><script type="module" src="/src/isolated-panel.tsx"></script></body>
+</html>

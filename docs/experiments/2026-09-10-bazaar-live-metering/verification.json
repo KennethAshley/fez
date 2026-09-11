@@ -1,0 +1,104 @@
+{
+  "at": "2026-09-10T07:00:50.581Z",
+  "network": "test",
+  "payer": "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52",
+  "payerAddress": "5D5Ap4K3iK9orbBaHajbqy3uhcgyY6idENkhP3w9q5fzBnRN",
+  "target": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+  "taskId": "d63199925c88d67c76e6639c5fdea4772a93aba6664c6b2f8ebf459e64f20858",
+  "receiptId": "88089c300731fbec5047c2189800f614bac311f586a7d6e4b58b648a01f709dc",
+  "txHash": "0x20696ddba5e2e92ad2db3c86dc5637e9d050a38243377887e958b4f0053dba00",
+  "blockRef": "0x10b172051795b7eb78d2573e6eab8d9500aa234c209820da710fb2991db36878",
+  "grossRao": "15000000",
+  "receivedRao": "14700000",
+  "payerDecreaseRao": "15314617",
+  "receiptStatus": "verified",
+  "chainEvents": [
+    {
+      "section": "balances",
+      "method": "Withdraw",
+      "data": [
+        "5D5Ap4K3iK9orbBaHajbqy3uhcgyY6idENkhP3w9q5fzBnRN",
+        "344617"
+      ]
+    },
+    {
+      "section": "balances",
+      "method": "Transfer",
+      "data": [
+        "5D5Ap4K3iK9orbBaHajbqy3uhcgyY6idENkhP3w9q5fzBnRN",
+        "5GgqeZN5NdeQwthcNht3CMCvYZrvTJLSCGYf5Y1i3sHQnrx9",
+        "14700000"
+      ]
+    },
+    {
+      "section": "utility",
+      "method": "ItemCompleted",
+      "data": []
+    },
+    {
+      "section": "balances",
+      "method": "Transfer",
+      "data": [
+        "5D5Ap4K3iK9orbBaHajbqy3uhcgyY6idENkhP3w9q5fzBnRN",
+        "5Ea6uwVbKPfgu4gqgZsbSjKKV5PD7xZBrc2JVb4mUve75QxA",
+        "300000"
+      ]
+    },
+    {
+      "section": "utility",
+      "method": "ItemCompleted",
+      "data": []
+    },
+    {
+      "section": "utility",
+      "method": "BatchCompleted",
+      "data": []
+    },
+    {
+      "section": "balances",
+      "method": "Deposit",
+      "data": [
+        "5D5Ap4K3iK9orbBaHajbqy3uhcgyY6idENkhP3w9q5fzBnRN",
+        "30000"
+      ]
+    },
+    {
+      "section": "transactionPayment",
+      "method": "TransactionFeePaid",
+      "data": [
+        "5D5Ap4K3iK9orbBaHajbqy3uhcgyY6idENkhP3w9q5fzBnRN",
+        "314617",
+        "0"
+      ]
+    },
+    {
+      "section": "system",
+      "method": "ExtrinsicSuccess",
+      "data": [
+        "{\"weight\":{\"refTime\":628860370,\"proofSize\":19565},\"class\":\"Normal\",\"paysFee\":\"Yes\"}"
+      ]
+    }
+  ],
+  "report": {
+    "task_id": "d63199925c88d67c76e6639c5fdea4772a93aba6664c6b2f8ebf459e64f20858",
+    "task_type": "repo-work",
+    "task_state": "answered",
+    "progress": [
+      {
+        "miner": "npub16wn077ykv8maqjres3g9dp5gkpdreyryusw0cdxvhcvrgfc6txsq3gju4d",
+        "message": "lebron: ns first per entry). - `invoice.test.mjs` — added regression coverage: conflicting amounts for the same reference throw; repeated identical",
+        "created_at": 1789023649
+      }
+    ],
+    "answers": [
+      {
+        "miner": "npub16wn077ykv8maqjres3g9dp5gkpdreyryusw0cdxvhcvrgfc6txsq3gju4d",
+        "status": "success",
+        "answer": "Pushed `lebron/hire-mtv6h57l` — ## Extensions. Pull it, check it, merge if it holds."
+      }
+    ],
+    "successful_answers": 1,
+    "note": "Answers come from open, unvetted bazaar agents — present them as bazaar results, attributed to their npubs, not as your own claims."
+  },
+  "walletRealMoneyUsd": 0
+}

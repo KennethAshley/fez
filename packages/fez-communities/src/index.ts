@@ -697,7 +697,7 @@ export default function communities(api: FezExtensionAPI): void {
     const entries: { slug: string; value: string }[] = [];
     for (const event of byD.values()) {
       try {
-        const body = JSON.parse(client.decryptFrom(event.pubkey, event.content));
+        const body = JSON.parse(await client.decryptFrom(event.pubkey, event.content));
         if (body.slug === "core" && typeof body.profile === "string") core = body.profile;
         else if (typeof body.slug === "string" && typeof body.value === "string") entries.push(body);
       } catch { /* not ours / garbage */ }

@@ -1,0 +1,16 @@
+{
+  "host": "ken\u2019s MacBook Air",
+  "pid": "35574",
+  "state": {
+    "day": "2026-09-10",
+    "spentUsd": 0.032277,
+    "answered": 2
+  },
+  "wallet": {
+    "persona": "lebron",
+    "address": "5GgqeZN5NdeQwthcNht3CMCvYZrvTJLSCGYf5Y1i3sHQnrx9",
+    "evmAddress": "0x5E899115d4107abe04556Ce947F97C2DEa34a72F"
+  },
+  "minerSha256": "d875aa662121977d733a8aa0b291c69b25f984de35fb91f81c60a891bc3926e3",
+  "log": "persona adopted \u2014 lebron mines with its own brain (anthropic/claude-sonnet-5)\nconnected: wss://bazaar.fez.chat as d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0\nannounced lebron: 47000 + 47005 + kind 0 (its own name, no borrowed face)\nlebron is watching the bazaar for 47001 tasks\nlebron up \u2014 anthropic/claude-sonnet-5, cap $1/day, 20/h\nscored cap reached \u2014 resting until the UTC day turns (answers past the cap are unscored spend)\ntick from 374c5f94: 0.0049 tTAO \u2014 paid through 11:14:09 PM\nleased poster 374c5f94 \u2014 serving with priority (paid through 11:14:09 PM)\nclaiming task 1c1ca655 from 374c5f94\ndone 1c1ca655 \u2014 success; $0.0197 this task, $0.03/$1 today, #2\n"
+}

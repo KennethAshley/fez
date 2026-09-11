@@ -1,8 +1,8 @@
 import { unixNow } from "../shared/time.js";
 import { hexToBytes } from "nostr-tools/utils";
-import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey, nip44 } from "nostr-tools";
+import { type Event, type Filter, type UnsignedEvent, finalizeEvent, generateSecretKey, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import { RelayConnection } from "./relay.js";
-import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
+import { KIND_AGENT_CAPABILITY, KIND_AGENT_METADATA, KIND_AGENT_PROGRESS, KIND_AGENT_RESULT, KIND_AGENT_TASK } from "./kinds.js";
 import { buildDmWraps, buildGroupDmWraps, unwrapDm, type DmRumor } from "./dm.js";
 
 export interface ClientConfig {
@@ -41,6 +41,10 @@ export interface TaskOptions {
   parentTaskId?: string;
   /** Callback for progress updates */
   onProgress?: (event: Event) => void;
+  /** Bounds the local result wait, including publication. Defaults to 60 seconds. */
+  timeoutMs?: number;
+  /** Stops waiting locally; it does not cancel computation on the remote agent. */
+  signal?: AbortSignal;
 }
 
 export interface TaskResult {
@@ -247,6 +251,12 @@ export class CapabilityClient {
    * Send a task to an agent and wait for the result.
    */
   async sendTask(options: TaskOptions): Promise<TaskResult> {
+    const timeoutMs = options.timeoutMs ?? 60000;
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+      throw new Error("timeoutMs must be a positive integer no larger than 2147483647");
+    }
+    const abortError = () => Object.assign(new Error("Task wait aborted"), { name: "AbortError" });
+    if (options.signal?.aborted) throw abortError();
     const event: UnsignedEvent = {
       kind: KIND_AGENT_TASK,
       pubkey: this.pubkey,
@@ -266,41 +276,67 @@ export class CapabilityClient {
     };
 
     const signed = finalizeEvent(event, this.privateKey);
-    await this.relay.publish(signed);
-
-    // Subscribe for result
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      let settled = false;
+      let unsub = () => {};
+      const finish = (settle: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        options.signal?.removeEventListener("abort", onAbort);
         unsub();
-        reject(new Error("Task timed out waiting for result"));
-      }, 60000);
-
-      const unsub = this.relay.subscribe(
-        [
-          {
-            kinds: [KIND_AGENT_RESULT],
-            "#e": [signed.id],
-            "#p": [this.pubkey],
-          },
-        ],
-        (resultEvent) => {
-          try {
-            const content = JSON.parse(resultEvent.content);
-            clearTimeout(timeout);
-            unsub();
-            resolve({
-              event: resultEvent,
-              status: content.status,
-              result: content.result,
-              error: content.error,
-              cost: content.cost,
-            });
-          } catch {
-            // ignore parse errors
+        settle();
+      };
+      const onAbort = () => finish(() => reject(abortError()));
+      const timeout = setTimeout(() => finish(() => reject(new Error("Task timed out waiting for result"))), timeoutMs);
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      const isRecord = (value: unknown): value is Record<string, unknown> =>
+        value !== null && typeof value === "object" && !Array.isArray(value);
+      try {
+        // Subscribe first: a fast worker may reply before the publish acknowledgement.
+        unsub = this.relay.subscribe(
+          [
+            {
+              kinds: [KIND_AGENT_RESULT, KIND_AGENT_PROGRESS],
+              authors: [options.to],
+              "#e": [signed.id],
+              "#p": [this.pubkey],
+            },
+          ],
+          (resultEvent) => {
+            if (settled || resultEvent.pubkey !== options.to || !verifyEvent(resultEvent) ||
+              !resultEvent.tags.some(t => t[0] === "e" && t[1] === signed.id) ||
+              !resultEvent.tags.some(t => t[0] === "p" && t[1] === this.pubkey)) return;
+            if (resultEvent.kind === KIND_AGENT_PROGRESS) {
+              try { options.onProgress?.(resultEvent); }
+              catch (error) { finish(() => reject(error)); }
+              return;
+            }
+            if (resultEvent.kind !== KIND_AGENT_RESULT) return;
+            try {
+              const content: unknown = JSON.parse(resultEvent.content);
+              if (!isRecord(content) || typeof content.status !== "string" || !content.status.trim()) return;
+              if (content.result !== undefined && !isRecord(content.result)) return;
+              if (content.error !== undefined && (!isRecord(content.error) || typeof content.error.message !== "string" ||
+                (content.error.code !== undefined && typeof content.error.code !== "string"))) return;
+              if (content.cost !== undefined && (!isRecord(content.cost) || typeof content.cost.currency !== "string" ||
+                typeof content.cost.amount !== "string")) return;
+              finish(() => resolve({
+                event: resultEvent,
+                status: content.status as string,
+                result: content.result as TaskResult["result"],
+                error: content.error as TaskResult["error"],
+                cost: content.cost as TaskResult["cost"],
+              }));
+            } catch {
+              // ignore parse errors
+            }
           }
-        }
-      );
+        );
+        if (options.signal?.aborted) onAbort();
+        if (settled) { unsub(); return; }
+        void this.relay.publish(signed).catch(error => finish(() => reject(error)));
+      } catch (error) { finish(() => reject(error)); }
     });
   }
 }
-

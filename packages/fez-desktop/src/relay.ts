@@ -44,15 +44,14 @@ export function relaySet(): string[] {
  * cache left the sentinel faithfully guarding a workspace the user had
  * moved out of.
  */
-export function setRelays(urls: string | string[]): void {
+export async function setRelays(urls: string | string[], options: { requirePersistence?: boolean } = {}): Promise<void> {
   const list = (Array.isArray(urls) ? urls : urls.split(","))
     .map((u) => u.trim())
     .filter(Boolean);
   if (list.length === 0) return;
+  const saved = import("@tauri-apps/api/core").then(({ invoke }) => invoke("write_relays", { relays: list }));
+  // A workspace switch must not move the UI while its agents stay behind.
+  if (options.requirePersistence) await saved;
+  else void saved.catch(() => { /* outside tauri the cache is all there is */ });
   localStorage.setItem("fez-relay", list.join(","));
-  void import("@tauri-apps/api/core")
-    .then(({ invoke }) => invoke("write_relays", { relays: list }))
-    .catch(() => {
-      /* outside tauri (tests) the cache is all there is */
-    });
 }

@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 export const TEXT_CAP = 2500;
 
@@ -8,13 +10,33 @@ export const TEXT_CAP = 2500;
 export function checkText(text: string): string | undefined {
   if (!text.trim()) return "nothing to speak — text is empty.";
   if (text.length > TEXT_CAP)
-    return `text is ${text.length} chars; the cap is ${TEXT_CAP} (it is a paid API). Shorten it and call again — do not expect truncation.`;
+    return `text is ${text.length} chars; the cap is ${TEXT_CAP}. Shorten it and call again — do not expect truncation.`;
   return undefined;
 }
 
 /** NIP-92 imeta tag, byte-shaped like the composer's (upload.ts imetaTag). */
-export function imetaFor(url: string, size: number): string[] {
-  return ["imeta", `url ${url}`, "m audio/mpeg", `size ${size}`];
+export function imetaFor(url: string, size: number, mime = "audio/mpeg"): string[] {
+  return ["imeta", `url ${url}`, `m ${mime}`, `size ${size}`];
+}
+
+/** Explicit local backend: native PCM WAV needs neither an API key nor an encoder dependency. */
+export async function speakLocally(text: string): Promise<Uint8Array> {
+  const bad = checkText(text);
+  if (bad) throw new Error(bad);
+  if (process.platform !== "darwin") throw new Error("the macos speech engine requires macOS");
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "fez-speech-"));
+  try {
+    const input = path.join(dir, "text.txt");
+    const output = path.join(dir, "speech.wav");
+    await fs.promises.writeFile(input, text.trim(), { mode: 0o600 });
+    await promisify(execFile)("/usr/bin/say", [
+      "-v", "Samantha", "-r", "165", "-f", input, "-o", output,
+      "--file-format=WAVE", "--data-format=LEI16@22050",
+    ], { timeout: 60_000, maxBuffer: 64 * 1024, env: { PATH: "/usr/bin:/bin" } });
+    return await fs.promises.readFile(output);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
 }
 
 interface ChannelEvent {

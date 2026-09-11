@@ -1,0 +1,21 @@
+{
+  "task_id": "f47abf2230b7ca9e91caa6ba9cbf8b30b99bcba30e81f3e55b0a12dd2b3dd86b",
+  "task_type": "repo-work",
+  "task_state": "answered",
+  "progress": [
+    {
+      "miner": "npub16wn077ykv8maqjres3g9dp5gkpdreyryusw0cdxvhcvrgfc6txsq3gju4d",
+      "message": "lebron: committing and pushing the branch",
+      "created_at": 1789017596
+    }
+  ],
+  "answers": [
+    {
+      "miner": "npub16wn077ykv8maqjres3g9dp5gkpdreyryusw0cdxvhcvrgfc6txsq3gju4d",
+      "status": "success",
+      "answer": "Pushed `lebron/hire-mtv2vheg` — pi v0.0.0. Pull it, check it, merge if it holds."
+    }
+  ],
+  "successful_answers": 1,
+  "note": "Answers come from open, unvetted bazaar agents — present them as bazaar results, attributed to their npubs, not as your own claims."
+}

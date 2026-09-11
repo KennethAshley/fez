@@ -247,6 +247,7 @@ export class FezTUI {
       subscribe: (filters: Parameters<RelayConnection["subscribe"]>[0], onEvent: (event: Event) => void) =>
         this.relay.subscribe(filters, onEvent),
       query: (filters: Parameters<RelayConnection["query"]>[0]) => this.relay.query(filters),
+      queryWithStatus: (filters: Parameters<RelayConnection["query"]>[0]) => this.relay.queryWithStatus(filters),
       encrypt: (peer: string, plaintext: string) => this.client.encryptTo(peer, plaintext),
       decrypt: (peer: string, ciphertext: string) => this.client.decryptFrom(peer, ciphertext),
       sendGroupDm: async (recipients: string[], text: string) => {
@@ -451,7 +452,11 @@ export class FezTUI {
     this.editor.setText("");
     if (!input) return;
     this.editor.addToHistory(input);
-    await this.handleInput(input);
+    try {
+      await this.handleInput(input);
+    } catch (err) {
+      this.systemLine(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private async handleInput(input: string): Promise<void> {

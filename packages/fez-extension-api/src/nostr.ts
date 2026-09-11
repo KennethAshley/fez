@@ -22,6 +22,9 @@ export type NostrFilter = Record<string, unknown>;
  * The relay, as the user. Publishing SIGNS with the user's key, so a
  * host gates it behind the `publish` permission. Present only where a
  * key is (the TUI and the sentinel), undefined elsewhere.
+ * Denied operations throw (synchronous methods) or reject (Promise
+ * methods), naming the extension, operation, and required permission.
+ * An empty result never stands in for a permission denial.
  */
 export interface NostrAccess {
   pubkey: string;

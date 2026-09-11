@@ -20,7 +20,7 @@ export interface ArtifactLike {
   authorName: string;
   type: string;
   title?: string;
-  content: string;
+  content?: string;
   ts: number;
   rootId?: string;
 }

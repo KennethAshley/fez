@@ -12,7 +12,7 @@ import { hasFace } from "./agent-face";
  *
  * A persona that has never spawned has no face, and that is the truth
  * rather than a gap to paper over: the sprite is generated from the
- * agent's key, and `get_identity` only READS the keychain, so no key
+ * agent's key, and `get_pubkey` only READS the keychain, so no key
  * exists until the agent first wakes. An unhatched agent gets the
  * ember-marked placeholder and says so.
  *

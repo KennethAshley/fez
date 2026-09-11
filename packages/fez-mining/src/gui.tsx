@@ -6,6 +6,8 @@ import { validateConfig } from "./config.js";
 import { MINING_SOURCE, MINING_CHANNEL_NAME, minerRootLine, parseMinerRoot } from "./thread.js";
 import { ensureMiningSkill, removeMiningSkill } from "./persona-skill.js";
 import { SUBNET_LOGOS } from "./subnet-logos.js";
+import { createSubmissionGui } from "./submission-gui.js";
+import { createDevelopmentGui } from './development-gui.js';
 
 /**
  * fez-mining, GUI part — the "Mining" nav view: active miners up top (each
@@ -43,6 +45,8 @@ export default function activate(api: GuiExtensionApi): void {
     background: "var(--bg1, transparent)",
   };
   const dim = { opacity: 0.75, fontSize: 12 };
+  const { SubmissionPanel, SubmissionSummary } = createSubmissionGui(api, { card, dim });
+  const { DevelopmentPanel } = createDevelopmentGui(api, { card, dim });
   const sectionLabel = {
     display: "flex",
     alignItems: "center",
@@ -263,6 +267,8 @@ export default function activate(api: GuiExtensionApi): void {
 
     const [subnets, setSubnets] = useState<Subnet[]>([]);
     const [covered, setCovered] = useState<number[]>([]);
+    const [submissionNetuids, setSubmissionNetuids] = useState<number[]>([]);
+    const [submissionPick, setSubmissionPick] = useState<{ netuid: number; persona: string } | undefined>(undefined);
     const [requirementsByNetuid, setRequirementsByNetuid] = useState<
       Record<number, { gpu?: string; publicEndpoint?: boolean }>
     >({});
@@ -295,36 +301,32 @@ export default function activate(api: GuiExtensionApi): void {
     const [showAllSubnets, setShowAllSubnets] = useState(false);
 
     const loadCatalog = useCallback(async () => {
-      const [s, c, req] = await Promise.all([
+      const [s, c, req, submissions] = await Promise.all([
         api.storage.get<Subnet[]>("subnets"),
         api.storage.get<number[]>("covered"),
         api.storage.get<Record<number, { gpu?: string; publicEndpoint?: boolean }>>("requirementsByNetuid"),
+        api.storage.get<number[]>("submissionNetuids"),
       ]);
       setSubnets(s ?? []);
       setCovered(c ?? []);
       setRequirementsByNetuid(req ?? {});
+      setSubmissionNetuids(submissions ?? []);
     }, []);
 
-    // Point 4: storage.get("miners") for the recorded fields (persona,
-    // hotkey, uid, startedAt, lastExit) + `fez-mine status --json` for a
-    // freshly-checked pid liveness — merged by (netuid, persona). A
-    // status call that fails (no `processes` grant, or the bin errors)
-    // degrades every row to "dead" rather than losing the row entirely.
+    // Merge fresh CLI fields too: submission phase/errors can change in chat.
     const loadMiners = useCallback(async () => {
       const stored = (await api.storage.get<MinerEntry[]>("miners")) ?? [];
-      const aliveByKey = new Map<string, boolean>();
+      const rows = new Map(stored.map(m => [minerKey(m.netuid, m.persona), { ...m, alive: false }]));
       if (run) {
         try {
           const out = await run("fez-mine", ["status", "--json"]);
-          if (out.code === 0) {
-            const rows = JSON.parse(out.stdout) as StatusRow[];
-            for (const r of rows) aliveByKey.set(minerKey(r.netuid, r.persona), r.alive);
-          }
-        } catch {
-          // best-effort — stored rows still render, just as "dead"
+          if (out.code !== 0) throw Error(out.stderr.trim() || `status exited ${out.code}`);
+          for (const row of JSON.parse(out.stdout) as StatusRow[]) rows.set(minerKey(row.netuid, row.persona), row);
+        } catch (err) {
+          for (const row of rows.values()) if (row.mode === "submission") row.submissionError = err instanceof Error ? err.message : String(err);
         }
       }
-      setMiners(stored.map((m) => ({ ...m, alive: aliveByKey.get(minerKey(m.netuid, m.persona)) ?? false })));
+      setMiners([...rows.values()]);
     }, [run]);
 
     useEffect(() => {
@@ -361,7 +363,7 @@ export default function activate(api: GuiExtensionApi): void {
     }, [miners]);
     const loadMetagraph = useCallback(async () => {
       if (!run) return;
-      const active = minersRef.current.filter((m) => m.alive || m.desired === "running");
+      const active = minersRef.current.filter((m) => m.mode !== "submission" && (m.alive || m.desired === "running"));
       const results = await Promise.all(
         active.map(async (m): Promise<[string, MetagraphInfo] | undefined> => {
           try {
@@ -395,6 +397,11 @@ export default function activate(api: GuiExtensionApi): void {
         const out = await run("fez-mine", ["subnets", "--refresh", "--json"]);
         if (out.code !== 0) throw new Error(out.stderr.trim() || `subnets --refresh exited ${out.code}`);
         await loadCatalog();
+        const catalog = JSON.parse(out.stdout) as { subnets: Subnet[]; covered: number[]; submissionNetuids?: number[]; requirementsByNetuid?: Record<number, { gpu?: string; publicEndpoint?: boolean }> };
+        setSubnets(catalog.subnets);
+        setCovered(catalog.covered);
+        setSubmissionNetuids(catalog.submissionNetuids ?? []);
+        setRequirementsByNetuid(catalog.requirementsByNetuid ?? {});
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -430,7 +437,7 @@ export default function activate(api: GuiExtensionApi): void {
             try {
               const statusOut = await run("fez-mine", ["status", "--json"]);
               const rows = statusOut.code === 0 ? (JSON.parse(statusOut.stdout) as StatusRow[]) : [];
-              const stillMining = rows.some((r) => r.persona === persona && (r.alive || r.desired === "running"));
+              const stillMining = rows.some((r) => r.persona === persona && (r.mode === "submission" || r.alive || r.desired === "running"));
               if (!stillMining) {
                 const md = await personasApi.read(persona);
                 const next = removeMiningSkill(md);
@@ -459,7 +466,7 @@ export default function activate(api: GuiExtensionApi): void {
     // to local). No teardown: a dead runner has nothing to stop first.
     const restart = useCallback(
       async (m: MinerRow) => {
-        if (!run) return;
+        if (!run || m.mode === "submission") return;
         const k = minerKey(m.netuid, m.persona);
         setBusy(k);
         setError(undefined);
@@ -570,7 +577,7 @@ export default function activate(api: GuiExtensionApi): void {
     // the old always-on Mine button), then machine step or straight to
     // the config step.
     const selectSubnet = useCallback(
-      (netuid: number) => {
+      async (netuid: number) => {
         if (!personasApi) {
           setError("Mining needs the `personas` permission — reinstall the extension to grant it.");
           return;
@@ -580,6 +587,24 @@ export default function activate(api: GuiExtensionApi): void {
           return;
         }
         setError(undefined);
+        let submission = submissionNetuids.includes(netuid);
+        if (!submission) {
+          try {
+            if (!run) return;
+            const out = await run("fez-mine", ["describe", "--netuid", String(netuid), "--json"]);
+            if (out.code !== 0) throw Error(out.stderr.trim() || `describe exited ${out.code}`);
+            submission = (JSON.parse(out.stdout) as { mode?: string }).mode === "submission";
+          } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+            return;
+          }
+        }
+        if (submission) {
+          setPicker(undefined);
+          setSubmissionPick({ netuid, persona: personas[0] });
+          return;
+        }
+        setSubmissionPick(undefined);
         const req = requirementsByNetuid[netuid];
         if (req) {
           const choices = machineChoices(req, hasDoToken);
@@ -589,7 +614,7 @@ export default function activate(api: GuiExtensionApi): void {
         }
         void enterConfigStep(netuid, undefined);
       },
-      [personasApi, personas, requirementsByNetuid, enterConfigStep, hasDoToken]
+      [personasApi, personas, requirementsByNetuid, enterConfigStep, hasDoToken, submissionNetuids, run]
     );
 
     const confirmMachine = useCallback(
@@ -608,7 +633,7 @@ export default function activate(api: GuiExtensionApi): void {
       if (!picker || picker.kind !== "config") return;
       const missing = validateConfig(picker.schema, picker.values);
       if (missing) {
-        setError(`${missing} is required`);
+        setError(`${missing} is missing or invalid`);
         return;
       }
       setError(undefined);
@@ -800,11 +825,8 @@ export default function activate(api: GuiExtensionApi): void {
     }
 
     const subnetName = (netuid: number) => subnets.find((s) => s.netuid === netuid)?.name ?? `netuid ${netuid}`;
-    // "Active" means running-or-meant-to-be: a crashed miner the sentinel
-    // will respawn still belongs here (dead dot). A miner the user stopped
-    // (desired:"stopped", dead) is not active — it drops off, so a stale
-    // stopped entry never clutters the top of the page.
-    const activeMiners = miners.filter((m) => m.alive || m.desired === "running");
+    // Submissions belong in the fleet without a process or running intent.
+    const activeMiners = miners.filter((m) => m.mode === "submission" || m.alive || m.desired === "running");
 
     // Renders whichever picker step is open, or nothing when it's closed.
     const renderPicker = (): JSX.Element | null => {
@@ -985,6 +1007,7 @@ export default function activate(api: GuiExtensionApi): void {
         : sortedRows.slice(0, DEFAULT_SUBNET_COUNT); // actionable sorted first, then a page of the rest
     const hiddenCount = sortedRows.length - tableRows.length;
     const machineHint = (netuid: number): string => {
+      if (submissionNetuids.includes(netuid)) return "validator-hosted submission";
       const req = requirementsByNetuid[netuid];
       if (req?.gpu) return "needs a GPU";
       if (req?.publicEndpoint) return "public endpoint";
@@ -998,7 +1021,7 @@ export default function activate(api: GuiExtensionApi): void {
     // the bottom-right corner — the main subnet is the thing you mine, the
     // component is supporting infrastructure and reads subordinate.
     const stackCluster = (netuid: number, name: string): JSX.Element => {
-      const comps = stackFor(netuid, requirementsByNetuid[netuid]);
+      const comps = submissionNetuids.includes(netuid) ? [] : stackFor(netuid, requirementsByNetuid[netuid]);
       return (
         <span style={{ position: "relative", display: "inline-flex", flex: "none" }}>
           {subnetAvatar(netuid, name)}
@@ -1022,7 +1045,7 @@ export default function activate(api: GuiExtensionApi): void {
       );
     };
     const stackLine = (netuid: number): string => {
-      const comps = stackFor(netuid, requirementsByNetuid[netuid]);
+      const comps = submissionNetuids.includes(netuid) ? [] : stackFor(netuid, requirementsByNetuid[netuid]);
       if (comps.length === 0) return machineHint(netuid);
       const what = (c: number): string => {
         const nm = subnetName(c).replace(/\.io$/, "");
@@ -1045,12 +1068,24 @@ export default function activate(api: GuiExtensionApi): void {
           ) : (
             activeMiners.map((m) => {
               const k = minerKey(m.netuid, m.persona);
+              if (m.mode === "submission") return (
+                <div key={k} className="skill-row" style={{ alignItems: "center" }}>
+                  {subnetAvatar(m.netuid, subnetName(m.netuid))}
+                  <div className="skill-main">
+                    <span className="skill-name">{m.persona} · {subnetName(m.netuid)}</span>
+                    <SubmissionSummary status={m.submission} error={m.submissionError} />
+                  </div>
+                  <div className="skill-actions">
+                    <button className="agent-action" onClick={() => { setPicker(undefined); setSubmissionPick({ netuid: m.netuid, persona: m.persona }); }}>Manage</button>
+                  </div>
+                </div>
+              );
               return (
                 <div
                   key={k}
                   className="skill-row"
                   style={{ cursor: hasChannels ? "pointer" : undefined, alignItems: "center" }}
-                  onClick={() => void openMinerThread(m)}
+                  onClick={() => void openMinerThread(m).catch(err => setError(String(err)))}
                 >
                   {stackCluster(m.netuid, subnetName(m.netuid))}
                   <div className="skill-main">
@@ -1118,7 +1153,12 @@ export default function activate(api: GuiExtensionApi): void {
             })
           )}
 
-          {picker ? (
+          {submissionPick ? (
+            <SubmissionPanel key={minerKey(submissionPick.netuid, submissionPick.persona)} {...submissionPick} personas={personas}
+              entry={miners.find(m => m.netuid === submissionPick.netuid && m.persona === submissionPick.persona)}
+              onPersonaChange={persona => setSubmissionPick({ netuid: submissionPick.netuid, persona })}
+              onClose={() => setSubmissionPick(undefined)} onChange={loadMiners} />
+          ) : picker ? (
             renderPicker()
           ) : (
             <div>
@@ -1220,6 +1260,40 @@ export default function activate(api: GuiExtensionApi): void {
   type ConfigView = Record<string, string | number | boolean>;
 
   function MinerCard(props: { channelId: string; rootId: string; rootContent: string }): JSX.Element | null {
+    const parsed = parseMinerRoot(props.rootContent);
+    const netuid = parsed?.netuid;
+    const persona = parsed?.persona;
+    const [entry, setEntry] = useState<MinerEntry | undefined>(undefined);
+    const [loaded, setLoaded] = useState(false);
+    const [error, setError] = useState<string | undefined>(undefined);
+    const [retry, setRetry] = useState(0);
+    useEffect(() => {
+      let cancelled = false;
+      setLoaded(false);
+      setEntry(undefined);
+      setError(undefined);
+      if (netuid === undefined || !persona || !api.processes) return;
+      void (async () => {
+        try {
+          const stored = (await api.storage.get<MinerEntry[]>("miners"))?.find(m => m.netuid === netuid && m.persona === persona);
+          if (!cancelled && stored?.mode === "submission") setEntry(stored);
+          const out = await api.processes!.run("fez-mine", ["status", "--json"]);
+          if (out.code !== 0) throw Error(out.stderr.trim() || `status exited ${out.code}`);
+          const current = (JSON.parse(out.stdout) as StatusRow[]).find(m => m.netuid === netuid && m.persona === persona);
+          if (!cancelled) { setEntry(current ?? stored); setLoaded(true); }
+        } catch (err) { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); }
+      })();
+      return () => { cancelled = true; };
+    }, [netuid, persona, retry]);
+    if (!parsed) return null;
+    if (!api.processes) return <p className="settings-hint">Mining needs the processes permission.</p>;
+    if (entry?.mode === "submission") return <SubmissionPanel key={minerKey(parsed.netuid, parsed.persona)} {...parsed} entry={entry} />;
+    if (error) return <div style={card}><p className="ob-error" role="alert">{error}</p><button className="agent-action" onClick={() => setRetry(n => n + 1)}>Retry</button></div>;
+    if (!loaded) return <p className="settings-hint">Loading miner status…</p>;
+    return <ProcessMinerCard key={minerKey(parsed.netuid, parsed.persona)} {...props} />;
+  }
+
+  function ProcessMinerCard(props: { channelId: string; rootId: string; rootContent: string }): JSX.Element | null {
     const run = api.processes?.run;
     const parsed = parseMinerRoot(props.rootContent);
     const netuid = parsed?.netuid ?? 0;
@@ -1363,7 +1437,7 @@ export default function activate(api: GuiExtensionApi): void {
     const saveConfig = async (): Promise<void> => {
       const missing = validateConfig(schema, values);
       if (missing) {
-        setError(`${missing} is required`);
+        setError(`${missing} is missing or invalid`);
         return;
       }
       setBusy(true);
@@ -1444,6 +1518,7 @@ export default function activate(api: GuiExtensionApi): void {
           {logs || "no logs yet"}
         </pre>
 
+        <DevelopmentPanel key={`${netuid}:${persona}`} netuid={netuid} persona={persona} />
         {Label("config")}
         {editing ? (
           <div>
@@ -1481,7 +1556,7 @@ export default function activate(api: GuiExtensionApi): void {
     api.registerThreadView(
       "mining-miner",
       (rootContent) => parseMinerRoot(rootContent) !== null,
-      (props) => <MinerCard {...props} />
+      (props) => <MinerCard key={props.rootId} {...props} />
     );
   }
 }

@@ -97,7 +97,7 @@ describe("welcome opener", () => {
     for (const p of STARTER_TEAM) expect(opener).toContain(`@${p.id}`);
     expect(opener).toContain("Don't start any work yet");
     expect(opener.length).toBeLessThan(260);
-    expect(kickoffText()).toContain("What can we help you build?");
+    expect(kickoffText()).toContain("Pick an example");
 
     // teammates inherit exactly the brain @fez was given — parse⇄build round-trips
     const fezMd = buildFezPersonaMd("pi", "deepseek-v3", "local-56105ece7a");

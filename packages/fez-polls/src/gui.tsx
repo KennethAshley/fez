@@ -17,14 +17,15 @@ interface ClientLike {
   toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
   sendChannelMessage(text: string, opts?: object): Promise<unknown>;
   state: {
-    scope?: { channelId: string };
-    communities: Map<string, { channels: Map<string, { members: Map<string, string> }> }>;
+    scope: { channelId: string } | null;
+    workspace: { owner?: string; members: ReadonlyMap<string, string> };
+    isMember(pk: string): boolean;
   };
 }
 
-interface GuiApi {
+export interface GuiApi {
   React: { createElement: typeof h; useState: <T>(v: T) => [T, (v: T) => void] };
-  client: ClientLike;
+  client?: ClientLike;
   registerMessageDecorator(
     match: (content: string) => boolean,
     render: (props: { content: string; msgId: string; channelId: string; authorName: string }) => unknown
@@ -39,14 +40,14 @@ let h: any;
 
 export default function activate(api: GuiApi): void {
   h = api.React.createElement;
+  if (!api.client) throw new Error("fez-polls needs read:channels permission");
   const { client } = api;
 
-  const members = (channelId: string): ReadonlySet<string> => {
-    for (const community of client.state.communities.values()) {
-      const channel = community.channels.get(channelId);
-      if (channel) return new Set(channel.members.keys());
-    }
-    return new Set();
+  const members = (): ReadonlySet<string> => {
+    const state = client.state;
+    const roster = new Set(state.workspace.members.keys());
+    if (state.workspace.owner) roster.add(state.workspace.owner);
+    return new Set([...roster].filter(pk => state.isMember(pk)));
   };
 
   api.registerMessageDecorator(
@@ -54,7 +55,7 @@ export default function activate(api: GuiApi): void {
     ({ content, msgId, channelId }) => {
       const poll = parsePoll(content);
       if (!poll) return null;
-      const roster = members(channelId);
+      const roster = members();
       const reactionMap = client.reactions(msgId);
       const ballots: { pk: string; content: string }[] = [];
       const mine = new Set<string>();

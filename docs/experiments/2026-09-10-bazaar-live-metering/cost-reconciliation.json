@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-10T07:05:04.136395+00:00",
+  "nativeUsd": 0.0556305,
+  "bazaarLedgerDeltaUsd": 0.0556305,
+  "exactMatchAtRecordedPrecision": true,
+  "calls": 7,
+  "models": [
+    "opencode-go/kimi-k3"
+  ],
+  "spentBeforeUsd": 0.047253,
+  "spentAfterUsd": 0.1028835,
+  "reservedAfterUsd": 0,
+  "pendingHireAfter": false,
+  "cumulativeAccountedUsd": 14.6919399,
+  "unallocatedUsd": 5.3080601,
+  "walletRealMoneyUsd": 0,
+  "basis": "Engine-reported price estimate, not a provider invoice. Old unreconciled reservations retained."
+}

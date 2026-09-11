@@ -7,7 +7,7 @@ export default [{
   name: "container-fixture",
   requirements: {},
   config: [],
-  container: { image: "example/fixture@sha256:0000", env: {}, ports: [] },
+  container: { image: `example/fixture@sha256:${"0".repeat(64)}`, env: {}, ports: [] },
   async install(ctx) { await ctx.machine.exec("echo SCRIPT_HOOK_RAN install"); },
   async register(ctx) { await ctx.machine.exec("echo SCRIPT_HOOK_RAN register"); },
   async start(ctx) { await ctx.machine.exec("echo SCRIPT_HOOK_RAN start"); },

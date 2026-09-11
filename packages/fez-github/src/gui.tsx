@@ -1,5 +1,7 @@
+import { request as octokitRequest } from "@octokit/request";
 import { createOAuthDeviceAuth } from "@octokit/auth-oauth-device";
 import { DEFAULT_CLIENT_ID, APP_INSTALL_URL, verificationUrl } from "./app-id.js";
+import { parseConfig, destinationFor, type Config, type DestinationChannel } from "./config.js";
 import type { GuiExtensionAPI } from "./gui-types.js";
 
 /**
@@ -30,26 +32,23 @@ import type { GuiExtensionAPI } from "./gui-types.js";
  * page keeps ONE React, same reason fez-polls does.
  */
 
-interface Available {
-  repo: string;
-  private: boolean;
-}
-
-interface Config {
-  repos: string[];
-  pollSeconds?: number;
-  login?: string;
-  available?: Available[];
-  triage?: string[];
-}
+type Available = NonNullable<Config["available"]>[number];
 
 export default function activate(api: GuiExtensionAPI): void {
   const h = api.React.createElement;
   const { useState, useEffect, useCallback } = api.React;
-  const { client, secrets, openUrl } = api;
+  if (!api.client) throw new Error("fez-github needs read:channels permission");
+  const { client, secrets, openUrl, fetch } = api;
+  if (typeof client.listChannels !== "function" || typeof client.createChannel !== "function") {
+    throw new Error("Update Fez to choose GitHub destination channels");
+  }
 
   function GitHubPanel(): JSX.Element {
     const [config, setConfig] = useState<Config>({ repos: [] });
+    const [channels, setChannels] = useState<DestinationChannel[]>([]);
+    const [destinations, setDestinations] = useState<Record<string, string>>({});
+    const [newNames, setNewNames] = useState<Record<string, string>>({});
+    const [loaded, setLoaded] = useState(false);
     const [connected, setConnected] = useState(false);
     const [checking, setChecking] = useState(true);
     const [code, setCode] = useState<{ userCode: string; url: string } | undefined>(undefined);
@@ -59,28 +58,37 @@ export default function activate(api: GuiExtensionAPI): void {
 
     const check = useCallback(async () => {
       setChecking(true);
-      const has = await secrets.has("token").catch(() => false);
-      setConnected(has);
-      setChecking(false);
+      try { setConnected(await secrets.has("token")); }
+      catch (error) { setError(current => current ?? String(error)); }
+      finally { setChecking(false); }
     }, []);
 
     const reload = useCallback(async () => {
-      const saved = await client.extensionConfig<Config>("fez-github").catch(() => undefined);
-      if (saved) setConfig(saved);
+      try {
+        const [saved, channels] = await Promise.all([client.extensionConfig("fez-github"), client.listChannels()]);
+        setConfig(parseConfig(saved));
+        setChannels(channels);
+        setLoaded(true);
+      } catch (err) { setError(current => current ?? String(err)); }
     }, []);
 
     useEffect(() => {
+      if (busy) return;
       void check();
       void reload();
       // The poller writes `available` on its own schedule, and this panel
       // is usually opened right after connecting — so look again shortly.
       const timer = setInterval(() => void reload(), 15_000);
       return () => clearInterval(timer);
-    }, []);
+    }, [busy]);
 
     async function save(next: Config): Promise<void> {
       await client.saveExtensionConfig("fez-github", next);
       setConfig(next);
+    }
+
+    function openLink(url: string): void {
+      void openUrl(url).catch(error => setError(String(error)));
     }
 
     async function connect(): Promise<void> {
@@ -88,6 +96,7 @@ export default function activate(api: GuiExtensionAPI): void {
       setBusy("asking GitHub for a code…");
       try {
         const auth = createOAuthDeviceAuth({
+          request: octokitRequest.defaults({ request: { fetch } }),
           clientType: "github-app",
           clientId: DEFAULT_CLIENT_ID,
           onVerification: (v) => {
@@ -103,7 +112,7 @@ export default function activate(api: GuiExtensionAPI): void {
               () => setCopied(true),
               () => setCopied(false)
             );
-            void openUrl(url);
+            openLink(url);
           },
         });
 
@@ -130,7 +139,7 @@ export default function activate(api: GuiExtensionAPI): void {
         // written to config.
         setBusy("reading your installations…");
         const [login, available] = await Promise.all([whoAmI(result.token), listRepos(result.token)]);
-        await save({ ...config, login, available: available.length > 0 ? available : config.available });
+        await save({ ...parseConfig(await client.extensionConfig("fez-github")), login, available: available.length > 0 ? available : config.available });
 
         setCode(undefined);
         setBusy(undefined);
@@ -179,26 +188,45 @@ export default function activate(api: GuiExtensionAPI): void {
       }
     }
 
-    function toggleWatch(repo: string): void {
-      const watching = config.repos.includes(repo);
-      void save({
-        ...config,
-        repos: watching ? config.repos.filter((r) => r !== repo) : [...config.repos, repo],
-        // Un-watching takes triage with it: a standing instruction with
-        // nothing left to trigger it is worse than no instruction.
-        triage: watching ? (config.triage ?? []).filter((r) => r !== repo) : config.triage,
-      });
+    async function changeWatch(repo: string, stop = false): Promise<void> {
+      setBusy("saving…");
+      setError(undefined);
+      try {
+        const latest = parseConfig(await client.extensionConfig("fez-github"));
+        const channelIds = { ...latest.channelIds };
+        if (stop) {
+          delete channelIds[repo];
+          await save({ ...latest, channelIds, repos: latest.repos.filter(r => r !== repo), triage: (latest.triage ?? []).filter(r => r !== repo) });
+        } else {
+          let id = destinations[repo] ?? destinationFor(latest, repo, channels)?.id;
+          if (id === "__new__") {
+            const name = newNames[repo]?.trim();
+            if (!name) throw new Error("Enter a name for the new channel");
+            id = await client.createChannel(name);
+            // If saving the watch fails, retry with this channel instead of creating another.
+            setChannels(rows => [...rows, { id: id!, name }]);
+            setDestinations(rows => ({ ...rows, [repo]: id! }));
+          } else if (!id || !(await client.listChannels()).some(channel => channel.id === id)) {
+            throw new Error("Choose an available destination channel");
+          }
+          await save({ ...latest, repos: [...new Set([...latest.repos, repo])], channelIds: { ...channelIds, [repo]: id } });
+        }
+      } catch (err) { setError(String(err)); }
+      finally { setBusy(undefined); }
     }
 
-    function toggleTriage(repo: string): void {
-      const on = config.triage ?? [];
-      void save({
-        ...config,
-        triage: on.includes(repo) ? on.filter((r) => r !== repo) : [...on, repo],
-      });
+    async function toggleTriage(repo: string): Promise<void> {
+      setBusy("saving…");
+      setError(undefined);
+      try {
+        const latest = parseConfig(await client.extensionConfig("fez-github"));
+        const on = latest.triage ?? [];
+        await save({ ...latest, triage: on.includes(repo) ? on.filter(r => r !== repo) : [...on, repo] });
+      } catch (err) { setError(String(err)); }
+      finally { setBusy(undefined); }
     }
 
-    if (checking) return <div className="settings-hint">checking…</div>;
+    if (checking && !connected) return <div className="settings-hint">checking…</div>;
 
     // ── not connected ────────────────────────────────────────────────
     if (!connected) {
@@ -214,7 +242,7 @@ export default function activate(api: GuiExtensionAPI): void {
               <div className="settings-hint">
                 {copied ? "copied — " : ""}
                 your browser is open at{" "}
-                <button className="skill-link" onClick={() => void openUrl(code.url)}>
+                <button className="skill-link" onClick={() => openLink(code.url)}>
                   github.com/login/device
                 </button>
                 . Approve there and this panel connects itself.
@@ -226,24 +254,27 @@ export default function activate(api: GuiExtensionAPI): void {
             </button>
           )}
           {busy ? <div className="settings-hint">{busy}</div> : null}
-          {error ? <div className="ob-error">{error}</div> : null}
+          {error ? <div className="ob-error" role="alert">{error}</div> : null}
         </div>
       );
     }
 
     // ── connected ────────────────────────────────────────────────────
-    const available = config.available ?? [];
+    const available = [...(config.available ?? [])];
+    for (const repo of config.repos) {
+      if (!available.some(row => row.repo === repo)) available.push({ repo, private: false });
+    }
     return (
       <div>
         <div className="skill-author">{`connected as ${config.login ?? "GitHub"} · read-only`}</div>
         <div className="settings-hint">
-          Each repo you watch becomes a channel; every issue and pull request is a thread in it. Only what changes
-          gets posted — you won't get its history.
+          Choose a channel for each repository, or create one. Issue and pull request updates appear in threads
+          there. Only new activity is posted; existing messages stay where they are.
         </div>
         {available.length === 0 ? (
           <div className="settings-hint">
             No repositories yet — the app isn't installed anywhere fez can see.{" "}
-            <button className="skill-link" onClick={() => void openUrl(APP_INSTALL_URL)}>
+            <button className="skill-link" onClick={() => openLink(APP_INSTALL_URL)}>
               Install it on a repo →
             </button>{" "}
             then this list fills in within a few minutes.
@@ -251,6 +282,9 @@ export default function activate(api: GuiExtensionAPI): void {
         ) : (
           available.map((row) => {
             const watching = config.repos.includes(row.repo);
+            const current = destinationFor(config, row.repo, channels);
+            const selected = destinations[row.repo] ?? current?.id ?? "";
+            const changed = selected !== current?.id;
             return (
               <div key={row.repo} className="skill-row">
                 <div className="skill-main">
@@ -263,10 +297,21 @@ export default function activate(api: GuiExtensionAPI): void {
                     ) : null}
                   </span>
                   {watching ? (
-                    <span className="skill-desc">{`#${(row.repo.split("/")[1] ?? row.repo).toLowerCase()}`}</span>
+                    <span className="skill-desc">{current ? `Posting to #${current.name}` : "Choose a destination to resume updates"}</span>
                   ) : null}
                 </div>
-                <div className="skill-actions">
+                <div className="skill-actions" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <select aria-label={`Channel for ${row.repo}`} value={selected} disabled={!!busy || !loaded}
+                    onChange={(event: { target: { value: string } }) => setDestinations(rows => ({ ...rows, [row.repo]: event.target.value }))}>
+                    <option value="">Choose a channel…</option>
+                    {channels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}{channels.filter(c => c.name === channel.name).length > 1 ? ` (${channel.id.slice(0, 8)})` : ""}</option>)}
+                    <option value="__new__">Create a new channel…</option>
+                  </select>
+                  {selected === "__new__" ? <input aria-label={`New channel name for ${row.repo}`} placeholder="Channel name" maxLength={256}
+                    value={newNames[row.repo] ?? ""} disabled={!!busy}
+                    onChange={(event: { target: { value: string } }) => setNewNames(rows => ({ ...rows, [row.repo]: event.target.value }))} /> : null}
+                  {(!watching || changed) ? <button className="agent-action" disabled={!!busy || !loaded || !selected || (selected === "__new__" && !newNames[row.repo]?.trim())}
+                    onClick={() => void changeWatch(row.repo)}>{watching ? "Save channel" : "watch"}</button> : null}
                   {watching ? (
                     <button
                       className={config.triage?.includes(row.repo) ? "mini on" : "mini"}
@@ -274,35 +319,29 @@ export default function activate(api: GuiExtensionAPI): void {
                         "Ask @fez who should take each NEW issue and pull request. " +
                         "Costs an orchestrator turn per item, plus whatever the agent it picks then does."
                       }
-                      onClick={() => toggleTriage(row.repo)}
+                      disabled={!!busy || !current}
+                      onClick={() => void toggleTriage(row.repo)}
                     >
                       {config.triage?.includes(row.repo) ? "triage on" : "triage off"}
                     </button>
                   ) : null}
-                  <button
-                    className={watching ? "mini" : "agent-action"}
-                    title={watching ? "stop watching — the channel and everything in it stays" : undefined}
-                    onClick={() => toggleWatch(row.repo)}
-                  >
-                    {watching ? "watching" : "watch"}
-                  </button>
+                  {watching ? <button className="mini" disabled={!!busy}
+                    title="stop watching — the channel and everything in it stays"
+                    onClick={() => void changeWatch(row.repo, true)}>Stop watching</button> : null}
                 </div>
               </div>
             );
           })
         )}
         <div className="settings-hint">
-          <button className="skill-link" onClick={() => void openUrl(APP_INSTALL_URL)}>
+          <button className="skill-link" onClick={() => openLink(APP_INSTALL_URL)}>
             Add or remove repositories on GitHub →
           </button>
         </div>
-        {error ? <div className="ob-error">{error}</div> : null}
+        {error ? <div className="ob-error" role="alert">{error}</div> : null}
       </div>
     );
   }
 
-  // The `source` is what ties this panel to the channels the bridge
-  // opens: the rail groups by it and offers a settings button that
-  // renders whatever panel claims it, without knowing what GitHub is.
-  api.registerSettingsPanel("fez-github", () => <GitHubPanel />, { source: "github" });
+  api.registerSettingsPanel("fez-github", () => <GitHubPanel />);
 }

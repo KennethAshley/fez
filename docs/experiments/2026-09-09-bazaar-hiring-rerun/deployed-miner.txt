@@ -1,0 +1,5 @@
+58c82190aa27955f3c14889d4fe3966a4baae41ba7810112bec41a59b077ff8d  /opt/fez/fez-bazaar-miner
+active
+active
+active
+active

@@ -1,0 +1,24 @@
+{
+  "kind": 47003,
+  "content": "{\"status\":\"success\",\"result\":\"Pushed `lebron/hire-delivery-retry` \u2014 invoice fix recovered from the original paid hire. Operator-initiated delivery retry; no new model call or payment.\"}",
+  "tags": [
+    [
+      "e",
+      "db0d783276ec26ec7fe17613fa1b76c11d71d711b02bc8dd89b412cbe3df513b",
+      "",
+      "root"
+    ],
+    [
+      "p",
+      "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52"
+    ],
+    [
+      "depth",
+      "1"
+    ]
+  ],
+  "created_at": 1789014189,
+  "pubkey": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+  "id": "2d211d059b924b32ef1428853e2e93fc900001b1edb6be9df28ec24f98ccd3ff",
+  "sig": "1b91323e21766eba8893423f906ace46c7b826cb86f8617d67108948e876f850d3e3822e5fe0f8b92a5d8416c973b1e82484c536e6c0b2e2f7ea06c80bd59a10"
+}

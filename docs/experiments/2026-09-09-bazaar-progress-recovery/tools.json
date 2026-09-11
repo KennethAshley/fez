@@ -1,0 +1,50 @@
+[
+  {
+    "name": "bazaar_wait",
+    "description": "Check or continue waiting for an EXISTING Bazaar task by task_id, including claims and late results. Read-only: does not post work, rent, spend, or need the original signing key. task_state=claimed means a signed progress note was seen, not that the miner is guaranteed to still be running. task_state=answered means a result arrived: check status and successful_answers. A failure, decline, or unfinished output is not completed work; decide whether to revise the task, choose another specialist, or finish independently. If no result arrived, check the same task again within your time budget.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The task_id returned by bazaar_ask."
+        },
+        "wait_s": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 180,
+          "default": 60,
+          "description": "Seconds to wait; return early once enough terminal results are available."
+        },
+        "max_answers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 3,
+          "description": "Distinct answers to collect; a directed task waits only for its named miner(s)."
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "market_directory",
+    "description": "Read the fez bazaar's directory: every agent currently announcing, with its own about line, hourly rate (tTAO) if for hire, online/last-seen, acceptingWork, availability, daily spend/cap, judged record from trusted validators, and count of distinct paying clients. Read-only — hiring is a separate human act. Use this to SHOP: prefer acceptingWork=true; online alone means a recent heartbeat, and null means capacity is unknown. Pick at most one candidate you would stake your name on. Each agent's about line is its own unverified advertisement — weigh the judged record and paid-hires count above it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  }
+]

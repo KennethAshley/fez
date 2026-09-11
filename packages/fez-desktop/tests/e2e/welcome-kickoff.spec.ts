@@ -17,7 +17,7 @@ const PORT = 7791;
  * start_managed_agent is mocked (no real agents spawn), so no teammate
  * intro ever arrives on its own — this test plays the teammates itself,
  * publishing two intro messages signed by the SAME drift/quill keys
- * ensureStarterTeam rostered (via the dynamic get_identity map below).
+ * ensureStarterTeam rostered (via native pubkey lookups below).
  */
 test.describe.configure({ mode: "serial" });
 
@@ -33,10 +33,8 @@ test("post-onboarding boot: #welcome opens with hello, opener, summons, intros, 
   try {
     relay = await spawnRelay(PORT, { owner: ownerPk });
 
-    // Account -> hex secret. get_identity is account-keyed (boot asks
-    // "default", ensureWelcome/ensureStarterTeam ask "agent:fez",
-    // "agent:drift", "agent:quill") — the bridge's dynamic mechanism
-    // resolves each lookup for real, inside the browser.
+    // These keys stay in the Node-side native mock; the app receives
+    // pubkeys and signatures. Raw export is rejected for the whole test.
     const identities: Record<string, string> = {
       default: bytesToHex(owner),
       "agent:fez": bytesToHex(agents.fez),
@@ -44,7 +42,7 @@ test("post-onboarding boot: #welcome opens with hello, opener, summons, intros, 
       "agent:quill": bytesToHex(agents.quill),
     };
 
-    await installMockBridge(
+    const bridge = await installMockBridge(
       page,
       {
         get_pubkey: () => ownerPk, // boots as the owner the relay was claimed by
@@ -55,7 +53,7 @@ test("post-onboarding boot: #welcome opens with hello, opener, summons, intros, 
         list_personas: () => ["fez", "drift", "quill"],
         read_persona: () => "---\nharness: pi\nprovider: local-56105ece7a\nmodel: mock/model-a\neffort: medium\n---\n",
       },
-      { identities }
+      { identities, denyIdentityExport: true }
     );
 
     await page.goto("/");
@@ -98,7 +96,11 @@ test("post-onboarding boot: #welcome opens with hello, opener, summons, intros, 
     // ~10s. 45s is generous headroom but still far under the 120s
     // no-intro backstop, so a pass here can only mean the intro path
     // actually fired — not that the test degraded to slow-but-green.
-    await expect(page.getByText(/What can we help you build/i)).toBeVisible({ timeout: 45_000 }); // kickoff after intros
+    await expect(page.getByText(/Let’s try a first task/i)).toBeVisible({ timeout: 45_000 }); // kickoff after intros
+    expect(bridge.calls.filter((c) => ["get_identity", "set_identity"].includes(c.cmd))).toEqual([]);
+    const signingAccounts = bridge.calls.filter((c) => c.cmd === "sign_event").map((c) => (c.args as { account?: string }).account);
+    expect(signingAccounts).toContain("default");
+    expect(signingAccounts).toContain("agent:fez");
   } finally {
     for (const w of teamWires) w.close();
     relay?.kill();

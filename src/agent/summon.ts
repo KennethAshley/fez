@@ -137,11 +137,21 @@ export class SummonEngine {
 
   private async handleChannelMessage(event: SummonEvent): Promise<void> {
     if (!this.authorized(event.pubkey)) return;
+    // Terminal work routed to an external caller is not a fresh prose summon.
+    if (event.tags.some(t => t[0] === "result") && event.tags.some(t => t[0] === "result-handler" && t[1] === "external")) return;
     if (Number(event.tags.find((t) => t[0] === "depth")?.[1] ?? 0) >= this.maxChainDepth) return;
     const channelId = event.tags.find((t) => t[0] === "h")?.[1];
     if (!channelId) return;
     const work = await this.workContextOf(event, channelId);
-    for (const persona of summonMentions(event.content)) {
+    const addressed = new Set(summonMentions(event.content));
+    for (const tag of event.tags) {
+      if (tag[0] !== "task") continue;
+      const persona = this.agentPkToName.get(tag[1]);
+      // Announcements are discovery hints. Only the local identity can
+      // bind a signed task's recipient to a persona we may spawn.
+      if (persona && await this.host.personaExists(persona) && await this.host.personaPubkey(persona) === tag[1]) addressed.add(persona);
+    }
+    for (const persona of addressed) {
       if (this.spawning.has(persona) || !(await this.host.personaExists(persona))) continue;
       // An agent mentioning ITSELF (its dying "failed to start" words, or
       // any self-reference) is not a summon — else a spawn-death loops.
@@ -194,6 +204,7 @@ export class SummonEngine {
     } catch { return; }
     if (!name) return;
     this.agentPkToName.set(event.pubkey, name);
+    if (!(await this.host.personaExists(name)) || await this.host.personaPubkey(name) !== event.pubkey) return;
     if (await this.host.registryEntry(name)) this.attestAgent(event.pubkey);
     const target = this.pendingInvites.get(name);
     if (target) {

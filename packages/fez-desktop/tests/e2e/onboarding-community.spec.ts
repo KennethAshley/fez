@@ -4,8 +4,7 @@ import { installMockBridge } from "./helpers/bridge";
 async function toCommunity(page) {
   await page.goto("/");
   await page.getByRole("button", { name: /get started/i }).click();
-  await page.getByRole("button", { name: /^continue$/i }).click();
-  await page.getByRole("button", { name: /skip for now/i }).click();
+  await page.getByRole("button", { name: /explore first/i }).click();
 }
 
 test("join door accepts a fez-join code and returns to profile", async ({ page }) => {
@@ -60,7 +59,7 @@ test("join door rejects garbage with the honest error", async ({ page }) => {
 test("reconnect door adds a relay and continues to profile", async ({ page }) => {
   await installMockBridge(page);
   await toCommunity(page);
-  await page.getByRole("button", { name: /already have a community/i }).click();
+  await page.getByRole("button", { name: /reconnect an existing workspace/i }).click();
   await page.getByPlaceholder(/wss:\/\//).fill("wss://team.example");
   await page.getByRole("button", { name: /^add$/i }).click();
   await expect(page.getByText("✓ wss://team.example")).toBeVisible();
@@ -71,7 +70,7 @@ test("reconnect door adds a relay and continues to profile", async ({ page }) =>
 test("create door claims the local relay then reaches profile", async ({ page }) => {
   const bridge = await installMockBridge(page);
   await toCommunity(page);
-  await page.getByRole("button", { name: /create a community/i }).click();
+  await page.getByRole("button", { name: /start a workspace for me/i }).click();
   await expect(page.getByText("Build your profile")).toBeVisible();
   expect(bridge.calls.some((c) => c.cmd === "ensure_local_relay")).toBe(true);
 });
@@ -79,7 +78,7 @@ test("create door claims the local relay then reaches profile", async ({ page })
 test("avatar over 256KB is refused with the sprite consolation", async ({ page }) => {
   await installMockBridge(page);
   await toCommunity(page);
-  await page.getByRole("button", { name: /create a community/i }).click();
+  await page.getByRole("button", { name: /start a workspace for me/i }).click();
   const big = Buffer.alloc(300 * 1024, 7);
   await page.locator('input[type="file"]').setInputFiles({ name: "big.png", mimeType: "image/png", buffer: big });
   await expect(page.getByText(/over 256KB/i)).toBeVisible();

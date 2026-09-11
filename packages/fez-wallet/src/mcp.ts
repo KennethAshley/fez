@@ -27,6 +27,7 @@ import { rentAgent } from "./rent.js";
 import { resolveRecipient } from "./resolve.js";
 import { rosterFilter, rosterFromEvents } from "./roster.js";
 import { createAddressAnnouncer } from "./announce.js";
+import { requireWalletMutationAllowed } from "./evaluation.js";
 
 /**
  * fez-wallet, skill part — the calling agent's OWN allowance account.
@@ -197,8 +198,10 @@ server.registerTool(
         .describe("Id of the message this pays for — the payment shows under it in chat."),
     },
   },
-  async ({ to, amount, asset, memo, for: forEvent }, extra) =>
-    text(await walletSend(await deps(extra.signal), { to, amount, asset, memo, for: forEvent }))
+  async ({ to, amount, asset, memo, for: forEvent }, extra) => {
+    requireWalletMutationAllowed();
+    return text(await walletSend(await deps(extra.signal), { to, amount, asset, memo, for: forEvent }));
+  }
 );
 
 server.registerTool(
@@ -293,6 +296,7 @@ server.registerTool(
     },
   },
   async ({ poster, arbiter, amount, check_only }) => {
+    if (!check_only) requireWalletMutationAllowed();
     await cryptoWaitReady();
     const me = (await personaStatus(persona!)).address;
     if (check_only) {

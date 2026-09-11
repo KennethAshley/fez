@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-10T01:38:43.339Z",
+  "network": "test",
+  "genesis": "0x8f9cf856bf558a14440e75569c9e58594757048d7b3a84b5d25f6bd978263105",
+  "payer": "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52",
+  "payerAddress": "5D5Ap4K3iK9orbBaHajbqy3uhcgyY6idENkhP3w9q5fzBnRN",
+  "freeBeforeRao": "195316309",
+  "accountedBeforeUsd": 11.106543
+}

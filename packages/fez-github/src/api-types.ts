@@ -92,6 +92,7 @@ export interface FezExtensionAPI {
   client?: unknown;
   /** Gated by permissions; undefined when the host offers none. */
   nostr?: NostrAccess;
+  channels?: ChannelsAccess;
   ui: {
     setStatus(key: string, value: string): void;
     createSidePanel(opts?: { width?: number; title?: string; icon?: string; order?: number }): PanelHandle;

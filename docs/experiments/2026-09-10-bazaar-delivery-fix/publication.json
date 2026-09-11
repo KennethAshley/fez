@@ -1,0 +1,32 @@
+{
+  "at": "2026-09-10T04:37:43.803197+00:00",
+  "branch": "codex/hire-delivery",
+  "fez": {
+    "commit": "69d62c81ac490f6367c2b34f82301963d618d3cd",
+    "pr": "https://github.com/KennethAshley/fez/pull/7",
+    "files": 3,
+    "testsPassed": 1452,
+    "testsSkipped": 1,
+    "mergeCommit": "50303cdd38f4a0d8f12ba985e2edc62e6499ceb2",
+    "mergedAt": "2026-09-10T05:04:49Z",
+    "mergedTree": "b0939d48dcb53c00f1f8dfec4b0fe91072a41f41",
+    "mergeVerification": {
+      "testsPassed": 1515,
+      "testsSkipped": 1,
+      "build": "core + 44 packages passed",
+      "acpTypecheck": "passed",
+      "mergedTreeMatchesTestedTree": true
+    }
+  },
+  "bazaar": {
+    "commit": "29bc53d2bfa22e2e4d4881d28065d4c38cce65c9",
+    "pr": "https://github.com/KennethAshley/fez-bazaar/pull/3",
+    "files": 5,
+    "testsPassed": 301,
+    "mergeCommit": "f6217ecc00160746cc93e5baa22419e28008525b",
+    "mergedAt": "2026-09-10T04:53:37Z"
+  },
+  "draft": false,
+  "merged": true,
+  "unrelatedChangesExcluded": true
+}

@@ -35,8 +35,10 @@ const KIND_APP_DATA = CONFIG_KIND;
 export const CONFIG_D = "ext:fez-github";
 
 export interface Config {
-  /** Repos being watched — a channel each. */
+  /** Repos being watched. Several repos may share one channel. */
   repos: string[];
+  /** Full repository name → chosen channel ID. Names are never destinations. */
+  channelIds?: Record<string, string>;
   /** Floor of 60s — this spends someone else's API quota. */
   pollSeconds?: number;
   /** Who we connected as. Public, and only ever decoration. */
@@ -73,6 +75,11 @@ export function parseConfig(raw: unknown): Config {
   if (!raw || typeof raw !== "object") return EMPTY;
   const value = raw as Record<string, unknown>;
   const config: Config = { repos: strings(value.repos) };
+  if (value.channelIds && typeof value.channelIds === "object" && !Array.isArray(value.channelIds)) {
+    config.channelIds = Object.fromEntries(Object.entries(value.channelIds).filter(
+      ([repo, id]) => config.repos.includes(repo) && typeof id === "string" && id.trim().length > 0,
+    ));
+  }
   if (typeof value.pollSeconds === "number" && Number.isFinite(value.pollSeconds)) {
     config.pollSeconds = value.pollSeconds;
   }
@@ -96,6 +103,25 @@ export function parseConfig(raw: unknown): Config {
   const triage = strings(value.triage).filter((repo) => config.repos.includes(repo));
   if (triage.length > 0) config.triage = triage;
   return config;
+}
+
+export interface DestinationChannel {
+  id: string;
+  name: string;
+  source?: string;
+  meta?: Record<string, string>;
+}
+
+/** Only old GitHub-owned channels can supply a missing legacy binding. */
+export function legacyChannel(repo: string, channels: readonly DestinationChannel[]): DestinationChannel | undefined {
+  const matches = channels.filter(channel => channel.source === "github" && channel.meta?.repo === repo);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+export function destinationFor(config: Config, repo: string, channels: readonly DestinationChannel[]): DestinationChannel | undefined {
+  const id = config.channelIds?.[repo];
+  return id ? channels.find(channel => channel.id === id)
+    : config.repos.includes(repo) ? legacyChannel(repo, channels) : undefined;
 }
 
 export async function loadConfig(nostr: NostrAccess, owner: string): Promise<Config> {

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SummonEngine, type SummonHost, type SummonEvent } from "../../../src/agent/summon.js";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import { completeWork } from "../../fez-client/src/work-completion.js";
 
 const OWNER = "aa".repeat(32);
 const SIBLING = "bb".repeat(32);
@@ -31,6 +33,47 @@ const msg = (pubkey: string, content: string, extra: string[][] = []): SummonEve
 
 describe("SummonEngine — channel messages", () => {
   beforeEach(() => vi.useRealTimers());
+
+  it("a signed task from an attested coordinator wakes the locally matching specialist without a mention", async () => {
+    const coordinatorKey = new Uint8Array(32).fill(31), speakerKey = new Uint8Array(32).fill(32);
+    const coordinator = getPublicKey(coordinatorKey), speaker = getPublicKey(speakerKey);
+    const { host, spawned } = makeHost({ personaPubkey: async n => n === "scout" ? speaker : undefined });
+    const engine = new SummonEngine(host);
+    engine.noteAnnouncement(speaker, "scout");
+    const assignment = finalizeEvent({ kind: 47103, created_at: 100, content: "Narrate exactly: Every agent has an identity.",
+      tags: [["h", "speech"], ["p", speaker], ["task", speaker]] }, coordinatorKey);
+    await engine.handleEvent(assignment);
+    expect(spawned).toHaveLength(0);
+    engine.noteAttestation(coordinator);
+    await engine.handleEvent(assignment);
+    expect(spawned).toEqual([{ persona: "scout", channels: ["speech"], work: undefined }]);
+  });
+
+  it("an announcement cannot bind a task addressed to another key to a local persona", async () => {
+    const { host, spawned } = makeHost();
+    const engine = new SummonEngine(host);
+    engine.noteAnnouncement(STRANGER, "scout");
+    await engine.handleEvent(msg(OWNER, "Narrate the script.", [["task", STRANGER]]));
+    await engine.handleEvent(msg(OWNER, "Narrate the script.", [["task", SCOUT_PK]])); // no known name for this key
+    await engine.handleEvent(msg(OWNER, "Recording ready.", [["p", SCOUT_PK]]));
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("external results cannot summon mentioned agents; ordinary completion mentions still can", async () => {
+    const callerKey = new Uint8Array(32).fill(34), workerKey = new Uint8Array(32).fill(35);
+    const caller = getPublicKey(callerKey), worker = getPublicKey(workerKey);
+    const { host, spawned } = makeHost({ personaPubkey: async n => n === "scout" ? caller : undefined });
+    const engine = new SummonEngine(host);
+    engine.noteAttestation(worker);
+    for (const external of [true, false]) {
+      const assignment = finalizeEvent({ kind: 47103, created_at: 100, content: "Narrate the script.",
+        tags: [["h", "speech"], ["task", worker], ...(external ? [["result-handler", "external"]] : [])] }, callerKey);
+      const result = finalizeEvent({ ...completeWork(assignment, worker, { status: "success", summary: "@scout recording ready.",
+        capability: "speech", artifacts: ["https://example.org/audio.wav"] }), created_at: 101 }, workerKey);
+      await engine.handleEvent(result);
+      expect(spawned).toHaveLength(external ? 0 : 1);
+    }
+  });
 
   it("owner mention of an existing persona spawns it into the channel", async () => {
     const { host, spawned } = makeHost();
@@ -94,6 +137,19 @@ describe("SummonEngine — channel messages", () => {
 });
 
 describe("SummonEngine — completion paths", () => {
+  it("a forged announcement name cannot claim a pending local specialist's invitation", async () => {
+    const { host, published } = makeHost({ query: rosterQuery([["p", OWNER, "owner"]]) });
+    const engine = new SummonEngine(host);
+    engine.noteAnnouncement(SCOUT_PK, "scout");
+    await engine.handleEvent(msg(OWNER, "Narrate the script.", [["task", SCOUT_PK]]));
+    const beforeAnnouncement = [...published];
+    await engine.handleEvent({ kind: 47000, pubkey: STRANGER, content: JSON.stringify({ name: "scout" }), tags: [] });
+    expect(published).toEqual(beforeAnnouncement);
+    await engine.handleEvent({ kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] });
+    expect(published.map(p => p.kind)).toContain(47006);
+    expect(published.map(p => p.kind)).toContain(47102);
+  });
+
   it("announcement of a pending persona publishes attestation + roster invite", async () => {
     // The roster query must return a real roster for the invite to build on:
     // an empty result reads as a failed query and publishes nothing (see the

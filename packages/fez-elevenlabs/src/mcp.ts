@@ -6,12 +6,12 @@ import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { RelayConnection, getKey, resolveRelays, loadSettings } from "@fezchat/protocol";
 import { uploadToBlossom } from "@fezchat/media/dist/blossom.js";
 import { voiceFor } from "./voices.js";
-import { checkText, imetaFor, matchChannel, readVoicePrefs } from "./speak.js";
+import { checkText, imetaFor, matchChannel, readVoicePrefs, speakLocally } from "./speak.js";
 
 /**
  * fez-elevenlabs, skill part — agents speak.
  *
- * One tool. fez_speak turns text into an mp3 (ElevenLabs), uploads it
+ * One tool. fez_speak turns text into an mp3 (ElevenLabs) or WAV (macOS), uploads it
  * through the same Blossom path the composer uses, and publishes a
  * kind-47103 channel message AS THE AGENT with a NIP-92 imeta tag — so
  * the desktop's shipped audio playback renders it with zero new GUI
@@ -27,6 +27,7 @@ if (!persona) {
   process.exit(1);
 }
 const apiKey = process.env.ELEVENLABS_API_KEY;
+const engine = process.env.FEZ_SPEECH_ENGINE || "elevenlabs";
 const keyHex = getKey(`agent:${persona}`);
 if (!keyHex) {
   console.error(`fez-elevenlabs: no local key for agent "${persona}"`);
@@ -94,7 +95,9 @@ server.registerTool(
     },
   },
   async ({ channel, text: spoken }) => {
-    if (!apiKey)
+    if (engine !== "elevenlabs" && engine !== "macos")
+      return text(`can't speak: unknown speech engine "${engine}". Set FEZ_SPEECH_ENGINE to elevenlabs or macos.`);
+    if (engine === "elevenlabs" && !apiKey)
       return text(
         "can't speak: ELEVENLABS_API_KEY is not configured for this skill. Say so instead of pretending — the owner adds the key in Settings → skills."
       );
@@ -110,17 +113,18 @@ server.registerTool(
     }
     if (!channelId) return text(`no channel "${channel}" on this relay.`);
     try {
-      const voice = voiceFor(myPubkey, readVoicePrefs(), persona);
-      const bytes = await tts(voice.id, spoken.trim());
-      const upload = await uploadToBlossom(mediaServer(), bytes, "audio/mpeg", sign);
+      const voice = engine === "macos" ? { id: "Samantha", name: "Samantha (macOS)" } : voiceFor(myPubkey, readVoicePrefs(), persona);
+      const mime = engine === "macos" ? "audio/wav" : "audio/mpeg";
+      const bytes = engine === "macos" ? await speakLocally(spoken) : await tts(voice.id, spoken.trim());
+      const upload = await uploadToBlossom(mediaServer(), bytes, mime, sign);
       await relay.publish(
         sign({
           kind: KIND_MESSAGE,
-          tags: [["h", channelId], imetaFor(upload.url, upload.size)],
+          tags: [["h", channelId], imetaFor(upload.url, upload.size, mime)],
           content: spoken.trim(),
         })
       );
-      return text(`spoke in #${channel.replace(/^#/, "")} as ${voice.name} (${Math.round(upload.size / 1024)} KB mp3).`);
+      return text(`spoke in #${channel.replace(/^#/, "")} as ${voice.name} (${Math.round(upload.size / 1024)} KB, ${mime}). Audio: ${upload.url}`);
     } catch (err) {
       return text(`speak failed — ${err instanceof Error ? err.message : String(err)}. Tell the user; do not claim it posted.`);
     }

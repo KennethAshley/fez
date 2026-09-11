@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-10T03:33:25.798Z",
+  "request": {
+    "task": "Fix invoiceBalance in this repository: repeated payment references with the same cents must count once; a repeated reference with different cents must throw. Preserve validation, refunds, overpayment credits, distinct references with equal amounts, and caller data. First run node --test and observe the failing duplicate-import test. Make the minimal fix, add regression coverage for conflicting references and repeated refunds, then run node --test again. Do not add dependencies or delete/weaken existing tests. Do not commit or push; the Fez runtime handles that. Report the test result and the changed files. Work only in this synthetic repository and stop when done.",
+    "task_type": "repo-work",
+    "repo": "https://kens-macbook-pro.tail93459d.ts.net:8443/git/lebron-invoice-pilot-20260910.git",
+    "wait_s": 60,
+    "max_answers": 1,
+    "to": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+    "use_wallet_identity": true
+  }
+}

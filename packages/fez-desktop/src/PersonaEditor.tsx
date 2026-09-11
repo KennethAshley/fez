@@ -1,3 +1,4 @@
+import { parsePersona, getField, setField } from "./persona-fields";
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { flash } from "./toast";
@@ -19,28 +20,6 @@ import { hasFace } from "./agent-face";
  * is deliberately NOT editable: it's the @mention, the routing name,
  * and the key alias — renaming would mint a different agent.
  */
-
-function parsePersona(content: string): { front: string[]; body: string } {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(content);
-  if (!match) return { front: [], body: content.trim() };
-  return { front: match[1].split(/\r?\n/), body: match[2].trim() };
-}
-
-function getField(front: string[], key: string): string {
-  for (const line of front) {
-    const match = new RegExp(`^${key}:\\s*(.*)$`).exec(line);
-    if (match) return match[1].trim();
-  }
-  return "";
-}
-
-function setField(front: string[], key: string, value: string): string[] {
-  const index = front.findIndex((line) => new RegExp(`^${key}:`).test(line));
-  if (!value.trim()) return index === -1 ? front : front.filter((_, i) => i !== index);
-  const line = `${key}: ${value.trim()}`;
-  if (index === -1) return [...front, line];
-  return front.map((existing, i) => (i === index ? line : existing));
-}
 
 const listToText = (raw: string) => raw.replace(/^\[|\]$/g, "").trim();
 const textToList = (text: string) => {

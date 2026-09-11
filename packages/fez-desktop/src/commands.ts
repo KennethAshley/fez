@@ -2,6 +2,7 @@ import { guiCommand } from "./gui-extensions";
 import { invitePersona } from "./invite-persona";
 import type { FezClient } from "@fezchat/client";
 import type { BrowserWire } from "./wire";
+import { resolvePubkeyInput } from "./public-key";
 
 /**
  * GUI slash commands — the TUI's muscle memory, desktop-shaped. Typing
@@ -63,7 +64,7 @@ function parseDelay(token: string | undefined): number | undefined {
 
 function resolvePk(client: FezClient, raw: string): string | undefined {
   const trimmed = raw.replace(/^@/, "");
-  return /^[0-9a-f]{64}$/i.test(trimmed) ? trimmed.toLowerCase() : client.pkByName(trimmed);
+  return resolvePubkeyInput(trimmed, name => client.pkByName(name));
 }
 
 /** Returns feedback text for the composer notice ("" = silent success). */
@@ -81,7 +82,7 @@ export async function runCommand(text: string, ctx: CommandCtx): Promise<string>
         return "";
       case "dm": {
         const pk = resolvePk(client, rest[0] ?? "");
-        if (!pk) return `nobody named "${rest[0] ?? ""}" — try a known name or a 64-hex pubkey`;
+        if (!pk) return `nobody named "${rest[0] ?? ""}" — try a known name, npub, or hex key`;
         ui.openDm(pk);
         return "";
       }

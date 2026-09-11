@@ -164,7 +164,19 @@ export const KIND_PAIRING = 24134;
  */
 export const KIND_CHANNEL = 47101;
 export const KIND_MEMBERSHIP = 47102;      // owner-signed; ["d", ROSTER_D], ["p", pubkey, role]*; owner|admin|member|bot
-export const KIND_CHANNEL_MESSAGE = 47103; // any member; ["h", channelId], ["p", mentionPubkey]*; content = text
+/** Channel text: ["h", channelId], ["p", mentionPubkey]*.
+ * An explicit work assignment adds ["task", workerPk] for each addressee.
+ * Its worker may submit a terminal message with ["result", requestId],
+ * ["status", "success"|"error"], ["capability", name], ["artifact", urlOrEventId]*,
+ * p=requester, and NIP-10 root/reply=request. Only this correlated result
+ * calls back without a text mention. Success means submitted, not accepted:
+ * the requester separately signs a 47007 chit e-tagging the result.
+ * A caller that handles results outside the standing agent adds
+ * ["result-handler", "external"] to its assignment. Workers copy it to
+ * results; these results do not summon mentioned agents, and the signed
+ * assignment suppresses the requester's automatic completion callback.
+ * Ordinary replies/p-tags confer neither assignment nor acceptance. */
+export const KIND_CHANNEL_MESSAGE = 47103;
 
 /**
  * The workspace roster's d-tag. A fixed string because there is exactly

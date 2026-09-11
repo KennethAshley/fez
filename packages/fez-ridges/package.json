@@ -8,32 +8,32 @@
     "type": "extension",
     "parts": {
       "headless": "dist/headless.js",
+      "miner": "dist/miner.js",
       "skill": {
         "command": "node",
         "args": ["dist/mcp.js"]
       },
-      "gui": "dist/gui.js",
       "background": true
     },
     "permissions": [
       "network:product.ridges.ai",
+      "network:agent-upload.ridges.ai",
+      "processes",
       "network:api.github.com",
       "read:channels",
       "publish",
       "commands",
-      "ui",
       "background"
     ],
     "minFezVersion": "0.2.0"
   },
   "scripts": {
-    "build": "esbuild src/headless.ts src/mcp.ts --bundle --format=esm --platform=node --outdir=dist && node ../../dist/cli.js pack",
+    "build": "esbuild src/headless.ts src/mcp.ts src/miner.ts --bundle --format=esm --platform=node --outdir=dist",
     "check": "tsc --noEmit",
     "test": "vitest --run"
   },
   "dependencies": {
     "@fezchat/wallet": "file:../fez-wallet",
-    "@fezchat/ui": "file:../fez-ui",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.23.0"
   },
@@ -42,11 +42,7 @@
     "@fezchat/extension-api": "file:../fez-extension-api",
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6"
+    "vitest": "^2.1.0"
   },
   "files": [
     "dist"

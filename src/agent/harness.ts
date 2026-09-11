@@ -10,6 +10,7 @@ import { withFreshOAuth } from "../extensions/connections.js";
 import type { SystemPromptMode } from "./system-prompt.js";
 import { notice } from "../cli/notices.js";
 import { classifyToolCall, type RiskVerdict } from "./command-risk.js";
+import localAgents from "./local-agents.json" with { type: "json" };
 
 /**
  * One activity event from a running harness turn — the raw material of the
@@ -323,6 +324,37 @@ interface AcpDescriptor {
   env: () => NodeJS.ProcessEnv;
 }
 
+// ACP reports cumulative session dollars; consumers need cumulative dollars
+// within the current turn. A missing/reset total leaves the next delta unknown.
+const sessionCosts = new WeakMap<object, number | null>();
+const pendingUpdates = new WeakMap<object, Promise<unknown>>();
+function nextSessionUpdate<T>(session: { nextUpdate(): Promise<T> }): Promise<T> {
+  let pending = pendingUpdates.get(session) as Promise<T> | undefined;
+  if (!pending) { pending = session.nextUpdate(); pendingUpdates.set(session, pending); }
+  return pending;
+}
+const usageNumber = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+function usdCost(update: Record<string, unknown>): number | undefined {
+  const cost = update.cost;
+  if (!cost || typeof cost !== "object" || !("currency" in cost) || cost.currency !== "USD" || !("amount" in cost)) return undefined;
+  return usageNumber(cost.amount);
+}
+function forwardUsage(raw: unknown, onUpdate?: (update: HarnessUpdate) => void, includeCache = false): void {
+  if (!raw || typeof raw !== "object") return;
+  const values = raw as Record<string, unknown>;
+  const costKeys = ["costUsd", "cost_usd", "totalCostUsd", "total_cost_usd"];
+  if (costKeys.some(key => values[key] !== undefined && usageNumber(values[key]) === undefined)) throw new Error("ACP reported invalid usage cost");
+  const num = (...keys: string[]) => keys.map(key => usageNumber(values[key])).find(value => value !== undefined);
+  let inputTokens = num("inputTokens", "input_tokens", "promptTokens", "prompt_tokens");
+  if (includeCache && inputTokens !== undefined) {
+    const read = usageNumber(values.cachedReadTokens ?? 0), write = usageNumber(values.cachedWriteTokens ?? 0);
+    inputTokens = read === undefined || write === undefined ? undefined : usageNumber(inputTokens + read + write);
+  }
+  const outputTokens = num("outputTokens", "output_tokens", "completionTokens", "completion_tokens");
+  const costUsd = num(...costKeys);
+  if (inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined) onUpdate?.({ type: "usage", inputTokens, outputTokens, costUsd });
+}
+
 /**
  * Drive ONE prompt lifecycle on a live ACP session: fire the prompt,
  * consume updates (idle + hard timeouts, abort racing) until "stop",
@@ -358,15 +390,20 @@ export async function drainAbandonedTurn(
       handle = setTimeout(() => resolve("expired"), deadline - Date.now());
     });
     try {
-      const message = await Promise.race([session.nextUpdate(), expiry]);
-      if (message === "expired") return;
+      const message = await Promise.race([nextSessionUpdate(session), expiry]);
+      if (message === "expired") { sessionCosts.set(session, null); return; }
+      pendingUpdates.delete(session);
       if (message.kind === "stop") return;
+      if (message.update?.sessionUpdate === "usage_update" && message.update.cost != null) sessionCosts.set(session, usdCost(message.update) ?? null);
     } catch {
+      sessionCosts.set(session, null);
+      pendingUpdates.delete(session);
       return; // stream is done or broken; nothing left to inherit
     } finally {
       clearTimeout(handle!);
     }
   }
+  sessionCosts.set(session, null);
 }
 
 /** How long to wait for an abandoned turn to finish before giving up. */
@@ -403,6 +440,9 @@ export async function drivePrompt(
   if (input) input.controller = controller;
   try {
     return await drivePromptLoop(session, command, instruction, onProgress, onUpdate, controller.signal, timeouts, images, input);
+  } catch (error) {
+    sessionCosts.set(session, null);
+    throw error;
   } finally {
     controller.abort();
     if (input) input.controller = undefined;
@@ -466,6 +506,9 @@ async function drivePromptLoop(
   let lastProgressAt = 0;
   let lastThoughtAt = 0;
   let lastTextAt = 0;
+  let costBaseline = sessionCosts.has(session) ? sessionCosts.get(session) ?? null : 0;
+  let latestCost = costBaseline;
+  let sawCost = false;
 
   while (true) {
     const remaining = hardDeadline - Date.now();
@@ -488,12 +531,15 @@ async function drivePromptLoop(
 
     let message;
     try {
-      message = await Promise.race([session.nextUpdate(), idleTimeout, abortPromise, promptFailed]);
+      message = await Promise.race([nextSessionUpdate(session), idleTimeout, abortPromise, promptFailed]);
+      pendingUpdates.delete(session);
     } finally {
       clearTimeout(idleHandle!);
     }
 
     if (message.kind === "stop") {
+      forwardUsage(message.response?.usage, onUpdate, true);
+      if (!sawCost) sessionCosts.set(session, null);
       if (message.stopReason !== "end_turn") {
         notice(`${command} stopped with reason: ${message.stopReason}`);
       }
@@ -548,25 +594,19 @@ async function drivePromptLoop(
       onUpdate?.({ type: "plan" });
     }
 
-    // Usage sniffing: ACP doesn't standardize token counts, but several
-    // adapters attach them to updates under obvious names. Forward what's
-    // actually there — never estimate (Buzz's fail-closed usage rule).
-    if (onUpdate) {
-      const raw = (update as Record<string, unknown>).usage ?? (update as Record<string, unknown>).tokenUsage;
-      if (raw && typeof raw === "object") {
-        const u = raw as Record<string, unknown>;
-        const num = (...keys: string[]) => {
-          for (const key of keys) if (typeof u[key] === "number") return u[key] as number;
-          return undefined;
-        };
-        const inputTokens = num("inputTokens", "input_tokens", "promptTokens", "prompt_tokens");
-        const outputTokens = num("outputTokens", "output_tokens", "completionTokens", "completion_tokens");
-        const costUsd = num("costUsd", "cost_usd", "totalCostUsd", "total_cost_usd");
-        if (inputTokens !== undefined || outputTokens !== undefined || costUsd !== undefined) {
-          onUpdate({ type: "usage", inputTokens, outputTokens, costUsd });
-        }
-      }
+    if (update.sessionUpdate === "usage_update" && update.cost != null) {
+      const amount = usdCost(update);
+      if (amount !== undefined && latestCost !== null && amount < latestCost) throw new Error("ACP cumulative usage cost decreased");
+      if (amount === undefined && sawCost) throw new Error("ACP cumulative usage cost became unavailable");
+      if (amount === undefined) costBaseline = null;
+      latestCost = amount ?? null;
+      sessionCosts.set(session, latestCost);
+      sawCost = amount !== undefined;
+      if (amount !== undefined && costBaseline !== null) onUpdate?.({ type: "usage", costUsd: amount - costBaseline });
     }
+    // Retain adapters' older per-turn usage fields. Context occupancy in
+    // usage_update.used/size is never a count of billed tokens.
+    forwardUsage(update.usage ?? update.tokenUsage, onUpdate);
 
     // Throttled, and fires on any update — even a tool-call-only stretch
     // should tell the caller "still alive."
@@ -983,7 +1023,14 @@ export function registerBuiltinHarnesses(): void {
   // ~/.fez/runtimes/node) — it CANNOT be compiled, its SDK loads
   // dynamically. Prefer the managed install; a dev with the npm adapter
   // on PATH is unaffected.
-  registerHarness(acpHarness({ id: "claude-code", aliases: ["claude"], command: fezManagedNodeTool("claude-agent-acp"), env: isolatedClaudeEnv }));
+  for (const agent of localAgents) {
+    registerHarness(acpHarness({
+      id: agent.id, aliases: agent.cli === agent.id ? [] : [agent.cli],
+      command: fezManagedNodeTool(agent.adapter),
+      env: agent.id === "claude-code" ? isolatedClaudeEnv
+        : () => withManagedNodePath({ ...process.env, CODEX_PATH: process.env.CODEX_PATH ?? "codex" }),
+    }));
+  }
   // pi speaks ACP via the pi-acp bridge, which shells to `pi --mode rpc`.
   // Both prefer fez's bundled copies so the Built-in agent works with zero
   // install; PI_ACP_PI_COMMAND points the bundled bridge at the bundled pi

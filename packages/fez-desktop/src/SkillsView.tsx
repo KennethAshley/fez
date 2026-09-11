@@ -813,7 +813,6 @@ export default function SkillsView({
         {tab === "browse" && only === "extensions" && (
           <ExtensionGallery
             client={client}
-            installed={new Set(everything.map((row) => row.name))}
             onInstalled={reload}
             onNotice={flash}
           />

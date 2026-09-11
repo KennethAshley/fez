@@ -1,0 +1,12 @@
+{
+  "baseUrl": "https://llm.chutes.ai/v1",
+  "taskId": "C01",
+  "models": {
+    "lead": { "id": "deepseek-ai/DeepSeek-V4-Flash-0731-TEE", "inputMicrousdPerMillion": 440000, "outputMicrousdPerMillion": 1320000 },
+    "coder": { "id": "zai-org/GLM-5.1-TEE", "inputMicrousdPerMillion": 980000, "outputMicrousdPerMillion": 3080000 },
+    "writer": { "id": "moonshotai/Kimi-K2.6-TEE", "inputMicrousdPerMillion": 580000, "outputMicrousdPerMillion": 3400000, "thinking": false },
+    "researcher": { "id": "deepseek-ai/DeepSeek-V4-Flash-0731-TEE", "inputMicrousdPerMillion": 440000, "outputMicrousdPerMillion": 1320000 },
+    "reviewer": { "id": "Qwen/Qwen3.5-397B-A17B-TEE", "inputMicrousdPerMillion": 450000, "outputMicrousdPerMillion": 3000000 }
+  },
+  "limits": { "maxCalls": 6, "maxOutputTokens": 4096, "maxRequestBytes": 64000, "maxSeconds": 180 }
+}

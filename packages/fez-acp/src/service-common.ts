@@ -59,9 +59,4 @@ export async function resolveChannels(relay: RelayConnection, specs: string[], r
   return channels;
 }
 
-/** Buzz's NIP-10 parse: parent = last reply-marked e-tag; root = root-marked ?? parent. */
-export function parseThreadRef(tags: string[][]): { parentId?: string; rootId?: string } {
-  const parentId = tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
-  const rootId = tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? parentId;
-  return { parentId, rootId };
-}
+export { parseThreadRef } from "../../fez-client/src/thread-ref.js";

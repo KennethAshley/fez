@@ -9,6 +9,7 @@ import { FezClient, setStatePersistence, type Artifact, type MediaAttachment, ty
 import { embedUrls, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
+import { fetchRelayInfo } from "../../../src/protocol/nip11";
 import { bindMention, describeMentionProblems, splitMentions, type MentionBindings } from "@fezchat/client";
 import Composer from "./Composer";
 import SearchOverlay from "./SearchOverlay";
@@ -58,7 +59,10 @@ import { uploadFile, shareLine, imetaTag, setMediaServer, reconcileMediaServer, 
 import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
-import FirstRun from "./FirstRun";
+import AiSetupDialog from "./AiSetupDialog";
+import FirstRun, { FirstTask } from "./FirstRun";
+import HistoryStatus from "./HistoryStatus";
+import { isNostrKeyInput, pubkeyFromInput, resolvePubkeyInput } from "./public-key";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
 import { messageDecorators, settingsPanelForSource, extensionSettingsPanels } from "./gui-extensions";
 import { EMOJI, searchEmoji } from "./emoji";
@@ -172,7 +176,8 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
     // identity landed exactly there — no path had spawned the relay).
     // ensure_local_relay is idempotent: pidfile verified by process
     // name, spawn skipped when it's genuinely running.
-    if (relaySet().every((u) => u.includes("127.0.0.1") || u.includes("localhost"))) {
+    if (relaySet().every((u) => u.includes("127.0.0.1") || u.includes("localhost")) &&
+        (!localStorage.getItem("fez-relay") || !(await fetchRelayInfo(relaySet()[0])))) {
       try {
         const savedName = localStorage.getItem("fez-name")?.trim();
         const url = await invoke<string>("ensure_local_relay", {
@@ -190,7 +195,7 @@ function bootOnce(): Promise<{ client: FezClient; wire: BrowserWire }> {
         throw new Error(`couldn't start your local workspace: ${detail}`, { cause: err });
       }
     }
-    const wire = new BrowserWire(relaySet(), rustSigner(pubkey));
+    const wire = new BrowserWire(relaySet(), rustSigner(pubkey, ACCOUNT));
     const client = new FezClient(wire);
     await client.start();
 
@@ -356,7 +361,7 @@ export default function App() {
       // identity anyway, and a missing brain degrades with its own
       // honest message downstream).
       try {
-        await invoke<string>("get_identity", { account: ACCOUNT });
+        await invoke<string>("get_pubkey", { account: ACCOUNT });
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
@@ -429,6 +434,7 @@ function Shell({
   const render = useForceRender();
   const [view, setView] = useState<MainView>({ kind: "channel" });
   const [pane, setPane] = useState<SidePane>();
+  const [aiSetupOpen, setAiSetupOpen] = useState(false);
   // Bumped when the agents pane writes a persona, so the roster page
   // re-reads rather than showing what it read before the edit.
   const [agentsNonce, setAgentsNonce] = useState(0);
@@ -553,7 +559,7 @@ function Shell({
   useEffect(() => {
     const events = [
       "message", "messageEdited", "messageDeleted", "metaChanged", "reaction",
-      "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged",
+      "channelsChanged", "presenceChanged", "unreadsChanged", "typingChanged", "historyChanged",
       "dmMessage", "jobsChanged", "artifact",
     ] as const;
     for (const name of events) client.on(name, render as never);
@@ -1478,6 +1484,7 @@ function Shell({
           onWatch={(agent) => setPane({ kind: "watch", agent })}
           onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
           onAgents={() => setView({ kind: "agents" })}
+          onConnectAi={() => setAiSetupOpen(true)}
           onSearch={() => setSearchOpen({ query: "" })}
           onNotice={(text) => { setBanner(text); setTimeout(() => setBanner(undefined), 6000); }}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
@@ -1687,6 +1694,12 @@ function Shell({
           </div>
         </div>
       )}
+      {aiSetupOpen && <AiSetupDialog onClose={() => setAiSetupOpen(false)} onConnected={() => {
+        setAiSetupOpen(false);
+        setAgentsNonce((n) => n + 1);
+        window.dispatchEvent(new Event("fez-ai-connected"));
+        void import("./welcome").then(({ ensureWelcome }) => ensureWelcome(client)).catch((err) => toast.error(String(err)));
+      }} />}
       {settingsOpen && <SettingsPane client={client} wire={wire} onClose={() => setSettingsOpen(false)} />}
       {/* One extension's settings, opened from the group of channels it
           owns. The same panel object the settings pane renders — an
@@ -1811,8 +1824,10 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
   // Type-to-find over everyone the workspace can name — an exact name
   // was the old contract, and "@dri" going nowhere while @drift sits on
   // the relay made the input feel broken. Enter takes the first match.
-  const q = who.trim().replace(/^@/, "").toLowerCase();
-  const matches = q && !/^[0-9a-f]{64}$/i.test(q)
+  const raw = who.trim().replace(/^@/, "");
+  const directPk = pubkeyFromInput(raw);
+  const q = raw.toLowerCase();
+  const matches = q && !directPk && !isNostrKeyInput(raw)
     ? [...client.knownNames().entries()]
         .filter(([, n]) => n.toLowerCase().includes(q))
         .sort(([, a], [, b]) => Number(b.toLowerCase().startsWith(q)) - Number(a.toLowerCase().startsWith(q)) || a.localeCompare(b))
@@ -1824,10 +1839,12 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
     onOpen(pk);
   };
   const start = () => {
-    const raw = who.trim().replace(/^@/, "");
-    const pk = /^[0-9a-f]{64}$/i.test(raw) ? raw.toLowerCase() : client.pkByName(raw) ?? matches[0]?.[0];
-    if (!pk) return;
-    pick(pk);
+    try {
+      const pk = resolvePubkeyInput(raw, name => client.pkByName(name) ?? matches[0]?.[0]);
+      if (pk) pick(pk);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
   };
   if (!open) {
     return (
@@ -1841,7 +1858,7 @@ function NewDmButton({ client, onOpen }: { client: FezClient; onOpen: (convoKey:
         value={who}
         autoFocus
         spellCheck={false}
-        placeholder="@name or pubkey"
+        placeholder="@name, npub, or hex key"
         onChange={(e) => setWho(e.target.value)}
         onBlur={() => setOpen(false)}
         onKeyDown={(e) => {
@@ -1878,6 +1895,7 @@ function ChannelView({
   onWatch,
   onManage,
   onAgents,
+  onConnectAi,
   onProfile,
   onDocs,
   onSearch,
@@ -1896,6 +1914,7 @@ function ChannelView({
   onWatch: (agent: string) => void;
   onManage: () => void;
   onAgents: () => void;
+  onConnectAi: () => void;
   onProfile: (pk: string) => void;
   onDocs: () => void;
   onSearch: () => void;
@@ -1908,6 +1927,7 @@ function ChannelView({
    * mention, so mentioning one is never "reached nobody". */
   localAgents: ReadonlySet<string>;
 }) {
+  const history = client.historyState(channelId);
   /** agent → when its current turn began, for the elapsed readout. */
   const turnStarts = useRef(new Map<string, number>());
   // Drafts persist per channel (Buzz's DraftsPanel decision, minimal
@@ -2347,6 +2367,10 @@ function ChannelView({
           />
         )}
       </header>
+      <HistoryStatus state={history} onRetry={() => {
+        if (history.operation === "older") void client.loadOlderPage(channelId);
+        else void client.loadChannelHistory(channelId);
+      }} />
       <div className="timeline" ref={timelineRef} onScroll={trackScroll}>
         {/* The two empty-state panels used to be inverted: FirstRun (the
             helpful one) required members > 1 — impossible for a fresh solo
@@ -2361,7 +2385,7 @@ function ChannelView({
             the channel info above carries the standing guidance, and a
             placeholder repeating "mention an agent" under it was one nag
             too many (removed on request, after shipping for an hour). */}
-        {messages.length === 0 &&
+        {channelId !== "bootstrap-welcome" && history.status === "ready" && messages.length === 0 &&
           ![...client.state.workspace.channels.keys()].some(
             (id) => id !== channelId && client.messages(id).length > 0
           ) && (
@@ -2376,6 +2400,11 @@ function ChannelView({
             You're the only member here so far — invite people from manage (+), or mention an agent by name to bring one in.
           </div>
         )}
+        {channelId === "bootstrap-welcome" && client.state.isOwner(client.pubkey)
+          && history.status === "ready" && !threadRoot && !editing && !draft
+          && !messages.some((m) => m.authorPk === client.pubkey) && (
+            <FirstTask onDraft={setDraft} onConnect={onConnectAi} />
+          )}
         {(channelId === "bootstrap-general" || channelId === "bootstrap-welcome") && (client.state.workspace.members.size ?? 0) > 1 && <MentionHint />}
         {threadRoot && (() => {
           const root = messages.find((m) => m.id === threadRoot);

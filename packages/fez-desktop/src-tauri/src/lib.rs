@@ -1,5 +1,7 @@
 use nostr::JsonUtil as _;
+mod bounded_command;
 mod git_install;
+mod isolated_panel;
 mod managed_agents;
 mod managed_node;
 mod package_install;
@@ -63,20 +65,25 @@ fn artifact_doc(id: u64) -> Option<String> {
     guard.as_ref().and_then(|docs| docs.get(&id).cloned())
 }
 
-/// The user's fez identity from the macOS keychain — the same key every
-/// other fez surface uses (service "fez-keys"). The webview receives the
-/// hex and signs in-process, exactly the TUI's custody model; the key
-/// never leaves the machine.
+/// Explicit export for onboarding and backup. Still reachable from the
+/// shared webview: this command is not an extension isolation boundary.
 #[tauri::command]
 fn get_identity(account: Option<String>) -> Result<String, String> {
     let account = account.unwrap_or_else(|| "default".to_string());
+    read_identity(&account)?
+        .ok_or_else(|| format!("no fez identity in the keychain for account \"{account}\""))
+}
+
+// Absence is data, access failure is an error. Key creation must never
+// infer permission to replace an identity from a failed keychain read.
+fn read_identity(account: &str) -> Result<Option<String>, String> {
     let output = Command::new("security")
         .args([
             "find-generic-password",
             "-s",
             "fez-keys",
             "-a",
-            &account,
+            account,
             "-w",
         ])
         .output()
@@ -93,7 +100,7 @@ fn get_identity(account: Option<String>) -> Result<String, String> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let not_found = output.status.code() == Some(44) || stderr.contains("could not be found");
         if not_found {
-            return Err(format!("no fez identity in the keychain for account \"{account}\""));
+            return Ok(None);
         }
         return Err(format!(
             "keychain access failed for account \"{account}\": {}",
@@ -104,14 +111,12 @@ fn get_identity(account: Option<String>) -> Result<String, String> {
     if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("keychain entry is not a 64-hex key".to_string());
     }
-    Ok(hex)
+    Ok(Some(hex))
 }
 
 // ── key custody ─────────────────────────────────────────────────────
-// The identity key stays HERE. The webview asks for a pubkey, for
-// signatures, and for DM crypto — never the secret (Buzz's custody
-// model). get_identity survives above as the EXPLICIT reveal used by
-// backup/settings; nothing on the boot or messaging path calls it.
+// Boot, messaging and agent setup use pubkeys and native crypto.
+// Onboarding and backup still export keys through get_identity above.
 
 /// Keys per account, loaded from the keychain once per launch — DM
 /// history decrypt would otherwise spawn `security` per event.
@@ -120,15 +125,15 @@ static IDENTITY_KEYS: Mutex<Option<std::collections::HashMap<String, nostr::Keys
 
 fn load_keys(account: Option<String>) -> Result<nostr::Keys, String> {
     let name = account.clone().unwrap_or_else(|| "default".to_string());
-    {
-        let guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(keys) = guard.as_ref().and_then(|m| m.get(&name)) {
-            return Ok(keys.clone());
-        }
+    // Serialize cache fills with creation/replacement so a slow old read
+    // cannot repopulate the cache after a successful restore.
+    // ponytail: one lock across keychain IO; per-account locks if this contends.
+    let mut guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(keys) = guard.as_ref().and_then(|m| m.get(&name)) {
+        return Ok(keys.clone());
     }
     let hex = get_identity(account)?;
     let keys = nostr::Keys::parse(&hex).map_err(|e| format!("bad identity key: {e}"))?;
-    let mut guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
     guard.get_or_insert_with(Default::default).insert(name, keys.clone());
     Ok(keys)
 }
@@ -137,6 +142,38 @@ fn load_keys(account: Option<String>) -> Result<nostr::Keys, String> {
 #[tauri::command]
 fn get_pubkey(account: Option<String>) -> Result<String, String> {
     Ok(load_keys(account)?.public_key().to_hex())
+}
+
+/// Prepare a local agent without handing its private key to JavaScript.
+#[tauri::command]
+fn ensure_agent_identity(name: String) -> Result<String, String> {
+    if !valid_persona_name(&name) {
+        return Err("invalid persona name".to_string());
+    }
+    let account = format!("agent:{name}");
+    let mut guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+    let cache = guard.get_or_insert_with(Default::default);
+    if let Some(keys) = cache.get(&account) {
+        return Ok(keys.public_key().to_hex());
+    }
+    let keys = ensure_identity_key(read_identity(&account), |hex| store_identity(&account, hex, false))?;
+    let pubkey = keys.public_key().to_hex();
+    cache.insert(account, keys);
+    Ok(pubkey)
+}
+
+fn ensure_identity_key(
+    existing: Result<Option<String>, String>,
+    save: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<nostr::Keys, String> {
+    match existing? {
+        Some(hex) => nostr::Keys::parse(&hex).map_err(|e| format!("bad identity key: {e}")),
+        None => {
+            let keys = nostr::Keys::generate();
+            save(&keys.secret_key().to_secret_hex())?;
+            Ok(keys)
+        }
+    }
 }
 
 fn parse_tags(tags: Vec<Vec<String>>) -> Result<Vec<nostr::Tag>, String> {
@@ -258,32 +295,47 @@ async fn dm_unwrap(event: String, account: Option<String>) -> Result<String, Str
 #[tauri::command]
 fn set_identity(account: Option<String>, hex: String, replace: Option<bool>) -> Result<(), String> {
     let account = account.unwrap_or_else(|| "default".to_string());
+    let mut guard = IDENTITY_KEYS.lock().unwrap_or_else(|p| p.into_inner());
+    store_identity(&account, &hex, replace == Some(true))?;
+    if let Some(cache) = guard.as_mut() {
+        cache.remove(&account);
+    }
+    Ok(())
+}
+
+fn store_identity(account: &str, hex: &str, replace: bool) -> Result<(), String> {
     if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("not a 64-hex key".to_string());
     }
-    if replace != Some(true) {
+    nostr::Keys::parse(hex).map_err(|e| format!("bad identity key: {e}"))?;
+    if !replace {
         // The guard must fail CLOSED: a denied keychain prompt makes
         // get_identity error exactly like an absent identity, and
         // treating "can't read" as "doesn't exist" made prompt-denial
         // the one path that could clobber the root identity (-U is an
         // update). Only the not-found error means it's safe to write.
-        match get_identity(Some(account.clone())) {
-            Ok(_) => return Err(format!("account \"{account}\" already holds an identity")),
-            Err(e) if e.contains("no fez identity") => {} // genuinely absent — mint away
+        match read_identity(account) {
+            Ok(Some(_)) => return Err(format!("account \"{account}\" already holds an identity")),
+            Ok(None) => {} // genuinely absent — mint away
             Err(e) => return Err(format!("can't tell whether an identity already exists — {e}")),
         }
     }
-    let status = Command::new("security")
-        .args([
-            "add-generic-password",
-            "-s",
-            "fez-keys",
-            "-a",
-            &account,
-            "-w",
-            &hex,
-            "-U",
-        ])
+    let mut command = Command::new("security");
+    command.args([
+        "add-generic-password",
+        "-s",
+        "fez-keys",
+        "-a",
+        account,
+        "-w",
+        hex,
+    ]);
+    // Without -U the keychain also refuses a concurrent CLI's new key;
+    // the read-before-write guard alone cannot make creation atomic.
+    if replace {
+        command.arg("-U");
+    }
+    let status = command
         .status()
         .map_err(|e| format!("couldn't run security: {e}"))?;
     if !status.success() {
@@ -465,7 +517,15 @@ fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
         .args(["find-generic-password", "-s", "fez-skill-env", "-a", &account])
         .output()
         .map_err(|e| format!("couldn't run security: {e}"))?;
-    Ok(output.status.success())
+    keychain_presence(output.status.code())
+}
+
+fn keychain_presence(code: Option<i32>) -> Result<bool, String> {
+    match code {
+        Some(0) => Ok(true),
+        Some(44) => Ok(false), // errSecItemNotFound; a locked/denied keychain is not "disconnected".
+        _ => Err("keychain access failed".into()),
+    }
 }
 
 /// GUI extension parts installed by `fez install`/`fez link`
@@ -473,81 +533,26 @@ fn has_skill_secret(skill: String, key: String) -> Result<bool, String> {
 /// webview imports each as an ES module and calls its activate(api) — the
 /// GUI's version of the TUI's extension loader.
 #[tauri::command]
-fn list_gui_extensions() -> Result<Vec<(String, String, String)>, String> {
+fn list_gui_extensions() -> Result<Vec<(String, String, String, Option<String>, Option<String>)>, String> {
     let home_path = fez_home()?;
-    Ok(package_install::gui_parts(&home_path))
+    Ok(package_install::gui_parts(&home_path).into_iter().map(|(name, code, styles, runtime)| {
+        let source = package_install::installed_manifest(&name, &home_path)
+            .and_then(|manifest| manifest.pointer("/fez/settingsSource").and_then(serde_json::Value::as_str)
+                .filter(|source| valid_secret_name(source)).map(str::to_owned));
+        (name, code, styles, source, runtime)
+    }).collect())
 }
 
-/// Read one extension's state file (~/.fez/extension-data/<name>.json)
-/// whole, as text. The gui loader namespaces calls to the extension's
-/// own stem — this command only enforces that the name can't traverse.
-/// Read-only: gui parts render state; headless/CLI own writes.
+/// Legacy main-webview API. Isolated panels use the caller-bound broker.
 #[tauri::command]
 fn extension_storage_read(name: String) -> Result<String, String> {
-    let ok_first = name
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_alphanumeric())
-        .unwrap_or(false);
-    let ok_rest = name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    if !ok_first || !ok_rest || name.contains("..") {
-        return Err(format!("invalid extension name: {name}"));
-    }
-    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
-    let file = std::path::Path::new(&home)
-        .join(".fez")
-        .join("extension-data")
-        .join(format!("{name}.json"));
-    Ok(std::fs::read_to_string(file).unwrap_or_else(|_| "{}".to_string()))
+    isolated_panel::read_storage(&fez_home()?, &name).map(|value| value.to_string())
 }
 
-/// Write ONE key under an extension's `prefs` object
-/// (~/.fez/extension-data/<name>.json). Name validation mirrors
-/// `extension_storage_read` verbatim.
-///
-/// Scoped to `prefs` on purpose: the CLI rewrites the rest of this file
-/// on every spend, so a webview writing those keys would clobber ledger
-/// rows outright. The scoping is what keeps a panel write from ever
-/// TARGETING a CLI-owned key; it does not serialize the two writers.
-/// This function read-modify-writes the whole file, and so does the node
-/// side, from a different process — two concurrent writes can still lose
-/// an update. This is a correctness boundary — gui parts run in the page
-/// and can reach every command regardless, so it is not, and must not be
-/// described as, a security boundary.
 #[tauri::command]
 fn extension_storage_write(name: String, key: String, value: String) -> Result<(), String> {
-    let ok_first = name
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_alphanumeric())
-        .unwrap_or(false);
-    let ok_rest = name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    if !ok_first || !ok_rest || name.contains("..") {
-        return Err(format!("invalid extension name: {name}"));
-    }
-    let parsed: serde_json::Value =
-        serde_json::from_str(&value).map_err(|e| format!("invalid value json: {e}"))?;
-    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
-    let dir = std::path::Path::new(&home).join(".fez").join("extension-data");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let file = dir.join(format!("{name}.json"));
-    let mut state: serde_json::Value = std::fs::read_to_string(&file)
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if !state.is_object() {
-        state = serde_json::json!({});
-    }
-    if !state["prefs"].is_object() {
-        state["prefs"] = serde_json::json!({});
-    }
-    state["prefs"][key] = parsed;
-    std::fs::write(&file, serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
+    let value = serde_json::from_str(&value).map_err(|e| format!("invalid value json: {e}"))?;
+    isolated_panel::write_preference(&fez_home()?, &name, &key, value)
 }
 
 /// What each installed extension was granted (settings.extensionPermissions).
@@ -614,6 +619,11 @@ fn harness_installed(cmd: &str) -> bool {
     binary_in_dirs(cmd, &harness_search_dirs())
 }
 
+fn harness_path(cmd: &str) -> Option<std::path::PathBuf> {
+    harness_search_dirs().into_iter().find(|dir| binary_in_dirs(cmd, std::slice::from_ref(dir)))
+        .map(|dir| std::path::Path::new(&dir).join(cmd))
+}
+
 /// Every place an installer actually puts things — shared by harness
 /// detection and the claude auth probe, so the two can't disagree about
 /// where `claude` lives.
@@ -626,6 +636,9 @@ fn harness_search_dirs() -> Vec<String> {
         "/opt/homebrew/bin".into(),
         "/usr/local/bin".into(),
         "/usr/bin".into(),
+        "/Applications/Codex.app/Contents/Resources".into(),
+        "/Applications/ChatGPT.app/Contents/Resources".into(),
+        format!("{home}/Applications/Codex.app/Contents/Resources"),
         format!("{home}/.local/bin"),
         // The other node-adjacent installers people actually use — a user
         // who got claude-agent-acp through bun/volta/deno/asdf/pnpm saw
@@ -659,44 +672,16 @@ fn harness_search_dirs() -> Vec<String> {
 /// separate — "installed" (the CLI exists) and "signed in" (its auth
 /// probe says so) — plus whether fez's managed adapter is runnable.
 /// READY may only be claimed when all three hold.
-/// Run `claude auth status` with a REAL 10s kill deadline (Buzz's
-/// number). The old version documented the deadline and never had one —
-/// a bare .output() waits forever on a hung CLI. Small output only:
-/// reading the pipes after exit is safe because auth-status JSON is far
-/// below the pipe buffer.
+/// Auth probes share the bounded runner: noisy output and inherited pipes
+/// must not stall onboarding or make a truncated result look authoritative.
 fn probe_claude_auth(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    use std::process::Stdio;
-    let child = Command::new(path)
-        .args(["auth", "status"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let Ok(mut child) = child else { return false };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-            Err(_) => return false,
-        }
-    }
-    let mut out = String::new();
-    if let Some(mut so) = child.stdout.take() {
-        let _ = so.read_to_string(&mut out);
-    }
-    let mut err = String::new();
-    if let Some(mut se) = child.stderr.take() {
-        let _ = se.read_to_string(&mut err);
-    }
-    managed_node::parse_claude_auth(&out)
-        .or_else(|| managed_node::parse_claude_auth(&err))
+    let Ok(output) = bounded_command::run(
+        Command::new(path).args(["auth", "status"]).env("PATH", subprocess_path_env()),
+        std::time::Duration::from_secs(10),
+        1024 * 1024,
+    ) else { return false };
+    std::str::from_utf8(&output.stdout).ok().and_then(managed_node::parse_claude_auth)
+        .or_else(|| std::str::from_utf8(&output.stderr).ok().and_then(managed_node::parse_claude_auth))
         .unwrap_or(false)
 }
 
@@ -707,11 +692,7 @@ fn probe_claude_auth(path: &std::path::Path) -> bool {
 #[tauri::command]
 async fn claude_brain_status() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let dirs = harness_search_dirs();
-        let claude = dirs
-            .iter()
-            .map(|d| std::path::Path::new(d).join("claude"))
-            .find(|p| p.is_file());
+        let claude = harness_path("claude");
         let installed = claude.is_some();
         let authed = claude.as_deref().map(probe_claude_auth).unwrap_or(false);
         serde_json::json!({
@@ -723,6 +704,27 @@ async fn claude_brain_status() -> Result<String, String> {
     })
     .await
     .map_err(|e| format!("status probe panicked: {e}"))
+}
+
+/// Probe sign-in without reading or returning the user's credential files.
+#[tauri::command]
+async fn codex_brain_status() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let codex = harness_path("codex");
+        let authed = codex.as_ref().map(|path| {
+            bounded_command::run(Command::new(path).args(["login", "status"]).env("PATH", subprocess_path_env()),
+                std::time::Duration::from_secs(10), 1024 * 1024)
+                .map(|out| out.status.success()).unwrap_or(false)
+        }).unwrap_or(false);
+        serde_json::json!({ "installed": codex.is_some(), "authed": authed,
+            "adapterReady": managed_node::local_adapter_ready("codex") }).to_string()
+    }).await.map_err(|e| format!("Codex status probe failed: {e}"))
+}
+
+#[tauri::command]
+async fn ensure_codex_adapter() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| managed_node::ensure_adapter("codex"))
+        .await.map_err(|e| format!("Codex setup failed: {e}"))?
 }
 
 /// Provision the private node runtime + the Claude ACP adapter — the
@@ -797,16 +799,13 @@ fn binary_in_dirs(cmd: &str, dirs: &[String]) -> bool {
 
 #[tauri::command]
 fn detect_harnesses() -> Result<String, String> {
-    let map = serde_json::json!({
-        // The VENDOR CLI is the question, not the ACP adapter — fez
-        // bundles claude-agent-acp into ~/.fez/bin (same as pi-acp), so a
-        // user who installed Claude Code must never read "not detected"
-        // because an npm package they've never heard of is missing.
-        // (Buzz's two-axis availability, collapsed by shipping the axis
-        // that was ours to ship.)
-        "claude-code": harness_installed("claude"),
-        "pi": harness_installed("pi-acp"),
-    });
+    let mut map = serde_json::Map::new();
+    map.insert("pi".into(), serde_json::json!(harness_installed("pi-acp")));
+    for agent in managed_node::local_agents() {
+        map.insert(agent["id"].as_str().unwrap().into(),
+            serde_json::json!(harness_installed(agent["cli"].as_str().unwrap())));
+    }
+    let map = serde_json::Value::Object(map);
     Ok(map.to_string())
 }
 
@@ -2219,6 +2218,9 @@ pub(crate) fn spawn_agent_process(
     repo: Option<String>,
     base_branch: Option<String>,
 ) -> Result<u32, String> {
+    if !valid_persona_name(&persona) {
+        return Err("invalid persona name".into());
+    }
     if let Some(r) = &repo {
         if !safe_work(r) {
             return Err(format!("unsafe repo name refused: {r}"));
@@ -2242,6 +2244,12 @@ pub(crate) fn spawn_agent_process(
         ("FEZ_AGENT_OWNER".to_string(), owner),
         ("FEZ_RELAY".to_string(), relays),
     ];
+    // Run the same installed Codex that onboarding checked, including app-bundled CLIs.
+    if std::env::var_os("CODEX_PATH").is_none() {
+        if let Some(path) = harness_path("codex") {
+            env.push(("CODEX_PATH".into(), path.to_string_lossy().into_owned()));
+        }
+    }
     if let Some(r) = &repo {
         env.push(("FEZ_AGENT_REPO".to_string(), r.clone()));
         if let Some(b) = &base_branch {
@@ -2266,20 +2274,26 @@ pub(crate) fn spawn_agent_process(
 /// summoning; running a package's own daemon is not summoning, and one that
 /// inherited that gate would silently do nothing and report success.
 #[tauri::command]
-fn spawn_extension_agent(
+async fn spawn_extension_agent(
     extension: String,
     bin: String,
     name: String,
     env: Vec<(String, String)>,
 ) -> Result<u32, String> {
-    // Scoped to THIS bin: "drift" the chat agent must not block sending
-    // "drift" the miner — one name, two domains, two processes.
-    if agent_is_alive_bin(&name, Some(&bin)) {
-        return Err(format!("{name} is already running — recall it first"));
-    }
-    let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
-    extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
-    spawn_tracked_process(name, &bin, checked_env(env)?, vec![], None, None)
+    tauri::async_runtime::spawn_blocking(move || {
+        // Scoped to THIS bin: "drift" the chat agent must not block sending
+        // "drift" the miner — one name, two domains, two processes.
+        if agent_is_alive_bin(&name, Some(&bin)) {
+            return Err(format!("{name} is already running — recall it first"));
+        }
+        let manifest = fez_home().ok().and_then(|home| package_install::installed_manifest(&extension, &home));
+        extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
+        let env = checked_env(env)?;
+        managed_node::ensure_for_program(&fez_home()?.join("bin").join(&bin))?;
+        spawn_tracked_process(name, &bin, env, vec![], None, None)
+    })
+    .await
+    .map_err(|e| format!("extension startup task panicked: {e}"))?
 }
 
 /// One-shot: run a bin THIS extension's package ships and return what it
@@ -2290,7 +2304,8 @@ fn spawn_extension_agent(
 /// difference is shape — this runs to completion and hands back stdout,
 /// where spawn starts a standing process and hands back a pid. Args are
 /// plain strings passed verbatim to the extension's OWN binary; a 120s
-/// deadline kills a hang rather than parking a webview promise forever.
+/// deadline covers the process and pipe capture. Combined output over 8 MiB
+/// fails explicitly so consumers never parse silently truncated output.
 #[tauri::command]
 async fn run_extension_bin(
     extension: String,
@@ -2302,38 +2317,15 @@ async fn run_extension_bin(
         let manifest = package_install::installed_manifest(&extension, &home);
         extension_may_spawn(&settings_value(), manifest.as_ref(), &extension, &bin)?;
         let program = home.join("bin").join(&bin);
-        use std::io::Read;
-        use std::process::Stdio;
-        let mut child = Command::new(&program)
-            .args(&args)
-            .env("PATH", subprocess_path_env())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("{bin}: {e}"))?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if std::time::Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("{bin} ran past the 120s deadline and was stopped"));
-                }
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                Err(e) => return Err(format!("{bin}: {e}")),
-            }
-        }
-        let mut stdout = String::new();
-        if let Some(mut so) = child.stdout.take() {
-            let _ = so.read_to_string(&mut stdout);
-        }
-        let mut stderr = String::new();
-        if let Some(mut se) = child.stderr.take() {
-            let _ = se.read_to_string(&mut stderr);
-        }
-        let code = child.wait().ok().and_then(|st| st.code()).unwrap_or(-1);
+        managed_node::ensure_for_program(&program)?;
+        let output = bounded_command::run(
+            Command::new(&program).args(&args).env("PATH", subprocess_path_env()),
+            std::time::Duration::from_secs(120),
+            8 * 1024 * 1024,
+        ).map_err(|e| format!("{bin}: {e}"))?;
+        let code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8(output.stdout).map_err(|_| format!("{bin}: stdout was not valid UTF-8"))?;
+        let stderr = String::from_utf8(output.stderr).map_err(|_| format!("{bin}: stderr was not valid UTF-8"))?;
         Ok(serde_json::json!({ "code": code, "stdout": stdout, "stderr": stderr }))
     })
     .await
@@ -2724,9 +2716,13 @@ fn copy_agent_files(src: &std::path::Path, bin: &std::path::Path) -> Result<(), 
     Ok(())
 }
 
+fn app_context<R: tauri::Runtime>() -> tauri::Context<R> { tauri::generate_context!() }
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .channel_interceptor(isolated_panel::channel_message)
+        .manage(isolated_panel::PanelHost::new(fez_home().expect("Fez home directory")))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2819,8 +2815,8 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![stage_artifact, release_artifact, get_pubkey, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package])
-        .build(tauri::generate_context!())
+        .invoke_handler(isolated_panel::guard(tauri::generate_handler![isolated_panel::open_isolated_panel, isolated_panel::isolated_panel_request, isolated_panel::isolated_panel_reply, isolated_panel::isolated_panel_host_request, stage_artifact, release_artifact, get_pubkey, ensure_agent_identity, sign_event, nip44_encrypt, nip44_decrypt, dm_wrap_all, dm_unwrap, get_identity, set_identity, write_persona, list_personas, read_persona, persona_mtime, update_persona, rename_persona, delete_persona, list_gui_extensions, extension_storage_read, extension_storage_write, list_local_extensions, list_installed_skills, read_extension_grants, list_persona_drafts, read_persona_draft, approve_persona_draft, reject_persona_draft, write_persona_draft, read_skills, write_skill, remove_skill, set_skill_secret, has_skill_secret, delete_skill_secret, read_bench_proposals, decide_bench_proposal, read_keymap, write_keymap, install_package, remove_extension, read_extension_versions, latest_version, package_info, export_tool, wire_chutes_pi, wire_provider_pi, provider_key_present, detect_harnesses, claude_brain_status, ensure_claude_adapter, codex_brain_status, ensure_codex_adapter, factory_reset, ensure_local_relay, local_relay_status, write_relays, write_media_server, read_media_server, runner_status, connect_service, spawn_agent, kill_agent, agent_alive, agent_last_exit, spawned_agents, managed_agents::start_managed_agent, spawn_extension_agent, run_extension_bin, inspect_git_package, install_git_package]))
+        .build(app_context())
         .expect("error while building tauri application")
         .run(|_app, _event| {
             // Agents are DETACHED and deliberately outlive the window —
@@ -2861,6 +2857,50 @@ fn min_fez_version_error(required: Option<&str>, host: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod identity_key_tests {
+    #[test]
+    fn keychain_presence_distinguishes_missing_from_access_failure() {
+        assert_eq!(super::keychain_presence(Some(0)), Ok(true));
+        assert_eq!(super::keychain_presence(Some(44)), Ok(false));
+        assert!(super::keychain_presence(Some(36)).is_err());
+        assert!(super::keychain_presence(None).is_err());
+    }
+
+    use super::ensure_identity_key;
+
+    #[test]
+    fn existing_identity_is_reused_without_writing() {
+        let key = nostr::Keys::generate();
+        let actual = ensure_identity_key(Ok(Some(key.secret_key().to_secret_hex())), |_| {
+            panic!("existing identities must not be overwritten")
+        }).unwrap();
+        assert_eq!(actual.public_key(), key.public_key());
+    }
+
+    #[test]
+    fn absent_identity_is_saved_before_its_pubkey_is_returned() {
+        let mut saved = None;
+        let key = ensure_identity_key(Ok(None), |hex| {
+            saved = Some(hex.to_string());
+            Ok(())
+        }).unwrap();
+        assert_eq!(nostr::Keys::parse(&saved.unwrap()).unwrap().public_key(), key.public_key());
+    }
+
+    #[test]
+    fn denied_or_malformed_identity_never_mints_a_replacement() {
+        for read in [Err("keychain access denied".to_string()), Ok(Some("invalid".to_string()))] {
+            assert!(ensure_identity_key(read, |_| panic!("read failure must not write")).is_err());
+        }
+    }
+
+    #[test]
+    fn failed_save_does_not_report_an_identity() {
+        assert_eq!(ensure_identity_key(Ok(None), |_| Err("keychain write failed".to_string())).unwrap_err(), "keychain write failed");
+    }
+}
+
+#[cfg(test)]
 mod harness_detect_tests {
     use super::binary_in_dirs;
 
@@ -2878,6 +2918,21 @@ mod harness_detect_tests {
         assert!(binary_in_dirs("claude", &dirs));
         assert!(!binary_in_dirs("codex", &dirs));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod auth_probe_tests {
+    use super::probe_claude_auth;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn auth_probe_drains_noisy_stderr_before_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("claude");
+        std::fs::write(&program, "#!/bin/sh\nhead -c 262144 /dev/zero >&2\nprintf '{\"loggedIn\":true}'\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(probe_claude_auth(&program));
     }
 }
 

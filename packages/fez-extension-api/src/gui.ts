@@ -10,6 +10,8 @@
  * return an element (`El`) from a `() => El` render function instead of
  * mounting their own root — see `MountRender` below for both forms.
  */
+import type { NostrEvent } from "./nostr.js";
+
 export type El = unknown;
 export type Props = Record<string, unknown> | null;
 
@@ -58,7 +60,7 @@ export interface PageViewProps {
   channelId: string;
   /** wiki page slug, absent for a channel doc */
   slug?: string;
-  /** false when an old version is on screen — a view must not rewrite history */
+  /** False for historical versions or without publish permission. */
   editable: boolean;
 }
 
@@ -75,6 +77,22 @@ export interface BlockProps {
   slug?: string;
 }
 
+/**
+ * The API for a settings-only GUI part running in a separate webview.
+ * Both legacy React elements and mount/dispose callbacks are supported.
+ * Preferences belong to the calling extension; `client.agents()` is an
+ * initial snapshot requiring read:agents. The client requires read:channels.
+ * Config and write-only secrets use the directory name with a `fez-` prefix
+ * added when absent. Duplicate installed owners of that namespace are denied. Config reads
+ * require sign, writes also require publish. HTTPS fetch and browser links
+ * require an exact network:<hostname> grant. Only one panel can be registered;
+ * its main-window source shortcut comes from `fez.settingsSource` in the manifest.
+ * The full GUI API's other capabilities are unavailable in this host.
+ */
+export type IsolatedPanelApi = Pick<GuiExtensionApi, "React" | "prefs" | "secrets" | "openUrl" | "fetch" | "registerSettingsPanel"> & {
+  client?: Pick<GuiClient, "agents" | "extensionConfig" | "saveExtensionConfig" | "listChannels" | "createChannel">;
+};
+
 export interface GuiExtensionApi {
   /** Available for legacy element-returning parts (`() => El`). Mount-model
    *  parts bundle their own React and don't need this. */
@@ -86,8 +104,10 @@ export interface GuiExtensionApi {
     useRef<T>(initial: T): { current: T };
     useMemo<T>(factory: () => T, deps: readonly unknown[]): T;
   };
-  /** The shared @fezchat/client instance — read state, publish as the user. Withheld without `read:channels`. */
-  client: GuiClient;
+  /** Absent without read:channels. A restricted client view with copied read
+   * results; writes reject without publish, signing without sign or publish.
+   * This API checks grants; extensions still share the host webview. */
+  client?: GuiClient;
   /**
    * Read-only view of this extension's own state file
    * (~/.fez/extension-data/<name>.json — the same namespace the
@@ -118,6 +138,13 @@ export interface GuiExtensionApi {
   prefs: {
     get<T = unknown>(key: string): Promise<T | undefined>;
     set(key: string, value: unknown): Promise<void>;
+  };
+  /** Permission-checked fetch. Isolated panels support bounded UTF-8 GET/HEAD/POST over HTTPS, with no redirects. */
+  fetch: typeof globalThis.fetch;
+  /** Write-only credentials; no secret value is returned to extension code. */
+  secrets: {
+    set(key: string, value: string): Promise<void>;
+    has(key: string): Promise<boolean>;
   };
   /** Open a browser to `url`. */
   openUrl(url: string): Promise<void>;
@@ -231,7 +258,7 @@ export interface GuiExtensionApi {
    * A toast through the host's app-wide notification layer — the same
    * toasts core fires, so extension feedback (a start failure, a saved
    * confirmation) isn't trapped in the pane that produced it. Optional:
-   * hosts predating it don't offer it.
+   * hosts predating it don't offer it; absent without ui permission.
    */
   toast?: (message: string, variant?: "success" | "error" | "warn" | "info") => void;
   agents?: {
@@ -279,21 +306,29 @@ export interface GuiExtensionApi {
 }
 
 /**
- * The slice of @fezchat/client a GUI extension typically reaches. The real
- * client has far more; type against what you use.
+ * A supported subset of the GUI client adapter, not the full FezClient.
+ * Additional core methods are not automatically exposed to extensions.
  */
 export interface GuiClient {
+  /** Active channels as copied records; choose destinations by ID, not name. */
+  listChannels(): Promise<{ id: string; name: string; source?: string; meta?: Record<string, string> }[]>;
+  /** Always creates a new ordinary channel. Requires publish and workspace ownership. */
+  createChannel(name: string): Promise<string>;
+  /** Encrypted, self-addressed extension config. Isolated hosts restrict the namespace. */
+  extensionConfig<T>(extension: string): Promise<T | undefined>;
+  saveExtensionConfig(extension: string, config: unknown): Promise<void>;
   pubkey: string;
   relayInfo(): (Record<string, unknown> & { pubkey?: string }) | undefined;
   channelsFrom(source: string): RepoChannelLike[];
   ensureChannel(spec: { name: string; source?: string; meta?: Record<string, string> }): Promise<string | undefined>;
   on(event: "channelsChanged", handler: () => void): () => void;
+  on(event: "paymentReceipt", handler: (channelId: string, targetId: string) => void): () => void;
   sendChannelMessage(text: string, opts?: { channelId?: string }): Promise<unknown>;
   /** Channel docs the client has absorbed, by channel id. */
   docsByChannel(): ReadonlyMap<string, { latestContent?: string }>;
   /** Publish a new doc version into a channel. */
   publishDoc(channelId: string, content: string): Promise<void>;
-  /** NIP-98 header for one request — the key stays behind the seam.
+  /** NIP-98 header for one request — requires sign or publish.
    * Async since key custody moved into the host process (the desktop
    * signs in Rust); always await it. */
   httpAuthHeader(url: string, method: string): Promise<string | undefined>;
@@ -301,6 +336,15 @@ export interface GuiClient {
   displayName(pk: string): string;
   /** The pubkey behind an @name, if the client knows one. */
   pkByName(name: string): string | undefined;
+  /** Requires read:agents. */
+  agents(): ReadonlyMap<string, string>;
+  msgById(id: string): { id: string; content: string; authorPk: string; ts: number } | undefined;
+  myReactionTo(targetId: string, emoji: string): string | undefined;
+  myReactionTimeTo(targetId: string, emoji: string): number | undefined;
+  /** Requires publish. */
+  toggleReaction(channelId: string, targetId: string, emoji: string): Promise<void>;
+  paymentReceiptsFor(targetId: string): readonly (NostrEvent & { sig: string })[];
+  /** Requires read:agents; denied reads throw instead of returning empty data. */
   workingAgents(): ReadonlyMap<string, { activity: string; ts: number }>;
   messages(channelId: string): readonly { id: string; content: string; rootId?: string }[];
   threadReplies(channelId: string, rootId: string): { id: string; content: string }[];

@@ -12,13 +12,15 @@ export interface GuiExtensionAPI {
     useEffect(fn: () => void | (() => void), deps?: readonly unknown[]): void;
     useCallback<T extends (...args: never[]) => unknown>(fn: T, deps: readonly unknown[]): T;
   };
-  client: {
-    pubkey: string;
+  client?: {
+    listChannels(): Promise<import("./config.js").DestinationChannel[]>;
+    createChannel(name: string): Promise<string>;
     extensionConfig<T>(extension: string): Promise<T | undefined>;
     saveExtensionConfig(extension: string, config: unknown): Promise<void>;
   };
   /** Write-only, namespaced to this extension. There is no get(). */
   secrets: { set(key: string, value: string): Promise<void>; has(key: string): Promise<boolean> };
+  fetch: typeof globalThis.fetch;
   openUrl(url: string): Promise<void>;
   /**
    * `source` names the channel source this panel configures, so the

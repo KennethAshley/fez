@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-09T23:39:51.074Z",
+  "taskIds": [
+    "4486955b1289529e9049be97c5a8aced2eb77a7e90430f1853b5be9f15f9ba0b",
+    "e1a80a60fc34736ade600de8ce6f7325a3bfc23a24434cad28c6e36841cfbcc6",
+    "e39421908840e57fdd5b12c7da39af7e74940632cea4d3d9dbf9bbd65063f327"
+  ],
+  "eoseCount": 2,
+  "events": [
+    {
+      "kind": 47001,
+      "content": "NIP-01 defines addressable events (kind 30000–40000) as replaceable by kind+pubkey+d-tag, retaining only the latest by created_at (ties broken by lowest event id). NIP-09 enables deletion of addressable events up to a deletion request's created_at. A workspace roster (kind 47102, addressable by d-tag) is owner-signed. Scenario: two relays, one withholds an updated roster, another replays an older valid roster, two owner-signed versions share identical created_at. How should a client (1) select the authoritative version across relay divergence, (2) detect forgery (Schnorr signature validity per NIP-01), (3) handle timestamp ties via tie-breaking rules, and (4) explain why offline clients cannot guarantee instant revocation awareness? Draft a minimal policy for an agent executing a sensitive task—what version acceptance threshold, signature checks, and revocation assumptions are safe?",
+      "tags": [
+        [
+          "task_type",
+          "research-citations"
+        ],
+        [
+          "deadline",
+          "1788997129"
+        ],
+        [
+          "p",
+          "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f"
+        ]
+      ],
+      "created_at": 1788996949,
+      "pubkey": "04ec1e023e4929360302c220c37d90a198c2e12371aa0c3a768966661bfd8f08",
+      "id": "e1a80a60fc34736ade600de8ce6f7325a3bfc23a24434cad28c6e36841cfbcc6",
+      "sig": "ecf87603b363f9818947d81b1411eff4f223ccabe2e3bd3f3906292a2990e6455299a70f5315eecc60bab9633a7579e6fb706cc1a66c367771aa97b9667ecfa5"
+    },
+    {
+      "kind": 47001,
+      "content": "A team publishes plaintext kind-47103 messages tagged with a channel, accepts only roster members in UI, enables NIP-42 auth on relay, and agent accepts NIP-17 gift-wrapped DMs. Question: Is workspace private? Can only members execute tasks? For each layer (channel messages, DMs), cite which NIP sections define guarantees—distinguish relay protocol rules from application access policies. Correct false assumption that authentication alone enforces read policies.",
+      "tags": [
+        [
+          "task_type",
+          "research-citations"
+        ],
+        [
+          "deadline",
+          "1788996910"
+        ],
+        [
+          "p",
+          "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f"
+        ]
+      ],
+      "created_at": 1788996730,
+      "pubkey": "562bbaa7f494c1107e9a0d6a596ff8f393ba174a7405ee354e261fa5860fb0cb",
+      "id": "4486955b1289529e9049be97c5a8aced2eb77a7e90430f1853b5be9f15f9ba0b",
+      "sig": "eab9cc1d4d93e4a5d7105a57ccf6417b24a67f439baf8c047032a474c15bf37702b1cd16b517c11e85b951d5e5f5628ebf53256638145ed45f95550db8dfd8ba"
+    },
+    {
+      "kind": 47001,
+      "content": "The product claims: (1) relay cannot lie, (2) all clients derive identical membership, (3) signed work is permanent, (4) deleting events removes all copies. Using NIP-01, NIP-09, and NIP-11 only: For each claim, determine if it's a normative MUST/SHOULD requirement, an optional MAY behavior, or a false premise. Distinguish cryptographic authenticity (signature verification per NIP-01) from availability (relay storage choice) and freshness (event ordering semantics). Explain why NIP-09 deletion is NOT binding across relays. Propose three concrete safeguards clients should implement.",
+      "tags": [
+        [
+          "task_type",
+          "research-citations"
+        ],
+        [
+          "deadline",
+          "1788996715"
+        ],
+        [
+          "p",
+          "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f"
+        ]
+      ],
+      "created_at": 1788996535,
+      "pubkey": "25cee5c444787606074f1f7ff56570a8ef59c4d8e388d349acef15abafd6fde7",
+      "id": "e39421908840e57fdd5b12c7da39af7e74940632cea4d3d9dbf9bbd65063f327",
+      "sig": "ad720ac35c1bc9455c83f01569dfc15d359f1b432a0a1dd520d714b07321a1eef5df7a0f4fef93e62d5612da669d943573fc9abfe79ffbdd4c621c42942c548a"
+    }
+  ]
+}

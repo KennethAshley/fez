@@ -2,13 +2,14 @@ import { generateWalletMnemonic, deriveAgentPair, treasuryPair, pairFromStored, 
 import { readEntry, writeEntry, readRootEntry, writeRootEntry, readRemoteHotkeyEntry, writeRemoteHotkeyEntry } from "./store.js";
 import { isValidEntryName, isReservedEntryName } from "./entry-names.js";
 import { loadConfig, saveConfig, assignEvmIndex, migratePrefs, x402Settings, type Network } from "./config.js";
-import { NETWORKS } from "./networks.js";
+import { NETWORKS, endpointFor } from "./networks.js";
 import { type ChainAdapter, parseAmount, formatAmount } from "./chains/adapter.js";
 import { mirrorAddresses, mirrorEndpoint, mirrorSpend, mirrorPrefs, mirrorEvmAddress, mirrorX402Meta, mirrorSubnet } from "./storage-mirror.js";
 import { migrateLog } from "./log.js";
 import { burnCost, formatRao, metagraph, ownerOf, register, stakedAlpha, transferStake, uidFor, type MetagraphInfo } from "./chains/subtensor.js";
 import { TAO_DECIMALS } from "./chains/substrate.js";
 import { DEFAULT_NETUID, personaStatus, requirePersonaPair, requireRehearsalNetwork, subtensorFor } from "./stake.js";
+import { requireWalletMutationAllowed } from "./evaluation.js";
 
 /**
  * The ceremony. This module is the ONLY place the "root" entry (the
@@ -48,6 +49,7 @@ export type InitResult =
   | { adopted: true; treasuryAddress: string };
 
 export async function initWallet(): Promise<InitResult> {
+  requireWalletMutationAllowed();
   // An existing root is ADOPTED, never overwritten: rebuild the mirror
   // from it and hand back the treasury. This is the repair path for the
   // stranded half-state (root in the keychain, mirror wiped — factory
@@ -92,6 +94,7 @@ export interface DeriveResult {
 }
 
 export async function derivePersona(persona: string): Promise<DeriveResult> {
+  requireWalletMutationAllowed();
   requireUsablePersonaName(persona);
   const mnemonic = requireRoot();
   const existing = readEntry(persona);
@@ -131,6 +134,7 @@ export async function cmdDerive(io: CliIo, persona: string): Promise<void> {
  * first; loadConfig() is re-read from disk afterward so what we print is
  * what is now actually persisted, not what we assume. */
 export async function cmdNetwork(io: CliIo, next?: string): Promise<void> {
+  if (next !== undefined) requireWalletMutationAllowed();
   if (next !== undefined && !NETWORKS.includes(next as Network)) {
     throw new Error(`unknown network "${next}" — expected one of: ${NETWORKS.join(", ")}`);
   }
@@ -150,6 +154,7 @@ export async function cmdNetwork(io: CliIo, next?: string): Promise<void> {
 }
 
 export async function cmdFund(io: CliIo, adapter: ChainAdapter, persona: string, amount: string): Promise<void> {
+  requireWalletMutationAllowed();
   requireUsablePersonaName(persona);
   const mnemonic = requireRoot();
   const stored = readEntry(persona);
@@ -185,6 +190,7 @@ export async function payFromTreasury(
   amount: string,
   opts: { memo?: string } = {},
 ): Promise<{ persona: string; to: string; amount: string; txHash: string }> {
+  requireWalletMutationAllowed();
   const config = loadConfig();
   requireRehearsalNetwork(config.network);
   if (!/^5[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(to)) throw new Error("recipient must be an ss58 address");
@@ -231,6 +237,7 @@ export async function registerPersona(
   netuid = DEFAULT_NETUID,
   opts?: { hotkeyAddress?: string }
 ): Promise<RegisterResult> {
+  requireWalletMutationAllowed();
   // The override path below skips requirePersonaPair entirely (there's no
   // local pair to derive from), which is where persona-name validation
   // normally happens — so it must happen here instead, before any chain
@@ -267,9 +274,11 @@ export async function registerPersona(
  * (remote-hotkey/<persona>, via store.ts's sibling helpers) — the root
  * entry is never touched by this path. Create-or-load: idempotent, so
  * re-running `export-hotkey` after the first time re-exports the same key.
+ * `existing` makes read-only consumers fail before generating a missing key.
  */
 export async function exportRemoteHotkey(
-  persona: string
+  persona: string,
+  opts?: { existing?: boolean }
 ): Promise<{
   persona: string;
   ss58Address: string;
@@ -282,8 +291,10 @@ export async function exportRemoteHotkey(
   coldkeypub?: { accountId: string; publicKey: string; ss58Address: string };
   created: boolean;
 }> {
+  requireWalletMutationAllowed();
   requireUsablePersonaName(persona);
   const existing = readRemoteHotkeyEntry(persona);
+  if (opts?.existing && !existing) throw new Error("No existing remote hotkey for this persona");
   const mnemonic = existing ?? generateWalletMnemonic();
   if (!existing) writeRemoteHotkeyEntry(persona, mnemonic);
   const keyfile = keyfileFor(mnemonic);
@@ -339,6 +350,7 @@ export async function cmdRegister(
   netuid = DEFAULT_NETUID,
   opts?: { hotkeyAddress?: string }
 ): Promise<void> {
+  requireWalletMutationAllowed();
   const api = await subtensorFor(loadConfig().endpoints.tao).catch(() => undefined);
   if (api) io.print(`registration on netuid ${netuid} burns ${formatRao(await burnCost(api, netuid))} tTAO from the treasury`);
   const r = await registerPersona(persona, netuid, opts);
@@ -371,13 +383,15 @@ export async function cmdCost(io: CliIo, netuid = DEFAULT_NETUID): Promise<void>
 
 /** Read-only: a hotkey's live on-chain miner performance. `undefined`
  * (not an error) when the hotkey isn't registered on this netuid. */
-export async function metagraphInfo(netuid: number, hotkey: string): Promise<MetagraphInfo | undefined> {
-  const api = await subtensorFor(loadConfig().endpoints.tao);
+export async function metagraphInfo(netuid: number, hotkey: string, requireTestnet = false): Promise<MetagraphInfo | undefined> {
+  const config = loadConfig();
+  if (requireTestnet && (config.network !== "test" || config.endpoints.tao !== endpointFor("test"))) throw Error("This metagraph read requires the exact testnet endpoint");
+  const api = await subtensorFor(config.endpoints.tao);
   return metagraph(api, netuid, hotkey);
 }
 
-export async function cmdMetagraph(io: CliIo, netuid: number, hotkey: string): Promise<void> {
-  const m = await metagraphInfo(netuid, hotkey);
+export async function cmdMetagraph(io: CliIo, netuid: number, hotkey: string, requireTestnet = false): Promise<void> {
+  const m = await metagraphInfo(netuid, hotkey, requireTestnet);
   if (!m) { io.print(`${hotkey} is not registered on netuid ${netuid}`); return; }
   io.print(
     `uid ${m.uid}  incentive ${m.incentive.toFixed(4)}  emission ${m.emission}  trust ${m.trust.toFixed(4)}  ` +
@@ -403,6 +417,7 @@ export interface PayoutResult {
  * the guardian keeps the uid.
  */
 export async function payoutPersona(persona: string, amount?: string, netuid = DEFAULT_NETUID): Promise<PayoutResult> {
+  requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const mnemonic = requireRoot();
   const config = loadConfig();

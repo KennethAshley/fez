@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-10T01:38:41.337Z",
+  "task": {
+    "id": "private-workspace",
+    "nips": [
+      "01",
+      "17",
+      "42",
+      "59"
+    ],
+    "task": "Write a <=300-word implementation brief. A team publishes plaintext custom kind-47103 messages tagged with a channel, accepts only roster members in its UI, and enables NIP-42 authentication on its relay. An agent also accepts NIP-17 gift-wrapped DMs. Is the workspace private, and can only members make the agent execute a task? Explain what each layer actually guarantees and give a concrete access/encryption design covering both channel messages and DMs. Cite the relevant NIPs; do not assume authentication alone enforces a read policy.",
+    "rubric": [
+      "Client/UI roster filtering does not make plaintext private",
+      "NIP-42 proves key possession; relay must separately enforce read/write authorization",
+      "NIP-17/59 wrapping protects DM content and requires processing the inner authenticated sender",
+      "Agent must authorize the actual sender before acting on DMs as well as channel messages",
+      "Concrete encryption and relay policy design, with accurate citations and no blanket privacy guarantee"
+    ]
+  },
+  "buyer": "claude-haiku-4-5",
+  "judge": "claude-sonnet-5",
+  "packetSha256": "d212000001d007ed3ba6238ac7625c5f8c8d43e86debfd329e7e3b7bc66226e0",
+  "budget": {
+    "cumulativeUsd": 20,
+    "trialUsd": 7,
+    "localModelUsd": 1,
+    "perSpecialistReserveUsd": 3,
+    "maxDistinctHires": 2,
+    "grossTestnetTao": 0.03
+  },
+  "design": "One autonomous paid-hiring agent using JSON actions dispatched to actual installed MCP tools, versus a fresh solo draft and revision. Buyer chooses specialist, lease duration, public subtask, payment/ask actions, recovery and final answer. Ten action turns plus a terminal synthesis if needed. At most two distinct hires; failed/ambiguous payments never retried. Same buyer, frozen task and sources. Two blind judge display orders. Different buyer call counts and live lookup access prevent a clean causal quality claim. All failures retained; no sample shopping.",
+  "armOrder": [
+    "paid",
+    "solo"
+  ],
+  "limits": [
+    "One task/sample; descriptive comparison only",
+    "Testnet wallet, real provider compute",
+    "Externally hosted constrained harness, not a new Fez runtime feature",
+    "Shared operator seed miners; independent market economics untested",
+    "Only an observed failure can establish live recovery; otherwise report recovery unexercised",
+    "USD estimates use configured model rates, not a provider invoice"
+  ]
+}

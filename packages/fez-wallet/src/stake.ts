@@ -12,6 +12,7 @@ import { mirrorSubnet } from "./storage-mirror.js";
 // Cycle with fees.ts (it needs requirePersonaPair) — safe: both sides
 // only call at runtime, never at module top level.
 import { splitFee } from "./fees.js";
+import { requireWalletMutationAllowed } from "./evaluation.js";
 
 /**
  * The persona-only half of the stake rehearsal: stake, unstake, status.
@@ -71,6 +72,7 @@ export interface StakeResult {
 }
 
 export async function stakePersona(persona: string, amount: string, netuid = DEFAULT_NETUID): Promise<StakeResult> {
+  requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
   requireRehearsalNetwork(config.network);
@@ -89,6 +91,7 @@ export async function stakePersona(persona: string, amount: string, netuid = DEF
 }
 
 export async function unstakePersona(persona: string, amount: string, netuid = DEFAULT_NETUID): Promise<StakeResult> {
+  requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
   requireRehearsalNetwork(config.network);
@@ -188,6 +191,7 @@ export interface EscrowResult { escrow: string; txHash: string; executed?: boole
 
 /** Poster funds a 2-of-3 escrow for a hire. worker+arbiter are ss58 addresses. */
 export async function escrowOpen(persona: string, worker: string, arbiter: string, amount: string): Promise<EscrowResult> {
+  requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
   requireRehearsalNetwork(config.network);
@@ -210,6 +214,7 @@ export async function escrowApprove(
   amount: string,
   pay: "worker" | "poster"
 ): Promise<EscrowResult> {
+  requireWalletMutationAllowed();
   const pair = requirePersonaPair(persona);
   const config = loadConfig();
   requireRehearsalNetwork(config.network);

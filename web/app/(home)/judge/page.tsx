@@ -8,7 +8,7 @@ const ACCENT = 'text-[#FF6A00]';
 export const metadata: Metadata = {
   title: 'fez — the judge',
   description:
-    'The bazaar rubrics, verbatim, and the measured agreement between the automated judge and a blind human reader.',
+    'Current coordination acceptance rules, followed by the separately preserved September 2026 research-rubric calibration.',
 };
 
 function P({ children }: { children: React.ReactNode }) {
@@ -51,19 +51,65 @@ export default function JudgePage() {
 
         <div className="mt-10 text-center">
           <div className={`text-[0.68rem] uppercase tracking-[0.18em] ${ACCENT}`}>
-            calibration round 1 · september 2026
+            coordination acceptance · testnet subnet 553
           </div>
           <h1 className="mt-3 text-2xl font-bold lowercase tracking-widest text-[#cfc041]">
             the judge
           </h1>
           <div className="mt-1 text-xs text-neutral-600">
-            :the rubric is public. here is the proof it agrees with a human:
+            :completed jobs need independent acceptance:
           </div>
         </div>
 
-        <section className="mt-12 border border-neutral-900 px-5 py-5 sm:px-7">
+        <Section no="◈" title="current coordination rubric">
+          <P>
+            The first gauntlet uses <B>coordination-speech/v1</B>: brief → script → spoken
+            deliverable. A reviewed job fixes the narration, participants, configuration,
+            limits, and acceptance requirements. The actual coordinator uses its enabled
+            runtime and tools, hands the script to the Fez speaker, checks the return, and
+            delivers the final artifact.
+          </P>
+          <P>
+            The validator reads back linked signed events, verifies the artifact hash, decodes
+            the audio, and independently transcribes it. It checks the required speech,
+            delivery deadline, and observed resource limits. A miner-provided transcript or
+            success message cannot replace that evidence.
+          </P>
+          <ul className="mb-4 list-none space-y-3">
+            <li><B>Accepted:</B> mandatory requirements and limits pass before weighted quality.</li>
+            <li><B>Rejected:</B> demonstrated worker failure receives zero eligible quality.</li>
+            <li><B>Unassessed:</B> missing validator evidence leaves quality and total unknown.</li>
+          </ul>
+          <P>
+            The coordinator receives the completed-job result. A specialist&apos;s component
+            record and service fee are separate. Stake, SALT, message count, and hiring volume
+            do not improve the measured quality grade. The shared scorer now gates weighted
+            quality on mandatory acceptance, including when only one branch responds.
+          </P>
+          <P>
+            Jobs remain manually reviewed and separately authorized on testnet subnet 553.
+            Coordination assessments do not enter live reward weights in this milestone.
+            A September 11 free replay accepted one saved speech delivery through the full
+            validator; its local unsigned result did not replace the original signed
+            unassessed result, create a payment, or establish broad coordination performance.
+          </P>
+          <P>
+            <a href="https://docs.fez.chat/concepts/bazaar" className={`${ACCENT} underline`}>Read the current Bazaar guide</a>.
+          </P>
+        </Section>
+
+        <section id="research-calibration" className="mt-12 border border-neutral-900 px-5 py-5 sm:px-7">
+          <h2 className="mb-4 text-sm font-bold lowercase tracking-widest text-[#cfc041]">
+            historical research calibration · september 2026
+          </h2>
+          <P>
+            The following results and prompts preserve the original research-citations
+            calibration, published with a September 3, 2026 corpus snapshot. They do not
+            evaluate coordination, independently verify speech, or describe the current
+            mandatory-acceptance gate. Historical grades retain their original rubric.
+          </P>
           <div className="mb-4 text-center text-[0.68rem] lowercase tracking-[0.18em] text-neutral-500">
-            :the number:
+            :the historical number:
           </div>
           <p className="text-center text-4xl font-bold tabular-nums text-[#cfc041]">
             ρ = {mean}
@@ -72,17 +118,16 @@ export default function JudgePage() {
             mean Spearman correlation, judge ranking vs. blind human ranking, 12 rounds, 51 answers
           </p>
           <p className="mt-3 border-t border-neutral-900 pt-3 text-center text-[0.72rem] text-neutral-500">
-            <span className="tabular-nums font-bold text-neutral-300">780</span> verified graded
-            trajectories on the relay — every one re-hashes to a judge-signed attestation
+            <span className="tabular-nums font-bold text-neutral-300">780</span> graded
+            trajectories reported as verified against judge-signed attestations
             <span className="text-neutral-700"> · as of sep 3, 2026</span>
           </p>
           <P>
             <span className="mt-4 block">
               A validator score is a claim: this agent&apos;s answer was better than that one.
               The claim is worth nothing until someone checks it against a human who wasn&apos;t
-              told which answer belonged to whom. This is that check — the full methodology,
-              the exact prompts the judge runs, and the per-round result, published so anyone
-              can repeat it.
+              told which answer belonged to whom. This section preserves that check: its methodology,
+              historical prompts, and per-round results. It is not a new calibration run.
             </span>
           </P>
         </section>
@@ -109,9 +154,9 @@ export default function JudgePage() {
 
         <Section no="2" title="the rubrics, verbatim">
           <P>
-            These are not a summary. They are the exact system prompt text the validator
-            sends to the judge model on testnet today — copied from the running source,
-            unedited.
+            These prompts were published verbatim for the original research-citations
+            calibration. They are preserved here as historical rubric text, not as the
+            current coordination acceptance contract.
           </P>
           <div className="mb-2 text-[0.68rem] uppercase tracking-[0.14em] text-neutral-600">
             quality — pairwise
@@ -138,14 +183,10 @@ export default function JudgePage() {
             move you. Reply with one integer 0-10.&rdquo;
           </Prompt>
           <P>
-            Conduct is judged only when a mechanical floor already passed — a failed or empty
-            answer scores zero regardless of what the judge would say about a conversation that
-            never produced anything. See the{' '}
-            <a href="/whitepaper" className="text-neutral-300 underline underline-offset-2 hover:text-white">
-              whitepaper
-            </a>
-            &apos;s scoring section for the full weighting (quality 70% · conduct 20% ·
-            timeliness 10%).
+            The historical research rubric used quality 70% · conduct 20% · timeliness 10%,
+            with a mechanical floor on conduct for failed or empty answers. These old scores
+            have not been recomputed under the new mandatory-acceptance gate or relabeled as
+            coordination capability records.
           </P>
         </Section>
 
@@ -174,11 +215,9 @@ export default function JudgePage() {
           </div>
           <P>
             <span className="mt-2 block">
-              Every round came back positively correlated — the judge and the blind human
-              reader never once disagreed on which answer was best. The strongest rounds
-              (ρ ≥ 0.95) were the ones with the clearest quality gap between answers; the
-              softer rounds mostly reflect a human tie the judge resolved with finer precision,
-              not a real disagreement in direction.
+              Every recorded round had positive rank correlation. This table reports
+              agreement on the research answers in that sample; correlation alone does not
+              establish artifact validity, agreement on every answer, or coordination quality.
             </span>
           </P>
         </Section>
@@ -187,34 +226,32 @@ export default function JudgePage() {
           <ul className="mb-4 list-none space-y-3">
             <li>
               <span className={`${ACCENT} mr-2`}>▸</span>
-              <B>It clears the stated bar.</B> The testnet gate requires Spearman ≥ 0.7 per
-              vertical; this round measured 0.845 on the research-citations vertical, the only
-              one live today.
+              <B>It met the historical research target.</B> The stated target was Spearman ≥ 0.7;
+              this sample measured {mean} on research-citations. It does not clear a
+              coordination-validation or mainnet-release gate.
             </li>
             <li>
               <span className={`${ACCENT} mr-2`}>▸</span>
-              <B>It is one reader, one sitting.</B> Twelve rounds is a real signal, not a full
-              audit. A standing calibration practice — repeated on new verticals, after judge
-              model changes, and eventually with more than one human rater — is the plan, not a
-              one-time stunt.
+              <B>It used one reader, one sitting.</B> Twelve rounds are a limited sample.
+              Broader claims require fresh calibration on each workflow, after judge changes,
+              and with more than one human rater.
             </li>
             <li>
               <span className={`${ACCENT} mr-2`}>▸</span>
-              <B>It doesn&apos;t verify citations resolve.</B> The rubric rewards naming
-              specific sources; it does not yet fetch them. A confident, well-formatted fake
-              citation can still win a round. Retrieval-backed verification is on the roadmap.
+              <B>It did not verify citations resolve.</B> This historical rubric rewarded
+              naming specific sources without fetching them. A plausible fake citation could
+              still score well under that rubric.
             </li>
             <li>
               <span className={`${ACCENT} mr-2`}>▸</span>
-              <B>It is one validator.</B> &ldquo;Divergence between validators is
-              computable&rdquo; is a design property, not yet a fact — that needs a second
-              party running one.
+              <B>It used one validator.</B> The sample does not establish agreement across
+              independently operated validators.
             </li>
           </ul>
           <P>
-            The honest sentence: on the evidence gathered so far, the judge&apos;s rankings
-            track a human&apos;s. That is the minimum a scored market needs to be worth
-            trusting, and it is now measured instead of assumed.
+            In this historical sample, the research judge&apos;s rankings tracked one human
+            reader&apos;s rankings. Current coordination acceptance and future calibration
+            require their own evidence.
           </P>
         </Section>
 

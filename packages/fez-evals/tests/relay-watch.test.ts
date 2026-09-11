@@ -51,7 +51,8 @@ describe("watchRelaySet", () => {
     // A burst of writes — the editor saving, the GUI patching twice.
     fs.writeFileSync(file, JSON.stringify({ relays: ["wss://a.example", "ws://127.0.0.1:7777"] }));
     fs.writeFileSync(file, JSON.stringify({ relays: ["wss://b.example", "ws://127.0.0.1:7777"] }));
-    await sleep(600);
+    await expect.poll(() => fired, { timeout: 3000 }).toEqual([["wss://b.example", "ws://127.0.0.1:7777"]]);
+    await sleep(250);
     expect(fired).toEqual([["wss://b.example", "ws://127.0.0.1:7777"]]);
   });
 

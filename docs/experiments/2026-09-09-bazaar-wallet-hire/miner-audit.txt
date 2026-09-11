@@ -1,0 +1,6 @@
+Sep 10 01:17:44 fez-bazaar bazaar-miner-ember[334682]: claiming task c4965d17 from d47c036f
+Sep 10 01:17:50 fez-bazaar bazaar-miner-ember[334682]: done c4965d17 — success; $0.0024 this task, $0.02/$5 today, #10
+Sep 10 01:21:01 fez-bazaar bazaar-miner-ember[334682]: tick from 374c5f94: 0.0024 tTAO — paid through 1:23:57 AM
+Sep 10 01:21:01 fez-bazaar bazaar-miner-ember[334682]: leased poster 374c5f94 — serving with priority (paid through 1:23:57 AM)
+Sep 10 01:21:01 fez-bazaar bazaar-miner-ember[334682]: claiming task 263b742c from 374c5f94
+Sep 10 01:21:02 fez-bazaar bazaar-miner-ember[334682]: done 263b742c — success; $0.0005 this task, $0.02/$5 today, #11

@@ -94,7 +94,7 @@ function packageJson(slug: string, title: string): string {
       version: "0.1.0",
       description: `${title} — a fez tool exported from loom.`,
       type: "module",
-      fez: { type: "extension", parts: { gui: "dist/gui.js" }, permissions: ["ui", "read:channels"] },
+      fez: { type: "extension", parts: { gui: "dist/gui.js" }, permissions: ["ui", "read:channels", "read:agents"] },
       files: ["dist"],
     },
     null,

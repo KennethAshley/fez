@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
-import { PERM_LABEL, SENSITIVE, norm, permLabel, catalogEntry, installExtension } from "./extensions-catalog";
+import { PERM_LABEL, SENSITIVE, norm, permLabel, catalogEntry, installExtension, useInstalledExtensions } from "./extensions-catalog";
 import { flash } from "./toast";
 import { generateArtifact } from "./artifact-sprite";
 import { AnimatedSprite } from "@fezchat/ui";
@@ -58,15 +58,9 @@ export function stripArtifactMarkers(content: string): string {
  */
 export function InstallOffer({ content, authorName, client }: { content: string; authorName: string; client: FezClient }) {
   const names = installOffers(content);
-  const [installed, setInstalled] = useState<Set<string>>(new Set());
+  const installed = useInstalledExtensions();
   const [busy, setBusy] = useState<string>();
   const [confirming, setConfirming] = useState<string>();
-
-  useEffect(() => {
-    void invoke<[string, string[]][]>("list_local_extensions")
-      .then((rows) => setInstalled(new Set(rows.map(([n]) => norm(n)))))
-      .catch(() => {});
-  }, [content]);
 
   if (names.length === 0) return null;
 
@@ -77,7 +71,6 @@ export function InstallOffer({ content, authorName, client }: { content: string;
     try {
       await installExtension(client, name);
       flash(`✓ ${entry?.title ?? name} installed — ${entry?.where ?? ""}`);
-      setInstalled((s) => new Set(s).add(norm(name)));
     } catch (e) {
       flash(`✗ ${e instanceof Error ? e.message : String(e)}`);
     } finally {

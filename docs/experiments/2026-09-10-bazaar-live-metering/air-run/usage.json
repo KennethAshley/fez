@@ -1,0 +1,174 @@
+{
+  "at": 1789023711.7999291,
+  "nativeUsd": 0.0556305,
+  "ledgerDeltaUsd": 0.0556305,
+  "calls": 7,
+  "state": {
+    "day": "2026-09-10",
+    "spentUsd": 0.1028835,
+    "reservedUsd": 0,
+    "pendingHire": false,
+    "answered": 5,
+    "seen": [
+      "6f0aca976bc28094dbb6938c721739cb7261efc4f43b9506e74082aa0d01189b",
+      "15e9287577dd0da953c82e1875eb6859b0fe031f3d1a4a135b5a6e48080e7881",
+      "1c1ca6557738ce98f2322e61582c52f9c39857b12bdf1b0b1ae689980c1d89f0",
+      "db0d783276ec26ec7fe17613fa1b76c11d71d711b02bc8dd89b412cbe3df513b",
+      "9ed7e53203d1c9875b8fccfa1938ead3d8645555b46a64db8c11645a00242467",
+      "144f4d0d923d9e9b6b473deed6a8bda198688a4a95a89486c8192ac7711176cf",
+      "f47abf2230b7ca9e91caa6ba9cbf8b30b99bcba30e81f3e55b0a12dd2b3dd86b",
+      "5b8c436171bc5b16865884275d6828516cc54b3217b3211d163e89addb1e38ad",
+      "d63199925c88d67c76e6639c5fdea4772a93aba6664c6b2f8ebf459e64f20858",
+      "8276e5a5c1d20df822960dd75c4108e8ded55cece59f16818dc229b0e2ee80ee"
+    ]
+  },
+  "usage": [
+    {
+      "session": "/Users/ken/.pi/agent/sessions/--private-var-folders-sl-5qh0vym54kv6dr3lgvf_rfcm0000gn-T-fez-hire-Y6aWuc--/2026-09-10T07-00-28-189Z_01a08a1e-2b9d-7e8d-bab0-a608512e45f0.jsonl",
+      "timestamp": "2026-09-10T07:00:30.092Z",
+      "model": "kimi-k3",
+      "provider": "opencode-go",
+      "usage": {
+        "input": 1715,
+        "output": 82,
+        "cacheRead": 256,
+        "cacheWrite": 0,
+        "reasoning": 9,
+        "totalTokens": 2053,
+        "cost": {
+          "input": 0.005145,
+          "output": 0.00123,
+          "cacheRead": 7.68e-05,
+          "cacheWrite": 0,
+          "total": 0.006451800000000001
+        }
+      }
+    },
+    {
+      "session": "/Users/ken/.pi/agent/sessions/--private-var-folders-sl-5qh0vym54kv6dr3lgvf_rfcm0000gn-T-fez-hire-Y6aWuc--/2026-09-10T07-00-28-189Z_01a08a1e-2b9d-7e8d-bab0-a608512e45f0.jsonl",
+      "timestamp": "2026-09-10T07:00:32.410Z",
+      "model": "kimi-k3",
+      "provider": "opencode-go",
+      "usage": {
+        "input": 1463,
+        "output": 111,
+        "cacheRead": 640,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 2214,
+        "cost": {
+          "input": 0.0043890000000000005,
+          "output": 0.001665,
+          "cacheRead": 0.000192,
+          "cacheWrite": 0,
+          "total": 0.006246000000000001
+        }
+      }
+    },
+    {
+      "session": "/Users/ken/.pi/agent/sessions/--private-var-folders-sl-5qh0vym54kv6dr3lgvf_rfcm0000gn-T-fez-hire-Y6aWuc--/2026-09-10T07-00-28-189Z_01a08a1e-2b9d-7e8d-bab0-a608512e45f0.jsonl",
+      "timestamp": "2026-09-10T07:00:34.270Z",
+      "model": "kimi-k3",
+      "provider": "opencode-go",
+      "usage": {
+        "input": 0,
+        "output": 57,
+        "cacheRead": 2746,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 2803,
+        "cost": {
+          "input": 0,
+          "output": 0.0008550000000000001,
+          "cacheRead": 0.0008238,
+          "cacheWrite": 0,
+          "total": 0.0016788
+        }
+      }
+    },
+    {
+      "session": "/Users/ken/.pi/agent/sessions/--private-var-folders-sl-5qh0vym54kv6dr3lgvf_rfcm0000gn-T-fez-hire-Y6aWuc--/2026-09-10T07-00-28-189Z_01a08a1e-2b9d-7e8d-bab0-a608512e45f0.jsonl",
+      "timestamp": "2026-09-10T07:00:38.037Z",
+      "model": "kimi-k3",
+      "provider": "opencode-go",
+      "usage": {
+        "input": 0,
+        "output": 373,
+        "cacheRead": 3144,
+        "cacheWrite": 0,
+        "reasoning": 49,
+        "totalTokens": 3517,
+        "cost": {
+          "input": 0,
+          "output": 0.005595,
+          "cacheRead": 0.0009431999999999999,
+          "cacheWrite": 0,
+          "total": 0.0065382
+        }
+      }
+    },
+    {
+      "session": "/Users/ken/.pi/agent/sessions/--private-var-folders-sl-5qh0vym54kv6dr3lgvf_rfcm0000gn-T-fez-hire-Y6aWuc--/2026-09-10T07-00-28-189Z_01a08a1e-2b9d-7e8d-bab0-a608512e45f0.jsonl",
+      "timestamp": "2026-09-10T07:00:44.284Z",
+      "model": "kimi-k3",
+      "provider": "opencode-go",
+      "usage": {
+        "input": 3306,
+        "output": 448,
+        "cacheRead": 256,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 4010,
+        "cost": {
+          "input": 0.009918,
+          "output": 0.00672,
+          "cacheRead": 7.68e-05,
+          "cacheWrite": 0,
+          "total": 0.0167148
+        }
+      }
+    },
+    {
+      "session": "/Users/ken/.pi/agent/sessions/--private-var-folders-sl-5qh0vym54kv6dr3lgvf_rfcm0000gn-T-fez-hire-Y6aWuc--/2026-09-10T07-00-28-189Z_01a08a1e-2b9d-7e8d-bab0-a608512e45f0.jsonl",
+      "timestamp": "2026-09-10T07:00:45.933Z",
+      "model": "kimi-k3",
+      "provider": "opencode-go",
+      "usage": {
+        "input": 0,
+        "output": 57,
+        "cacheRead": 4053,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 4110,
+        "cost": {
+          "input": 0,
+          "output": 0.0008550000000000001,
+          "cacheRead": 0.0012159,
+          "cacheWrite": 0,
+          "total": 0.0020709
+        }
+      }
+    },
+    {
+      "session": "/Users/ken/.pi/agent/sessions/--private-var-folders-sl-5qh0vym54kv6dr3lgvf_rfcm0000gn-T-fez-hire-Y6aWuc--/2026-09-10T07-00-28-189Z_01a08a1e-2b9d-7e8d-bab0-a608512e45f0.jsonl",
+      "timestamp": "2026-09-10T07:00:49.582Z",
+      "model": "kimi-k3",
+      "provider": "opencode-go",
+      "usage": {
+        "input": 4265,
+        "output": 209,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 45,
+        "totalTokens": 4474,
+        "cost": {
+          "input": 0.012795,
+          "output": 0.003135,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.01593
+        }
+      }
+    }
+  ]
+}

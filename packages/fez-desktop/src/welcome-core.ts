@@ -1,3 +1,4 @@
+import { parsePersona, getField, setField } from "./persona-fields";
 /**
  * The scripted half of the welcome choreography — everything here is
  * client-signed and deterministic; no LLM output ever passes through
@@ -169,8 +170,19 @@ export function buildStarterPersonaMd(p: StarterPersona, harness: string, model?
  * through the app) keeps fez.md the single source of that choice.
  */
 export function parsePersonaBrain(md: string): { harness: string; model?: string; provider?: string; effort?: string } {
-  const grab = (key: string) => md.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim();
+  const { front } = parsePersona(md);
+  const grab = (key: string) => getField(front, key) || undefined;
   return { harness: grab("harness") ?? "pi", model: grab("model"), provider: grab("provider"), effort: grab("effort") };
+}
+
+/** Change an agent's AI setup without replacing its tools or instructions. */
+export function withPersonaBrain(md: string, brain: ReturnType<typeof parsePersonaBrain>): string {
+  let { front } = parsePersona(md);
+  for (const key of ["harness", "provider", "model", "effort"] as const) {
+    front = setField(front, key, brain[key] ?? "");
+  }
+  const body = md.match(/^---\r?\n[\s\S]*?\r?\n---([\s\S]*)$/)?.[1] ?? `\n\n${md}`;
+  return `---\n${front.join("\n")}\n---${body}`;
 }
 
 /**
@@ -190,8 +202,14 @@ export function teamOpenerText(names: string[]): string {
 }
 
 export function kickoffText(): string {
-  return "What can we help you build? Bring us something you're working on, or give us a quick challenge to see how we work together.";
+  return "Let’s try a first task. Pick an example below, or tell @fez what you want to work on. I’ll bring in the right teammate.";
 }
+
+export const FIRST_TASKS = [
+  { label: "Turn an idea into a plan", prompt: "@fez help me turn an idea into a plan. Ask me what I want to make, then bring in a teammate to help." },
+  { label: "Research a question", prompt: "@fez help me research a question. Ask me the question first, then bring in @drift to find and check sources." },
+  { label: "Write something together", prompt: "@fez help me write something. Ask what I’m writing and who it’s for, then bring in @quill." },
+];
 
 /**
  * Have the teammates spoken? Counts distinct authors in the channel that

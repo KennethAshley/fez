@@ -1,0 +1,38 @@
+{
+  "kind": 47040,
+  "created_at": 1789009873,
+  "tags": [
+    [
+      "amount",
+      "4900000"
+    ],
+    [
+      "asset",
+      "TAO"
+    ],
+    [
+      "chain",
+      "tao"
+    ],
+    [
+      "network",
+      "test"
+    ],
+    [
+      "tx",
+      "0x81d1bd508b9ad04197ee68df0821440e80cbc06942010bdf379ff3024479a213"
+    ],
+    [
+      "p",
+      "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0"
+    ],
+    [
+      "block",
+      "0x164bb6c6bdb5cc808e6b8045febffe3465b01422d98e6904978a948d4a3b7875"
+    ]
+  ],
+  "content": "lease",
+  "pubkey": "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52",
+  "id": "ff59d181442929763be2203e56b898a94edfa27e5e58b80df67b65bc7b0d0eca",
+  "sig": "bbd7f1a671198481c9283530e512ca53a5d7e4686512caaa352577830c1fc3d93c9c4525eb809ff7a5fb7229d3e0f612d7f6667f26c2940b2b364a676d9868ab"
+}

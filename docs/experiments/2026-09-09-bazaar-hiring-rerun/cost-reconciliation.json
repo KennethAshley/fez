@@ -1,0 +1,28 @@
+{
+  "authorizedCumulativeUsd": 20,
+  "priorPilotUsd": 1.032813,
+  "rerunBuyerUsd": 0.180265,
+  "rerunJudgeUsd": 0.893465,
+  "remoteTasks": [
+    {
+      "taskId": "90db5191e2e66cf7250c8cd737d70cb441b95bd84ec5031858db5724e35ac879",
+      "reportedUsd": 0.0483,
+      "precisionUsd": 0.0001,
+      "basis": "miner usage priced by its configured model rates; log rounded to four decimals"
+    },
+    {
+      "taskId": "1e9b5a3eab4717afdcdad30c2e5aa1dbad71281aa2e2392c59484c4253e983ec",
+      "reportedUsd": 0.1314,
+      "precisionUsd": 0.0001,
+      "basis": "miner usage priced by its configured model rates; log rounded to four decimals"
+    }
+  ],
+  "rerunRemoteReportedUsd": 0.1797,
+  "rerunTotalReportedUsdApprox": 1.2534299999999998,
+  "cumulativeReportedUsdApprox": 2.286243,
+  "conservativeAccountedUsdIncludingUnreleasedReservations": 8.106543,
+  "unusedBudgetAfterConservativeReservationsUsd": 11.893457,
+  "walletTransfers": 0,
+  "paidLeaseTested": false,
+  "basis": "Token-priced local usage plus rounded miner-side compute costs, not a reconciled provider invoice. Existing background validator/miner activity is outside this directed-request pilot. The two new $3 reservations remain held in the conservative ledger; prior $9 reservations were released only after server logs proved no model calls."
+}

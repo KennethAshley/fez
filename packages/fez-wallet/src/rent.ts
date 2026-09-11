@@ -6,6 +6,7 @@ import { parseAmount } from "./chains/adapter.js";
 import { mirrorSpend } from "./storage-mirror.js";
 import { ambiguousTransferError, signerFromPair, submitAndWait } from "./chains/substrate.js";
 import { requirePersonaPair, requireRehearsalNetwork, subtensorFor } from "./stake.js";
+import { requireWalletMutationAllowed } from "./evaluation.js";
 import { splitFee } from "./fees.js";
 
 /**
@@ -114,6 +115,7 @@ export async function rentAgent(
   hours: number,
   relayUrl = DEFAULT_MARKET_RELAY
 ): Promise<RentResult> {
+  requireWalletMutationAllowed();
   if (!/^[0-9a-f]{64}$/.test(minerPk)) throw new Error("miner must be a 64-hex nostr pubkey");
   if (!(hours > 0) || hours > 24) throw new Error("hours must be between 0 and 24 — a lease is a tick, not a marriage");
   const pair = requirePersonaPair(persona);
@@ -188,6 +190,7 @@ export async function payAddress(
   amount: string,
   opts: { forEvent?: string; payeePk?: string; relayUrl?: string; memo?: string } = {}
 ): Promise<PayResult> {
+  requireWalletMutationAllowed();
   if (!/^5[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(to)) throw new Error("recipient must be an ss58 address");
   const pair = requirePersonaPair(persona);
   const config = loadConfig();

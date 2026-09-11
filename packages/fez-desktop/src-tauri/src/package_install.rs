@@ -508,7 +508,7 @@ pub(crate) fn remove_installed(base: &str, home: &Path) -> Result<Vec<String>, S
 /// manifest says whether it has a gui part. A dir with no `fez.parts.gui`
 /// or an unreadable bundle is skipped, not an error: a package that
 /// legitimately has no GUI part is not a broken install.
-pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String, String)> {
+pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String, String, Option<String>)> {
     let mut out = Vec::new();
     let entries = match std::fs::read_dir(home.join("packages")) {
         Ok(e) => e,
@@ -546,7 +546,11 @@ pub(crate) fn gui_parts(home: &Path) -> Vec<(String, String, String)> {
                     std::fs::read_to_string(home.join("packages").join(&name).join(format!("{stem}.css"))).ok()
                 })
                 .unwrap_or_default();
-            out.push((name, code, styles));
+            // Only absence means legacy. A malformed declaration must reach
+            // the loader as unsupported, never silently run in main.
+            let runtime = manifest.pointer("/fez/guiRuntime")
+                .map(|value| value.as_str().unwrap_or("invalid").to_owned());
+            out.push((name, code, styles, runtime));
         }
     }
     out
@@ -573,7 +577,7 @@ pub(crate) fn local_extensions(home: &Path) -> Vec<(String, Vec<String>)> {
             }
         }
     }
-    for (name, _, _) in gui_parts(home) {
+    for (name, _, _, _) in gui_parts(home) {
         map.entry(name).or_default().push("gui".to_string());
     }
     if let Ok(entries) = std::fs::read_dir(home.join("packages")) {
@@ -985,10 +989,32 @@ mod tests {
         // fixture_tar already declares fez.parts.gui = "dist/gui.js"
         install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
         let found = gui_parts(home.path());               // the new pure scanner
-        assert!(found.iter().any(|(name, code, _)| name == "tidy" && code.contains("export default")));
+        assert!(found.iter().any(|(name, code, _, _)| name == "tidy" && code.contains("export default")));
         // it is read from the package dir, and does NOT depend on gui-extensions/
         std::fs::remove_dir_all(home.path().join("gui-extensions")).ok();
-        assert!(gui_parts(home.path()).iter().any(|(n, _, _)| n == "tidy"), "must not depend on the symlink dir");
+        assert!(gui_parts(home.path()).iter().any(|(n, _, _, _)| n == "tidy"), "must not depend on the symlink dir");
+    }
+
+    #[test]
+    fn gui_parts_preserves_runtime_selection_and_marks_invalid_declarations() {
+        let home = tempfile::tempdir().unwrap();
+        install_from_tarball("@fezchat/tidy", &fixture_tar(), "0.0.1", home.path()).unwrap();
+        let file = home.path().join("packages/tidy/package.json");
+        let mut manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        for (runtime, expected) in [
+            (serde_json::json!("isolated-settings"), "isolated-settings"),
+            (serde_json::json!("future-runtime"), "future-runtime"),
+            (serde_json::Value::Null, "invalid"),
+            (serde_json::json!({}), "invalid"),
+        ] {
+            manifest["fez"]["guiRuntime"] = runtime;
+            std::fs::write(&file, manifest.to_string()).unwrap();
+            let parts = serde_json::to_value(gui_parts(home.path())).unwrap();
+            assert_eq!(parts[0][3], expected);
+        }
+        manifest["fez"].as_object_mut().unwrap().remove("guiRuntime");
+        std::fs::write(&file, manifest.to_string()).unwrap();
+        assert_eq!(serde_json::to_value(gui_parts(home.path())).unwrap()[0][3], serde_json::Value::Null);
     }
 
     // install_from_tarball already refuses a traversal `gui` rel at write
@@ -1010,7 +1036,7 @@ mod tests {
         std::fs::write(home.path().join("packages").join("evil.js"), "haha\n").unwrap();
 
         let found = gui_parts(home.path());
-        assert!(found.iter().all(|(n, _, _)| n != "evil"), "a traversal gui rel must yield no gui part: {found:?}");
+        assert!(found.iter().all(|(n, _, _, _)| n != "evil"), "a traversal gui rel must yield no gui part: {found:?}");
     }
 
     // fez pack emits a hashed `<gui>.css` beside `<gui>.js`; gui_parts must
@@ -1023,14 +1049,14 @@ mod tests {
 
         // No companion css yet → empty styles, not an error.
         let none = gui_parts(home.path());
-        let (_, _, styles) = none.iter().find(|(n, _, _)| n == "tidy").expect("tidy");
+        let (_, _, styles, _) = none.iter().find(|(n, _, _, _)| n == "tidy").expect("tidy");
         assert_eq!(styles, "", "no companion css → empty styles");
 
         // Write dist/gui.css beside the fixture's dist/gui.js → it is read.
         let css = home.path().join("packages").join("tidy").join("dist").join("gui.css");
         std::fs::write(&css, ".fez-tidy-x{color:red}\n").unwrap();
         let with = gui_parts(home.path());
-        let (_, _, styles) = with.iter().find(|(n, _, _)| n == "tidy").expect("tidy");
+        let (_, _, styles, _) = with.iter().find(|(n, _, _, _)| n == "tidy").expect("tidy");
         assert!(styles.contains(".fez-tidy-x"), "companion css must be read: {styles:?}");
     }
 

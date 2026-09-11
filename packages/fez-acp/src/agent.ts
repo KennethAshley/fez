@@ -63,12 +63,15 @@ import fs from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { isAddressedTo } from "./addressing.js";
+import { addressees, isAddressedTo } from "./addressing.js";
+import { workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
+import { deliverHire } from "./hire-delivery.js";
+import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evaluationRuntime, assertEvaluationToolsUnchanged, readEvaluationRequest, runEvaluation } from "./evaluation.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
 import { resolveAttachedSkills, skillsPromptSection, skillsEnvJson } from "./skills-prompt.js";
 import { fezMcpLaunch, resolveNodeCommand } from "./mcp-path.js";
 import { capReply as capReplyPure, stripHarnessNoise, stripSelfAddress } from "./bridge-policy.js";
-import { loadServiceKey, resolveChannels } from "./service-common.js";
+import { loadServiceKey, resolveChannels, parseThreadRef } from "./service-common.js";
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
@@ -162,10 +165,15 @@ function withNotice(
 }
 
 async function main() {
+  const evaluationCheck = process.env.FEZ_EVALUATION_CHECK === "1";
+  const evaluationFile = process.env.FEZ_EVALUATION_REQUEST;
+  const evaluating = evaluationCheck || evaluationFile !== undefined;
+  // Validate the explicit allowance before runtime preparation or any provider use.
+  const evaluationRequest = evaluationFile && !evaluationCheck ? await readEvaluationRequest(evaluationFile) : undefined;
   // `fez-agent connect <key>` — the OAuth sign-in flow, runnable from the
   // compiled binary so the DESKTOP can trigger it (the webview can't hold
   // the loopback callback port; this process can). Exits when connected.
-  if (process.argv[2] === "connect" && process.argv[3]) {
+  if (!evaluating && process.argv[2] === "connect" && process.argv[3]) {
     try {
       await connectService(process.argv[3]);
       console.log(`✓ ${process.argv[3]} connected`);
@@ -185,6 +193,7 @@ async function main() {
   // answers only gift-wrapped DMs (`fez agent <persona> -c none`) — the
   // shape a DM summons wakes an agent into, since DMs are channel-free.
   if (!personaId) {
+    if (evaluating) throw new EvaluationError("FEZ_AGENT_PERSONA is required for evaluation");
     console.error("Usage: fez agent <persona> [-c channels|none] — or set FEZ_AGENT_PERSONA / FEZ_AGENT_CHANNELS and fez run dist/agent.js");
     process.exit(1);
   }
@@ -192,6 +201,7 @@ async function main() {
   registerBuiltinHarnesses();
   const persona = await findPersona(personaId);
   if (!persona) {
+    if (evaluating) throw new EvaluationError("Evaluation persona is not installed");
     console.error(`No persona "${personaId}" (looked in ~/.fez/personas/)`);
     process.exit(1);
   }
@@ -201,7 +211,8 @@ async function main() {
   // once here is the fix; a `!` at each use would only hide the question.
   const activePersona = persona;
   const harness = findHarness(persona.harness);
-  if (!harness || !(await harness.detect())) {
+  if (!harness || !(evaluating ? evaluationExecutableAvailable(harness.command) : await harness.detect())) {
+    if (evaluating) throw new EvaluationError("The persona's selected harness is unavailable");
     console.error(`Persona "${personaId}" needs harness "${persona.harness}" which isn't available`);
     process.exit(1);
   }
@@ -282,14 +293,14 @@ async function main() {
     persona.skillSettings
   );
   const skillsSection = skillsPromptSection(attachedSkills);
-  const mcpServers = await withFreshOAuth(
-    resolved
+  const configuredMcpServers = resolved
       // Copies, not registry objects — the command rewrite below must not
       // reach back into the shared registry.
       .map((r) => findMcpServer(r.key))
       .filter((s): s is NonNullable<typeof s> => s !== undefined)
-      .map((s) => ({ ...s }))
-  );
+      .map((s) => ({ ...s }));
+  // A readiness check does not refresh credentials or contact tool services.
+  const mcpServers = evaluating ? configuredMcpServers : await withFreshOAuth(configuredMcpServers);
 
   // A bare `command: node` (what the installer writes for every skill
   // part) is unrunnable from an app-spawned agent — the GUI PATH has no
@@ -346,6 +357,55 @@ async function main() {
     if (s.name === "fez") continue;
     const runs = "command" in s ? `${s.command}${s.args?.length ? " " + s.args.join(" ") : ""}` : "url" in s ? s.url : s.type;
     console.log(`🔧 tool "${s.name}" attached (${runs})`);
+  }
+
+  if (evaluating) {
+    const runtime = evaluationRuntime({ persona });
+    const missingTools = [...missingSkills, ...missingSkillMds];
+    if (!fezMcp.launch) missingTools.push("fez");
+    for (const tool of resolved) if (!findMcpServer(tool.key)) missingTools.push(tool.name);
+    for (const server of mcpServers) {
+      // The current Pi bridge only writes stdio MCP servers; silently dropping
+      // an owner's remote tool would evaluate a different configuration.
+      if (!("command" in server)) {
+        if (persona.harness === "pi") missingTools.push(server.name);
+        continue;
+      }
+      if (!evaluationExecutableAvailable(server.command)) missingTools.push(server.name);
+    }
+    const skillFiles = attachedSkills.map(skill => {
+      try { return { name: skill.name, setting: skill.setting, content: fs.readFileSync(skill.path, "utf8") }; }
+      catch { missingTools.push(skill.name); return { name: skill.name, missing: true }; }
+    });
+    registerSystemPromptSection({ id: "fez:trust-boundary", order: 10, text: UNTRUSTED_CONTENT_NOTICE });
+    const standing = composeSystemPrompt(persona.systemPrompt);
+    const ready = evaluationReady({ persona, harness, tools: mcpServers.map(server => server.name),
+      skills: attachedSkills.map(skill => skill.name), missingTools,
+      configuration: { tools: resolved.map(tool => ({ name: tool.name, entry: tool.entry })), skillFiles, standing }, runtime,
+    });
+    console.log(`FEZ_EVALUATION_READY=${JSON.stringify(ready)}`);
+    if (!ready.ready) throw new EvaluationError("Agent is missing enabled tools: " + ready.missingTools.join(", "));
+    if (evaluationCheck) return;
+    if (!evaluationRequest) throw new EvaluationError("FEZ_EVALUATION_REQUEST must name a funded request file");
+    const priorEvaluationContext = process.env.FEZ_EVALUATION_ACTIVE;
+    process.env.FEZ_EVALUATION_ACTIVE = "1";
+    try {
+      const refreshed = await withFreshOAuth(mcpServers);
+      assertEvaluationToolsUnchanged(mcpServers, refreshed);
+      mcpServers.splice(0, mcpServers.length, ...refreshed.map(server => "command" in server ? {
+        ...server, env: [...server.env.filter(entry => entry.name !== "FEZ_EVALUATION_ACTIVE"), { name: "FEZ_EVALUATION_ACTIVE", value: "1" }],
+      } : server));
+      // Same unattended policy as a standing agent without an approval channel.
+      // Wallet entrypoints independently reject mutations in evaluation context.
+      setRiskPolicy(async () => "deny");
+      const result = await runEvaluation({ request: evaluationRequest, ready, harness, mcpServers,
+        systemPrompt: standing, skillsSection, prepareWorkdir: dir => configureWorkdir(dir, true, runtime) });
+      console.log(`FEZ_EVALUATION_RESULT=${JSON.stringify(result)}`);
+    } finally {
+      if (priorEvaluationContext === undefined) delete process.env.FEZ_EVALUATION_ACTIVE;
+      else process.env.FEZ_EVALUATION_ACTIVE = priorEvaluationContext;
+    }
+    return;
   }
 
   // ── Per-persona working directory. Turns run HERE, not wherever `fez
@@ -437,12 +497,14 @@ async function main() {
   // settings for TRUSTED folders, so one trust.json entry for the
   // shared work root covers every persona (observed format:
   // { "<path>": true }); a custom workdir is trusted individually.
-  if (persona.harness === "pi") {
+  function configureWorkdir(workDir: string, transient = false, selection?: { provider: string | null; model: string | null }): (() => void) | undefined {
+    const persona = activePersona;
+    if (persona.harness !== "pi") return;
     const piDir = path.join(workDir, ".pi");
     fs.mkdirSync(piDir, { recursive: true });
     const piSettings: Record<string, unknown> = { quietStartup: true };
-    if (persona.extra.provider) piSettings.defaultProvider = persona.extra.provider;
-    if (persona.extra.model) piSettings.defaultModel = persona.extra.model;
+    if (selection?.provider || persona.extra.provider) piSettings.defaultProvider = selection?.provider || persona.extra.provider;
+    if (selection?.model || persona.extra.model) piSettings.defaultModel = selection?.model || persona.extra.model;
     const thinking = piThinkingLevel(persona.extra.effort);
     if (thinking) piSettings.defaultThinkingLevel = thinking;
     // `packages:` frontmatter — pi registry packages (pi.dev/packages)
@@ -489,26 +551,35 @@ async function main() {
       console.log(`🔌 pi mcp bridge: ${Object.keys(mcpJson.mcpServers).length} server(s) via pi-mcp-adapter (.pi/mcp.json)`);
     }
     fs.writeFileSync(path.join(piDir, "settings.json"), JSON.stringify(piSettings, null, 1) + "\n");
+    let removeTrust: (() => void) | undefined;
     try {
       const trustFile = path.join(os.homedir(), ".pi", "agent", "trust.json");
       let trust: Record<string, boolean> = {};
       try {
         trust = JSON.parse(fs.readFileSync(trustFile, "utf-8"));
       } catch { /* first pi use — file created below */ }
-      const trustPath = persona.extra.workdir ? workDir : path.join(os.homedir(), ".fez", "agents", "work");
+      const trustPath = transient || persona.extra.workdir ? workDir : path.join(os.homedir(), ".fez", "agents", "work");
       if (trust[trustPath] !== true) {
         trust[trustPath] = true;
         fs.mkdirSync(path.dirname(trustFile), { recursive: true });
         fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
+        if (transient) removeTrust = () => {
+          const current = JSON.parse(fs.readFileSync(trustFile, "utf8")) as Record<string, boolean>;
+          delete current[trustPath];
+          fs.writeFileSync(trustFile, JSON.stringify(current, null, 2) + "\n");
+        };
         console.log(`🔓 pi project trust granted for ${trustPath}`);
       }
     } catch (err) {
+      if (transient) throw new EvaluationError("Could not apply the selected runtime's evaluation configuration");
       console.warn(`⚠️  couldn't update pi trust — persona provider/model settings may be ignored: ${err instanceof Error ? err.message : err}`);
     }
     if (persona.extra.provider || persona.extra.model) {
       console.log(`🧠 pi mind: ${persona.extra.provider ?? "(default provider)"} / ${persona.extra.model ?? "(default model)"}`);
     }
+    return removeTrust;
   }
+  configureWorkdir(workDir);
 
   // Turn deadlines: SESSION_TIMEOUTS (Buzz's 900s idle / 2h hard — sized
   // above the longest legitimate quiet tool run) unless the persona says
@@ -586,20 +657,12 @@ async function main() {
       process.exit(4);
     }
     try {
-      git(["add", "-A"]);
-      if (!git(["status", "--porcelain"]).toString().trim()) {
-        console.error("FEZ_HIRE_ERROR=the engine finished but changed no files");
-        process.exit(5);
-      }
       emit("committing and pushing the branch");
       const msg = (summary.split("\n").find((l) => l.trim())?.trim() || hireTask).slice(0, 72);
-      git(["-c", `user.name=${personaId}`, "-c", `user.email=${personaId}@fez`, "commit", "-m", msg]);
-      execFileSync("git", ["-c", `http.extraHeader=${nip98()}`, "push", "origin", branchName], { cwd: hireDir, stdio: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+      deliverHire({ dir: hireDir, branch: branchName, personaId, message: msg, authHeader: nip98 });
     } catch (err) {
-      console.error(`FEZ_HIRE_ERROR=commit/push failed: ${(err as Error).message.slice(0, 200)}`);
+      console.error(`FEZ_HIRE_ERROR=${(err as Error).message.replace(/\s+/g, " ")}`);
       process.exit(6);
-    } finally {
-      fs.rmSync(hireDir, { recursive: true, force: true });
     }
     console.log(`FEZ_HIRE_BRANCH=${branchName}`);
     console.log(`FEZ_HIRE_SUMMARY=${(summary.split("\n").find((l) => l.trim())?.trim() || "done").slice(0, 200)}`);
@@ -1153,8 +1216,8 @@ async function main() {
     });
   }
 
-  // ── Session pool — Buzz's per-channel sessions, fez-shaped. One LIVE
-  // harness conversation per scope (channel or DM peer): the persona,
+  // ── Session pool — one LIVE
+  // harness conversation per scope (chat/doc thread or DM participants): the persona,
   // memory, and conventions go in once at open; every later turn is
   // just the new message, and the mind remembers its own earlier turns —
   // including handoffs it issued. This replaces fresh-process-per-turn
@@ -1296,8 +1359,11 @@ async function main() {
     }
     let pooled = await getSession(scope);
     try {
+      signal?.throwIfAborted();
       const instruction = withHandoff(scope, await buildPrompt(!pooled.primed), !pooled.primed);
+      signal?.throwIfAborted();
       const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
+      signal?.throwIfAborted();
       // An empty reply is a FAILED turn, not a publishable one (seen
       // live: pi provider flaked, harness emitted only retry noise, the
       // scrubbed remainder was "" — and an empty message still breaks
@@ -1311,29 +1377,41 @@ async function main() {
     } catch (err) {
       const kind = classifyTurnError(err);
       dropSession(scope); // failed or aborted mid-prompt — never reuse
+      signal?.throwIfAborted();
       if (kind !== "transient") throw err;
       console.log(`↻ transient harness error — recycling session, replaying once: ${err instanceof Error ? err.message : err}`);
       pooled = await getSession(scope);
-      const reply = await pooled.session.prompt(
-        withHandoff(scope, await buildPrompt(true), true),
-        onProgress,
-        onUpdate,
-        signal
-      );
-      // The replay came back empty too — the harness/provider is down,
-      // not blinking. Fail the turn (outer ladder decides what's next).
-      if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down", { cause: err });
-      pooled.primed = true;
-      pooled.turns++;
-      pooled.lastUsed = Date.now();
-      return reply;
+      try {
+        signal?.throwIfAborted();
+        const instruction = withHandoff(scope, await buildPrompt(true), true);
+        signal?.throwIfAborted();
+        const reply = await pooled.session.prompt(instruction, onProgress, onUpdate, signal);
+        signal?.throwIfAborted();
+        // The replay came back empty too — let the outer retry ladder recover.
+        if (!reply.trim()) throw new Error("harness returned an empty reply twice — provider down", { cause: err });
+        pooled.primed = true;
+        pooled.turns++;
+        pooled.lastUsed = Date.now();
+        return reply;
+      } catch (replayError) {
+        dropSession(scope);
+        throw replayError;
+      }
     } finally {
       pooled.busy = false;
       pooled.lastUsed = Date.now();
     }
   }
 
-  const recent = new Map<string, string[]>(); // channelId -> last few messages, as harness context
+  const recent = new Map<string, ChEvent[]>(); // conversation scope -> recent events
+  function remember(scope: string, event: ChEvent): void {
+    const context = recent.get(scope) ?? [];
+    if (!context.some(e => e.id === event.id)) context.push(event);
+    recent.delete(scope);
+    recent.set(scope, context.slice(-10));
+    // Thread count grows over time; bound retained context independently of sessions.
+    if (recent.size > 200) recent.delete(recent.keys().next().value!);
+  }
   // Event-id dedupe: relays can deliver an event more than once (and the
   // startup backfill can overlap the live subscription); without this a
   // duplicate delivery runs a second full turn and double-posts the reply
@@ -1347,42 +1425,67 @@ async function main() {
   // into one coherent turn. Transient turn failures requeue with a
   // backoff ladder (5s → 30s → 120s) before dead-lettering loudly.
   type ChEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
+  type DocTurn = { rootId: string; anchor: string; slug?: string };
+  interface ChannelTurnOptions {
+    redispatch?: boolean;
+    attempts?: number;
+    doc?: DocTurn;
+    steering?: ChEvent[];
+    scope?: string;
+  }
   interface PendingItem {
     scope: string;
     kind: "ch" | "dm";
     chEvent?: ChEvent;
-    chChannelId?: string;
+    doc?: DocTurn;
+    steering?: ChEvent[];
     dm?: DmRumor;
     attempts: number;
     notBefore: number;
   }
-  const SCOPE_QUEUE_CAP = 20;
+  const QUEUE_CAP = 20; // per channel (across threads), or DM conversation
   const RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
-  const pendingByScope = new Map<string, PendingItem[]>();
+  const pendingByScope = new Map<string, (PendingItem & { order: number })[]>();
+  let enqueueOrder = 0;
   const scopeOrder: string[] = [];
 
   function enqueue(item: PendingItem): void {
+    const dedupeId = item.chEvent?.id ?? item.dm?.id;
+    if (pendingByScope.get(item.scope)?.some(existing => (existing.chEvent?.id ?? existing.dm?.id) === dedupeId)) return;
+    const channelId = item.chEvent?.tags.find(t => t[0] === "h")?.[1];
+    // ponytail: scan pending work; index by channel if queue volume makes this hot.
+    const queued = [...pendingByScope.values()].flat().filter(existing => item.kind === "ch"
+      ? existing.kind === "ch" && existing.chEvent?.tags.find(t => t[0] === "h")?.[1] === channelId
+      : existing.scope === item.scope);
+    if (queued.length >= QUEUE_CAP) {
+      const dropped = queued.reduce((oldest, next) => next.order < oldest.order ? next : oldest);
+      const list = pendingByScope.get(dropped.scope)!;
+      list.splice(list.indexOf(dropped), 1);
+      if (list.length === 0) {
+        pendingByScope.delete(dropped.scope);
+        scopeOrder.splice(scopeOrder.indexOf(dropped.scope), 1);
+      }
+      console.warn(`⚠️  queue for ${channelId ?? item.scope} full — dropped oldest (${(dropped.chEvent?.id ?? dropped.dm?.id ?? "?").slice(0, 8)})`);
+    }
     let list = pendingByScope.get(item.scope);
     if (!list) pendingByScope.set(item.scope, (list = []));
-    const dedupeId = item.chEvent?.id ?? item.dm?.id;
-    if (list.some((existing) => (existing.chEvent?.id ?? existing.dm?.id) === dedupeId)) return;
-    if (list.length >= SCOPE_QUEUE_CAP) {
-      const dropped = list.shift();
-      console.warn(`⚠️  queue for ${item.scope} full — dropped oldest (${(dropped?.chEvent?.id ?? dropped?.dm?.id ?? "?").slice(0, 8)})`);
-    }
-    list.push(item);
+    list.push({ ...item, order: enqueueOrder++ });
     if (!scopeOrder.includes(item.scope)) scopeOrder.push(item.scope);
     console.log(`⏳ queued for ${item.scope} (${list.length} pending${item.attempts ? `, attempt ${item.attempts + 1}` : ""})`);
   }
 
   let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  let dispatching = false;
   function drainNext(): void {
-    if (busy) return;
+    if (busy || dispatching) return;
     const now = Date.now();
     for (let i = 0; i < scopeOrder.length; i++) {
       const scope = scopeOrder[i];
       const list = pendingByScope.get(scope) ?? [];
-      const ready = list.filter((item) => item.notBefore <= now);
+      let ready = list.filter((item) => item.notBefore <= now);
+      // Each result needs its own review/acceptance context; batching
+      // would expose only the last result id to the coordinator.
+      if (ready.some(item => item.chEvent?.tags.some(t => t[0] === "result"))) ready = ready.slice(0, 1);
       if (ready.length === 0) {
         if (list.length === 0) {
           pendingByScope.delete(scope);
@@ -1391,10 +1494,15 @@ async function main() {
         }
         continue;
       }
-      pendingByScope.set(scope, list.filter((item) => item.notBefore > now));
+      pendingByScope.set(scope, list.filter((item) => !ready.includes(item)));
       scopeOrder.splice(i, 1);
       scopeOrder.push(scope); // rotate: next drain favors other scopes
-      dispatchBatch(scope, ready);
+      // Reserve the slot through asynchronous admission, including early rejection.
+      dispatching = true;
+      void dispatchBatch(scope, ready).finally(() => {
+        dispatching = false;
+        drainNext();
+      });
       return;
     }
     // Nothing ready — wake when the earliest backoff expires.
@@ -1409,17 +1517,18 @@ async function main() {
     }
   }
 
-  function dispatchBatch(scope: string, items: PendingItem[]): void {
+  async function dispatchBatch(scope: string, items: PendingItem[]): Promise<void> {
     const attempts = Math.max(...items.map((item) => item.attempts));
     if (items[0].kind === "ch") {
-      // Batch: earlier messages ride the steering channel (the prompt
-      // already frames them as "these also arrived — weave them in").
       const last = items[items.length - 1];
-      for (const item of items.slice(0, -1)) {
-        steerMessages.push(`${who(item.chEvent!.pubkey)}: ${item.chEvent!.content}`);
-      }
+      const steering = [...new Map(items.flatMap(item => [
+        ...(item.steering ?? []), ...(item === last ? [] : [item.chEvent!]),
+      ]).filter(event => event.id !== last.chEvent!.id).map(event => [event.id, event])).values()];
       if (items.length > 1) console.log(`📦 batching ${items.length} queued messages for ${scope} into one turn`);
-      setTimeout(() => void handleChannelMessage(last.chEvent!, true, attempts), 100);
+      const doc = last.doc ? { ...last.doc,
+        anchor: last.doc.anchor || items.find(item => item.doc?.anchor)?.doc?.anchor || "",
+      } : undefined;
+      await handleChannelMessage(last.chEvent!, { redispatch: true, attempts, doc, steering, scope });
     } else {
       const last = items[items.length - 1];
       const merged: DmRumor =
@@ -1428,7 +1537,7 @@ async function main() {
           : last.dm!;
       if (items.length > 1) console.log(`📦 batching ${items.length} queued DMs for ${scope} into one turn`);
       seenEventIds.delete(merged.id);
-      setTimeout(() => void handleDm(merged, false, attempts), 100);
+      await handleDm(merged, false, attempts, true);
     }
   }
 
@@ -1440,7 +1549,9 @@ async function main() {
   const onBusy = process.env.FEZ_AGENT_ON_BUSY === "queue" ? "queue" : "steer";
   let turnController: AbortController | undefined;
   let turnKind: "ch" | "dm" | undefined; // steer may only abort CHANNEL turns; cancel aborts either
-  const steerMessages: string[] = [];
+  let activeScope: string | undefined;
+  let turnAcceptsSteering = false;
+  const steerMessages: ChEvent[] = [];
 
   // Mention = p-tag (the normal path) OR the agent's own @name in the
   // content. The name fallback exists for the auto-spawn bootstrap: a
@@ -1452,24 +1563,17 @@ async function main() {
   const isMention = (event: { pubkey: string; content: string; tags: string[][] }) =>
     isAddressedTo(event, personaId!, myPubkey, owner, persona.aliases ?? []);
 
+  const completedHandoffs = new Set<string>();
+  async function completionRequest(event: ChEvent): Promise<ChEvent | undefined> {
+    const id = event.tags.find(t => t[0] === "result")?.[1];
+    if (!id) return;
+    const [request] = await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [id], authors: [myPubkey] }]);
+    if (request && workResultForAgent(event, request)) return request;
+  }
+
   const handleChannelMessage = async (
-    event: {
-      id: string;
-      pubkey: string;
-      created_at: number;
-      content: string;
-      tags: string[][];
-    },
-    /** true for our own deliberate re-entries (steer re-dispatch, queue drain) — they reuse a seen event. */
-    redispatch = false,
-    attempts = 0,
-    /**
-     * Set when the trigger is a DOC COMMENT (40101) rather than a chat
-     * message: the whole turn then lives in the document — the reply is
-     * published back into the comment thread, and nothing (no draft, no
-     * typing, no message) touches the channel timeline.
-     */
-    doc?: { rootId: string; anchor: string; slug?: string }
+    event: ChEvent,
+    { redispatch = false, attempts = 0, doc, steering = [], scope: queuedScope }: ChannelTurnOptions = {}
   ): Promise<void> => {
       const channelId = event.tags.find((t) => t[0] === "h")?.[1];
       if (!channelId || event.pubkey === myPubkey) return;
@@ -1477,17 +1581,16 @@ async function main() {
       seenEventIds.add(event.id);
       if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
 
-      const context = recent.get(channelId) ?? [];
-      context.push(`${who(event.pubkey)}: ${event.content}`);
-      recent.set(channelId, context.slice(-10));
-
-      const mentioned = isMention(event);
-      // The owner is implicitly a member of their own workspace — the
-      // same rule every client applies (workspace-state isMember). An
-      // owner-less roster write once deafened every agent to the owner
-      // for a day, silently; the implicit check plus the log line below
-      // make that failure impossible-and-loud instead of silent.
+      const { rootId: triggerRoot } = parseThreadRef(event.tags);
+      const scope = queuedScope ?? (doc
+        ? `doc:${JSON.stringify([doc.slug ? "wiki" : "channel", doc.slug || channelId, doc.rootId.toLowerCase()])}`
+        : `ch:${JSON.stringify([channelId, (triggerRoot ?? event.id).toLowerCase()])}`);
+      const isResult = event.tags.some(t => t[0] === "result");
+      const completedRequest = !doc && isResult ? await completionRequest(event).catch(() => undefined) : undefined;
+      const mentioned = isResult ? !!completedRequest : isMention(event);
+      // The owner is implicitly a member, even when omitted from the roster.
       const authorIsMember = roster.members.has(event.pubkey) || event.pubkey === owner;
+      if (!redispatch && authorIsMember) remember(scope, event);
 
       if (!mentioned) return;
       if (!(await authorAllowed(event.pubkey))) return;
@@ -1523,20 +1626,33 @@ async function main() {
         return;
       }
 
+      if (completedRequest && !redispatch) {
+        const key = `${completedRequest.id}:${event.pubkey}`;
+        if (completedHandoffs.has(key)) return;
+        completedHandoffs.add(key);
+        // ponytail: bounded process-local duplicate guard; startup also checks signed replies.
+        if (completedHandoffs.size > 2000) completedHandoffs.delete(completedHandoffs.values().next().value!);
+      }
+
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
-      if (busy) {
-        if (onBusy === "steer" && turnController && turnKind === "ch") {
-          steerMessages.push(`${who(event.pubkey)}: ${event.content}`);
+      if (busy || (dispatching && !redispatch)) {
+        if (!completedRequest && onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
+          steerMessages.push(...steering, event);
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
         } else {
-          enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: 0, notBefore: 0 });
+          enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts, notBefore: 0 });
         }
         return;
       }
 
       busy = true;
+      activeScope = scope;
+      turnController = new AbortController();
+      turnKind = "ch";
+      turnAcceptsSteering = true;
+      cancelRequested = false;
       lastAcceptedAt = Date.now();
       turnTimes.push(Date.now());
 
@@ -1578,9 +1694,7 @@ async function main() {
       // thread-scoped typing; a plain channel mention means channel-scoped
       // — the mentioning user is looking at the channel view, and a
       // thread-scoped indicator there would be invisible to them.
-      const typingThreadRoot =
-        event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ??
-        event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
+      const typingThreadRoot = triggerRoot;
       const typing = setInterval(() => {
         if (doc) return; // a doc-comment turn never touches the channel timeline
         void relay
@@ -1596,19 +1710,11 @@ async function main() {
           )
           .catch(() => {});
       }, 3000);
-      turnController = new AbortController();
-      turnKind = "ch";
-      cancelRequested = false;
       turnUsage = undefined;
       const turnStartedAt = Date.now();
-      // Steering guidance consumed into this turn's prompt (Buzz frames
-      // steered messages as "arrived while you were working — weave in").
-      const steering = steerMessages.splice(0);
       // NIP-10 markers, Buzz's exact shape (threading.ts) — computed
       // BEFORE the try so drafts, the reply, and the failure notice all
       // carry the same thread tags.
-      const triggerParent = event.tags.filter((t) => t[0] === "e" && t[3] === "reply").at(-1)?.[1];
-      const triggerRoot = event.tags.find((t) => t[0] === "e" && t[3] === "root")?.[1] ?? triggerParent;
       // A doc-comment turn answers INSIDE the document: a 40101 reply
       // e-tagged to the comment root. Chat threading tags don't apply.
       const replyTags = doc
@@ -1652,8 +1758,14 @@ async function main() {
 
         const buildPrompt = async (fresh: boolean): Promise<string> => {
           const memory = memoryPromptParts(await coreMemoryState());
+          const workNotice = completedRequest
+            ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then deliver the outcome to the original user. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
+            : !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
+              ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, a summary, capability, and artifact URLs/event ids. This publishes your result and calls back to the requester automatically; do not send a separate callback or acceptance. Report blockers as error, never as success.`
+              : undefined;
           if (!fresh) {
             return [
+              ...(workNotice ? [workNotice] : []),
               // Core rides EVERY turn, not just the fresh prompt: the
               // harness compacts its own context, and a compaction that
               // drops your identity is how an agent quietly becomes
@@ -1664,7 +1776,7 @@ async function main() {
               ...(steering.length > 0
                 ? [
                     `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response:`,
-                    ...steering,
+                    ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
                   ]
                 : []),
               docFraming
@@ -1674,6 +1786,7 @@ async function main() {
           }
           return [
             persona.systemPrompt ?? "",
+            ...(workNotice ? [workNotice] : []),
             ...(memory.section ? [memory.section] : []),
             ...(skillsSection ? [skillsSection] : []),
             `You are @${personaId}, responding in a group chat channel where humans and other agents talk. This session is ONGOING — later messages arrive as new turns in the same conversation, so remember what you said and did. Two conventions matter:`,
@@ -1737,11 +1850,12 @@ async function main() {
             `- Fez tools: you have fez_* MCP tools — fez_send_message, fez_read_channel, fez_send_dm, fez_search, fez_mem_set/get/list, fez_doc_get/append, fez_list_agents. Prefer them over \`fez\` shell commands.`,
             `- Channel doc: this channel has one shared markdown document. When asked to record findings/notes/conclusions in "the doc", APPEND — shell: fez doc append --channel ${channelId} "<markdown, \\n for newlines>" (appends never clobber another agent's edit). Read it first with fez doc get --channel ${channelId}. Only \`fez doc set\` (full replace) when someone explicitly asks for a rewrite.`,
             `Recent messages:`,
-            ...(recent.get(channelId) ?? []),
+            ...(recent.get(scope) ?? []).filter(e => e.id !== event.id).map(e => `${who(e.pubkey)}: ${e.content}`),
+            `Current request from ${who(event.pubkey)}: ${event.content}`,
             ...(steering.length > 0
               ? [
                   `While you were composing a reply, these follow-up messages arrived — weave them into one coherent response rather than answering separately:`,
-                  ...steering,
+                  ...steering.map(e => `${who(e.pubkey)}: ${e.content}`),
                 ]
               : []),
             // Next to the trigger, as work for THIS turn — the ambient
@@ -1779,12 +1893,27 @@ async function main() {
         publishObserver({ type: "turn", status: "started", ...(triggerRoot ? { root: triggerRoot } : {}) });
         const onUpdate = makeOnUpdate();
         const rawReply = await promptSession(
-          `ch:${channelId}`,
+          scope,
           withNotice(buildPrompt, attachmentPrompt(event)),
           publishDraft,
           onUpdate,
           turnController.signal
         );
+        turnAcceptsSteering = false;
+        if (turnController.signal.aborted) throw Object.assign(new Error("turn aborted"), { name: "AbortError" });
+        // The completion tool already posted the signed, threaded result.
+        // Do not post the model's tool acknowledgment as a second delivery.
+        if (!doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)) {
+          const submitted = await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#result": [event.id] }]);
+          const result = submitted.find(r => workResult(r, event));
+          if (result) {
+            remember(scope, result);
+            publishObserver({ type: "turn", status: "done" });
+            publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, result.content.length, event.id);
+            consecutiveFailures = 0;
+            return;
+          }
+        }
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
@@ -1796,12 +1925,21 @@ async function main() {
           myPubkey,
           ...replyTags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
         ]).catch(() => []);
+        const assignments: string[][] = [];
+        if (!doc) {
+          for (const name of addressees(reply)) {
+            const pk = await pubkeyForName(name);
+            // A callback to the caller is not a new assignment.
+            if (pk && pk !== myPubkey && pk !== owner && pk !== event.pubkey && await isSibling(pk)) assignments.push(["task", pk]);
+          }
+        }
         const replyEvent = client.signEvent({
           kind: replyKind,
-          tags: [...replyTags, ...mentioned],
+          tags: [...replyTags, ...mentioned, ...assignments],
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
         await relay.publish(replyEvent);
+        remember(scope, replyEvent);
         // Tag the artifact with the conversation's thread root, so a
         // client can scope it to the thread that built it (triggerRoot in
         // an existing thread; the message we're replying to when a
@@ -1823,7 +1961,11 @@ async function main() {
         publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, reply.length, event.id);
         consecutiveFailures = 0;
         console.log(`✅ Replied (${reply.length} chars)`);
-      } catch (err) {
+      } catch (caught) {
+        turnAcceptsSteering = false;
+        // Opening/replaying a session may fail without observing cancellation.
+        // Steering still owns that exit; retrying first would discard its follow-ups.
+        const err = turnController?.signal.aborted ? turnController.signal.reason : caught;
         if (err instanceof Error && err.name === "AbortError" && cancelRequested) {
           // Owner cancel — the turn just STOPS. No steer re-dispatch, and
           // an honest threaded notice instead of silence.
@@ -1845,7 +1987,7 @@ async function main() {
           publishObserver({ type: "turn", status: "retrying" });
           const delay = RETRY_DELAYS_MS[attempts];
           console.warn(`↻ transient turn failure — retry ${attempts + 1}/${RETRY_DELAYS_MS.length} in ${delay / 1000}s: ${err instanceof Error ? err.message.slice(0, 120) : err}`);
-          enqueue({ scope: `ch:${channelId}`, kind: "ch", chEvent: event, chChannelId: channelId, attempts: attempts + 1, notBefore: Date.now() + delay });
+          enqueue({ scope, kind: "ch", chEvent: event, doc, steering, attempts: attempts + 1, notBefore: Date.now() + delay });
         } else {
           publishObserver({ type: "turn", status: "failed" });
           publishTurnMetric(`ch:${channelId}`, "failed", turnStartedAt, 0, event.id);
@@ -1902,15 +2044,15 @@ async function main() {
         clearInterval(typing);
         turnController = undefined;
         turnKind = undefined;
+        activeScope = undefined;
+        turnAcceptsSteering = false;
         busy = false;
         if (steerMessages.length > 0) {
-          // Steered: re-dispatch the SAME trigger — the unconsumed steer
-          // messages get woven into the merged prompt.
-          setTimeout(() => void handleChannelMessage(event, true), 250);
-        } else {
-          // Drain: the next scope with ready work gets a (batched) turn.
-          setTimeout(drainNext, 250);
+          const followups = steerMessages.splice(0);
+          if (!cancelRequested) enqueue({ scope, kind: "ch", chEvent: event, doc,
+            steering: [...steering, ...followups], attempts, notBefore: 0 });
         }
+        drainNext();
       }
   };
 
@@ -1940,7 +2082,7 @@ async function main() {
     await relay.publish(toSelf);
   };
 
-  const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0): Promise<void> => {
+  const handleDm = async (dm: DmRumor, fromBacklog = false, attempts = 0, redispatch = false): Promise<void> => {
     if (seenEventIds.has(dm.id)) return;
     seenEventIds.add(dm.id);
     if (seenEventIds.size > 2000) seenEventIds.delete(seenEventIds.values().next().value as string);
@@ -1986,8 +2128,8 @@ async function main() {
     }
     if (Date.now() < breakerUntil) return;
 
-    if (busy) {
-      enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts: 0, notBefore: 0 });
+    if (busy || (dispatching && !redispatch)) {
+      enqueue({ scope: `dm:${convoKey}`, kind: "dm", dm, attempts, notBefore: 0 });
       return;
     }
 
@@ -1996,6 +2138,7 @@ async function main() {
     turnTimes.push(Date.now());
     turnController = new AbortController();
     turnKind = "dm";
+    activeScope = `dm:${convoKey}`;
     cancelRequested = false;
     turnUsage = undefined;
     const turnStartedAt = Date.now();
@@ -2084,7 +2227,8 @@ async function main() {
       busy = false;
       turnController = undefined;
       turnKind = undefined;
-      setTimeout(drainNext, 250);
+      activeScope = undefined;
+      drainNext();
     }
   };
 
@@ -2094,9 +2238,7 @@ async function main() {
   // — otherwise every restart re-answers the last DM.
   let dmLive = false;
   /**
-   * A comment on a doc/page that addresses us. Replies (e-tagged to a
-   * root) are other people's thread traffic — only ROOT comments are
-   * requests, and only if they mention us. The turn runs through the
+   * A comment or follow-up on a doc/page that addresses us runs through the
    * same machinery as a chat mention, but tagged as a doc turn so the
    * answer goes back into the margin instead of the channel.
    */
@@ -2113,10 +2255,10 @@ async function main() {
     const parent = event.tags.find((t) => t[0] === "e")?.[1];
     // A reply that mentions us is still a request — answer in that same
     // thread (its root), not a new one.
-    const rootId = parent ?? event.id;
+    const rootId = parent && /^[0-9a-f]{64}$/i.test(parent) ? parent.toLowerCase() : event.id;
     await resolveName(event.pubkey);
     console.log(`📝 Doc comment from ${who(event.pubkey)} on ${slug ? `page "${slug}"` : "the channel doc"}`);
-    await handleChannelMessage(event, false, 0, { rootId, anchor, slug });
+    await handleChannelMessage(event, { doc: { rootId, anchor, slug } });
   };
 
   const dmBacklog: DmRumor[] = [];
@@ -2126,12 +2268,16 @@ async function main() {
     for (const dm of dmBacklog.splice(0)) void handleDm(dm, true);
   }, 2500);
 
+  let startupBackfillStarted = false;
+  const backfillSince = Math.floor(Date.now() / 1000) - 120;
   relay.subscribe(
     [
       ...(channels.length > 0
         ? [
             { kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) },
-            { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D], since: Math.floor(Date.now() / 1000) },
+            // Replay the latest roster too: enrollment can land between
+            // the initial snapshot and this subscription.
+            { kinds: [KIND_MEMBERSHIP], "#d": [ROSTER_D] },
           ]
         : []),
       // Doc comments addressed to us: work handed over INSIDE a document.
@@ -2143,6 +2289,7 @@ async function main() {
     (event) => {
       if (event.kind === KIND_MEMBERSHIP) {
         absorbMembership(event);
+        void backfillStartup().catch(err => console.error("Startup request recovery failed:", err));
         return;
       }
       if (event.kind === KIND_DOC_COMMENT) {
@@ -2160,48 +2307,77 @@ async function main() {
     }
   );
 
-  // Backfill: an auto-spawned agent starts seconds AFTER the mention that
-  // summoned it — the live subscription (since: now) misses it. Pick up
-  // the most recent unanswered mention from the last two minutes.
-  const BACKFILL_WINDOW_S = 120;
-  const [recentMessages, ownReplies] = channels.length === 0 ? [[], []] : await Promise.all([
-    relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }]),
-    relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }]),
-  ]);
-  const answered = new Set(
-    ownReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e" && t[3] === "reply").map((t) => t[1]))
-  );
-  const pending = recentMessages
-    .filter((e) => e.pubkey !== myPubkey && isMention(e) && !answered.has(e.id))
-    .sort((a, b) => a.created_at - b.created_at)
-    .at(-1);
-  // Same race for doc comments: the comment that summoned us predates the
-  // live subscription. Only unanswered roots addressed to us.
-  const recentComments = await relay
-    .query([{ kinds: [KIND_DOC_COMMENT], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }])
-    .catch(() => []);
-  const myCommentReplies = await relay
-    .query([{ kinds: [KIND_DOC_COMMENT], authors: [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }])
-    .catch(() => []);
-  const answeredComments = new Set(myCommentReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])));
-  const pendingComment = recentComments
-    .filter((e) => e.pubkey !== myPubkey && !answeredComments.has(e.id))
-    .sort((a, b) => a.created_at - b.created_at)
-    .at(-1);
-  if (pendingComment) {
-    console.log(`⏪ Backfilling doc comment from ${pendingComment.pubkey.slice(0, 8)}…`);
-    setTimeout(() => void handleDocComment(pendingComment), 3000);
-  }
+  async function backfillStartup(): Promise<void> {
+    // A successful empty history query before enrollment means "not
+    // allowed to read yet", not "no request". Recover only once access
+    // arrives, keeping the original cutoff and the live-event dedupe.
+    if (startupBackfillStarted || (channels.length > 0 && !roster.members.has(myPubkey))) return;
+    startupBackfillStarted = true;
+    // Backfill: an auto-spawned agent starts seconds AFTER the mention that
+    // summoned it — the live subscription (since: now) misses it. Pick up
+    // the most recent unanswered mention from the last two minutes.
+    const [recentMessages, ownReplies] = channels.length === 0 ? [[], []] : await Promise.all([
+      relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: backfillSince }]),
+      relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], since: backfillSince }]),
+    ]);
+    const answered = new Set(
+      ownReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e" && t[3] === "reply").map((t) => t[1]))
+    );
+    // Results remain work after the startup mention window. Recover the
+    // latest bounded batch and use signed replies to avoid reviewing twice.
+    // ponytail: latest 200 results; paginate when offline backlogs exceed this.
+    const results = channels.length === 0 ? [] : await relay.query([{
+      kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, "#p": [myPubkey], "#status": ["success", "error"], limit: 200,
+    }]);
+    const requestIds = [...new Set(results.flatMap(e => e.tags.filter(t => t[0] === "result").map(t => t[1])))];
+    if (requestIds.length) {
+      const [requests, responses] = await Promise.all([
+        relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], ids: requestIds }]),
+        relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#e": results.map(e => e.id) }]),
+      ]);
+      const answeredResults = new Set(responses.flatMap(e => e.tags.filter(t => t[0] === "e" && t[3] === "reply").map(t => t[1])));
+      const valid = results.flatMap(result => {
+        const request = requests.find(r => workResultForAgent(result, r));
+        return request ? [{ result, key: `${request.id}:${result.pubkey}` }] : [];
+      });
+      for (const { result, key } of valid) if (answeredResults.has(result.id)) completedHandoffs.add(key);
+      for (const { result, key } of valid.sort((a, b) => a.result.created_at - b.result.created_at)) {
+        if (!completedHandoffs.has(key)) setTimeout(() => void handleChannelMessage(result), 3000);
+      }
+    }
+    const pending = recentMessages
+      .filter((e) => e.pubkey !== myPubkey && !e.tags.some(t => t[0] === "result") && isMention(e) && !answered.has(e.id))
+      .sort((a, b) => a.created_at - b.created_at)
+      .at(-1);
+    // Same race for doc comments: the comment that summoned us predates the
+    // live subscription. Only unanswered roots addressed to us.
+    const recentComments = await relay
+      .query([{ kinds: [KIND_DOC_COMMENT], "#p": [myPubkey], since: backfillSince }])
+      .catch(() => []);
+    const myCommentReplies = await relay
+      .query([{ kinds: [KIND_DOC_COMMENT], authors: [myPubkey], since: backfillSince }])
+      .catch(() => []);
+    const answeredComments = new Set(myCommentReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])));
+    const pendingComment = recentComments
+      .filter((e) => e.pubkey !== myPubkey && !answeredComments.has(e.id))
+      .sort((a, b) => a.created_at - b.created_at)
+      .at(-1);
+    if (pendingComment) {
+      console.log(`⏪ Backfilling doc comment from ${pendingComment.pubkey.slice(0, 8)}…`);
+      setTimeout(() => void handleDocComment(pendingComment), 3000);
+    }
 
-  if (pending) {
-    console.log(`⏪ Backfilling mention from ${pending.pubkey.slice(0, 8)}… (${Math.floor(Date.now() / 1000) - pending.created_at}s ago)`);
-    // Small grace so an auto-spawn /invite (published once our 47000 is
-    // seen) lands before our reactions/reply — non-member events get
-    // dropped by clients.
-    // Backfill deliberately KEEPS the dedupe: if the live subscription
-    // already delivered this event, a second turn is exactly the bug.
-    setTimeout(() => void handleChannelMessage(pending), 3000);
+    if (pending) {
+      console.log(`⏪ Backfilling mention from ${pending.pubkey.slice(0, 8)}… (${Math.floor(Date.now() / 1000) - pending.created_at}s ago)`);
+      // Small grace so an auto-spawn /invite (published once our 47000 is
+      // seen) lands before our reactions/reply — non-member events get
+      // dropped by clients.
+      // Backfill deliberately KEEPS the dedupe: if the live subscription
+      // already delivered this event, a second turn is exactly the bug.
+      setTimeout(() => void handleChannelMessage(pending), 3000);
+    }
   }
+  await backfillStartup();
 
   process.on("SIGINT", () => {
     clearInterval(heartbeat);
@@ -2213,6 +2389,12 @@ async function main() {
 }
 
 main().catch(async (err) => {
+  if (process.env.FEZ_EVALUATION_CHECK === "1" || process.env.FEZ_EVALUATION_REQUEST !== undefined) {
+    const message = err instanceof EvaluationError ? err.message : "Evaluation startup failed; check the selected runtime and enabled tools";
+    console.error(`FEZ_EVALUATION_ERROR=${JSON.stringify({ message, ...(err instanceof EvaluationError ? err.observation : {}) })}`);
+    process.exitCode = 1;
+    return;
+  }
   console.error("FAILED:", err);
   // Say it WHERE THE SUMMONS CAME FROM, not just to a log in a tab
   // nobody watches. A spawn that dies before its first turn — a

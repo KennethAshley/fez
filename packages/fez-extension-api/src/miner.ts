@@ -84,6 +84,8 @@ export interface ConfigField {
   options?: string[];                           // for type "select"
   required?: boolean;
   help?: string;
+  /** Full-value validation for identifiers such as repository URLs and commit SHAs. */
+  pattern?: string;
 }
 
 /**
@@ -110,6 +112,8 @@ export interface MinerContainer {
 
 export interface SubnetMiner {
   netuid: number;
+  /** Reject a wallet on another network before registration or provisioning. */
+  network?: "test" | "finney";
   /** Short human name shown in the GUI row ("bazaar"). */
   name: string;
   requirements?: {
@@ -121,6 +125,19 @@ export interface SubnetMiner {
     publicEndpoint?: boolean;
   };
   config?: ConfigField[];
+  /** Local development is separate from enrollment, deployment and paid upload. */
+  development?: {
+    instructions: string;
+    evaluate?: (ctx: SubmissionContext, sourcePath: string) => Promise<{
+      evaluator: string;
+      dataset: string;
+      metrics: Record<string, number>;
+      detail: string;
+      costUsd?: number;
+    }>;
+  };
+  /** Uploaded jobs run by validators; never provision or supervise a local runner. */
+  submission?: MinerSubmission;
   /** One-time machine setup (clone, deps). MUST be idempotent — the runner calls it every start. */
   install?(ctx: MinerContext): Promise<void>;
   /**
@@ -139,4 +156,47 @@ export interface SubnetMiner {
   container?: MinerContainer;
   /** Subnet-side health beyond process-alive. */
   status?(ctx: MinerContext): Promise<MinerStatus>;
+}
+
+export interface SubmissionVersion {
+  id: string;
+  name: string;
+  version: number;
+  createdAt: string;
+  activatedAt: string | null;
+}
+
+export interface SubmissionStatus {
+  hotkey: string;
+  uid?: number;
+  phase: "not-submitted" | "pending" | "active" | "failed";
+  versions: SubmissionVersion[];
+  checkedAt: string;
+  activeVersionId?: string;
+  nextUploadAt?: string;
+  detail: string;
+}
+
+export interface SubmissionContext {
+  persona: string;
+  hotkey?: string;
+  walletBin: string;
+  /** Local per-miner directory for candidate test receipts, never private keys. */
+  workDir: string;
+  config: Record<string, string | number | boolean>;
+}
+
+export interface SubmissionTest {
+  sha256: string;
+  prediction?: number;
+  detail: string;
+}
+
+export interface MinerSubmission {
+  /** Subnet-specific consequences shown before the user confirms an upload. */
+  notice?: string;
+  status(ctx: SubmissionContext): Promise<SubmissionStatus>;
+  test(ctx: SubmissionContext, sourcePath: string): Promise<SubmissionTest>;
+  /** Must refuse changed or untested bytes. This never registers a wallet. */
+  submit(ctx: SubmissionContext, sourcePath: string, sha256: string): Promise<SubmissionStatus>;
 }

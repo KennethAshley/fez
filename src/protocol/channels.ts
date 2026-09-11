@@ -54,7 +54,7 @@ export interface ChannelRef {
 }
 
 export interface ChannelsAccess {
-  /** Every channel the owner has signed into being. */
+  /** Active channels the owner has signed into being. */
   list(): Promise<ChannelRef[]>;
   /**
    * The channel for this thing, opening it if it isn't open.
@@ -97,7 +97,8 @@ export function makeChannels(nostr: NostrAccess, ownerPubkey: string): ChannelsA
       const id = event.tags.find((t) => t[0] === "d")?.[1];
       if (!id) continue;
       try {
-        const parsed = JSON.parse(event.content) as { name?: string; source?: unknown; meta?: unknown };
+        const parsed = JSON.parse(event.content) as { name?: string; source?: unknown; meta?: unknown; archived?: boolean };
+        if (parsed.archived === true) { byId.delete(id); continue; }
         if (!parsed.name) continue;
         byId.set(id, {
           id,

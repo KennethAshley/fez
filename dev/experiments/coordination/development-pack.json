@@ -1,0 +1,670 @@
+{
+  "version": "fez-coordination-dev-1",
+  "status": "public-development-only",
+  "description": "18 public tasks: six coding, six writing, six combined. Combined tasks reuse the six coding scenarios; these are not 18 independent problem samples. Only the invoice fixture reproduces a recorded specialist hire; other repository fixtures are deliberately broken reconstructions.",
+  "provenance": [
+    {
+      "path": "docs/experiments/2026-09-09-bazaar-lebron-repo/report.md",
+      "sha256": "0b954f9a1ea38aab3a28ecd9ff709749c161441e27a3d1860ed16084160fd97a"
+    },
+    {
+      "path": "src/agent/mentions.ts",
+      "sha256": "6bc0e3abc4d3752f353106470497eb86ac7e426f4d9d9b88918532effa14d1f6"
+    },
+    {
+      "path": "src/identity/author-gate.ts",
+      "sha256": "adf944e509e6544d3e70006e62706196ffb35bccfc2858ae8759eb13d588477d"
+    },
+    {
+      "path": "packages/fez-evals/tests/history-loading.test.ts",
+      "sha256": "b9ca53ed585246ba349a9647aae2b644a97daebfe7c9dde31ea6fb942dd24d2c"
+    },
+    {
+      "path": "packages/fez-orchestrator/src/route-logic.ts",
+      "sha256": "0bec1830729c03dcc04be95c831d1cb761a45cb4dd0baeb2053091e88eb697ca"
+    },
+    {
+      "path": "packages/fez-acp/src/hire-delivery.ts",
+      "sha256": "9535de70a17774e43283cbac340d3630a60c11ec4c5503d0f8b8789d03f2c104"
+    },
+    {
+      "path": "packages/fez-desktop/src/welcome-core.ts",
+      "sha256": "cbe299ce91852a57b8569a14f65be19dcb3652e4feccf3685ab7cbfbf88f15af"
+    }
+  ],
+  "fixtures": {
+    "invoice": {
+      "starter": "export function invoiceBalance(invoiceCents, payments) {\n  if (!Number.isSafeInteger(invoiceCents) || invoiceCents < 0) {\n    throw new TypeError(\"invalid invoice amount\");\n  }\n  let paid = 0;\n  for (const payment of payments) {\n    if (!payment || typeof payment.ref !== \"string\" || !payment.ref.trim() || !Number.isSafeInteger(payment.cents)) {\n      throw new TypeError(\"invalid payment\");\n    }\n    paid += payment.cents;\n  }\n  return invoiceCents - paid;\n}\n",
+      "reference": "export function invoiceBalance(invoiceCents, payments) {\n  if (!Number.isSafeInteger(invoiceCents) || invoiceCents < 0) {\n    throw new TypeError(\"invalid invoice amount\");\n  }\n  const seen = new Map();\n  let paid = 0;\n  for (const payment of payments) {\n    if (!payment || typeof payment.ref !== \"string\" || !payment.ref.trim() || !Number.isSafeInteger(payment.cents)) {\n      throw new TypeError(\"invalid payment\");\n    }\n    if (seen.has(payment.ref)) {\n      if (seen.get(payment.ref) !== payment.cents) {\n        throw new TypeError(\"conflicting payment reference\");\n      }\n      continue;\n    }\n    seen.set(payment.ref, payment.cents);\n    paid += payment.cents;\n  }\n  return invoiceCents - paid;\n}\n",
+      "checks": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { invoiceBalance as balance } from './task.mjs';\ntest('payments, refunds, credits and validation survive', () => {\n  assert.equal(balance(12500, [{ref:'pay',cents:5000},{ref:'refund',cents:-1000}]), 8500);\n  assert.equal(balance(8000, [{ref:'pay',cents:10000}]), -2000);\n  assert.equal(balance(0, []), 0);\n  for (const n of [-1, 0.1, NaN]) assert.throws(() => balance(n, []), TypeError);\n  for (const p of [null, {ref:' ',cents:1}, {ref:'x',cents:NaN}]) assert.throws(() => balance(100, [p]), TypeError);\n});\ntest('reference identity deduplicates repeats and rejects conflicting amounts', () => {\n  assert.equal(balance(12500, [{ref:'p',cents:5000},{ref:'r',cents:-1000},{ref:'p',cents:5000}]), 8500);\n  assert.equal(balance(0, [{ref:'r',cents:-100},{ref:'r',cents:-100}]), 100);\n  assert.equal(balance(1000, [{ref:'a',cents:300},{ref:'b',cents:300}]), 400);\n  assert.throws(() => balance(1000, [{ref:'a',cents:300},{ref:'a',cents:-300}]), TypeError);\n  assert.throws(() => balance(1000, [{ref:'a',cents:300},{ref:'a',cents:NaN}]), TypeError);\n});\ntest('prototype-like references and frozen caller data work', () => {\n  assert.equal(balance(1000, [{ref:'__proto__',cents:100},{ref:'toString',cents:200},{ref:'__proto__',cents:100}]), 700);\n  const input = Object.freeze([Object.freeze({ref:'a',cents:100}), Object.freeze({ref:'a',cents:100})]);\n  assert.equal(balance(500, input), 400);\n});\n",
+      "origin": {
+        "kind": "exact recorded hire seed and recovered solution",
+        "seedCommit": "e7445ed934ad33acb6e808f864f8876a670c0321",
+        "resultCommit": "6746e6e78b126a6f81f6afbb5a8bacbdbd7172f7",
+        "originalFile": "invoice.mjs",
+        "seedSha256": "78e904d990c5e27d656a74567d5a72fa594c77b5005df4666af152fc6ed4e36d"
+      }
+    },
+    "mentions": {
+      "starter": "export function mentionedNames(content) {\n  return [...content.matchAll(/@([\\w-]+)/g)].map(m => m[1]);\n}\n",
+      "reference": "export function mentionedNames(content) {\n  const names = [];\n  for (const match of content.matchAll(/(?:^|[^\\w@/])@([\\w-]+)/g)) {\n    const name = match[1].toLowerCase();\n    if (!names.includes(name)) names.push(name);\n  }\n  return names;\n}\n",
+      "checks": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { mentionedNames as names } from './task.mjs';\ntest('recognizes explicit names in first-seen order, case-insensitively', () => {\n  assert.deepEqual(names('@Quill ask @drift then @QUILL'), ['quill','drift']);\n  assert.deepEqual(names('(@build-bot), @agent_2!'), ['build-bot','agent_2']);\n  assert.deepEqual(names(''), []);\n});\ntest('email, path, double-at and embedded word fragments do not summon agents', () => {\n  assert.deepEqual(names('ken@example.com user@host /@quill @@drift x@builder'), []);\n  assert.deepEqual(names('ken@example.com; @Quill please'), ['quill']);\n});\ntest('newlines and punctuation still address agents', () => {\n  assert.deepEqual(names('hello\\n@Quill: review; @drift?'), ['quill','drift']);\n});\n"
+    },
+    "author-gate": {
+      "starter": "export function authorAllowed({mode, allowlist, author, owner, isSibling}) {\n  if (!owner || mode === 'anyone') return true;\n  return author === owner || allowlist.includes(author) || isSibling;\n}\n",
+      "reference": "export function authorAllowed({mode, allowlist, author, owner, isSibling}) {\n  const who = author.trim().toLowerCase();\n  if (!who) return false;\n  if (mode === 'anyone') return true;\n  return who === owner?.trim().toLowerCase() ||\n    allowlist.some(key => key.trim().toLowerCase() === who) || isSibling === true;\n}\n",
+      "checks": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { authorAllowed as allowed } from './task.mjs';\nconst base = {mode:'owner', allowlist:[], author:'stranger', owner:'owner', isSibling:false};\ntest('missing owner is not public access; absent authors never pass', () => {\n  assert.equal(allowed({...base, owner:undefined}), false);\n  assert.equal(allowed({...base, mode:'anyone', author:' '}), false);\n  assert.equal(allowed({...base, mode:'typo'}), false);\n});\ntest('owner, verified siblings and allowlisted collaborators remain admitted', () => {\n  assert.equal(allowed({...base, author:' OWNER '}), true);\n  assert.equal(allowed({...base, isSibling:true}), true);\n  assert.equal(allowed({...base, mode:'allowlist', allowlist:[' STRANGER ']}), true);\n  assert.equal(allowed({...base, mode:'allowlist', author:'owner'}), true);\n  assert.equal(allowed({...base, mode:'anyone'}), true);\n});\ntest('truthy sibling claims do not replace verified booleans and inputs are not modified', () => {\n  assert.equal(allowed({...base, isSibling:'true'}), false);\n  const input = Object.freeze({...base, allowlist:Object.freeze([' FRIEND ']), author:'friend'});\n  assert.equal(allowed(input), true);\n});\n"
+    },
+    "history": {
+      "starter": "export function mergeHistory(cached, page) {\n  return {messages:page.events.sort((a,b) => a.ts-b.ts), status:'ready', partial:false};\n}\n",
+      "reference": "export function mergeHistory(cached, page) {\n  const byId = new Map();\n  for (const event of [...cached, ...page.events]) if (!byId.has(event.id)) byId.set(event.id, event);\n  const messages = [...byId.values()].sort((a,b) => a.ts-b.ts || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));\n  return {messages, status:page.failed ? 'error' : 'ready', partial:page.failed && messages.length > 0};\n}\n",
+      "checks": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { mergeHistory as merge } from './task.mjs';\nconst event = (id,ts) => ({id,ts});\ntest('partial failure retains cached and newly available messages', () => {\n  assert.deepEqual(merge([event('cached',10)],{events:[event('partial',5)],failed:true}),\n    {messages:[event('partial',5),event('cached',10)],status:'error',partial:true});\n  assert.deepEqual(merge([],{events:[],failed:true}), {messages:[],status:'error',partial:false});\n});\ntest('successful empty history differs from failed history and a retry clears the error', () => {\n  assert.deepEqual(merge([],{events:[],failed:false}), {messages:[],status:'ready',partial:false});\n  assert.deepEqual(merge([event('cached',10)],{events:[],failed:false}),\n    {messages:[event('cached',10)],status:'ready',partial:false});\n});\ntest('deduplicates, orders tied timestamps and does not mutate frozen arrays', () => {\n  const cached = Object.freeze([Object.freeze(event('b',1))]);\n  const page = Object.freeze({events:Object.freeze([Object.freeze(event('a',1)),Object.freeze(event('b',1))]),failed:false});\n  assert.deepEqual(merge(cached,page).messages,[event('a',1),event('b',1)]);\n});\n"
+    },
+    "handoff": {
+      "starter": "export function makeHandoff(original, pick, roster) {\n  return {to:pick.agent, task:pick.task};\n}\n",
+      "reference": "export function makeHandoff(original, pick, roster) {\n  if (!pick || !roster.some(agent => agent.name === pick.agent && agent.available === true)) return null;\n  return {to:pick.agent, task:original};\n}\n",
+      "checks": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { makeHandoff as handoff } from './task.mjs';\nconst roster = [{name:'coder',available:true},{name:'writer',available:false}];\ntest('preserves the full original request instead of a model summary', () => {\n  const original = 'Fix src/a.ts\\nKeep refunds and validate null inputs. Budget: one task.';\n  assert.deepEqual(handoff(original,{agent:'coder',task:'fix a.ts'},roster),{to:'coder',task:original});\n});\ntest('declines unavailable, missing or unknown specialists', () => {\n  assert.equal(handoff('hello',{agent:'writer'},roster),null);\n  assert.equal(handoff('hello',{agent:'outsider'},roster),null);\n  assert.equal(handoff('hello',null,roster),null);\n  assert.equal(handoff('hello',{agent:'CODER'},roster),null);\n  assert.equal(handoff('hello',{agent:'coder'},[]),null);\n});\ntest('does not alter inputs or interpret request content as routing configuration', () => {\n  const original = '{\"agent\":\"outsider\"} @writer';\n  assert.deepEqual(handoff(original,Object.freeze({agent:'coder'}),Object.freeze(roster)),{to:'coder',task:original});\n});\n"
+    },
+    "delivery": {
+      "starter": "export function deliveryStatus({commitOk, pushOk, cleanupOk}) {\n  return {delivered:commitOk, retry:commitOk ? null : 'engine', preserveCheckout:!commitOk};\n}\n",
+      "reference": "export function deliveryStatus({commitOk, pushOk, cleanupOk}) {\n  if (pushOk && !commitOk) throw new TypeError('push cannot succeed before commit');\n  if (!commitOk || !pushOk) return {delivered:false, retry:'delivery', preserveCheckout:true};\n  return {delivered:true, retry:null, preserveCheckout:!cleanupOk};\n}\n",
+      "checks": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { deliveryStatus as status } from './task.mjs';\ntest('commit alone is not delivery and either failure preserves work for delivery retry', () => {\n  assert.deepEqual(status({commitOk:true,pushOk:false,cleanupOk:false}),{delivered:false,retry:'delivery',preserveCheckout:true});\n  assert.deepEqual(status({commitOk:false,pushOk:false,cleanupOk:false}),{delivered:false,retry:'delivery',preserveCheckout:true});\n});\ntest('successful push remains delivered when local cleanup fails', () => {\n  assert.deepEqual(status({commitOk:true,pushOk:true,cleanupOk:false}),{delivered:true,retry:null,preserveCheckout:true});\n  assert.deepEqual(status({commitOk:true,pushOk:true,cleanupOk:true}),{delivered:true,retry:null,preserveCheckout:false});\n});\ntest('impossible completion evidence is rejected', () => {\n  assert.throws(() => status({commitOk:false,pushOk:true,cleanupOk:false}),TypeError);\n});\n"
+    }
+  },
+  "sources": {
+    "invoice-contract": {
+      "kind": "contract and sanitized summary of recorded hire",
+      "text": "INVOICE CONTRACT. invoiceBalance(invoiceCents, payments) returns invoice amount minus unique payments. Amounts are integer cents; negative payment amounts are refunds and a negative balance is a credit. Invoice must be a nonnegative safe integer. Every payment must have a nonempty, non-whitespace string ref and a safe-integer cents value; invalid entries throw TypeError. Validate each entry, even a repeat. Reference equality is exact and case-sensitive: do not trim or lowercase references. An identical reference/amount pair counts once; the same reference with a different amount throws TypeError. Different references with the same amount are separate payments. Do not mutate caller data. For this fixture the input is an array and all intermediate totals are within the safe-integer range.\nRecorded origin: a buyer agent asked a remote specialist to repair this synthetic invoice repository. The recovered repair passed buyer-side checks, but the initial automatic commit/push failed and an operator recovered the work. It is a real delegation attempt on a synthetic repository, not evidence of a production customer incident or a matched baseline advantage.\n"
+    },
+    "mentions-contract": {
+      "kind": "constructed benchmark contract",
+      "text": "MENTION CONTRACT. mentionedNames(content) receives a string. Recognize @ followed by one or more ASCII letters, digits, underscore or hyphen. The @ must be at the beginning or preceded by a character other than an ASCII word character, @ or slash. Return lowercase names in first-seen order, once each. Empty input returns []. Do not summon names from email addresses, embedded word fragments, /@paths or @@double-at syntax. Punctuation and line breaks may precede a valid mention. This fixture does not resolve names to pubkeys and does not implement Unicode usernames. In Fez the downstream addressing event needs the resolved p tag; highlighting text alone does not deliver a message.\n"
+    },
+    "author-contract": {
+      "kind": "constructed benchmark contract",
+      "text": "AUTHOR CONTRACT. authorAllowed({mode, allowlist, author, owner, isSibling}) must return a boolean. author and allowlist entries are strings; owner is a string or undefined. Normalize these keys by trimming and lowercasing. Empty author always fails. Exact mode 'anyone' allows any nonempty author. Other modes admit owner OR an allowlisted collaborator OR isSibling === true; they otherwise fail closed. An unknown mode does not become public. A missing owner alone grants no access, but an explicitly verified sibling or allowlisted collaborator still qualifies. allowlist is an additive array, not a replacement for owner access. No input mutation.\nThe caller computes isSibling from the owner's verified attestation. This pure fixture does not verify signatures or establish sibling status, and a stranger's textual claim must not count as that boolean. In the real system the workspace roster and the agent's author policy are separate checks.\n"
+    },
+    "history-contract": {
+      "kind": "constructed benchmark contract",
+      "text": "HISTORY CONTRACT. mergeHistory(cached, page) receives arrays of already-verified events {id:string, ts:number} and page={events, failed:boolean}. An id identifies an immutable event; repeated IDs have identical content in these fixtures. Return {messages, status, partial}. Merge cached and page events by exact ID, keep one of each, and order ascending by ts then lexically by id. Never mutate caller arrays or events. If failed is true, status is 'error' and partial is true exactly when any merged messages exist. A successful page yields status 'ready' and partial false, even when empty. Success must retain cached messages. This narrow fixture does not implement pagination cursors, signature verification, relay transport or channel membership.\n"
+    },
+    "handoff-contract": {
+      "kind": "constructed benchmark contract",
+      "text": "HANDOFF CONTRACT. makeHandoff(original, pick, roster) receives the original request string, a model pick object or null, and a roster of {name:string, available:boolean}. Return {to: name, task: original} only when pick.agent exactly matches an available roster name. Return null for an absent pick, unknown name or unavailable specialist. Name matching is case-sensitive. Preserve the original request byte-for-byte as a JS string, including newlines and constraints; ignore any pick.task summary. Do not rewrite input objects or infer names from message content. This does not transmit anything; the actual Fez transport is outside the fixture.\nThis is intentionally a small control task: a direct solution can be excellent, and unnecessary delegation may only add delay.\n"
+    },
+    "delivery-contract": {
+      "kind": "constructed benchmark contract",
+      "text": "DELIVERY CONTRACT. deliveryStatus({commitOk, pushOk, cleanupOk}) receives booleans observed by a runner after the coding engine has finished. If pushOk is true but commitOk false, throw TypeError for contradictory evidence. A failed commit or push means {delivered:false, retry:'delivery', preserveCheckout:true}; the saved code should not require a new model run. When commit and push both succeed, delivered is true and retry is null. Preserve the local checkout if cleanup failed; otherwise preserveCheckout is false. Cleanup failure cannot turn a delivered result into an undelivered one. This pure function reports observations; it does not run Git, guarantee retry idempotency, authorize a new payment or prove buyer acceptance of code quality.\nThe recorded hire produced correct code but needed operator recovery after automatic commit failed. A future runner must observe artifact delivery separately from tests passing.\n"
+    },
+    "hire-incident": {
+      "kind": "sanitized facts from recorded hire report",
+      "text": "HIRE INCIDENT EVIDENCE — sanitized summary of a recorded experiment, not a production incident.\nH1. A remote specialist used a coding engine on a second machine to fix duplicate imported payments in a synthetic invoice repository.\nH2. The initial repository had 3 passing tests and 1 failing test. The repaired repository passed 6 tests on both machines. A buyer also ran 10 independent checks, which passed.\nH3. The temporary checkout inherited an interactive global commit-signing configuration. The automatic commit failed. No branch was automatically pushed and the buyer received no final result during its bounded wait.\nH4. An operator recovered the existing work and made a recovery commit with signing disabled for that one command. Global signing stayed enabled. Recovery did not require another coding run or payment.\nH5. The 8 model calls reported a total token-price estimate of $0.0643278. This was not a provider invoice. A testnet lease was separate from that estimate; there was no mainnet transfer.\nH6. There is no matched individual-agent control, no reliable total wall-clock duration in this source pack, and no evidence of broad coordination superiority. A next experiment needs distinct code-acceptance and delivery checks.\n"
+    },
+    "onboarding-facts": {
+      "kind": "fact sheet grounded in desktop persona builder and prior code review",
+      "text": "ONBOARDING FACT SHEET — frozen product facts for this writing exercise.\nO1. The desktop app creates @fez as a conversational guide using the user's connected agent runtime and model. Mention @fez after connecting a model in Settings → Agents.\nO2. @fez can answer questions and suggest an appropriate workspace persona. Existing persona examples include a researcher and a writer.\nO3. When a needed capability is absent locally, market discovery can identify a specialist. Tool availability depends on installed extensions; the guide should say when a needed tool is unavailable.\nO4. Free Bazaar questions use bazaar_ask. Paid work goes through propose_hire and a human decision on its card; @fez does not receive wallet access or autonomous spending authority.\nO5. A proposal, a payment, delivery of an artifact and acceptance of the artifact are separate events. Do not promise that merely accepting a proposal completes the work.\n"
+    },
+    "pilot-table": {
+      "kind": "explicitly synthetic table",
+      "text": "SYNTHETIC PILOT TABLE — invented data for evidence-synthesis practice, not Fez results.\nEach row is a matched task under a common declared allowance. Scores below are eligible outcome quality (0–1). All attempts stayed within limits. Cost values are estimates in USD. Time is attempt elapsed seconds including specialists. One trial per task.\nTask | individual score/cost/time | fixed-workflow score/cost/time | adaptive score/cost/time\nA | 0.8 / 0.04 / 40 | 0.8 / 0.07 / 60 | 0.9 / 0.09 / 75\nB | 0.4 / 0.05 / 50 | 0.6 / 0.09 / 80 | 0.8 / 0.11 / 95\nC | 0.9 / 0.03 / 30 | 0.8 / 0.06 / 55 | 0.9 / 0.08 / 65\nD | 0.6 / 0.02 / 25 | 0.5 / 0.04 / 40 | 0.4 / 0.07 / 70\nThere were no observed human interventions. These four tasks are a convenience sample from one scenario family; they do not establish statistical significance, held-out generalization or a causal benefit from a particular handoff. Model-call costs are not invoices. The exercise is to describe both improvements and regressions without replacing quality with cost efficiency.\n"
+    },
+    "launch-facts": {
+      "kind": "source-limited copywriting brief",
+      "text": "LAUNCH COPY FACT SHEET — use these claims only.\nL1. Fez lets agents communicate as signed Nostr identities. Agents can use different models, capabilities and tools.\nL2. A person can talk to @fez in the desktop app and ask for help finding an appropriate agent.\nL3. The current coordination-miner experiment evaluates submitted coordinator instructions using coding, writing and combined work. The local scorer is implemented; real comparative agent runs for this task pack have not happened.\nL4. There is no demonstrated universal quality improvement, guaranteed income, guaranteed subnet allocation or autonomous paid hiring in this exercise.\nL5. The invitation is to try one small task with @fez after connecting a model, then check the returned result. There is no launch date, signup URL or price to invent.\n"
+    },
+    "roster-brief": {
+      "kind": "explicitly fictional profiles",
+      "text": "SPECIALIST SELECTION EXERCISE — all agents, scores and costs here are fictional.\nThe user's task: polish an already fact-checked tutorial for first-time users. Keep the technical claims and code examples intact. The desired deliverable is a clear, friendly tutorial. All three agents are available and permitted for the exercise. A lead may also do the edit directly.\nScribe: tutorial clarity 4.8/5, preserving supplied technical facts 4.4/5; recent estimated call cost $0.06; latency 50s.\nBuilder: tutorial clarity 2.8/5, preserving supplied technical facts 4.8/5; recent estimated call cost $0.03; latency 30s.\nVerifier: tutorial clarity 3.2/5, preserving supplied technical facts 4.9/5; recent estimated call cost $0.08; latency 70s.\nThese are observations on 10 prior tutorial exercises, not guarantees. The fact-check is already complete. An extra factual review is justified only if new ambiguity is found, not by default. An agent's stake is not part of this exercise's evidence.\n"
+    },
+    "data-policy": {
+      "kind": "closed-source policy and deliberately unsupported draft",
+      "text": "DATA POLICY FOR THIS BENCHMARK — a supplied policy, not legal advice.\nD1. Only explicitly designated evaluation tasks are recorded for this benchmark. Each approved record identifies the task, artifacts, handoffs, observations and final assessment.\nD2. Private app conversations and directed customer hires are not automatically exported. A future contribution needs explicit permission for the specific material; possession of a signed message does not grant that permission.\nD3. Signed event IDs identify authorship evidence and artifact hashes identify content; neither proves truth, completeness, quality, payment or causality.\nD4. A future trained coordinator is a research aim. Dataset construction and fine-tuning should follow demonstrated evaluation value; no fine-tuned model improvement has been shown by this pack.\nDraft to revise: \"Every Fez chat automatically trains our global brain. Verified messages guarantee correct answers, and the resulting model is already better than individual agents. Join now for guaranteed subnet returns.\"\n"
+    }
+  },
+  "rubrics": {
+    "coding": [
+      {
+        "name": "contract coverage",
+        "weight": 0.4,
+        "anchors": [
+          "Violates a stated behavior or hard-codes the shown examples.",
+          "Passes public checks, but an explanation or implementation leaves a stated edge case unsupported.",
+          "Implements all stated behavior with a general solution; reviewer can trace handling of listed edge cases."
+        ]
+      },
+      {
+        "name": "regression evidence",
+        "weight": 0.3,
+        "anchors": [
+          "No runnable regression, weakened acceptance checks or unsupported pass claim.",
+          "A runnable new regression passes, but does not demonstrate the defect in the original starter.",
+          "At least one focused new regression fails on the starter and passes on the repair, without modifying supplied acceptance checks."
+        ]
+      },
+      {
+        "name": "maintainability",
+        "weight": 0.3,
+        "anchors": [
+          "Unrelated behavior, unnecessary dependencies or difficult-to-audit changes.",
+          "Scoped repair with understandable intent but avoidable duplication or confusing naming.",
+          "Small scoped repair with clear names and a concise explanation of why the defect occurred."
+        ]
+      }
+    ],
+    "writing": [
+      {
+        "name": "source fidelity",
+        "weight": 0.4,
+        "anchors": [
+          "Invents or materially misrepresents a supplied fact.",
+          "Facts are mostly correct but one qualifier or source distinction is unclear.",
+          "Material claims are grounded and qualifiers, estimates and uncertainty are preserved."
+        ]
+      },
+      {
+        "name": "decision usefulness",
+        "weight": 0.25,
+        "anchors": [
+          "Misses the requested decision or omits essential context.",
+          "Addresses the request but leaves a non-critical implication or next action vague.",
+          "Prioritizes the requested decision and includes a concrete, supported next action."
+        ]
+      },
+      {
+        "name": "audience and clarity",
+        "weight": 0.25,
+        "anchors": [
+          "Hard to follow or inappropriate for the specified audience.",
+          "Understandable but repetitive or unnecessarily technical.",
+          "Clear, direct and well ordered for the audience, with concrete language."
+        ]
+      },
+      {
+        "name": "format discipline",
+        "weight": 0.1,
+        "anchors": [
+          "Wrong deliverable or over the stated word limit.",
+          "Fits the limit and deliverable but has avoidable padding or distracting structure.",
+          "Fits the requested form concisely; every part serves the task."
+        ]
+      }
+    ],
+    "combined": [
+      {
+        "name": "code contract coverage",
+        "weight": 0.35,
+        "anchors": [
+          "Violates a stated behavior or hard-codes examples.",
+          "Passes public checks but leaves a stated edge case unsupported in code or explanation.",
+          "General scoped repair covers the full published contract."
+        ]
+      },
+      {
+        "name": "regression evidence",
+        "weight": 0.15,
+        "anchors": [
+          "No runnable defect regression or acceptance checks were weakened.",
+          "New regression passes without demonstrating failure on the original.",
+          "Focused regression fails on starter and passes on repair."
+        ]
+      },
+      {
+        "name": "explanation fidelity",
+        "weight": 0.3,
+        "anchors": [
+          "User explanation contradicts code or sources.",
+          "Explanation is accurate in outline but one material qualifier is unclear.",
+          "Examples, limitations and claims agree with both the repaired artifact and sources."
+        ]
+      },
+      {
+        "name": "user usefulness",
+        "weight": 0.2,
+        "anchors": [
+          "No usable explanation, or wrong audience/form/word limit.",
+          "Readable explanation but a non-critical next step or example is vague.",
+          "Concise explanation with the requested concrete example and an actionable next step."
+        ]
+      }
+    ]
+  },
+  "baselines": [
+    {
+      "id": "individual",
+      "description": "Strong individual control; same lead model, task inputs and local tools. Delegation is disabled by the runner, not merely the prompt.",
+      "instructions": "Complete the supplied task yourself using the available local tools and source material. Inspect, test and revise your work as needed. Do not delegate to another agent or query another model. Preserve every requirement, respect the declared resource and permission limits, and deliver the requested files with an accurate verification report. If evidence is missing, say so; do not fabricate completion. Choose a small, correct solution and check it against the published acceptance rules.\n",
+      "sha256": "b5d635c1abd6f2a5bc50080f2389512706959ca575b25400433d0f21f82912fd"
+    },
+    {
+      "id": "fixed-workflow",
+      "description": "Fixed specialist sequence control; same roster as adaptive candidates. Specialist configuration is supplied by the future runner.",
+      "instructions": "Complete the supplied task with this fixed workflow. For coding, ask the coding specialist to implement and test, then ask the reviewer to check the result against the contract. For writing, ask the researcher to extract source facts, then ask the writer to draft, then ask the reviewer to check source fidelity. For combined work, ask the coder to implement and test, then ask the writer to explain the actual artifact, then ask the reviewer to compare both with the contract. Include the original request and relevant supplied sources in each handoff. As lead, integrate results and run final local checks; do not delegate additional repair rounds. Report actual deliverables, test results, uncertainty and any unmet requirements. Respect the shared resource and permission limits. An unavailable configured specialist is a runner failure to report, not permission to invent a result or silently switch the workflow.\n",
+      "sha256": "83eb066d6c4fc2e3a58ab812b6416ce1f75a3b3e682a7b558aef15d5f89675b6"
+    },
+    {
+      "id": "fez-desktop-snapshot",
+      "description": "Exact buildFezPersonaMd(\"pi\") snapshot, without a provider/model selection. This is an instruction reference, not evidence of running the native desktop host.",
+      "instructions": "---\nharness: pi\naliases: [orchestrator]\nmcpServers: [bazaar=npm:@fezchat/bazaar]\ndescription: your guide to fez — ask how anything works, or hand over a task and the right agent gets it\n---\nYou are @fez, the guide for this fez workspace. Answer questions about fez\nplainly; for tasks, name the persona best suited and offer to bring it in.\n\nWhen a task needs a capability nobody on the roster claims — or the user\nexplicitly asks for the market — call market_directory, pick AT MOST ONE\ncandidate you would stake your name on, and reply with a fenced\nfez-hire-proposal block:\n\n```fez-hire-proposal\n{ \"task\": \"<the work, stated so a stranger could do it>\",\n  \"pk\": \"<its 64-hex pubkey>\", \"name\": \"<its name>\",\n  \"why\": \"<the roster gap, in one sentence>\",\n  \"kind\": \"settle\", \"price_est_tao\": 0.0, \"rate_tao_hr\": 0.0 }\n```\n\nThe block renders as a card; the human decides. Never present market\nanswers as your own, never propose more than one candidate, and if the\nroster covers the task, do not mention the market at all. If\nmarket_directory is not among your tools, say the market extension\nisn't installed rather than guessing.\n\nTwo tiers. bazaar_ask is the FREE tryout — use it directly for one-off\nquestions and fact-checks, attributing answers as bazaar results. When\nthe work merits PAYING — a priority lease, or an escrowed deliverable —\ncall the propose_hire TOOL and relay its output verbatim; its card\ncarries the buttons that pay, clicked by the human from their own\nwallet. That tool IS your ability to arrange paid work: you cannot spend\nand must never ask for wallet access, and \"blocked on payment\" is never\ntrue. Propose even when the agent is offline (say so in the why; the\nhire waits).\n",
+      "sha256": "dbf0b9c6e2b8f381c30d16cf7506184f6aa23442f961091b58cb1e99510f3a18"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "C01",
+      "family": "coding",
+      "title": "Stop duplicate imported payments",
+      "cluster": "invoice",
+      "fixture": "invoice",
+      "sources": [
+        "invoice-contract"
+      ],
+      "prompt": "Repair invoiceBalance so duplicate imports do not count twice, while preserving validation, refunds and credits. Follow the exact reference-identity contract. Return the repaired task.mjs, add a focused regression.test.mjs, and summarize the change and actual local checks in answer.md (at most 180 words). Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The final answer accurately reports which checks ran and does not invent remote delivery or an agent run."
+      ],
+      "reviewerNotes": [
+        "The returned balance for invoice 12500, payment P=5000 repeated twice, is 7500.",
+        "Do not equate passing tests with remote delivery, settlement or a causal delegation advantage."
+      ]
+    },
+    {
+      "id": "C02",
+      "family": "coding",
+      "title": "Recognize intentional agent mentions",
+      "cluster": "mentions",
+      "fixture": "mentions",
+      "sources": [
+        "mentions-contract"
+      ],
+      "prompt": "Repair mentionedNames so email addresses and path fragments cannot accidentally mention an agent, while intentional mentions still work. Return the repaired task.mjs, add a focused regression.test.mjs, and summarize the change and actual local checks in answer.md (at most 180 words). Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The final answer accurately reports which checks ran and does not invent remote delivery or an agent run."
+      ],
+      "reviewerNotes": [
+        "Names are lowercased and deduplicated in first-seen order.",
+        "Only the published ASCII/boundary rules apply; do not impose a different username convention."
+      ]
+    },
+    {
+      "id": "C03",
+      "family": "coding",
+      "title": "Fail closed without blocking trusted collaborators",
+      "cluster": "author-gate",
+      "fixture": "author-gate",
+      "sources": [
+        "author-contract"
+      ],
+      "prompt": "Repair authorAllowed so an unconfigured owner never opens public access and trusted collaborators still work. Return the repaired task.mjs, add a focused regression.test.mjs, and summarize the change and actual local checks in answer.md (at most 180 words). Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The final answer accurately reports which checks ran and does not invent remote delivery or an agent run."
+      ],
+      "reviewerNotes": [
+        "Owner, explicit allowlist and verified sibling are additive alternatives.",
+        "The fixture consumes a trusted boolean; it does not validate attestations itself."
+      ]
+    },
+    {
+      "id": "C04",
+      "family": "coding",
+      "title": "Preserve useful history after a partial failure",
+      "cluster": "history",
+      "fixture": "history",
+      "sources": [
+        "history-contract"
+      ],
+      "prompt": "Repair mergeHistory so partial relay failure retains available history and is not confused with a successful empty result. Return the repaired task.mjs, add a focused regression.test.mjs, and summarize the change and actual local checks in answer.md (at most 180 words). Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The final answer accurately reports which checks ran and does not invent remote delivery or an agent run."
+      ],
+      "reviewerNotes": [
+        "An error with available messages is partial, not empty success.",
+        "No cursor, relay transport or signature claim belongs to this narrow helper."
+      ]
+    },
+    {
+      "id": "C05",
+      "family": "coding",
+      "title": "Preserve the full request in a specialist handoff",
+      "cluster": "handoff",
+      "fixture": "handoff",
+      "sources": [
+        "handoff-contract"
+      ],
+      "prompt": "Repair makeHandoff so a model-generated summary cannot discard the user’s original constraints and unavailable agents are not selected. Return the repaired task.mjs, add a focused regression.test.mjs, and summarize the change and actual local checks in answer.md (at most 180 words). Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The final answer accurately reports which checks ran and does not invent remote delivery or an agent run."
+      ],
+      "reviewerNotes": [
+        "Preserve original text exactly, including all constraints and newlines.",
+        "This small control may favor direct work; hiring a specialist earns no credit by itself."
+      ]
+    },
+    {
+      "id": "C06",
+      "family": "coding",
+      "title": "Separate completed code from delivered work",
+      "cluster": "delivery",
+      "fixture": "delivery",
+      "sources": [
+        "delivery-contract"
+      ],
+      "prompt": "Repair deliveryStatus so commit success alone is never reported as delivery and cleanup failures do not erase successful delivery. Return the repaired task.mjs, add a focused regression.test.mjs, and summarize the change and actual local checks in answer.md (at most 180 words). Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The final answer accurately reports which checks ran and does not invent remote delivery or an agent run."
+      ],
+      "reviewerNotes": [
+        "Commit/push failure retries delivery from preserved work, not the coding engine.",
+        "The status helper cannot implement or prove idempotent Git retries."
+      ]
+    },
+    {
+      "id": "W01",
+      "family": "writing",
+      "title": "Explain the failed hire honestly",
+      "cluster": "invoice",
+      "fixture": null,
+      "sources": [
+        "hire-incident"
+      ],
+      "prompt": "Write a buyer-facing incident update in answer.md, at most 220 words. Lead with whether the task was completed end to end. Explain the code result, delivery failure and recovery; distinguish cost estimates from payment and state what was not measured. Give one concrete next verification action. Cite source IDs such as H2 after material claims.",
+      "acceptance": [
+        "The requested answer.md exists and satisfies the stated audience, form and word limit.",
+        "Clearly states that the initial unattended hire did not deliver, despite correct recovered code.",
+        "Reports operator recovery, not autonomous success, and does not invent total duration.",
+        "Calls the $0.0643278 model figure an estimate, not an invoice or the lease price."
+      ],
+      "reviewerNotes": [
+        "Correct code evidence: 6 repository tests and 10 independent checks, with operator recovery after commit failure.",
+        "No matched baseline exists, so the result does not prove delegation improved quality."
+      ]
+    },
+    {
+      "id": "W02",
+      "family": "writing",
+      "title": "Write a first-use guide for @fez",
+      "cluster": "onboarding",
+      "fixture": null,
+      "sources": [
+        "onboarding-facts"
+      ],
+      "prompt": "Write a friendly first-use guide in answer.md for a nontechnical newcomer, at most 180 words. Explain how to start with @fez, what happens when another skill is needed, and how free questions differ from paid proposals. Use no more than four numbered steps. Include one useful first message the newcomer can copy.",
+      "acceptance": [
+        "The requested answer.md exists and satisfies the stated audience, form and word limit.",
+        "Connect a model before expecting @fez to answer; use the provided Settings → Agents location.",
+        "Does not grant @fez wallet access, promise autonomous spending, or equate a hire proposal with completed work.",
+        "Includes a concrete copyable first message and at most four steps."
+      ],
+      "reviewerNotes": [
+        "Do not invent extension installation screens or hidden UI steps.",
+        "Plain descriptions of free and paid work are sufficient; tool names are not necessary in a newcomer guide."
+      ]
+    },
+    {
+      "id": "W03",
+      "family": "writing",
+      "title": "Synthesize a mixed coordination result",
+      "cluster": "pilot-analysis",
+      "fixture": null,
+      "sources": [
+        "pilot-table"
+      ],
+      "prompt": "Write a research decision memo in answer.md, at most 250 words, using only the synthetic pilot table. Compute each arm’s mean quality and total estimated cost. Explain where adaptive coordination improved or worsened outcomes, mention the time trade-off, and recommend the next comparison needed before a broad claim. Keep quality and cost separate.",
+      "acceptance": [
+        "The requested answer.md exists and satisfies the stated audience, form and word limit.",
+        "Labels the table synthetic and reports mean quality 0.675 individual, 0.675 fixed, and 0.75 adaptive (rounding to three decimals allowed).",
+        "Reports total estimated costs $0.14, $0.26 and $0.35 respectively.",
+        "Explicitly notes the adaptive regression on task D and the lack of generalization or causal evidence."
+      ],
+      "reviewerNotes": [
+        "Adaptive ties individual on C, improves A/B, worsens D; it is slower on every row.",
+        "The mean advantage is 0.075 quality points, not a 75% improvement.",
+        "Recommend repeated matched trials and fresh scenario instances; a particular handoff needs an ablation to attribute benefit."
+      ]
+    },
+    {
+      "id": "W04",
+      "family": "writing",
+      "title": "Write grounded launch copy",
+      "cluster": "launch",
+      "fixture": null,
+      "sources": [
+        "launch-facts"
+      ],
+      "prompt": "Write a single short launch-style post in answer.md, at most 100 words, aimed at agent builders. Make the idea of different agents working together clear and concrete. Include one invitation to try @fez. Keep the stage of the coordination-miner experiment accurate; do not add a date, URL, price or guaranteed benefit.",
+      "acceptance": [
+        "The requested answer.md exists and satisfies the stated audience, form and word limit.",
+        "Communicates agent communication and complementary capabilities without claiming measured superiority.",
+        "Identifies coordination mining as an experiment, not an operating reward mechanism.",
+        "Includes a concrete invitation to try a small task; invents no date, URL, price or guarantee."
+      ],
+      "reviewerNotes": [
+        "A brief, vivid example is welcome if framed as a use case, not a proven capability result.",
+        "Reward clear writing; reproducing the source bullets verbatim is not required."
+      ]
+    },
+    {
+      "id": "W05",
+      "family": "writing",
+      "title": "Choose a specialist for the skill needed",
+      "cluster": "specialist-selection",
+      "fixture": null,
+      "sources": [
+        "roster-brief"
+      ],
+      "prompt": "Write a recommendation in answer.md, at most 180 words, for the tutorial-editing request. Choose the best-supported approach from this fictional roster or direct work, explain the relevant strengths and trade-offs, and write a concise handoff brief that preserves technical facts. Do not add a second specialist without a specific reason.",
+      "acceptance": [
+        "The requested answer.md exists and satisfies the stated audience, form and word limit.",
+        "Uses tutorial clarity and fact preservation as the main evidence, not lowest cost or stake.",
+        "Treats the profile scores and costs as fictional observations, not performance guarantees.",
+        "Includes a handoff brief preserving technical claims and code examples."
+      ],
+      "reviewerNotes": [
+        "Scribe has the strongest supported specialist fit for this already fact-checked tutorial. A direct-work recommendation needs a clear limitation statement because no lead-agent quality observation is supplied.",
+        "A specialist is not mandatory if the recommendation honestly explains its evidence and limits.",
+        "Do not add a factual review simply to maximize delegation."
+      ]
+    },
+    {
+      "id": "W06",
+      "family": "writing",
+      "title": "Repair an unsupported data-and-training pitch",
+      "cluster": "data-policy",
+      "fixture": null,
+      "sources": [
+        "data-policy"
+      ],
+      "prompt": "Rewrite the supplied draft into a credible explanation in answer.md, at most 170 words, for an agent operator considering contributing evaluation work. Explain what may be recorded, the consent boundary, what signed evidence does and does not establish, and the current status of model training. Keep an inviting tone without guaranteed outcomes.",
+      "acceptance": [
+        "The requested answer.md exists and satisfies the stated audience, form and word limit.",
+        "Does not claim private chats or directed hires are automatically exported or consented.",
+        "Explains that signatures/hashes do not prove truth or quality.",
+        "Describes fine-tuning as future research without a demonstrated improvement or guaranteed returns."
+      ],
+      "reviewerNotes": [
+        "A correct invitation names designated evaluation tasks and permission for specific material.",
+        "No legal interpretation or new privacy promise beyond the supplied policy is required."
+      ]
+    },
+    {
+      "id": "X01",
+      "family": "combined",
+      "title": "Explain the invoice repair to an importer operator",
+      "cluster": "invoice",
+      "fixture": "invoice",
+      "sources": [
+        "invoice-contract"
+      ],
+      "prompt": "Repair invoiceBalance so duplicate imports do not count twice, while preserving validation, refunds and credits. Follow the exact reference-identity contract. Return the repaired task.mjs and a focused regression.test.mjs. Also write an operator note in answer.md (at most 180 words). Explain reference-based deduplication, conflicting amounts, refunds and credits. Include one numerical before/after duplicate example and a verification step. Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The requested user-facing answer.md is present, within its word limit, and agrees with the repaired code and every material source fact.",
+        "The duplicate example has correct arithmetic.",
+        "The note explains that two different references remain two separate payments.",
+        "Do not claim the fixture fixes real settlement or guarantees delivery."
+      ],
+      "reviewerNotes": [
+        "The returned balance for invoice 12500, payment P=5000 repeated twice, is 7500.",
+        "Do not equate passing tests with remote delivery, settlement or a causal delegation advantage.",
+        "Use the combined rubric; code and explanation both matter. Do not count this as an independent scenario from C01."
+      ]
+    },
+    {
+      "id": "X02",
+      "family": "combined",
+      "title": "Ship a mention fix with a newcomer help snippet",
+      "cluster": "mentions",
+      "fixture": "mentions",
+      "sources": [
+        "mentions-contract"
+      ],
+      "prompt": "Repair mentionedNames so email addresses and path fragments cannot accidentally mention an agent, while intentional mentions still work. Return the repaired task.mjs and a focused regression.test.mjs. Also write help text in answer.md (at most 140 words) for someone mentioning a teammate. Include one valid hyphenated-agent example and one email address that must not summon an agent. State that actual delivery still depends on resolving a known agent. Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The requested user-facing answer.md is present, within its word limit, and agrees with the repaired code and every material source fact.",
+        "The examples obey the published parser rules.",
+        "Do not promise that unknown names or highlighting alone deliver a message."
+      ],
+      "reviewerNotes": [
+        "Names are lowercased and deduplicated in first-seen order.",
+        "Only the published ASCII/boundary rules apply; do not impose a different username convention.",
+        "Use the combined rubric; code and explanation both matter. Do not count this as an independent scenario from C02."
+      ]
+    },
+    {
+      "id": "X03",
+      "family": "combined",
+      "title": "Ship a permission fix with an access explanation",
+      "cluster": "author-gate",
+      "fixture": "author-gate",
+      "sources": [
+        "author-contract"
+      ],
+      "prompt": "Repair authorAllowed so an unconfigured owner never opens public access and trusted collaborators still work. Return the repaired task.mjs and a focused regression.test.mjs. Also write answer.md (at most 200 words) for a workspace owner. Explain default access, verified sibling access and additive allowlists, then give a compact three-row example table for owner, verified sibling and stranger. Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The requested user-facing answer.md is present, within its word limit, and agrees with the repaired code and every material source fact.",
+        "The stranger row fails under owner mode without other authorization.",
+        "An unconfigured owner does not automatically mean anyone can act.",
+        "The explanation does not pretend this helper verifies signatures or replaces membership checks."
+      ],
+      "reviewerNotes": [
+        "Owner, explicit allowlist and verified sibling are additive alternatives.",
+        "The fixture consumes a trusted boolean; it does not validate attestations itself.",
+        "Use the combined rubric; code and explanation both matter. Do not count this as an independent scenario from C03."
+      ]
+    },
+    {
+      "id": "X04",
+      "family": "combined",
+      "title": "Ship a history fix with a support reply",
+      "cluster": "history",
+      "fixture": "history",
+      "sources": [
+        "history-contract"
+      ],
+      "prompt": "Repair mergeHistory so partial relay failure retains available history and is not confused with a successful empty result. Return the repaired task.mjs and a focused regression.test.mjs. Also write answer.md (at most 160 words) responding to a user who sees old messages and a loading error. Explain partial data, how a successful retry changes status, and why cached messages should remain visible. Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The requested user-facing answer.md is present, within its word limit, and agrees with the repaired code and every material source fact.",
+        "The reply does not describe partial failure as an empty conversation.",
+        "Do not claim all history is loaded, erased, or recoverable from unavailable relays."
+      ],
+      "reviewerNotes": [
+        "An error with available messages is partial, not empty success.",
+        "No cursor, relay transport or signature claim belongs to this narrow helper.",
+        "Use the combined rubric; code and explanation both matter. Do not count this as an independent scenario from C04."
+      ]
+    },
+    {
+      "id": "X05",
+      "family": "combined",
+      "title": "Ship a handoff fix with a delegation example",
+      "cluster": "handoff",
+      "fixture": "handoff",
+      "sources": [
+        "handoff-contract"
+      ],
+      "prompt": "Repair makeHandoff so a model-generated summary cannot discard the user’s original constraints and unavailable agents are not selected. Return the repaired task.mjs and a focused regression.test.mjs. Also write answer.md (at most 180 words) for an agent developer. Use this original request verbatim in an example payload: \"Fix the importer. Keep refunds and validate null inputs.\" Explain why a shorter model summary is not an adequate replacement and how no-fit is handled. Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The requested user-facing answer.md is present, within its word limit, and agrees with the repaired code and every material source fact.",
+        "The example outbound task matches the supplied original exactly.",
+        "Unknown or unavailable names produce no handoff rather than a fabricated recipient."
+      ],
+      "reviewerNotes": [
+        "Preserve original text exactly, including all constraints and newlines.",
+        "This small control may favor direct work; hiring a specialist earns no credit by itself.",
+        "Use the combined rubric; code and explanation both matter. Do not count this as an independent scenario from C05."
+      ]
+    },
+    {
+      "id": "X06",
+      "family": "combined",
+      "title": "Ship a delivery fix with a recovery runbook",
+      "cluster": "delivery",
+      "fixture": "delivery",
+      "sources": [
+        "delivery-contract"
+      ],
+      "prompt": "Repair deliveryStatus so commit success alone is never reported as delivery and cleanup failures do not erase successful delivery. Return the repaired task.mjs and a focused regression.test.mjs. Also write answer.md (at most 220 words) for an operator. Distinguish commit failure, push failure and cleanup failure. Explain which evidence permits reporting delivery, how existing work is retained, and why recovery should not automatically buy another lease or rerun the model. Work only in this fixture; no production repository edit is requested.",
+      "acceptance": [
+        "All supplied acceptance.test.mjs checks pass on the returned task.mjs; supplied checks and sources are unchanged.",
+        "A runnable regression.test.mjs and the repaired task.mjs are present; no new dependency or unrelated artifact change.",
+        "The requested user-facing answer.md is present, within its word limit, and agrees with the repaired code and every material source fact.",
+        "A successful local commit alone is not reported as delivered.",
+        "A successful push plus cleanup failure remains delivered with local cleanup pending.",
+        "No instruction changes global signing settings or claims the pure helper has already retried Git."
+      ],
+      "reviewerNotes": [
+        "Commit/push failure retries delivery from preserved work, not the coding engine.",
+        "The status helper cannot implement or prove idempotent Git retries.",
+        "Use the combined rubric; code and explanation both matter. Do not count this as an independent scenario from C06."
+      ]
+    }
+  ],
+  "executionProfile": {
+    "status": "proposed controlled-run profile; not an executable or funded configuration",
+    "trialSet": [
+      0,
+      1,
+      2
+    ],
+    "attemptDeadlineSeconds": 600,
+    "maxTotalModelCalls": 20,
+    "maxTotalModelTokens": 24000,
+    "maxConcurrentSpecialists": 2,
+    "maxDelegationDepth": 1,
+    "specialistRoles": [
+      "coder",
+      "writer",
+      "researcher",
+      "reviewer"
+    ],
+    "requirements": [
+      "Pin coordinator and each specialist provider/model/version, sampling, tools, source/pack hashes, isolation image, and a pricebook before execution.",
+      "Use the same coordinator model across arms and the same specialist configurations where delegation is allowed; all lead and specialist calls consume the shared allowance.",
+      "A separate authorized monetary allowance is required before any paid model or specialist call; this profile authorizes no spend.",
+      "The individual arm cannot delegate but retains the same non-delegation tools and a full allowance. Record this deliberate arm difference in the common conditions declaration.",
+      "The @fez snapshot requires matching host tools/permissions. An adapter-based run must be labeled adapted; do not present it as the native app baseline.",
+      "Do not expose the master pack, other attempts, reference answers, reviewer notes, keys, private logs or production network to a candidate.",
+      "All conditions, including arm-specific policies, are fixed before the matched schedule. Rerun an affected matched trial when provider/validator infrastructure fails."
+    ]
+  }
+}

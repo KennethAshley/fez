@@ -40,6 +40,14 @@ Host-only additions (not in the published types, available in the TUI):
 sensitive `system-prompt` permission; re-registering an id replaces it, and
 nobody can replace the whole prompt).
 
+Start background work with `fez sentinel`. To troubleshoot one extension,
+use `fez sentinel --extensions fez-github` (use its installed directory name).
+The selection can only narrow the enabled background extensions; it does not
+grant permissions. Stop any existing sentinel before starting another.
+On macOS, `fez sentinel-install --extensions fez-github` saves that selection
+as a login service and restarts it after a crash. Omit `--extensions` to run
+all enabled background extensions. Remove the service with `fez sentinel-uninstall`.
+
 ## Nostr access
 
 `api.nostr` is split per method because reading is the channel firehose and
@@ -54,11 +62,15 @@ publishing signs **as the user**:
 - `decrypt` needs `sign` or `read:dms`
 - `pubkey` is ungated — it's the public key, safe to hand out
 
-Every denial warns **once** per method. Most then return a hollow value
-(empty array, empty-signature event, no-op unsubscribe) — an extension that
-quietly does nothing is worse to debug than one that logs why. `signEvent`
-and `decrypt` are the exception: they throw instead, so a denied signature
-or decryption can't masquerade as valid empty output.
+Denied operations **throw or reject**, naming the extension, operation,
+and required permission. Promise-returning methods (`publish`, `sendDm`,
+`query`) reject; synchronous methods throw. Empty query results and an
+unrecognized DM remain valid results when the read is granted. Channel
+helpers propagate these errors, so a denied publish cannot report a channel
+created or a message sent. Terminal submissions show errors in the timeline.
+
+Registration without a grant still warns and skips, and UI calls outside
+the TUI remain inert so the same extension can load in the sentinel.
 
 ## Channels and workspace
 

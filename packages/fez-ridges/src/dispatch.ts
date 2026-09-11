@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { parseIssueUrl } from "./github.js";
-import { mirrorJobs, upsertJob, type RidgesJob } from "./store.js";
+import { upsertJob, type RidgesJob } from "./store.js";
+import { formatJob } from "./status.js";
 
 /**
  * Structurally just enough of the Fetch API for the title lookup — same
@@ -64,7 +65,6 @@ export async function dispatchRidges(deps: DispatchDeps, args: { issueUrl: strin
   const now = () => (deps.now ? deps.now() : new Date().toISOString());
   const record = async (job: RidgesJob) => {
     upsertJob(deps.dir, job);
-    await mirrorJobs(deps.dir);
   };
 
   const parsed = parseIssueUrl(args.issueUrl);
@@ -82,6 +82,7 @@ export async function dispatchRidges(deps: DispatchDeps, args: { issueUrl: strin
       issueNumber: 0,
       usd: undefined,
       status: "refused",
+      detail: message,
       updatedAt: ts,
     });
     return message;
@@ -122,11 +123,11 @@ export async function dispatchRidges(deps: DispatchDeps, args: { issueUrl: strin
       const detail = readStringField(outcome.bodyText, "detail");
       const raw = detail ?? (outcome.bodyText || `HTTP ${outcome.status}`);
       const message = `ridges refused before payment — ${oneLine(raw).slice(0, 500)}`;
-      await record({ ...base, id: randomUUID(), status: "refused" });
+      await record({ ...base, id: randomUUID(), status: "refused", detail: message });
       return message;
     }
     case "refused": {
-      await record({ ...base, id: randomUUID(), status: "refused" });
+      await record({ ...base, id: randomUUID(), status: "refused", detail: oneLine(outcome.message).slice(0, 500) });
       return outcome.message;
     }
     case "paid": {
@@ -135,11 +136,12 @@ export async function dispatchRidges(deps: DispatchDeps, args: { issueUrl: strin
       // keys on) is always our own, so a fixed/repeated provider id can
       // never overwrite an unrelated paid row.
       const issueId = readStringField(outcome.bodyText, "issue_id");
-      await record({ ...base, id: randomUUID(), providerId: issueId, status: "working", usd: outcome.usd, txHash: outcome.txHash });
-      return `ridges: dispatched — the subnet has your issue (paid $${outcome.usd.toFixed(2)}, tx ${outcome.txHash})`;
+      const job: RidgesJob = { ...base, id: randomUUID(), providerId: issueId, status: "working", usd: outcome.usd, txHash: outcome.txHash };
+      await record(job);
+      return `ridges: dispatched — the subnet has your issue (paid $${outcome.usd.toFixed(2)}, tx ${outcome.txHash})\n${formatJob(job)}\nCheck progress with ridges_status or /ridges status. Background tracking requires the Fez sentinel.`;
     }
     case "ambiguous": {
-      await record({ ...base, id: randomUUID(), status: "payment-unclear", usd: outcome.usd, txHash: outcome.txHash });
+      await record({ ...base, id: randomUUID(), status: "payment-unclear", usd: outcome.usd, txHash: outcome.txHash, detail: oneLine(outcome.message).slice(0, 500) });
       const txNote = outcome.txHash ? ` (${outcome.txHash})` : "";
       return `${outcome.message} If it settled, do not re-dispatch — contact Ridges support with the tx hash${txNote}.`;
     }

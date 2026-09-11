@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 
 import { AnimatedSprite, PixelSprite } from '@/components/qud/pixel-sprite';
@@ -141,12 +141,12 @@ const SCENARIOS: Scenario[] = [
     responses: [
       {
         miner: 'quill',
-        text: 'Because reputation is collateral. A worker whose whole record is public and signed has something to lose on every job — the market can price that history, and buyers can trust strangers without an escrow in the middle. Anonymous workers reset to zero for free; named ones cannot.',
+        text: 'A signed work history lets a buyer inspect what an agent delivered and which outcomes a validator accepted. The record should include failures and the configuration that did the work. A public identity helps attribute that evidence; it does not guarantee delivery or replace payment safeguards.',
         quality: 90, conduct: 92, timeliness: 76,
       },
       {
         miner: 'drift',
-        text: 'A permanent identity turns each deliverable into a bond posted against future income. Cheating burns the npub, and the npub is the business.',
+        text: 'A stable public identity connects an agent to its past work. Starting with a new key loses that history. The record is evidence to inspect, not collateral or a job guarantee.',
         quality: 86, conduct: 89, timeliness: 58,
       },
     ],
@@ -255,8 +255,6 @@ export function BazaarClient() {
     () => Object.fromEntries(MINERS.map((m, i) => [m.id, 55 + ((i * 7) % 20)])),
   );
   const [settledCount, setSettledCount] = useState(0);
-  const emaRef = useRef(ema);
-  emaRef.current = ema;
 
   useEffect(() => {
     let alive = true;
@@ -316,10 +314,10 @@ export function BazaarClient() {
       <div className="rounded-sm border border-neutral-900 bg-neutral-950 p-4">
         <div className="flex items-baseline justify-between">
           <span className="text-[0.68rem] lowercase tracking-[0.18em] text-[#cfc041]">
-            ⚖ miner standings <span className="text-neutral-600">· rolling ema</span>
+            ⚖ simulated standings <span className="text-neutral-600">· rolling ema</span>
           </span>
           <span className="text-[0.65rem] tabular-nums text-neutral-600">
-            {settledCount} conversations scored
+            {settledCount} scripted examples scored
           </span>
         </div>
         <div className="mt-3 space-y-2">
@@ -361,8 +359,8 @@ export function BazaarClient() {
           ))}
         </div>
         <p className="mt-3 border-t border-neutral-900 pt-2 text-[0.65rem] leading-relaxed text-neutral-700">
-          ema of validator scores per conversation → normalized → on-chain weights → emissions.
-          the bar is the other miners, forever.
+          Illustrative research rubric: quality 70% · conduct 20% · timeliness 10%.
+          These scripted scores create no attestations, weights, payments, or capability records.
         </p>
       </div>
 
@@ -400,10 +398,10 @@ export function BazaarClient() {
                     }`}
                   >
                     <span className="text-neutral-700">[</span>
-                    {t.phase === 'working' ? (
+                    {t.phase === 'settled' ? 'example complete' : t.phase === 'working' ? (
                       <>labor arrives <Typing /></>
                     ) : t.phase === 'scoring' ? (
-                      'the validator judges'
+                      'simulated judging'
                     ) : (
                       t.phase
                     )}
@@ -455,7 +453,7 @@ export function BazaarClient() {
                         >
                           <div className="flex items-baseline justify-between">
                             <span className="text-[0.62rem] uppercase tracking-[0.18em] text-neutral-500">
-                              validator attestation · kind 47020
+                              simulated score · not a signed attestation
                             </span>
                             <span className="text-sm font-bold tabular-nums text-[#FF6A00]">
                               <CountUp to={overall(r)} active={scoringActive} />

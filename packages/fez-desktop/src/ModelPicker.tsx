@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useHarnesses } from "./harnesses";
+import { localAgents, useHarnesses } from "./harnesses";
+import { providerId } from "./providers";
 
 /**
  * Pick an agent's BRAIN — Buzz's agent-pane pattern. Users think about one
@@ -35,7 +36,7 @@ export interface BrainSelection {
 
 export function ModelPicker({ value, onChange }: { value: BrainSelection; onChange: (s: BrainSelection) => void }) {
   const harnesses = useHarnesses();
-  const claudeInstalled = harnesses.find((h) => h.id === "claude-code")?.installed ?? false;
+  const installedAgents = localAgents.filter((a) => harnesses.some((h) => h.id === a.id && h.installed));
   const [wiredModels, setWiredModels] = useState<Record<string, string[]>>({});
   const [wireError, setWireError] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -65,12 +66,11 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
   // Plain provider ids now (pi's models.json providers key). Old personas
   // may still carry the legacy local-<hash> id — match those too so their
   // editor doesn't read as unconfigured.
-  const LEGACY: Record<string, string> = { "local-56105ece7a": "chutes", "local-ebfd09756a": "gm", "local-3ce36528bf": "anthropic", "local-d9617135d6": "openai", "local-76ef4ad6f0": "openrouter" };
-  const effectiveProvider = LEGACY[value.provider] ?? value.provider;
+  const effectiveProvider = providerId(value.provider);
   const selectedWired = WIRED.find((w) => w.local === effectiveProvider);
   const current =
-    value.harness === "claude-code"
-      ? "claude-code"
+    localAgents.some((a) => a.id === value.harness)
+      ? value.harness
       : value.harness === "pi" && selectedWired && value.model
         ? `${selectedWired.id}:${value.model}`
         : value.harness === "router"
@@ -84,12 +84,12 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
     if (v.startsWith("locked:")) { setLockedPick(v.slice("locked:".length)); return; }
     setLockedPick(undefined);
     const wired = WIRED.find((w) => v.startsWith(`${w.id}:`));
-    if (v === "claude-code") onChange({ harness: "claude-code", provider: "", model: "" });
+    if (localAgents.some((a) => a.id === v)) onChange({ harness: v, provider: "", model: "" });
     else if (wired) onChange({ harness: "pi", provider: wired.local, model: v.slice(wired.id.length + 1) });
     else onChange({ harness: "pi", provider: "", model: "" }); // not configured — built-in runtime, no model yet
   };
 
-  const hasOptions = claudeInstalled || WIRED.some((w) => (wiredModels[w.id] ?? []).length > 0);
+  const hasOptions = installedAgents.length > 0 || WIRED.some((w) => (wiredModels[w.id] ?? []).length > 0);
   const lockedEntry = WIRED.find((w) => w.id === lockedPick);
 
   return (
@@ -113,16 +113,16 @@ export function ModelPicker({ value, onChange }: { value: BrainSelection; onChan
               </optgroup>
             );
           })}
-          {claudeInstalled && (
+          {installedAgents.length > 0 && (
             <optgroup label="On this machine">
-              <option value="claude-code">Claude Code</option>
+              {installedAgents.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
             </optgroup>
           )}
           {current === "router" && <option value="router">Router (advanced — edit in the .md)</option>}
         </select>
       )}
-      {current === "claude-code" && !lockedPick && (
-        <div className="settings-hint">Uses Claude Code's own model — nothing to configure here.</div>
+      {localAgents.some((a) => a.id === current) && !lockedPick && (
+        <div className="settings-hint">Uses {localAgents.find((a) => a.id === current)?.label}'s existing sign-in and model setup.</div>
       )}
       {selectedWired && current.startsWith(`${selectedWired.id}:`) && !lockedPick && (
         <div className="settings-hint">{selectedWired.hint}</div>

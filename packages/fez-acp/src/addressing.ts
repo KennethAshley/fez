@@ -11,6 +11,8 @@
  *   summoning B to answer A, straight into the depth cap).
  * - Name matching is the auto-spawn bootstrap: a mention of a
  *   not-yet-running agent can't carry its p-tag.
+ * - Explicit task tags address their worker independently of prose;
+ *   the caller still verifies the signature, author policy, and roster.
  */
 export interface AddressableEvent {
   pubkey: string;
@@ -51,6 +53,7 @@ export function isAddressedTo(
   /** The persona's "also answers to" nicknames — matched exactly like the id. */
   aliases: readonly string[] = []
 ): boolean {
+  if (event.tags.some(t => t[0] === "task" && t[1] === myPubkey)) return true;
   const named = addressees(event.content);
   if (named.length > 0) {
     const mine = new Set([personaId, ...aliases].map((n) => n.toLowerCase()));

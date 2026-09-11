@@ -1,0 +1,56 @@
+{
+  "cases": [
+    {
+      "case": "relay-trust",
+      "outcome": "Quill: lookup marker only",
+      "soloSeconds": 17.213,
+      "hireSeconds": 121.968,
+      "soloWords": 292,
+      "hireWords": 283,
+      "soloScores": [
+        8,
+        null
+      ],
+      "hireScores": [
+        8,
+        null
+      ]
+    },
+    {
+      "case": "private-workspace",
+      "outcome": "Quill: substantive analysis",
+      "soloSeconds": 23.361,
+      "hireSeconds": 57.935,
+      "soloWords": 279,
+      "hireWords": 331,
+      "soloScores": [
+        7,
+        null
+      ],
+      "hireScores": [
+        9,
+        null
+      ]
+    },
+    {
+      "case": "roster-ordering",
+      "outcome": "Buyer declined to hire",
+      "soloSeconds": 18.254,
+      "hireSeconds": 19.07,
+      "soloWords": 291,
+      "hireWords": 310,
+      "soloScores": [
+        5,
+        6
+      ],
+      "hireScores": [
+        6,
+        8
+      ]
+    }
+  ],
+  "realHires": 2,
+  "signedReplies": 2,
+  "substantiveSpecialistReplies": 1,
+  "cumulativeReportedUsdApprox": 2.286243
+}

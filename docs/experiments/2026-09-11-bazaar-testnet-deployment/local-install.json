@@ -1,0 +1,18 @@
+{
+  "backup": "/Users/ken/.fez/backups/bazaar-coordination-2026-09-11T04-03-22-942Z-90297",
+  "installed": [
+    "runtimes/bazaar-coordination-20260911/evaluation-launcher.mjs",
+    "runtimes/bazaar-coordination-20260911/fez-agent",
+    "runtimes/bazaar-coordination-20260911/fez-agent-runtime",
+    "runtimes/bazaar-coordination-20260911/fez-mcp",
+    "packages/bazaar/bin/fez-bazaar-ask",
+    "packages/bazaar/bin/fez-bazaar-miner",
+    "packages/bazaar/dist/bridge.js",
+    "packages/bazaar/dist/fez-bazaar-miner.js",
+    "packages/bazaar/dist/gui.js",
+    "packages/bazaar/dist/miner.js",
+    "packages/wallet/bin/fez-wallet",
+    "packages/wallet/dist/cli.js",
+    "packages/wallet/dist/mcp.js"
+  ]
+}

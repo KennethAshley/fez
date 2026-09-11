@@ -1,0 +1,7 @@
+**
+!requirements.txt
+!contract.py
+!train.py
+!ops/
+!ops/docker/
+!ops/docker/standalone-text-trainer.dockerfile

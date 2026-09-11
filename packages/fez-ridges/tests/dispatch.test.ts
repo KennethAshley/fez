@@ -3,20 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { dispatchRidges, type DispatchDeps, type FetchLike, type X402Outcome } from "../src/dispatch.js";
-import { readJobs, STORAGE_NAME } from "../src/store.js";
+import { readJobs } from "../src/store.js";
 
 let dir: string;
-let extensionDataDir: string;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-ridges-dispatch-"));
-  extensionDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fez-ridges-extdata-"));
-  process.env.FEZ_EXTENSION_DATA_DIR = extensionDataDir;
 });
-
-function readMirror() {
-  return JSON.parse(fs.readFileSync(path.join(extensionDataDir, `${STORAGE_NAME}.json`), "utf8"));
-}
 
 function fakeGet(status: number, body = ""): FetchLike {
   return async () => ({
@@ -53,8 +46,6 @@ describe("dispatchRidges: invalid URL", () => {
     expect(jobs[0]).toMatchObject({ status: "refused", issueUrl: "https://github.com/acme/widgets/pulls/42" });
     expect(jobs[0].usd).toBeUndefined();
 
-    const mirrored = readMirror();
-    expect(mirrored.jobs).toHaveLength(1);
   });
 });
 
@@ -77,7 +68,6 @@ describe("dispatchRidges: response outcome (app-not-installed guard)", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({ status: "refused", repo: "acme/widgets", issueNumber: 42, title: "Widget is broken" });
 
-    expect(readMirror().jobs).toHaveLength(1);
   });
 
   // I4: `detail` (and its T3 non-JSON/missing-detail fallback, the raw
@@ -127,7 +117,6 @@ describe("dispatchRidges: refused outcome", () => {
     expect(message).toBe(walletMessage);
     const jobs = readJobs(dir);
     expect(jobs[0]).toMatchObject({ status: "refused" });
-    expect(readMirror().jobs).toHaveLength(1);
   });
 });
 
@@ -146,7 +135,10 @@ describe("dispatchRidges: paid outcome", () => {
 
     const message = await dispatchRidges(d, { issueUrl: ISSUE_URL, maxUsd: 10 });
 
-    expect(message).toBe("ridges: dispatched — the subnet has your issue (paid $2.50, tx 0xabc123)");
+    expect(message).toContain("ridges: dispatched — the subnet has your issue (paid $2.50, tx 0xabc123)");
+    expect(message).toContain(ISSUE_URL);
+    expect(message).toContain("Widget is broken");
+    expect(message).toContain("Base mainnet");
     expect(x402).toHaveBeenCalledWith(
       d.x402Deps,
       expect.objectContaining({
@@ -170,7 +162,6 @@ describe("dispatchRidges: paid outcome", () => {
       issueNumber: 42,
     });
 
-    expect(readMirror().jobs).toHaveLength(1);
   });
 
   // M1: a fixed/repeated provider issue_id (a bug on Ridges' side, or a
@@ -262,7 +253,6 @@ describe("dispatchRidges: ambiguous outcome", () => {
 
     const jobs = readJobs(dir);
     expect(jobs[0]).toMatchObject({ status: "payment-unclear", usd: 3, txHash: "0xfeed" });
-    expect(readMirror().jobs).toHaveLength(1);
   });
 
   it("still names the support recovery path when no tx hash came back", async () => {

@@ -1,0 +1,395 @@
+[
+  {
+    "id": "prior-pilot-carryover",
+    "type": "carryover",
+    "reservedUsd": 10.032813,
+    "actualUsd": 1.032813,
+    "state": "reconciled",
+    "remoteUsd": 0,
+    "releasedRemoteReservationUsd": 9,
+    "evidence": "prior-remote-audit.txt",
+    "at": "2026-09-10T00:24:38.408Z"
+  },
+  {
+    "id": "relay-trust-solo-draft",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.040674,
+    "state": "completed",
+    "at": "2026-09-10T00:25:02.762Z",
+    "actualUsd": 0.011818
+  },
+  {
+    "id": "relay-trust-solo-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.043754,
+    "state": "completed",
+    "at": "2026-09-10T00:25:13.976Z",
+    "actualUsd": 0.011807
+  },
+  {
+    "id": "relay-trust-hire-decision",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.0427,
+    "state": "completed",
+    "at": "2026-09-10T00:25:20.350Z",
+    "actualUsd": 0.012398
+  },
+  {
+    "id": "relay-trust-hire-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f",
+    "state": "answered-cost-unmeasured",
+    "at": "2026-09-10T00:25:31.193Z"
+  },
+  {
+    "id": "relay-trust-hire-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.043649,
+    "state": "completed",
+    "at": "2026-09-10T00:27:14.785Z",
+    "actualUsd": 0.011846
+  },
+  {
+    "id": "private-workspace-hire-decision",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.060363,
+    "state": "completed",
+    "at": "2026-09-10T00:27:22.370Z",
+    "actualUsd": 0.020356
+  },
+  {
+    "id": "private-workspace-hire-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f",
+    "state": "answered-cost-unmeasured",
+    "at": "2026-09-10T00:27:32.797Z"
+  },
+  {
+    "id": "private-workspace-hire-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.06362,
+    "state": "completed",
+    "at": "2026-09-10T00:28:10.737Z",
+    "actualUsd": 0.02087
+  },
+  {
+    "id": "private-workspace-solo-draft",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.058337,
+    "state": "completed",
+    "at": "2026-09-10T00:28:19.879Z",
+    "actualUsd": 0.021786
+  },
+  {
+    "id": "private-workspace-solo-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.062474,
+    "state": "completed",
+    "at": "2026-09-10T00:28:35.622Z",
+    "actualUsd": 0.020123
+  },
+  {
+    "id": "roster-ordering-hire-decision",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.042735,
+    "state": "completed",
+    "at": "2026-09-10T00:28:43.550Z",
+    "actualUsd": 0.013085
+  },
+  {
+    "id": "roster-ordering-hire-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.043446,
+    "state": "completed",
+    "at": "2026-09-10T00:28:55.664Z",
+    "actualUsd": 0.011922
+  },
+  {
+    "id": "roster-ordering-solo-draft",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.040709,
+    "state": "completed",
+    "at": "2026-09-10T00:29:02.311Z",
+    "actualUsd": 0.012345
+  },
+  {
+    "id": "roster-ordering-solo-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.044112,
+    "state": "completed",
+    "at": "2026-09-10T00:29:14.282Z",
+    "actualUsd": 0.011909
+  },
+  {
+    "id": "relay-trust-judge-0",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.25219,
+    "state": "completed",
+    "at": "2026-09-10T00:29:50.995Z",
+    "actualUsd": 0.13156
+  },
+  {
+    "id": "relay-trust-judge-1",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.25219,
+    "state": "incomplete",
+    "at": "2026-09-10T00:30:29.368Z",
+    "actualUsd": 0.13701
+  },
+  {
+    "id": "private-workspace-judge-0",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.340525,
+    "state": "completed",
+    "at": "2026-09-10T00:31:12.434Z",
+    "actualUsd": 0.18386
+  },
+  {
+    "id": "private-workspace-judge-1",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.340525,
+    "state": "incomplete",
+    "at": "2026-09-10T00:31:49.993Z",
+    "actualUsd": 0.187685
+  },
+  {
+    "id": "roster-ordering-judge-0",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.251945,
+    "state": "completed",
+    "at": "2026-09-10T00:32:29.060Z",
+    "actualUsd": 0.119725
+  },
+  {
+    "id": "roster-ordering-judge-1",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.251945,
+    "state": "completed",
+    "at": "2026-09-10T00:33:00.485Z",
+    "actualUsd": 0.133625
+  },
+  {
+    "id": "wallet-hire-ember-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "e6e9a111876c80f5cc065a0b3dcf12998fab79a137e8a596be62c2ec9930d11c",
+    "state": "answered-cost-reported",
+    "at": "2026-09-10T01:20:56.858Z",
+    "walletNetwork": "test",
+    "walletRealMoneyUsd": 0,
+    "reportedUsd": 0.0005,
+    "precisionUsd": 0.0001,
+    "taskId": "263b742c484cadc9b72145ed301de852f4d0c9d98149ba623b9521991aa09cfc",
+    "evidence": "../2026-09-09-bazaar-wallet-hire/miner-audit.txt"
+  },
+  {
+    "id": "autonomous-buyer-0",
+    "type": "model",
+    "reservedUsd": 0.06613999999999999,
+    "model": "claude-haiku-4-5",
+    "state": "completed",
+    "at": "2026-09-10T01:38:43.341Z",
+    "actualUsd": 0.017865
+  },
+  {
+    "id": "autonomous-buyer-1",
+    "type": "model",
+    "reservedUsd": 0.068218,
+    "model": "claude-haiku-4-5",
+    "state": "completed",
+    "at": "2026-09-10T01:38:45.706Z",
+    "actualUsd": 0.018736
+  },
+  {
+    "id": "autonomous-buyer-2",
+    "type": "model",
+    "reservedUsd": 0.06856899999999999,
+    "model": "claude-haiku-4-5",
+    "state": "completed",
+    "at": "2026-09-10T01:38:49.335Z",
+    "actualUsd": 0.019447
+  },
+  {
+    "id": "autonomous-specialist-b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f",
+    "walletNetwork": "test",
+    "walletRealMoneyUsd": 0,
+    "state": "buyer-timeout-cost-reported",
+    "at": "2026-09-10T01:38:53.250Z",
+    "taskId": "bc1c5dd3618c2a8fd6117a5f04c38f10cfcefd3ac0d88a4ac0bd513ad8066830",
+    "successfulAnswers": 0,
+    "reportedUsd": 0.1267,
+    "precisionUsd": 0.0001,
+    "lateStatus": "failure",
+    "lateDelaySeconds": 103,
+    "evidence": "../2026-09-09-bazaar-autonomous-hire/miner-audit.txt"
+  },
+  {
+    "id": "autonomous-buyer-3",
+    "type": "model",
+    "reservedUsd": 0.069434,
+    "model": "claude-haiku-4-5",
+    "state": "completed",
+    "at": "2026-09-10T01:39:01.649Z",
+    "actualUsd": 0.022028000000000002
+  },
+  {
+    "id": "autonomous-buyer-4",
+    "type": "model",
+    "reservedUsd": 0.072064,
+    "model": "claude-haiku-4-5",
+    "state": "completed",
+    "at": "2026-09-10T01:40:11.929Z",
+    "actualUsd": 0.02452
+  },
+  {
+    "id": "autonomous-solo-draft",
+    "type": "model",
+    "reservedUsd": 0.061148,
+    "model": "claude-haiku-4-5",
+    "state": "completed",
+    "at": "2026-09-10T01:40:28.353Z",
+    "actualUsd": 0.020023
+  },
+  {
+    "id": "autonomous-solo-final",
+    "type": "model",
+    "reservedUsd": 0.063969,
+    "model": "claude-haiku-4-5",
+    "state": "completed",
+    "at": "2026-09-10T01:40:40.108Z",
+    "actualUsd": 0.020351
+  },
+  {
+    "id": "autonomous-judge-0",
+    "type": "model",
+    "reservedUsd": 0.242145,
+    "model": "claude-sonnet-5",
+    "state": "completed",
+    "at": "2026-09-10T01:41:21.636Z",
+    "actualUsd": 0.09942899999999999
+  },
+  {
+    "id": "autonomous-judge-1",
+    "type": "model",
+    "reservedUsd": 0.242145,
+    "model": "claude-sonnet-5",
+    "state": "completed",
+    "at": "2026-09-10T01:41:43.334Z",
+    "actualUsd": 0.114909
+  },
+  {
+    "id": "autonomous-progress-recovery-0",
+    "type": "model",
+    "reservedUsd": 0.020368,
+    "state": "completed",
+    "at": "2026-09-10T01:56:27.432Z",
+    "actualUsd": 0.003778
+  },
+  {
+    "id": "autonomous-progress-recovery-1",
+    "type": "model",
+    "reservedUsd": 0.021867,
+    "state": "completed",
+    "at": "2026-09-10T01:58:16.885Z",
+    "actualUsd": 0.008934000000000001
+  },
+  {
+    "id": "lebron-air-invoice-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+    "state": "completed-cost-reconciled",
+    "at": "2026-09-10T03:01:03.340055+00:00",
+    "walletNetwork": "test",
+    "walletRealMoneyUsd": 0,
+    "basis": "Air miner token-price ledger, including its one earlier background answer; not a provider invoice.",
+    "hireAttemptAt": "2026-09-10T03:11:01.637Z",
+    "actualUsd": 0.032277,
+    "hireModelUsd": 0.019671,
+    "backgroundModelUsd": 0.012606,
+    "evidence": "2026-09-09-bazaar-lebron-air/air-stopped.json",
+    "completedAt": "2026-09-10T03:14:06.863414+00:00"
+  },
+  {
+    "id": "lebron-air-repository-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+    "state": "failed-delivery-cost-reconciled",
+    "at": "2026-09-10T03:32:12.030263+00:00",
+    "walletNetwork": "test",
+    "walletRealMoneyUsd": 0,
+    "basis": "Complete Pi session runtime token-price estimate for 8 calls (opencode-go/kimi-k3), not a provider invoice; miner accounting omits harness usage. Code passed; automatic commit failed; no repeat hire.",
+    "hireAttemptAt": "2026-09-10T03:33:13.395Z",
+    "actualUsd": 0.0643278,
+    "hireModelUsd": 0.0643278,
+    "evidence": "2026-09-09-bazaar-lebron-repo/air-harness-evidence.json",
+    "completedAt": "2026-09-10T03:43:25.567281+00:00"
+  },
+  {
+    "id": "lebron-air-unattended-repository-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+    "state": "completed-unattended-cost-reconciled",
+    "at": "2026-09-10T05:16:55.758970+00:00",
+    "walletNetwork": "test",
+    "walletRealMoneyUsd": 0,
+    "basis": "Complete fresh Pi session token-price estimate for 7 opencode-go/kimi-k3 calls, not a provider invoice; unattended delivery succeeded.",
+    "hireAttemptAt": "2026-09-10T05:19:33.591Z",
+    "actualUsd": 0.0481656,
+    "hireModelUsd": 0.0481656,
+    "taskId": "f47abf2230b7ca9e91caa6ba9cbf8b30b99bcba30e81f3e55b0a12dd2b3dd86b",
+    "completedAt": "2026-09-10T05:24:58.832979+00:00",
+    "evidence": "../2026-09-10-bazaar-unattended-hire/air-run/usage.json"
+  },
+  {
+    "id": "lebron-air-background-before-live-metering",
+    "type": "remote",
+    "actualUsd": 0.014976,
+    "reservedUsd": 0.014976,
+    "state": "completed-cost-reconciled",
+    "at": "2026-09-10T06:58:27.700689+00:00",
+    "basis": "Air miner increased from 0.032277 to 0.047253 after restart; separate background answer."
+  },
+  {
+    "id": "lebron-air-live-metering-specialist",
+    "type": "remote",
+    "pk": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+    "reservedUsd": 3,
+    "state": "completed-live-metering-cost-reconciled",
+    "at": "2026-09-10T06:58:27.700689+00:00",
+    "walletNetwork": "test",
+    "walletRealMoneyUsd": 0,
+    "hireAttemptAt": "2026-09-10T07:00:14.692Z",
+    "actualUsd": 0.0556305,
+    "hireModelUsd": 0.0556305,
+    "taskId": "d63199925c88d67c76e6639c5fdea4772a93aba6664c6b2f8ebf459e64f20858",
+    "completedAt": "2026-09-10T07:05:04.135983+00:00",
+    "evidence": "../2026-09-10-bazaar-live-metering/cost-reconciliation.json",
+    "basis": "Native Pi session estimate equals the persisted Bazaar ledger delta; seven calls, no delivery recovery."
+  }
+]

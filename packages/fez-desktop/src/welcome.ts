@@ -7,13 +7,12 @@
  * the source of truth) — the bundle deliberately doesn't import the CLI.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import type { FezClient } from "@fezchat/client";
-import { BrowserWire } from "./wire";
+import { BrowserWire, rustSigner } from "./wire";
 import { relaySet } from "./relay";
 import { toast } from "./toast";
-import { detectHarnesses } from "./harnesses";
+import { agentReady, detectHarnesses, localAgents, type LocalAgentStatus } from "./harnesses";
+import { PROVIDERS, providerId } from "./providers";
 import {
   WELCOME_CHANNEL_ID,
   HELLO_MARKER,
@@ -57,51 +56,29 @@ async function ensureFezPersona(harness: string): Promise<void> {
   }
 }
 
-async function agentKeyHex(): Promise<string> {
-  try {
-    return await invoke<string>("get_identity", { account: AGENT_ACCOUNT });
-  } catch {
-    const hex = bytesToHex(generateSecretKey());
-    await invoke("set_identity", { hex, account: AGENT_ACCOUNT });
-    return hex;
-  }
-}
-
-const PROVIDER_IDS = ["chutes", "anthropic", "openai", "openrouter"];
-
+/** Readiness belongs to the chosen persona, never another installed agent. */
 export async function readiness(): Promise<Readiness> {
-  const harnesses = await detectHarnesses();
-  // Claude counts only when all three claims hold: CLI installed, its
-  // auth probe says signed in, and the managed adapter is runnable —
-  // "installed" alone once produced READY on a machine that could not
-  // complete a single turn.
-  let claudeReady = false;
   try {
-    const c = JSON.parse(await invoke<string>("claude_brain_status")) as {
-      installed: boolean;
-      authed: boolean;
-      adapterReady: boolean;
-    };
-    claudeReady = c.installed && c.authed && c.adapterReady;
-  } catch {
-    claudeReady = false;
-  }
-  // Any configured provider counts — the Chutes-only gate was the bug
-  // that kept the team from ever spawning.
-  let piKeyed = false;
-  for (const p of PROVIDER_IDS) {
-    if (await invoke<boolean>("provider_key_present", { provider: p }).catch(() => false)) {
-      piKeyed = true;
-      break;
+    const md = await invoke<string>("read_persona", { name: "fez" });
+    const brain = parsePersonaBrain(md);
+    const local = localAgents.find((a) => a.id === brain.harness);
+    if (local) {
+      const status = JSON.parse(await invoke<string>(local.statusCommand)) as LocalAgentStatus;
+      return { authed: agentReady(status), runner: true };
     }
+    if (brain.harness !== "pi" || !brain.provider || !brain.model) return { authed: false, runner: true };
+    const id = providerId(brain.provider);
+    const harnesses = await detectHarnesses();
+    const authed = !!harnesses.pi && PROVIDERS.some((p) => p.id === id)
+      && await invoke<boolean>("provider_key_present", { provider: id });
+    return { authed, runner: true };
+  } catch {
+    return { authed: false, runner: true };
   }
-  // runner: the app supervises its own agents now — spawn is ours to do,
-  // so "someone is listening" is simply "we are able to spawn".
-  return { authed: claudeReady || (!!harnesses["pi"] && piKeyed), runner: true };
 }
 
-function markerWire(hex: string): MarkerWire & { close(): void } {
-  const wire = new BrowserWire(relaySet(), hex);
+function markerWire(pubkey: string): MarkerWire & { close(): void } {
+  const wire = new BrowserWire(relaySet(), rustSigner(pubkey, AGENT_ACCOUNT));
   return {
     async existing(channelId) {
       const events = await wire.query([{ kinds: [KIND_MESSAGE], "#h": [channelId], limit: 500 }]);
@@ -148,23 +125,14 @@ async function ensureStarterTeam(
   for (const p of STARTER_TEAM) {
     // Same custody as @fez: keychain fez-keys / agent:<name> — the key the
     // spawned fez-agent will load is the key we roster here.
-    let hex: string;
+    let pk: string;
     try {
-      hex = await invoke<string>("get_identity", { account: `agent:${p.id}` });
+      pk = await invoke<string>("ensure_agent_identity", { name: p.id });
     } catch (err) {
-      // Mint only on genuine absence. A denied keychain prompt errors
-      // too, and minting then would re-key an agent that already owns a
-      // roster seat (set_identity's fail-closed guard would refuse
-      // anyway — skip the teammate and say why instead of dying here).
       const msg = err instanceof Error ? err.message : String(err);
-      if (!/no fez identity/i.test(msg)) {
-        toast.warn(`@${p.id} skipped: ${msg}`);
-        continue;
-      }
-      hex = bytesToHex(generateSecretKey());
-      await invoke("set_identity", { hex, account: `agent:${p.id}` });
+      toast.warn(`@${p.id} skipped: ${msg}`);
+      continue;
     }
-    const pk = getPublicKey(hexToBytes(hex));
     if (!client.state.isMember(pk)) {
       await client.invite(pk, "bot").catch(() => {});
       await client.attestAgent(pk).catch(() => {});
@@ -255,14 +223,13 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
 
   const harnesses = await detectHarnesses();
   await ensureFezPersona(harnesses["claude-code"] ? "claude-code" : "pi");
-  const hex = await agentKeyHex();
+  const agentPk = await invoke<string>("ensure_agent_identity", { name: "fez" });
 
   // Roster the guide BEFORE it speaks. The opener is signed by the
   // agent's own key, and the client renders only members — an
   // unrostered @fez posted a perfect welcome that every client rightly
   // refused to show (found live: three events on the relay, a silent
   // screen). Idempotent; owner-signed.
-  const agentPk = getPublicKey(hexToBytes(hex));
   if (!client.state.isMember(agentPk)) {
     await client.invite(agentPk, "bot").catch(() => {});
     // Attested = summon authority: the sentinel honors mentions from the
@@ -273,7 +240,8 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
   // A swallowed failure here was the cruelest first-run outcome: @fez
   // posts its welcome (owner-signed markers, no process needed), then
   // never answers a single mention, with no trace anywhere.
-  await invoke("start_managed_agent", {
+  const r = await readiness();
+  if (r.authed) await invoke("start_managed_agent", {
     persona: "fez",
     owner: client.pubkey,
     relay: relaySet()[0],
@@ -282,9 +250,8 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
     toast.error(`@fez couldn't start: ${err instanceof Error ? err.message : String(err)}`);
   });
 
-  const r = await readiness();
   const userName = localStorage.getItem("fez-name") ?? "";
-  const w = markerWire(hex);
+  const w = markerWire(agentPk);
   try {
     // The author line reads "fez", not a pubkey prefix — kind 0 is
     // replaceable, so republishing the same profile every run is a no-op.

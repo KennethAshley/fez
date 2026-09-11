@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient, ObserverEntry, WireEvent } from "@fezchat/client";
 import { invitePersona } from "./invite-persona";
+import { toast } from "./toast";
 import { dayKey } from "./format";
 import type { BrowserWire } from "./wire";
 import ActivityFeed from "./ActivityFeed";
@@ -618,7 +619,8 @@ export default function AgentsPane({
                       onClick={() => {
                         void invitePersona(client, name).then((r) => {
                           if (r.kind === "invited") setInvited(name);
-                        });
+                          else toast.info(`mention @${name} in a channel to create its identity and invite it`);
+                        }).catch((err) => toast.error(String(err)));
                       }}
                     >
                       invite
@@ -635,10 +637,11 @@ export default function AgentsPane({
                         while (existing.has(`${name.toLowerCase()}-${n}`)) n++;
                         const twin = `${name}-${n}`;
                         await invoke<string>("write_persona", { name: twin, content });
-                        await invitePersona(client, twin);
+                        const result = await invitePersona(client, twin);
                         setPersonaNonce((x) => x + 1);
-                        setInvited(twin);
-                      })();
+                        if (result.kind === "invited") setInvited(twin);
+                        else toast.info(`mention @${twin} in a channel to create its identity and invite it`);
+                      })().catch((err) => toast.error(String(err)));
                     }}
                   >
                     twin

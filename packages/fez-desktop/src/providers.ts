@@ -1,3 +1,7 @@
+// Older personas used generated provider ids; new ones use the provider name.
+const LEGACY: Record<string, string> = { "local-56105ece7a": "chutes", "local-ebfd09756a": "gm", "local-3ce36528bf": "anthropic", "local-d9617135d6": "openai", "local-76ef4ad6f0": "openrouter" };
+export const providerId = (id: string) => LEGACY[id] ?? id;
+
 /**
  * The v1 provider table (mirrors the Rust `provider_spec` list in
  * src-tauri/lib.rs). One row per pi-wireable model provider: the id is the

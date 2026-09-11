@@ -1,0 +1,10 @@
+{
+  "hireModelUsd": 0.019671,
+  "airSessionModelUsd": 0.032277,
+  "backgroundModelUsd": 0.012606,
+  "walletRealMoneyUsd": 0,
+  "cumulativeReportedUsdApprox": 2.81574,
+  "conservativeCumulativeAccountedUsd": 14.50884,
+  "authorizedCumulativeUsd": 20,
+  "basis": "Configured token prices and actual Air miner ledger. Earlier remote reservations remain held. Not reconciled against provider invoices."
+}

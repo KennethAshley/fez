@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-10T03:30:59.887Z",
+  "channelId": "120f23e8-3d72-4e0b-93f8-c7f731aa22d9",
+  "url": "https://kens-macbook-pro.tail93459d.ts.net:8443/git/lebron-invoice-pilot-20260910.git",
+  "head": "e7445ed934ad33acb6e808f864f8876a670c0321",
+  "owner": "2d4c2942d379634c2f8204d85cfdaaf25058e8620ad43e5553f1ac774263f941",
+  "meta": {
+    "repo": "lebron-invoice-pilot-20260910",
+    "clone": "https://kens-macbook-pro.tail93459d.ts.net:8443/git/lebron-invoice-pilot-20260910.git",
+    "protect": "main",
+    "grants": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0:1789014659"
+  }
+}
