@@ -1,0 +1,76 @@
+{
+  "deployment.json": {
+    "deployed": true,
+    "network": "test",
+    "netuid": 553,
+    "artifacts": {
+      "20-testnet.conf": "5a15397b455dc722403042bec7c4df7b2d6871bcfc24c02548fc94eaec4bd86f",
+      "assert-bazaar-testnet.py": "c583fe295cace7564569f6ba00ad64bcdd04ece9aa800f0f61b7b1ccc0fe139b",
+      "availability.js": "530be01e01ea9b34892df45e6fe8ccb0c8651b034d9fd13742ec1ebb7e6c97b6",
+      "fez-bazaar-miner": "5a73266d42565d7c8e6ffa5e5d6d2e6c2cde80826c2a7217b6725a6e9c757d13",
+      "fez-bazaar-validator": "4a80ca96416915aa13b66fc71e8c23c1a9fe12b95494516ca489e9c417c28263",
+      "index.html": "1f0939db2dba3a13f8c5c18585cc14d64cf45eb407c0776acbb6efe7b4bbfb8e"
+    },
+    "services": [
+      "fez-bazaar-miner@ember",
+      "fez-bazaar-miner@quill",
+      "fez-bazaar-miner@forge",
+      "fez-bazaar-miner@drift",
+      "fez-bazaar-validator"
+    ],
+    "originalConfigurationHashesPreserved": true,
+    "gauntletJobScheduled": false,
+    "backup": "/root/fez-testnet-deploy/20260911-coordination/backup"
+  },
+  "originals.json": {
+    "fez-bazaar-miner": {
+      "target": "/opt/fez/fez-bazaar-miner",
+      "existed": true,
+      "sha256": "a1619ee3190c5a15e0b37473526fbdacc12c38684d2ff5d38d77c328a2e8a4db"
+    },
+    "fez-bazaar-validator": {
+      "target": "/opt/fez/fez-bazaar-validator",
+      "existed": true,
+      "sha256": "07321b697cef9d737d6072283a5db493187e6145717848f77f6287ef99d84cb5"
+    },
+    "index.html": {
+      "target": "/var/www/bazaar/index.html",
+      "existed": true,
+      "sha256": "507337d061025b065c99f255ee70e2562953eebb7bfc73e2fee6ec6843f933dd"
+    },
+    "availability.js": {
+      "target": "/var/www/bazaar/availability.js",
+      "existed": true,
+      "sha256": "530be01e01ea9b34892df45e6fe8ccb0c8651b034d9fd13742ec1ebb7e6c97b6"
+    },
+    "assert-bazaar-testnet.py": {
+      "target": "/opt/fez/assert-bazaar-testnet.py",
+      "existed": false,
+      "sha256": null
+    },
+    "20-testnet.conf": {
+      "target": "/etc/systemd/system/fez-bazaar-validator.service.d/20-testnet.conf",
+      "existed": false,
+      "sha256": null
+    }
+  },
+  "preserved-config-hashes.json": {
+    "/etc/fez/bazaar-validator.env": "49d751c483079a7cf4eba5fcfbf776316297195a47ab34af14755cfc3ef7da09",
+    "/etc/fez/bazaar-miner-quill.env": "c767ae92ff9a4c680c8960873c2b718c8e548f0bc5b01e26c1a78ce2a0d22353",
+    "/etc/fez/bazaar-miner-ember.env": "8dc5a9650288fda6ce27f4e61261db16dba2fb1be54b824c3027fed118b125f7",
+    "/etc/fez/bazaar-miner-drift.env": "431d9122cebc7846d74c2fe53d323dc7c4f2eaac0c4505341b18a59efd677865",
+    "/etc/fez/bazaar-miner-forge.env": "886020845eefbc10a2e9816acc3a987c72dc4ff0455c9e45535eea3c7ec6299c",
+    "/etc/systemd/system/fez-bazaar-validator.service": "8128c54d36bd48dff62ebfbee8f2252e0197fab2f16d276d9c4c4455b98d6ab1",
+    "/etc/systemd/system/fez-bazaar-miner@.service": "8f5f71c9c1a2a99fb94362abbc769c4ac183587fc34630269f5f44a8a70a3f93",
+    "/opt/fez/sidecar/set_weights.py": "6ca2dc5305c7a49083ee07218767535087c14fc41b8504c30807edb1fd4b1270",
+    "/opt/fez/fez-relay.mjs": "7b60d518fdb2b90e323cc326609cb60108c5f8d33689af89d1cd609b4d4f58a0",
+    "/etc/caddy/Caddyfile": "32c1ec84b20d952013347d6b31324c9afa8ff2a00821cf148d162b557e759092"
+  },
+  "testnet-preflight.json": {
+    "network": "test",
+    "netuid": 553,
+    "endpoint": "wss://test.finney.opentensor.ai:443",
+    "genesis": "0x8f9cf856bf558a14440e75569c9e58594757048d7b3a84b5d25f6bd978263105",
+    "testnetVerified": true
+  }
+}

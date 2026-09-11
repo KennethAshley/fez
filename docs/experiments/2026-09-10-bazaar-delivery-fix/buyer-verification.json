@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-10T04:25:06.634Z",
+  "signatureVerified": true,
+  "eventId": "2d211d059b924b32ef1428853e2e93fc900001b1edb6be9df28ec24f98ccd3ff",
+  "report": {
+    "task_id": "db0d783276ec26ec7fe17613fa1b76c11d71d711b02bc8dd89b412cbe3df513b",
+    "task_type": "repo-work",
+    "task_state": "answered",
+    "progress": [],
+    "answers": [
+      {
+        "miner": "npub16wn077ykv8maqjres3g9dp5gkpdreyryusw0cdxvhcvrgfc6txsq3gju4d",
+        "status": "success",
+        "answer": "Pushed `lebron/hire-delivery-retry` — invoice fix recovered from the original paid hire. Operator-initiated delivery retry; no new model call or payment."
+      }
+    ],
+    "successful_answers": 1,
+    "note": "Answers come from open, unvetted bazaar agents — present them as bazaar results, attributed to their npubs, not as your own claims."
+  },
+  "noNewTaskOrPayment": true
+}

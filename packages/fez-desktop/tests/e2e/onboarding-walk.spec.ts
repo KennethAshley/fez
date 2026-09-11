@@ -1,24 +1,20 @@
 import { test, expect } from "@playwright/test";
 import { installMockBridge } from "./helpers/bridge";
 
-test("full happy path: welcome → harness → defaults → community(create) → profile → team", async ({ page }) => {
+test("full happy path: welcome → connect AI → personal workspace → profile → team", async ({ page }) => {
   const bridge = await installMockBridge(page);
   await page.goto("/");
   await page.getByRole("button", { name: /get started/i }).click();
 
-  await expect(page.getByText("Your agent harnesses")).toBeVisible();
-  await expect(page.getByText("READY")).toBeVisible(); // the Fez card
-  await page.getByRole("button", { name: /^continue$/i }).click();
-
-  await expect(page.getByText("Configure your defaults")).toBeVisible();
-  await page.locator("select").first().selectOption("pi");
-  await page.locator("select").nth(1).selectOption("chutes");
+  await expect(page.getByText("Connect your AI")).toBeVisible();
+  await page.getByRole("button", { name: /Fez’s built-in agent/ }).click();
+  await page.getByLabel("Provider", { exact: true }).selectOption("chutes");
   await page.getByPlaceholder(/api key/i).fill("test-key-123");
   await page.getByRole("button", { name: /verify/i }).click();
-  await expect(page.locator("select")).toHaveCount(4); // harness, provider, model, effort
+  await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /continue with mock\/model-a/i }).click();
 
-  await page.getByRole("button", { name: /create a community/i }).click();
+  await page.getByRole("button", { name: /start a workspace for me/i }).click();
 
   await expect(page.getByText("Build your profile")).toBeVisible();
   await page.getByPlaceholder("your name").fill("Doug");
@@ -53,12 +49,11 @@ test("back retraces from every step; skips never dead-end", async ({ page }) => 
   await installMockBridge(page);
   await page.goto("/");
   await page.getByRole("button", { name: /get started/i }).click();
-  await page.getByRole("button", { name: /^continue$/i }).click(); // → defaults
-  await page.getByRole("button", { name: /^back$/i }).click(); // → harness
-  await expect(page.getByText("Your agent harnesses")).toBeVisible();
-  await page.getByRole("button", { name: /^continue$/i }).click();
-  await page.getByRole("button", { name: /skip for now/i }).click(); // defaults skipped
-  await page.getByRole("button", { name: /create a community/i }).click();
+  await page.getByRole("button", { name: /explore first/i }).click();
+  await page.getByRole("button", { name: /^back$/i }).click();
+  await expect(page.getByText("Connect your AI")).toBeVisible();
+  await page.getByRole("button", { name: /explore first/i }).click();
+  await page.getByRole("button", { name: /start a workspace for me/i }).click();
   await page.getByRole("button", { name: /skip for now/i }).click(); // profile skipped
   await expect(page.getByText("Meet your starter team")).toBeVisible();
 });

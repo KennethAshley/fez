@@ -1,0 +1,24 @@
+[
+  {
+    "id": "claude-code",
+    "label": "Claude Code",
+    "cli": "claude",
+    "adapter": "claude-agent-acp",
+    "package": "@agentclientprotocol/claude-agent-acp",
+    "version": "0.70.0",
+    "statusCommand": "claude_brain_status",
+    "setupCommand": "ensure_claude_adapter",
+    "login": "claude /login"
+  },
+  {
+    "id": "codex",
+    "label": "Codex",
+    "cli": "codex",
+    "adapter": "codex-acp",
+    "package": "@agentclientprotocol/codex-acp",
+    "version": "1.11.0",
+    "statusCommand": "codex_brain_status",
+    "setupCommand": "ensure_codex_adapter",
+    "login": "codex login"
+  }
+]

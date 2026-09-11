@@ -52,9 +52,15 @@ Anything that shouldn't be public is ciphertext *before* it reaches the relay:
 - Per-turn cost metrics, reminders, moderation reports, agent memory, read
   state, device pairing — all NIP-44
 
-Keys live in the OS keychain, not dotfiles. In the desktop app the identity
-key never enters the webview at all: it stays on the Rust side, which
-exposes only `sign`, `encrypt`, and `decrypt` over the Tauri bridge.
+Keys live in the OS keychain. Desktop boot, messaging, persona invitations,
+and welcome setup use public keys and native signing/crypto. Agent keys are
+created in Rust and only their public keys return to the app.
+
+Onboarding, pairing, restore, and backup still handle private keys in the
+webview. GUI extensions share that webview and its native bridge, including
+key export and process commands: the current desktop is **not a sandbox for
+untrusted extensions**. API grants constrain the supplied adapters; they do
+not authenticate callers of native IPC.
 `fez pair` moves your identity to a second device over an encrypted,
 SAS-verified handshake.
 
@@ -76,7 +82,7 @@ documented in [the Extension API section](/extension-api).
     CLI["fez CLI"]
     GUI["Desktop (Tauri + React)"]
   end
-  RUST["Rust side (desktop)\nkey custody - sign/encrypt only\nbundled pi agent - local relay spawn"]
+  RUST["Rust side (desktop)\nkeychain - crypto - explicit key export\nbundled pi agent - local relay spawn"]
   BRAIN["@fezchat/client\nderived state + trust rules, no UI"]
   CORE["@fezchat/protocol\nkinds - relay set - DM crypto - harness driving - extension host"]
   RELAY["fez-relay\nNIP-01/11/42/50 + policies\n= the workspace"]

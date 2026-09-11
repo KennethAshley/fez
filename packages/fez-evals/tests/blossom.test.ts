@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import http from "node:http";
+import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { finalizeEvent, generateSecretKey, verifyEvent } from "nostr-tools/pure";
 import { uploadToBlossom, sha256Hex, mimeFor, KIND_BLOSSOM_AUTH } from "../../fez-media/src/blossom.js";
@@ -11,7 +12,7 @@ import { uploadToBlossom, sha256Hex, mimeFor, KIND_BLOSSOM_AUTH } from "../../fe
  * signature, kind, verb, hash match, unexpired.
  */
 
-const PORT = 7796;
+let serverUrl: string;
 const sk = generateSecretKey();
 const sign = (tmpl: { kind: number; tags: string[][]; content: string }) =>
   finalizeEvent({ ...tmpl, created_at: Math.floor(Date.now() / 1000) }, sk);
@@ -19,7 +20,7 @@ const sign = (tmpl: { kind: number; tags: string[][]; content: string }) =>
 let server: http.Server;
 let lastRejection = "";
 
-beforeAll(() => {
+beforeAll(async () => {
   server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c) => chunks.push(c));
@@ -46,10 +47,14 @@ beforeAll(() => {
       if (tag("x") !== hash) return reject(401, "hash mismatch");
       if (Number(tag("expiration")) < Math.floor(Date.now() / 1000)) return reject(401, "expired");
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ url: `http://127.0.0.1:${PORT}/${hash}`, sha256: hash, size: body.length, type: req.headers["content-type"] }));
+      res.end(JSON.stringify({ url: `${serverUrl}/${hash}`, sha256: hash, size: body.length, type: req.headers["content-type"] }));
     });
   });
-  return new Promise<void>((res) => server.listen(PORT, res));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected a loopback port");
+  serverUrl = `http://127.0.0.1:${address.port}`;
 });
 
 afterAll(() => new Promise<void>((res) => server.close(() => res())));
@@ -57,7 +62,7 @@ afterAll(() => new Promise<void>((res) => server.close(() => res())));
 describe("Blossom upload", () => {
   test("signed upload round-trips with content-addressed URL", async () => {
     const bytes = new TextEncoder().encode("hello blossom");
-    const blob = await uploadToBlossom(`http://127.0.0.1:${PORT}`, bytes, "text/plain", sign);
+    const blob = await uploadToBlossom(serverUrl, bytes, "text/plain", sign);
     expect(blob.sha256).toBe(sha256Hex(bytes));
     expect(blob.url).toContain(blob.sha256);
     expect(blob.size).toBe(bytes.length);
@@ -68,7 +73,7 @@ describe("Blossom upload", () => {
     const bytes = new TextEncoder().encode("real payload");
     const evilSign = (tmpl: { kind: number; tags: string[][]; content: string }) =>
       sign({ ...tmpl, tags: tmpl.tags.map((t) => (t[0] === "x" ? ["x", "0".repeat(64)] : t)) });
-    await expect(uploadToBlossom(`http://127.0.0.1:${PORT}`, bytes, "text/plain", evilSign)).rejects.toThrow(/401|hash/);
+    await expect(uploadToBlossom(serverUrl, bytes, "text/plain", evilSign)).rejects.toThrow(/401|hash/);
     expect(lastRejection).toBe("hash mismatch");
   });
 
@@ -76,7 +81,7 @@ describe("Blossom upload", () => {
     const bytes = new TextEncoder().encode("nope");
     const forge = (tmpl: { kind: number; tags: string[][]; content: string }) =>
       ({ ...tmpl, id: "0".repeat(64), pubkey: "0".repeat(64), created_at: Math.floor(Date.now() / 1000), sig: "0".repeat(128) }) as never;
-    await expect(uploadToBlossom(`http://127.0.0.1:${PORT}`, bytes, "text/plain", forge)).rejects.toThrow();
+    await expect(uploadToBlossom(serverUrl, bytes, "text/plain", forge)).rejects.toThrow();
     expect(lastRejection).toBe("bad signature");
   });
 

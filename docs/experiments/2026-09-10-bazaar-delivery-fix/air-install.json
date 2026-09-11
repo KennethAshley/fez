@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-10T04:22:46.675481+00:00",
+  "installed": [
+    {
+      "path": "/Users/ken/.fez/bin/fez-agent",
+      "sha256": "3abd0f6b24c5f19a693759326fcf0ec25e67938fab8a6fead42c62f1431cd2c6",
+      "backup": "/Users/ken/.fez/bazaar/delivery-fix-backup-20260910/fez-agent"
+    },
+    {
+      "path": "/Users/ken/.fez/packages/bazaar/dist/fez-bazaar-miner.js",
+      "sha256": "acea873b4bf230dd2ffe0cbb43974994989c014b5670bf7d0f7889d4b30b0d81",
+      "backup": "/Users/ken/.fez/bazaar/delivery-fix-backup-20260910/fez-bazaar-miner.js"
+    }
+  ],
+  "command": "/Users/ken/.fez/bazaar/lebron-delivery-retry.command",
+  "localAdHocCodeSignatureVerified": true
+}

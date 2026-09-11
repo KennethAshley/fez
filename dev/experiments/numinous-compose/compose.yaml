@@ -1,0 +1,20 @@
+name: fez-numinous-lab
+services:
+  smoke:
+    image: python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
+    command: [python, /trial/smoke.py]
+    network_mode: none
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 32
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - .:/trial:ro
+    tmpfs:
+      - /sandbox:size=8m,mode=1777
+      - /tmp:size=8m,mode=1777

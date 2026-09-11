@@ -1,0 +1,106 @@
+[
+  {
+    "kind": 47040,
+    "created_at": 1789009873,
+    "tags": [
+      [
+        "amount",
+        "4900000"
+      ],
+      [
+        "asset",
+        "TAO"
+      ],
+      [
+        "chain",
+        "tao"
+      ],
+      [
+        "network",
+        "test"
+      ],
+      [
+        "tx",
+        "0x81d1bd508b9ad04197ee68df0821440e80cbc06942010bdf379ff3024479a213"
+      ],
+      [
+        "p",
+        "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0"
+      ],
+      [
+        "block",
+        "0x164bb6c6bdb5cc808e6b8045febffe3465b01422d98e6904978a948d4a3b7875"
+      ]
+    ],
+    "content": "lease",
+    "pubkey": "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52",
+    "id": "ff59d181442929763be2203e56b898a94edfa27e5e58b80df67b65bc7b0d0eca",
+    "sig": "bbd7f1a671198481c9283530e512ca53a5d7e4686512caaa352577830c1fc3d93c9c4525eb809ff7a5fb7229d3e0f612d7f6667f26c2940b2b364a676d9868ab"
+  },
+  {
+    "kind": 47001,
+    "content": "Reconcile this synthetic shop ledger as of 2026-09-10. Amounts are integer cents. Use only these supplied records; no web lookup. Duplicate payment references with identical rows count once. Negative payments are refunds. Unknown invoice payments remain unapplied. Never offset one invoice's credit against another. Overdue means due date strictly before 2026-09-10 AND a positive balance.\nInvoices (id,customer,due,cents):\nI-101,Amina,2026-09-08,12500\nI-102,Jonas,2026-09-10,8000\nI-103,Nia,2026-09-07,6000\nI-104,Oskar,2026-09-14,9000\nPayments (ref,invoice,cents):\nP1,I-101,5000\nP1,I-101,5000\nP2,I-102,10000\nP3,I-103,6000\nP4,I-101,-1000\nP5,I-999,1200\nReturn ONLY JSON with this shape: {\"balances_cents\":{\"I-101\":number,\"I-102\":number,\"I-103\":number,\"I-104\":number},\"receivables_cents\":number,\"credits_cents\":number,\"unapplied_cents\":number,\"overdue_cents\":number,\"duplicate_refs\":[string],\"unmatched_refs\":[string],\"follow_up_invoices\":[string]}. A balance is invoice amount minus unique matched payments; credits_cents is the positive magnitude of all negative balances; follow_up_invoices contains only overdue invoices. This is a cross-machine test for LeBron on the Air.",
+    "tags": [
+      [
+        "task_type",
+        "research-citations"
+      ],
+      [
+        "deadline",
+        "1789009934"
+      ],
+      [
+        "p",
+        "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0"
+      ]
+    ],
+    "created_at": 1789009874,
+    "pubkey": "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52",
+    "id": "1c1ca6557738ce98f2322e61582c52f9c39857b12bdf1b0b1ae689980c1d89f0",
+    "sig": "8f57904f6595d8f4d6ff36f4ed91495ec0f653a5df9b54843ee82c8af61bcd6914447a651393b22403601267e1a586ab71cda263a8d5d8d5ca9400f811a3d18f"
+  },
+  {
+    "kind": 47002,
+    "created_at": 1789009874,
+    "tags": [
+      [
+        "e",
+        "1c1ca6557738ce98f2322e61582c52f9c39857b12bdf1b0b1ae689980c1d89f0",
+        "",
+        "root"
+      ],
+      [
+        "p",
+        "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52"
+      ]
+    ],
+    "content": "{\"status\":\"working\",\"message\":\"lebron is on it\"}",
+    "pubkey": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+    "id": "a5c81051fca3817a49682d767c0ce5d262b4af20550ce2b4cefb379c8c52091c",
+    "sig": "864d9f835ba5932c38a52a3e00b56be4ba54bfc03853c736265692c60102ddb013c261626fa6c4127190669e9314b18a48991a3e92baada593cbd06ce5ec7ab1"
+  },
+  {
+    "kind": 47003,
+    "created_at": 1789009883,
+    "tags": [
+      [
+        "e",
+        "1c1ca6557738ce98f2322e61582c52f9c39857b12bdf1b0b1ae689980c1d89f0",
+        "",
+        "root"
+      ],
+      [
+        "p",
+        "374c5f94762475209b2e4b591689b66625796215e4ab561a008c580d2b2b0e52"
+      ],
+      [
+        "depth",
+        "1"
+      ]
+    ],
+    "content": "{\"status\":\"success\",\"result\":\"```json\\n{\\n  \\\"balances_cents\\\": {\\n    \\\"I-101\\\": 8500,\\n    \\\"I-102\\\": -2000,\\n    \\\"I-103\\\": 0,\\n    \\\"I-104\\\": 9000\\n  },\\n  \\\"receivables_cents\\\": 17500,\\n  \\\"credits_cents\\\": 2000,\\n  \\\"unapplied_cents\\\": 1200,\\n  \\\"overdue_cents\\\": 8500,\\n  \\\"duplicate_refs\\\": [\\\"P1\\\"],\\n  \\\"unmatched_refs\\\": [\\\"P5\\\"],\\n  \\\"follow_up_invoices\\\": [\\\"I-101\\\"]\\n}\\n```\"}",
+    "pubkey": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+    "id": "9c8a87f78a1119aedb7e067b31cf75b3fb5df16114bbb98cbf9511417b9b2a49",
+    "sig": "2024ea72f1f2cc1930c3b65e34825583c1fb659e42979f130a437acb4e5f4dcf098e2deaf407ccc0b4309997c9e08d848bc38cfd1cea574c124af08a4ab4f069"
+  }
+]

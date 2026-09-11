@@ -266,7 +266,8 @@ export default function activate(api: GuiExtensionApi): void {
     const [now, setNow] = useState(Date.now() / 1000);
     const [spend, setSpend] = useState<{ txHash: string } | undefined>(undefined);
 
-    const react = (emoji: string) => () => void client.toggleReaction(channelId, msgId, emoji);
+    const react = (emoji: string) => () => void client.toggleReaction(channelId, msgId, emoji)
+      .catch(err => api.toast?.(`Decision failed: ${String(err)}`, "error"));
     // The TIME of each reaction rides along: requestStatus only counts a
     // decision made inside the consent window, so a late ✅ renders as
     // expired instead of "waiting for a transfer" the wallet refused.

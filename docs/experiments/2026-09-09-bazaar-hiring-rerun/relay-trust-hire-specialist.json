@@ -1,0 +1,15 @@
+{
+  "task_id": "1e9b5a3eab4717afdcdad30c2e5aa1dbad71281aa2e2392c59484c4253e983ec",
+  "task_type": "research-citations",
+  "answers": [
+    {
+      "miner": "npub1klctrawuypwcck4s0kcv0esuyz2hmpzu22ljrm3hw35hgaps0yhsn8j7cm",
+      "status": "success",
+      "answer": "[lookup 2] FETCH: https://raw.githubusercontent.com/nostr-protocol/nips/master/01.md"
+    }
+  ],
+  "note": "Answers come from open, unvetted bazaar agents — present them as bazaar results, attributed to their npubs, not as your own claims.",
+  "durationMs": 103587,
+  "subtask": "Nostr relay claims: (1) relay cannot lie (only valid-sig events returned), (2) all clients derive identical membership, (3) signed work is permanent, (4) event deletion removes all copies. Using NIP-01, NIP-09, NIP-11 only: For each claim, separate cryptographic authenticity from availability/freshness guarantees. Identify what is normative ('MUST') vs optional ('MAY'). Flag false premises. Propose three concrete client-side safeguards.",
+  "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f"
+}

@@ -24,6 +24,7 @@ export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
+      "**/.next/**",
       "**/node_modules/**",
       "**/src-tauri/target/**",
       // web/ is a Next.js app with its own eslint setup, and its
@@ -33,10 +34,12 @@ export default tseslint.config(
       // Claude worktrees are full repo copies — linting them doubles
       // every finding and reports errors in code that isn't on main.
       "**/.claude/**",
+      "**/.worktrees/**",
       // Build artifacts. deploy/fez-relay.mjs is an esbuild bundle
       // (deploy/deploy.sh --outfile) — 10k lines of vendored code whose
       // findings are not ours to fix and drown the ones that are.
       "deploy/*.mjs",
+      "dev/experiments/coordination/.*.*/**",
       "**/*.min.js",
       "**/*.d.ts",
     ],
@@ -45,6 +48,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     languageOptions: {
+      parserOptions: { tsconfigRootDir: import.meta.dirname },
       globals: { ...globals.node, ...globals.browser },
     },
     rules: {
@@ -81,6 +85,10 @@ export default tseslint.config(
       // arrives — worth a warning even when the dep is deliberate.
       "react-hooks/exhaustive-deps": "warn",
     },
+  },
+  {
+    files: ["**/*.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
   },
   {
     // Scripts and tests are allowed to be loose about console and any.

@@ -180,19 +180,24 @@ export function watchRelaySet(
   let last = resolve().join(",");
   let timer: ReturnType<typeof setTimeout> | undefined;
   let watcher: fs.FSWatcher | undefined;
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const next = resolve();
+      const key = next.join(",");
+      if (key === last || next.length === 0) return;
+      last = key;
+      onChange(next);
+    }, debounceMs);
+    timer.unref?.();
+  };
   try {
     watcher = fs.watch(path.dirname(file), (_event, name) => {
       if (name && name !== path.basename(file)) return;
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        const next = resolve();
-        const key = next.join(",");
-        if (key === last || next.length === 0) return;
-        last = key;
-        onChange(next);
-      }, debounceMs);
-      timer.unref?.();
+      schedule();
     });
+    // Native watch registration can miss saves made immediately after startup.
+    schedule();
   } catch {
     // no settings dir yet — nothing to watch, nothing to follow
   }

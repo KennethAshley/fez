@@ -1,0 +1,47 @@
+# Local Alice chain only. The default image entrypoint is deliberately bypassed.
+name: fez-hippius-chain-lab
+services:
+  devchain:
+    image: ghcr.io/thenervelab/thebrain/hippius-node@sha256:5d1c73c38335a166dd34b6736b7de0ebadd6c41340487fcb57b8c94c8e5eb282
+    platform: linux/amd64
+    container_name: fez-hippius-devchain-trial
+    entrypoint: [/usr/local/bin/hippius-current]
+    command:
+      - --chain=development
+      - --alice
+      - --auto-insert-keys
+      - --validator
+      - --force-authoring
+      # This chain is disposable and has no external peers; create its test P2P key.
+      - --unsafe-force-node-key-generation
+      - --base-path=/data
+      - --database=paritydb
+      - --offchain-worker=never
+      - --no-telemetry
+      - --no-mdns
+      - --in-peers=0
+      - --out-peers=0
+      - --rpc-port=9944
+      - --rpc-methods=unsafe
+    network_mode: none
+    read_only: true
+    user: "5000:5000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpus: 0.75
+    pids_limit: 128
+    restart: "no"
+    healthcheck:
+      disable: true
+    tmpfs:
+      - /data:rw,nosuid,nodev,size=256m,uid=5000,gid=5000
+      - /tmp:rw,nosuid,nodev,size=32m,mode=1777
+    volumes:
+      - type: bind
+        source: ./hippius-current
+        target: /usr/local/bin/hippius-current
+        read_only: true
+        bind:
+          create_host_path: false

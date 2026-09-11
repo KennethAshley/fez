@@ -12,7 +12,7 @@ import { membershipPolicy } from "../../fez-relay/dist/policies.js";
  * ("dm:b+a", bad hex) is refused outright.
  */
 
-const PORT = 7796;
+let relayUrl: string;
 const creator = generateSecretKey();
 const alice = generateSecretKey();
 const bob = generateSecretKey();
@@ -32,7 +32,7 @@ class Probe {
   messages: unknown[][] = [];
   challenge = "";
   open(): Promise<void> {
-    this.ws = new WsSocket(`ws://127.0.0.1:${PORT}`);
+    this.ws = new WsSocket(relayUrl);
     this.ws.on("message", (raw) => {
       const msg = JSON.parse(raw.toString());
       if (msg[0] === "AUTH") this.challenge = msg[1];
@@ -58,7 +58,7 @@ class Probe {
   async auth(key: Uint8Array): Promise<void> {
     const t0 = Date.now();
     while (!this.challenge && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 25));
-    const event = signAs(key, 22242, "", [["relay", `ws://127.0.0.1:${PORT}`], ["challenge", this.challenge]]);
+    const event = signAs(key, 22242, "", [["relay", relayUrl], ["challenge", this.challenge]]);
     this.send(["AUTH", event]);
     await this.waitFor((m) => m[0] === "OK" && m[1] === event.id && m[2] === true);
   }
@@ -83,7 +83,11 @@ class Probe {
 let relay: RelayHandle;
 
 beforeAll(async () => {
-  relay = startRelay({ port: PORT, policies: [membershipPolicy(getPublicKey(creator))], log: () => {} });
+  relayUrl = await new Promise<string>(resolve => {
+    relay = startRelay({ port: 0, host: "127.0.0.1", policies: [membershipPolicy(getPublicKey(creator))], log: () => {},
+      onListening: port => resolve(`ws://127.0.0.1:${port}`),
+    });
+  });
   const seeder = new Probe();
   await seeder.open();
   await seeder.publish(

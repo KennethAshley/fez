@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-10T05:24:58.833155+00:00",
+  "reportedModelUsd": 0.0481656,
+  "calls": 7,
+  "provider": "opencode-go",
+  "model": "kimi-k3",
+  "walletNetwork": "test",
+  "walletRealMoneyUsd": 0,
+  "grossLeaseTao": 0.015,
+  "chainFeeTao": 0.000314617,
+  "cumulativeAccountedUsd": 14.6213334,
+  "cumulativeCapUsd": 20,
+  "remainingUnallocatedUsd": 5.378666600000001,
+  "olderUnreconciledReservationsRetained": true,
+  "reservationReleasedUsd": 2.9518344
+}

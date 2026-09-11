@@ -31,6 +31,13 @@ the Settings → Wallet panel, never by hand-editing `wallet.json`.
 everything else, so a derived endpoint or a prefs threshold can never
 turn into a wallet.json override the selector cannot move.
 
+With `FEZ_EVALUATION_ACTIVE=1`, money tools and wallet CLI mutations refuse
+before wallet key access or payment requests. This includes x402 fetches,
+stake, rent, escrow approvals, key creation/export and network switching.
+Wallet queries remain available. Authorized evaluation settlement belongs
+to the host outside the child process; this guard prevents accidental
+spending through these APIs and is not an operating-system sandbox.
+
 ## Custody invariants
 
 1. The MCP server never reads the root mnemonic (only `cli-commands.ts`

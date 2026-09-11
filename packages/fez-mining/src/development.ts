@@ -30,6 +30,7 @@ const git = (repository:string,args:string[]) => execFileSync('git',['-c','core.
 
 async function readJson(file:string):Promise<unknown|undefined> {
   try { return JSON.parse(await fs.readFile(file,'utf8')); }
+  // eslint-disable-next-line preserve-caught-error -- Raw errors may expose private response or process data.
   catch(e) { if(e && typeof e==='object' && 'code' in e && e.code==='ENOENT') return undefined; throw Error('Mining development history is unreadable; preserve it before recovery'); }
 }
 async function writeJson(file:string,value:unknown) {

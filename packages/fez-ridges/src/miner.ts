@@ -100,6 +100,7 @@ export function createRidgesSubmission(deps: { fetch?: typeof fetch; run?: Run; 
         current.detail = `Accepted agent ${accepted.agentId}; server metadata and screening await refresh. ${current.detail}`;
       }
     } catch (e) {
+      // eslint-disable-next-line preserve-caught-error -- Raw errors may expose private response or process data.
       if (!(e && typeof e === "object" && "code" in e && e.code === "ENOENT")) throw Error("Cannot read local Ridges acceptance receipt");
     }
     return current;
@@ -141,10 +142,12 @@ export function createRidgesSubmission(deps: { fetch?: typeof fetch; run?: Run; 
       const runtime = secret("openrouter_api_key");
       const management = secret("openrouter_management_key");
       const name = ctx.config.name ?? `Fez ${ctx.persona}`;
+      // eslint-disable-next-line no-control-regex -- Refuse control characters in upload fields.
       if (typeof name !== "string" || !name.trim() || name.length > 200 || /[\x00-\x1f]/.test(name)) throw Error("Invalid Ridges agent name");
       const attemptFile = join(ctx.workDir, "ridges-upload.json");
       let previous;
       try { previous = JSON.parse(await readFile(attemptFile, "utf8")); }
+      // eslint-disable-next-line preserve-caught-error -- Raw errors may expose private response or process data.
       catch (e) { if (!(e && typeof e === "object" && "code" in e && e.code === "ENOENT")) throw Error("Cannot read prior Ridges upload receipt"); }
       if (previous && (!previous.agentId || previous.ticketHash === hash(ticket))) throw Error("Prior ticket was attempted; inspect Ridges status and upload receipt before retrying");
       const selected = competition.parse(await request(`/competitions/${setId}`));

@@ -1,0 +1,22 @@
+[
+  {
+    "network": "finney",
+    "netuid": "553",
+    "refusedBeforeSDK": true
+  },
+  {
+    "network": "test",
+    "netuid": "1",
+    "refusedBeforeSDK": true
+  },
+  {
+    "network": "wss://entrypoint-finney.opentensor.ai:443",
+    "netuid": "553",
+    "refusedBeforeSDK": true
+  },
+  {
+    "network": "",
+    "netuid": "553",
+    "refusedBeforeSDK": true
+  }
+]

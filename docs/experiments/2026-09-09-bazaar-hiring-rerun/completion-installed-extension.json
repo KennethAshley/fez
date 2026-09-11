@@ -1,0 +1,25 @@
+{
+  "backup": "/var/folders/xw/b0sklf9s1xq8_63v0t0xk2gh0000gn/T/bazaar-before-completion-mciqcv8t",
+  "files": [
+    {
+      "path": "/Users/ken/.fez/packages/bazaar/dist/gui.js",
+      "sha256": "069c0297d33324595b31394a2921168f934afc8bae288d094a096ada6dc4a63b"
+    },
+    {
+      "path": "/Users/ken/.fez/packages/bazaar/dist/bridge.js",
+      "sha256": "b5dd981213a578dafdad7d35ea5c5bdbbc9818c8392d26636fede9e33e20339b"
+    },
+    {
+      "path": "/Users/ken/.fez/packages/bazaar/dist/fez-bazaar-miner.js",
+      "sha256": "d40abf4b15ce3692b1ec7f4d42154bc5fa5cd9770234acf319a6ed217f1b9712"
+    },
+    {
+      "path": "/Users/ken/.fez/packages/bazaar/bin/fez-bazaar-ask",
+      "sha256": "b5dd981213a578dafdad7d35ea5c5bdbbc9818c8392d26636fede9e33e20339b"
+    },
+    {
+      "path": "/Users/ken/.fez/packages/bazaar/bin/fez-bazaar-miner",
+      "sha256": "d40abf4b15ce3692b1ec7f4d42154bc5fa5cd9770234acf319a6ed217f1b9712"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "fezEvals": {
+    "command": "npx vitest --run --maxWorkers=1 --minWorkers=1",
+    "passed": 1429,
+    "skipped": 1,
+    "reasonForSerial": "Existing integration suites use overlapping fixed ports."
+  },
+  "bazaarTests": {
+    "command": "bun test",
+    "passed": 301
+  },
+  "rootTypecheck": "passed",
+  "acpTypecheck": "passed",
+  "bazaarTypecheck": "passed",
+  "acpBuild": "passed",
+  "bazaarExtensionBuild": "passed",
+  "nativeRuntimeBuild": "passed",
+  "independentReview": "all findings resolved; no remaining blocker",
+  "sourceChanges": "Merged into main: Fez #7 and fez-bazaar #3",
+  "publication": "publication.json",
+  "mergeVerification": "Exact Fez merged tree: 1515 passed, 1 skipped; full build and ACP typecheck passed. See publication.json."
+}

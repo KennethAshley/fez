@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Server } from "node:http";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { RelayConnection, type HarnessAdapter, type Persona } from "@fezchat/protocol";
 import { startRelay, type RelayHandle } from "../../fez-relay/src/relay.js";
@@ -61,20 +60,10 @@ beforeEach(async () => {
     } }),
   };
   await new Promise<void>(resolve => {
-    const listen = Server.prototype.listen;
-    const listener = vi.spyOn(Server.prototype, "listen").mockImplementation(function (this: Server) {
-      this.once("listening", () => {
-        const address = this.address();
-        if (!address || typeof address === "string") throw new Error("Expected a local relay port");
-        fixture.url = `ws://127.0.0.1:${address.port}`;
-        resolve();
-      });
-      return listen.call(this, 0, "127.0.0.1");
-    });
-    relay = startRelay({ port: 0, workspace: { owner: ownerPk },
+    relay = startRelay({ port: 0, host: "127.0.0.1", workspace: { owner: ownerPk },
       policies: [membershipPolicy(ownerPk)], log: () => {},
+      onListening: port => { fixture.url = `ws://127.0.0.1:${port}`; resolve(); },
     });
-    listener.mockRestore();
   });
   ownerWire = new RelayConnection({ urls: [fixture.url], authSigner: async t => finalizeEvent(t, ownerKey) });
   await ownerWire.connect();

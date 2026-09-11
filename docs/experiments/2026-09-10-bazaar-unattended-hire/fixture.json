@@ -1,0 +1,12 @@
+{
+  "repoName": "lebron-invoice-unattended-20260910",
+  "seedPath": "/private/tmp/lebron-invoice-unattended-20260910",
+  "task": "Fix invoiceBalance in this repository: repeated payment references with the same cents must count once; a repeated reference with different cents must throw. Preserve validation, refunds, overpayment credits, distinct references with equal amounts, and caller data. First run node --test and observe the failing duplicate-import test. Make the minimal fix, add regression coverage for conflicting references and repeated refunds, then run node --test again. Do not add dependencies or delete/weaken existing tests. Do not commit or push; the Fez runtime handles that. Report the test result and the changed files. Work only in this synthetic repository and stop when done.",
+  "target": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0",
+  "rateTaoHr": 0.1,
+  "hours": 0.15,
+  "payTo": "5GgqeZN5NdeQwthcNht3CMCvYZrvTJLSCGYf5Y1i3sHQnrx9",
+  "network": "test",
+  "remoteReservationUsd": 3,
+  "reservationId": "lebron-air-unattended-repository-specialist"
+}

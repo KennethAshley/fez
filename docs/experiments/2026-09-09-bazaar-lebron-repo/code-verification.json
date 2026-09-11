@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-10T03:41:21.507596+00:00",
+  "seedCommit": "e7445ed934ad33acb6e808f864f8876a670c0321",
+  "candidatePath": "/private/tmp/lebron-invoice-result-20260910",
+  "delivery": "patch recovered over SSH after runtime commit failed",
+  "changedFiles": [
+    "invoice.mjs",
+    "invoice.test.mjs"
+  ],
+  "existingTestsPreserved": true,
+  "repositoryTestsPassed": 6,
+  "withheldChecksPassed": 10,
+  "patchSha256": "164d789e7a0030d00b1251e762ff8ec794459527dd1d6c2d6e1526598ae6dfe9",
+  "recoveredCommit": "6746e6e78b126a6f81f6afbb5a8bacbdbd7172f7",
+  "bundleVerified": true,
+  "recoveredCommitMatchesTestedFiles": true,
+  "descendsFromSeed": true,
+  "automaticPushSucceeded": false
+}

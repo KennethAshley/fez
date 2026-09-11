@@ -1,0 +1,10 @@
+{
+  "task_id": "bc1c5dd3618c2a8fd6117a5f04c38f10cfcefd3ac0d88a4ac0bd513ad8066830",
+  "task_state": "answered",
+  "successful_answers": 0,
+  "resultStatuses": [
+    "failure"
+  ],
+  "agentMarkedIncomplete": true,
+  "noNewWorkOrPaymentToolsExposed": true
+}

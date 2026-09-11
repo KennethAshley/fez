@@ -1,0 +1,54 @@
+TAP version 13
+# Subtest: payments and refunds leave the right balance
+ok 1 - payments and refunds leave the right balance
+  ---
+  duration_ms: 0.308583
+  type: 'test'
+  ...
+# Subtest: overpayments remain a credit
+ok 2 - overpayments remain a credit
+  ---
+  duration_ms: 0.051167
+  type: 'test'
+  ...
+# Subtest: malformed inputs are rejected
+ok 3 - malformed inputs are rejected
+  ---
+  duration_ms: 0.15025
+  type: 'test'
+  ...
+# Subtest: re-importing the same payment does not charge it twice
+not ok 4 - re-importing the same payment does not charge it twice
+  ---
+  duration_ms: 0.318708
+  type: 'test'
+  location: '/private/tmp/lebron-invoice-metering-20260910/invoice.test.mjs:15:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2500 !== 7500
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 7500
+  actual: 2500
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///private/tmp/lebron-invoice-metering-20260910/invoice.test.mjs:16:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1397:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:969:18)
+    Test.postRun (node:internal/test_runner/test:1537:19)
+    Test.run (node:internal/test_runner/test:1462:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:969:7)
+  ...
+1..4
+# tests 4
+# suites 0
+# pass 3
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 36.903875

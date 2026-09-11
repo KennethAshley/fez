@@ -10,7 +10,8 @@ The short version:
 
 - **Surfaces** — the TUI (`src/cli/tui.ts` + `packages/fez-tui`), the CLI
   (`src/cli/`), and the desktop app (`packages/fez-desktop`, Tauri 2 +
-  React, with key custody in Rust).
+  React, with native signing and keychain access in Rust; onboarding and
+  backup still handle keys in the shared webview).
 - **One brain** — `packages/fez-client` holds all derived state and trust
   rules; every surface renders over it.
 - **Protocol core** — `src/` (`@fezchat/protocol`): the kinds registry

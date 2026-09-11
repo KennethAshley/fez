@@ -11,6 +11,7 @@ import { withFreshOAuth } from "../extensions/connections.js";
 import type { SystemPromptMode } from "./system-prompt.js";
 import { notice } from "../cli/notices.js";
 import { classifyToolCall, type RiskVerdict } from "./command-risk.js";
+import localAgents from "./local-agents.json" with { type: "json" };
 
 /**
  * One activity event from a running harness turn — the raw material of the
@@ -1094,7 +1095,14 @@ export function registerBuiltinHarnesses(): void {
   // ~/.fez/runtimes/node) — it CANNOT be compiled, its SDK loads
   // dynamically. Prefer the managed install; a dev with the npm adapter
   // on PATH is unaffected.
-  registerHarness(acpHarness({ id: "claude-code", aliases: ["claude"], command: fezManagedNodeTool("claude-agent-acp"), env: isolatedClaudeEnv }));
+  for (const agent of localAgents) {
+    registerHarness(acpHarness({
+      id: agent.id, aliases: agent.cli === agent.id ? [] : [agent.cli],
+      command: fezManagedNodeTool(agent.adapter),
+      env: agent.id === "claude-code" ? isolatedClaudeEnv
+        : () => withManagedNodePath({ ...process.env, CODEX_PATH: process.env.CODEX_PATH ?? "codex" }),
+    }));
+  }
   // pi speaks ACP via the pi-acp bridge, which shells to `pi --mode rpc`.
   // Both prefer fez's bundled copies so the Built-in agent works with zero
   // install; PI_ACP_PI_COMMAND points the bundled bridge at the bundled pi

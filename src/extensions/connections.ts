@@ -443,7 +443,8 @@ export async function withFreshOAuth<T extends HeaderedServer>(servers: T[]): Pr
       headers.push({ name: "Authorization", value: `Bearer ${token}` });
       out.push({ ...server, headers });
     } catch (e) {
-      if (process.env.FEZ_EVALUATION_ACTIVE === "1") throw new Error(`Evaluation tool unavailable: ${name}`, { cause: e });
+      // eslint-disable-next-line preserve-caught-error -- Raw errors may expose private response or process data.
+      if (process.env.FEZ_EVALUATION_ACTIVE === "1") throw new Error(`Evaluation tool unavailable: ${name}`);
       console.error(`⚠️  skill "${name}" withheld: ${e instanceof Error ? e.message : e}`);
     }
   }

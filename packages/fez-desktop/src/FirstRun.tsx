@@ -2,6 +2,34 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { FezClient } from "@fezchat/client";
 import { readiness } from "./welcome";
+import { FIRST_TASKS } from "./welcome-core";
+
+/** Suggestions fill a draft; only the user's normal Send action publishes it. */
+export function FirstTask({ onDraft, onConnect }: { onDraft: (text: string) => void; onConnect: () => void }) {
+  const [ready, setReady] = useState<boolean>();
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setReady(undefined);
+    const check = () => void readiness().then((r) => { if (alive) setReady(r.authed && r.runner); });
+    check();
+    window.addEventListener("focus", check);
+    window.addEventListener("fez-ai-connected", check);
+    return () => { alive = false; window.removeEventListener("focus", check); window.removeEventListener("fez-ai-connected", check); };
+  }, [revision]);
+  return <div className="first-task">
+    {ready === undefined ? <p role="status">Checking your AI connection…</p> : ready ? <>
+      <p>Try a first task. Pick one, edit the message, and send it to @fez.</p>
+      <div className="first-task-actions">
+        {FIRST_TASKS.map((task) => <button key={task.label} className="mini" onClick={() => onDraft(task.prompt)}>{task.label}</button>)}
+      </div>
+    </> : <>
+      <p>Your workspace is ready. Connect AI so your agents can reply.</p>
+      <button className="mini" onClick={onConnect}>Connect AI</button>{" "}
+      <button className="mini" onClick={() => setRevision((n) => n + 1)}>Check connection</button>
+    </>}
+  </div>;
+}
 
 /**
  * What an empty channel says on someone's first day.

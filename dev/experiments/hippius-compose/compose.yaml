@@ -1,0 +1,25 @@
+# Offline storage protocol test, NOT a registered miner or a rewards network.
+name: fez-hippius-lab
+services:
+  storage-test:
+    build: .
+    platform: linux/amd64
+    image: fez-hippius-storage-test:0.1.32
+    network_mode: none
+    read_only: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    init: true
+    restart: "no"
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=32m,mode=1777
+    volumes:
+      - miner-data:/data
+    command: [seed]
+volumes:
+  miner-data:

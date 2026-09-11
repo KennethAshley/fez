@@ -3,13 +3,15 @@ import { nextStep, prevStep, identityPlan, isStep } from "../../fez-desktop/src/
 
 describe("onboarding step order", () => {
   it("walks the locked order forward", () => {
-    const walk = ["welcome", "harness", "defaults", "community", "profile", "team"];
+    const walk = ["welcome", "harness", "community", "profile", "team"];
     for (let i = 0; i < walk.length - 1; i++) expect(nextStep(walk[i] as never)).toBe(walk[i + 1]);
     // "team" is the last step — Buzz's flow ends there, no "done" after it.
     expect(nextStep("team" as never)).toBe("team");
   });
   it("back retraces it", () => {
-    expect(prevStep("defaults" as never)).toBe("harness");
+    expect(prevStep("community")).toBe("harness");
+    expect(nextStep("defaults")).toBe("community"); // resume an older wizard
+    expect(prevStep("defaults")).toBe("welcome");
     expect(prevStep("team" as never)).toBe("profile");
     expect(prevStep("welcome" as never)).toBe("welcome");
   });

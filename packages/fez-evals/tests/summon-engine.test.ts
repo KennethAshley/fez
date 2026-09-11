@@ -137,6 +137,19 @@ describe("SummonEngine — channel messages", () => {
 });
 
 describe("SummonEngine — completion paths", () => {
+  it("a forged announcement name cannot claim a pending local specialist's invitation", async () => {
+    const { host, published } = makeHost({ query: rosterQuery([["p", OWNER, "owner"]]) });
+    const engine = new SummonEngine(host);
+    engine.noteAnnouncement(SCOUT_PK, "scout");
+    await engine.handleEvent(msg(OWNER, "Narrate the script.", [["task", SCOUT_PK]]));
+    const beforeAnnouncement = [...published];
+    await engine.handleEvent({ kind: 47000, pubkey: STRANGER, content: JSON.stringify({ name: "scout" }), tags: [] });
+    expect(published).toEqual(beforeAnnouncement);
+    await engine.handleEvent({ kind: 47000, pubkey: SCOUT_PK, content: JSON.stringify({ name: "scout" }), tags: [] });
+    expect(published.map(p => p.kind)).toContain(47006);
+    expect(published.map(p => p.kind)).toContain(47102);
+  });
+
   it("a matching display name cannot attest an unrelated key or let it summon local agents", async () => {
     const { host, published, spawned } = makeHost({ registryEntry: () => ({ channels: ["chan1"] }) });
     const engine = new SummonEngine(host);

@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-10T05:17:37.050Z",
+  "channelId": "f8ce4927-1d58-42d8-97f4-151d1b26e383",
+  "url": "https://kens-macbook-pro.tail93459d.ts.net:8443/git/lebron-invoice-unattended-20260910.git",
+  "head": "bf9dcac011c0aeb90cb2549c2efd36bb450f0b2b",
+  "owner": "2d4c2942d379634c2f8204d85cfdaaf25058e8620ad43e5553f1ac774263f941",
+  "meta": {
+    "repo": "lebron-invoice-unattended-20260910",
+    "clone": "https://kens-macbook-pro.tail93459d.ts.net:8443/git/lebron-invoice-unattended-20260910.git",
+    "protect": "main",
+    "grants": "d3a6ff789661f7d048798450568688b05a3c9064e41cfc34ccbe1834271a59a0:1789021057"
+  }
+}

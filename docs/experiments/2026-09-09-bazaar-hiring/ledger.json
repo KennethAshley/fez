@@ -1,0 +1,188 @@
+[
+  {
+    "id": "relay-trust-solo-draft",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.040674,
+    "state": "completed",
+    "at": "2026-09-09T23:28:28.440Z",
+    "actualUsd": 0.011188
+  },
+  {
+    "id": "relay-trust-solo-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.043407,
+    "state": "completed",
+    "at": "2026-09-09T23:28:38.048Z",
+    "actualUsd": 0.011486
+  },
+  {
+    "id": "relay-trust-hire-decision",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.042403,
+    "state": "completed",
+    "at": "2026-09-09T23:28:43.692Z",
+    "actualUsd": 0.012605
+  },
+  {
+    "id": "relay-trust-hire-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f",
+    "state": "timeout-cost-unmeasured",
+    "at": "2026-09-09T23:28:55.146Z"
+  },
+  {
+    "id": "relay-trust-hire-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.043782,
+    "state": "completed",
+    "at": "2026-09-09T23:31:55.318Z",
+    "actualUsd": 0.011574
+  },
+  {
+    "id": "private-workspace-hire-decision",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.060066,
+    "state": "completed",
+    "at": "2026-09-09T23:32:02.130Z",
+    "actualUsd": 0.019433
+  },
+  {
+    "id": "private-workspace-hire-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f",
+    "state": "timeout-cost-unmeasured",
+    "at": "2026-09-09T23:32:10.403Z"
+  },
+  {
+    "id": "private-workspace-hire-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.060369,
+    "state": "completed",
+    "at": "2026-09-09T23:35:10.544Z",
+    "actualUsd": 0.020016
+  },
+  {
+    "id": "private-workspace-solo-draft",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.058337,
+    "state": "completed",
+    "at": "2026-09-09T23:35:19.805Z",
+    "actualUsd": 0.020276
+  },
+  {
+    "id": "private-workspace-solo-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.061552,
+    "state": "completed",
+    "at": "2026-09-09T23:35:32.106Z",
+    "actualUsd": 0.020211
+  },
+  {
+    "id": "roster-ordering-hire-decision",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.042438,
+    "state": "completed",
+    "at": "2026-09-09T23:35:38.322Z",
+    "actualUsd": 0.012097
+  },
+  {
+    "id": "roster-ordering-hire-specialist",
+    "type": "remote",
+    "reservedUsd": 3,
+    "pk": "b7f0b1f5dc205d8c5ab07db0c7e61c20957d845c52bf21ee377469747430792f",
+    "state": "timeout-cost-unmeasured",
+    "at": "2026-09-09T23:35:49.395Z"
+  },
+  {
+    "id": "roster-ordering-hire-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.043515,
+    "state": "completed",
+    "at": "2026-09-09T23:38:49.539Z",
+    "actualUsd": 0.012268
+  },
+  {
+    "id": "roster-ordering-solo-draft",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.040709,
+    "state": "completed",
+    "at": "2026-09-09T23:38:59.008Z",
+    "actualUsd": 0.01182
+  },
+  {
+    "id": "roster-ordering-solo-final",
+    "type": "model",
+    "model": "claude-haiku-4-5",
+    "reservedUsd": 0.043543,
+    "state": "completed",
+    "at": "2026-09-09T23:39:09.702Z",
+    "actualUsd": 0.011999
+  },
+  {
+    "id": "relay-trust-judge-0",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.251395,
+    "state": "completed",
+    "at": "2026-09-09T23:39:31.254Z",
+    "actualUsd": 0.131675
+  },
+  {
+    "id": "relay-trust-judge-1",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.251395,
+    "state": "completed",
+    "at": "2026-09-09T23:41:38.699Z",
+    "actualUsd": 0.13455
+  },
+  {
+    "id": "private-workspace-judge-0",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.34066,
+    "state": "incomplete",
+    "at": "2026-09-09T23:42:17.602Z",
+    "actualUsd": 0.18811
+  },
+  {
+    "id": "private-workspace-judge-1",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.34066,
+    "state": "completed",
+    "at": "2026-09-09T23:44:43.752Z",
+    "actualUsd": 0.181835
+  },
+  {
+    "id": "roster-ordering-judge-0",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.25372,
+    "state": "completed",
+    "at": "2026-09-09T23:45:22.808Z",
+    "actualUsd": 0.10901
+  },
+  {
+    "id": "roster-ordering-judge-1",
+    "type": "model",
+    "model": "claude-opus-5",
+    "reservedUsd": 0.25372,
+    "state": "completed",
+    "at": "2026-09-09T23:45:50.500Z",
+    "actualUsd": 0.11266
+  }
+]

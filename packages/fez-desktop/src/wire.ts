@@ -20,9 +20,9 @@ import { RelayConnection } from "../../../src/protocol/relay.js";
  * Custody: crypto goes through a SIGNER seam. The app passes rustSigner
  * — the key stays in Rust (macOS keychain → in-process cache), the
  * webview asks for signatures and DM crypto over the invoke bridge, and
- * a fully compromised webview could misuse those operations while the
- * app is open but cannot exfiltrate the identity (Buzz's model). Tests
- * and node hosts pass a 64-hex secret instead, which builds the
+ * normal messaging never needs the secret. This signer alone is not a
+ * sandbox: the shared webview still has identity-export and process IPC.
+ * Tests and node hosts pass a 64-hex secret instead, which builds the
  * in-process localSigner — same seam, keys where the host wants them.
  */
 
@@ -50,25 +50,25 @@ export interface WireSigner {
 }
 
 /** The app's signer: Rust holds the key; this side never sees it. */
-export function rustSigner(pubkey: string): WireSigner {
+export function rustSigner(pubkey: string, account?: string): WireSigner {
   return {
     pubkey,
     async sign(tmpl) {
       return JSON.parse(
-        await invoke<string>("sign_event", { kind: tmpl.kind, content: tmpl.content, tags: tmpl.tags, createdAt: tmpl.created_at })
+        await invoke<string>("sign_event", { account, kind: tmpl.kind, content: tmpl.content, tags: tmpl.tags, createdAt: tmpl.created_at })
       ) as WireEvent;
     },
-    encrypt: (peer, plaintext) => invoke<string>("nip44_encrypt", { peer, plaintext }),
-    decrypt: (peer, ciphertext) => invoke<string>("nip44_decrypt", { peer, ciphertext }),
+    encrypt: (peer, plaintext) => invoke<string>("nip44_encrypt", { account, peer, plaintext }),
+    decrypt: (peer, ciphertext) => invoke<string>("nip44_decrypt", { account, peer, ciphertext }),
     async wrapDm(kind, content, tags, recipients) {
-      return JSON.parse(await invoke<string>("dm_wrap_all", { kind, content, tags, recipients })) as {
+      return JSON.parse(await invoke<string>("dm_wrap_all", { account, kind, content, tags, recipients })) as {
         rumorId: string;
         wraps: WireEvent[];
       };
     },
     async unwrap(event) {
       try {
-        return JSON.parse(await invoke<string>("dm_unwrap", { event: JSON.stringify(event) })) as Rumor;
+        return JSON.parse(await invoke<string>("dm_unwrap", { account, event: JSON.stringify(event) })) as Rumor;
       } catch {
         return undefined; // not for us — same silence as the local path
       }

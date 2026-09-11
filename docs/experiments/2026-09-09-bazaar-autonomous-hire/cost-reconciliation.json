@@ -1,0 +1,16 @@
+{
+  "authorizedCumulativeUsd": 20,
+  "trialCapUsd": 7,
+  "buyerUsd": 0.102596,
+  "soloUsd": 0.040374,
+  "judgeUsd": 0.214338,
+  "specialistReportedUsd": 0.1267,
+  "paidArmReportedUsdApprox": 0.229296,
+  "trialReportedUsdApprox": 0.484008,
+  "priorReportedUsdApprox": 2.286743,
+  "cumulativeReportedUsdApprox": 2.770751,
+  "conservativeTrialAccountedUsd": 3.357308,
+  "conservativeCumulativeAccountedUsd": 14.463851,
+  "walletRealMoneyUsd": 0,
+  "basis": "Configured per-token model prices and miner-reported cost rounded to four decimals; not a reconciled provider invoice. All four $3 remote reservations remain held. Background tasks are excluded."
+}
