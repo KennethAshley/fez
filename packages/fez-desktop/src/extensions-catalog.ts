@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { useMemo } from "react";
+import { useConfig } from "./config-store";
 import type { FezClient } from "@fezchat/client";
 import { reloadGuiExtensions } from "./gui-extensions";
 
@@ -121,6 +123,11 @@ export const permLabel = (p: string): string => {
 const REPO = "https://github.com/KennethAshley/fez";
 /** De-scope and drop a `fez-` prefix so @fezchat/git, git, and fez-git all match. */
 export const norm = (n: string) => n.replace(/^@fezchat\//, "").replace(/^fez-/, "");
+/** Package records include tool-only extensions; legacy linked parts may have no version. */
+export function useInstalledExtensions(): Set<string> {
+  const { versions, localParts } = useConfig();
+  return useMemo(() => new Set([...Object.keys(versions), ...Object.keys(localParts)].map(norm)), [versions, localParts]);
+}
 export const githubUrl = (name: string) =>
   catalogEntry(name)?.repo ?? `${REPO}/tree/main/packages/fez-${norm(name)}`;
 export const npmUrl = (name: string) => `https://www.npmjs.com/package/${name}`;
