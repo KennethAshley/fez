@@ -94,8 +94,9 @@ test("Mining links native chat, retains fleet history, and manages through one p
     await page.getByLabel("Use an existing agent").check();
     await page.getByLabel("Mining agent",{exact:true}).selectOption("quill");
     await page.getByRole("button",{name:"Enable mining & continue"}).click();
-    await expect(page.getByRole("status")).toContainText("Mining tools saved for @quill");
-    await expect(page.getByRole("status")).toContainText("restart");
+    const miningStatus=page.getByRole("status").filter({hasText:"Mining tools saved for @quill"});
+    await expect(miningStatus).toBeVisible();
+    await expect(miningStatus).toContainText("restart");
     await expect(page.getByRole("button",{name:/Register/})).toHaveCount(0);
     await page.getByRole("button",{name:"Continue to miner setup"}).click();
     await expect(page.getByText("Awaiting validator activation")).toHaveCount(0);

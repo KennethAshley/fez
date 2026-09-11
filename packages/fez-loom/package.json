@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/loom",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Save, reopen, and share artifacts from any agent. Includes @loom as an optional live-tool builder.",
   "type": "module",
   "fez": {
@@ -16,7 +16,8 @@
       "publish",
       "personas",
       "ui"
-    ]
+    ],
+    "minFezVersion": "0.2.2"
   },
   "scripts": {
     "build": "esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=automatic --outfile=dist/gui.js",

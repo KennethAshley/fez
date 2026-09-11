@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/protocol",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Fez — a decentralized MCP for agents. Any agent can call any other agent by name over Nostr.",
   "type": "module",
   "bin": {
@@ -14,12 +14,18 @@
       "import": "./dist/index.js"
     },
     "./client": {
-      "types": "./dist/client/index.d.ts",
-      "import": "./dist/client/index.js"
+      "types": "./packages/fez-client/dist/index.d.ts",
+      "import": "./packages/fez-client/dist/index.js"
     }
   },
   "files": [
     "dist",
+    "packages/fez-client/dist",
+    "packages/fez-tui/dist",
+    "packages/fez-acp/dist",
+    "packages/fez-sentinel/dist",
+    "packages/fez-orchestrator/dist",
+    "packages/fez-mcp/dist",
     "README.md",
     "VISION.md"
   ],

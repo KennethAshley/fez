@@ -22,7 +22,8 @@
       "network:us.sentry.io",
       "network:de.sentry.io"
     ],
-    "guiRuntime": "isolated-settings"
+    "guiRuntime": "isolated-settings",
+    "minFezVersion": "0.2.2"
   },
   "scripts": {
     "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js && esbuild src/instrument.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___fezRequire}from'node:module';const require=___fezRequire(import.meta.url);\" --outfile=dist/instrument.mjs",
@@ -31,5 +32,8 @@
   },
   "dependencies": {
     "@sentry/node": "10.74.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

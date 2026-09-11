@@ -21,7 +21,8 @@
       "network:slack.com",
       "network:.slack.com"
     ],
-    "guiRuntime": "isolated-settings"
+    "guiRuntime": "isolated-settings",
+    "minFezVersion": "0.2.2"
   },
   "scripts": {
     "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___cr}from'module';const require=___cr(import.meta.url);\" --outfile=dist/headless.js && esbuild src/gui.tsx --bundle --format=iife --global-name=__fezExt --platform=browser --jsx=transform --jsx-factory=h --outfile=dist/gui.js",
@@ -32,5 +33,9 @@
   },
   "devDependencies": {
     "@types/react": "^19.2.18"
-  }
+  },
+  "files": [
+    "dist",
+    "app-manifest.json"
+  ]
 }

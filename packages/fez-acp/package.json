@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/acp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "fez's standing agent runtime (buzz-acp's role): persona-backed channel agents with harness invocation, retries, circuit breaker, observer stream, steer/queue, budgets",
   "type": "module",
@@ -23,5 +23,8 @@
   "devDependencies": {
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

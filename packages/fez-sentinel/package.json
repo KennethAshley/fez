@@ -1,6 +1,6 @@
 {
   "name": "@fezchat/sentinel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "fez's always-on watcher: wakes sleeping agents on DMs/mentions and delivers desktop notifications — the fleet works with no TUI open",
   "type": "module",
@@ -20,5 +20,8 @@
   "devDependencies": {
     "esbuild": "^0.21.5",
     "typescript": "^5.6.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

@@ -40,6 +40,8 @@ const EXTENSIONS = [
   ...INFRA,
   "packages/fez-git",
   "packages/fez-github",
+  "packages/fez-sentry",
+  "packages/fez-slack",
   "packages/fez-kanban",
   "packages/fez-polls",
   "packages/fez-communities",
