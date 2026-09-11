@@ -44,7 +44,12 @@ export class SlackApi {
   }
   async open(): Promise<string> { return socketUrl((await this.call("apps.connections.open", {}, true)).url); }
   async post(channel: string, thread: string, text: string, id: string): Promise<void> {
-    await this.call("chat.postMessage", { channel, thread_ts: thread, text, client_msg_id: id, mrkdwn: false, parse: "none", link_names: false, unfurl_links: false, unfurl_media: false });
+    // Slack translates standard Markdown, including code, into native rich text.
+    // ponytail: retain plain text above Slack's 12k Markdown cap or with mention
+    // syntax; a full parser is only needed if those messages must be formatted too.
+    const blocks = text.length <= 12000 && !/<[@!#]|@(here|channel|everyone)\b/i.test(text)
+      ? [{ type: "markdown", text }] : undefined;
+    await this.call("chat.postMessage", { channel, thread_ts: thread, text: text.replace(/<(?=[@!#])/g, "&lt;"), blocks, client_msg_id: id, mrkdwn: false, parse: "none", link_names: false, unfurl_links: false, unfurl_media: false });
   }
 }
 

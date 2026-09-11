@@ -216,6 +216,25 @@ describe("Slack transport trust boundary", () => {
     await expect(broken.identity()).rejects.toThrow(/Slack request failed/);
     await expect(broken.identity()).rejects.not.toThrow(/supersecret/);
   });
+  it("renders ordinary Markdown through Slack while preserving code and disabling automatic mentions", async () => {
+    let posted: Record<string, unknown> = {};
+    const api = new SlackApi("xoxb-format", "xapp-format", async (_url, init) => {
+      posted = JSON.parse(String(init?.body)); return new Response('{"ok":true}');
+    });
+    const answer = "**Ack before work.** Use `event_id`.\n\n```js\nif (a < b && ready) run();\n```";
+    await api.post("C123456", "12.3", answer, "format-id");
+    expect(posted).toMatchObject({ blocks: [{ type: "markdown", text: answer }], parse: "none", link_names: false, unfurl_links: false, unfurl_media: false });
+    for (const [text, plain] of [
+      ["Literal <@U123456> <!here> <#C123456>", "Literal &lt;@U123456> &lt;!here> &lt;#C123456>"],
+      ["Notify @everyone", "Notify @everyone"],
+      ["x".repeat(12001), "x".repeat(12001)],
+    ]) {
+      await api.post("C123456", "12.3", text, "plain-id");
+      expect(posted.blocks).toBeUndefined();
+      expect(posted.mrkdwn).toBe(false);
+      expect(posted.text).toBe(plain);
+    }
+  });
   it.each(["open", "post"] as const)("honors 429 Retry-After for %s across API instances without retrying early", async method => {
     vi.useFakeTimers();
     const fetcher = vi.fn(async () => new Response("", { status: 429, headers: { "Retry-After": "120" } }));
