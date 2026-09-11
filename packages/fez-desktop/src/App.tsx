@@ -44,6 +44,7 @@ import type { MountRender } from "./mount-result";
 import { GuestThreadView, addGuest, listGuests, removeGuest, useGuestUnreads } from "./guest-threads";
 import { MountPoint } from "./MountPoint";
 import { matchAction, nextUnreadChannel } from "./keymap";
+import { moveChannel, orderChannels, useChannelOrder } from "./channel-order";
 import { useConfig } from "./config-store";
 import { Toaster } from "./Toaster";
 import { InstallOffer, installOffers, stripInstallMarkers, stripArtifactMarkers, gitInstallOffers, GitInstallOffer } from "./InstallOffer";
@@ -519,6 +520,10 @@ function Shell({
     setHidden(next);
   };
   const [showStowed, setShowStowed] = useState(false);
+  const [channelOrder, saveChannelOrder] = useChannelOrder(client.pubkey, wire.relays[0]);
+  const draggedChannel = useRef<string | undefined>(undefined);
+  const [channelDrop, setChannelDrop] = useState<{ id: string; after: boolean }>();
+  const [channelOrderStatus, setChannelOrderStatus] = useState("");
   // A live tool's proposed write, awaiting the human's yes/no — the wallet
   // prompt. The tool never signs; this dialog is the only path to publish.
   const [toolConsent, setToolConsent] = useState<{ desc: string; resolve: (ok: boolean) => void }>();
@@ -851,8 +856,7 @@ function Shell({
         break;
       case "next-unread":
       case "prev-unread": {
-        const order = [...client.state.workspace.channels.keys()];
-        const dest = nextUnreadChannel(order, unreads, scope?.channelId, action === "next-unread" ? 1 : -1);
+        const dest = nextUnreadChannel(visibleChannelOrder, unreads, scope?.channelId, action === "next-unread" ? 1 : -1);
         if (dest) void openChannel(dest);
         break;
       }
@@ -1013,8 +1017,42 @@ function Shell({
     return (
       <button
         key={channel.id}
-        className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}`}
-        title={`${members} member${members === 1 ? "" : "s"} in this workspace — right-click for options`}
+        className={`channel${active ? " active" : ""}${muted.has(channel.id) ? " muted" : ""}${channelDrop?.id === channel.id ? (channelDrop.after ? " drop-after" : " drop-before") : ""}`}
+        title={`${members} member${members === 1 ? "" : "s"} in this workspace — drag to reorder, Alt+Shift+↑/↓ to move, right-click for options`}
+        aria-keyshortcuts="Alt+Shift+ArrowUp Alt+Shift+ArrowDown"
+        draggable
+        onDragStart={(e) => {
+          draggedChannel.current = channel.id;
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("application/x-fez-channel", channel.id);
+          setCtxMenu(undefined);
+        }}
+        onDragOver={(e) => {
+          if (!canMoveChannel(draggedChannel.current, channel.id)) { setChannelDrop(undefined); return; }
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "move";
+          const rect = e.currentTarget.getBoundingClientRect();
+          setChannelDrop({ id: channel.id, after: e.clientY > rect.top + rect.height / 2 });
+        }}
+        onDragLeave={() => setChannelDrop(undefined)}
+        onDragEnd={() => { draggedChannel.current = undefined; setChannelDrop(undefined); }}
+        onDrop={(e) => {
+          const id = draggedChannel.current;
+          if (!id || !canMoveChannel(id, channel.id)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          reorderChannel(id, channel.id, e.clientY > rect.top + rect.height / 2);
+          draggedChannel.current = undefined;
+          setChannelDrop(undefined);
+        }}
+        onKeyDown={(e) => {
+          if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          moveChannelBy(channel.id, e.key === "ArrowUp" ? -1 : 1);
+        }}
         onClick={() => void openChannel(channel.id)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -1056,7 +1094,7 @@ function Shell({
   // everyone) or hidden (this machine only). Kept aside so they can be
   // restored, never silently dropped.
   const stowed: { id: string; name: string; archived: boolean }[] = [];
-  for (const channel of client.state.workspace.channels.values()) {
+  for (const channel of orderChannels(client.state.workspace.channels.values(), channelOrder)) {
     if (channel.archived || hidden.has(channel.id)) {
       stowed.push({ id: channel.id, name: channel.name, archived: !!channel.archived });
       continue;
@@ -1069,6 +1107,31 @@ function Shell({
       ownChannels.push(channel);
     }
   }
+
+  const channelGroups = [ownChannels, ...bridged.values()];
+  const visibleChannelOrder = channelGroups.flatMap(group => group.map(channel => channel.id));
+  const groupByChannel = new Map(channelGroups.flatMap(group => group.map(channel => [channel.id, group] as const)));
+  const canMoveChannel = (id: string | undefined, target: string) =>
+    !!id && id !== target && groupByChannel.has(id) && groupByChannel.get(id) === groupByChannel.get(target);
+  const channelNeighbor = (id: string, direction: number) => {
+    const group = groupByChannel.get(id) ?? [];
+    return group[group.findIndex(channel => channel.id === id) + direction]?.id;
+  };
+  const reorderChannel = (id: string, target: string, after: boolean) => {
+    if (!canMoveChannel(id, target)) return;
+    // Retain stowed and not-yet-loaded IDs so hiding or a partial relay replay doesn't lose their place.
+    const next = moveChannel([...new Set([...channelOrder, ...client.state.workspace.channels.keys()])], id, target, after);
+    try {
+      saveChannelOrder(next);
+      const group = orderChannels(groupByChannel.get(id) ?? [], next);
+      const index = group.findIndex(channel => channel.id === id);
+      setChannelOrderStatus(`#${group[index].name} moved to position ${index + 1} of ${group.length}`);
+    } catch { toast.error("Could not save channel order. Please try again."); }
+  };
+  const moveChannelBy = (id: string, direction: number) => {
+    const target = channelNeighbor(id, direction);
+    if (target) reorderChannel(id, target, direction > 0);
+  };
 
   // Which extension's settings modal is open, by panel name.
   const [extSettings, setExtSettings] = useState<string | undefined>(undefined);
@@ -1083,6 +1146,7 @@ function Shell({
     <div className="shell" style={{ "--rail-w": `${railW}px`, "--pane-w": `${paneW}px` } as React.CSSProperties}>
       <BootSplash loading={false} />
       <Toaster />
+      <div className="channel-order-status" role="status">{channelOrderStatus}</div>
       {!connected && (
         <div className="conn-bar">
           {relayHealth.length > 1 ? `all ${relayHealth.length} relays unreachable` : "relay disconnected"} — reconnecting…
@@ -1609,6 +1673,14 @@ function Shell({
       {view.kind === "channel" && !scope && <div className="boot">no channel — pick one from the rail</div>}
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+          <button disabled={!channelNeighbor(ctxMenu.channelId, -1)} onClick={() => {
+            moveChannelBy(ctxMenu.channelId, -1);
+            setCtxMenu(undefined);
+          }}>move up</button>
+          <button disabled={!channelNeighbor(ctxMenu.channelId, 1)} onClick={() => {
+            moveChannelBy(ctxMenu.channelId, 1);
+            setCtxMenu(undefined);
+          }}>move down</button>
           <button
             onClick={() => {
               const newest = client.messages(ctxMenu.channelId).at(-1);
