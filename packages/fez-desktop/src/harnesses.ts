@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import localAgents from "../../../src/agent/local-agents.json";
+
+export { localAgents };
+export interface LocalAgentStatus { installed: boolean; authed: boolean; adapterReady: boolean }
+export const agentReady = (status?: LocalAgentStatus) => !!(status?.installed && status.authed && status.adapterReady);
 
 export interface HarnessInfo {
   id: string;
@@ -47,7 +52,7 @@ export function useHarnesses(): HarnessInfo[] {
   const loading = installed === undefined;
   return [
     { id: "pi", label: "Built-in", installed: installed?.pi ?? loading },
-    { id: "claude-code", label: "Claude Code", installed: installed?.["claude-code"] ?? loading },
+    ...localAgents.map(({ id, label }) => ({ id, label, installed: installed?.[id] ?? false })),
     { id: "router", label: "Router (routing only)", installed: true },
   ];
 }

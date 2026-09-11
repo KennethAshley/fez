@@ -13,8 +13,8 @@ import type { FezClient } from "@fezchat/client";
 import { BrowserWire } from "./wire";
 import { relaySet } from "./relay";
 import { toast } from "./toast";
-import { detectHarnesses } from "./harnesses";
-import { PROVIDERS } from "./providers";
+import { agentReady, detectHarnesses, localAgents, type LocalAgentStatus } from "./harnesses";
+import { PROVIDERS, providerId } from "./providers";
 import {
   WELCOME_CHANNEL_ID,
   HELLO_MARKER,
@@ -68,35 +68,25 @@ async function agentKeyHex(): Promise<string> {
   }
 }
 
+/** Readiness belongs to the chosen persona, never another installed agent. */
 export async function readiness(): Promise<Readiness> {
-  const harnesses = await detectHarnesses();
-  // Claude counts only when all three claims hold: CLI installed, its
-  // auth probe says signed in, and the managed adapter is runnable —
-  // "installed" alone once produced READY on a machine that could not
-  // complete a single turn.
-  let claudeReady = false;
   try {
-    const c = JSON.parse(await invoke<string>("claude_brain_status")) as {
-      installed: boolean;
-      authed: boolean;
-      adapterReady: boolean;
-    };
-    claudeReady = c.installed && c.authed && c.adapterReady;
-  } catch {
-    claudeReady = false;
-  }
-  // Any configured provider counts — the Chutes-only gate was the bug
-  // that kept the team from ever spawning.
-  let piKeyed = false;
-  for (const p of PROVIDERS) {
-    if (await invoke<boolean>("provider_key_present", { provider: p.id }).catch(() => false)) {
-      piKeyed = true;
-      break;
+    const md = await invoke<string>("read_persona", { name: "fez" });
+    const brain = parsePersonaBrain(md);
+    const local = localAgents.find((a) => a.id === brain.harness);
+    if (local) {
+      const status = JSON.parse(await invoke<string>(local.statusCommand)) as LocalAgentStatus;
+      return { authed: agentReady(status), runner: true };
     }
+    if (brain.harness !== "pi" || !brain.provider || !brain.model) return { authed: false, runner: true };
+    const id = providerId(brain.provider);
+    const harnesses = await detectHarnesses();
+    const authed = !!harnesses.pi && PROVIDERS.some((p) => p.id === id)
+      && await invoke<boolean>("provider_key_present", { provider: id });
+    return { authed, runner: true };
+  } catch {
+    return { authed: false, runner: true };
   }
-  // runner: the app supervises its own agents now — spawn is ours to do,
-  // so "someone is listening" is simply "we are able to spawn".
-  return { authed: claudeReady || (!!harnesses["pi"] && piKeyed), runner: true };
 }
 
 function markerWire(hex: string): MarkerWire & { close(): void } {
@@ -263,7 +253,8 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
   // A swallowed failure here was the cruelest first-run outcome: @fez
   // posts its welcome (owner-signed markers, no process needed), then
   // never answers a single mention, with no trace anywhere.
-  await invoke("start_managed_agent", {
+  const r = await readiness();
+  if (r.authed) await invoke("start_managed_agent", {
     persona: "fez",
     owner: client.pubkey,
     relay: relaySet()[0],
@@ -272,7 +263,6 @@ export async function ensureWelcome(client: FezClient): Promise<void> {
     toast.error(`@fez couldn't start: ${err instanceof Error ? err.message : String(err)}`);
   });
 
-  const r = await readiness();
   const userName = localStorage.getItem("fez-name") ?? "";
   const w = markerWire(hex);
   try {

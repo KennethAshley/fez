@@ -98,7 +98,7 @@ test("post-onboarding boot: #welcome opens with hello, opener, summons, intros, 
     // ~10s. 45s is generous headroom but still far under the 120s
     // no-intro backstop, so a pass here can only mean the intro path
     // actually fired — not that the test degraded to slow-but-green.
-    await expect(page.getByText(/What can we help you build/i)).toBeVisible({ timeout: 45_000 }); // kickoff after intros
+    await expect(page.getByText(/Let’s try a first task/i)).toBeVisible({ timeout: 45_000 }); // kickoff after intros
   } finally {
     for (const w of teamWires) w.close();
     relay?.kill();

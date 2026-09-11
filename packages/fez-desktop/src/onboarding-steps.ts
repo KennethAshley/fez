@@ -20,8 +20,8 @@ export type Step =
   | "profile"
   | "team";
 
-const ORDER: Step[] = ["welcome", "harness", "defaults", "community", "profile", "team"];
-const ALL: Step[] = [...ORDER, "invite", "pairing", "restore", "reconnect"];
+const ORDER: Step[] = ["welcome", "harness", "community", "profile", "team"];
+const ALL: Step[] = [...ORDER, "defaults", "invite", "pairing", "restore", "reconnect"];
 
 /** Guard for step names read back from persistence — a renamed or
  * removed step in a stale snapshot must fall back to the front door,
@@ -31,12 +31,12 @@ export function isStep(s: unknown): s is Step {
 }
 
 export function nextStep(s: Step): Step {
-  const i = ORDER.indexOf(s);
+  const i = ORDER.indexOf(s === "defaults" ? "harness" : s);
   return i >= 0 && i < ORDER.length - 1 ? ORDER[i + 1] : s;
 }
 
 export function prevStep(s: Step): Step {
-  const i = ORDER.indexOf(s);
+  const i = ORDER.indexOf(s === "defaults" ? "harness" : s);
   return i > 0 ? ORDER[i - 1] : s;
 }
 

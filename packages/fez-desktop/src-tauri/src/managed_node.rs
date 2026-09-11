@@ -17,8 +17,11 @@ use std::process::Command;
 pub const MANAGED_NODE_VERSION: &str = "v24.18.0";
 const NODE_FILENAME: &str = "node-v24.18.0-darwin-arm64.tar.gz";
 const NODE_SHA256: &str = "e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1";
-pub const CLAUDE_ADAPTER_PKG: &str = "@agentclientprotocol/claude-agent-acp";
-pub const CLAUDE_ADAPTER_VERSION: &str = "0.70.0";
+// Shared with the TypeScript runtime and desktop picker.
+pub fn local_agents() -> Vec<serde_json::Value> {
+    serde_json::from_str(include_str!("../../../../src/agent/local-agents.json"))
+        .expect("bundled local agent catalog must be valid JSON")
+}
 
 fn fez_home_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".fez")
@@ -35,10 +38,6 @@ pub fn node_bin_dir() -> PathBuf {
 
 pub fn node_tools_bin_dir() -> PathBuf {
     fez_home_dir().join("node-tools").join("bin")
-}
-
-pub fn adapter_path() -> PathBuf {
-    node_tools_bin_dir().join("claude-agent-acp")
 }
 
 fn node_ready() -> bool {
@@ -62,18 +61,14 @@ pub(crate) fn ensure_for_program(program: &std::path::Path) -> Result<(), String
     Ok(())
 }
 
-pub fn adapter_ready() -> bool {
-    // The npm bin shim plus the actual package — a shim pointing at a
-    // half-removed install must not count.
-    adapter_path().exists()
-        && fez_home_dir()
-            .join("node-tools")
-            .join("lib")
-            .join("node_modules")
-            .join("@agentclientprotocol")
-            .join("claude-agent-acp")
-            .join("package.json")
-            .exists()
+pub fn adapter_ready() -> bool { local_adapter_ready("claude-code") }
+
+pub fn local_adapter_ready(id: &str) -> bool {
+    let Some(agent) = local_agents().into_iter().find(|a| a["id"] == id) else { return false };
+    node_ready()
+        && node_tools_bin_dir().join(agent["adapter"].as_str().unwrap()).is_file()
+        && fez_home_dir().join("node-tools/lib/node_modules")
+            .join(agent["package"].as_str().unwrap()).join("package.json").is_file()
 }
 
 fn ensure_node_runtime() -> Result<(), String> {
@@ -141,8 +136,13 @@ fn ensure_node_runtime() -> Result<(), String> {
 /// node runtime, then `npm install -g --prefix ~/.fez/node-tools`.
 /// Blocking (called from an async Tauri command); idempotent; the first
 /// run downloads ~50MB and takes tens of seconds — the UI says so.
-pub fn ensure_claude_adapter() -> Result<String, String> {
-    if adapter_ready() {
+pub fn ensure_claude_adapter() -> Result<String, String> { ensure_adapter("claude-code") }
+
+pub fn ensure_adapter(id: &str) -> Result<String, String> {
+    let agent = local_agents().into_iter().find(|a| a["id"] == id).ok_or("Unsupported local agent")?;
+    static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = INSTALL_LOCK.lock().map_err(|_| "adapter install lock poisoned")?;
+    if local_adapter_ready(id) {
         return Ok("ready".to_string());
     }
     ensure_node_runtime()?;
@@ -159,7 +159,7 @@ pub fn ensure_claude_adapter() -> Result<String, String> {
         .args([
             "install",
             "-g",
-            &format!("{CLAUDE_ADAPTER_PKG}@{CLAUDE_ADAPTER_VERSION}"),
+            &format!("{}@{}", agent["package"].as_str().unwrap(), agent["version"].as_str().unwrap()),
             "--prefix",
         ])
         .arg(&prefix)
@@ -174,7 +174,7 @@ pub fn ensure_claude_adapter() -> Result<String, String> {
             err.lines().rev().take(3).collect::<Vec<_>>().join(" | ")
         ));
     }
-    if !adapter_ready() {
+    if !local_adapter_ready(id) {
         return Err("npm reported success but the adapter isn't runnable".to_string());
     }
     Ok("installed".to_string())
@@ -198,6 +198,20 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_agent_catalog_has_pinned_installers_for_the_supported_launchers() {
+        let agents = super::local_agents();
+        assert_eq!(agents.len(), 2);
+        for agent in agents {
+            for field in ["id", "cli", "adapter", "package", "version", "statusCommand", "setupCommand"] {
+                assert!(!agent[field].as_str().unwrap().is_empty(), "missing {field}");
+            }
+            assert!(agent["package"].as_str().unwrap().starts_with("@agentclientprotocol/"));
+            assert!(agent["version"].as_str().unwrap().split('.').all(|part| part.parse::<u32>().is_ok()));
+        }
+        assert!(!super::local_adapter_ready("unknown-agent"));
+    }
+
     #[test]
     fn extension_node_scripts_request_a_runtime_but_native_bins_do_not() {
         assert!(super::is_node_script(b"#!/usr/bin/env node\nconsole.log('setup')"));

@@ -59,7 +59,8 @@ import { uploadFile, shareLine, imetaTag, setMediaServer, reconcileMediaServer, 
 import { runCommand } from "./commands";
 import { startUpdateCheck } from "./updater";
 import Onboarding from "./Onboarding";
-import FirstRun from "./FirstRun";
+import AiSetupDialog from "./AiSetupDialog";
+import FirstRun, { FirstTask } from "./FirstRun";
 import HistoryStatus from "./HistoryStatus";
 import { isNostrKeyInput, pubkeyFromInput, resolvePubkeyInput } from "./public-key";
 import { foldLedger, InlineProposal, proposalIdsIn } from "./BenchProposals";
@@ -433,6 +434,7 @@ function Shell({
   const render = useForceRender();
   const [view, setView] = useState<MainView>({ kind: "channel" });
   const [pane, setPane] = useState<SidePane>();
+  const [aiSetupOpen, setAiSetupOpen] = useState(false);
   // Bumped when the agents pane writes a persona, so the roster page
   // re-reads rather than showing what it read before the edit.
   const [agentsNonce, setAgentsNonce] = useState(0);
@@ -1531,6 +1533,7 @@ function Shell({
           onWatch={(agent) => setPane({ kind: "watch", agent })}
           onManage={() => setPane(pane?.kind === "manage" ? undefined : { kind: "manage" })}
           onAgents={() => setView({ kind: "agents" })}
+          onConnectAi={() => setAiSetupOpen(true)}
           onSearch={() => setSearchOpen({ query: "" })}
           onNotice={(text) => { setBanner(text); setTimeout(() => setBanner(undefined), 6000); }}
           onProfile={(pk) => setPane({ kind: "profile", pk })}
@@ -1746,6 +1749,12 @@ function Shell({
           </div>
         </div>
       )}
+      {aiSetupOpen && <AiSetupDialog onClose={() => setAiSetupOpen(false)} onConnected={() => {
+        setAiSetupOpen(false);
+        setAgentsNonce((n) => n + 1);
+        window.dispatchEvent(new Event("fez-ai-connected"));
+        void import("./welcome").then(({ ensureWelcome }) => ensureWelcome(client)).catch((err) => toast.error(String(err)));
+      }} />}
       {settingsOpen && <SettingsPane client={client} wire={wire} onClose={() => setSettingsOpen(false)} />}
       {/* One extension's settings, opened from the group of channels it
           owns. The same panel object the settings pane renders — an
@@ -1933,6 +1942,7 @@ function ChannelView({
   onWatch,
   onManage,
   onAgents,
+  onConnectAi,
   onProfile,
   onDocs,
   onSearch,
@@ -1961,6 +1971,7 @@ function ChannelView({
   onWatch: (agent: string) => void;
   onManage: () => void;
   onAgents: () => void;
+  onConnectAi: () => void;
   onProfile: (pk: string) => void;
   onDocs: () => void;
   onSearch: () => void;
@@ -2492,7 +2503,7 @@ function ChannelView({
             the channel info above carries the standing guidance, and a
             placeholder repeating "mention an agent" under it was one nag
             too many (removed on request, after shipping for an hour). */}
-        {history.status === "ready" && messages.length === 0 &&
+        {channelId !== "bootstrap-welcome" && history.status === "ready" && messages.length === 0 &&
           ![...client.state.workspace.channels.keys()].some(
             (id) => id !== channelId && client.messages(id).length > 0
           ) && (
@@ -2507,6 +2518,11 @@ function ChannelView({
             You're the only member here so far — invite people from manage (+), or mention an agent by name to bring one in.
           </div>
         )}
+        {channelId === "bootstrap-welcome" && client.state.isOwner(client.pubkey)
+          && history.status === "ready" && !threadRoot && !editing && !draft
+          && !messages.some((m) => m.authorPk === client.pubkey) && (
+            <FirstTask onDraft={setDraft} onConnect={onConnectAi} />
+          )}
         {(channelId === "bootstrap-general" || channelId === "bootstrap-welcome") && (client.state.workspace.members.size ?? 0) > 1 && <MentionHint />}
         {threadRoot && (() => {
           const root = messages.find((m) => m.id === threadRoot);
