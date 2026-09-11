@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import { act } from "react";
-import activate from "../src/gui.tsx";
+import activate, { type GuiApi } from "../src/gui.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,16 +12,16 @@ describe("loom gui migrated to the mount model", () => {
       registerNavView,
       registerArtifactAction: vi.fn(),
       client: {
+        pubkey: "user",
         state: {
-          scope: undefined,
-          workspace: { channels: new Map() },
+          workspace: { relay: "wss://workspace", channels: new Map() },
         },
+        artifacts: () => [],
+        on: () => () => {},
         publishArtifact: vi.fn(),
       },
       openTool: vi.fn(),
-      exportTool: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any;
+    } satisfies GuiApi;
 
     activate(api);
 

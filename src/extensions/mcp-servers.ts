@@ -134,7 +134,7 @@ function resolveHeaders(
   }));
 }
 
-function keychainSecret(skill: string, key: string): string | undefined {
+export function keychainSecret(skill: string, key: string): string | undefined {
   if (process.platform !== "darwin") return undefined;
   try {
     const value = execFileSync(

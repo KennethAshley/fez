@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { execFile, execSync, spawn } from "node:child_process";
+import { execFile, execFileSync, execSync, spawn } from "node:child_process";
 import {
   CapabilityClient,
   RelayConnection,
@@ -21,6 +21,8 @@ import {
   makeChannels,
   isSafeWork,
   parseSealed,
+  fetchRelayInfo,
+  setWorkspaceBackend,
 } from "@fezchat/protocol";
 import { decodeReminderV2 } from "./reminders-v2.js";
 
@@ -52,6 +54,17 @@ import { decodeReminderV2 } from "./reminders-v2.js";
 
 // Summon policy is now in @fezchat/protocol (shared with desktop)
 export { summonMentions, isSafeWork } from "@fezchat/protocol";
+
+/** A delayed NIP-11 response must never reinstall the workspace the user just left. */
+export async function refreshWorkspace(
+  currentRelay: () => string, read = fetchRelayInfo, write = setWorkspaceBackend,
+): Promise<string | undefined> {
+  const relayUrl = currentRelay();
+  const info = await read(relayUrl);
+  if (currentRelay() !== relayUrl) return undefined;
+  write({ relayUrl, owner: info?.pubkey, info });
+  return info?.pubkey;
+}
 
 const HERDR_SOCKET = path.join(os.homedir(), ".config", "herdr", "herdr.sock");
 const REGISTRY = path.join(os.homedir(), ".fez", "herdr-tabs.json");
@@ -118,13 +131,37 @@ interface RegisteredTab {
   /** Thread-scoped work: the repo + line this instance was cut onto. */
   work?: { repo: string; line?: string };
 }
-function loadRegistry(): RegisteredTab[] {
+function loadRegistry(file = REGISTRY): RegisteredTab[] {
   try {
-    const raw = JSON.parse(fs.readFileSync(REGISTRY, "utf-8")) as (RegisteredTab & { channel?: string })[];
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8")) as (RegisteredTab & { channel?: string })[];
     return raw.map((t) => ({ ...t, channels: t.channels ?? (t.channel ? [t.channel] : []) }));
   } catch {
     return [];
   }
+}
+
+export function registeredAgent(persona: string, home = path.join(os.homedir(), ".fez")) {
+  // A desktop-started agent can outlive the app. Its live record must
+  // survive the handoff to the sentinel, including its channels/checkout.
+  if (!/^[\w-]+$/.test(persona)) return;
+  try {
+    const rows: unknown = JSON.parse(fs.readFileSync(path.join(home, "desktop-agents.json"), "utf-8"));
+    const row = Array.isArray(rows) ? (rows as { persona?: unknown; channels?: unknown; pid?: unknown; bin?: unknown; repo?: unknown; line?: unknown }[])
+      .find(entry => entry.persona === persona && (entry.bin === undefined || entry.bin === "fez-agent")) : undefined;
+    if (row && typeof row.pid === "number" && Number.isSafeInteger(row.pid) && row.pid > 1 &&
+        Array.isArray(row.channels) && row.channels.every((channel): channel is string => typeof channel === "string") &&
+        (row.repo === undefined || typeof row.repo === "string" && isSafeWork(row.repo)) &&
+        (row.line === undefined || typeof row.line === "string" && isSafeWork(row.line)) &&
+        Number(fs.readFileSync(path.join(home, "agents", `${persona}.pid`), "utf-8").trim()) === row.pid) {
+      const command = execFileSync("ps", ["-p", String(row.pid), "-o", "command="], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      const binary = path.join(home, "bin", "fez-agent");
+      if (command === binary || command.startsWith(`${binary} `)) {
+        return { channels: row.channels, work: typeof row.repo === "string" ? { repo: row.repo, line: typeof row.line === "string" ? row.line : undefined } : undefined };
+      }
+    }
+  } catch { /* missing, stale, or unreadable desktop record; try the sentinel's registry */ }
+  const row = loadRegistry(path.join(home, "herdr-tabs.json")).find((entry) => entry.persona === persona);
+  return row ? { channels: row.channels, work: row.work } : undefined;
 }
 function saveRegistry(tabs: RegisteredTab[]): void {
   fs.mkdirSync(path.dirname(REGISTRY), { recursive: true });
@@ -195,10 +232,12 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
   // sentinel faithfully watching a relay the user had left.
   watchRelaySet((next) => {
     try {
+      const previousPrimary = relayUrls[0];
       relay.setRelays(next);
       client.setRelays(next);
       relayUrls.length = 0;
       relayUrls.push(...next); // same array — spawn env strings read it live
+      if (next[0] !== previousPrimary) setWorkspaceBackend({ relayUrl: next[0] });
       console.log(`🔁 relay set changed → ${next.join(", ")}`);
     } catch (err) {
       console.error(`⚠️  relay set change refused: ${err instanceof Error ? err.message : err}`);
@@ -209,7 +248,7 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
   console.log(`   herdr: ${(await herdrAlive()) ? "connected — agents spawn as tabs" : "absent — agents spawn as detached processes"}`);
 
   // ── spawn paths ───────────────────────────────────────────────────────
-  const agentEnvCmd = (persona: string, channels: string[], work?: { repo: string; line?: string }) => {
+  const agentEnvCmd = (persona: string, channels: string[], work?: { repo: string; line?: string }, takeOver = false) => {
     // The SINK: this string is typed into a live shell (herdr
     // pane.send_text). Validating HERE, not only where `work` is built,
     // is what makes the guard hold against a future caller that
@@ -220,6 +259,7 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
     if (work?.line && !isSafeWork(work.line)) throw new Error(`unsafe line name refused: ${work.line}`);
     const env =
       `FEZ_AGENT_OWNER=${myPubkey} FEZ_RELAY=${relayUrls.join(",")}` +
+      (takeOver ? " FEZ_AGENT_TAKEOVER=1" : "") +
       (work ? ` FEZ_AGENT_REPO=${work.repo}${work.line ? ` FEZ_AGENT_BASE_BRANCH=${work.line}` : ""}` : "");
     // The bundled runtime first: a desktop-only machine has no `fez` on
     // PATH, and the whole point of shipping fez-agent is that summons
@@ -231,7 +271,7 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
     return `${env} fez agent ${persona} -c ${channels.length > 0 ? channels.join(",") : "none"}`;
   };
 
-  async function spawnAgent(persona: string, channels: string[], work?: { repo: string; line?: string }): Promise<void> {
+  async function spawnAgent(persona: string, channels: string[], work?: { repo: string; line?: string }, takeOver = false): Promise<void> {
     if (await herdrAlive()) {
       const registered = loadRegistry();
       const prior = registered.find((t) => t.persona === persona);
@@ -239,7 +279,7 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
       const created = await herdrCall("tab.create", { label: `fez:${persona}`, cwd: os.homedir(), focus: false });
       const tab = created.tab as { tab_id: string };
       const pane = created.root_pane as { pane_id: string };
-      await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: agentEnvCmd(persona, channels, work) + "\n" });
+      await herdrCall("pane.send_text", { pane_id: pane.pane_id, text: agentEnvCmd(persona, channels, work, takeOver) + "\n" });
       saveRegistry([...registered.filter((t) => t.persona !== persona), { persona, channels, tabId: tab.tab_id, paneId: pane.pane_id, work }]);
       console.log(`🧬 spawned @${persona} in herdr tab ${tab.tab_id} (${channels.length > 0 ? channels.join(",") : "dm-only"})`);
     } else {
@@ -249,6 +289,7 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
         ...process.env,
         FEZ_AGENT_OWNER: myPubkey,
         FEZ_RELAY: relayUrls.join(","),
+        ...(takeOver ? { FEZ_AGENT_TAKEOVER: "1" } : {}),
         ...(work ? { FEZ_AGENT_REPO: work.repo, ...(work.line ? { FEZ_AGENT_BASE_BRANCH: work.line } : {}) } : {}),
       };
       const bundled = path.join(os.homedir(), ".fez", "bin", "fez-agent");
@@ -285,6 +326,7 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
       signEvent: (template: unknown) => client.signEvent(template as never),
       subscribe: (filters: unknown, handler: unknown) => relay.subscribe(filters as never, handler as never),
       query: (filters: unknown) => relay.query(filters as never),
+      queryWithStatus: (filters: unknown) => relay.queryWithStatus(filters as never),
       encrypt: (peer: string, plaintext: string) => client.encryptTo(peer, plaintext),
       decrypt: (peer: string, ciphertext: string) => client.decryptFrom(peer, ciphertext),
     };
@@ -323,14 +365,12 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
         const pk = await resolvePersonaPubkey(persona).catch(() => undefined);
         return !!pk && Date.now() - (lastBeat.get(pk) ?? 0) < PRESENCE_TTL_MS;
       },
-      registryEntry: (persona: string) => {
-        const t = loadRegistry().find((x) => x.persona === persona);
-        return t ? { channels: t.channels, work: t.work } : undefined;
-      },
+      registryEntry: (persona: string) => registeredAgent(persona),
       spawn: (persona, channels, work) => spawnAgent(persona, channels, work),
       restart: async (persona, channels, work) => {
-        try { execSync(`pkill -f "(fez|cli\\.js) agent ${persona}"`, { stdio: "pipe" }); } catch { /* already gone */ }
-        await spawnAgent(persona, channels, work);
+        // Bundled agents have no persona in argv. Let the signed ownership
+        // protocol retire the old body instead of guessing which PID to kill.
+        await spawnAgent(persona, channels, work, true);
       },
       query: (filters) => relay.query(filters as never) as never,
       publish: async (template) => {
@@ -568,7 +608,7 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
   // retried next tick; it can never take the sentinel down.
   await (async () => {
    try {
-    const { loadExtensions, registeredScheduledTasks, setNostrBackend, setWorkspaceBackend, fetchRelayInfo } =
+    const { loadExtensions, registeredScheduledTasks, setNostrBackend } =
       await import("@fezchat/protocol");
     setNostrBackend(buildTaskNostr() as never);
     // Which workspace this is, and who owns it. The sentinel has no
@@ -584,22 +624,8 @@ export async function runSentinel(onlyExtensions?: readonly string[]) {
     // read that lost that race would leave the owner unknown for the
     // whole process lifetime, silently disabling channel creation for
     // every scheduled task until somebody restarted it.
-    let workspaceOwner: string | undefined;
-    const resolveOwner = async (): Promise<string | undefined> => {
-      if (workspaceOwner) return workspaceOwner;
-      const info = await fetchRelayInfo(relayUrls[0]);
-      if (info?.pubkey) {
-        workspaceOwner = info.pubkey;
-        setWorkspaceBackend({
-          relayUrl: relayUrls[0],
-          owner: workspaceOwner,
-          info: info as Record<string, unknown>,
-        });
-        console.log(`   ⏱  workspace owner ${workspaceOwner.slice(0, 12)}…`);
-      }
-      return workspaceOwner;
-    };
-    await resolveOwner();
+    const resolveOwner = () => refreshWorkspace(() => relayUrls[0]);
+    const workspaceOwner = await resolveOwner();
     if (!workspaceOwner) {
       // No owner means no channel, roster or ban event can be valid here,
       // so nothing a scheduled task publishes into a channel would count.

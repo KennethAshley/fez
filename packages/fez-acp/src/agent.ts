@@ -1855,7 +1855,7 @@ async function main() {
           const workNotice = completedRequest
             ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then deliver the outcome to the original user. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
             : !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
-              ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, a summary, capability, and artifact URLs/event ids. This publishes your result and calls back to the requester automatically; do not send a separate callback or acceptance. Report blockers as error, never as success.`
+              ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, summary, capability, and artifact URLs/event ids. The summary is the actual reply delivered to the requester: include your full answer or deliverable and useful details, not a report about answering them (say "Hello!" rather than "Greeted the user"). This publishes your result automatically; do not put the answer in a separate message after the tool, or send a separate callback or acceptance. Report blockers as error, never as success.`
               : undefined;
           if (!fresh) {
             return [

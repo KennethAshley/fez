@@ -1,4 +1,5 @@
-import { KIND_CHANNEL, KIND_CHANNEL_MESSAGE } from "./kinds.js";
+import { KIND_CHANNEL } from "./kinds.js";
+import { channelMessage } from "../../packages/fez-client/dist/channel-message.js";
 import type { NostrAccess } from "../extensions/extensions.js";
 
 /**
@@ -151,11 +152,7 @@ export function makeChannels(nostr: NostrAccess, ownerPubkey: string): ChannelsA
     },
 
     async say(channelId: string, text: string, opts?: { threadRoot?: string }): Promise<string> {
-      const tags: string[][] = [["h", channelId]];
-      // The threading shape fez uses everywhere: a reply carries a root
-      // marker, and the root is whatever message opened the thread.
-      if (opts?.threadRoot) tags.push(["e", opts.threadRoot, "", "root"]);
-      const event = await nostr.publish({ kind: KIND_CHANNEL_MESSAGE, tags, content: text });
+      const event = await nostr.publish(channelMessage({ channelId, content: text, threadRoot: opts?.threadRoot }));
       return event.id;
     },
   };

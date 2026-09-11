@@ -19,6 +19,7 @@ function fakeBackend() {
     signEvent: vi.fn((t: Parameters<NostrAccess["signEvent"]>[0]) => ({ ...t, id: "REAL", pubkey: "pk_owner", created_at: 1, sig: "realsig" })),
     subscribe: vi.fn(() => () => {}),
     query: vi.fn(async () => []),
+    queryWithStatus: vi.fn(async () => ({ events: [], failures: [] })),
     encrypt: vi.fn(() => "CIPHER"),
     decrypt: vi.fn(() => "PLAIN"),
     sendDm: vi.fn(async () => "rumor"),
@@ -80,9 +81,11 @@ describe("denied relay operations report failure instead of empty success", () =
     await expect(nostr.publish(TMPL)).rejects.toThrow(/read-only.*publish/);
     await expect(nostr.sendDm("peer", "hello")).rejects.toThrow(/read-only.*sendDm.*publish/);
     await expect(nostr.query([])).rejects.toThrow(/read-only.*query.*read:channels/);
+    await expect(nostr.queryWithStatus!([])).rejects.toThrow(/read-only.*queryWithStatus.*read:channels/);
     expect(bk.publish).not.toHaveBeenCalled();
     expect(bk.sendDm).not.toHaveBeenCalled();
     expect(bk.query).not.toHaveBeenCalled();
+    expect(bk.queryWithStatus).not.toHaveBeenCalled();
   });
 
   it("throws when a subscription or DM read is denied", () => {
@@ -100,6 +103,9 @@ describe("denied relay operations report failure instead of empty success", () =
     await expect(nostr.sendDm("peer", "hello")).resolves.toBe("rumor");
     expect(bk.sendDm).toHaveBeenCalledWith("peer", "hello");
     await expect(nostr.query([])).resolves.toEqual([]);
+    await expect(nostr.queryWithStatus!([])).resolves.toEqual({ events: [], failures: [] });
+    await nostr.publish({ ...TMPL, created_at: 42 });
+    expect(bk.publish).toHaveBeenLastCalledWith({ ...TMPL, created_at: 42 });
     expect(nostr.subscribe([], () => {})).toBeTypeOf("function");
     expect(nostr.unwrapDm({ ...TMPL, id: "wrap", pubkey: "peer", created_at: 1, sig: "sig" })).toBeUndefined();
   });

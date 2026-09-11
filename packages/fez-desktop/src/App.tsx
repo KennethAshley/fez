@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyEvent, installNotificationClick } from "./notify";
-import { FezClient, dmConvoKey, setStatePersistence, type Artifact, type InputHistoryEntry, type PendingInput, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
+import { FezClient, dmConvoKey, latestArtifacts, setStatePersistence, type Artifact, type InputHistoryEntry, type PendingInput, type MediaAttachment, type Msg, type ObserverEntry, type WireEvent } from "@fezchat/client";
 import { embedUrls, mediaKind } from "./media-kind";
 import { BrowserWire, rustSigner } from "./wire";
 import { relaySet, setRelays } from "./relay";
@@ -2141,20 +2141,14 @@ function ChannelView({
   // the latest per (thread, author, title) — one handle, one view. Keying
   // on the root keeps two threads' same-titled tools distinct. Non-live
   // artifacts (a distinct html/table/image each time) are left as-is.
-  const latestLive = new Map<string, Artifact>();
-  for (const a of allArtifacts) {
-    if (a.type !== "live") continue;
-    const key = [a.rootId ?? "top", a.authorName, a.title ?? ""].join(" | ");
-    const prev = latestLive.get(key);
-    if (!prev || a.ts > prev.ts) latestLive.set(key, a);
-  }
+  const latestLive = latestArtifacts(allArtifacts.filter(a => a.type === "live"));
   // One thread, one button, one pane: a tool lives in the thread that built
   // it. Inside that thread it shows its handle; the channel view shows only
   // top-level tools (no thread root) — a threaded tool is reached by opening
   // its thread, not by a handle floating loose in the channel.
   const liveTools = threadRoot
-    ? [...latestLive.values()].filter((a) => a.rootId === threadRoot)
-    : [...latestLive.values()].filter((a) => !a.rootId);
+    ? latestLive.filter((a) => a.rootId === threadRoot)
+    : latestLive.filter((a) => !a.rootId);
   // Non-live artifacts (html/image/table) render inline, but scope to their
   // thread the SAME way as tools: a thread shows its own, the channel shows
   // only top-level ones. An artifact built inside a thread stays there —

@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import asyncFs from "node:fs/promises";
 import { makeStorage, removeStorage } from "../../../src/extensions/extension-storage.js";
 
 /**
@@ -15,6 +16,17 @@ const WORK = fs.mkdtempSync(path.join(os.tmpdir(), "fez-ext-storage-"));
 afterAll(() => fs.rmSync(WORK, { recursive: true, force: true }));
 
 describe("extension storage", () => {
+  it("preserves the previous outbox if replacing the state file fails", async () => {
+    const storage = makeStorage("outbox", WORK);
+    await storage.set("prepared", { id: "first" });
+    const rename = vi.spyOn(asyncFs, "rename").mockRejectedValueOnce(new Error("disk unavailable"));
+    try {
+      await expect(storage.set("prepared", { id: "second" })).rejects.toThrow("disk unavailable");
+      expect(await makeStorage("outbox", WORK).get("prepared")).toEqual({ id: "first" });
+    } finally { rename.mockRestore(); }
+    await storage.set("prepared", { id: "second" });
+    expect(await makeStorage("outbox", WORK).get("prepared")).toEqual({ id: "second" });
+  });
   it("round-trips a value and survives a new instance (persistence)", async () => {
     const a = makeStorage("polls", WORK);
     await a.set("last-sync", { at: 123, ok: true });

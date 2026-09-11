@@ -209,7 +209,7 @@ server.registerTool("fez_complete_work", {
   inputSchema: {
     requestId: z.string().regex(/^[a-f0-9]{64}$/),
     status: z.enum(["success", "error"]),
-    summary: z.string().min(1).max(8000),
+    summary: z.string().min(1).max(8000).describe("The actual answer or deliverable, shown directly to the requester. Include useful details; do not replace the answer with a description of what you did."),
     capability: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/).describe("capability used, e.g. speech, transcription, coding"),
     artifacts: z.array(z.string()).max(16).default([]).describe("HTTPS deliverable URLs or signed artifact event ids"),
   },

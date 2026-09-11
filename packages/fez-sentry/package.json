@@ -1,0 +1,35 @@
+{
+  "name": "@fezchat/sentry",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sentry incidents in a Fez channel, with optional agent investigation and draft fixes.",
+  "type": "module",
+  "fez": {
+    "type": "extension",
+    "parts": {
+      "headless": "dist/headless.js",
+      "background": true,
+      "gui": "dist/gui.js"
+    },
+    "permissions": [
+      "read:channels",
+      "read:agents",
+      "publish",
+      "sign",
+      "background",
+      "ui",
+      "network:sentry.io",
+      "network:us.sentry.io",
+      "network:de.sentry.io"
+    ],
+    "guiRuntime": "isolated-settings"
+  },
+  "scripts": {
+    "build": "esbuild src/headless.ts --bundle --format=esm --platform=node --outfile=dist/headless.js && esbuild src/gui.ts --bundle --format=iife --global-name=__fezExt --platform=browser --outfile=dist/gui.js && esbuild src/instrument.ts --bundle --format=esm --platform=node --banner:js=\"import{createRequire as ___fezRequire}from'node:module';const require=___fezRequire(import.meta.url);\" --outfile=dist/instrument.mjs",
+    "check": "tsc --noEmit",
+    "test:connection": "node --env-file=.env.local --input-type=module -e \"const {verifyConnection}=await import('./dist/instrument.mjs'); try { console.log(await verifyConnection()); } catch (error) { console.error(error.message); process.exitCode = 1; }\""
+  },
+  "dependencies": {
+    "@sentry/node": "10.74.0"
+  }
+}

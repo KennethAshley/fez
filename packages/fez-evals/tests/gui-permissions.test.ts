@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createRequire } from "node:module";
-import { FezClient, type Wire } from "../../fez-client/src/index.js";
+import { FezClient, type Artifact, type ClientEvents, type Wire } from "../../fez-client/src/index.js";
 import { handlePanelRequest } from "../../fez-desktop/src/IsolatedPanelLauncher";
 import { extensionSettingsPanels, guiExtensionStatus, loadGuiExtensions, reloadGuiExtensions, messageDecorators, pageViewsFor, type GuiExtensionApi, type PageViewProps } from "../../fez-desktop/src/gui-extensions";
 
@@ -158,10 +158,26 @@ it("granted agent reads and encrypted config preserve the requested config names
   expect(wire.publish).toHaveBeenCalledOnce();
 });
 
-it("Loom exports request the grant needed for workflow queries", async () => {
-  const { exportFiles } = await import("../../fez-loom/src/export.js");
-  const files = exportFiles({ id: "tool", title: "Workflows", type: "html", content: "tool", ts: 1 });
-  const grants: string[] = JSON.parse(files.pkgJson).fez.permissions;
+it("artifact reads and notifications cannot mutate the host's saved source data", async () => {
+  const artifact: Artifact = { id: "original", channelId: "channel", authorPk: "owner", authorName: "Owner", type: "live", title: "Original", content: "content", ts: 1 };
+  let notify: ClientEvents["artifact"] | undefined;
+  const { api } = await load(["read:channels"], { prepare: client => {
+    vi.spyOn(client, "artifacts").mockReturnValue([artifact]);
+    vi.spyOn(client, "on").mockImplementation((event, handler) => {
+      if (event === "artifact") notify = handler as ClientEvents["artifact"];
+      return () => {};
+    });
+  } });
+  api.client!.artifacts("channel")[0].title = "modified read";
+  expect(artifact.title).toBe("Original");
+  api.client!.on("artifact", (_channelId, copy) => { copy.title = "modified event"; });
+  expect(notify).toBeTypeOf("function");
+  notify!("channel", artifact);
+  expect(artifact.title).toBe("Original");
+});
+
+it("workflow queries require read:agents in addition to read:channels", async () => {
+  const grants = ["ui", "read:channels", "read:agents"];
   const { api } = await load(grants, { prepare: client => {
     vi.spyOn(client, "workflowRuns").mockReturnValue(new Map([["run", { workflow: "Build", status: "done", ts: 1 }]]));
   } });

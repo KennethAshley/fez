@@ -1,6 +1,7 @@
 import { wikiSlug, orderVersions, assertDocBase, docCommentThreads, type DocAnchor } from "./docs.js";
 export * from "./docs.js";
 export * from "./memory.js";
+export * from "./artifacts.js";
 export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
 export {
   latestPerAddress,

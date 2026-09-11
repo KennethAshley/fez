@@ -1,7 +1,7 @@
 {
   "name": "@fezchat/loom",
   "version": "0.2.2",
-  "description": "Loom for fez — describe a tool over your channel data and @loom weaves a live, streaming UI (sandboxed; reads the relay freely, every write asks you first). Keep the good ones in the ▣ tools gallery; the best crystallize into extensions.",
+  "description": "Save, reopen, and share artifacts from any agent. Includes @loom as an optional live-tool builder.",
   "type": "module",
   "fez": {
     "type": "extension",

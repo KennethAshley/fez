@@ -38,7 +38,8 @@ import { makeStorage, type StorageAccess } from "./extension-storage.js";
  */
 export interface NostrAccess {
   pubkey: string;
-  publish(tmpl: { kind: number; tags: string[][]; content: string }): Promise<Event>;
+  /** Preserve created_at when retrying a previously prepared event. */
+  publish(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Promise<Event>;
   /**
    * Sign WITHOUT publishing — for events that travel outside the relay
    * (Blossom/NIP-98 HTTP auth headers). The private key stays behind the
@@ -47,6 +48,8 @@ export interface NostrAccess {
   signEvent(tmpl: { kind: number; tags: string[][]; content: string; created_at?: number }): Event;
   subscribe(filters: Filter[], onEvent: (event: Event) => void): () => void;
   query(filters: Filter[]): Promise<Event[]>;
+  /** Complete reads distinguish an absent permission/config event from a timed-out query. */
+  queryWithStatus?(filters: Filter[]): Promise<{ events: Event[]; failures: { url: string; reason: string }[] }>;
   /** NIP-44 with the user's key — private pipes over public relays (observer frames, DMs). */
   encrypt(peerPubkey: string, plaintext: string): string;
   /** Throws on wrong key/garbage — callers decide whether that's ignorable. */
@@ -486,6 +489,7 @@ export function buildApi(granted: readonly string[], extensionName = "extension"
       : (() => deny("sign or read:dms", "nostr.decrypt")),
     sendDm: may("publish") ? bk.sendDm : (async () => deny("publish", "nostr.sendDm")),
     query: may("read:channels") ? bk.query : (async () => deny("read:channels", "nostr.query")),
+    queryWithStatus: may("read:channels") ? bk.queryWithStatus : (async () => deny("read:channels", "nostr.queryWithStatus")),
     subscribe: may("read:channels")
       ? bk.subscribe
       : (() => deny("read:channels", "nostr.subscribe")),
