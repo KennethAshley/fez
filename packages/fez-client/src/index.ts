@@ -1,5 +1,6 @@
 import { wikiSlug, orderVersions, assertDocBase, docCommentThreads, type DocAnchor } from "./docs.js";
 export * from "./docs.js";
+export * from "./memory.js";
 export { parseQuery, describeQuery, type Query, type QuerySource, type QueryView } from "./query-lang.js";
 export {
   latestPerAddress,
@@ -261,6 +262,8 @@ export const K = {
   OBSERVER: 20004,
   THREAD_SUMMARY: 39005,
   WORKFLOW_RUN: 47200,
+  MEMORY: 47210,
+  MEMORY_UPDATE: 47211,
   REACTION: 7,
   DELETION: 5,
   GIFT_WRAP: 1059,

@@ -277,6 +277,19 @@ export const KIND_THREAD_SUMMARY = 39005;
  */
 export const KIND_WORKFLOW_RUN = 47200;
 
+/** Shared channel fact: append-only plaintext, tagged ["h", channelId], signed by a workspace member. */
+export const KIND_MEMORY = 47210;
+
+/**
+ * Correct or forget one shared fact without deleting its history. ["h", channelId]
+ * and exactly one ["e", originalMemoryId] target a kind-47210 fact in that channel.
+ * Only its author or a current workspace moderator may update it. The newest
+ * authorized update wins (lowest id on timestamp ties); its timestamp must be
+ * later than the original. Empty content forgets the fact; nonempty content
+ * replaces or restores it. Readers apply current membership and removal rules.
+ */
+export const KIND_MEMORY_UPDATE = 47211;
+
 /**
  * Agent engram — NIP-AE persistent agent memory (Buzz's spec,
  * implemented to the letter in src/engram.ts for cross-implementation
