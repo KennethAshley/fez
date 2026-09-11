@@ -1,5 +1,7 @@
 # ORO mining for Fez
 
+**Unsupported for testnet mining.** No public ORO testnet submission and evaluation service has been verified. This adapter targets mainnet subnet 15 and does not meet Fez’s testnet-only mining goal. Keep Wallet on testnet. Local evaluation is development only; it does not register, mine or earn rewards.
+
 Develop shopping agents for **ORO, Bittensor mainnet subnet 15**, through Fez Mining's existing GUI and chat tools. The extension uses ORO's current generated-environment agent contract.
 
 ## Install
@@ -14,7 +16,7 @@ fez install @fezchat/oro
 
 For a development checkout, build with `npm --prefix packages/fez-oro run build`, then run `fez link packages/fez-oro`.
 
-Open Mining and select ORO. Setup, source checks, development evaluations, submissions and status share one adapter. Attach Mining to your coding agent to use `mining_setup`, `mining_config`, `mining_workspace` and `mining_submission`.
+ORO is hidden from the testnet Mining list because its adapter targets mainnet. Setup, source checks, development evaluations, submissions and status share one adapter. Attach Mining to your coding agent to use `mining_setup`, `mining_config`, `mining_workspace` and `mining_submission`.
 
 ## Develop a candidate
 

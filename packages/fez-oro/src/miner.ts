@@ -53,7 +53,7 @@ async function safe<T>(fn: () => Promise<T>): Promise<T> {
 export function createOroSubmission(deps: { exec?: Exec; run?: Run; fetch?: typeof fetch; now?: () => number } = {}): MinerSubmission {
   const execute = deps.exec ?? exec, fetcher = deps.fetch ?? fetch, now = deps.now ?? Date.now;
   return {
-    notice: 'Submitting to ORO starts mainnet SN15 evaluation and bills the inference provider linked in the ORO dashboard. Attempts may consume an 18-hour cooldown, including rejected code. Code is later released publicly. No automatic registration, provider linking or retry.',
+    notice: 'Unsupported for testnet mining. No public ORO testnet service has been verified. Submitting to ORO starts mainnet SN15 evaluation and bills the inference provider linked in the ORO dashboard. Attempts may consume an 18-hour cooldown, including rejected code. Code is later released publicly. No automatic registration, provider linking or retry.',
     status: ctx => safe(async () => {
       validContext(ctx); agentName(ctx);
       const deadline = Date.now() + 90000;

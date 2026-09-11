@@ -11,6 +11,7 @@ const COMMIT = 'ffb98e581e8976fbe33cc4a3a467eb617d4b0328';
 const PACK = '9e5d11c6945edc19e06b730afd5681a035f75827933f958e6bfbcc846a28c73a';
 const families = ['intent_decomposition','retrieval_recall','constraint_satisfaction','preference_reasoning','ranking','recovery','justification'] as const;
 export const oroDevelopmentInstructions =
+  'Unsupported for testnet mining. Local evaluation is development only and does not mine or earn rewards. Keep Wallet on testnet. ' +
   'Implement synchronous agent_main(problem_data) using the supplied environment binding and policy_view. ' +
   'Evaluate runs the official 35-task development pack, not a prediction of current qualifying or race scores. ' +
   'It requires an explicit request and can bill both agent and simulator inference. ' +

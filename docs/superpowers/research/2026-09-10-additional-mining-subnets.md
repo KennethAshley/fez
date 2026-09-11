@@ -1,5 +1,7 @@
 # Additional mining subnets for Fez
 
+> Superseded recommendation: Fez requires testnet mining. The ranking below did not qualify active testnet evaluation and must not be used as an implementation shortlist. Mainnet feasibility and local benchmarks do not establish testnet mining support.
+
 Research date: 2026-09-10. Four candidates, ranked by agent relevance and clarity of the integration contract, not expected returns. Sources are official repositories/docs. Netuids below are verified against those sources, not a live chain query; registration availability and currently open competitions remain unverified. No code changed, agents executed, keys supplied, registrations made, or money spent.
 
 Local context supplied by the main agent: Gradients supports testnet SN241; Numinous supports testnet SN155; the existing Ridges extension purchases coding through x402 and does not mine. Container/Compose/publicEndpoint support exists; the generic submission test result currently expects a numeric prediction. Integration observations below are inferences, not a review of those seams.
