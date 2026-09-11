@@ -44,6 +44,7 @@ export function isAddressedTo(
   /** The persona's "also answers to" nicknames — matched exactly like the id. */
   aliases: readonly string[] = []
 ): boolean {
+  if (event.tags.some(t => t[0] === "task" && t[1] === myPubkey)) return true;
   const named = addressees(event.content);
   if (named.length > 0) {
     const mine = new Set([personaId, ...aliases].map((n) => n.toLowerCase()));

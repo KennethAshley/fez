@@ -188,6 +188,90 @@ describe("standing-agent model recovery", () => {
   });
 });
 
+describe("delegated work completion", () => {
+  const specialistKey = new Uint8Array(32).fill(3);
+  const specialistPk = getPublicKey(specialistKey);
+  beforeEach(async () => {
+    for (const [kind, tags, content] of [
+      [47102, [["d", "roster"], ["p", ownerPk], ["p", agentPk], ["p", specialistPk]], ""],
+      [47006, [["p", specialistPk]], ""],
+    ] as const) {
+      await wire.publish(finalizeEvent({ kind, tags: tags.map(t => [...t]), content, created_at: Math.floor(Date.now() / 1000) }, ownerKey));
+    }
+    await wire.publish(finalizeEvent({ kind: 47000, tags: [], content: '{"name":"speaker"}', created_at: Math.floor(Date.now() / 1000) }, specialistKey));
+  });
+
+  it("records the assigned specialist on a handoff, excluding downstream mentions", async () => {
+    await send("Make narration");
+    await finish(turns[0], "@speaker narrate this. If needed ask @other later.");
+    expect(replies()[0].tags).toContainEqual(["task", specialistPk]);
+  });
+
+  it("wakes the coordinator once for a correlated result even when it names the user", async () => {
+    const root = await send("Make narration");
+    await finish(turns[0], "@speaker narrate this");
+    // Seed the assignment explicitly so this tests callback admission independently.
+    const request = finalizeEvent({ kind: 47103, content: "@speaker narrate this", created_at: Math.floor(Date.now() / 1000),
+      tags: [["h", channelA], ["e", root.id, "", "root"], ["p", specialistPk], ["task", specialistPk]],
+    }, agentKey);
+    await wire.publish(request);
+    const result = (key: Uint8Array, channel = channelA, status = "success") => finalizeEvent({
+      kind: 47103, content: "@human here is the audio https://example.org/audio.wav", created_at: Math.floor(Date.now() / 1000),
+      tags: [["h", channel], ["e", root.id, "", "root"], ["e", request.id, "", "reply"], ["p", agentPk], ["result", request.id], ["status", status]],
+    }, key);
+    await wire.publish(result(ownerKey)); // wrong worker
+    await wire.publish(result(specialistKey, channelB)); // wrong channel
+    await wire.publish(result(specialistKey, channelA, "pending")); // not terminal
+    await vi.advanceTimersByTimeAsync(0);
+    expect(turns).toHaveLength(1);
+    const delivered = result(specialistKey);
+    await wire.publish(delivered);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(turns).toHaveLength(2);
+    expect(turns[1].text).toContain(delivered.id);
+    expect(turns[1].text).toContain("fez_accept_work");
+    await finish(turns[1], "Audio checked and delivered.");
+    expect(replies().at(-1)?.tags).not.toContainEqual(["task", specialistPk]);
+    await wire.publish(finalizeEvent({ ...delivered, content: "duplicate result" }, specialistKey));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(turns).toHaveLength(2);
+  });
+
+  it("uses the completion tool's signed result instead of posting another model acknowledgment", async () => {
+    const request = finalizeEvent({ kind: 47103, content: "@isolation-test narrate this", created_at: Math.floor(Date.now() / 1000),
+      tags: [["h", channelA], ["task", agentPk], ["p", agentPk]],
+    }, specialistKey);
+    await wire.publish(request);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(turns[0].text).toContain(request.id);
+    const result = finalizeEvent({ kind: 47103, content: "Audio delivered", created_at: Math.floor(Date.now() / 1000),
+      tags: [["h", channelA], ["e", request.id, "", "root"], ["e", request.id, "", "reply"], ["result", request.id], ["status", "success"], ["p", specialistPk]],
+    }, agentKey);
+    await wire.publish(result);
+    await finish(turns[0], "@speaker thank you, done");
+    expect(replies()).toEqual([result]);
+  });
+
+  it("keeps two queued completions as separately reviewable results", async () => {
+    const active = await send("Finish the plan before reviewing results");
+    for (const content of ["first assignment", "second assignment"]) {
+      const request = finalizeEvent({ kind: 47103, content, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", channelA], ["e", active.id, "", "root"], ["task", specialistPk]],
+      }, agentKey);
+      await wire.publish(request);
+      await wire.publish(finalizeEvent({ kind: 47103, content: `${content} done`, created_at: Math.floor(Date.now() / 1000),
+        tags: [["h", channelA], ["e", active.id, "", "root"], ["e", request.id, "", "reply"], ["result", request.id], ["status", "success"], ["p", agentPk]],
+      }, specialistKey));
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(turns[0].aborted).toBe(false);
+    await finish(turns[0]);
+    expect(turns).toHaveLength(2);
+    await finish(turns[1]);
+    expect(turns).toHaveLength(3);
+  });
+});
+
 describe("standing-agent conversation isolation", () => {
   it.each([channelA, channelB])("queues unrelated work in %s without steering the active request", async channel => {
     const a = await send("TASK_ALPHA");

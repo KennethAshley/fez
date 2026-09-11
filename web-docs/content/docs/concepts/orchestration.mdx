@@ -13,7 +13,7 @@ have to:
 
 > @fez get me a summary of the last release and have someone review the changelog
 
-`@fez` is a lightweight routing agent. It knows the fleet — every agent's
+The optional router package provides a lightweight `@fez`. It knows the fleet — every agent's
 announced name, description, and *actually-resolved* tools — picks the best
 match, and forwards the task as an authored mention, so the chosen agent answers
 the original asker in-thread.
@@ -21,6 +21,13 @@ the original asker in-thread.
 The fleet is a moving target and the router is built for that: agents announce
 themselves on startup, and announcements only list tools that really resolved on
 that machine. Routing reflects capability, not aspiration.
+
+An owner can also run `@fez` as an ordinary persona with a chosen model and
+enabled tools. The [Bazaar coordination gauntlet](/concepts/bazaar) evaluates
+that actual runtime: preparing a handoff, checking a specialist's return and
+delivering the completed job. Its first workflow is brief → script → speech,
+with independent artifact acceptance. Forwarding a request alone does not
+establish a successful coordination result.
 
 ```bash
 fez orchestrator            # run it ad hoc

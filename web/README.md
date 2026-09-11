@@ -1,45 +1,37 @@
-# web
+# Fez public website
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+This Next.js app serves `https://fez.chat`. The public manual is a separate
+app in `../web-docs`, served at `https://docs.fez.chat`.
 
-Run development server:
+## Develop and verify
 
-```bash
-npm run dev
-# or
-pnpm dev
-# or
-yarn dev
-```
+Run `npm run dev`, `npm run types:check`, or `npm run build` in the app you
+are changing. Each app has its own dependencies and lockfile. The website's
+`next.config.mjs` redirects old `/docs` URLs to the manual, preserving the
+page path.
 
-Open http://localhost:3000 with your browser to see the result.
+After publication, run `node ../web-docs/scripts/check-public-pages.mjs` here. It checks
+the manual and the Bazaar guide at `docs.fez.chat`. It
+makes read-only HTTP requests; no agent jobs or chain operations run.
 
-## Explore
+## Deployment boundaries
 
-In the project, you can see:
+| Vercel project | Source directory | Domain |
+| --- | --- | --- |
+| `fez-web` | This directory as the upload root | `fez.chat` |
+| `fez-docs` | `web-docs` within the repository/upload root | `docs.fez.chat` |
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
+The Git-connected `fez-docs` project must have **Root Directory = `web-docs`**.
+Setting it to `web` builds the marketing app under the docs domain and breaks
+every manual page. For a CLI deployment, stage the manual inside a
+`web-docs/` directory and upload its parent, preserving that same root setting.
 
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
+Keep the two `.vercel/project.json` identities separate. Inspect the project,
+source-file list, and built routes before promoting a deployment. Never
+upload local `.env` files, private experiment records, or unrelated workspace
+files. Existing environment settings stay on their respective Vercel projects.
 
-### Fumadocs MDX
-
-Collections are defined with the [Macro API](https://fumadocs.dev/docs/mdx/macro) in `lib/source.ts`.
-
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
-
-## Learn More
-
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+The website's production hosting target is distinct from the chain network:
+the current Bazaar integration uses **Bittensor testnet, subnet 553**. A site
+deployment does not authorize model spending, specialist payments, or changes
+to coordination rewards.

@@ -69,7 +69,9 @@ import fs from "node:fs";
 import { execSync, execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { isAddressedTo } from "./addressing.js";
+import { addressees, isAddressedTo } from "./addressing.js";
+import { workResult, workResultForAgent } from "../../fez-client/src/work-completion.js";
+import { EvaluationError, evaluationExecutableAvailable, evaluationReady, evaluationRuntime, assertEvaluationToolsUnchanged, readEvaluationRequest, runEvaluation } from "./evaluation.js";
 import { runMeteredHire } from "./hire-usage.js";
 import { deliverHire } from "./hire-delivery.js";
 import { memoryPromptParts, type CoreMemoryState } from "./memory-prompt.js";
@@ -172,14 +174,19 @@ function withNotice(
 }
 
 async function main() {
-  if (process.argv[2] === "--hire-protocol") {
+  const evaluationCheck = process.env.FEZ_EVALUATION_CHECK === "1";
+  const evaluationFile = process.env.FEZ_EVALUATION_REQUEST;
+  const evaluating = evaluationCheck || evaluationFile !== undefined;
+  // Validate the explicit allowance before runtime preparation or any provider use.
+  const evaluationRequest = evaluationFile && !evaluationCheck ? await readEvaluationRequest(evaluationFile) : undefined;
+  if (!evaluating && process.argv[2] === "--hire-protocol") {
     console.log("FEZ_HIRE_PROTOCOL=1");
     return;
   }
   // `fez-agent connect <key>` — the OAuth sign-in flow, runnable from the
   // compiled binary so the DESKTOP can trigger it (the webview can't hold
   // the loopback callback port; this process can). Exits when connected.
-  if (process.argv[2] === "connect" && process.argv[3]) {
+  if (!evaluating && process.argv[2] === "connect" && process.argv[3]) {
     try {
       await connectService(process.argv[3]);
       console.log(`✓ ${process.argv[3]} connected`);
@@ -199,6 +206,7 @@ async function main() {
   // answers only gift-wrapped DMs (`fez agent <persona> -c none`) — the
   // shape a DM summons wakes an agent into, since DMs are channel-free.
   if (!personaId) {
+    if (evaluating) throw new EvaluationError("FEZ_AGENT_PERSONA is required for evaluation");
     console.error("Usage: fez agent <persona> [-c channels|none] — or set FEZ_AGENT_PERSONA / FEZ_AGENT_CHANNELS and fez run dist/agent.js");
     process.exit(1);
   }
@@ -206,6 +214,7 @@ async function main() {
   registerBuiltinHarnesses();
   const persona = await findPersona(personaId);
   if (!persona) {
+    if (evaluating) throw new EvaluationError("Evaluation persona is not installed");
     console.error(`No persona "${personaId}" (looked in ~/.fez/personas/)`);
     process.exit(1);
   }
@@ -215,7 +224,8 @@ async function main() {
   // once here is the fix; a `!` at each use would only hide the question.
   const activePersona = persona;
   const harness = findHarness(persona.harness);
-  if (!harness || !(await harness.detect())) {
+  if (!harness || !(evaluating ? evaluationExecutableAvailable(harness.command) : await harness.detect())) {
+    if (evaluating) throw new EvaluationError("The persona's selected harness is unavailable");
     console.error(`Persona "${personaId}" needs harness "${persona.harness}" which isn't available`);
     process.exit(1);
   }
@@ -296,14 +306,14 @@ async function main() {
     persona.skillSettings
   );
   const skillsSection = skillsPromptSection(attachedSkills);
-  const mcpServers = await withFreshOAuth(
-    resolved
+  const configuredMcpServers = resolved
       // Copies, not registry objects — the command rewrite below must not
       // reach back into the shared registry.
       .map((r) => findMcpServer(r.key))
       .filter((s): s is NonNullable<typeof s> => s !== undefined)
-      .map((s) => ({ ...s }))
-  );
+      .map((s) => ({ ...s }));
+  // A readiness check does not refresh credentials or contact tool services.
+  const mcpServers = evaluating ? configuredMcpServers : await withFreshOAuth(configuredMcpServers);
 
   // A bare `command: node` (what the installer writes for every skill
   // part) is unrunnable from an app-spawned agent — the GUI PATH has no
@@ -360,6 +370,55 @@ async function main() {
     if (s.name === "fez") continue;
     const runs = "command" in s ? `${s.command}${s.args?.length ? " " + s.args.join(" ") : ""}` : "url" in s ? s.url : s.type;
     console.log(`🔧 tool "${s.name}" attached (${runs})`);
+  }
+
+  if (evaluating) {
+    const runtime = evaluationRuntime({ persona });
+    const missingTools = [...missingSkills, ...missingSkillMds];
+    if (!fezMcp.launch) missingTools.push("fez");
+    for (const tool of resolved) if (!findMcpServer(tool.key)) missingTools.push(tool.name);
+    for (const server of mcpServers) {
+      // The current Pi bridge only writes stdio MCP servers; silently dropping
+      // an owner's remote tool would evaluate a different configuration.
+      if (!("command" in server)) {
+        if (persona.harness === "pi") missingTools.push(server.name);
+        continue;
+      }
+      if (!evaluationExecutableAvailable(server.command)) missingTools.push(server.name);
+    }
+    const skillFiles = attachedSkills.map(skill => {
+      try { return { name: skill.name, setting: skill.setting, content: fs.readFileSync(skill.path, "utf8") }; }
+      catch { missingTools.push(skill.name); return { name: skill.name, missing: true }; }
+    });
+    registerSystemPromptSection({ id: "fez:trust-boundary", order: 10, text: UNTRUSTED_CONTENT_NOTICE });
+    const standing = composeSystemPrompt(persona.systemPrompt);
+    const ready = evaluationReady({ persona, harness, tools: mcpServers.map(server => server.name),
+      skills: attachedSkills.map(skill => skill.name), missingTools,
+      configuration: { tools: resolved.map(tool => ({ name: tool.name, entry: tool.entry })), skillFiles, standing }, runtime,
+    });
+    console.log(`FEZ_EVALUATION_READY=${JSON.stringify(ready)}`);
+    if (!ready.ready) throw new EvaluationError("Agent is missing enabled tools: " + ready.missingTools.join(", "));
+    if (evaluationCheck) return;
+    if (!evaluationRequest) throw new EvaluationError("FEZ_EVALUATION_REQUEST must name a funded request file");
+    const priorEvaluationContext = process.env.FEZ_EVALUATION_ACTIVE;
+    process.env.FEZ_EVALUATION_ACTIVE = "1";
+    try {
+      const refreshed = await withFreshOAuth(mcpServers);
+      assertEvaluationToolsUnchanged(mcpServers, refreshed);
+      mcpServers.splice(0, mcpServers.length, ...refreshed.map(server => "command" in server ? {
+        ...server, env: [...server.env.filter(entry => entry.name !== "FEZ_EVALUATION_ACTIVE"), { name: "FEZ_EVALUATION_ACTIVE", value: "1" }],
+      } : server));
+      // Same unattended policy as a standing agent without an approval channel.
+      // Wallet entrypoints independently reject mutations in evaluation context.
+      setRiskPolicy(async () => "deny");
+      const result = await runEvaluation({ request: evaluationRequest, ready, harness, mcpServers,
+        systemPrompt: standing, skillsSection, prepareWorkdir: dir => configureWorkdir(dir, true, runtime) });
+      console.log(`FEZ_EVALUATION_RESULT=${JSON.stringify(result)}`);
+    } finally {
+      if (priorEvaluationContext === undefined) delete process.env.FEZ_EVALUATION_ACTIVE;
+      else process.env.FEZ_EVALUATION_ACTIVE = priorEvaluationContext;
+    }
+    return;
   }
 
   // ── Per-persona working directory. Turns run HERE, not wherever `fez
@@ -451,12 +510,14 @@ async function main() {
   // settings for TRUSTED folders, so one trust.json entry for the
   // shared work root covers every persona (observed format:
   // { "<path>": true }); a custom workdir is trusted individually.
-  if (persona.harness === "pi") {
+  function configureWorkdir(workDir: string, transient = false, selection?: { provider: string | null; model: string | null }): (() => void) | undefined {
+    const persona = activePersona;
+    if (persona.harness !== "pi") return;
     const piDir = path.join(workDir, ".pi");
     fs.mkdirSync(piDir, { recursive: true });
     const piSettings: Record<string, unknown> = { quietStartup: true };
-    if (persona.extra.provider) piSettings.defaultProvider = persona.extra.provider;
-    if (persona.extra.model) piSettings.defaultModel = persona.extra.model;
+    if (selection?.provider || persona.extra.provider) piSettings.defaultProvider = selection?.provider || persona.extra.provider;
+    if (selection?.model || persona.extra.model) piSettings.defaultModel = selection?.model || persona.extra.model;
     const thinking = piThinkingLevel(persona.extra.effort);
     if (thinking) piSettings.defaultThinkingLevel = thinking;
     // `packages:` frontmatter — pi registry packages (pi.dev/packages)
@@ -503,26 +564,35 @@ async function main() {
       console.log(`🔌 pi mcp bridge: ${Object.keys(mcpJson.mcpServers).length} server(s) via pi-mcp-adapter (.pi/mcp.json)`);
     }
     fs.writeFileSync(path.join(piDir, "settings.json"), JSON.stringify(piSettings, null, 1) + "\n");
+    let removeTrust: (() => void) | undefined;
     try {
       const trustFile = path.join(os.homedir(), ".pi", "agent", "trust.json");
       let trust: Record<string, boolean> = {};
       try {
         trust = JSON.parse(fs.readFileSync(trustFile, "utf-8"));
       } catch { /* first pi use — file created below */ }
-      const trustPath = persona.extra.workdir ? workDir : path.join(os.homedir(), ".fez", "agents", "work");
+      const trustPath = transient || persona.extra.workdir ? workDir : path.join(os.homedir(), ".fez", "agents", "work");
       if (trust[trustPath] !== true) {
         trust[trustPath] = true;
         fs.mkdirSync(path.dirname(trustFile), { recursive: true });
         fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
+        if (transient) removeTrust = () => {
+          const current = JSON.parse(fs.readFileSync(trustFile, "utf8")) as Record<string, boolean>;
+          delete current[trustPath];
+          fs.writeFileSync(trustFile, JSON.stringify(current, null, 2) + "\n");
+        };
         console.log(`🔓 pi project trust granted for ${trustPath}`);
       }
     } catch (err) {
+      if (transient) throw new EvaluationError("Could not apply the selected runtime's evaluation configuration");
       console.warn(`⚠️  couldn't update pi trust — persona provider/model settings may be ignored: ${err instanceof Error ? err.message : err}`);
     }
     if (persona.extra.provider || persona.extra.model) {
       console.log(`🧠 pi mind: ${persona.extra.provider ?? "(default provider)"} / ${persona.extra.model ?? "(default model)"}`);
     }
+    return removeTrust;
   }
+  configureWorkdir(workDir);
 
   // Turn deadlines: SESSION_TIMEOUTS (Buzz's 900s idle / 2h hard — sized
   // above the longest legitimate quiet tool run) unless the persona says
@@ -1453,7 +1523,10 @@ async function main() {
     for (let i = 0; i < scopeOrder.length; i++) {
       const scope = scopeOrder[i];
       const list = pendingByScope.get(scope) ?? [];
-      const ready = list.filter((item) => item.notBefore <= now);
+      let ready = list.filter((item) => item.notBefore <= now);
+      // Each result needs its own review/acceptance context; batching
+      // would expose only the last result id to the coordinator.
+      if (ready.some(item => item.chEvent?.tags.some(t => t[0] === "result"))) ready = ready.slice(0, 1);
       if (ready.length === 0) {
         if (list.length === 0) {
           pendingByScope.delete(scope);
@@ -1462,7 +1535,7 @@ async function main() {
         }
         continue;
       }
-      pendingByScope.set(scope, list.filter((item) => item.notBefore > now));
+      pendingByScope.set(scope, list.filter((item) => !ready.includes(item)));
       scopeOrder.splice(i, 1);
       scopeOrder.push(scope); // rotate: next drain favors other scopes
       void dispatchBatch(scope, ready);
@@ -1544,6 +1617,14 @@ async function main() {
   const isMention = (event: { pubkey: string; content: string; tags: string[][] }) =>
     isAddressedTo(event, personaId!, myPubkey, owner, persona.aliases ?? []);
 
+  const completedHandoffs = new Set<string>();
+  async function completionRequest(event: ChEvent): Promise<ChEvent | undefined> {
+    const id = event.tags.find(t => t[0] === "result")?.[1];
+    if (!id) return;
+    const [request] = await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], ids: [id], authors: [myPubkey] }]);
+    if (request && workResultForAgent(event, request)) return request;
+  }
+
   const handleChannelMessage = async (
     event: ChEvent,
     { redispatch = false, attempts = 0, doc, steering = [], scope: queuedScope }: ChannelTurnOptions = {}
@@ -1566,7 +1647,9 @@ async function main() {
         : `ch:${JSON.stringify([channelId, (triggerRoot ?? event.id).toLowerCase()])}`);
       if (!redispatch) recent.add(scope, event.id, `${who(event.pubkey)}: ${event.content}`);
 
-      if (!isMention(event)) return;
+      const isResult = event.tags.some(t => t[0] === "result");
+      const completedRequest = !doc && isResult ? await completionRequest(event).catch(() => undefined) : undefined;
+      if (isResult ? !completedRequest : !isMention(event)) return;
       if (!(await authorAllowed(event.pubkey))) return;
 
       // Agent-to-agent chain cap — the shared protocol limit, so the
@@ -1596,10 +1679,18 @@ async function main() {
         return;
       }
 
+      if (completedRequest && !redispatch) {
+        const key = `${completedRequest.id}:${event.pubkey}`;
+        if (completedHandoffs.has(key)) return;
+        completedHandoffs.add(key);
+        // ponytail: bounded process-local duplicate guard; startup also checks signed replies.
+        if (completedHandoffs.size > 2000) completedHandoffs.delete(completedHandoffs.values().next().value!);
+      }
+
       // Mid-turn mentions: STEER (default — cancel the in-flight turn and
       // restart with the new message woven in) or QUEUE (process after).
       if (busy || (dispatching && !redispatch)) {
-        if (onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
+        if (!completedRequest && onBusy === "steer" && turnController && turnKind === "ch" && activeScope === scope && turnAcceptsSteering && !cancelRequested) {
           steerMessages.push(...steering.map(event => ({ event })), { event, doc });
           console.log(`🔀 Steering — cancelling in-flight turn to weave in mention from ${event.pubkey.slice(0, 8)}…`);
           turnController.abort();
@@ -1758,8 +1849,14 @@ async function main() {
 
         const buildPrompt = async (fresh: boolean): Promise<string> => {
           const memory = memoryPromptParts(await coreMemoryState());
+          const workNotice = completedRequest
+            ? `Delegated result ${event.id} for request ${completedRequest.id}: ${workResult(event, completedRequest)}. Check the deliverable against the original request: ${untrustedValue(completedRequest.content)}. If it meets the request, call fez_accept_work with resultId=${event.id} and a note naming what you actually checked. Then deliver the outcome to the original user. Submission alone is not acceptance. Do not @mention the worker to acknowledge it.`
+            : !doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)
+              ? `Assigned work requestId=${event.id}. When finished, call fez_complete_work with this requestId, status success or error, a summary, capability, and artifact URLs/event ids. This publishes your result and calls back to the requester automatically; do not send a separate callback or acceptance. Report blockers as error, never as success.`
+              : undefined;
           if (!fresh) {
             return [
+              ...(workNotice ? [workNotice] : []),
               // Core rides EVERY turn, not just the fresh prompt: the
               // harness compacts its own context, and a compaction that
               // drops your identity is how an agent quietly becomes
@@ -1779,6 +1876,7 @@ async function main() {
             ].join("\n\n");
           }
           return [
+            ...(workNotice ? [workNotice] : []),
             persona.systemPrompt ?? "",
             ...(memory.section ? [memory.section] : []),
             ...(skillsSection ? [skillsSection] : []),
@@ -1895,6 +1993,19 @@ async function main() {
         );
         turnAcceptsSteering = false;
         if (turnController.signal.aborted) throw Object.assign(new Error("turn aborted"), { name: "AbortError" });
+        // The completion tool already posted the signed, threaded result.
+        // Do not post the model's tool acknowledgment as a second delivery.
+        if (!doc && event.tags.some(t => t[0] === "task" && t[1] === myPubkey)) {
+          const submitted = await relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#result": [event.id] }]);
+          const result = submitted.find(r => workResult(r, event));
+          if (result) {
+            recent.add(scope, result.id, `${who(result.pubkey)}: ${result.content}`);
+            publishObserver({ type: "turn", status: "done" });
+            publishTurnMetric(`ch:${channelId}`, "done", turnStartedAt, result.content.length, event.id);
+            consecutiveFailures = 0;
+            return;
+          }
+        }
         // Never publish an empty message, whatever path produced it.
         if (!rawReply.trim()) throw new Error("harness returned an empty reply");
         const { text: rawText, artifacts } = extractArtifacts(rawReply);
@@ -1906,9 +2017,17 @@ async function main() {
           myPubkey,
           ...replyTags.filter((tag) => tag[0] === "p").map((tag) => tag[1]),
         ]).catch(() => []);
+        const assignments: string[][] = [];
+        if (!doc) {
+          for (const name of addressees(reply)) {
+            const pk = await pubkeyForName(name);
+            // A callback to the caller is not a new assignment.
+            if (pk && pk !== myPubkey && pk !== owner && pk !== event.pubkey && await isSibling(pk)) assignments.push(["task", pk]);
+          }
+        }
         const replyEvent = client.signEvent({
           kind: replyKind,
-          tags: [...replyTags, ...mentioned],
+          tags: [...replyTags, ...mentioned, ...assignments],
           content: reply || `📦 ${artifacts[0]?.title ?? artifacts[0]?.type ?? "artifact"}`,
         });
         await relay.publish(replyEvent);
@@ -2272,6 +2391,9 @@ async function main() {
     for (const dm of dmBacklog.splice(0)) void runtimeRefresh.run(() => handleDm(dm, true));
   }, 2500);
 
+  let startupBackfillStarted = false;
+  const backfillSince = Math.floor(Date.now() / 1000) - 120;
+
   relay.subscribe(
     [
       ...(channels.length > 0
@@ -2290,6 +2412,7 @@ async function main() {
     (event) => {
       if (event.kind === KIND_MEMBERSHIP || event.kind === KIND_BAN_LIST) {
         workspace.absorb(event);
+        void backfillStartup().catch(err => console.error("Startup request recovery failed:", err));
         return;
       }
       if (event.kind === KIND_DOC_COMMENT) {
@@ -2307,48 +2430,75 @@ async function main() {
     }
   );
 
-  // Backfill: an auto-spawned agent starts seconds AFTER the mention that
-  // summoned it — the live subscription (since: now) misses it. Pick up
-  // the most recent unanswered mention from the last two minutes.
-  const BACKFILL_WINDOW_S = 120;
-  const [recentMessages, ownReplies] = channels.length === 0 ? [[], []] : await Promise.all([
-    relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }]),
-    relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }]),
-  ]);
-  const answered = new Set(
-    ownReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e" && t[3] === "reply").map((t) => t[1]))
-  );
-  const pending = recentMessages
-    .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && isMention(e) && !answered.has(e.id))
-    .sort((a, b) => a.created_at - b.created_at)
-    .at(-1);
-  // Same race for doc comments: the comment that summoned us predates the
-  // live subscription. Only unanswered roots addressed to us.
-  const recentComments = await relay
-    .query([{ kinds: [KIND_DOC_COMMENT], "#p": [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }])
-    .catch(() => []);
-  const myCommentReplies = await relay
-    .query([{ kinds: [KIND_DOC_COMMENT], authors: [myPubkey], since: Math.floor(Date.now() / 1000) - BACKFILL_WINDOW_S }])
-    .catch(() => []);
-  const answeredComments = new Set(myCommentReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])));
-  const pendingComment = recentComments
-    .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && !answeredComments.has(e.id))
-    .sort((a, b) => a.created_at - b.created_at)
-    .at(-1);
-  if (pendingComment) {
-    console.log(`⏪ Backfilling doc comment from ${pendingComment.pubkey.slice(0, 8)}…`);
-    void runtimeRefresh.run(() => handleDocComment(pendingComment), 3000);
-  }
+  async function backfillStartup(): Promise<void> {
+    // An empty history query before enrollment is not proof of no work.
+    if (startupBackfillStarted || (channels.length > 0 && !workspace.isMember(myPubkey))) return;
+    startupBackfillStarted = true;
+    // Backfill: an auto-spawned agent starts seconds AFTER the mention that
+    // summoned it — the live subscription (since: now) misses it. Pick up
+    // the most recent unanswered mention from the last two minutes.
+    const [recentMessages, ownReplies] = channels.length === 0 ? [[], []] : await Promise.all([
+      relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, since: backfillSince }]),
+      relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], since: backfillSince }]),
+    ]);
+    const answered = new Set(
+      ownReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e" && t[3] === "reply").map((t) => t[1]))
+    );
+    // Results remain work after the startup mention window. Recover the
+    // latest bounded batch and use signed replies to avoid reviewing twice.
+    // ponytail: latest 200 results; paginate when offline backlogs exceed this.
+    const results = channels.length === 0 ? [] : await relay.query([{
+      kinds: [KIND_CHANNEL_MESSAGE], "#h": channels, "#p": [myPubkey], "#status": ["success", "error"], limit: 200,
+    }]);
+    const requestIds = [...new Set(results.flatMap(e => e.tags.filter(t => t[0] === "result").map(t => t[1])))];
+    if (requestIds.length) {
+      const [requests, responses] = await Promise.all([
+        relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], ids: requestIds }]),
+        relay.query([{ kinds: [KIND_CHANNEL_MESSAGE], authors: [myPubkey], "#e": results.map(e => e.id) }]),
+      ]);
+      const answeredResults = new Set(responses.flatMap(e => e.tags.filter(t => t[0] === "e" && t[3] === "reply").map(t => t[1])));
+      const valid = results.flatMap(result => {
+        const request = requests.find(r => workResultForAgent(result, r));
+        return request ? [{ result, key: `${request.id}:${result.pubkey}` }] : [];
+      });
+      for (const { result, key } of valid) if (answeredResults.has(result.id)) completedHandoffs.add(key);
+      for (const { result, key } of valid.sort((a, b) => a.result.created_at - b.result.created_at)) {
+        if (!completedHandoffs.has(key)) void runtimeRefresh.run(() => handleChannelMessage(result), 3000);
+      }
+    }
+    const pending = recentMessages
+      .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && !e.tags.some(t => t[0] === "result") && isMention(e) && !answered.has(e.id))
+      .sort((a, b) => a.created_at - b.created_at)
+      .at(-1);
+    // Same race for doc comments: the comment that summoned us predates the
+    // live subscription. Only unanswered roots addressed to us.
+    const recentComments = await relay
+      .query([{ kinds: [KIND_DOC_COMMENT], "#p": [myPubkey], since: backfillSince }])
+      .catch(() => []);
+    const myCommentReplies = await relay
+      .query([{ kinds: [KIND_DOC_COMMENT], authors: [myPubkey], since: backfillSince }])
+      .catch(() => []);
+    const answeredComments = new Set(myCommentReplies.flatMap((e) => e.tags.filter((t) => t[0] === "e").map((t) => t[1])));
+    const pendingComment = recentComments
+      .filter((e) => e.pubkey !== myPubkey && workspace.isMember(e.pubkey) && !answeredComments.has(e.id))
+      .sort((a, b) => a.created_at - b.created_at)
+      .at(-1);
+    if (pendingComment) {
+      console.log(`⏪ Backfilling doc comment from ${pendingComment.pubkey.slice(0, 8)}…`);
+      void runtimeRefresh.run(() => handleDocComment(pendingComment), 3000);
+    }
 
-  if (pending) {
-    console.log(`⏪ Backfilling mention from ${pending.pubkey.slice(0, 8)}… (${Math.floor(Date.now() / 1000) - pending.created_at}s ago)`);
-    // Small grace so an auto-spawn /invite (published once our 47000 is
-    // seen) lands before our reactions/reply — non-member events get
-    // dropped by clients.
-    // Backfill deliberately KEEPS the dedupe: if the live subscription
-    // already delivered this event, a second turn is exactly the bug.
-    void runtimeRefresh.run(() => handleChannelMessage(pending), 3000);
+    if (pending) {
+      console.log(`⏪ Backfilling mention from ${pending.pubkey.slice(0, 8)}… (${Math.floor(Date.now() / 1000) - pending.created_at}s ago)`);
+      // Small grace so an auto-spawn /invite (published once our 47000 is
+      // seen) lands before our reactions/reply — non-member events get
+      // dropped by clients.
+      // Backfill deliberately KEEPS the dedupe: if the live subscription
+      // already delivered this event, a second turn is exactly the bug.
+      void runtimeRefresh.run(() => handleChannelMessage(pending), 3000);
+    }
   }
+  await backfillStartup();
 
   // Only bundled agents self-refresh. Source/CLI runs keep their own lifecycle.
   // The compiler embeds this value; reading the marker at startup races installation.
@@ -2376,6 +2526,12 @@ async function main() {
 }
 
 main().catch(async (err) => {
+  if (process.env.FEZ_EVALUATION_CHECK === "1" || process.env.FEZ_EVALUATION_REQUEST !== undefined) {
+    const message = err instanceof EvaluationError ? err.message : "Evaluation startup failed; check the selected runtime and enabled tools";
+    console.error(`FEZ_EVALUATION_ERROR=${JSON.stringify({ message, ...(err instanceof EvaluationError ? err.observation : {}) })}`);
+    process.exitCode = 1;
+    return;
+  }
   console.error("FAILED:", err);
   // Say it WHERE THE SUMMONS CAME FROM, not just to a log in a tab
   // nobody watches. A spawn that dies before its first turn — a

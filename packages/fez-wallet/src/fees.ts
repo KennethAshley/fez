@@ -5,6 +5,7 @@ import { alphaPriceTao, formatRao } from "./chains/subtensor.js";
 import { signerFromPair, submitAndWait } from "./chains/substrate.js";
 import { requirePersonaPair, requireRehearsalNetwork, subtensorFor, DEFAULT_NETUID } from "./stake.js";
 import { DEFAULT_MARKET_RELAY, marketPublish } from "./rent.js";
+import { requireWalletMutationAllowed } from "./evaluation.js";
 
 /**
  * The fee burn (spec 2026-09-04): skim a small protocol fee off each
@@ -112,6 +113,7 @@ function registeredHotkey(netuid: number): string {
  * enforces the spec's batch-don't-drip rule for us.
  */
 export async function burnRun(amountTao?: string, netuid = DEFAULT_NETUID): Promise<BurnResult> {
+  requireWalletMutationAllowed();
   const pair = requirePersonaPair(BURN_VAULT);
   const config = loadConfig();
   requireRehearsalNetwork(config.network);

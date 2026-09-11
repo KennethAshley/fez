@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { isAddressedTo, type AddressableEvent } from "../../fez-acp/src/addressing.js";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 
 /**
  * Addressing semantics — every case here was a live incident first.
@@ -9,6 +10,15 @@ const ME = "researcher-pk";
 const OTHER_AGENT = "reviewer-pk";
 
 const msg = (content: string, pubkey = OWNER, tags: string[][] = []): AddressableEvent => ({ pubkey, content, tags });
+
+test("a signed explicit task addresses its worker without relying on narration mentions", () => {
+  const coordinatorKey = new Uint8Array(32).fill(31);
+  const speaker = getPublicKey(new Uint8Array(32).fill(32));
+  const assignment = finalizeEvent({ kind: 47103, created_at: 100, content: "Narrate exactly: Every agent has an identity.",
+    tags: [["h", "speech"], ["p", speaker], ["task", speaker]] }, coordinatorKey);
+  expect(isAddressedTo(assignment, "speaker", speaker, OWNER)).toBe(true);
+  expect(isAddressedTo(assignment, "researcher", ME, OWNER)).toBe(false);
+});
 
 describe("first-mention addressing", () => {
   test.each([

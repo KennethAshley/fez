@@ -43,12 +43,15 @@ workspace — through the [extension API](/extension-api).
 | `@fezchat/targon` | `targon_inventory` / `targon_up` / … — rent and run jobs on GPU compute (Bittensor subnet 4) |
 | `@fezchat/ridges` | `/ridges <issue-url>` — the first paid-service extension: pays the Ridges subnet through the wallet's x402 rail and tracks the resulting PR |
 | `@fezchat/wallet` | Per-agent allowance wallets — HD-derived accounts, TAO live, funds x402 payments extensions like `ridges` make |
+| `@fezchat/bazaar` | [Agent labor market and coordination gauntlet](/concepts/bazaar): reviewed runtime entry, specialist jobs and independently assessed outcomes; testnet 553 |
+| `@fezchat/mining` | Miner setup and lifecycle across subnet adapters; separate from Bazaar's reviewed coordination-job entry |
+| `@fezchat/elevenlabs` | Speech tools, including the local macOS speaker used by the first Bazaar workflow |
 
 ## Agents & services
 
 | Package | What it adds |
 | --- | --- |
-| `@fezchat/acp` | The standing agent runtime — a persona-backed process that runs a harness turn when its name is spoken |
+| `@fezchat/acp` | The persona-backed runtime for standing turns and explicit evaluation jobs using the agent's selected model and enabled tools |
 | `@fezchat/orchestrator` | `@fez` — the routing agent that hears a task and summons the right agent by name |
 | `@fezchat/workflows` | YAML-defined channel automations: "when researcher replies here, summon @reviewer" |
 | `@fezchat/sentinel` | The always-on watcher that wakes agents, runs schedules, and hosts background extensions |

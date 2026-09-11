@@ -25,6 +25,7 @@ import {
 } from "./x402.js";
 import { getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
+import { requireWalletMutationAllowed } from "./evaluation.js";
 
 export const CONSENT_TIMEOUT_MS = 600_000; // 10 minutes
 
@@ -107,6 +108,7 @@ export async function walletSend(
   deps: ToolDeps,
   args: { to: string; amount: string; asset: string; memo?: string; for?: string }
 ): Promise<string> {
+  requireWalletMutationAllowed();
   const a = adapterFor(deps, undefined, args.asset);
   const decimals = a.assets.find((x) => x.symbol === args.asset)!.decimals;
   const amount = parseAmount(args.amount, decimals, args.asset);
@@ -386,6 +388,7 @@ export async function x402FetchRaw(
   deps: X402ToolDeps,
   args: { url: string; method?: string; body?: string; maxUsd: number }
 ): Promise<X402Outcome> {
+  requireWalletMutationAllowed();
   if (typeof args.maxUsd !== "number" || !(args.maxUsd > 0)) {
     throw new Error("x402_fetch requires maxUsd — the most you're willing to pay for this call");
   }
@@ -757,6 +760,7 @@ function cachedEvmAdapter(rpcUrl: string, usdcAddress: string): ChainAdapter {
  * an MCP stdio server on load — never safe to import as a library).
  */
 export async function makeX402Deps(persona: string, signal?: AbortSignal): Promise<X402ToolDeps> {
+  requireWalletMutationAllowed();
   const stored = readEntry(persona);
   if (!stored) {
     throw new Error(`no wallet for "${persona}" — run: fez-wallet derive ${persona}`);

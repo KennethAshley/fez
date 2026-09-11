@@ -1,8 +1,8 @@
 # Fez Architecture
 
 The maintained architecture documentation lives on the docs site:
-**[docs.fez.chat/docs/architecture](https://docs.fez.chat/docs/architecture)**
-(source: `web/content/docs/architecture.mdx`). It covers the four claims the
+**[docs.fez.chat/architecture](https://docs.fez.chat/architecture)**
+(source: `web-docs/content/docs/architecture.mdx`). It covers the four claims the
 design rests on, the component map with diagrams, and the message→answer
 trace.
 
@@ -24,6 +24,12 @@ The short version:
   (claude-code or the bundled pi).
 - **Features are packages** — everything else in `packages/` ships as
   installable extensions against `packages/fez-extension-api`.
+- **Evaluated work** — the sibling `fez-bazaar` uses ACP's generic evaluation
+  seam with the actual persona, model and enabled tools. Its first coordination
+  workflow is brief → script → speech, independently checked before quality
+  counts. [The public guide](../web-docs/content/docs/concepts/bazaar.mdx)
+  distinguishes operator-issued testnet jobs, authorized spending, specialist
+  services, owner custody, SALT and stake. Coordination emissions are not active.
 
 An earlier version of this file described the pre-relay, pre-desktop,
 single-relay SDK and aged badly — including a claim that no Rust layer
