@@ -37,10 +37,7 @@ test("Loom saves, reopens, updates and shares artifacts from any agent under des
       { id: "unrelated-workspace", content: "private older save", type: "live", ts: now }]);
     const gui = readFileSync(new URL("../../../fez-loom/dist/gui.js", import.meta.url), "utf8");
     const config = JSON.parse(readFileSync(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
-    // The fixture serves NIP-11 over loopback HTTP. Keep the production rendering
-    // policy, allowing only this temporary relay in addition to production connections.
-    const policy = { ...config.app.security.csp, "connect-src": `${config.app.security.csp["connect-src"]} ${relay.url.replace("ws:", "http:")}` };
-    const csp = Object.entries(policy).map(([key, value]) => `${key} ${value}`).join("; ");
+    const csp = Object.entries(config.app.security.csp).map(([key, value]) => `${key} ${value}`).join("; ");
     await page.route("http://127.0.0.1:4173/", async route => {
       const response = await route.fetch();
       await route.fulfill({ response, headers: { ...response.headers(), "content-security-policy": csp } });

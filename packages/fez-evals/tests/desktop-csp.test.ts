@@ -20,6 +20,14 @@ function directive(name: string): string[] {
 }
 
 describe("desktop CSP", () => {
+  it("allows NIP-11 discovery for both local and hosted WebSocket relays", () => {
+    // A ws:// relay's identity is fetched over http:// before joining it.
+    // Allowing only the socket makes reachable LAN invites look unavailable.
+    for (const scheme of ["ws:", "http:", "wss:", "https:"]) {
+      expect(directive("connect-src"), scheme).toContain(scheme);
+    }
+  });
+
   it("lets remote blobs load for every media element, not just images", () => {
     for (const name of ["img-src", "media-src"]) {
       expect(directive(name), name).toContain("https:");

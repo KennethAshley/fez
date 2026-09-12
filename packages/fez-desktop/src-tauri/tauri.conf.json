@@ -39,7 +39,7 @@
         "default-src": "'self'",
         "script-src": "'self' 'unsafe-eval'",
         "style-src": "'self' 'unsafe-inline'",
-        "connect-src": "'self' ipc: http://ipc.localhost ws: wss: https:",
+        "connect-src": "'self' ipc: http://ipc.localhost ws: wss: http: https:",
         "img-src": "'self' asset: http://asset.localhost data: blob: https:",
         "frame-src": "'self' artifact: http://artifact.localhost https:",
         "media-src": "'self' data: blob: https:",
