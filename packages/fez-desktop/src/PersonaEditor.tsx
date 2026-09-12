@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { flash } from "./toast";
 import type { FezClient } from "@fezchat/client";
 import { parseSkillEntries, formatSkillEntries, parseSkillDecls, formatSkillDecls, safeSkillEntries, nearestKnownKey } from "@fezchat/client";
+import { DEFAULT_REFLECTION_PROMPT, reflectionConfig, reflectionEnabled } from "@fezchat/client";
 import { ModelPicker } from "./ModelPicker";
 import { accessRows } from "./access-rows";
 import { listGuests } from "./guest-threads";
@@ -42,6 +43,7 @@ export default function PersonaEditor({
   const [body, setBody] = useState("");
   const [state, setState] = useState<"idle" | "saving" | string>("idle");
   const [armedDelete, setArmedDelete] = useState(false);
+  const [reflection, setReflection] = useState({ enabled: false, every: "30m", prompt: "" });
   // What was on disk. The commit bar is sticky now, so it is always in
   // view whether or not there is anything to commit — which makes "is
   // there anything to commit" a thing the bar has to be able to say.
@@ -53,6 +55,9 @@ export default function PersonaEditor({
         const parsed = parsePersona(content);
         setFront(parsed.front);
         setBody(parsed.body);
+        const every = getField(parsed.front, "reflectionEvery");
+        const enabled = reflectionEnabled(every);
+        setReflection({ enabled, every: enabled ? every : "30m", prompt: getField(parsed.front, "reflectionPrompt") });
         setSaved({ front: parsed.front.join("\n"), body: parsed.body });
       })
       .catch((err) => setState(String(err)));
@@ -81,15 +86,34 @@ export default function PersonaEditor({
 
   // Launch configuration changes apply on an explicit restart; saving
   // must not interrupt the work already running with the old configuration.
-  const SPAWN_KEYS = ["mcpServers", "skills", "harness", "provider", "model", "effort", "repo", "scope"];
+  const SPAWN_KEYS = ["mcpServers", "skills", "harness", "provider", "model", "effort", "repo", "scope", "reflectionEvery", "reflectionPrompt"];
+
+  const supportsReflection = getField(front, "harness") !== "router";
+  let draftFront = front;
+  let reflectionError = "";
+  if (supportsReflection) {
+    const originalEvery = getField(front, "reflectionEvery");
+    const every = reflection.enabled ? reflection.every.trim() : reflectionEnabled(originalEvery) ? "off" : originalEvery;
+    // Persona values occupy one line. A pasted instruction must never introduce another key.
+    const prompt = reflection.prompt.replace(/[\r\n]+/g, " ").trim();
+    if (every !== originalEvery) draftFront = setField(draftFront, "reflectionEvery", every);
+    if (!prompt || prompt !== getField(front, "reflectionPrompt")) draftFront = setField(draftFront, "reflectionPrompt", prompt);
+    if (reflection.enabled) {
+      try {
+        if (!reflectionConfig({ reflectionEvery: every })) reflectionError = "Enter a reflection interval.";
+      } catch {
+        reflectionError = "Enter an interval from 60s to 24d, such as 30m or 2h.";
+      }
+    }
+  }
 
   const save = async () => {
+    if (reflectionError) return;
     setState("saving");
-    const frontText = front.filter((line) => line.trim()).join("\n");
+    const frontText = draftFront.filter((line) => line.trim()).join("\n");
     const content = frontText ? `---\n${frontText}\n---\n\n${body.trim()}\n` : `${body.trim()}\n`;
     const savedFront = (saved?.front ?? "").split("\n");
-    const fieldOf = (lines: string[], key: string) => lines.find((l) => l.startsWith(key + ":"))?.slice(key.length + 1).trim();
-    const spawnChanged = SPAWN_KEYS.some((k) => fieldOf(savedFront, k) !== fieldOf(front, k));
+    const spawnChanged = SPAWN_KEYS.some((k) => getField(savedFront, k) !== getField(draftFront, k));
     try {
       await invoke("update_persona", { name, content });
       if (spawnChanged) {
@@ -126,7 +150,7 @@ export default function PersonaEditor({
   const setBrain = (s: { harness: string; provider: string; model: string }) =>
     setFront(setField(setField(setField(front, "harness", s.harness), "provider", s.provider), "model", s.model));
 
-  const dirty = !saved || saved.front !== front.join("\n") || saved.body !== body;
+  const dirty = !saved || saved.front !== draftFront.join("\n") || saved.body !== body;
   const skillNames = parseSkillEntries(splitList(field("mcpServers"))).names;
   const skillMdDecls = parseSkillDecls(splitList(field("skills")));
   const promptWords = body.trim() ? body.trim().split(/\s+/).length : 0;
@@ -230,6 +254,42 @@ export default function PersonaEditor({
           <label>access</label>
           <AccessPicker client={client} value={field("respondTo")} onChange={(value) => update("respondTo", value)} />
         </div>
+        {supportsReflection && (
+          <section aria-labelledby="reflection-title">
+            <div className="manage-section" id="reflection-title">reflection</div>
+            <div className="settings-field">
+              <div className="set-row">
+                <span className="set-label">Periodic reflection</span>
+                <button type="button" role="switch" aria-label="Periodic reflection" aria-checked={reflection.enabled}
+                  className={reflection.enabled ? "toggle on" : "toggle"}
+                  onClick={() => setReflection({ ...reflection, enabled: !reflection.enabled })}>
+                  <span className="toggle-knob" />
+                </button>
+              </div>
+              <div className="field-note">While running and idle, check for useful work without waiting for a message. Uses this agent’s existing limits and permissions.</div>
+            </div>
+            {reflection.enabled && (
+              <>
+                <div className="settings-field">
+                  <label htmlFor="reflection-every">Check every</label>
+                  <input id="reflection-every" className="manage-input" value={reflection.every} placeholder="30m" spellCheck={false}
+                    aria-invalid={!!reflectionError} aria-describedby="reflection-interval-note"
+                    onChange={e => setReflection({ ...reflection, every: e.target.value })} />
+                  <div id="reflection-interval-note" className={reflectionError ? "ob-error" : "field-note"} role={reflectionError ? "alert" : undefined}>
+                    {reflectionError || "Use s, m, h, or d. At least 1 minute; busy checks are skipped."}
+                  </div>
+                </div>
+                <div className="settings-field">
+                  <label htmlFor="reflection-prompt">Reflection instructions</label>
+                  <textarea id="reflection-prompt" className="manage-input" rows={4} value={reflection.prompt}
+                    placeholder={DEFAULT_REFLECTION_PROMPT} aria-describedby="reflection-prompt-note"
+                    onChange={e => setReflection({ ...reflection, prompt: e.target.value })} />
+                  <div id="reflection-prompt-note" className="field-note">Optional. Leave blank to review standing responsibilities and unfinished work. Results appear in your private watch stream.</div>
+                </div>
+              </>
+            )}
+          </section>
+        )}
         <div className="settings-field">
           <label>also answers to</label>
           <input
@@ -339,7 +399,7 @@ export default function PersonaEditor({
       <div className="edit-foot">
         {state !== "idle" && state !== "saving" && <div className="ob-error">{state}</div>}
         <div className="edit-foot-row">
-          <button className="agent-action primary" disabled={!dirty || state === "saving"} onClick={() => void save()}>
+          <button className="agent-action primary" disabled={!dirty || state === "saving" || !!reflectionError} onClick={() => void save()}>
             {state === "saving" ? "saving…" : "save"}
           </button>
           <button className="agent-action" onClick={() => onDone(false)}>

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { reflectionConfig } from "../../fez-acp/src/reflection.js";
+import { reflectionConfig } from "../../fez-client/src/reflection.js";
 import { parseFrontmatter, validatePersonaFile } from "../../../src/identity/personas.js";
 
 it("keeps reflection opt-in and lets the environment disable persona defaults", () => {

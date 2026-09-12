@@ -88,7 +88,7 @@ import { hexToBytes } from "nostr-tools/utils";
 import { resolveWorkspace, defaultBranchFor } from "./workspaces.js";
 import { piThinkingLevel } from "./thinking.js";
 import { RuntimeRefresh } from "./runtime-refresh.js";
-import { reflectionConfig } from "./reflection.js";
+import { reflectionConfig } from "../../fez-client/src/reflection.js";
 import { bindAgentLifetime } from "./lifetime.js";
 import { RecentContexts } from "./recent-context.js";
 import { decide, claimOwnership, takeOverActive, shutdownGraced, type OwnershipIO, type PresenceBeat } from "./ownership.js";
@@ -693,7 +693,7 @@ async function main() {
     process.exit(0);
   }
 
-  const reflection = reflectionConfig(persona.extra);
+  const reflection = reflectionConfig(persona.extra, process.env);
   if (reflection && !owner) throw new Error("Periodic reflection requires FEZ_AGENT_OWNER");
 
   // Identity: one stable key per persona (~/.fez/agents/<persona>.key).

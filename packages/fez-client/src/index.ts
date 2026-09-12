@@ -482,6 +482,7 @@ export * from "./mentions.js";
 export * from "./skill-source.js";
 export * from "./skill-attach.js";
 export * from "./persona-keys.js";
+export * from "./reflection.js";
 export * from "./salt.js";
 import { chitEvidence, deriveSalt, type SaltPanel } from "./salt.js";
 import {

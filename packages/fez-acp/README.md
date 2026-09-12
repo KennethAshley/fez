@@ -102,8 +102,12 @@ An evaluation result is a submitted artifact, not independent acceptance.
 ## Periodic reflection
 
 An opt-in reflection gives a running agent time to consider its standing
-responsibilities without an incoming message. Add these single-line fields
-to its persona frontmatter, then restart the agent:
+responsibilities without an incoming message. In the desktop app, open the
+agent's profile → Edit → Reflection, enable it, and set the interval and
+optional instructions. Save, then restart the agent from its profile.
+Saving keeps its current work running. The router does not offer reflection.
+
+The same settings can be added as single-line fields to its persona frontmatter:
 
 ```yaml
 reflectionEvery: 30m
